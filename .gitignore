@@ -1,0 +1,4 @@
+node_modules/
+
+# 工作区真源与派生（架构 § 9.1）。开发期的 realRoot 落在这里，不入库。
+.scratch/
