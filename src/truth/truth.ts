@@ -21,6 +21,17 @@ export interface TruthStats {
 }
 
 /** `advance` 输掉了 CAS。**这不是异常情况，是那把锁的全部意义**：并发推进同一 ref 时恰一个成功。 */
+/**
+ * CAS 推进的重试次数。**重试的理由不是"CAS 会失败"，是"锁会撞车"**：两个写者同时推进
+ * 同一个 ref，后到的那个可能连锁都没拿到就失败（ref 的锁文件被占着），而那一刻 ref 还没
+ * 动——不重试的话它会变成 GitError，"恰有一个成功"从调用方看就成了"其中一个坏了"。
+ */
+const ADVANCE_ATTEMPTS = 4
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
 export class RefConflictError extends Error {
   readonly ref: RefName
   readonly expected: CommitId | null
@@ -376,14 +387,17 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
       // `expectedOld === null` 的形态是"这个 ref 必须还不存在"：git 用全零 oid 表达它。
       // 零的长度随对象格式走（sha1 40 位、sha256 64 位），所以从 `to` 自己身上取。
       const args = ['update-ref', ref, to, expectedOld ?? '0'.repeat(to.length)]
-      const r = await git.tryRun(args)
-      if (r.status === 0) return
-      // 非零有两种，必须分开报：ref 现在的值**不等于** expectedOld，那是 CAS 输了；
-      // 相等却还是失败，那是别的原因——git 自己就拒绝把 `refs/heads/*` 指向非提交对象
-      // （实测 `trying to write non-commit object`）。把后者报成 CAS 会把方向指错。
-      const actual = await rawRefValue(ref)
-      if (actual !== expectedOld) throw new RefConflictError(ref, expectedOld, actual)
-      throw new GitError(args, r.status, r.stderr)
+      for (let attempt = 0; ; attempt++) {
+        const r = await git.tryRun(args)
+        if (r.status === 0) return
+        // 非零有两种，必须分开报：ref 现在的值**不等于** expectedOld，那是 CAS 输了；
+        // 相等却还是失败，那是别的原因——git 自己就拒绝把 `refs/heads/*` 指向非提交对象
+        // （实测 `trying to write non-commit object`）。把后者报成 CAS 会把方向指错。
+        const actual = await rawRefValue(ref)
+        if (actual !== expectedOld) throw new RefConflictError(ref, expectedOld, actual)
+        if (attempt >= ADVANCE_ATTEMPTS) throw new GitError(args, r.status, r.stderr)
+        await sleep(5 * (attempt + 1))
+      }
     },
 
     resolve,

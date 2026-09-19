@@ -60,9 +60,10 @@ test('checkpoint：两个写者抢同一个 ref → 恰一个成功，**输的�
   const bad = [a, b].filter((r) => r.status === 'rejected')
   assert.equal(ok.length, 1, '恰一个成功')
   assert.equal(bad.length, 1)
+  const reason = (bad[0] as PromiseRejectedResult).reason as Error
   assert.ok(
-    (bad[0] as PromiseRejectedResult).reason instanceof RefConflictError,
-    '输的原因应当是 CAS',
+    reason instanceof RefConflictError,
+    `输的原因应当是 CAS，实际是 ${reason.name}：${reason.message}`,
   )
 
   const events = []
