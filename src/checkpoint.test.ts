@@ -14,7 +14,7 @@ import { checkpoint } from './checkpoint.ts'
 import { refFor } from './refs.ts'
 import { openLog } from './log/log.ts'
 import { openTruth, RefConflictError } from './truth/truth.ts'
-import type { TreeEntry } from './truth/contract.ts'
+import type { TreeEntry } from './entries.ts'
 import type { AgentId, WriterId } from './terms.ts'
 
 const REPO = join(import.meta.dirname, '..')

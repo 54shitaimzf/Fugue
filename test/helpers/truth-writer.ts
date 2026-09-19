@@ -12,7 +12,7 @@
 // 正常工作时的样子，不是这个进程出错。
 import { existsSync } from 'node:fs'
 import { openTruth } from '../../src/truth/truth.ts'
-import type { TreeEntry } from '../../src/truth/contract.ts'
+import type { TreeEntry } from '../../src/entries.ts'
 import type { RefName } from '../../src/terms.ts'
 
 const [root, ref, mode, ...rest] = process.argv.slice(2)

@@ -610,7 +610,7 @@ test('CLI：fugue commit 把日志折成树、推进 ref、记下 ckpt/commit', 
   assert.equal(existsSync(join(root, '.git', 'index')), false, 'commit 也不该落索引')
 })
 
-test('CLI：commit 折不了的事件一律拒绝，光秃秃的 commit 也不行', async (ctx) => {
+test('CLI：commit 收的是视图的全量读出——改名过的事件不再拒绝，树里是改后的名字', async (ctx) => {
   const root = tmpRoot()
   const agent = 'agent/r1/1'
   const log = openLog(root, { sync: 'never' })
@@ -636,16 +636,22 @@ test('CLI：commit 折不了的事件一律拒绝，光秃秃的 commit 也不�
   await log.close()
   await t.close()
 
-  const bad = spawnSync(
+  // U2 时这里是"折不了就拒绝"：那时的提交只会折 `view/write` 与 `view/remove`，一条
+  // `view/rename` 被忽略就会提交出一个少了改名的树。U3 的视图重放接管了这一步，所以
+  // 现在它提交得出来，而且树里是改后的名字。
+  const ok = spawnSync(
     process.execPath,
-    [CLI, '--root', root, '--agent', agent, 'commit', '-m', '不该提交成功'],
+    [CLI, '--root', root, '--agent', agent, '--json', 'commit', '-m', '改名之后'],
     { encoding: 'utf8' },
   )
-  assert.notEqual(bad.status, 0, '折不了就非零退出，不给出一个少了改名的树')
-  assert.match(bad.stderr, /view\/rename/)
+  assert.equal(ok.status, 0, ok.stderr)
+  const r = JSON.parse(ok.stdout) as { commit: string; entries: number }
+  assert.equal(r.entries, 1, '一条入口：改后的那个名字')
   const t2 = openTruth(root)
   ctx.after(() => t2.close())
-  await assert.rejects(() => t2.resolve(`refs/heads/${agent}` as RefName), RefNotFoundError)
+  const head = await t2.resolve(`refs/heads/${agent}` as RefName)
+  assert.equal(await t2.readAt(head, 'old.ts'), null, '旧名字不在树里')
+  assert.equal((await t2.readAt(head, 'new.ts'))?.toString(), 'x\n')
   await t2.close()
 
   const noMsg = spawnSync(process.execPath, [CLI, '--root', root, 'commit'], { encoding: 'utf8' })

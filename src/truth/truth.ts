@@ -7,16 +7,8 @@
 // 形状：blob 与 tree 都是**不可变、内容寻址**的对象，所以读路径上的缓存永远有效，
 // 不需要失效逻辑——`trees` 与 `commitTrees` 因此是纯粹的加速项。
 import { GitError, openGit, type GitHandle, type ReadTier } from './git.ts'
-import type {
-  Conflict,
-  ConflictStage,
-  DirEntry,
-  EntryKind,
-  EntryMeta,
-  ObjectId,
-  TreeEntry,
-  Truth,
-} from './contract.ts'
+import type { Conflict, ConflictStage, Truth } from './contract.ts'
+import type { DirEntry, EntryKind, EntryMeta, ObjectId, TreeEntry } from '../entries.ts'
 import type { BlobId, CommitId, RefName, RelPath, TreeId } from '../terms.ts'
 
 export interface TruthStats {

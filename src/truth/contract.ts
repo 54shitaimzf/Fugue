@@ -1,52 +1,10 @@
-// M1 的契约与它的值域。出处：架构 § 8.2——接口逐字照抄，不加不减。
+// M1 的契约。出处：架构 § 8.2——接口逐字照抄，不加不减。
 //
-// **§ 8.2 的签名里用了四个没有定义的类型名**（`TreeEntry` · `EntryMeta` · `DirEntry` ·
-// `Conflict`），全文找不到它们。这里给出**把 § 8.2 写全所必需的最小形状**：每个字段都
-// 对应签名里必须传进、或必须回得来的一个事实，没有一个字段是为将来预留的。
+// § 8.2 的签名里用了四个没有定义的类型名（`TreeEntry` · `EntryMeta` · `DirEntry` ·
+// `Conflict`）。**条目那三个不在这里**：M2 读出去的也是同一组形状，所以它们住在
+// `../entries.ts`，这一份只留 M1 自己的东西——冲突的形状与 `Truth`。
 import type { BlobId, CommitId, RefName, RelPath, TreeId } from '../terms.ts'
-
-/**
- * `putTree` 的输入。`name` 是**视图内的相对路径**，可以含 `/`——嵌套由 `putTree` 建。
- *
- * 这个选择不是自由发挥：`git mktree` 明确拒绝带斜杠的名字（实测
- * `fatal: path sub/c.txt contains slash`），而 `readAt` / `listAt` 收的是嵌套路径。
- * 摊平的名字 + 一个 `putTree` 把它们折成树，是两侧都成立的形状。
- */
-export interface TreeEntry {
-  name: RelPath
-  mode: number
-  id: ObjectId
-}
-
-/**
- * 条目的四类。`file` · `symlink` · `dir` 是树里的三种日常模式，`gitlink`（`160000`）是
- * 第四种：它指的是**另一个仓库里的一个提交**，submodule 的入口。
- *
- * **第四类不是替将来留的位置，是今天就会撞上的情形**——`<root>/.git` 就是项目自己的
- * 仓库，项目带 submodule，它的树里就有 `160000`。给它一个说得出自己是什么的取值：报成
- * 0 字节的文件是在说谎，后面每一层（物化 · 合并）都会拿着错的形状干活；认不出来就整棵
- * 树失败，则把"一个 submodule"放大成"这个仓库不可读"。
- */
-export type EntryKind = 'file' | 'symlink' | 'dir' | 'gitlink'
-
-/** 条目的对象标识。**三样都可能**：文件是 blob、目录是 tree、gitlink 是提交。 */
-export type ObjectId = BlobId | TreeId | CommitId
-
-export interface EntryMeta {
-  kind: EntryKind
-  mode: number
-  /**
-   * 字节数。**dir 与 gitlink 恒为 0**——它们没有字节可数，这个 0 是形状要求的占位，
-   * 不是读数（`git ls-tree -l` 对这两类同样给 `-`）。
-   */
-  size: number
-  id: ObjectId
-}
-
-/** `listAt` 的一行：`EntryMeta` 加上它在**所在目录里**的名字（不含前缀路径）。 */
-export interface DirEntry extends EntryMeta {
-  name: string
-}
+import type { DirEntry, EntryMeta, TreeEntry } from '../entries.ts'
 
 /**
  * `mergeTree` 冲突时的一行。出处：`git merge-tree --write-tree` 的 stdout 第二段，

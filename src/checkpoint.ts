@@ -11,7 +11,8 @@
 // 所以 M2 落地时这个文件一行都不用改——换掉的是调用者那一段折叠。
 import { refFor } from './refs.ts'
 import type { Log } from './log/events.ts'
-import type { TreeEntry, Truth } from './truth/contract.ts'
+import type { TreeEntry } from './entries.ts'
+import type { Truth } from './truth/contract.ts'
 import { RefNotFoundError } from './truth/truth.ts'
 import type { AgentId, CommitId, RefName, TreeId, ViewRev, WriterId } from './terms.ts'
 
