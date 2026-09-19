@@ -4,15 +4,18 @@
 // **单次进程 + 每次重建**：不需要守护进程、不需要常驻状态、崩溃恢复即"下一条命令
 // 照常加载"。命令逐个单元长出来，U1 有 `log`，U2 挂上 `commit`；U6 收口时这张表才齐。
 //
-// 全部输出是结构化的，`--json` 给的就是机器读的那一份；人读的那一列只是同一份
-// 数据的另一种排布，不构成第二份定义。
+// 这一层只做三件事：解析参数 · 把结构化结果排成两列（人读的与 `--json` 的）· 决定退出码。
+// **提交本身的顺序不在这里**——`checkpoint` 与 `fugue commit` 是同一个操作的两个名字
+// （§ 9.6），所以那个操作住在 `src/checkpoint.ts`，这里只是它的一个人侧入口。
+import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import { LogCorruptError, logDir, openLog } from '../log/log.ts'
 import type { LogHandle } from '../log/log.ts'
 import type { LogEvent } from '../log/events.ts'
-import { openTruth, RefNotFoundError } from '../truth/truth.ts'
-import type { TruthHandle } from '../truth/truth.ts'
+import { checkpoint } from '../checkpoint.ts'
+import { openTruth } from '../truth/truth.ts'
 import type { TreeEntry } from '../truth/contract.ts'
-import type { AgentId, BlobId, CommitId, LogPos, RefName, ViewRev, WriterId } from '../terms.ts'
+import type { BlobId, LogPos, ViewRev, WriterId } from '../terms.ts'
 
 const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 
@@ -77,14 +80,6 @@ function emit(pos: LogPos, e: LogEvent, json: boolean): void {
   process.stdout.write(`${pos.writer}\t${pos.seq}\t${t}\t${brief}\n`)
 }
 
-/**
- * writer → ref。出处：架构 § 4 的命名方案（`refs/heads/main` · `refs/heads/agent/<round>/<n>`）。
- * 所以 writer `agent/r1/1` 就是 `refs/heads/agent/r1/1`，而 round 级的写者走主线。
- */
-function refFor(w: WriterId): RefName {
-  return w === 'round' ? 'refs/heads/main' : `refs/heads/${w}`
-}
-
 interface Folded {
   entries: TreeEntry[]
   rev: ViewRev
@@ -96,8 +91,10 @@ interface Folded {
  *
  * 只有两种事件能折：`view/write` 与 `view/remove`（后来的写覆盖先前的写，remove 抹掉
  * 指向）。**其余 `view/*` 一律拒绝**，不静默忽略——`view/rename` 被忽略的话，提交出来
- * 的树会声称一个已经被改名走的路径还在原处，而"重放必须一致"是承重性质。U3 的
- * `loadView` 落地之后，这段折叠整个换成视图的全量读出。
+ * 的树会声称一个已经被改名走的路径还在原处，而"重放必须一致"是承重性质。
+ *
+ * U3 的 `loadView` 落地之后，这个函数整个删掉：`checkpoint` 收的就是条目，来源换成视图
+ * 的全量读出，**调用点一行都不用改**。
  */
 async function foldLog(log: LogHandle, writer: WriterId): Promise<Folded> {
   const files = new Map<string, { mode: number; id: BlobId }>()
@@ -124,17 +121,7 @@ async function foldLog(log: LogHandle, writer: WriterId): Promise<Folded> {
   }
 }
 
-async function parentOf(truth: TruthHandle, ref: RefName): Promise<CommitId | null> {
-  try {
-    return await truth.resolve(ref)
-  } catch (err) {
-    if (err instanceof RefNotFoundError) return null
-    throw err
-  }
-}
-
 async function commit(root: string, writer: WriterId, msg: string, json: boolean): Promise<number> {
-  const ref = refFor(writer)
   const log = openLog(root)
   const truth = openTruth(root)
   try {
@@ -146,31 +133,18 @@ async function commit(root: string, writer: WriterId, msg: string, json: boolean
       )
       return 2
     }
-    const tree = await truth.putTree(folded.entries)
-    const parent = await parentOf(truth, ref)
-    const commit = await truth.commit(tree, parent === null ? [] : [parent], msg)
-    // **CAS 推进在日志之前。** 输掉 CAS 的写者一句都不留——日志记的是**已发布**的提交；
-    // 反过来先写日志的话，CAS 输了就在重放的权威来源里留下一个从未成为分支头的提交点。
-    await truth.advance(ref, commit, parent)
-    await log.append(writer, {
-      t: 'ckpt/commit',
-      agent: writer as AgentId,
-      commit,
+    const r = await checkpoint({
+      log,
+      truth,
+      writer,
+      entries: folded.entries,
       rev: folded.rev,
       msg,
     })
     if (json) {
-      const out = {
-        commit,
-        ref,
-        tree,
-        parents: parent === null ? [] : [parent],
-        entries: folded.entries.length,
-        rev: folded.rev,
-      }
-      process.stdout.write(JSON.stringify(out) + '\n')
+      process.stdout.write(JSON.stringify({ ...r, rev: folded.rev }) + '\n')
     } else {
-      process.stdout.write(`${commit}\t${ref}\t${folded.entries.length} 个条目\n`)
+      process.stdout.write(`${r.commit}\t${r.ref}\t${r.entries} 个条目\n`)
     }
     return 0
   } finally {
@@ -179,7 +153,7 @@ async function commit(root: string, writer: WriterId, msg: string, json: boolean
   }
 }
 
-async function main(argv: readonly string[]): Promise<number> {
+export async function main(argv: readonly string[]): Promise<number> {
   const { flags, positional } = parseArgv(argv)
   const json = flags.has('json')
   const rootFlag = flags.get('root')
@@ -225,14 +199,24 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 }
 
-main(process.argv.slice(2))
-  .then((code) => process.exit(code))
-  .catch((err: unknown) => {
-    if (err instanceof LogCorruptError) {
-      process.stderr.write(`日志损坏，拒绝加载 —— ${err.message}\n`)
-      process.stderr.write(`日志目录：${logDir(process.cwd())}\n`)
-    } else {
-      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`)
-    }
-    process.exit(1)
-  })
+/**
+ * 只有直接运行才执行。**这个守卫不能用 `import.meta.main`**：它是 Node 24.2 才有的，
+ * 而 `package.json` 声明的 engines 是 ≥22.6——在那个版本上它会静默什么都不做。
+ * 与 `tools/test-entry.js` 用同一个写法，所以本模块**可以被 import 而不产生副作用**。
+ */
+const isMain =
+  process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+
+if (isMain) {
+  main(process.argv.slice(2))
+    .then((code) => process.exit(code))
+    .catch((err: unknown) => {
+      if (err instanceof LogCorruptError) {
+        process.stderr.write(`日志损坏，拒绝加载 —— ${err.message}\n`)
+        process.stderr.write(`日志目录：${logDir(process.cwd())}\n`)
+      } else {
+        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`)
+      }
+      process.exit(1)
+    })
+}

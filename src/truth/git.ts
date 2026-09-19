@@ -7,7 +7,11 @@
 // 进程的代价几乎全是进程创建（架构 § 8.2：`rev-parse` 与 `hash-object` 耗时相同即为证），
 // 500 个 blob 光这一步就是 500 ms 量级，直接把一轮预算吃掉一半。
 //
-// **退化档：逐次读。** `read: 'oneshot'` 可以显式选它，批量子进程死掉时也自动退回去。
+// **批量要批到请求这一层，不只是进程这一层。** 一个目录的 500 个条目，若每条各写一次
+// 请求，进程数是一个、往返数还是 500——所以 `objectMany` 把一整批请求一次写完、一次收完。
+//
+// **退化档：逐次读。** `read: 'oneshot'` 可以显式选它，批量子进程死掉时也自动退回去；
+// 这时一批请求仍是一个进程（一次调用一个进程），只是没有那个跨调用的长命子进程。
 // 判据是 AGENTS 第五节那句话——那个机制死掉的时候，系统是**变慢**，不是跑不起来。
 //
 // 二 · **每次调用都是 plumbing，且带 `gc.auto=0`**（架构 § 8.2 硬约束 3）。porcelain
@@ -55,11 +59,14 @@ export interface GitHandle {
   readonly gitDir: string
   /** 这个句柄起过多少个 git 进程。 */
   spawns(): number
+  /** 这个句柄向 git 发过多少次请求。批量档下它大于进程数——那正是批量的意义。 */
+  requests(): number
   /** 当前实际在用的读档位——批量子进程死掉之后这里会变成 `oneshot`。 */
   readTier(): ReadTier
   tryRun(args: readonly string[], input?: string | Uint8Array): Promise<RunResult>
   run(args: readonly string[], input?: string | Uint8Array): Promise<Buffer>
   object(want: 'info' | 'contents', id: string): Promise<ObjectReply | null>
+  objectMany(want: 'info' | 'contents', ids: readonly string[]): Promise<Array<ObjectReply | null>>
   close(): Promise<void>
 }
 
@@ -116,7 +123,9 @@ function parseReply(
   if (!Number.isInteger(size) || size < 0) {
     throw new Error(`cat-file 给的 size 不是非负整数：${JSON.stringify(line)}`)
   }
-  if (want === 'info') return { reply: { type: parts[1], size, body: EMPTY }, rest: buf.subarray(nl + 1) }
+  if (want === 'info') {
+    return { reply: { type: parts[1], size, body: EMPTY }, rest: buf.subarray(nl + 1) }
+  }
   const end = nl + 1 + size + 1
   if (buf.length < end) return null
   return {
@@ -125,14 +134,17 @@ function parseReply(
   }
 }
 
+/** 一批请求。一次 `ask` = 一次写入 = 一次往返，不管里面几条。 */
 interface Pending {
   want: 'info' | 'contents'
-  resolve: (r: ObjectReply | null) => void
+  count: number
+  replies: Array<ObjectReply | null>
+  resolve: (r: Array<ObjectReply | null>) => void
   reject: (e: unknown) => void
 }
 
 interface Batch {
-  ask(want: 'info' | 'contents', id: string): Promise<ObjectReply | null>
+  ask(want: 'info' | 'contents', ids: readonly string[]): Promise<Array<ObjectReply | null>>
   kill(): Promise<void>
 }
 
@@ -151,11 +163,13 @@ export function openGit(root: string, opts: { read?: ReadTier } = {}): GitHandle
   // 而 gc 与并发写者共用对象库是错的。这里每条命令都带上它，不指望仓库配置里有。
   const prefix: readonly string[] = ['--git-dir=' + gitDir, '-c', 'gc.auto=0']
   let spawns = 0
+  let requests = 0
   let tier: ReadTier = opts.read ?? 'batch'
   let batch: Batch | undefined
 
   async function tryRun(args: readonly string[], input?: string | Uint8Array): Promise<RunResult> {
     spawns++
+    requests++
     const child = spawn('git', [...prefix, ...args], {
       cwd: root,
       env,
@@ -207,8 +221,11 @@ export function openGit(root: string, opts: { read?: ReadTier } = {}): GitHandle
         const parsed = parseReply(buf, head.want)
         if (parsed === null) return
         buf = parsed.rest
-        pending.shift()
-        head.resolve(parsed.reply)
+        head.replies.push(parsed.reply)
+        if (head.replies.length === head.count) {
+          pending.shift()
+          head.resolve(head.replies)
+        }
       }
     }
 
@@ -225,11 +242,19 @@ export function openGit(root: string, opts: { read?: ReadTier } = {}): GitHandle
       die(new Error(`cat-file --batch-command 退出（${code}）${why === '' ? '' : '：' + why}`))
     })
 
-    function ask(want: 'info' | 'contents', id: string): Promise<ObjectReply | null> {
+    function ask(
+      want: 'info' | 'contents',
+      ids: readonly string[],
+    ): Promise<Array<ObjectReply | null>> {
       if (dead !== undefined) return Promise.reject(dead)
-      return new Promise<ObjectReply | null>((resolve, reject) => {
-        pending.push({ want, resolve, reject })
-        child.stdin?.write(`${want} ${id}\n`)
+      return new Promise<Array<ObjectReply | null>>((resolve, reject) => {
+        if (ids.length === 0) {
+          resolve([])
+          return
+        }
+        requests++
+        pending.push({ want, count: ids.length, replies: [], resolve, reject })
+        child.stdin?.write(ids.map((id) => `${want} ${id}\n`).join(''))
       })
     }
 
@@ -244,30 +269,48 @@ export function openGit(root: string, opts: { read?: ReadTier } = {}): GitHandle
     return { ask, kill }
   }
 
-  async function oneShot(want: 'info' | 'contents', id: string): Promise<ObjectReply | null> {
+  /** 退化档：一次调用一个进程，但**一批请求仍然只发一个进程**。 */
+  async function oneShotMany(
+    want: 'info' | 'contents',
+    ids: readonly string[],
+  ): Promise<Array<ObjectReply | null>> {
+    if (ids.length === 0) return []
     const args = want === 'contents' ? ['cat-file', '--batch'] : ['cat-file', '--batch-check']
-    const r = await tryRun(args, id + '\n')
-    const parsed = parseReply(r.stdout, want)
-    if (parsed === null) {
-      if (r.status !== 0) throw new GitError(args, r.status, r.stderr)
-      throw new Error(`cat-file 对 ${id} 没有给出完整回复`)
+    const r = await tryRun(args, ids.map((id) => id + '\n').join(''))
+    const out: Array<ObjectReply | null> = []
+    let rest = r.stdout
+    for (let i = 0; i < ids.length; i++) {
+      const parsed = parseReply(rest, want)
+      if (parsed === null) {
+        if (r.status !== 0) throw new GitError(args, r.status, r.stderr)
+        throw new Error(`cat-file 只回了 ${i} / ${ids.length} 条`)
+      }
+      out.push(parsed.reply)
+      rest = parsed.rest
     }
-    return parsed.reply
+    return out
   }
 
-  async function object(want: 'info' | 'contents', id: string): Promise<ObjectReply | null> {
+  async function objectMany(
+    want: 'info' | 'contents',
+    ids: readonly string[],
+  ): Promise<Array<ObjectReply | null>> {
     if (tier === 'batch') {
       try {
         if (batch === undefined) batch = startBatch()
-        return await batch.ask(want, id)
+        return await batch.ask(want, ids)
       } catch {
         // 批量读这一档死了。**退到逐次读，不是把错误抛给调用者**——读是幂等的，
-        // 在途的那一条重发一次没有副作用。退化之后本句柄不再尝试批量。
+        // 在途的那一批重发一次没有副作用。退化之后本句柄不再尝试批量。
         batch = undefined
         tier = 'oneshot'
       }
     }
-    return oneShot(want, id)
+    return oneShotMany(want, ids)
+  }
+
+  async function object(want: 'info' | 'contents', id: string): Promise<ObjectReply | null> {
+    return (await objectMany(want, [id]))[0]
   }
 
   async function close(): Promise<void> {
@@ -280,10 +323,12 @@ export function openGit(root: string, opts: { read?: ReadTier } = {}): GitHandle
     root,
     gitDir,
     spawns: () => spawns,
+    requests: () => requests,
     readTier: () => tier,
     tryRun,
     run,
     object,
+    objectMany,
     close,
   }
 }

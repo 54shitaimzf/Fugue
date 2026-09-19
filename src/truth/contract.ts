@@ -3,8 +3,6 @@
 // **§ 8.2 的签名里用了四个没有定义的类型名**（`TreeEntry` · `EntryMeta` · `DirEntry` ·
 // `Conflict`），全文找不到它们。这里给出**把 § 8.2 写全所必需的最小形状**：每个字段都
 // 对应签名里必须传进、或必须回得来的一个事实，没有一个字段是为将来预留的。
-//
-// 这一处是本单元唯一的接口冻结点（PLAN § 4.1）：形状定错了，M2 与 M13 都要跟着改。
 import type { BlobId, CommitId, RefName, RelPath, TreeId } from '../terms.ts'
 
 /**
@@ -17,18 +15,31 @@ import type { BlobId, CommitId, RefName, RelPath, TreeId } from '../terms.ts'
 export interface TreeEntry {
   name: RelPath
   mode: number
-  id: BlobId | TreeId
+  id: ObjectId
 }
 
-/** 条目的三类。出处：架构 § 8.3 的 `Entry`。 */
-export type EntryKind = 'file' | 'symlink' | 'dir'
+/**
+ * 条目的四类。前三类出自架构 § 8.3 的 `Entry`（file · symlink · dir）。
+ *
+ * **`gitlink` 是第四类，架构 § 8.2 / § 8.3 没有给它位置**（mode `160000`，submodule）。
+ * 给它一个自己的 kind，而不是报成 0 字节的文件，也不是让整棵树读不了：报成文件是在说谎，
+ * 后面每一层（物化 · 合并）都会拿着错的形状干活；整棵树失败则把"一个 submodule"放大成
+ * "这个仓库不可读"。两害相权，取一个说得出自己是什么的值。
+ */
+export type EntryKind = 'file' | 'symlink' | 'dir' | 'gitlink'
+
+/** 条目的对象标识。**三样都可能**：文件是 blob、目录是 tree、gitlink 是提交。 */
+export type ObjectId = BlobId | TreeId | CommitId
 
 export interface EntryMeta {
   kind: EntryKind
   mode: number
-  /** 字节数。**目录恒为 0**——目录没有字节，这个 0 是形状要求的占位，不是读数。 */
+  /**
+   * 字节数。**dir 与 gitlink 恒为 0**——它们没有字节可数，这个 0 是形状要求的占位，
+   * 不是读数（`git ls-tree -l` 对这两类同样给 `-`）。
+   */
   size: number
-  id: BlobId | TreeId
+  id: ObjectId
 }
 
 /** `listAt` 的一行：`EntryMeta` 加上它在**所在目录里**的名字（不含前缀路径）。 */

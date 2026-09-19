@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { logDir, openLog } from '../log/log.ts'
-import { kindOf, openTruth, RefConflictError, RefNotFoundError } from './truth.ts'
+import { kindOf, openTruth, RefConflictError, RefNotCommitError, RefNotFoundError } from './truth.ts'
 import type { TreeEntry } from './contract.ts'
 import type { AgentId, BlobId, CommitId, RefName, WriterId } from '../terms.ts'
 
@@ -124,7 +124,7 @@ function gitChildren(): number[] {
 
 // ────────────────────────────────── 断言 ① 并发提交
 
-test('断言①：N=4 并发提交 → 4 个有效提交，git fsck 干净，零协调', async () => {
+test('断言①：N=4 并发提交 → 4 个有效提交，git fsck 干净，零协调', async (ctx) => {
   const root = tmpRoot()
   const refs = [1, 2, 3, 4].map((i) => `refs/heads/agent/r1/${i}`)
   const outs = await Promise.all(refs.map((r) => runHelper(root, r, 'commit', '20')))
@@ -135,6 +135,8 @@ test('断言①：N=4 并发提交 → 4 个有效提交，git fsck 干净，零
   }
 
   const t = openTruth(root)
+
+  ctx.after(() => t.close())
   const heads: string[] = []
   for (const ref of refs) {
     const head = await t.resolve(ref as RefName)
@@ -156,11 +158,13 @@ test('断言①：N=4 并发提交 → 4 个有效提交，git fsck 干净，零
 
 // ────────────────────────────────── 断言 ② CAS
 
-test('断言②：同一个 expectedOld 并发 advance 同一个 ref → 恰一个成功', async () => {
+test('断言②：同一个 expectedOld 并发 advance 同一个 ref → 恰一个成功', async (ctx) => {
   const root = tmpRoot()
   const barrier = join(mkdtempSync(join(tmpdir(), 'fugue-bar-')), 'go')
 
   const t = openTruth(root)
+
+  ctx.after(() => t.close())
   const baseBlob = await t.putBlob(Buffer.from('base\n'))
   const base = await t.commit(
     await t.putTree([{ name: 'base.txt', mode: 0o100644, id: baseBlob }]),
@@ -189,6 +193,8 @@ test('断言②：同一个 expectedOld 并发 advance 同一个 ref → 恰一�
   assert.equal(new Set(rows.map((r) => r.commit)).size, 4, '四个提交各不相同')
 
   const t2 = openTruth(root)
+
+  ctx.after(() => t2.close())
   assert.equal(await t2.resolve('refs/heads/main'), won[0].commit, 'ref 应当停在赢家那个提交上')
   await t2.close()
 
@@ -200,14 +206,17 @@ test('断言②：同一个 expectedOld 并发 advance 同一个 ref → 恰一�
 
 // ────────────────────────────────── 断言 ③ 批量读
 
-test('断言③：读 500 个 blob 只起一个 git 进程（§ 8.2 的批量读）', async () => {
+test('断言③：读 500 个 blob 只起一个 git 进程（§ 8.2 的批量读）', async (ctx) => {
   const root = tmpRoot()
   const writer = openTruth(root)
+  ctx.after(() => writer.close())
   const ids: BlobId[] = []
   for (let i = 0; i < 500; i++) ids.push(await writer.putBlob(Buffer.from(`第 ${i} 个 blob\n`)))
   await writer.close()
 
   const t = openTruth(root)
+
+  ctx.after(() => t.close())
   assert.equal(t.stats().gitSpawns, 0, '开句柄本身不该起进程')
   for (let i = 0; i < 500; i++) {
     assert.equal(Buffer.from(await t.getBlob(ids[i])).toString(), `第 ${i} 个 blob\n`, `第 ${i} 个`)
@@ -218,14 +227,17 @@ test('断言③：读 500 个 blob 只起一个 git 进程（§ 8.2 的批量读
   await t.close()
 })
 
-test('退化档：批量子进程被杀 → 退回逐次读，读数一个不差', async () => {
+test('退化档：批量子进程被杀 → 退回逐次读，读数一个不差', async (ctx) => {
   const root = tmpRoot()
   const writer = openTruth(root)
+  ctx.after(() => writer.close())
   const ids: BlobId[] = []
   for (let i = 0; i < 50; i++) ids.push(await writer.putBlob(Buffer.from(`降级 ${i}\n`)))
   await writer.close()
 
   const t = openTruth(root)
+
+  ctx.after(() => t.close())
   assert.equal((await t.getBlob(ids[0])).toString(), '降级 0\n')
   assert.equal(t.stats().gitSpawns, 1, '第一个读起了那一个批量子进程')
 
@@ -244,9 +256,10 @@ test('退化档：批量子进程被杀 → 退回逐次读，读数一个不差
 
 // ────────────────────────────────── 断言 ④ 协议中途崩溃
 
-test('断言④：提交协议第 1–2 步之间崩溃 → 孤儿 blob，git fsck 仍干净', async () => {
+test('断言④：提交协议第 1–2 步之间崩溃 → 孤儿 blob，git fsck 仍干净', async (ctx) => {
   const root = tmpRoot()
   const t = openTruth(root)
+  ctx.after(() => t.close())
   const baseBlob = await t.putBlob(Buffer.from('base\n'))
   const base = await t.commit(
     await t.putTree([{ name: 'base.txt', mode: 0o100644, id: baseBlob }]),
@@ -257,6 +270,7 @@ test('断言④：提交协议第 1–2 步之间崩溃 → 孤儿 blob，git fs
   await t.close()
 
   const child = spawn(process.execPath, [HELPER, root, 'refs/heads/main', 'crash'], { env: GIT_ENV })
+  ctx.after(() => child.kill('SIGKILL'))
   const line = await firstLine(child)
   const blob = JSON.parse(line).blob as string
   assert.equal(git(root, 'cat-file', '-e', blob).status, 0, '崩溃前写下的 blob 必须真的在对象库里')
@@ -266,6 +280,7 @@ test('断言④：提交协议第 1–2 步之间崩溃 → 孤儿 blob，git fs
   // 第 2 步没发生：没有任何东西指向这个 blob，日志也一行都没有。
   assert.equal(existsSync(join(logDir(root), 'main.jsonl')), false, '协议第 2 步不该留下日志')
   const t2 = openTruth(root)
+  ctx.after(() => t2.close())
   assert.equal(await t2.readAt(base, 'orphan.txt'), null)
   await t2.close()
 
@@ -277,9 +292,10 @@ test('断言④：提交协议第 1–2 步之间崩溃 → 孤儿 blob，git fs
 
 // ────────────────────────────────── 读路径与树
 
-test('读路径：blob 逐字节往返（含 NUL 与换行），readAt / statAt / listAt 的边界', async () => {
+test('读路径：blob 逐字节往返（含 NUL 与换行），readAt / statAt / listAt 的边界', async (ctx) => {
   const root = tmpRoot()
   const t = openTruth(root)
+  ctx.after(() => t.close())
   const raw = Buffer.from([0x00, 0x01, 0xff, 0x0a, 0x0d, 0x00, 0x7f, 0x80])
   const bin = await t.putBlob(raw)
   assert.deepEqual(Buffer.from(await t.getBlob(bin)), raw, 'blob 必须逐字节回得来')
@@ -324,14 +340,17 @@ test('读路径：blob 逐字节往返（含 NUL 与换行），readAt / statAt 
   assert.deepEqual(await t.listAt(c, '没有这个'), [], '不存在的目录列出来是空的')
   assert.deepEqual(await t.listAt(c, 'bin'), [], '文件不是目录')
 
-  // 160000（submodule）在架构里没有位置：认不出来就显式失败，不报成 0 字节的文件。
-  assert.throws(() => kindOf(0o160000), /不认识这个条目类型/)
+  // 160000（submodule）在架构里没有位置：给它自己的 kind——既不报成 0 字节的文件
+  // （那是说谎，后面每一层都会拿着错的形状干活），也不让整棵树读不了。
+  assert.equal(kindOf(0o160000), 'gitlink')
+  assert.throws(() => kindOf(0o100664), /不认识这个条目类型/)
   await t.close()
 })
 
-test('putTree：同一集合得到同一个 tree id；空树有定值；两种冲突拒绝', async () => {
+test('putTree：同一集合得到同一个 tree id；空树有定值；两种冲突拒绝', async (ctx) => {
   const root = tmpRoot()
   const t = openTruth(root)
+  ctx.after(() => t.close())
   const a = await t.putBlob(Buffer.from('a\n'))
   const b = await t.putBlob(Buffer.from('b\n'))
   const entries: TreeEntry[] = [
@@ -357,11 +376,12 @@ test('putTree：同一集合得到同一个 tree id；空树有定值；两种�
   await t.close()
 })
 
-test('putTree：`sub`（目录）与 `sub.txt`（文件）同在一棵树里，git 的树序成立', async () => {
+test('putTree：`sub`（目录）与 `sub.txt`（文件）同在一棵树里，git 的树序成立', async (ctx) => {
   // git 的树序把目录当成"名字加一个斜杠"参与比较，所以 `sub.txt` 排在 `sub/` **前面**；
   // 顺序反了的树 `git fsck` 直接报 treeNotSorted 并以非零退出（实测）。
   const root = tmpRoot()
   const t = openTruth(root)
+  ctx.after(() => t.close())
   const blob = await t.putBlob(Buffer.from('x\n'))
   const tree = await t.putTree([
     { name: 'sub/c.txt', mode: 0o100644, id: blob },
@@ -380,9 +400,10 @@ test('putTree：`sub`（目录）与 `sub.txt`（文件）同在一棵树里，g
 
 // ────────────────────────────────── refs 与 CAS 的边界
 
-test('advance：创建即占位；输了给出实际值；resolve 只认提交', async () => {
+test('advance：创建即占位；输了给出实际值；resolve 只认提交', async (ctx) => {
   const root = tmpRoot()
   const t = openTruth(root)
+  ctx.after(() => t.close())
   const blob = await t.putBlob(Buffer.from('x\n'))
   const tree = await t.putTree([{ name: 'x.txt', mode: 0o100644, id: blob }])
   const c1 = await t.commit(tree, [], '1')
@@ -402,7 +423,11 @@ test('advance：创建即占位；输了给出实际值；resolve 只认提交',
   // 指向 blob 的 ref 不是提交点：`resolve` 的 `^{commit}` 就是为这一条。分支名由 git
   // 自己挡（`refs/heads/*` 只收提交对象），tags 下可以指 blob——所以这里用 tags。
   await t.advance('refs/tags/round/r1/merged', blob as unknown as CommitId, null)
-  await assert.rejects(() => t.resolve('refs/tags/round/r1/merged'), RefNotFoundError)
+  await assert.rejects(
+    () => t.resolve('refs/tags/round/r1/merged'),
+    RefNotCommitError,
+    '存在但不是提交，与"不存在"是两回事：混成一个，调用者会在一个有东西的位置上静默造出根提交',
+  )
   // 而 advance 失败的原因不止一种：把分支指向 blob 是 git 拒的，不是 CAS 输的。
   await assert.rejects(
     () => t.advance('refs/heads/blobref', blob as unknown as CommitId, null),
@@ -414,9 +439,10 @@ test('advance：创建即占位；输了给出实际值；resolve 只认提交',
 
 // ────────────────────────────────── mergeTree
 
-test('mergeTree：判据是退出码；冲突时不给出 tree', async () => {
+test('mergeTree：判据是退出码；冲突时不给出 tree', async (ctx) => {
   const root = tmpRoot()
   const t = openTruth(root)
+  ctx.after(() => t.close())
   const put = (s: string) => t.putBlob(Buffer.from(s))
   const keep = await put('keep\n')
   const fBase = await put('base\n')
@@ -481,11 +507,13 @@ test('mergeTree：判据是退出码；冲突时不给出 tree', async () => {
 
 // ────────────────────────────────── 命令：它是这一步"可用"的凭据
 
-test('CLI：fugue commit 把日志折成树、推进 ref、记下 ckpt/commit', async () => {
+test('CLI：fugue commit 把日志折成树、推进 ref、记下 ckpt/commit', async (ctx) => {
   const root = tmpRoot()
   const agent = 'agent/r1/1'
   const log = openLog(root, { sync: 'never' })
+  ctx.after(() => log.close())
   const t = openTruth(root)
+  ctx.after(() => t.close())
   const one = await t.putBlob(Buffer.from('第一版\n'))
   await log.append(agent as WriterId, {
     t: 'view/write',
@@ -509,12 +537,15 @@ test('CLI：fugue commit 把日志折成树、推进 ref、记下 ckpt/commit', 
   assert.equal(r1.entries, 1)
 
   const t2 = openTruth(root)
+
+  ctx.after(() => t2.close())
   assert.equal((await t2.readAt(r1.commit as CommitId, 'src/a.ts'))?.toString(), '第一版\n')
   assert.equal(await t2.resolve(r1.ref as RefName), r1.commit)
   await t2.close()
 
   // 第二次：改一个文件、加一个文件。parent 要接上第一次的提交点。
   const log2 = openLog(root, { sync: 'never' })
+  ctx.after(() => log2.close())
   const two = await t2.putBlob(Buffer.from('第二版\n'))
   const three = await t2.putBlob(Buffer.from('新增\n'))
   await log2.append(agent as WriterId, {
@@ -548,11 +579,15 @@ test('CLI：fugue commit 把日志折成树、推进 ref、记下 ckpt/commit', 
   assert.notEqual(r2.commit, r1.commit)
 
   const t3 = openTruth(root)
+
+  ctx.after(() => t3.close())
   assert.equal((await t3.readAt(r2.commit as CommitId, 'src/a.ts'))?.toString(), '第二版\n')
   assert.equal((await t3.readAt(r2.commit as CommitId, 'src/b.ts'))?.toString(), '新增\n')
   await t3.close()
 
   const log3 = openLog(root, { sync: 'never' })
+
+  ctx.after(() => log3.close())
   const events = []
   for await (const e of log3.readByWriter(agent as WriterId)) events.push(e)
   await log3.close()
@@ -575,11 +610,13 @@ test('CLI：fugue commit 把日志折成树、推进 ref、记下 ckpt/commit', 
   assert.equal(existsSync(join(root, '.git', 'index')), false, 'commit 也不该落索引')
 })
 
-test('CLI：commit 折不了的事件一律拒绝，光秃秃的 commit 也不行', async () => {
+test('CLI：commit 折不了的事件一律拒绝，光秃秃的 commit 也不行', async (ctx) => {
   const root = tmpRoot()
   const agent = 'agent/r1/1'
   const log = openLog(root, { sync: 'never' })
+  ctx.after(() => log.close())
   const t = openTruth(root)
+  ctx.after(() => t.close())
   const blob = await t.putBlob(Buffer.from('x\n'))
   await log.append(agent as WriterId, {
     t: 'view/write',
@@ -607,10 +644,64 @@ test('CLI：commit 折不了的事件一律拒绝，光秃秃的 commit 也不�
   assert.notEqual(bad.status, 0, '折不了就非零退出，不给出一个少了改名的树')
   assert.match(bad.stderr, /view\/rename/)
   const t2 = openTruth(root)
+  ctx.after(() => t2.close())
   await assert.rejects(() => t2.resolve(`refs/heads/${agent}` as RefName), RefNotFoundError)
   await t2.close()
 
   const noMsg = spawnSync(process.execPath, [CLI, '--root', root, 'commit'], { encoding: 'utf8' })
   assert.equal(noMsg.status, 2)
   assert.match(noMsg.stderr, /-m <msg>/)
+})
+
+// ────────────────────────────────── 批量往返与 gitlink
+
+test('listAt：一个目录的 size 一次问完，往返数是 O(1) 而不是 O(条目数)', async (ctx) => {
+  const root = tmpRoot()
+  const w = openTruth(root)
+  ctx.after(() => w.close())
+  const entries: TreeEntry[] = []
+  for (let i = 0; i < 200; i++) {
+    const body = Buffer.from(`内容 ${i}\n`)
+    entries.push({ name: `d/f${String(i).padStart(3, '0')}.txt`, mode: 0o100644, id: await w.putBlob(body) })
+  }
+  const c = await w.commit(await w.putTree(entries), [], '大目录')
+
+  const t = openTruth(root)
+  ctx.after(() => t.close())
+  const got = await t.listAt(c, 'd')
+  assert.equal(got.length, 200)
+  assert.equal(got[0].size, Buffer.byteLength('内容 0\n'))
+  assert.equal(got[199].size, Buffer.byteLength('内容 199\n'))
+  const s = t.stats()
+  assert.equal(s.gitSpawns, 1, `200 个条目只该起一个进程，实际 ${s.gitSpawns}`)
+  // 4 = 提交 → 根树 → d 树（走树的三次 contents）+ 一次批量 info。**批量之前这里是 200+。**
+  assert.equal(s.gitRequests, 4, `请求数应当是 4，实际 ${s.gitRequests}`)
+})
+
+test('gitlink：一个 submodule 不让整棵树读不了，也不冒充 0 字节的文件', async (ctx) => {
+  const root = tmpRoot()
+  const t = openTruth(root)
+  ctx.after(() => t.close())
+  const inner = await t.commit(
+    await t.putTree([{ name: 'inner.txt', mode: 0o100644, id: await t.putBlob(Buffer.from('内层\n')) }]),
+    [],
+    '内层',
+  )
+  const outer = await t.putBlob(Buffer.from('外层\n'))
+  const c = await t.commit(
+    await t.putTree([
+      { name: 'a.txt', mode: 0o100644, id: outer },
+      { name: 'sub', mode: 0o160000, id: inner },
+    ]),
+    [],
+    '带一个 gitlink',
+  )
+  assert.deepEqual(await t.statAt(c, 'sub'), { kind: 'gitlink', mode: 0o160000, size: 0, id: inner })
+  assert.equal(await t.readAt(c, 'sub'), null, 'gitlink 指的是另一个仓库的一个提交，不是这个路径的字节')
+  assert.equal((await t.readAt(c, 'a.txt'))?.toString(), '外层\n', '同一棵树里的普通文件照常读')
+  assert.deepEqual(
+    (await t.listAt(c, '')).map((e) => `${e.name}:${e.kind}:${e.size}`),
+    [`a.txt:file:${Buffer.byteLength('外层\n')}`, 'sub:gitlink:0'],
+  )
+  assert.equal(fsck(root).status, 0)
 })

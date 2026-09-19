@@ -13,6 +13,7 @@ import type {
   DirEntry,
   EntryKind,
   EntryMeta,
+  ObjectId,
   TreeEntry,
   Truth,
 } from './contract.ts'
@@ -21,6 +22,8 @@ import type { BlobId, CommitId, RefName, RelPath, TreeId } from '../terms.ts'
 export interface TruthStats {
   /** 这个句柄起过多少个 git 进程。 */
   gitSpawns: number
+  /** 这个句柄向 git 发过多少次请求。批量档下它远大于进程数——那正是批量的意义。 */
+  gitRequests: number
   /** 当前实际在用的读档位。 */
   readTier: ReadTier
 }
@@ -29,9 +32,10 @@ export interface TruthStats {
 export class RefConflictError extends Error {
   readonly ref: RefName
   readonly expected: CommitId | null
-  readonly actual: CommitId | null
+  /** ref 现在的值。可能不是提交——这里只报事实，不替它解释。 */
+  readonly actual: string | null
 
-  constructor(ref: RefName, expected: CommitId | null, actual: CommitId | null) {
+  constructor(ref: RefName, expected: CommitId | null, actual: string | null) {
     super(
       `ref ${ref} 的 CAS 输了：期望 ${expected ?? '（不存在）'}，实际 ${actual ?? '（不存在）'}`,
     )
@@ -42,28 +46,50 @@ export class RefConflictError extends Error {
   }
 }
 
+/** ref 不存在。**与"存在但不是提交"分开报**：两者对调用者的含义完全不同。 */
 export class RefNotFoundError extends Error {
   readonly ref: RefName
 
   constructor(ref: RefName, detail: string) {
-    super(`ref 不存在或不是提交：${ref}${detail.trim() === '' ? '' : '：' + detail.trim()}`)
+    super(`ref 不存在：${ref}${detail.trim() === '' ? '' : '：' + detail.trim()}`)
     this.name = 'RefNotFoundError'
     this.ref = ref
   }
 }
 
 /**
+ * ref 存在，但它指向的不是提交（比如指向一个 blob 或 tree）。
+ *
+ * 分开报有实际后果：调用者若把这一种也当成"没有 parent"，就会在一个其实有东西的位置上
+ * 静默造出一个根提交——错得看不出来。
+ */
+export class RefNotCommitError extends Error {
+  readonly ref: RefName
+  readonly actual: string
+
+  constructor(ref: RefName, actual: string, detail: string) {
+    super(
+      `ref 存在但不指向提交：${ref} → ${actual}${detail.trim() === '' ? '' : '：' + detail.trim()}`,
+    )
+    this.name = 'RefNotCommitError'
+    this.ref = ref
+    this.actual = actual
+  }
+}
+
+/**
  * 条目类型。**认不出来的一律显式失败**，不猜：`160000`（submodule / gitlink）在架构
- * § 8.2 与 § 8.3 里没有位置——`Entry` 只有 file / symlink / dir 三类。把它报成一个
- * 0 字节的文件，会让后面每一层（物化 · 合并）都拿着一份错的形状干活。
+ * § 8.2 与 § 8.3 里没有位置，所以它在这里是一个**说得出自己是什么**的取值，而不是
+ * 一个 0 字节的文件。
  */
 export function kindOf(mode: number): EntryKind {
   if (mode === 0o40000) return 'dir'
+  if (mode === 0o160000) return 'gitlink'
   if (mode === 0o120000) return 'symlink'
   if (mode === 0o100644 || mode === 0o100755) return 'file'
   throw new Error(
-    `M1 不认识这个条目类型：mode ${mode.toString(8)}。架构 § 8.2 / § 8.3 只给了 file / symlink / dir 三类，` +
-      `submodule（160000）没有位置——这里显式失败，不把它报成文件`,
+    `M1 不认识这个条目类型：mode ${mode.toString(8)}。` +
+      `架构 § 8.2 / § 8.3 只给了 file / symlink / dir 三类，加 gitlink 是这里定下的第四类`,
   )
 }
 
@@ -73,7 +99,7 @@ interface RawEntry {
   id: string
 }
 
-/** 把视图内的相对路径切成段。`..` 与绝对路径在这里挡住——M1 只不该被喂进会走错门的东西。 */
+/** 把视图内的相对路径切成段。`..` 与绝对路径在这里挡住——M1 不该被喂进会走错门的东西。 */
 function segments(path: RelPath): string[] {
   if (path.startsWith('/')) throw new Error(`M1 只收视图内的相对路径：${JSON.stringify(path)}`)
   const out: string[] = []
@@ -92,6 +118,14 @@ function treeOrder(name: string, isDir: boolean): Buffer {
 
 function modeText(mode: number): string {
   return mode.toString(8).padStart(6, '0')
+}
+
+/** `mktree` 的输入里，类型词必须与 mode 对得上：gitlink 指的是一个提交对象，不是 blob。 */
+function typeWordFor(mode: number): string {
+  const kind = kindOf(mode)
+  if (kind === 'dir') return 'tree'
+  if (kind === 'gitlink') return 'commit'
+  return 'blob'
 }
 
 interface DirNode {
@@ -192,12 +226,6 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
     return null
   }
 
-  async function sizeOf(id: string): Promise<number> {
-    const r = await git.object('info', id)
-    if (r === null) throw new Error(`对象不见了：${id}`)
-    return r.size
-  }
-
   async function emit(node: DirNode): Promise<TreeId> {
     const rows: Array<{ key: Buffer; line: string }> = []
     for (const [name, sub] of node.dirs) {
@@ -207,7 +235,10 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
       })
     }
     for (const [name, f] of node.files) {
-      rows.push({ key: treeOrder(name, false), line: `${modeText(f.mode)} blob ${f.id}\t${name}` })
+      rows.push({
+        key: treeOrder(name, false),
+        line: `${modeText(f.mode)} ${typeWordFor(f.mode)} ${f.id}\t${name}`,
+      })
     }
     // 自己排一遍，不把顺序托给 mktree：同一个条目集必须得到同一个 tree id，
     // 这条性质要由本模块成立，不能由"mktree 恰好也排"成立。
@@ -222,6 +253,11 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
   async function putTree(entries: TreeEntry[]): Promise<TreeId> {
     const root = emptyNode()
     for (const e of entries) {
+      // 目录由路径推出来，不作为叶子条目：两种写法都能表达"这里有个目录"的话，
+      // 就会有两种 tree，而同一个条目集必须只对应一个 tree id。
+      if (kindOf(e.mode) === 'dir') {
+        throw new Error(`putTree 不收目录条目（目录由路径推出来）：${e.name}`)
+      }
       const segs = segments(e.name)
       if (segs.length === 0) throw new Error(`putTree 收到空路径：${JSON.stringify(e.name)}`)
       let node = root
@@ -257,19 +293,21 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
     return [...byPath].map(([path, stages]) => ({ path, stages }))
   }
 
-  async function resolveOrNull(ref: RefName): Promise<CommitId | null> {
-    try {
-      return await resolve(ref)
-    } catch {
-      return null
-    }
+  /** ref 现在的值，**不要求它是提交**。CAS 的判定要的是这个，不是 `resolve`。 */
+  async function rawRefValue(ref: RefName): Promise<string | null> {
+    const r = await git.tryRun(['rev-parse', '--verify', '--quiet', ref])
+    const id = r.stdout.toString('utf8').trim()
+    return r.status === 0 && id !== '' ? id : null
   }
 
   async function resolve(ref: RefName): Promise<CommitId> {
     const r = await git.tryRun(['rev-parse', '--verify', '--quiet', ref + '^{commit}'])
     const id = r.stdout.toString('utf8').trim()
-    if (r.status !== 0 || id === '') throw new RefNotFoundError(ref, r.stderr)
-    return id as CommitId
+    if (r.status === 0 && id !== '') return id as CommitId
+    // `^{commit}` 失败有两种原因，分不开就再问一次：这个 ref 到底存不存在。
+    const raw = await rawRefValue(ref)
+    if (raw === null) throw new RefNotFoundError(ref, r.stderr)
+    throw new RefNotCommitError(ref, raw, r.stderr)
   }
 
   return {
@@ -298,37 +336,49 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
       const hit = await lookup(commit, path)
       if (hit === null) return null
       const kind = kindOf(hit.mode)
-      return {
-        kind,
-        mode: hit.mode,
-        // 目录没有字节。这个 0 是形状要求的占位，不是读数。
-        size: kind === 'dir' ? 0 : await sizeOf(hit.id),
-        id: hit.id as BlobId | TreeId,
-      }
+      const sized = kind === 'file' || kind === 'symlink'
+      const r = sized ? await git.object('info', hit.id) : null
+      if (sized && r === null) throw new Error(`对象不见了：${hit.id}`)
+      return { kind, mode: hit.mode, size: r === null ? 0 : r.size, id: hit.id }
     },
 
     async readAt(commit: CommitId, path: RelPath): Promise<Uint8Array | null> {
       const hit = await lookup(commit, path)
       if (hit === null) return null
-      if (kindOf(hit.mode) === 'dir') return null
+      const kind = kindOf(hit.mode)
+      // 目录没有字节；gitlink 指的是另一个仓库的一个提交，把它那个提交对象的字节当成
+      // 这个路径的内容交出去是错的。
+      if (kind === 'dir' || kind === 'gitlink') return null
       return Buffer.from(await need('contents', hit.id, 'blob'))
     },
 
     async listAt(commit: CommitId, dir: RelPath): Promise<DirEntry[]> {
       const hit = await lookup(commit, dir)
       if (hit === null || kindOf(hit.mode) !== 'dir') return []
-      const out: DirEntry[] = []
-      for (const e of await treeEntries(hit.id)) {
-        const kind = kindOf(e.mode)
-        out.push({
-          name: e.name,
-          kind,
-          mode: e.mode,
-          size: kind === 'dir' ? 0 : await sizeOf(e.id),
-          id: e.id as BlobId | TreeId,
-        })
+      const entries = await treeEntries(hit.id)
+      // **一个目录的 size 一次问完。** 逐条问的话，进程数还是一个，往返数却是 O(条目数)。
+      const sized = entries.filter((e) => {
+        const k = kindOf(e.mode)
+        return k === 'file' || k === 'symlink'
+      })
+      const replies = await git.objectMany(
+        'info',
+        sized.map((e) => e.id),
+      )
+      const sizes = new Map<string, number>()
+      for (const [i, e] of sized.entries()) {
+        const r = replies[i]
+        if (r === null) throw new Error(`条目 ${e.name} 的对象不见了：${e.id}`)
+        sizes.set(e.id, r.size)
       }
-      return out
+      return entries.map((e) => {
+        const kind = kindOf(e.mode)
+        const size = sizes.get(e.id)
+        if ((kind === 'file' || kind === 'symlink') && size === undefined) {
+          throw new Error(`条目 ${e.name} 没拿到 size：${e.id}`)
+        }
+        return { name: e.name, kind, mode: e.mode, size: size ?? 0, id: e.id }
+      })
     },
 
     async advance(ref: RefName, to: CommitId, expectedOld: CommitId | null): Promise<void> {
@@ -340,7 +390,7 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
       // 非零有两种，必须分开报：ref 现在的值**不等于** expectedOld，那是 CAS 输了；
       // 相等却还是失败，那是别的原因——git 自己就拒绝把 `refs/heads/*` 指向非提交对象
       // （实测 `trying to write non-commit object`）。把后者报成 CAS 会把方向指错。
-      const actual = await resolveOrNull(ref)
+      const actual = await rawRefValue(ref)
       if (actual !== expectedOld) throw new RefConflictError(ref, expectedOld, actual)
       throw new GitError(args, r.status, r.stderr)
     },
@@ -370,6 +420,10 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
     },
 
     close: () => git.close(),
-    stats: () => ({ gitSpawns: git.spawns(), readTier: git.readTier() }),
+    stats: () => ({
+      gitSpawns: git.spawns(),
+      gitRequests: git.requests(),
+      readTier: git.readTier(),
+    }),
   }
 }
