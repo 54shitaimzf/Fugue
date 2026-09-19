@@ -340,8 +340,8 @@ test('读路径：blob 逐字节往返（含 NUL 与换行），readAt / statAt 
   assert.deepEqual(await t.listAt(c, '没有这个'), [], '不存在的目录列出来是空的')
   assert.deepEqual(await t.listAt(c, 'bin'), [], '文件不是目录')
 
-  // 160000（submodule）在架构里没有位置：给它自己的 kind——既不报成 0 字节的文件
-  // （那是说谎，后面每一层都会拿着错的形状干活），也不让整棵树读不了。
+  // 160000（submodule）有它自己的 kind：既不报成 0 字节的文件（那是说谎，后面每一层
+  // 都会拿着错的形状干活），也不让整棵树读不了。
   assert.equal(kindOf(0o160000), 'gitlink')
   assert.throws(() => kindOf(0o100664), /不认识这个条目类型/)
   await t.close()

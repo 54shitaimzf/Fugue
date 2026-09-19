@@ -78,9 +78,8 @@ export class RefNotCommitError extends Error {
 }
 
 /**
- * 条目类型。**认不出来的一律显式失败**，不猜：`160000`（submodule / gitlink）在架构
- * § 8.2 与 § 8.3 里没有位置，所以它在这里是一个**说得出自己是什么**的取值，而不是
- * 一个 0 字节的文件。
+ * 条目类型。**认不出来的一律显式失败**，不猜——猜错的那一半（把 `160000` 当成文件、
+ * 或当成一个可以下钻的目录）都不会报错，只会静默地把错的形状发给后面每一层。
  */
 export function kindOf(mode: number): EntryKind {
   if (mode === 0o40000) return 'dir'
@@ -89,7 +88,7 @@ export function kindOf(mode: number): EntryKind {
   if (mode === 0o100644 || mode === 0o100755) return 'file'
   throw new Error(
     `M1 不认识这个条目类型：mode ${mode.toString(8)}。` +
-      `架构 § 8.2 / § 8.3 只给了 file / symlink / dir 三类，加 gitlink 是这里定下的第四类`,
+      `树的模式只有 100644 / 100755 / 120000 / 40000 / 160000 五种`,
   )
 }
 
@@ -401,7 +400,7 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
       if (bases.length !== 2) {
         throw new Error(
           `mergeTree 只支持两个 base：git merge-tree --write-tree 的签名是 <branch1> <branch2>，` +
-            `三个及以上直接退 129（实测）。给了 ${bases.length} 个——多于两个怎么折叠，架构 § 8.2 没说`,
+            `三个及以上直接退 129（实测）。给了 ${bases.length} 个——多于两个由调用方逐路折叠（§ 8.2 硬约束 4）`,
         )
       }
       const args = ['merge-tree', '-z', '--write-tree', bases[0], bases[1]]
