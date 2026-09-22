@@ -1,0 +1,174 @@
+// overlayfs 的挂 · 卸 · 查。**三件事，一处实现。**
+//
+// 出处：架构 § 8.5 的两条机制约束与"挂载的生命周期"。`fork` 挂上、`ensure` 先卸再挂回、
+// `dispose` 卸载并删除——三处都要这三个动作，所以它们住在这里，不住在任何一个调用点里。
+//
+// **"谁挂的"不记在任何地方。** 卸载先试自己卸，卸不动再借 sudo——于是没有一份要跟着
+// 物化目录一起维护的挂载记录，也就不存在"记录与事实不一致"这种状态。
+//
+// **怎么挂的是一门探出来的事实，不是猜的**（`capability.ts` 探、`fork` 用）：
+//
+//   `direct` —— 当前进程在 mount namespace 里有 CAP_SYS_ADMIN：以 root 跑，或者整个会话在
+//               一个非特权 userns 里（§ 15.7 的 E3 说的正是这一档）。
+//   `sudo`   —— 借 `sudo -n`（不交互，要密码就当场失败，不吊在半路）。
+//
+// **为什么不是"起个 userns 自己挂"**：那门 mount namespace 随进程退出一起消失，于是
+// 下一条命令、以及站在目录里的人，谁都看不到那棵树。挂载要能被**别的进程**看见，就只能挂在
+// 调用者自己那一门命名空间里。这条是实测出来的（V2 的探针记录）。
+//
+// 失败一律**带 argv 与 stderr 抛**：挂不上的原因（缺 lowerdir / workdir 不空 / userns 里
+// 没有 overlay 支持）只有内核那句话说清楚，转述会丢掉它。
+import { spawnSync } from 'node:child_process'
+import { lstatSync, readFileSync, readdirSync, rmdirSync, unlinkSync } from 'node:fs'
+import { join } from 'node:path'
+import type { AbsPath } from '../terms.ts'
+
+export type MountMode = 'direct' | 'sudo'
+
+export interface OverlaySpec {
+  /** 底：真实工作树（§ 8.4——`fork` 不复制、不搬运）。 */
+  readonly lower: AbsPath
+  /** delta 落点，同时也是 overlay 的 `upperdir`。 */
+  readonly upper: AbsPath
+  /** overlay 自己的 `workdir`，**要在同一个文件系统上**，且每次挂载前是空的。 */
+  readonly work: AbsPath
+  /** 挂载点：执行看到的那个坐标（§ 8.4）。 */
+  readonly merged: AbsPath
+}
+
+export class MountError extends Error {
+  readonly argv: readonly string[]
+  readonly status: number
+  readonly stderr: string
+
+  constructor(what: string, argv: readonly string[], status: number, stderr: string) {
+    super(`${what}：${argv.join(' ')} 退出码 ${status}${stderr === '' ? '' : '：' + stderr}`)
+    this.name = 'MountError'
+    this.argv = argv
+    this.status = status
+    this.stderr = stderr
+  }
+}
+
+interface Ran {
+  status: number
+  stderr: string
+}
+
+/** 起一个进程，原样收它的退出码与 stderr。**不走 shell**：路径里有什么字符都不该被解释。 */
+function run(argv: readonly string[]): Ran {
+  const r = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8' })
+  if (r.error !== undefined && r.error !== null) {
+    return { status: 127, stderr: String((r.error as Error).message) }
+  }
+  return { status: r.status ?? 127, stderr: (r.stderr ?? '').trim() }
+}
+
+/** `sudo -n` 走得通吗。**`-n` 是这一条的全部**：要密码就当场失败，绝不吊在那里等人敲。 */
+export function sudoAvailable(): boolean {
+  return run(['sudo', '-n', 'true']).status === 0
+}
+
+function mountArgv(spec: OverlaySpec, mode: MountMode): string[] {
+  const opts = `lowerdir=${spec.lower},upperdir=${spec.upper},workdir=${spec.work}`
+  const tail = ['mount', '-t', 'overlay', 'overlay', '-o', opts, spec.merged]
+  return mode === 'sudo' ? ['sudo', '-n', ...tail] : tail
+}
+
+/** 挂上。挂不上抛 `MountError`——**不降级、不重试**：退档是 `fork` 的判断，不是这里。 */
+export function mountOverlay(spec: OverlaySpec, mode: MountMode): void {
+  const argv = mountArgv(spec, mode)
+  const r = run(argv)
+  if (r.status !== 0) throw new MountError('overlay 挂不上', argv, r.status, r.stderr)
+}
+
+/**
+ * 卸下 `merged`。没挂着给 `null`；挂着就返回**实际用了哪一门**。
+ *
+ * 先试自己卸：以 root 跑、或在会话自己的 userns 里时它就成了，不必多起一个进程。
+ */
+export function unmountOverlay(merged: AbsPath): MountMode | null {
+  if (!isMounted(merged)) return null
+  const direct = ['umount', merged]
+  const r = run(direct)
+  if (r.status === 0) return 'direct'
+  const viaSudo = ['sudo', '-n', 'umount', merged]
+  const s = run(viaSudo)
+  if (s.status === 0) return 'sudo'
+  throw new MountError('overlay 卸不下来', viaSudo, s.status, s.stderr)
+}
+
+/**
+ * `p` 此刻是不是一个挂载点。**读 `/proc/self/mountinfo`，不调 `mountpoint`**：少一个进程，
+ * 而且答案就是内核此刻的那张表，不是某个工具对它的转述。
+ *
+ * 一个直接后果要记住：表是**本进程这一门 mount namespace 的**。别人命名空间里的挂载在这里
+ * 看不见——这正是"挂载要挂在自己这一门里"那句话的另一面。
+ */
+export function isMounted(p: AbsPath): boolean {
+  let text: string
+  try {
+    text = readFileSync('/proc/self/mountinfo', 'utf8')
+  } catch {
+    return false
+  }
+  for (const line of text.split('\n')) {
+    if (line === '') continue
+    const f = line.split(' ')
+    // 第 5 个字段是挂载点（1 起数）。空格与反斜杠在那一栏里是八进制转义的。
+    if (f.length < 5) continue
+    if (unescapeMountField(f[4]) === p) return true
+  }
+  return false
+}
+
+/** mountinfo 的转义：空格 · 制表 · 换行 · 反斜杠写成 `\040` 这样的三位八进制。 */
+export function unescapeMountField(s: string): string {
+  return s.replace(/\\([0-7]{3})/g, (_m, oct: string) => String.fromCharCode(parseInt(oct, 8)))
+}
+
+/**
+ * 卸干净再删掉：`dispose`（V5）与"重来一次"的 `fork` 都要它。**删掉的是整份物化**
+ * （`upper` · `merged` · `tmp` · `cache` 四个坐标，§ 8.4），目录由调用点重建。
+ *
+ * **先卸后删是硬顺序。** 挂着的时候删挂载点，删的其实是底下那棵树——overlay 把底摊在挂载点
+ * 上，于是"删掉派生物"那一步会变成"删掉真源"。§ 8.5 的失败处理说的是"删除重建"，那句里
+ * 的删除只对**没挂着**的物化目录成立，所以这个顺序不能由调用点各自记着。
+ */
+export function clearMaterialization(merged: AbsPath, parts: readonly AbsPath[]): void {
+  unmountOverlay(merged)
+  for (const p of parts) removeTree(p)
+}
+
+/**
+ * 删一棵树。** 先试， 才往下走。**
+ *
+ * 这一句不是优化，是  那一门留下的一个事实：内核自己在  里建的
+ *  是 ，谁都读不了它。 会先  每个
+ * 目录，于是在它上面 ——而那个目录是**空的**， 一步就完。实测：
+ * 删得掉、 删不掉，差别就在这一步的顺序。
+ *
+ * 软链只 ，不跟进去（跟进去删的是别人家的树）。
+ */
+export function removeTree(p: AbsPath): void {
+  let st
+  try {
+    st = lstatSync(p, { throwIfNoEntry: false })
+  } catch {
+    return
+  }
+  if (st === undefined || st === null) return
+  if (!st.isDirectory()) {
+    unlinkSync(p)
+    return
+  }
+  try {
+    rmdirSync(p)
+    return
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code !== "ENOTEMPTY" && code !== "EEXIST") throw err
+  }
+  for (const name of readdirSync(p)) removeTree(join(p, name))
+  rmdirSync(p)
+}

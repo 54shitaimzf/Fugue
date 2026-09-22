@@ -29,9 +29,13 @@ import { LogCorruptError, logDir, mergedFace, openLog } from '../log/log.ts'
 import type { LogHandle, SyncLevel } from '../log/log.ts'
 import type { ChangeStatus, TreeStat } from '../materialize/diffstat.ts'
 import { TreeStatError, WORKSPACE_STATE, diffStat, loadTreeStat, scanTree, storeTreeStat } from '../materialize/diffstat.ts'
+import { DEFAULT_MATERIALIZE } from '../materialize/contract.ts'
+import { ForkRefused, fork } from '../materialize/fork.ts'
+import { LayError } from '../materialize/lay.ts'
+import { MountError } from '../materialize/mount.ts'
 import { HostError, assertHost } from '../roots/host.ts'
 import { createRoots } from '../roots/roots.ts'
-import type { LogPos, ViewRev, WriterId } from '../terms.ts'
+import type { CommitId, ForkStrategy, LogPos, ViewRev, WriterId } from '../terms.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import type { View } from '../view/contract.ts'
@@ -58,6 +62,11 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
   diff-stat [<dir>] [--baseline <f>] [--save <f>]
                              全树 (mtime,size,hash) 快照对比；不给 <dir> 时扫本 agent 的合并树，
                              基线由 --baseline 读、--save 存（三个路径都相对当前目录，不是 --root）
+  fork <base> [--strategy <s>] [--ro <p1,p2>]
+                             把 base 那棵树物化出来并挂上，返回合并树（本 agent 的坐标）
+                             <base> 是一个提交；--strategy 取 overlayfs | hardlink-ro | copy，
+                             不给就按策略表探着退档，用了哪一档写在 stderr 与 --json 里；
+                             --ro 声明哪几处子树只读（hardlink-ro 那一档只链它们）
   config show                工作区配置的全文
   config get <key>           配置里的一条；<key> 是点分路径，如 docs.trace.path
   config set <key> <value>   改一条；<value> 整份解析得了就当 JSON 值，否则当字符串
@@ -81,7 +90,7 @@ interface Parsed {
  * `fugue [--root <dir>] [--agent <id>] [--json] <command>`，开关排在命令**前面**，
  * 一个贪心的解析器会把命令当成开关的值吃掉。
  */
-const VALUED: ReadonlySet<string> = new Set(['root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save'])
+const VALUED: ReadonlySet<string> = new Set(['root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro'])
 
 function parseArgv(argv: readonly string[]): Parsed {
   const flags = new Map<string, string | true>()
@@ -413,6 +422,83 @@ function diffStatCmd(root: string, flags: Map<string, string | true>, args: stri
 /** 人读那一面的记号：增 · 删 · 改。`--json` 那一面给的是 `status` 这个字本身。 */
 const STATUS_MARK: Record<ChangeStatus, string> = { added: '+', removed: '-', changed: '~' }
 
+/** 策略名——给用法错与 `--json` 用；次序就是 § 8.5 策略表里的那三档（`reflink` 不在列）。 */
+const STRATEGIES: readonly ForkStrategy[] = ['overlayfs', 'hardlink-ro', 'copy']
+
+/**
+ * `fugue fork <base>`：把 base 那棵树物化出来，返回合并树（§ 8.5 · § 9.6）。
+ *
+ * **它不建视图、不读日志的历史**：物化的底是**真实工作树**，`fork` 只是把它挂上来（§ 8.4）。
+ * `base` 在这里只做两件事——解析成一个真提交（免得把一串敲错的字符当成标签记进日志），
+ * 以及进 `mat/fork` 事件。**不拿它跟真实工作树比对**：那一步 § 8.4 说得明白，不做检测。
+ *
+ * 退出码：0 物化好了（**用了哪一档由 stderr 那一行说，也由 `--json` 的 `strategy` 说**）·
+ * 1 做不成（底不在 · 挂不上 · 铺不动）· 2 命令行本身不成立。
+ */
+async function forkCmd(
+  root: string,
+  flags: Map<string, string | true>,
+  args: string[],
+  json: boolean,
+): Promise<number> {
+  const base = args[0]
+  if (base === undefined || base === '') return usageFail('fork 需要 <base>：一个提交')
+  const want = flags.get('strategy')
+  if (typeof want === 'string' && !(STRATEGIES as readonly string[]).includes(want)) {
+    return usageFail(`--strategy 只认 ${STRATEGIES.join(' · ')}；不给就按策略表探着退档`)
+  }
+  const roRaw = flags.get('ro')
+  const readOnly =
+    typeof roRaw === 'string' ? roRaw.split(',').map((s) => s.trim()).filter((s) => s !== '') : undefined
+
+  const abs = resolve(root)
+  const agent = agentFor(writerOf(flags))
+  const log = openLog(abs)
+  let truth: TruthHandle | null = null
+  try {
+    truth = openTruth(abs)
+    let commit: CommitId
+    try {
+      commit = await truth.resolve(base)
+    } catch (err) {
+      return fail(
+        `fork：${base} 不是这个工作区里一个能用的提交——<base> 要指向一棵树\n  ${(err as Error).message}`,
+      )
+    }
+    const res = await fork({ roots: createRoots(abs), log, root: abs }, agent, commit, {
+      ...DEFAULT_MATERIALIZE,
+      ...(typeof want === 'string' ? { preferredStrategy: want as ForkStrategy } : {}),
+      ...(readOnly === undefined ? {} : { readOnlyPaths: readOnly }),
+    })
+    if (json) {
+      emitJson({
+        agent,
+        base: res.base,
+        strategy: res.strategy,
+        mount: res.mount,
+        merged: res.merged,
+        laid: res.laid,
+        ms: res.ms,
+        why: res.why,
+        platform: res.facts,
+      })
+    } else {
+      // 用了哪一档是**读数**，不是进度条：它在 stderr 上，与 stdout 那条坐标分得开（§ 9.8）。
+      // `why` 自己开头就写着是哪一档（"overlayfs 档：…"或者"跳过 …；copy 档：…"），不再另起一句。
+      process.stderr.write(res.why + '\n')
+      emitLine(res.merged)
+    }
+    return 0
+  } catch (err) {
+    if (err instanceof ForkRefused) return fail(err.why)
+    if (err instanceof MountError || err instanceof LayError) return fail(err.message)
+    throw err
+  } finally {
+    await log.close()
+    if (truth !== null) await truth.close()
+  }
+}
+
 /** `p` 是不是在 `dir` 这棵树里。两边都已经 `resolve` 过；`dir` 自己不算"在树里"。 */
 function insideTree(dir: string, p: string): boolean {
   const rel = relative(dir, p)
@@ -491,6 +577,7 @@ async function run(argv: readonly string[]): Promise<number> {
 
   // 尺子只读，也不进那份"状态"——所以它排在视图之前（§ 8.5 把 diff-stat 与 verify-mat 并列只读）。
   if (cmd === 'diff-stat') return diffStatCmd(root, flags, positional.slice(1), json)
+  if (cmd === 'fork') return await forkCmd(root, flags, positional.slice(1), json)
 
   const args = positional.slice(1)
   const need = (n: number): boolean => args.length >= n && !args.slice(0, n).some((a) => a === '')

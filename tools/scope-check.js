@@ -7,13 +7,16 @@
 //   3. 没有多出常驻进程（跑完一条命令，没有还挂在这个工作区的 git 目录上的进程）
 //   4. 没有出现声明之外的持久化位置（临时工作区里只有 § 9.2 列出的那几处，且没有索引）
 //
+// 第 4 条那份清单在 V2 里多了一处：`.fugue/mat/`——物化的根（§ 8.4）。白名单与那一跑是
+// 成对的：加了位置就要有一条真跑过它的命令，否则白名单是白加的。
+//
 // 用法：
 //   node tools/scope-check.js <rev> --allow <path> [--allow <path> …]
 //
 // 负对照（它必须非零退出）——把声明收窄到实际碰过的一部分：
 //   node tools/scope-check.js <rev> --allow src/view/
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -75,6 +78,9 @@ function checkRun() {
       bad(`临时工作区建不起来：${init.stderr.trim()}`)
       return
     }
+    // 真源里先放一份**真的落在盘上**的文件：`fugue write` 写的是视图，不碰工作树，
+    // 所以没有这一份的话，物化那一跑铺出来的是一棵空树——跑了等于没跑。
+    writeFileSync(join(tmp, 'real.txt'), '真源里的一份\n')
     const runs = [
       spawnSync(process.execPath, [CLI, '--root', tmp, 'write', 'a.txt', '--stdin'], {
         input: '范围断言\n',
@@ -91,8 +97,17 @@ function checkRun() {
         encoding: 'utf8',
       }),
     ]
+    // 物化也跑一条（`copy` 那一档：不挂载、不要权限，任何机器上都跑得动）。它落下的
+    // `.fugue/mat/` 是 § 9.2 布局里声明过的第五个位置——不跑一遍就等于把那个目录白加进
+    // 白名单，而"多出一个没声明过的位置"恰好是下面第 4 条要抓的东西。
+    const committed = (runs[2].stdout ?? '').split('\t')[0]
+    runs.push(
+      spawnSync(process.execPath, [CLI, '--root', tmp, 'fork', committed, '--strategy', 'copy'], {
+        encoding: 'utf8',
+      }),
+    )
     const broke = runs.findIndex((r) => r.status !== 0)
-    if (broke === -1) ok('write · read · commit · config set · config get 五条命令都退 0')
+    if (broke === -1) ok('write · read · commit · config set · config get · fork 六条命令都退 0')
     else bad(`第 ${broke + 1} 条命令退 ${runs[broke].status}：${runs[broke].stderr.trim()}`)
 
     // 4 · 持久化位置：临时工作区里只该有**声明过的那几处**——§ 9.1 的状态表与 § 9.2 的
@@ -100,12 +115,15 @@ function checkRun() {
     // 等于没声明：一个走错地方的临时文件会静静住进去，而"没有声明之外的持久化位置"要拦的
     // 正是它。**目录按前缀比对，文件按全名比对**——否则 `config` 的临时名会挂在 `config`
     // 底下一起被放行，而"写坏了留下一个临时文件"恰好是这条要抓的东西。
-    const ALLOWED = ['.git/', '.fugue/log/', '.fugue/snap/', '.fugue/config']
+    // 那一份真源里本来就有的文件是这一跑的**输入**，不是命令落下的位置——量位置之前先把它
+    // 拿走，否则"只有声明过的几处"会被一份跟持久化无关的项目文件撞出假阳性。
+    rmSync(join(tmp, 'real.txt'), { force: true })
+    const ALLOWED = ['.git/', '.fugue/log/', '.fugue/snap/', '.fugue/config', '.fugue/mat/']
     const declared = (p) => ALLOWED.some((a) => (a.endsWith('/') ? p.startsWith(a) : p === a))
     const outside = walk(tmp)
       .map((p) => relative(tmp, p))
       .filter((p) => !declared(p))
-    if (outside.length === 0) ok(`持久化位置只有声明过的四处：${ALLOWED.join(' · ')}`)
+    if (outside.length === 0) ok(`持久化位置只有声明过的五处：${ALLOWED.join(' · ')}`)
     else bad(`出现了声明之外的持久化位置：${outside.join(' · ')}`)
     if (!existsSync(join(tmp, '.git', 'index'))) ok('没有落索引（§ 8.2 硬约束 1 的第二种形态）')
     else bad('落下了 .git/index')
