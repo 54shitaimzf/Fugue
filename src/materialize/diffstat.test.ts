@@ -153,6 +153,39 @@ test('④ 增 · 删 · 软链重指 · chmod：各报各的列', () => {
   )
 })
 
+test('⑧ 软链记的是"指向哪"，不是"指向的那份内容"（V1.2 修正）', () => {
+  const root = tree({ 'same1.txt': 'same', 'same2.txt': 'same' })
+  symlinkSync('same1.txt', join(root, 'link'))
+  symlinkSync('nowhere.txt', join(root, 'dead'))
+  // 两条链的 mtime 都先钉在纪元上：**这一条要证的是"内容"这一列会动**，不是"两个时刻恰好
+  // 不同"——不钉的话，重指那一步会把 mtime 一起带上，断言就绕过了要证的那一列。
+  for (const n of ['link', 'dead']) lutimesSync(join(root, n), new Date(0), new Date(0))
+  const before = scanTree(root)
+
+  // 改指向：两条目标**内容逐字节相同、长度也相同**——按内容算的那一版这里会一条都不报
+  // （内容哈希一样、size 一样、mtime 被钉住），而"符号链接比目标"（§ 8.5）要求它报出来。
+  unlinkSync(join(root, 'link'))
+  symlinkSync('same2.txt', join(root, 'link'))
+  lutimesSync(join(root, 'link'), new Date(0), new Date(0))
+  assert.deepEqual(diffStat(before, scanTree(root)), [
+    { path: 'link', status: 'changed', columns: ['content'] },
+  ])
+
+  // 负对照：改**被指向的那份内容**，动的是目标那一条，不是软链那一条。
+  const mid = scanTree(root)
+  writeFileSync(join(root, 'same1.txt'), 'changed')
+  assert.deepEqual(
+    diffStat(mid, scanTree(root)).map((c) => c.path),
+    ['same1.txt'],
+  )
+
+  // 悬空软链照样扫得动，而且它的"内容"就是那串指不到任何地方的目标。
+  const dead = scanTree(root).leaves.find((l) => l.path === 'dead')
+  assert.equal(dead?.kind, 'symlink')
+  assert.equal(dead?.hash, createHash('sha256').update('nowhere.txt').digest('hex'))
+  assert.equal(dead?.size, 'nowhere.txt'.length)
+})
+
 test('⑤ 跳过是前缀判定：`.git` 跳的是 `.git/…`，`.gitignore` 照扫', () => {
   const root = tree({ '.git/HEAD': 'ref: x', '.gitignore': 'node_modules\n', '.fugue/log/a.jsonl': '{}\n', 'src/a.ts': 'a' })
   assert.deepEqual(

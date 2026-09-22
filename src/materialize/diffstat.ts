@@ -21,7 +21,7 @@
 // `mtimeNs` 是**十进制串**：今天的时间戳约 1.7e18 ns，而 double 在 2^53 ≈ 9.0e15 之上就
 // 开始丢整数（换算成时间约 256 ns 一档）。用串就没有这个问题，JSON 里也还是它本身。
 import { createHash } from 'node:crypto'
-import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, readSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { AbsPath, RelPath } from '../terms.ts'
 
@@ -87,7 +87,10 @@ function leafOf(root: AbsPath, rel: RelPath): Leaf {
   // `lstat` 而不是 `stat`：软链记的是**它自己**（目标是它的内容），不跟过去。
   const st = lstatSync(abs, { bigint: true })
   const kind: LeafKind = st.isSymbolicLink() ? 'symlink' : st.isFile() ? 'file' : 'other'
-  const target = kind === 'symlink' ? readFileSync(abs, 'utf8') : ''
+  // **`readlink` 而不是 `readFile`。** 软链的内容就是它指向的那一串，不是那份被指向的字节：
+  // `readFileSync` 会跟过去读，于是两条指向不同、内容相同的链看起来一样，而悬空的那条直接把
+  // 整棵树扫崩。§ 8.5 的差异集口径写的是"符号链接比目标"（V1.2 修正）。
+  const target = kind === 'symlink' ? readlinkSync(abs) : ''
   const hash =
     kind === 'file'
       ? hashFile(abs)
