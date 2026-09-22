@@ -35,6 +35,7 @@ import type { MaterializeOptions } from './contract.ts'
 import { landDeltas } from './land.ts'
 import type { LandResult, ViewReads } from './land.ts'
 import { manifestMap, manifestPayload, matState } from './manifest.ts'
+import type { MatState } from './manifest.ts'
 import { MountError, isMounted, makeWhiteout, mountOverlayReady, unmountOverlay } from './mount.ts'
 import type { MountMode, OverlaySpec } from './mount.ts'
 
@@ -55,16 +56,32 @@ export interface EnsureDeps {
   /** 工作区根：平台事实的缓存住在 `<root>/.fugue/config`（§ 15.3.a）。 */
   readonly root: string
   /**
-   * 视图那一侧要的两样：变更序列与两条读。
+   * 视图那一侧要的四样：变更序列 · 两条读 · 它的修订点 · 它的墓碑。
    *
    * **不是 import 来的**（§ 8.3：三个模块只共享 `Delta`），由调用点注入——`View` 结构上就满足它。
+   * `tombstones` 只给落地判"一条 whiteout 打不开"那一支用（`land.ts` 的 `refuseReopen`）。
    */
-  readonly view: ViewReads & { deltasSince(from: ViewRev): Delta[] }
+  readonly view: ViewReads & {
+    readonly rev: ViewRev
+    deltasSince(from: ViewRev): Delta[]
+    tombstones(): readonly RelPath[]
+  }
+  /**
+   * base 提交那一份的读口（`mat/fork.base`）。**清单的口径问的是它，不是工作树**：§ 8.5 说的是
+   * "base 与视图之间内容不同的路径"，而真实工作树可能被人手改过（§ 8.4：这一步不做检测）。
+   * 两个混用会出一个假红，见 `land.ts` 文件头第六条。
+   */
+  readonly base: ViewReads
   /**
    * 物化的选项。**§ 8.5 的 `Materializer.ensure(a, upTo)` 不收它**：它在构造这一份物化时就定了，
    * 所以它住在这里，不住在签名上。
    */
   readonly opt?: MaterializeOptions
+  /**
+   * 调用点已经读过一次清单就递进来。**`matState` 是 O(整份日志)**（它要找到最后一条 `mat/fork`），
+   * 而 `ensure` 与 `verify-mat` 都要它——读两遍不会更对。
+   */
+  readonly state?: MatState
 }
 
 export interface EnsureResult {
@@ -93,7 +110,7 @@ export async function ensure(deps: EnsureDeps, agent: AgentId, upTo: ViewRev): P
   const started = performance.now()
   const { roots } = deps
   const opt = deps.opt ?? DEFAULT_MATERIALIZE
-  const st = await matState(deps.log, agent)
+  const st = deps.state ?? (await matState(deps.log, agent))
   if (!st.forked || st.base === null || st.strategy === null) {
     throw new EnsureRefused(
       '这个 agent 还没铺过物化树：delta 没有地方落\n先 fugue fork <base> 铺一棵（§ 8.5 的调用点：执行前 · 合并验收 · 冲突解决）。',
@@ -102,6 +119,12 @@ export async function ensure(deps: EnsureDeps, agent: AgentId, upTo: ViewRev): P
   if (upTo < st.rev) {
     throw new EnsureRefused(
       `物化已经落到 rev ${st.rev}，而 --to ${upTo} 比它早\n§ 9.6 那张表里没有"回退"这条路：要旧的那一棵就重新 fork。`,
+    )
+  }
+  if (upTo > deps.view.rev) {
+    throw new EnsureRefused(
+      `要落到 rev ${upTo}，而视图此刻只到 rev ${deps.view.rev}\n` +
+        `这个号还不是一个修订点——落一个不存在的号进 mat/sync，"清单落到哪儿了"从此说不准（而回退不是一条路，§ 9.6）。`,
     )
   }
   const upper = roots.scratchRoot(agent)
@@ -141,6 +164,7 @@ export async function ensure(deps: EnsureDeps, agent: AgentId, upTo: ViewRev): P
         {
           target,
           lower: roots.realRoot,
+          base: deps.base,
           overlay,
           whiteout:
             whiteoutMode === null ? null : (abs: AbsPath) => makeWhiteout(abs, whiteoutMode as MountMode),

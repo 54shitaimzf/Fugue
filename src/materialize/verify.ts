@@ -22,16 +22,27 @@
 // 比值恒等于 1，抓不住"重写整棵树"这类失效（§ 8.5）。分子取盘：`upper` 里多出来的一条就会
 // 出现在"只有落地有"那一栏里。
 //
+// **目录不是条目**（V7）：视图在一个被碰过的路径上给出 `dir` 时，那一条不进差异集——目录没有
+// 内容哈希，落地根的枚举也只看叶子（`landRootLeaves`）。它的变化由它的孩子（或者它下面那一条
+// whiteout）表达。少了这一句，"文件换成目录"会报一个永远对不上的 `onlyDiff`。
+//
+// **另两档的"落地集"是从清单推的，不是从盘上枚举的**（V7 写明的收窄）：`merged` 就是那棵树，
+// 枚举它等于扫全树（§ 8.5 要的是 O(改动数)），所以那两档只在清单的路径上逐条比"盘上这条与
+// base 一样吗"。后果是 `onlyLanded` 在那两档上**永远空**——"落地根里多出来的一条"只有
+// `overlayfs` 档（枚举 `upper`）看得见。这条记在疑点里。
+//
 // **它只读，而且不修。** § 8.5 把 `diff-stat` 与 `verify-mat` 并列写成只读，失败处理那一句
 // 是"删除重建，不尝试修复"——修不是这条命令的事，它只把不等报出来。
-import { existsSync, lstatSync, readdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Log } from '../log/events.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { AbsPath, AgentId, CommitId, ForkStrategy, RelPath, ViewRev } from '../terms.ts'
 import { diskEntry, hashOfState, portEntry, sameEntry } from './land.ts'
+import { scanTree } from './diffstat.ts'
 import type { EntryState, ViewReads } from './land.ts'
-import { manifestPayload, matState } from './manifest.ts'
+import { manifestMap, manifestPayload, matState } from './manifest.ts'
+import type { MatState } from './manifest.ts'
 
 /** 视图的上层那一条，**只有读**。与 `M2` 的 `SnapEntry` 结构上相容，但不是它的第二份定义。 */
 export type UpperRow =
@@ -60,6 +71,8 @@ export interface VerifyDeps {
   readonly view: MatViewReads
   /** 底那一侧：`mat/fork` 记的那个提交（`mat/fork.base`）。**不是视图此刻的 base**：那个随提交前移。 */
   readonly base: ViewReads
+  /** 调用点已经读过一次清单就递进来（与 `ensure` 同一个理由：`matState` 是 O(整份日志)）。 */
+  readonly state?: MatState
 }
 
 /** 一边的读数：路径与内容哈希（`''` = 这条路径在视图里没有了）。 */
@@ -95,23 +108,21 @@ export interface VerifyResult {
 
 const sideOf = (m: ReadonlyMap<RelPath, string>): Side => manifestPayload(m)
 
-/** 落地根里的叶子（`overlayfs` 档的 `upper`）：普通文件 · 软链 · whiteout。**白名单之外的不算**。 */
+/**
+ * 落地根里的叶子（`overlayfs` 档的 `upper`）：普通文件 · 软链 · whiteout。**白名单之外的不算**。
+ *
+ * **用的是 `diff-stat` 那把尺子的扫描器**（`scanTree`）：它的口径本来就是"只记叶子"，而它的
+ * 哈希正是 § 8.5 差异集那一套（文件比内容 · 软链比目标那串字符 · 别的没有内容）——whiteout 在
+ * 它眼里是 `other`、哈希为空串，与 `hashOfState` 给 `whiteout` 的那个空串是同一个。
+ * 一条遍历、一条哈希：这三样在物化这一组里只该有一个定义。
+ */
 function landRootLeaves(upper: AbsPath): Map<RelPath, string> {
-  const out = new Map<RelPath, string>()
-  const walk = (rel: RelPath): void => {
-    for (const name of readdirSync(rel === '' ? upper : join(upper, rel))) {
-      const child = rel === '' ? name : `${rel}/${name}`
-      if (lstatSync(join(upper, child)).isDirectory()) walk(child)
-      else out.set(child, hashOfState(diskEntry(join(upper, child), child)))
-    }
-  }
-  walk('')
-  return out
+  return new Map(scanTree(upper).leaves.map((l) => [l.path, l.hash]))
 }
 
 export async function verifyMat(deps: VerifyDeps, agent: AgentId): Promise<VerifyResult> {
   const started = performance.now()
-  const st = await matState(deps.log, agent)
+  const st = deps.state ?? (await matState(deps.log, agent))
   if (!st.forked || st.base === null || st.strategy === null) {
     throw new VerifyRefused(
       '这个 agent 还没铺过物化树：没有清单可以核\n先 fugue fork <base> 铺一棵（§ 8.5 的调用点：执行前 · 合并验收 · 冲突解决）。',
@@ -127,13 +138,14 @@ export async function verifyMat(deps: VerifyDeps, agent: AgentId): Promise<Verif
       `物化树不在：${overlay ? upper : merged}\n它被丢掉了（dispose 过？）——清单在日志里还留着，物化是派生的：fugue fork <base> 重铺一棵。`,
     )
   }
-  const manifest = new Map<RelPath, string>()
-  st.paths.forEach((p, i) => manifest.set(p, st.hashes[i] ?? ''))
+  const manifest = manifestMap(st)
 
   // 一 · 差异集：视图的上层逐条与 base 比。**base 那一侧是 `mat/fork` 记的那个提交。**
   const diff = new Map<RelPath, string>()
   for (const row of deps.view.upper()) {
     const v = await portEntry(deps.view, row.path)
+    // 这一条此刻是一个目录：目录不是条目（见文件头），它的变化由孩子或它下面那条 whiteout 表达。
+    if (v !== null && v.kind === 'dir') continue
     const b = await portEntry(deps.base, row.path)
     if (!sameEntry(v, b)) diff.set(row.path, hashOfState(v))
   }

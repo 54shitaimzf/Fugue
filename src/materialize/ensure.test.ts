@@ -22,7 +22,7 @@
 //     的事，不是落地的事。这里测的是它的**落地面**：同一批里的两种拼写互不覆盖。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, test } from 'node:test'
@@ -36,7 +36,7 @@ import type { CommitId, RelPath, ViewRev } from '../terms.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { View } from '../view/contract.ts'
 import { applyEdit } from '../view/edit.ts'
-import { lowerFor } from '../view/lower.ts'
+import { lowerAt, lowerFor } from '../view/lower.ts'
 import { loadView } from '../view/view.ts'
 import { probePlatform } from './capability.ts'
 import { DEFAULT_MATERIALIZE } from './contract.ts'
@@ -44,10 +44,11 @@ import type { MaterializeOptions } from './contract.ts'
 import { WORKSPACE_STATE, diffStat, scanTree } from './diffstat.ts'
 import { EnsureRefused, ensure } from './ensure.ts'
 import { fork } from './fork.ts'
-import { touchedBy } from './land.ts'
+import { LandError, touchedBy } from './land.ts'
 import { clearMaterialization, isMounted } from './mount.ts'
 import { matState } from './manifest.ts'
 import { removeTree } from './mount.ts'
+import { verifyMat } from './verify.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const CLI = join(HERE, '..', 'cli', 'fugue.ts')
@@ -146,8 +147,16 @@ async function stage(f: Fixture): Promise<Stage> {
           view: {
             stat: (p: RelPath) => view.stat(p),
             read: (p: RelPath) => view.read(p),
+            rev: view.rev,
             deltasSince: (from: ViewRev) => view.diff(from),
+            tombstones: () =>
+              view
+                .state()
+                .upper.filter((e) => e.kind === 'tombstone')
+                .map((e) => e.path),
           },
+          // 清单的口径问的是**提交**，不是工作树（`land.ts` 文件头第六条）。夹具里两者一致。
+          base: lowerAt(truth, f.commit),
         },
         AGENT,
         upTo ?? view.rev,
@@ -548,5 +557,176 @@ test('⑥ 命令面：fugue ensure 的 stdout 是坐标、stderr 是读数，失
     assert.match(gap.stderr, /不是一个修订点/)
   } finally {
     // 这一条全在子进程里跑，测试这边没有开着的句柄要收。
+  }
+})
+
+// ────────────────────────────────── V7 · 目录这一维（端到端）
+
+/**
+ * 每一步之后核一遍：**清单 == 差异集 == 落地根**（§ 8.5 的第二条验证性质）。
+ *
+ * 三个来源两两独立（日志重放 · 视图对上 base · 盘上枚举），所以这一句不是自己跟自己比；
+ * 目录那几种形状以前炸在半路，这一句也就无从谈起——它是 V7 那几条断言的主判据。
+ */
+/** 卸下合并树再走：挂着的时候清不掉那个目录（`dispose` 那个次序的另一面）。 */
+function unmount(s: Stage): void {
+  clearMaterialization(s.roots.mergedRoot(AGENT), [
+    s.roots.scratchRoot(AGENT),
+    s.roots.mergedRoot(AGENT),
+    s.roots.tempRoot(AGENT),
+  ])
+}
+
+async function verifyOk(s: Stage, f: Fixture): Promise<void> {
+  const truth = openTruth(f.dir)
+  try {
+    const res = await verifyMat(
+      {
+        roots: s.roots,
+        log: s.log,
+        base: lowerAt(truth, f.commit),
+        view: {
+          stat: (p: RelPath) => s.view.stat(p),
+          read: (p: RelPath) => s.view.read(p),
+          upper: () => s.view.state().upper,
+        },
+      },
+      AGENT,
+    )
+    assert.ok(
+      res.ok,
+      `三样不等：只有清单有 [${res.onlyManifest}] · 只有差异集有 [${res.onlyDiff}] · 只有落地有 [${res.onlyLanded}] · ` +
+        `清单有而落地没有 [${res.missing}] · 两边对不上 [${res.mismatch}]`,
+    )
+  } finally {
+    await truth.close()
+  }
+}
+
+test('⑦ 目录这一维：删一棵自己铺的子树 · 删底里的目录 · 文件与目录互换 · 重开被拒', async () => {
+  const f = fixture()
+  const s = await stage(f)
+  try {
+    await fork({ roots: s.roots, log: s.log, root: f.dir }, AGENT, f.commit)
+    const first = await s.ensure()
+    await verifyOk(s, f)
+
+    // 一 · 自己造一棵子树，再整个删掉（底里从来没有过它）
+    await s.edit({ kind: 'add', path: 'src/gen/x.ts', bytes: Buffer.from('x\n'), mode: 0o100644 })
+    await s.edit({ kind: 'add', path: 'src/gen/deep/y.ts', bytes: Buffer.from('y\n'), mode: 0o100644 })
+    const built = await s.ensure()
+    assert.deepEqual([...built.landed].sort(), ['src/gen/deep/y.ts', 'src/gen/x.ts'])
+    await verifyOk(s, f)
+
+    await s.edit({ kind: 'delete', path: 'src/gen' })
+    const gone = await s.ensure()
+    assert.deepEqual([...gone.landed], ['src/gen'], '删目录是一处改动：让开整棵子树')
+    assert.equal(existsSync(join(gone.merged, 'src/gen')), false, '合并树里那棵子树要没了')
+    const afterGone = await matState(s.log, AGENT)
+    assert.deepEqual([...afterGone.paths], [], '底里没有过它，清单里不该留')
+    await verifyOk(s, f)
+
+    // 二 · 又在同一个路径下建东西。**这一棵是我们自己造的，底里从来没有过** —— 建得起来，
+    //      下层也没有谁能漏回来（没有 whiteout，也没有下层目录）。
+    await s.edit({ kind: 'add', path: 'src/gen/again.ts', bytes: Buffer.from('again\n'), mode: 0o100644 })
+    const again = await s.ensure()
+    assert.equal(readFileSync(join(again.merged, 'src/gen/again.ts'), 'utf8'), 'again\n')
+    await verifyOk(s, f)
+
+    // 三 · 同一件事，但删的是**底里就有的**目录：overlayfs 档一条 whiteout 打不开，明说落不了；
+    //      另两档没有下层可漏，落得下去（同一条操作在两档上能力不同，如实报出来）。
+    await s.edit({ kind: 'delete', path: 'vendor' })
+    const vGone = await s.ensure()
+    assert.equal(existsSync(join(vGone.merged, 'vendor')), false)
+    await verifyOk(s, f)
+    await s.edit({ kind: 'add', path: 'vendor/again.txt', bytes: Buffer.from('again\n'), mode: 0o100644 })
+    if (first.strategy === 'overlayfs') {
+      await assert.rejects(
+        () => s.ensure(),
+        (err: unknown) => err instanceof LandError && /一条 whiteout 遮住的是下层的一整棵目录/.test((err as Error).message),
+      )
+      // **拒绝不是死路**：换一档重铺（另两档的落地根是我们自己那棵树，对完账就没有下层可漏了）。
+      // 这一条既是出路，也是"另两档能落、这一档落不了"这件事的负对照。
+      await fork({ roots: s.roots, log: s.log, root: f.dir }, AGENT, f.commit, opts({ preferredStrategy: 'copy' }))
+      const copied = await s.ensure()
+      assert.equal(copied.strategy, 'copy')
+      assert.equal(existsSync(join(copied.merged, 'vendor/lib.txt')), false, '被删掉的那个孩子不许留')
+      assert.equal(readFileSync(join(copied.merged, 'vendor/again.txt'), 'utf8'), 'again\n')
+      await verifyOk(s, f)
+    } else {
+      await s.ensure()
+      const repl = await s.ensure()
+      assert.equal(existsSync(join(repl.merged, 'vendor/lib.txt')), false, '被删掉的那个孩子不许留')
+      assert.equal(readFileSync(join(repl.merged, 'vendor/again.txt'), 'utf8'), 'again\n')
+      await verifyOk(s, f)
+    }
+
+    // 三 · 文件换成目录（同名）：底里那个文件要整个被上层的新目录遮住
+    await s.edit({ kind: 'delete', path: 'src/a.ts' })
+    await s.edit({ kind: 'add', path: 'src/a.ts/z.ts', bytes: Buffer.from('z\n'), mode: 0o100644 })
+    const swapped = await s.ensure()
+    assert.equal(readFileSync(join(swapped.merged, 'src/a.ts/z.ts'), 'utf8'), 'z\n')
+    assert.equal(lstatSync(join(swapped.merged, 'src/a.ts')).isDirectory(), true)
+    await verifyOk(s, f)
+
+    // 四 · 再换回来：目录换成文件（同名）
+    await s.edit({ kind: 'delete', path: 'src/a.ts' })
+    await s.edit({ kind: 'add', path: 'src/a.ts', bytes: Buffer.from('now a file\n'), mode: 0o100644 })
+    const back = await s.ensure()
+    assert.equal(lstatSync(join(back.merged, 'src/a.ts')).isFile(), true)
+    assert.equal(readFileSync(join(back.merged, 'src/a.ts'), 'utf8'), 'now a file\n')
+    const st = await matState(s.log, AGENT)
+    assert.deepEqual(
+      [...st.paths].sort(),
+      ['src/a.ts', 'src/gen/again.ts', 'vendor/again.txt'],
+      '目录那一条不是条目；剩下三条都是相对 base 真变了的路径',
+    )
+    await verifyOk(s, f)
+  } finally {
+    unmount(s)
+    await s.close()
+  }
+})
+
+test('⑧ 清单按 base 算：工作树被人手改过时，不多那一条', async () => {
+  const f = fixture()
+  const s = await stage(f)
+  try {
+    await fork({ roots: s.roots, log: s.log, root: f.dir }, AGENT, f.commit)
+    // 手改真实工作树（§ 8.4：这一步不做检测），再让视图写回 base 的那一份内容。
+    const original = readFileSync(join(f.dir, 'src/c.ts'), 'utf8')
+    writeFileSync(join(f.dir, 'src/c.ts'), '手改过\n')
+    await s.edit({ kind: 'modify', path: 'src/c.ts', bytes: Buffer.from(original), mode: 0o100644 })
+    const res = await s.ensure()
+    // 相对 base 什么都没变 → 清单里不该有它（按工作树算就会多这一条，那是 § 8.5 那句话说的假红）。
+    const st = await matState(s.log, AGENT)
+    assert.deepEqual([...st.paths], [], '清单的口径问的是 base，不是工作树')
+    // 而合并树里那一条必须是**视图**那一份：上层得把它写下来，因为底已经被改过了。
+    assert.equal(readFileSync(join(res.merged, 'src/c.ts'), 'utf8'), original)
+    assert.deepEqual([...res.landed], ['src/c.ts'])
+  } finally {
+    unmount(s)
+    await s.close()
+  }
+})
+
+test('⑨ ensure 不接受一个还没到的 rev：那个号会污染"清单落到哪儿了"', async () => {
+  const f = fixture()
+  const s = await stage(f)
+  try {
+    await fork({ roots: s.roots, log: s.log, root: f.dir }, AGENT, f.commit)
+    await s.edit({ kind: 'add', path: 'src/later.ts', bytes: Buffer.from('后来的\n'), mode: 0o100644 })
+    await assert.rejects(
+      () => s.ensure(s.view.rev + 5),
+      (err: unknown) => err instanceof EnsureRefused && /还不是一个修订点/.test(err.why),
+    )
+    // 拒绝之后照常能落：那个号没有被写进日志。
+    const ok = await s.ensure()
+    assert.equal(ok.to, s.view.rev)
+    const st = await matState(s.log, AGENT)
+    assert.deepEqual([...st.paths], ['src/later.ts'])
+  } finally {
+    unmount(s)
+    await s.close()
   }
 })

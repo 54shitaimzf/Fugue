@@ -72,7 +72,7 @@ printf '文件系统 %s · %s · %s · %s\n' "$(df -T "$WORK" | awk 'NR == 2 {pr
 
 # ── 一 · 起一个真项目：6 个单元 + vendor 里 1 个 + main + 一个 Makefile ────────
 cd "$WORK" || exit 1
-mkdir -p src vendor include
+mkdir -p src vendor include docs
 cat > include/common.h <<'EOF'
 #ifndef COMMON_H
 #define COMMON_H
@@ -85,6 +85,9 @@ for n in $UNITS; do
   printf '#include "common.h"\nint %s(void) { return %s; }\n' "$n" "$(printf '%s' "$n" | tr -d 'u')" > "src/$n.c"
 done
 printf '#include "common.h"\nint v1(void) { return 0; }\n' > vendor/v1.c
+# `docs/` 是**底里就有的**一棵目录，而构建不依赖它——目录那一维要拿它当"删掉一个底里的目录"。
+printf '# a\n' > docs/a.md
+printf '# b\n' > docs/b.md
 cat > src/main.c <<'EOF'
 #include <stdio.h>
 #include "common.h"
@@ -178,6 +181,94 @@ pass overlayfs
 pass hardlink-ro --strategy hardlink-ro --ro vendor
 pass copy --strategy copy
 pass 'copy·不保时间戳' --strategy copy --no-preserve-mtime
+
+# ── 三之二 · 目录这一维（V7）：三档各走一遍，每一步都核三集合相等 ──────────────
+# 三种操作各是一句"一条 delete delta 说的是一整棵目录"：删掉自己铺的子树 · 删掉底里的目录 ·
+# 文件与目录互换。它们以前炸在半路（`tools/probe-land-dirs.ts` 是取证的那一份）。
+#
+# 判据不是"没报错"，而是**每一步之后 `verify-mat` 都退 0**：清单（日志）· 差异集（视图对上
+# base）· 落地根（盘上枚举）三个来源两两独立，它们相等这句话在这条命令里才有人算。
+dirpass() {
+  LABEL=$1; shift
+  BOUT2="$OUT/dirs-$LABEL"
+  mkdir -p "$BOUT2"
+  printf '\n══ 目录这一维 · %s ══\n' "$LABEL"
+  run fugue dispose
+  node "$FUGUE" --root "$WORK" --json fork "$BASE" "$@" > "$BOUT2/fork.json" 2>/dev/null
+  DSTRATEGY=$(jget "$BOUT2/fork.json" strategy)
+  DMERGED=$(jget "$BOUT2/fork.json" merged)
+  printf '  档 %s · %s\n' "$DSTRATEGY" "$DMERGED"
+
+  nwrite() { printf '%s\n' "$2" | node "$FUGUE" --root "$WORK" write "$1" --stdin > /dev/null; }
+  ens() { node "$FUGUE" --root "$WORK" --json ensure > "$BOUT2/ensure.json" 2>"$BOUT2/ensure.err"; return $?; }
+  # 每一步之后核一遍三个来源相等；不等就把那条命令的输出留在 $BOUT2 里。
+  vfy() {
+    fugue verify-mat > "$BOUT2/verify-$1.log" 2>&1
+    check "$LABEL · verify-mat（$1）" "$?" "0"
+  }
+  there() { if [ -e "$DMERGED/$2" ]; then echo 在; else echo 不在; fi; }
+
+  # 一 · 自己造一棵子树，再整个删掉（底里从来没有过它）
+  nwrite src/gen/x.ts 'int x(void) { return 0; }'
+  nwrite src/gen/deep/y.ts 'int y(void) { return 0; }'
+  ens; check "$LABEL · 造子树 ensure" "$?" "0"
+  vfy 造子树
+  node "$FUGUE" --root "$WORK" remove src/gen > /dev/null 2>&1
+  ens; check "$LABEL · 删整棵子树 ensure" "$?" "0"
+  check "$LABEL · 1 合并树里那棵子树没了" "$(there x src/gen)" "不在"
+  vfy 删整棵子树
+
+  # 二 · 又在同一个路径下建东西：**这一棵是我们自己造的**，三档都该落得下去
+  nwrite src/gen/again.ts 'int again(void) { return 0; }'
+  ens; check "$LABEL · 重开自己造的目录 ensure" "$?" "0"
+  check "$LABEL · 2 重开之后那条在" "$(there x src/gen/again.ts)" "在"
+  vfy 重开自己造的目录
+
+  # 三 · 文件换成目录、再换回来
+  node "$FUGUE" --root "$WORK" remove src/u1.c > /dev/null 2>&1
+  nwrite src/u1.c/z.c 'int z(void) { return 1; }'
+  ens; check "$LABEL · 文件换成目录 ensure" "$?" "0"
+  if [ -d "$DMERGED/src/u1.c" ]; then ISDIR=目录; else ISDIR=别的; fi
+  check "$LABEL · 3 同名路径上是目录" "$ISDIR" "目录"
+  vfy 文件换成目录
+  node "$FUGUE" --root "$WORK" remove src/u1.c > /dev/null 2>&1
+  nwrite src/u1.c 'int u1(void) { return 1; }'
+  ens; check "$LABEL · 目录换成文件 ensure" "$?" "0"
+  if [ -f "$DMERGED/src/u1.c" ]; then ISFILE=文件; else ISFILE=别的; fi
+  check "$LABEL · 3 同名路径上是文件" "$ISFILE" "文件"
+  vfy 目录换成文件
+
+  # 四 · 删掉**底里就有的**目录 `docs/`，之后又在同名路径下建东西
+  node "$FUGUE" --root "$WORK" remove docs > /dev/null 2>&1
+  ens; check "$LABEL · 删底里的目录 ensure" "$?" "0"
+  check "$LABEL · 4 合并树里 docs 没了" "$(there x docs)" "不在"
+  vfy 删底里的目录
+  nwrite docs/again.md '# again'
+  ens; RC=$?
+  if [ "$DSTRATEGY" = overlayfs ]; then
+    # 一条 whiteout 打不开：明说落不了（口径见交付说明 V7），而且**没有半落一地**。
+    check "$LABEL · 5 overlayfs 档明说落不了" "$RC" "1"
+    if grep -q '一条 whiteout 遮住的是下层的一整棵目录' "$BOUT2/ensure.err"; then HINT=在; else HINT=不在; fi
+    check "$LABEL · 5 由头里说清了是哪一支" "$HINT" "在"
+    if grep -q 'fugue fork <base> --strategy copy' "$BOUT2/ensure.err"; then WAY=在; else WAY=不在; fi
+    check "$LABEL · 5 出路写在错误里" "$WAY" "在"
+    vfy 拒绝之后（清单没被写脏）
+  else
+    check "$LABEL · 5 另两档落得下去" "$RC" "0"
+    check "$LABEL · 5 被删掉的那个孩子没漏回来" "$(there x docs/a.md)" "不在"
+    check "$LABEL · 5 新写的那条在" "$(there x docs/again.md)" "在"
+    vfy 重开底里的目录
+  fi
+
+  # 五 · 这一趟折腾完，合并树照样能编（目录这一维不许把树弄坏）
+  if make -C "$DMERGED" O="$BOUT2/build" > "$BOUT2/make.log" 2>&1; then MAKE=过; else MAKE=没过; fi
+  check "$LABEL · 6 走完还能构建" "$MAKE" "过"
+  run fugue dispose
+}
+
+dirpass overlayfs
+dirpass hardlink-ro --strategy hardlink-ro --ro vendor
+dirpass copy --strategy copy
 
 printf '\n══ 读数并列（V6 的三条断言）══\n'
 printf '  %-16s %-12s %8s %10s %12s %14s %10s\n' 趟 档 'fork ms' 'ensure ms' 第二次重编 再物化后重编 未变四样

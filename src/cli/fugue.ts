@@ -183,6 +183,12 @@ interface OpenOptions {
    */
   history?: boolean
   upToRev?: ViewRev
+  /**
+   * 快照的上界（默认跟 `upToRev` 一样）。**它是"问哪一份快照"，与"视图载到哪儿"分开**：
+   * `ensure` 既要把视图载到目标 rev，又只敢用 rev ≤ 清单那个 rev 的快照——不然
+   * `diff(清单的 rev)` 会撞上"比快照早的历史不在它里面"（§ 9.4 那条结构性的限制）。
+   */
+  snapUpTo?: ViewRev
   /** 日志的耐久档位。提交点用 `each`（§ 9.5 把提交点与检查点列在同一档）。 */
   sync?: SyncLevel
 }
@@ -207,10 +213,11 @@ async function openCtx(
     const lower = await lowerFor(truth, writer)
     // 有快照就从快照起（§ 9.4 的第一步）：这一步只影响快慢，影响不到读出来的东西——
     // `diff` 那种要历史的命令在上面的 `history` 里被排除掉了。
+    const ceiling = opts.snapUpTo ?? opts.upToRev
     const snap =
       opts.history === true
         ? null
-        : await readSnapshot(root, writer, opts.upToRev === undefined ? {} : { upToRev: opts.upToRev })
+        : await readSnapshot(root, writer, ceiling === undefined ? {} : { upToRev: ceiling })
     const view = await loadView(
       log,
       writer,
@@ -549,8 +556,19 @@ async function ensureCmd(
     want = n
   }
   const abs = resolve(root)
-  // **要变更序列，所以不看快照**：`diff(since < 快照的 rev)` 答不了，那句限制是结构性的（§ 9.4）。
-  const ctx = await openCtx(abs, flags, { history: true, upToRev: want })
+  const agent = agentFor(writerOf(flags))
+  // **先问清单要两样：落到哪个 rev · base 是哪个提交。** 前者定快照的上界，后者是清单的口径
+  // 那一侧的读口（`land.ts` 文件头第六条）。这一趟只读日志、不开视图。
+  const peek = openLog(abs)
+  let st
+  try {
+    st = await matState(peek, agent)
+  } finally {
+    await peek.close()
+  }
+  // 视图要载到 `want`；而快照只敢用 rev ≤ 清单那个 rev 的那一份——`diff(st.rev)` 要算得出来
+  // （§ 9.4：快照换掉的是历史）。没有快照就是全量重放，慢一点，答案一样。
+  const ctx = await openCtx(abs, flags, { upToRev: want, snapUpTo: st.rev })
   try {
     const upTo = want ?? ctx.view.rev
     if (!ctx.view.revs.includes(upTo)) {
@@ -568,10 +586,20 @@ async function ensureCmd(
         view: {
           stat: (p) => ctx.view.stat(p),
           read: (p) => ctx.view.read(p),
+          rev: ctx.view.rev,
           deltasSince: (from) => ctx.view.diff(from),
+          // 墓碑只给"一条 whiteout 打不开"那一支用：视图删过一个目录，而底里它还在。
+          tombstones: () =>
+            ctx.view
+              .state()
+              .upper.filter((e) => e.kind === 'tombstone')
+              .map((e) => e.path),
         },
+        base: lowerAt(ctx.truth, st.base),
+        // 上面那一趟已经读过的清单：不为了同一个答案再全量重放一次（§ 9.4 的重放代价）。
+        state: st,
       },
-      agentFor(ctx.writer),
+      agent,
       upTo,
     )
     if (json) {
@@ -632,7 +660,9 @@ async function verifyMatCmd(root: string, flags: Map<string, string | true>, jso
   } finally {
     await peek.close()
   }
-  const ctx = await openCtx(abs, flags, { history: true, upToRev: st.rev })
+  // **不要 history**：这条命令要的是"视图在 st.rev 那一刻长什么样"，不是变更序列——所以
+  // 快照能用（§ 9.4 的第一步），代价从"重放整份日志"降到"重放快照之后的那些"。
+  const ctx = await openCtx(abs, flags, { upToRev: st.rev })
   try {
     const res = await verifyMat(
       {
@@ -645,6 +675,7 @@ async function verifyMatCmd(root: string, flags: Map<string, string | true>, jso
           read: (p) => ctx.view.read(p),
           upper: () => ctx.view.state().upper,
         },
+        state: st,
       },
       agent,
     )

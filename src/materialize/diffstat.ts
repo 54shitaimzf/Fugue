@@ -73,8 +73,13 @@ export function hashBytes(bytes: Uint8Array | string): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-/** 分块算哈希：整份读进内存在大文件上会白占一整个文件的内存。 */
-function hashFile(abs: AbsPath): string {
+/**
+ * 分块算哈希：整份读进内存在大文件上会白占一整个文件的内存。
+ *
+ * **导出是给 `land.ts` 的**：那边问"盘上这条是什么"时只要一个内容哈希，要的正是这一份实现
+ * ——文件的内容哈希在整个物化组里只该有一条路（口径一处，代价也一处）。
+ */
+export function hashFile(abs: AbsPath): string {
   const h = createHash('sha256')
   const fd = openSync(abs, 'r')
   try {
