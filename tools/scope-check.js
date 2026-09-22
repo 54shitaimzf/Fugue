@@ -87,12 +87,15 @@ function checkRun() {
     if (broke === -1) ok('write · read · commit 三条命令都退 0')
     else bad(`第 ${broke + 1} 条命令退 ${runs[broke].status}：${runs[broke].stderr.trim()}`)
 
-    // 4 · 持久化位置：临时工作区里除了 .git 与 .fugue/ 不该有别的。
+    // 4 · 持久化位置：临时工作区里只该有**声明过的那几处**——§ 9.1 的状态表与 § 9.2 的
+    // 布局就是这份声明：对象库 · 事件日志 · 视图快照。宽到整个 `.fugue/` 等于没声明：
+    // 一个走错地方的临时文件会静静住进去，而"没有声明之外的持久化位置"要拦的正是它。
+    const ALLOWED = ['.git/', '.fugue/log/', '.fugue/snap/']
     const outside = walk(tmp)
       .map((p) => relative(tmp, p))
-      .filter((p) => !p.startsWith('.git/') && !p.startsWith('.fugue/'))
-    if (outside.length === 0) ok('工作区里没有多出文件（上层只在日志与对象库里）')
-    else bad(`多出了文件：${outside.join(' · ')}`)
+      .filter((p) => !ALLOWED.some((a) => p.startsWith(a)))
+    if (outside.length === 0) ok(`持久化位置只有声明过的三处：${ALLOWED.join(' · ')}`)
+    else bad(`出现了声明之外的持久化位置：${outside.join(' · ')}`)
     if (!existsSync(join(tmp, '.git', 'index'))) ok('没有落索引（§ 8.2 硬约束 1 的第二种形态）')
     else bad('落下了 .git/index')
 
