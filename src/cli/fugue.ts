@@ -13,6 +13,15 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkpoint } from '../checkpoint.ts'
+import {
+  ConfigError,
+  configFileOf,
+  getConfig,
+  parseConfigValue,
+  readConfig,
+  setConfig,
+  writeConfig,
+} from '../config.ts'
 import type { Delta } from '../delta.ts'
 import type { TreeEntry } from '../entries.ts'
 import type { LogEvent } from '../log/events.ts'
@@ -41,9 +50,13 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
   diff [--since <rev>]       自某个修订点以来的变更
   commit -m <msg>            把当前视图提交成一个提交点，推进它的 ref
   replay [--to <rev>]        从日志重建视图并报出它；--verify 逐 agent 比对两条重建路径
+  config show                工作区配置的全文
+  config get <key>           配置里的一条；<key> 是点分路径，如 docs.trace.path
+  config set <key> <value>   改一条；<value> 整份解析得了就当 JSON 值，否则当字符串
 
 选项
-  --root <dir>    工作区根，默认当前目录；日志在 <root>/.fugue/log/，对象库在 <root>/.git
+  --root <dir>    工作区根，默认当前目录；日志在 <root>/.fugue/log/，对象库在 <root>/.git，
+                  配置在 <root>/.fugue/config
   --agent <id>    操作哪个视图；未指定时取 round（主线）
   --json          结构化输出
   --help          这张表
@@ -252,6 +265,59 @@ async function commit(ctx: Ctx, msg: string, json: boolean): Promise<number> {
   return 0
 }
 
+/**
+ * `fugue config show|get|set`（§ 9.6 的配置组 · § 15.3.a 的工作区级配置）。
+ *
+ * 三条命令都**不建视图、不读日志**——配置是工作区的输入，不是它的状态。所以它们在一个还
+ * 没有对象库的目录里照常可用；反过来说，重放这条链上没有任何一处读配置（PLAN § 5 的 U5
+ * 断言一：配置改动后重放结果不变）。
+ *
+ * 三个动词各报自己那件事：`show` 报全文 · `get` 报一条值 · `set` 报这次改动（含老值——
+ * § 15.3.a 要"每次改动记原值"，人这一面先做到"改一次就报一次"，留档与逆操作是 T5）。
+ */
+async function config(root: string, args: string[], json: boolean): Promise<number> {
+  const verb = args[0]
+  try {
+    if (verb === 'show') {
+      const doc = await readConfig(root)
+      emitLine(json ? JSON.stringify(doc) : JSON.stringify(doc, null, 2))
+      return 0
+    }
+    if (verb === 'get') {
+      const key = args[1]
+      if (key === undefined) return usageFail('config get 需要 <key>')
+      const value = getConfig(await readConfig(root), key)
+      if (value === undefined) return fail(`config get：没有这条键 —— ${key}`)
+      // 人这一面：字符串吐原样（好接管道），别的吐 JSON。`--json` 那一面一律是 JSON。
+      if (json) emitJson(value)
+      else emitLine(typeof value === 'string' ? value : JSON.stringify(value))
+      return 0
+    }
+    if (verb === 'set') {
+      const key = args[1]
+      const raw = args[2]
+      if (key === undefined || raw === undefined) return usageFail('config set 需要 <key> <value>')
+      const doc = await readConfig(root)
+      const old = getConfig(doc, key)
+      const value = parseConfigValue(raw)
+      setConfig(doc, key, value)
+      await writeConfig(root, doc)
+      const out: Record<string, unknown> = { key, value, path: configFileOf(root) }
+      // **老值只在原本有这条键时出现**：凭空多一个 `old: null` 会与"存了个 null"混起来。
+      if (old !== undefined) out.old = old
+      if (json) emitJson(out)
+      else {
+        emitLine(`${key}	${old === undefined ? '(没有)' : JSON.stringify(old)}	→	${JSON.stringify(value)}`)
+      }
+      return 0
+    }
+    return usageFail(`config 需要 show|get|set，收到：${verb ?? '(空)'}`)
+  } catch (err) {
+    if (err instanceof ConfigError) return fail(err.message)
+    throw err
+  }
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
   const { flags, positional } = parseArgv(argv)
   const json = flags.has('json')
@@ -290,6 +356,9 @@ export async function main(argv: readonly string[]): Promise<number> {
       await ctx.close()
     }
   }
+
+  // 配置不建视图、不读日志：它是工作区的输入，不是它的状态（§ 15.3.a 末段）。
+  if (cmd === 'config') return await config(root, positional.slice(1), json)
 
   const args = positional.slice(1)
   const need = (n: number): boolean => args.length >= n && !args.slice(0, n).some((a) => a === '')

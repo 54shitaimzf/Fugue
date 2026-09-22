@@ -5,7 +5,7 @@
 //   1. 该提交没有碰声明之外的路径（`--allow` 给的路径及其子树）
 //   2. 没有引入运行时依赖（package.json 没有 dependencies · 没有 node_modules）
 //   3. 没有多出常驻进程（跑完一条命令，没有还挂在这个工作区的 git 目录上的进程）
-//   4. 没有出现声明之外的持久化位置（临时工作区里只有 .git 与 .fugue/log/，且没有索引）
+//   4. 没有出现声明之外的持久化位置（临时工作区里只有 § 9.2 列出的那几处，且没有索引）
 //
 // 用法：
 //   node tools/scope-check.js <rev> --allow <path> [--allow <path> …]
@@ -82,19 +82,30 @@ function checkRun() {
       }),
       spawnSync(process.execPath, [CLI, '--root', tmp, 'read', 'a.txt'], { encoding: 'utf8' }),
       spawnSync(process.execPath, [CLI, '--root', tmp, 'commit', '-m', '范围断言'], { encoding: 'utf8' }),
+      // 配置也跑一条：它是第四个声明过的持久化位置，不跑一遍就等于把 `config` 白加进白名单，
+      // 而"原子写留下的临时名"恰好只有跑过才看得见。
+      spawnSync(process.execPath, [CLI, '--root', tmp, 'config', 'set', 'policy.readOnly', 'true'], {
+        encoding: 'utf8',
+      }),
+      spawnSync(process.execPath, [CLI, '--root', tmp, 'config', 'get', 'policy.readOnly'], {
+        encoding: 'utf8',
+      }),
     ]
     const broke = runs.findIndex((r) => r.status !== 0)
-    if (broke === -1) ok('write · read · commit 三条命令都退 0')
+    if (broke === -1) ok('write · read · commit · config set · config get 五条命令都退 0')
     else bad(`第 ${broke + 1} 条命令退 ${runs[broke].status}：${runs[broke].stderr.trim()}`)
 
     // 4 · 持久化位置：临时工作区里只该有**声明过的那几处**——§ 9.1 的状态表与 § 9.2 的
-    // 布局就是这份声明：对象库 · 事件日志 · 视图快照。宽到整个 `.fugue/` 等于没声明：
-    // 一个走错地方的临时文件会静静住进去，而"没有声明之外的持久化位置"要拦的正是它。
-    const ALLOWED = ['.git/', '.fugue/log/', '.fugue/snap/']
+    // 布局就是这份声明：对象库 · 事件日志 · 视图快照 · 工作区配置。宽到整个 `.fugue/`
+    // 等于没声明：一个走错地方的临时文件会静静住进去，而"没有声明之外的持久化位置"要拦的
+    // 正是它。**目录按前缀比对，文件按全名比对**——否则 `config` 的临时名会挂在 `config`
+    // 底下一起被放行，而"写坏了留下一个临时文件"恰好是这条要抓的东西。
+    const ALLOWED = ['.git/', '.fugue/log/', '.fugue/snap/', '.fugue/config']
+    const declared = (p) => ALLOWED.some((a) => (a.endsWith('/') ? p.startsWith(a) : p === a))
     const outside = walk(tmp)
       .map((p) => relative(tmp, p))
-      .filter((p) => !ALLOWED.some((a) => p.startsWith(a)))
-    if (outside.length === 0) ok(`持久化位置只有声明过的三处：${ALLOWED.join(' · ')}`)
+      .filter((p) => !declared(p))
+    if (outside.length === 0) ok(`持久化位置只有声明过的四处：${ALLOWED.join(' · ')}`)
     else bad(`出现了声明之外的持久化位置：${outside.join(' · ')}`)
     if (!existsSync(join(tmp, '.git', 'index'))) ok('没有落索引（§ 8.2 硬约束 1 的第二种形态）')
     else bad('落下了 .git/index')
