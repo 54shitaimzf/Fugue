@@ -67,11 +67,13 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
   diff-stat [<dir>] [--baseline <f>] [--save <f>]
                              全树 (mtime,size,hash) 快照对比；不给 <dir> 时扫本 agent 的合并树，
                              基线由 --baseline 读、--save 存（三个路径都相对当前目录，不是 --root）
-  fork <base> [--strategy <s>] [--ro <p1,p2>]
+  fork <base> [--strategy <s>] [--ro <p1,p2>] [--no-preserve-mtime]
                              把 base 那棵树物化出来并挂上，返回合并树（本 agent 的坐标）
                              <base> 是一个提交；--strategy 取 overlayfs | hardlink-ro | copy，
                              不给就按策略表探着退档，用了哪一档写在 stderr 与 --json 里；
-                             --ro 声明哪几处子树只读（hardlink-ro 那一档只链它们）
+                             --ro 声明哪几处子树只读（hardlink-ro 那一档只链它们）；
+                             --no-preserve-mtime 让抄出来的那几条用当下的时间戳而不是底的时间戳
+                             （§ 8.5 的 preserveMtime；它是"假失效"那半边的负对照）
   ensure [--to <rev>]
                              把这个 agent 到 <rev> 为止的改动落到物化树里（不给 --to 就是此刻），
                              返回合并树；已最新就什么都不落。一次落哪些路径由日志里的 mat/*
@@ -482,6 +484,10 @@ async function forkCmd(
     }
     const res = await fork({ roots: createRoots(abs), log, root: abs }, agent, commit, {
       ...DEFAULT_MATERIALIZE,
+      // `preserveMtime` 只在铺底的两档上有意义（overlayfs 档什么都不铺，§ 8.5）。它默认开着，
+      // 关掉是**负对照**用的：关掉之后未变文件的时间戳不是底的那一个，按 mtime 判定新旧的
+      // 工具链于是全量重建（V6 的读数）。
+      preserveMtime: !flags.has('no-preserve-mtime'),
       ...(typeof want === 'string' ? { preferredStrategy: want as ForkStrategy } : {}),
       ...(readOnly === undefined ? {} : { readOnlyPaths: readOnly }),
     })
