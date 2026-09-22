@@ -733,8 +733,11 @@ if (isMain) {
     .then((code) => process.exit(code))
     .catch((err: unknown) => {
       if (err instanceof LogCorruptError) {
+        // 日志在哪，由 `--root` 说了算——壳让人在任何目录里敲这条命令，而"我在哪"与
+        // "它的日志在哪"是两件事。默认值仍是 cwd（`run` 里那一句）。
+        const asked = parseArgv(process.argv.slice(2)).flags.get('root')
         process.stderr.write(`日志损坏，拒绝加载 —— ${err.message}\n`)
-        process.stderr.write(`日志目录：${logDir(process.cwd())}\n`)
+        process.stderr.write(`日志目录：${logDir(typeof asked === 'string' ? asked : process.cwd())}\n`)
       } else {
         process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`)
       }

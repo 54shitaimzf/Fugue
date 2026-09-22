@@ -37,6 +37,19 @@ sh tools/walkthrough.sh
 它起一个真仓库：写 · 提交 · 杀进程 · 重放 · 看变更，最后自己断言七条，并在结尾把表里属于
 S1 的每一行再走一遍、报退出码。`KEEP=1` 把临时工作区留下，`FUGUE=<cli>` 换掉被走查的那个命令行。
 
+## 命令壳（人这一侧）
+
+`bin/fugue` 是个 shim：顺着软链找到自己，再 `exec` 仓库里那个命令行。装法就一条：
+
+```
+ln -s ~/fugue/bin/fugue ~/.local/bin/fugue
+```
+
+装完在**任何目录**里敲 `fugue …`，与在仓库里敲 `node src/cli/fugue.ts …` 是同一次调用——
+stdout · stderr · 退出码逐字节相同，报错的那几条同样（断言在 `test/shell.test.ts`）。
+**它只住在人这一侧**：沙箱里没有它，视图里也没有它——模型那一侧的动作面是声明过的工具
+目录，不是 PATH（架构 § 24 纪律 13）。换解释器：`FUGUE_NODE=<node 的路径>`。
+
 ## 只写可擦除的 TypeScript
 
 Node 直跑 `.ts` 是 **strip-only**：**参数属性**（`constructor(readonly x: T)`）、`enum`、
