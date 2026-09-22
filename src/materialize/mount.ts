@@ -19,7 +19,7 @@
 // 失败一律**带 argv 与 stderr 抛**：挂不上的原因（缺 lowerdir / workdir 不空 / userns 里
 // 没有 overlay 支持）只有内核那句话说清楚，转述会丢掉它。
 import { spawnSync } from 'node:child_process'
-import { lstatSync, readFileSync, readdirSync, rmdirSync, unlinkSync } from 'node:fs'
+import { lstatSync, mkdirSync, readFileSync, readdirSync, rmdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AbsPath } from '../terms.ts'
 
@@ -80,6 +80,35 @@ export function mountOverlay(spec: OverlaySpec, mode: MountMode): void {
   const argv = mountArgv(spec, mode)
   const r = run(argv)
   if (r.status !== 0) throw new MountError('overlay 挂不上', argv, r.status, r.stderr)
+}
+
+/**
+ * 挂上前把 `work` 备好。overlay 要求 `workdir` 存在、与 `upperdir` 同盘、且是空的。
+ *
+ * **它是内核的草稿本，不是我们的东西**：一次没卸干净的挂载会在这里留下残渣，而残渣会让下一次
+ * 挂载报"workdir not empty"。所以清它不是宽容，是那道要求的另一半。
+ */
+export function mountOverlayReady(spec: OverlaySpec, mode: MountMode): void {
+  mkdirSync(spec.work, { recursive: true })
+  for (const name of readdirSync(spec.work)) removeTree(join(spec.work, name))
+  mountOverlay(spec, mode)
+}
+
+/**
+ * 造一条 whiteout：字符设备 0:0。**它是 overlayfs 眼里的"这儿没有"**——`upper` 里没有这条时，
+ * 那个路径上的内容由下层给；有这条时，它被挡掉（§ 8.5 的 `delete` 那一情形）。
+ *
+ * 实测（内核 6.18 · WSL2）：非特权 `mknod <p> c 0 0` 成功，而同一条路上的 `c 1 3` 与 `b 8 0`
+ * 都是 EPERM——内核对 0:0 留了豁免，所以这一件事不要任何特权。没有那条豁免的内核上借
+ * `sudo -n`，两档都不通由 `capability.ts` 探出来并据此判 overlayfs 那一档不可用。
+ *
+ * **`mknod` 是外部程序**：Node 的 `fs` 里没有这个调用（设备号是内核那一侧的入参）。
+ */
+export function makeWhiteout(abs: AbsPath, mode: MountMode): void {
+  const tail = ['mknod', abs, 'c', '0', '0']
+  const argv = mode === 'sudo' ? ['sudo', '-n', ...tail] : tail
+  const r = run(argv)
+  if (r.status !== 0) throw new MountError('whiteout 造不出来', argv, r.status, r.stderr)
 }
 
 /**

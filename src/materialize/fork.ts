@@ -30,7 +30,7 @@ import type { MaterializeOptions } from './contract.ts'
 import { WORKSPACE_STATE } from './diffstat.ts'
 import { LayError, layTree } from './lay.ts'
 import type { LayResult } from './lay.ts'
-import { clearMaterialization, mountOverlay } from './mount.ts'
+import { clearMaterialization, mountOverlayReady } from './mount.ts'
 import type { MountMode, OverlaySpec } from './mount.ts'
 
 /** 这一档现在不成立。**不是异常，是一次有由头的拒绝**——由头原样带给调用点。 */
@@ -146,8 +146,7 @@ function applyOnce(
   if (choice.strategy === 'overlayfs') {
     if (choice.mount === null) throw new Error('内部不一致：overlayfs 档没有报出挂载门路')
     const spec: OverlaySpec = { lower: roots.realRoot, upper: p.upper, work: join(p.temp, 'work'), merged: p.merged }
-    mkdirSync(spec.work, { recursive: true })
-    mountOverlay(spec, choice.mount)
+    mountOverlayReady(spec, choice.mount)
     return null
   }
   try {

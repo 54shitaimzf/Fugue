@@ -64,6 +64,15 @@ export interface ScanOptions {
 
 const CHUNK = 1 << 20
 
+/**
+ * 一份字节的 sha256。**差异集与物化清单共用这一个口径**（§ 8.5）：文件比的是内容，软链比的是
+ * 它指向的那串字符（`leafOf` 那一处）。落地那一侧（`land.ts`）算的也是它——两把尺子要对得上，
+ * 口径就只能写一遍。
+ */
+export function hashBytes(bytes: Uint8Array | string): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
 /** 分块算哈希：整份读进内存在大文件上会白占一整个文件的内存。 */
 function hashFile(abs: AbsPath): string {
   const h = createHash('sha256')
@@ -95,7 +104,7 @@ function leafOf(root: AbsPath, rel: RelPath): Leaf {
     kind === 'file'
       ? hashFile(abs)
       : kind === 'symlink'
-        ? createHash('sha256').update(target).digest('hex')
+        ? hashBytes(target)
         : ''
   return {
     path: rel,

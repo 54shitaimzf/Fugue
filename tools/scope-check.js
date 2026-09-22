@@ -8,7 +8,8 @@
 //   4. 没有出现声明之外的持久化位置（临时工作区里只有 § 9.2 列出的那几处，且没有索引）
 //
 // 第 4 条那份清单在 V2 里多了一处：`.fugue/mat/`——物化的根（§ 8.4）。白名单与那一跑是
-// 成对的：加了位置就要有一条真跑过它的命令，否则白名单是白加的。
+// 成对的：加了位置就要有一条真跑过它的命令，否则白名单是白加的。**V3 的 `ensure` 也要跑**：
+// 它往同一个根里落 delta、往 `log/` 里追加 `mat/sync`——两处位置都靠它才算真跑过。
 //
 // 用法：
 //   node tools/scope-check.js <rev> --allow <path> [--allow <path> …]
@@ -106,8 +107,17 @@ function checkRun() {
         encoding: 'utf8',
       }),
     )
+    // 再写一条、再 `ensure` 一次：delta 落地的那条路（V3）也要真跑过，否则 `.fugue/mat/`
+    // 那一处白名单挡住的正是"命令把东西落到别处"这一类，而没跑过的命令挡不住它。
+    runs.push(
+      spawnSync(process.execPath, [CLI, '--root', tmp, 'write', 'b.txt', '--stdin'], {
+        input: '增量\n',
+        encoding: 'utf8',
+      }),
+    )
+    runs.push(spawnSync(process.execPath, [CLI, '--root', tmp, 'ensure'], { encoding: 'utf8' }))
     const broke = runs.findIndex((r) => r.status !== 0)
-    if (broke === -1) ok('write · read · commit · config set · config get · fork 六条命令都退 0')
+    if (broke === -1) ok('write · read · commit · config set · config get · fork · write · ensure 八条命令都退 0')
     else bad(`第 ${broke + 1} 条命令退 ${runs[broke].status}：${runs[broke].stderr.trim()}`)
 
     // 4 · 持久化位置：临时工作区里只该有**声明过的那几处**——§ 9.1 的状态表与 § 9.2 的

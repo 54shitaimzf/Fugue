@@ -175,6 +175,8 @@ test('① 探针与选档：能用的第一档胜出（偏好先试），跳过�
     overlayfs: null,
     overlayfsNote: '当前命名空间里挂不动（测试造的）',
     hardlink: true,
+    whiteout: 'direct',
+    whiteoutNote: '造得出（测试造的）',
   }
   const pick = (opt: MaterializeOptions, facts = noOverlay) => chooseStrategy(facts, opt)
 
@@ -206,6 +208,18 @@ test('① 探针与选档：能用的第一档胜出（偏好先试），跳过�
   const f = pick(opts({}), { ...noOverlay, overlayfs: 'direct' })
   assert.equal(f.ok && f.choice.strategy, 'overlayfs')
   assert.equal(f.ok ? f.choice.mount : 'x', 'direct')
+
+  // **挂得上而删不掉，那一档就不是一档**：§ 8.5 要 `applyDelta` 覆盖的六种情形里有 `delete`，
+  // 而 overlayfs 的删除是一条 whiteout——造不出 whiteout 就没有删除可落。这条事实与挂载是
+  // 两件事，各探各的（`capability.ts` 的 `probeWhiteout`）。
+  const g = pick(opts({ preferredStrategy: 'overlayfs' }), {
+    ...noOverlay,
+    overlayfs: 'direct',
+    whiteout: null,
+    whiteoutNote: 'mknod 与 sudo 都不通（测试造的）',
+  })
+  assert.equal(g.ok && g.choice.strategy, 'copy')
+  assert.match(g.ok ? g.choice.why : '', /删除落不了地/)
 })
 
 test('② copy 档：全树哈希 == 该提交的 tree，且清单记的是变化不是铺设', async () => {
@@ -272,7 +286,14 @@ test('③ hardlink-ro 档：只链声明过的只读子树，穿透与不穿透�
 
     // 负对照三 · 全树用硬链接必须被拒（没有只读声明时那一档直接不成立）。
     const refused = chooseStrategy(
-      { fs: 'ext2/3/4', overlayfs: null, overlayfsNote: '挂不动', hardlink: true },
+      {
+        fs: 'ext2/3/4',
+        overlayfs: null,
+        overlayfsNote: '挂不动',
+        hardlink: true,
+        whiteout: 'direct',
+        whiteoutNote: '造得出（测试造的）',
+      },
       opts({ preferredStrategy: 'hardlink-ro' }),
     )
     assert.equal(refused.ok && refused.choice.strategy, 'copy')

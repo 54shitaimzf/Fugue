@@ -24,7 +24,7 @@ import { readConfig, setConfig, writeConfig } from '../config.ts'
 import { probeHost } from '../roots/host.ts'
 import type { AbsPath, ForkStrategy, RelPath } from '../terms.ts'
 import type { MaterializeOptions } from './contract.ts'
-import { MountError, mountOverlay, removeTree, sudoAvailable, unmountOverlay } from './mount.ts'
+import { MountError, makeWhiteout, mountOverlay, removeTree, sudoAvailable, unmountOverlay } from './mount.ts'
 import type { MountMode, OverlaySpec } from './mount.ts'
 
 /** 这份报告就是"这台机器现在允许哪几档"。它进配置，也进 `fugue fork` 的 `--json`。 */
@@ -37,6 +37,15 @@ export interface PlatformFacts {
   readonly overlayfsNote: string
   /** 硬链接在这个文件系统上可用吗（§ 8.5 硬链接纪律的物理前提：源与落点同盘）。 */
   readonly hardlink: boolean
+  /**
+   * whiteout（字符设备 0:0）用哪一门造得出；`null` = 造不动。
+   *
+   * **删除的落地整个押在它上面**：造不出来的话，`overlayfs` 挂得上也删不掉——那样它就不是
+   * 一档（`available` 据此判），因为 § 8.5 要求 `applyDelta` 覆盖的六种情形里有 `delete`。
+   */
+  readonly whiteout: MountMode | null
+  /** 造得出 / 造不动的一句话由头——与 `overlayfsNote` 同一个用处。 */
+  readonly whiteoutNote: string
 }
 
 /** 退档的次序（§ 8.5 的策略表）。`reflink` 不在里面：本平台不存在（§ 15.7）。 */
@@ -84,6 +93,32 @@ function probeOverlay(scratch: AbsPath): { mode: MountMode | null; note: string 
   }
 }
 
+/**
+ * 造一条 whiteout 试试。**它不做挂载**：`mknod` 与挂载是两件互不相干的事（实测这台机器上，
+ * 挂载要 sudo 而 `mknod 0:0` 不要），所以两件事各探各的，报出来的也是两个事实。
+ */
+function probeWhiteout(scratch: AbsPath): { mode: MountMode | null; note: string } {
+  const dir = join(scratch, 'whiteout')
+  mkdirSync(dir, { recursive: true })
+  const p = join(dir, 'wo')
+  try {
+    makeWhiteout(p, 'direct')
+    return { mode: 'direct', note: '非特权 mknod 造得出字符设备 0:0（内核对 0:0 留了豁免）' }
+  } catch (direct) {
+    const why = direct instanceof MountError ? direct.stderr : String(direct)
+    if (!sudoAvailable()) return { mode: null, note: `直接造不动（${why}），sudo -n 也不通` }
+    try {
+      makeWhiteout(p, 'sudo')
+      return { mode: 'sudo', note: `直接造不动（${why}），借 sudo -n 造得出` }
+    } catch (viaSudo) {
+      const why2 = viaSudo instanceof MountError ? viaSudo.stderr : String(viaSudo)
+      return { mode: null, note: `直接造不动（${why}），借 sudo 也造不动（${why2}）` }
+    }
+  } finally {
+    removeTree(dir)
+  }
+}
+
 /** 同一个文件系统上链得动吗。**真链一次**：`statfs` 的编号答不了这个问题（反向 9p 报的和本地一样是 9p）。 */
 function probeHardlink(scratch: AbsPath): boolean {
   const dir = join(scratch, 'hardlink')
@@ -117,11 +152,14 @@ export function probePlatform(realRoot: AbsPath, scratch: AbsPath): PlatformFact
   try {
     const host = probeHost(realRoot)
     const overlay = probeOverlay(scratch)
+    const whiteout = probeWhiteout(scratch)
     return {
       fs: host === null ? '探不到' : host.fs,
       overlayfs: overlay.mode,
       overlayfsNote: overlay.note,
       hardlink: probeHardlink(scratch),
+      whiteout: whiteout.mode,
+      whiteoutNote: whiteout.note,
     }
   } finally {
     removeTree(scratch)
@@ -139,7 +177,17 @@ export async function loadFacts(root: string): Promise<PlatformFacts | null> {
   if (typeof o['fs'] !== 'string') return null
   if (typeof o['overlayfsNote'] !== 'string') return null
   if (typeof o['hardlink'] !== 'boolean') return null
-  return { fs: o['fs'], overlayfs: mode, overlayfsNote: o['overlayfsNote'], hardlink: o['hardlink'] }
+  const w = o['whiteout']
+  if (w !== null && w !== 'direct' && w !== 'sudo') return null
+  if (typeof o['whiteoutNote'] !== 'string') return null
+  return {
+    fs: o['fs'],
+    overlayfs: mode,
+    overlayfsNote: o['overlayfsNote'],
+    hardlink: o['hardlink'],
+    whiteout: w,
+    whiteoutNote: o['whiteoutNote'],
+  }
 }
 
 /** 把事实落进工作区配置（§ 8.5 的"探针 + 缓存"）。**不碰别的键**。 */
@@ -183,6 +231,13 @@ type Availability = { readonly ok: true; readonly mount: MountMode | null; reado
 function available(facts: PlatformFacts, opt: MaterializeOptions, s: ForkStrategy): Availability {
   if (s === 'overlayfs') {
     if (facts.overlayfs === null) return { ok: false, why: `overlayfs 挂不动（${facts.overlayfsNote}）` }
+    if (facts.whiteout === null) {
+      // 挂得上而删不掉，这一档就不是一档：delta 的六种情形里有 `delete`（§ 8.5）。
+      return {
+        ok: false,
+        why: `overlayfs 挂得上，但 whiteout 造不出来（${facts.whiteoutNote}）——删除落不了地`,
+      }
+    }
     return {
       ok: true,
       mount: facts.overlayfs,

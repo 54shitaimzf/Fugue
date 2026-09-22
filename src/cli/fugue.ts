@@ -30,7 +30,9 @@ import type { LogHandle, SyncLevel } from '../log/log.ts'
 import type { ChangeStatus, TreeStat } from '../materialize/diffstat.ts'
 import { TreeStatError, WORKSPACE_STATE, diffStat, loadTreeStat, scanTree, storeTreeStat } from '../materialize/diffstat.ts'
 import { DEFAULT_MATERIALIZE } from '../materialize/contract.ts'
+import { EnsureRefused, ensure } from '../materialize/ensure.ts'
 import { ForkRefused, fork } from '../materialize/fork.ts'
+import { LandError } from '../materialize/land.ts'
 import { LayError } from '../materialize/lay.ts'
 import { MountError } from '../materialize/mount.ts'
 import { HostError, assertHost } from '../roots/host.ts'
@@ -67,6 +69,10 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              <base> 是一个提交；--strategy 取 overlayfs | hardlink-ro | copy，
                              不给就按策略表探着退档，用了哪一档写在 stderr 与 --json 里；
                              --ro 声明哪几处子树只读（hardlink-ro 那一档只链它们）
+  ensure [--to <rev>]
+                             把这个 agent 到 <rev> 为止的改动落到物化树里（不给 --to 就是此刻），
+                             返回合并树；已最新就什么都不落。一次落哪些路径由日志里的 mat/*
+                             重放得来，落完追加一条 mat/sync
   config show                工作区配置的全文
   config get <key>           配置里的一条；<key> 是点分路径，如 docs.trace.path
   config set <key> <value>   改一条；<value> 整份解析得了就当 JSON 值，否则当字符串
@@ -499,6 +505,95 @@ async function forkCmd(
   }
 }
 
+/**
+ * `fugue ensure [--to <rev>]`：把这个 agent 的改动落到物化树里（§ 8.5 · § 9.6 的物化行）。
+ *
+ * **它是物化那一组里唯一要建视图的命令**：`fork` 铺的是真实工作树（§ 8.4），不读日志；而
+ * `ensure` 落的是"这个 agent 自己写过的那些路径"，那份东西只存在于日志里。
+ *
+ * `--to` 不给就是视图此刻的修订点。**它必须是一个修订点**：这个号要进 `mat/sync`，落一个不存在
+ * 的号进去，"清单落到哪儿了"从此说不准——下一句 `--since` 也对不上。
+ *
+ * 退出码：0 落好了（用了哪一档由 `--json` 的 `strategy` 说）· 1 做不成（没 fork 过 · 挂不动 ·
+ * 落不下）· 2 命令行本身不成立。
+ */
+async function ensureCmd(
+  root: string,
+  flags: Map<string, string | true>,
+  args: string[],
+  json: boolean,
+): Promise<number> {
+  const toRaw = flags.get('to')
+  let want: ViewRev | undefined
+  if (typeof toRaw === 'string') {
+    const n = Number(toRaw)
+    if (!Number.isInteger(n) || n < 0) return usageFail('--to 要一个非负整数修订号')
+    want = n
+  }
+  const abs = resolve(root)
+  // **要变更序列，所以不看快照**：`diff(since < 快照的 rev)` 答不了，那句限制是结构性的（§ 9.4）。
+  const ctx = await openCtx(abs, flags, { history: true, upToRev: want })
+  try {
+    const upTo = want ?? ctx.view.rev
+    if (!ctx.view.revs.includes(upTo)) {
+      return fail(
+        `ensure：rev ${upTo} 不是一个修订点\n可用的有 ${ctx.view.revs.join(' · ')}（fugue revs 列的就是它们）`,
+      )
+    }
+    const res = await ensure(
+      {
+        roots: createRoots(abs),
+        log: ctx.log,
+        root: abs,
+        opt: DEFAULT_MATERIALIZE,
+        // 视图那一侧的读口：M4 不 import M2，所以由这里接上（§ 8.3：两者只共享 `Delta`）。
+        view: {
+          stat: (p) => ctx.view.stat(p),
+          read: (p) => ctx.view.read(p),
+          deltasSince: (from) => ctx.view.diff(from),
+        },
+      },
+      agentFor(ctx.writer),
+      upTo,
+    )
+    if (json) {
+      emitJson({
+        agent: res.agent,
+        from: res.from,
+        to: res.to,
+        strategy: res.strategy,
+        merged: res.merged,
+        upper: res.upper,
+        landed: res.landed,
+        untouched: res.untouched,
+        whiteouts: res.whiteouts,
+        pruned: res.pruned,
+        touched: res.touched,
+        noop: res.noop,
+        ms: res.ms,
+        platform: res.facts,
+      })
+    } else {
+      // 过程走 stderr（§ 9.8 的 stdout 纪律）：stdout 上那一行是合并树的坐标，与 `fork` 一致。
+      process.stderr.write(
+        res.noop
+          ? `rev ${res.to} 已是最新：没有 delta 要落\n`
+          : `rev ${res.from} → ${res.to} · 落地 ${res.landed.length} 条` +
+            `${res.whiteouts === 0 ? '' : `（${res.whiteouts} 条 whiteout）`} · 原样 ${res.untouched.length} 条` +
+            `${res.pruned === 0 ? '' : ` · 清掉空目录 ${res.pruned} 个`} · ${res.ms} ms · ${res.strategy} 档\n`,
+      )
+      emitLine(res.merged)
+    }
+    return 0
+  } catch (err) {
+    if (err instanceof EnsureRefused) return fail(err.why)
+    if (err instanceof MountError || err instanceof LandError) return fail(err.message)
+    throw err
+  } finally {
+    await ctx.close()
+  }
+}
+
 /** `p` 是不是在 `dir` 这棵树里。两边都已经 `resolve` 过；`dir` 自己不算"在树里"。 */
 function insideTree(dir: string, p: string): boolean {
   const rel = relative(dir, p)
@@ -578,6 +673,7 @@ async function run(argv: readonly string[]): Promise<number> {
   // 尺子只读，也不进那份"状态"——所以它排在视图之前（§ 8.5 把 diff-stat 与 verify-mat 并列只读）。
   if (cmd === 'diff-stat') return diffStatCmd(root, flags, positional.slice(1), json)
   if (cmd === 'fork') return await forkCmd(root, flags, positional.slice(1), json)
+  if (cmd === 'ensure') return await ensureCmd(root, flags, positional.slice(1), json)
 
   const args = positional.slice(1)
   const need = (n: number): boolean => args.length >= n && !args.slice(0, n).some((a) => a === '')
