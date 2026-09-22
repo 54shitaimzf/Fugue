@@ -4,8 +4,10 @@
 // M2 的代码里没有一处 import M1 的契约；换后端（内存假体 · 快照 · 将来的 Rust 侧）只需
 // 要另写一个这样的小文件。`base` 为 null 时下层是空的——新仓库一个提交都没有。
 import type { DirEntry, EntryMeta } from '../entries.ts'
+import { refFor } from '../refs.ts'
+import { RefNotFoundError } from '../truth/truth.ts'
 import type { Truth } from '../truth/contract.ts'
-import type { BlobId, CommitId, RelPath } from '../terms.ts'
+import type { BlobId, CommitId, RelPath, WriterId } from '../terms.ts'
 import type { Lower } from './contract.ts'
 
 export function lowerAt(truth: Truth, base: CommitId | null): Lower {
@@ -19,4 +21,25 @@ export function lowerAt(truth: Truth, base: CommitId | null): Lower {
     list: (dir: RelPath): Promise<DirEntry[]> =>
       base === null ? Promise.resolve([]) : truth.listAt(base, dir),
   }
+}
+
+/**
+ * 一个 writer 的视图铺在哪个提交上：它自己的 ref 现在指着的那个（§ 4 的 ref 方案）。
+ * **不存在就是 `null`**——新仓库还没有提交，那是正常状态，不是错误。
+ *
+ * 与 `lowerAt` 同一个理由住在这里：CLI 的两条命令与崩溃实验的写者都要这一句，抄三份
+ * 就是三处会漂移的地方。
+ */
+export async function baseFor(truth: Truth, writer: WriterId): Promise<CommitId | null> {
+  try {
+    return await truth.resolve(refFor(writer))
+  } catch (err) {
+    if (err instanceof RefNotFoundError) return null
+    throw err
+  }
+}
+
+/** `baseFor` + `lowerAt`：从"这是哪个 writer"一步到"它的下层"。 */
+export async function lowerFor(truth: Truth, writer: WriterId): Promise<Lower> {
+  return lowerAt(truth, await baseFor(truth, writer))
 }

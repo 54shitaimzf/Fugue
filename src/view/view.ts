@@ -17,9 +17,18 @@ import { createHash } from 'node:crypto'
 import type { Delta } from '../delta.ts'
 import { EMPTY_TREE_ID } from '../entries.ts'
 import type { DirEntry, EntryMeta } from '../entries.ts'
-import type { Log, LogEvent } from '../log/events.ts'
+import type { LogEvent, LogReader } from '../log/events.ts'
 import type { AgentId, BlobId, CommitId, RelPath, ViewRev, WriterId } from '../terms.ts'
-import type { Entry, LoadViewOptions, Lower, UpperEntry, View } from './contract.ts'
+import type {
+  Entry,
+  LoadViewOptions,
+  Lower,
+  SnapEntry,
+  UpperEntry,
+  View,
+  ViewSnapshot,
+  ViewState,
+} from './contract.ts'
 
 const DIR_MODE = 0o40000
 const SYMLINK_MODE = 0o120000
@@ -120,6 +129,8 @@ class MemoryView implements View {
   private readonly ops: { rev: ViewRev; delta: Delta }[]
   private readonly points: Set<ViewRev>
   private cur: ViewRev
+  /** 从快照起时的起点：比它更早的修订点与变更序列不在这个视图里（见 `diff`）。 */
+  private floor: ViewRev
 
   constructor(id: AgentId, lower: Lower) {
     this.id = id
@@ -129,6 +140,7 @@ class MemoryView implements View {
     this.ops = []
     this.points = new Set()
     this.cur = 0
+    this.floor = 0
   }
 
   get base(): CommitId | null {
@@ -139,8 +151,15 @@ class MemoryView implements View {
     return this.cur
   }
 
+  /**
+   * 全部可达修订点，升序，**不重复**。
+   *
+   * 去重不是洁癖：`ckpt/commit` 会把当刻的 rev 再记一次（空视图上的第一次提交记的就是 0），
+   * 于是从 0 全量重放会数出两个 0，而从快照起的视图数不出——`replay --verify` 的两条路
+   * 一比就分家。修订点是**集合**，不是计数。
+   */
   get revs(): ViewRev[] {
-    return [0, ...[...this.points].sort((a, b) => a - b)]
+    return [...new Set([0, ...this.points])].sort((a, b) => a - b)
   }
 
   hasUpper(path: RelPath): boolean {
@@ -157,6 +176,11 @@ class MemoryView implements View {
   private kindFor(p: string): 'add' | 'modify' {
     const own = this.upper.get(p)
     return own !== undefined && own.kind !== 'tombstone' ? 'modify' : 'add'
+  }
+
+  /** 装配体落日志前问的那一句。与重放的定名共用 `kindFor`——**这就是"重放必须一致"的落点**。 */
+  kindOf(path: RelPath): 'add' | 'modify' {
+    return this.kindFor(pathOf(path))
   }
 
   // ────────────────────────────────── 状态：只有这三处会动 upper 与 counts
@@ -448,7 +472,14 @@ class MemoryView implements View {
   }
 
   diff(since?: ViewRev): Delta[] {
-    const from = since === undefined ? -1 : since
+    const from = since === undefined ? 0 : since
+    // 状态里不含有过哪些变更：从快照起的视图说不出快照之前发生了什么。宁可显式拒绝——
+    // 悄悄少给一段，与 § 8.3「diff 是变更序列」这句话正好相反。
+    if (from < this.floor) {
+      throw new Error(
+        `这个视图从 rev ${this.floor} 的快照起：rev ${from} 之前的历史不在它里面（要历史就全量重放）`,
+      )
+    }
     return this.ops.filter((o) => o.rev > from).map((o) => cloneDelta(o.delta))
   }
 
@@ -462,7 +493,39 @@ class MemoryView implements View {
     return last
   }
 
-  // ────────────────────────────────── 重放
+  // ────────────────────────────────── 状态的可持久形式与重放
+
+  /** 上层折叠成一份能写成 JSON 的状态（§ 9.4 的快照）。**按路径排序**，好让文件逐字节可比。 */
+  state(): ViewState {
+    const upper: SnapEntry[] = []
+    for (const [path, e] of this.upper) {
+      if (e.kind === 'tombstone') upper.push({ path, kind: 'tombstone' })
+      else if (e.kind === 'file') {
+        upper.push({ path, kind: 'file', blob: blobIdOf(e.bytes), mode: e.mode })
+      } else upper.push({ path, kind: 'symlink', target: e.target })
+    }
+    upper.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    return { rev: this.cur, points: [...this.points].sort((a, b) => a - b), upper }
+  }
+
+  /**
+   * 从一份状态起（快照）。**它只铺上层**，下层照旧按需读——所以 base 前移与它无关。
+   *
+   * 变更序列不在这里面，所以 `floor` 立起来：`diff` 从此不回答更早的修订点。
+   */
+  async seed(s: ViewState): Promise<void> {
+    for (const e of s.upper) {
+      if (e.kind === 'tombstone') this.setSlot(e.path, { kind: 'tombstone' })
+      else if (e.kind === 'symlink') this.setSlot(e.path, { kind: 'symlink', target: e.target })
+      else {
+        const bytes = await this.lower.readBlob(e.blob)
+        this.setSlot(e.path, { kind: 'file', bytes, mode: normMode(e.mode) })
+      }
+    }
+    for (const p of s.points) this.points.add(p)
+    this.cur = Math.max(this.cur, s.rev)
+    this.floor = s.rev
+  }
 
   async replay(e: LogEvent): Promise<void> {
     switch (e.t) {
@@ -508,11 +571,19 @@ class MemoryView implements View {
   }
 }
 
-/** 重放到 `upToRev` 为止（§ 9.4 的第三步；快照是第四单元的加速项，此处只做全量重放）。 */
-export async function loadView(log: Log, agent: AgentId, opts: LoadViewOptions): Promise<View> {
+/**
+ * 重放（§ 9.4）：有快照就从快照起，没有就从 seq=0 起；只重放到 `upToRev` 为止。
+ *
+ * **快照只在它不晚于 `upToRev` 时才用**——它换掉的是历史，问一个比它更早的修订点时它帮不上
+ * 忙，忽略它只是慢一点。除此之外没有任何一条判断依赖快照有没有、对不对。
+ */
+export async function loadView(log: LogReader, agent: AgentId, opts: LoadViewOptions): Promise<View> {
   const view = new MemoryView(agent, opts.lower)
   const stop = opts.upToRev
-  for await (const e of log.readByWriter(agent as WriterId)) {
+  const snap = opts.snap
+  const useSnap = snap !== undefined && (stop === undefined || snap.state.rev <= stop)
+  if (snap !== undefined && useSnap) await view.seed(snap.state)
+  for await (const e of log.readByWriter(agent as WriterId, useSnap ? snap.seq : 0)) {
     const rev = (e as { rev?: unknown }).rev
     if (stop !== undefined && typeof rev === 'number' && rev > stop) continue
     await view.replay(e)

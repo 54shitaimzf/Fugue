@@ -49,6 +49,19 @@ async function eventFor(agent: AgentId, rev: ViewRev, d: Delta, truth: Truth): P
   }
 }
 
+/**
+ * 这次写在上层是新增还是改写——**由视图说了算，不由调用者说**。
+ *
+ * 调用者说错一次，同一份日志在活路径与重放上就会给出两份不同的 `diff()`：重放那边按上层
+ * 重新定名（`View.replay` 走 `kindFor`），而活路径记的是调用者递进来的那个名字。§ 8.3 要求
+ * `diff()` 在重放前后逐字节一致，所以定名这一步只能有一处，且必须在视图里。
+ */
+function normalize(view: View, d: Delta): Delta {
+  if (d.kind !== 'add' && d.kind !== 'modify') return d
+  const kind = view.kindOf(d.path)
+  return kind === d.kind ? d : { ...d, kind }
+}
+
 /** 只有下层才有的内容，先钉进日志；返回 null 表示这次变更不依赖下层。 */
 async function pinDown(t: EditTarget, d: Delta): Promise<Delta | null> {
   if (d.kind !== 'chmod' && d.kind !== 'rename') return null
@@ -69,7 +82,8 @@ async function pinDown(t: EditTarget, d: Delta): Promise<Delta | null> {
 }
 
 /** 落一条变更。返回它的 rev（一次改名/改权限可能是两条事件，返回的是最后一条的）。 */
-export async function applyEdit(target: EditTarget, d: Delta): Promise<ViewRev> {
+export async function applyEdit(target: EditTarget, raw: Delta): Promise<ViewRev> {
+  const d = normalize(target.view, raw)
   const pin = await pinDown(target, d)
   const deltas: Delta[] = pin === null ? [d] : [pin, d]
   const first = target.view.rev + 1

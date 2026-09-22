@@ -10,7 +10,7 @@ import type { FileHandle } from 'node:fs/promises'
 import { mkdir, open, readFile, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { decodeLine, encodeEvent } from './envelope.ts'
-import type { Log, LogEvent } from './events.ts'
+import type { Log, LogEvent, LogReader } from './events.ts'
 import type { LogPos, LogSeq, WriterId } from '../terms.ts'
 
 export type SyncLevel = 'each' | 'batch' | 'never'
@@ -28,6 +28,13 @@ export interface LogOptions {
 /** `Log` 加一个生命周期口。契约本身仍是 § 8.1 的三个方法。 */
 export interface LogHandle extends Log {
   close(): Promise<void>
+  /**
+   * 此刻有日志的全部 writer，排序。
+   *
+   * **读侧要它**：`replay --verify` 得逐个视图走一遍，而"有哪些视图"这件事只有日志目录
+   * 知道。`readMerged` 也能枚举出来，但那是拿一个流去回答一个集合问题。
+   */
+  writers(): Promise<WriterId[]>
 }
 
 // 只用可擦除语法：Node 直跑 .ts 是 strip-only，参数属性带运行时语义，用不了。
@@ -56,7 +63,8 @@ const TAIL_WINDOW = 64 * 1024
  * writer 标识同时是文件名，所以它先过一遍路径检查。拒绝空、绝对路径、反斜杠、
  * 空字节，以及任何以点开头的段——那些会走出 log 目录，或者藏起来。
  */
-function assertWriterId(w: WriterId): void {
+/** `snap/<writer>/` 也要过这一关：writer 标识同时是目录名。 */
+export function assertWriterId(w: WriterId): void {
   const bad = (why: string): never => {
     throw new Error(`writer 标识非法（${why}）：${JSON.stringify(w)}`)
   }
@@ -69,7 +77,11 @@ function assertWriterId(w: WriterId): void {
   }
 }
 
-function writerFile(root: string, w: WriterId): string {
+/**
+ * 该 writer 的日志文件。**导出是给快照用的**：快照要拿它的字节数，判断自己是不是比日志新
+ * （`snap.ts` 顶部的第三条失守）。除此之外没有第二个调用者。
+ */
+export function logFileOf(root: string, w: WriterId): string {
   assertWriterId(w)
   return join(logDir(root), w + '.jsonl')
 }
@@ -106,7 +118,7 @@ function parseWriterText(w: WriterId, text: string): Row[] {
 async function readWriter(root: string, w: WriterId): Promise<Row[]> {
   let text: string
   try {
-    text = await readFile(writerFile(root, w), 'utf8')
+    text = await readFile(logFileOf(root, w), 'utf8')
   } catch (err) {
     if ((err as { code?: string }).code === 'ENOENT') return []
     throw err
@@ -180,7 +192,7 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
   async function state(w: WriterId): Promise<WriterState> {
     const hit = writers.get(w)
     if (hit) return hit
-    const file = writerFile(root, w)
+    const file = logFileOf(root, w)
     await mkdir(dirname(file), { recursive: true })
     const fh = await open(file, 'a+')
     let nextSeq: LogSeq
@@ -261,5 +273,25 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
     await Promise.all(all.map((s) => s.fh.close().catch(() => undefined)))
   }
 
-  return { append, readByWriter, readMerged, close }
+  return { append, readByWriter, readMerged, writers: () => listWriters(root), close }
+}
+
+/**
+ * 把**交错的全序流**切成某个 writer 的那一份，冒充它的日志（只读）。
+ *
+ * 两个地方要它：`replay --verify` 与第四单元的交错断言。它兑现的是 § 9.2 那句话——
+ * `writer` 字段是"重放时用于交错排序"的，于是**同一份历史有两种读法**：按 writer 读，
+ * 或按交错序读再筛。两种读法重建出来的视图必须逐字节相同，否则"重建结果只由自己的操作
+ * 决定"就是空的。
+ *
+ * 它不实现 `append`：这条面是只读的，重放不该有写路径。
+ */
+export function mergedFace(log: Log, w: WriterId): LogReader {
+  return {
+    readByWriter: async function* (target: WriterId, fromSeq: LogSeq = 0): AsyncGenerator<LogEvent> {
+      for await (const { pos, e } of log.readMerged(fromSeq)) {
+        if (pos.writer === target) yield e
+      }
+    },
+  }
 }

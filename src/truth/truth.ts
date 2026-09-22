@@ -302,13 +302,23 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
     return r.status === 0 && id !== '' ? id : null
   }
 
+  /**
+   * ref → 它指向的提交。
+   *
+   * **先取一次值，再对那个值问"是不是提交"**——不是对 ref 再问一次。对 ref 问两次会读到两个
+   * 时刻：另一个写者在这中间推进了 ref，第一次读到的"不存在"就在第二次读里变成"存在但不是
+   * 提交"，一次良性竞争被报成一条不可重试的硬错误（实测：两个 `checkpoint` 抢同一个 ref，
+   * 每十次里有一次）。**值是 oid，对象不可变——问它才是稳的。**
+   */
   async function resolve(ref: RefName): Promise<CommitId> {
-    const r = await git.tryRun(['rev-parse', '--verify', '--quiet', ref + '^{commit}'])
+    const raw = await rawRefValue(ref)
+    if (raw === null) {
+      const probe = await git.tryRun(['rev-parse', '--verify', '--quiet', ref])
+      throw new RefNotFoundError(ref, probe.stderr)
+    }
+    const r = await git.tryRun(['rev-parse', '--verify', '--quiet', raw + '^{commit}'])
     const id = r.stdout.toString('utf8').trim()
     if (r.status === 0 && id !== '') return id as CommitId
-    // `^{commit}` 失败有两种原因，分不开就再问一次：这个 ref 到底存不存在。
-    const raw = await rawRefValue(ref)
-    if (raw === null) throw new RefNotFoundError(ref, r.stderr)
     throw new RefNotCommitError(ref, raw, r.stderr)
   }
 

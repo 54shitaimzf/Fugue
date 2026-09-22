@@ -89,3 +89,10 @@ export interface Log {
   readByWriter(w: WriterId, fromSeq?: LogSeq): AsyncIterable<LogEvent>
   readMerged(fromSeq?: LogSeq): AsyncIterable<{ pos: LogPos; e: LogEvent }>
 }
+
+/**
+ * `Log` 的读侧。**重放只需要这一半**——`loadView` 收的是它，不是整个 `Log`。
+ *
+ * 这不是为了好看：写路径与重放路径分开之后，"重放会不会改日志"这个问题在签名上就答完了。
+ */
+export type LogReader = Pick<Log, 'readByWriter'>

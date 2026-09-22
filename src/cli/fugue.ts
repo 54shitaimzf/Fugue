@@ -3,11 +3,12 @@
 //
 // **单次进程 + 每次重建**：不需要守护进程、不需要常驻状态、崩溃恢复就是"下一条命令照常
 // 加载"。命令逐个单元长出来：U1 挂上 `log`，U2 挂上 `commit`，U3 挂上视图的八条（§ 9.6
-// 的读 · 写 · 检视三组）；U6 收口时这张表才齐。
+// 的读 · 写 · 检视三组），U4 挂上 `replay`；U6 收口时这张表才齐。
 //
 // 这一层只做三件事：解析参数 · 把结构化结果排成两列（人读的与 `--json` 的）· 决定退出码。
 // **语义不在这里**：一次变更的顺序与校验住在 `src/view/edit.ts`，提交住在
 // `src/checkpoint.ts`——两个都是跨层接线（§ 7），这里只是它们的一个人侧入口。
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -15,16 +16,15 @@ import { checkpoint } from '../checkpoint.ts'
 import type { Delta } from '../delta.ts'
 import type { TreeEntry } from '../entries.ts'
 import type { LogEvent } from '../log/events.ts'
-import { LogCorruptError, logDir, openLog } from '../log/log.ts'
-import type { LogHandle } from '../log/log.ts'
-import { refFor } from '../refs.ts'
-import type { AgentId, CommitId, LogPos, ViewRev, WriterId } from '../terms.ts'
-import { openTruth, RefNotFoundError } from '../truth/truth.ts'
+import { LogCorruptError, logDir, mergedFace, openLog } from '../log/log.ts'
+import type { LogHandle, SyncLevel } from '../log/log.ts'
+import type { AgentId, LogPos, ViewRev, WriterId } from '../terms.ts'
+import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import type { View } from '../view/contract.ts'
 import { applyEdit } from '../view/edit.ts'
-import { lowerAt } from '../view/lower.ts'
-import { snapshotOf } from '../view/snapshot.ts'
+import { lowerFor } from '../view/lower.ts'
+import { readSnapshot, saveSnapshot, snapshotOf } from '../view/snapshot.ts'
 import { loadView } from '../view/view.ts'
 
 const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
@@ -40,6 +40,7 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
   chmod <path> <mode>        改模式；<mode> 是八进制，如 755
   diff [--since <rev>]       自某个修订点以来的变更
   commit -m <msg>            把当前视图提交成一个提交点，推进它的 ref
+  replay [--to <rev>]        从日志重建视图并报出它；--verify 逐 agent 比对两条重建路径
 
 选项
   --root <dir>    工作区根，默认当前目录；日志在 <root>/.fugue/log/，对象库在 <root>/.git
@@ -58,7 +59,7 @@ interface Parsed {
  * `fugue [--root <dir>] [--agent <id>] [--json] <command>`，开关排在命令**前面**，
  * 一个贪心的解析器会把命令当成开关的值吃掉。
  */
-const VALUED: ReadonlySet<string> = new Set(['root', 'agent', 'm', 'from', 'since'])
+const VALUED: ReadonlySet<string> = new Set(['root', 'agent', 'm', 'from', 'since', 'to'])
 
 function parseArgv(argv: readonly string[]): Parsed {
   const flags = new Map<string, string | true>()
@@ -112,11 +113,23 @@ function writerOf(flags: Map<string, string | true>): WriterId {
 }
 
 interface Ctx {
+  root: string
   log: LogHandle
   truth: TruthHandle
   view: View
   writer: WriterId
   close(): Promise<void>
+}
+
+interface OpenOptions {
+  /**
+   * 要变更序列的命令（`diff`）。**快照换掉的正是历史**，所以这些命令明说不看快照——
+   * 加速项不该在任何一处改变语义，答不上来的问题就得从 0 重放。
+   */
+  history?: boolean
+  upToRev?: ViewRev
+  /** 日志的耐久档位。提交点用 `each`（§ 9.5 把提交点与检查点列在同一档）。 */
+  sync?: SyncLevel
 }
 
 /**
@@ -126,21 +139,31 @@ interface Ctx {
  * 提交把视图定格成一个新的提交点之后，base 随之前移——上层仍然带着这次 agent 写过的
  * 全部路径，所以读出不变。
  */
-async function openCtx(root: string, flags: Map<string, string | true>): Promise<Ctx> {
+async function openCtx(
+  root: string,
+  flags: Map<string, string | true>,
+  opts: OpenOptions = {},
+): Promise<Ctx> {
   const writer = writerOf(flags)
-  const log = openLog(root)
+  const log = openLog(root, opts.sync === undefined ? {} : { sync: opts.sync })
   let truth: TruthHandle | null = null
   try {
     truth = openTruth(root)
-    let base: CommitId | null = null
-    try {
-      base = await truth.resolve(refFor(writer))
-    } catch (err) {
-      if (!(err instanceof RefNotFoundError)) throw err
-    }
-    const view = await loadView(log, writer as AgentId, { lower: lowerAt(truth, base) })
+    const lower = await lowerFor(truth, writer)
+    // 有快照就从快照起（§ 9.4 的第一步）：这一步只影响快慢，影响不到读出来的东西——
+    // `diff` 那种要历史的命令在上面的 `history` 里被排除掉了。
+    const snap =
+      opts.history === true
+        ? null
+        : await readSnapshot(root, writer, opts.upToRev === undefined ? {} : { upToRev: opts.upToRev })
+    const view = await loadView(
+      log,
+      writer as AgentId,
+      snap === null ? { lower, upToRev: opts.upToRev } : { lower, upToRev: opts.upToRev, snap },
+    )
     const t = truth
     return {
+      root,
       log,
       truth: t,
       view,
@@ -218,7 +241,12 @@ async function commit(ctx: Ctx, msg: string, json: boolean): Promise<number> {
     entries,
     rev: ctx.view.rev,
     msg,
+    // 视图铺在哪个提交上，这次提交就推在哪个提交之上（`checkpoint` 的 CAS 期望）。
+    expectedOld: ctx.view.base,
   })
+  // 提交点同时是快照点（§ 9.5 把提交点与检查点列在同一档）：那一行日志已经落了，把上层的
+  // 折叠留在 `<root>/.fugue/snap/` 下。**写不成就当没写**——快照从不阻塞写入（§ 9.4）。
+  await saveSnapshot(ctx.root, ctx.writer, ctx.view, r.seq)
   if (json) emitJson({ ...r, rev: ctx.view.rev })
   else emitLine(`${r.commit}\t${r.ref}\t${r.entries} 个条目`)
   return 0
@@ -250,10 +278,12 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0
   }
 
+  if (cmd === 'replay') return await replay(root, flags, json)
+
   if (cmd === 'commit') {
     const msg = flags.get('m')
     if (typeof msg !== 'string' || msg === '') return usageFail('commit 需要 -m <msg>')
-    const ctx = await openCtx(root, flags)
+    const ctx = await openCtx(root, flags, { sync: 'each' })
     try {
       return await commit(ctx, msg, json)
     } finally {
@@ -316,7 +346,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         since = Number(sinceRaw)
         if (!Number.isInteger(since) || since < 0) return usageFail('--since 要一个非负整数修订号')
       }
-      const ctx = await openCtx(root, flags)
+      const ctx = await openCtx(root, flags, { history: true })
       try {
         const deltas = ctx.view.diff(since)
         if (json) emitJson(deltas.map(deltaJson))
@@ -345,6 +375,189 @@ export async function main(argv: readonly string[]): Promise<number> {
     default:
       return usageFail(`未知命令：${cmd}`)
   }
+}
+
+/**
+ * `fugue replay [--to <rev>]` / `fugue replay --verify`（§ 9.6 的重放组）。
+ *
+ * **只读。** 它同时是 S1 的验收脚本与崩溃恢复实验的探针：一个写者被杀之后，第一条要跑的
+ * 就是它——所以它不能在坏现场上再写什么。
+ */
+async function replay(
+  root: string,
+  flags: Map<string, string | true>,
+  json: boolean,
+): Promise<number> {
+  const toRaw = flags.get('to')
+  let upToRev: ViewRev | undefined
+  if (typeof toRaw === 'string') {
+    const n = Number(toRaw)
+    if (!Number.isInteger(n) || n < 0) return usageFail('--to 要一个非负整数修订号')
+    upToRev = n
+  }
+  const only = flags.get('agent')
+  const log = openLog(root)
+  let truth: TruthHandle | null = null
+  const t0 = Date.now()
+  try {
+    truth = openTruth(root)
+    if (flags.has('verify')) {
+      const writers = typeof only === 'string' ? [only as WriterId] : await log.writers()
+      if (writers.length === 0) {
+        if (json) emitJson({ ok: true, agents: [] })
+        else emitLine('还没有任何 writer 写过日志：没有可重放的视图')
+        return 0
+      }
+      return await verify(root, log, truth, writers, upToRev, json)
+    }
+    const writer = writerOf(flags)
+    const lower = await lowerFor(truth, writer)
+    const snap = await readSnapshot(root, writer, upToRev === undefined ? {} : { upToRev })
+    const view = await loadView(
+      log,
+      writer as AgentId,
+      snap === null ? { lower, upToRev } : { lower, upToRev, snap },
+    )
+    const entries = await snapshotOf(view)
+    const ms = Date.now() - t0
+    const from =
+      snap === null ? { kind: 'genesis' } : { kind: 'snapshot', seq: snap.seq, rev: snap.state.rev }
+    if (json) emitJson({ agent: writer, rev: view.rev, base: view.base, from, entries, ms })
+    else {
+      const where =
+        snap === null ? '从 0 全量重放' : `从快照 seq ${snap.seq}（rev ${snap.state.rev}）起`
+      emitLine(`${view.rev}\t${view.base ?? '(没有提交)'}\t${entries.length} 个条目\t${where}`)
+    }
+    return 0
+  } finally {
+    await log.close()
+    if (truth !== null) await truth.close()
+  }
+}
+
+/** 条目表压成一行可比对的字：走目录的顺序不该参与判定。 */
+function entryKey(rows: TreeEntry[]): string {
+  return rows
+    .map((r) => `${r.mode.toString(8)} ${r.id} ${r.name}`)
+    .sort()
+    .join('\n')
+}
+
+/** 变更压成一行可比对的字。**`add` 与 `modify` 要分开**——它由日志前缀决定，不是细节。 */
+function deltaKey(d: Delta): string {
+  switch (d.kind) {
+    case 'add':
+    case 'modify':
+      return `${d.kind} ${d.path} ${d.mode.toString(8)} ${d.bytes.length} ${createHash('sha1').update(d.bytes).digest('hex')}`
+    case 'symlink':
+      return `symlink ${d.path} → ${d.target}`
+    case 'delete':
+      return `delete ${d.path}`
+    case 'rename':
+      return `rename ${d.from} → ${d.to}`
+    case 'chmod':
+      return `chmod ${d.path} ${d.mode.toString(8)}`
+  }
+}
+
+/**
+ * 两份视图是不是同一份：`rev` · `base` · `revs` · 全量读出 · 变更序列（从 `since` 起）。
+ *
+ * `since` 是给从快照起的视图留的：它答不了比快照更早的变更序列，所以两边都从快照那个
+ * 修订点比起——**这正是"快照换掉的是历史，不是状态"的可测形式**。
+ */
+function sameView(
+  a: View,
+  aRows: TreeEntry[],
+  b: View,
+  bRows: TreeEntry[],
+  since: ViewRev,
+): boolean {
+  if (a.rev !== b.rev || a.base !== b.base) return false
+  if (JSON.stringify(a.revs) !== JSON.stringify(b.revs)) return false
+  if (entryKey(aRows) !== entryKey(bRows)) return false
+  const x = a.diff(since).map(deltaKey)
+  const y = b.diff(since).map(deltaKey)
+  return x.length === y.length && x.every((k, i) => k === y[i])
+}
+
+/**
+ * `--verify`：逐 agent 重建视图，比对 `rev` · 全量读出 · `diff()` · `revs`（§ 9.6）。
+ *
+ * **两条独立的重建路径对着同一条日志，各走一遍**：
+ *
+ *   1. 按 writer 读（`readByWriter`） 与 按交错全序读再筛（`mergedFace`）
+ *   2. 从 0 全量重放 与 从快照起再重放尾部
+ *
+ * 第 2 条就是"快照是纯加速项"的验收——它把快照删掉只是慢，不会不一样；第 1 条是"重建结果
+ * 只由自己的操作决定"的验收——交错序里夹着别人的事件，读出来的还是自己那份。
+ */
+async function verify(
+  root: string,
+  log: LogHandle,
+  truth: TruthHandle,
+  writers: WriterId[],
+  upToRev: ViewRev | undefined,
+  json: boolean,
+): Promise<number> {
+  const reports: Record<string, unknown>[] = []
+  let bad = 0
+  for (const writer of writers) {
+    const checks: { what: string; ok: boolean; detail?: string }[] = []
+    let rev = 0
+    let count = 0
+    let snapInfo: Record<string, unknown> | null = null
+    try {
+      const lower = await lowerFor(truth, writer)
+      const full = await loadView(log, writer as AgentId, { lower, upToRev })
+      const want = await snapshotOf(full)
+      rev = full.rev
+      count = want.length
+
+      const inter = await loadView(mergedFace(log, writer), writer as AgentId, { lower, upToRev })
+      checks.push({
+        what: '交错读 == 按 writer 读',
+        ok: sameView(full, want, inter, await snapshotOf(inter), 0),
+      })
+
+      const snap = await readSnapshot(root, writer, upToRev === undefined ? {} : { upToRev })
+      if (snap === null) {
+        checks.push({
+          what: '从快照起 == 从 0 起',
+          ok: true,
+          detail: '没有快照：这一路只跑了全量重放',
+        })
+      } else {
+        snapInfo = { seq: snap.seq, rev: snap.state.rev }
+        const fast = await loadView(log, writer as AgentId, { lower, upToRev, snap })
+        checks.push({
+          what: `从快照 seq ${snap.seq}（rev ${snap.state.rev}）起 == 从 0 起`,
+          ok: sameView(full, want, fast, await snapshotOf(fast), snap.state.rev),
+        })
+      }
+    } catch (err) {
+      checks.push({
+        what: '重建',
+        ok: false,
+        detail: err instanceof Error ? err.message : String(err),
+      })
+    }
+    const ok = checks.every((c) => c.ok)
+    if (!ok) bad++
+    reports.push({ writer, ok, rev, entries: count, snapshot: snapInfo, checks })
+    if (!json) {
+      emitLine(`${ok ? 'ok  ' : 'FAIL'}\t${writer}\trev ${rev}\t${count} 个条目`)
+      for (const c of checks) {
+        const mark = c.ok ? '·' : '×'
+        const detail = c.detail === undefined ? '' : `（${c.detail}）`
+        if (!c.ok || c.detail !== undefined) emitLine(`      ${mark} ${c.what}${detail}`)
+      }
+    }
+  }
+  if (json) emitJson({ ok: bad === 0, agents: reports })
+  else if (bad === 0) emitLine(`${writers.length} 个视图全部一致`)
+  if (bad !== 0) return fail(`${bad} 个视图没有通过重放比对`)
+  return 0
 }
 
 /** 四条写命令共用的那一小段：把命令行收成一个 delta，落下去，报 rev。 */

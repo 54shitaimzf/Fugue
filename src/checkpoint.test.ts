@@ -52,9 +52,12 @@ test('checkpoint：两个写者抢同一个 ref → 恰一个成功，**输的�
     return [{ name: 'f.txt', mode: 0o100644, id: blob }]
   }
   // 两个都从"这个 ref 还不存在"出发：expectedOld 都是 null，所以恰一个能赢。
+  // **期望由调用者给**，所以这一条不再取决于"谁先读到 ref"——两次推进对同一个旧值做 CAS，
+  // git 保证恰一个成功。要是让 `checkpoint` 自己去读 ref，后读的那个会读到赢家的提交，
+  // 于是两个都成功："恰一个"就成了时序的运气。
   const [a, b] = await Promise.allSettled([
-    checkpoint({ log, truth, writer, entries: await mk('A'), rev: 1, msg: 'A' }),
-    checkpoint({ log, truth, writer, entries: await mk('B'), rev: 1, msg: 'B' }),
+    checkpoint({ log, truth, writer, entries: await mk('A'), rev: 1, msg: 'A', expectedOld: null }),
+    checkpoint({ log, truth, writer, entries: await mk('B'), rev: 1, msg: 'B', expectedOld: null }),
   ])
   const ok = [a, b].filter((r) => r.status === 'fulfilled')
   const bad = [a, b].filter((r) => r.status === 'rejected')
@@ -111,6 +114,7 @@ test('面外调用：日志的 writer 标识进得去，提交点回得来', asy
     entries: [{ name: 'src/a.ts', mode: 0o100644, id: blob }],
     rev: 1,
     msg: '面外提交',
+    expectedOld: null,
   })
   assert.equal(r.ref, 'refs/heads/agent/r1/2')
   assert.deepEqual(r.parents, [])
@@ -124,6 +128,7 @@ test('面外调用：日志的 writer 标识进得去，提交点回得来', asy
     entries: [{ name: 'src/a.ts', mode: 0o100644, id: blob }],
     rev: 1,
     msg: '第二次',
+    expectedOld: r.commit,
   })
   assert.deepEqual(r2.parents, [r.commit])
 })
