@@ -26,6 +26,7 @@ import type { TreeEntry } from '../entries.ts'
 import type { LogEvent } from '../log/events.ts'
 import { LogCorruptError, logDir, mergedFace, openLog } from '../log/log.ts'
 import type { LogHandle, SyncLevel } from '../log/log.ts'
+import { HostError, assertHost } from '../roots/host.ts'
 import type { LogPos, ViewRev, WriterId } from '../terms.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
@@ -56,7 +57,8 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
 
 选项
   --root <dir>    工作区根，默认当前目录；日志在 <root>/.fugue/log/，对象库在 <root>/.git，
-                  配置在 <root>/.fugue/config
+                  配置在 <root>/.fugue/config。工作区要落在一块原生的本地文件系统上：
+                  落在 9p / drvfs 那一类跨内核的落点上时拒绝启动（架构 § 15.7 的 E1）
   --agent <id>    操作哪个视图；未指定时取 round（主线）
   --json          结构化输出
   --help          这张表
@@ -350,6 +352,17 @@ async function run(argv: readonly string[]): Promise<number> {
     return 0
   }
   if (cmd === undefined) return usageFail('需要一个命令')
+
+  // 落点先探（架构 § 15.7 的 E1）。**E1 是硬要求，所以这里是拒绝启动，不是降级运行**：
+  // 落在 9p / drvfs 那一类跨内核的落点上时，失败模式是静默的（§ 15.8 的"不成立"档）。
+  // 根还不存在时探它最近的祖先（`host.ts`），所以这条检查不依赖"目录已经建好"；
+  // `--help` 在上面，不受影响。
+  try {
+    assertHost(root)
+  } catch (err) {
+    if (err instanceof HostError) return fail(err.message)
+    throw err
+  }
 
   if (cmd === 'log') {
     const only = flags.get('agent')

@@ -21,6 +21,12 @@ export type SignalId = string
 /** 视图内的相对路径。 */
 export type RelPath = string
 
+/**
+ * 虚拟空间之外的绝对路径：一个物理落点（架构 § 8.4 的四个根 · § 8.6 把 `cwd` 翻成物理路径）。
+ * 它在这里而不是在 M3 的契约里，因为 M3 · M4 · M5 都要说这个词，而它只该有一个定义。
+ */
+export type AbsPath = string
+
 /** git 侧的名字，架构 § 17 把它们列为需先冻结的接口。 */
 export type RefName = string
 export type BlobId = string
