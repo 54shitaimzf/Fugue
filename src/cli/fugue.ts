@@ -8,7 +8,7 @@
 // **语义不在这里**：一次变更的顺序与校验住在 `src/view/edit.ts`，提交住在
 // `src/checkpoint.ts`——两个都是跨层接线（§ 7），这里只是它们的一个人侧入口。
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkpoint } from '../checkpoint.ts'
@@ -21,12 +21,16 @@ import {
   setConfig,
   writeConfig,
 } from '../config.ts'
+import { agentFor } from '../identity.ts'
 import type { Delta } from '../delta.ts'
 import type { TreeEntry } from '../entries.ts'
 import type { LogEvent } from '../log/events.ts'
 import { LogCorruptError, logDir, mergedFace, openLog } from '../log/log.ts'
 import type { LogHandle, SyncLevel } from '../log/log.ts'
+import type { ChangeStatus, TreeStat } from '../materialize/diffstat.ts'
+import { TreeStatError, WORKSPACE_STATE, diffStat, loadTreeStat, scanTree, storeTreeStat } from '../materialize/diffstat.ts'
 import { HostError, assertHost } from '../roots/host.ts'
+import { createRoots } from '../roots/roots.ts'
 import type { LogPos, ViewRev, WriterId } from '../terms.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
@@ -51,6 +55,9 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
   revs                       全部可达修订点，升序；0 是 base 本身
   commit -m <msg>            把当前视图提交成一个提交点，推进它的 ref
   replay [--to <rev>]        从日志重建视图并报出它；--verify 逐 agent 比对两条重建路径
+  diff-stat [<dir>] [--baseline <f>] [--save <f>]
+                             全树 (mtime,size,hash) 快照对比；不给 <dir> 时扫本 agent 的合并树，
+                             基线由 --baseline 读、--save 存（三个路径都相对当前目录，不是 --root）
   config show                工作区配置的全文
   config get <key>           配置里的一条；<key> 是点分路径，如 docs.trace.path
   config set <key> <value>   改一条；<value> 整份解析得了就当 JSON 值，否则当字符串
@@ -74,7 +81,7 @@ interface Parsed {
  * `fugue [--root <dir>] [--agent <id>] [--json] <command>`，开关排在命令**前面**，
  * 一个贪心的解析器会把命令当成开关的值吃掉。
  */
-const VALUED: ReadonlySet<string> = new Set(['root', 'agent', 'm', 'from', 'since', 'to'])
+const VALUED: ReadonlySet<string> = new Set(['root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save'])
 
 function parseArgv(argv: readonly string[]): Parsed {
   const flags = new Map<string, string | true>()
@@ -325,6 +332,76 @@ async function config(root: string, args: string[], json: boolean): Promise<numb
 }
 
 /**
+ * `fugue diff-stat [<dir>] [--baseline <file>] [--save <file>]`（§ 9.6 的物化行 · § 9.8）。
+ *
+ * 它是**尺子**，不是物化的一步：只读——不动物化树、不动挂载态（§ 8.5 把 `diff-stat` 与
+ * `verify-mat` 并列写成只读）。所以它既不建视图也不读日志：树在盘上什么样，它就报什么样。
+ *
+ * 不给 `<dir>` 时扫的是这个 agent 的合并树（§ 8.4 的 `merged`）。树还没铺就**拒绝并指路
+ * `fork`**——不当成"空树，0 条变化"：那是尺子最坏的一种错法，量出来的 0 会被读成"树没变"。
+ * 基线由 `--baseline` 给、`--save` 存，它自己不占持久化位置（PLAN § 5.2 的 V1 行）。
+ *
+ * **变化条数不进退出码**：退出 0 就是"扫完了、比完了"。§ 9.8 里 `1` 是"这件事没做成"，
+ * 而"树变了"不是没做成。
+ */
+function diffStatCmd(root: string, flags: Map<string, string | true>, args: string[], json: boolean): number {
+  const where = args[0]
+  let dir: string
+  try {
+    dir = where === undefined ? createRoots(resolve(root)).mergedRoot(agentFor(writerOf(flags))) : resolve(where)
+  } catch (err) {
+    return fail((err as Error).message)
+  }
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    if (where !== undefined) return fail(`不是一棵能扫的树：${dir}`)
+    return fail(`物化的合并树还没铺：${dir}\n先 fugue fork <base> 铺一棵（§ 8.5）。`)
+  }
+
+  const baseFlag = flags.get('baseline')
+  const saveFlag = flags.get('save')
+  if (baseFlag === true || saveFlag === true) return usageFail('--baseline 与 --save 都要一个文件名')
+  const baseFile = typeof baseFlag === 'string' ? resolve(baseFlag) : undefined
+  const saveFile = typeof saveFlag === 'string' ? resolve(saveFlag) : undefined
+
+  let before: TreeStat | undefined
+  let now: TreeStat
+  try {
+    // 基线**先读**：读不动就拒绝，绝不当成"什么都没变"（与配置同一条纪律）。
+    if (baseFile !== undefined) before = loadTreeStat(baseFile)
+    now = scanTree(dir, { skip: WORKSPACE_STATE })
+    if (saveFile !== undefined) storeTreeStat(saveFile, now)
+  } catch (err) {
+    if (err instanceof TreeStatError) return fail(err.message)
+    return fail(`扫不动 ${dir}：${(err as Error).message}`)
+  }
+  // 过程走 stderr（§ 9.8 的 stdout 纪律）。
+  if (saveFile !== undefined) process.stderr.write(`快照存到 ${saveFile}\n`)
+
+  const paths = now.leaves.length
+  // 没给基线：这是一次"拍快照"，报的是树自己。
+  if (before === undefined) {
+    if (json) emitJson({ root: now.root, paths, leaves: now.leaves })
+    else emitLine(`${paths} 个叶子\t${now.root}`)
+    return 0
+  }
+
+  const changes = diffStat(before, now)
+  if (json) emitJson({ root: now.root, baseline: baseFile, paths, count: changes.length, changes })
+  else {
+    for (const c of changes) emitLine(`${STATUS_MARK[c.status]}\t${c.path}\t${c.columns.join(',')}`)
+    process.stderr.write(
+      changes.length === 0
+        ? `没有变化\t${paths} 个叶子\t基线 ${baseFile}\n`
+        : `${changes.length} 条变化\t${paths} 个叶子\t基线 ${baseFile}\n`,
+    )
+  }
+  return 0
+}
+
+/** 人读那一面的记号：增 · 删 · 改。`--json` 那一面给的是 `status` 这个字本身。 */
+const STATUS_MARK: Record<ChangeStatus, string> = { added: '+', removed: '-', changed: '~' }
+
+/**
  * 最外面那一层只做一件事：**把用法错翻成退出码 2**（§ 9.8 的退出码行）。
  *
  * 判据是"这条命令行本身就不成立"。它与"做不成"（1）分开是有用的：脚本要能一眼分出
@@ -393,6 +470,9 @@ async function run(argv: readonly string[]): Promise<number> {
 
   // 配置不建视图、不读日志：它是工作区的输入，不是它的状态（§ 15.3.a 末段）。
   if (cmd === 'config') return await config(root, positional.slice(1), json)
+
+  // 尺子只读，也不进那份"状态"——所以它排在视图之前（§ 8.5 把 diff-stat 与 verify-mat 并列只读）。
+  if (cmd === 'diff-stat') return diffStatCmd(root, flags, positional.slice(1), json)
 
   const args = positional.slice(1)
   const need = (n: number): boolean => args.length >= n && !args.slice(0, n).some((a) => a === '')
