@@ -141,14 +141,14 @@ export function clearMaterialization(merged: AbsPath, parts: readonly AbsPath[])
 }
 
 /**
- * 删一棵树。** 先试， 才往下走。**
+ * 删一棵树。**`rmdir` 先试，`readdir` 才往下走。**
  *
- * 这一句不是优化，是  那一门留下的一个事实：内核自己在  里建的
- *  是 ，谁都读不了它。 会先  每个
- * 目录，于是在它上面 ——而那个目录是**空的**， 一步就完。实测：
- * 删得掉、 删不掉，差别就在这一步的顺序。
+ * 这一句不是优化，是 `overlayfs` 那一门留下的一个事实：内核自己在 `work/` 里建的
+ * `work/work` 是 `root:root 000`，谁都读不了它。`fs.rmSync(recursive)` 会先 `readdir` 每个
+ * 目录，于是在它上面吃 `EACCES`——而那个目录是**空的**，`rmdir` 一步就完。实测：`rm -rf`
+ * 删得掉、`fs.rmSync` 删不掉，差别就在这一步的顺序。
  *
- * 软链只 ，不跟进去（跟进去删的是别人家的树）。
+ * 软链只删它自己，不跟进去（跟进去删的是别人家的树）。
  */
 export function removeTree(p: AbsPath): void {
   let st
