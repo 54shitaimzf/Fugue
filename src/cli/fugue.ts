@@ -69,7 +69,10 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              基线由 --baseline 读、--save 存（三个路径都相对当前目录，不是 --root）
   fork <base> [--strategy <s>] [--ro <p1,p2>] [--no-preserve-mtime]
                              把 base 那棵树物化出来并挂上，返回合并树（本 agent 的坐标）
-                             <base> 是一个提交；--strategy 取 overlayfs | hardlink-ro | copy，
+                             <base> 是一个提交，**要与真实工作树当前所在的那个提交一致**：
+                             物化的底就是那棵树（§ 8.4），不一致时物化树里没被本 agent 碰过的
+                             路径给的是工作树的内容而不是 base 的——这一层不做检测（检测在合并之前）
+                             --strategy 取 overlayfs | hardlink-ro | copy，
                              不给就按策略表探着退档，用了哪一档写在 stderr 与 --json 里；
                              --ro 声明哪几处子树只读（hardlink-ro 那一档只链它们）；
                              --no-preserve-mtime 让抄出来的那几条用当下的时间戳而不是底的时间戳
