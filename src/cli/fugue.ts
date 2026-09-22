@@ -34,7 +34,9 @@ import { EnsureRefused, ensure } from '../materialize/ensure.ts'
 import { ForkRefused, fork } from '../materialize/fork.ts'
 import { LandError } from '../materialize/land.ts'
 import { LayError } from '../materialize/lay.ts'
+import { matState } from '../materialize/manifest.ts'
 import { MountError } from '../materialize/mount.ts'
+import { VerifyRefused, verifyMat } from '../materialize/verify.ts'
 import { HostError, assertHost } from '../roots/host.ts'
 import { createRoots } from '../roots/roots.ts'
 import type { CommitId, ForkStrategy, LogPos, ViewRev, WriterId } from '../terms.ts'
@@ -42,7 +44,7 @@ import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import type { View } from '../view/contract.ts'
 import { applyEdit } from '../view/edit.ts'
-import { lowerFor } from '../view/lower.ts'
+import { lowerAt, lowerFor } from '../view/lower.ts'
 import { readSnapshot, saveSnapshot, snapshotOf } from '../view/snapshot.ts'
 import { loadView } from '../view/view.ts'
 
@@ -73,6 +75,9 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              把这个 agent 到 <rev> 为止的改动落到物化树里（不给 --to 就是此刻），
                              返回合并树；已最新就什么都不落。一次落哪些路径由日志里的 mat/*
                              重放得来，落完追加一条 mat/sync
+  verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
+                             里那几条，三者两两相等，并报 materialize-precision（§ 8.15 的比值）。
+                             不等就退 1——**只报不修**（§ 8.5 的失败处理是删除重建）
   config show                工作区配置的全文
   config get <key>           配置里的一条；<key> 是点分路径，如 docs.trace.path
   config set <key> <value>   改一条；<value> 整份解析得了就当 JSON 值，否则当字符串
@@ -594,6 +599,68 @@ async function ensureCmd(
   }
 }
 
+/**
+ * `fugue verify-mat`：清单 == 差异集（§ 8.5 的第二条验证性质 · § 9.6 物化行的出账）。
+ *
+ * **它建视图，而且载到清单那个 rev 为止**：物化树对应的是那一刻的清单。视图再往后写的那些
+ * 还没有落地，拿它们来核等于拿未来核现在。
+ *
+ * 底下那三样各有各的来源（日志 · 真源 · 文件系统，见 `verify.ts` 的文件头），所以"相等"不是
+ * 自己跟自己比。**不等就退 1，只报不修**：§ 8.5 的失败处理是删除重建，修不是这条命令的事。
+ */
+async function verifyMatCmd(root: string, flags: Map<string, string | true>, json: boolean): Promise<number> {
+  const abs = resolve(root)
+  const agent = agentFor(writerOf(flags))
+  // 先问清单要一个 rev——视图得载到那儿为止。这一趟只读日志，不开视图。
+  const peek = openLog(abs)
+  let st
+  try {
+    st = await matState(peek, agent)
+  } finally {
+    await peek.close()
+  }
+  const ctx = await openCtx(abs, flags, { history: true, upToRev: st.rev })
+  try {
+    const res = await verifyMat(
+      {
+        roots: createRoots(abs),
+        log: ctx.log,
+        // 底那一侧是 `mat/fork` 记的那个提交；`base` 为 null 时 `lowerAt` 给的就是一层空的下层。
+        base: lowerAt(ctx.truth, st.base),
+        view: {
+          stat: (p) => ctx.view.stat(p),
+          read: (p) => ctx.view.read(p),
+          upper: () => ctx.view.state().upper,
+        },
+      },
+      agent,
+    )
+    if (json) emitJson(res)
+    else {
+      const ratio = res.precision === null ? '（差异集为空）' : res.precision.toFixed(3)
+      emitLine(
+        `${res.ok ? 'ok' : '不等'}\t清单 ${res.manifest.paths.length} 条\t差异集 ${res.diff.paths.length} 条\t` +
+          `落地 ${res.landed.paths.length} 条\tmaterialize-precision ${ratio}`,
+      )
+      for (const [what, list] of [
+        ['只有清单有', res.onlyManifest],
+        ['只有差异集有', res.onlyDiff],
+        ['只有落地有（上层里多出来的）', res.onlyLanded],
+        ['清单有而落地没有', res.missing],
+        ['两边都有而内容对不上', res.mismatch],
+      ] as const) {
+        if (list.length > 0) emitLine(`${what}\t${list.join(' · ')}`)
+      }
+    }
+    return res.ok ? 0 : 1
+  } catch (err) {
+    if (err instanceof VerifyRefused) return fail(err.why)
+    throw err
+  } finally {
+    await ctx.close()
+  }
+}
+
 /** `p` 是不是在 `dir` 这棵树里。两边都已经 `resolve` 过；`dir` 自己不算"在树里"。 */
 function insideTree(dir: string, p: string): boolean {
   const rel = relative(dir, p)
@@ -674,6 +741,7 @@ async function run(argv: readonly string[]): Promise<number> {
   if (cmd === 'diff-stat') return diffStatCmd(root, flags, positional.slice(1), json)
   if (cmd === 'fork') return await forkCmd(root, flags, positional.slice(1), json)
   if (cmd === 'ensure') return await ensureCmd(root, flags, positional.slice(1), json)
+  if (cmd === 'verify-mat') return await verifyMatCmd(root, flags, json)
 
   const args = positional.slice(1)
   const need = (n: number): boolean => args.length >= n && !args.slice(0, n).some((a) => a === '')

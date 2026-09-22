@@ -97,7 +97,7 @@ export function hashOfState(st: EntryState | null): string {
 }
 
 /** 两条路径上的东西是不是同一份。**形状不同就是不同**（文件与软链不是一份东西）。 */
-function same(a: EntryState | null, b: EntryState | null): boolean {
+export function sameEntry(a: EntryState | null, b: EntryState | null): boolean {
   if (a === null || b === null) return a === b
   if (a.kind !== b.kind) return false
   if (a.kind === 'file' && b.kind === 'file') return a.hash === b.hash && a.mode === b.mode
@@ -106,7 +106,7 @@ function same(a: EntryState | null, b: EntryState | null): boolean {
 }
 
 /** 盘上一条路径的现状。**只对 delta 碰过的路径问**——落地因此是 O(改动数)，不是 O(树)。 */
-function diskState(abs: AbsPath, rel: RelPath): EntryState | null {
+export function diskEntry(abs: AbsPath, rel: RelPath): EntryState | null {
   let st
   try {
     st = lstatSync(abs)
@@ -122,8 +122,13 @@ function diskState(abs: AbsPath, rel: RelPath): EntryState | null {
   return { kind: 'other' }
 }
 
-/** 视图里那一条。读不出内容就说出来，不猜。 */
-async function viewState(view: ViewReads, rel: RelPath): Promise<EntryState | null> {
+/**
+ * 一个读口（视图 · 或者底那一侧）里那一条。读不出内容就说出来，不猜。
+ *
+ * **同一个函数读两边**：`verify-mat` 要拿视图与 base 比，两边各是一个 `ViewReads`，比的口径
+ * 只有一处——不然"相等"这个词会在两个地方各定义一遍。
+ */
+export async function portEntry(view: ViewReads, rel: RelPath): Promise<EntryState | null> {
   const meta = await view.stat(rel)
   if (meta === null) return null
   if (meta.kind === 'dir') return { kind: 'dir' }
@@ -161,10 +166,10 @@ export async function landDeltas(
   let pruned = 0
 
   for (const rel of touchedBy(deltas)) {
-    const want = await viewState(o.view, rel)
-    const under = diskState(join(o.lower, rel), rel)
+    const want = await portEntry(o.view, rel)
+    const under = diskEntry(join(o.lower, rel), rel)
     // 清单：相对底变了就记，变回来了就划掉。
-    if (same(want, under)) manifest.delete(rel)
+    if (sameEntry(want, under)) manifest.delete(rel)
     else manifest.set(rel, hashOfState(want))
     // 落地根里"要有什么"。
     //   overlayfs 档：底给得出的就不在 `upper` 里留第二条（留了要付 mtime 的代价）；视图里没有
@@ -176,11 +181,11 @@ export async function landDeltas(
         ? under === null
           ? null
           : WHITEOUT
-        : same(want, under)
+        : sameEntry(want, under)
           ? null
           : want
-    const now = diskState(join(o.target, rel), rel)
-    if (same(now, desired)) {
+    const now = diskEntry(join(o.target, rel), rel)
+    if (sameEntry(now, desired)) {
       untouched.push(rel)
       continue
     }
