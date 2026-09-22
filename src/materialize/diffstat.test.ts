@@ -8,13 +8,15 @@
 //   ② 改 3 个文件 → 恰好 3 条，且正是那 3 条 ← § 8.5 的第一条验证性质
 //   ③ 只 touch 一个文件 → 1 条，且分得出"mtime 变了、内容没变" ← 承重性质那一栏的仪器
 //
-// 两处负对照：③ 报的列**恰好**是 `mtime`（多一列就说明尺子在猜）；⑦ 里基线读不出来时命令
-// 拒绝（退出 1），而不是报"0 条变化"——尺子最坏的一种错法，是把"量不了"说成"没变"。
+// 负对照：③ 报的列**恰好**是 `mtime`（多一列就说明尺子在猜）；⑦ 里基线读不出来时命令拒绝
+// （退出 1），而不是报"0 条变化"——尺子最坏的一种错法，是把"量不了"说成"没变"；同一处，
+// 基线落在被扫的树里也拒绝，并且拒绝之后盘上不留那份快照。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   chmodSync,
+  existsSync,
   lutimesSync,
   mkdirSync,
   readFileSync,
@@ -182,7 +184,7 @@ test('⑥ 基线：写读往返；读不动 · 不是 JSON · 没有 leaves 一�
   assert.throws(() => loadTreeStat(noLeaves), TreeStatError)
 })
 
-test('⑦ 命令行：三条断言都从 `fugue diff-stat` 走得通；基线读不动时拒绝', async () => {
+test('⑦ 命令行：三条断言都从 `fugue diff-stat` 走得通；量不了 · 尺子进了树一律拒绝', async () => {
   const root = tree({
     'tree/a.txt': 'a',
     'tree/b.txt': 'b',
@@ -231,6 +233,26 @@ test('⑦ 命令行：三条断言都从 `fugue diff-stat` 走得通；基线读
   assert.ok(human.stderr.includes('1 条变化'), human.stderr)
 
   // 只读（§ 8.5 把 diff-stat 与 verify-mat 并列写成只读）：跑完一趟，那棵树逐字节没动
+  // 裸敲（没有 --baseline）：人读那一面指路，机器那一面还是那份 JSON
+  const bare = fugue(root, 'diff-stat', 'tree')
+  assert.equal(bare.code, 0, bare.stderr)
+  assert.deepEqual(bare.stdout.trim().split('\n'), [`4 个叶子\t${join(root, 'tree')}`])
+  assert.ok(bare.stderr.includes('--baseline'), bare.stderr)
+  assert.ok(bare.stderr.includes('不是对比'), bare.stderr)
+  const bareJson = fugue(root, 'diff-stat', 'tree', '--json')
+  assert.equal(JSON.parse(bareJson.stdout).paths, 4)
+
+  // 尺子别放进树里：基线/快照在被扫的树之内就拦住，且一个字节都不写
+  const insideSave = fugue(root, 'diff-stat', 'tree', '--baseline', 'one.json', '--save', 'tree/base.json')
+  assert.equal(insideSave.code, 1)
+  assert.ok(insideSave.stderr.includes('挪到'), insideSave.stderr)
+  assert.equal(existsSync(join(root, 'tree/base.json')), false, '拒绝之后不该留下那份快照')
+  const insideBase = fugue(root, 'diff-stat', 'tree', '--baseline', 'tree/one.json')
+  assert.equal(insideBase.code, 1)
+  assert.ok(insideBase.stderr.includes('--baseline'), insideBase.stderr)
+  // 负对照：同一份基线放在树外，同一条命令照常退 0
+  assert.equal(fugue(root, 'diff-stat', 'tree', '--baseline', 'one.json').code, 0)
+
   const beforeRun = JSON.stringify(scanTree(join(root, 'tree'), { skip: WORKSPACE_STATE }))
   assert.equal(fugue(root, 'diff-stat', 'tree', '--baseline', 'two.json').code, 0)
   assert.equal(

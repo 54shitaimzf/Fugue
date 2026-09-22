@@ -9,7 +9,7 @@
 // `src/checkpoint.ts`——两个都是跨层接线（§ 7），这里只是它们的一个人侧入口。
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { isAbsolute, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkpoint } from '../checkpoint.ts'
 import {
@@ -362,6 +362,16 @@ function diffStatCmd(root: string, flags: Map<string, string | true>, args: stri
   if (baseFlag === true || saveFlag === true) return usageFail('--baseline 与 --save 都要一个文件名')
   const baseFile = typeof baseFlag === 'string' ? resolve(baseFlag) : undefined
   const saveFile = typeof saveFlag === 'string' ? resolve(saveFlag) : undefined
+  // **别把尺子放进树里**：基线自己也是一份新文件，留在被扫的树里，下一轮它会被报成
+  // "多了一条"——量树的人亲手污染读数。拦住比事后解释便宜。
+  for (const [what, file] of [
+    ['--baseline', baseFile],
+    ['--save', saveFile],
+  ] as const) {
+    if (file !== undefined && insideTree(dir, file)) {
+      return fail(`${what} 指向被扫的树里：${file}\n基线是尺子，不是树的一部分——把它挪到 ${dir} 之外。`)
+    }
+  }
 
   let before: TreeStat | undefined
   let now: TreeStat
@@ -382,6 +392,8 @@ function diffStatCmd(root: string, flags: Map<string, string | true>, args: stri
   if (before === undefined) {
     if (json) emitJson({ root: now.root, paths, leaves: now.leaves })
     else emitLine(`${paths} 个叶子\t${now.root}`)
+    // 指路：裸敲这一次拿到的是快照，不是对比。"要对比该给什么"不能靠人去猜（§ 24 纪律 5）。
+    process.stderr.write('没有给 --baseline：这是一张快照，不是对比——--save <f> 存下来，下一次 --baseline <f> 读它\n')
     return 0
   }
 
@@ -400,6 +412,12 @@ function diffStatCmd(root: string, flags: Map<string, string | true>, args: stri
 
 /** 人读那一面的记号：增 · 删 · 改。`--json` 那一面给的是 `status` 这个字本身。 */
 const STATUS_MARK: Record<ChangeStatus, string> = { added: '+', removed: '-', changed: '~' }
+
+/** `p` 是不是在 `dir` 这棵树里。两边都已经 `resolve` 过；`dir` 自己不算"在树里"。 */
+function insideTree(dir: string, p: string): boolean {
+  const rel = relative(dir, p)
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+}
 
 /**
  * 最外面那一层只做一件事：**把用法错翻成退出码 2**（§ 9.8 的退出码行）。
