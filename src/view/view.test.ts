@@ -4,10 +4,8 @@
 // 合并读出 · 变更序列），而假体可以把"下层有什么"直接摆出来——真 git 那条路由
 // `src/cli/fugue.test.ts` 端到端走。
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import test from 'node:test'
+import { tmpDir } from '../../test/helpers/tmp.ts'
 import type { Delta } from '../delta.ts'
 import { EMPTY_TREE_ID } from '../entries.ts'
 import type { DirEntry, EntryMeta } from '../entries.ts'
@@ -311,7 +309,7 @@ test('diff(since) 与 revs：修订点是事件给的，不是自己数的', asy
 })
 
 test('真日志上的重放：写 · 改名 · 删 走一遍，与内存里的同一条历史一致', async (ctx) => {
-  const root = mkdtempSync(join(tmpdir(), 'fugue-view-'))
+  const root = tmpDir('fugue-view-')
   const log = openLog(root, { sync: 'never' })
   ctx.after(() => log.close())
 

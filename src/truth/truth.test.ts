@@ -7,10 +7,10 @@ import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { tmpDir } from '../../test/helpers/tmp.ts'
 import { logDir, openLog } from '../log/log.ts'
 import { kindOf, openTruth, RefConflictError, RefNotCommitError, RefNotFoundError } from './truth.ts'
 import type { TreeEntry } from './contract.ts'
@@ -40,7 +40,7 @@ function git(root: string, ...args: string[]) {
 }
 
 function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'fugue-truth-'))
+  const root = tmpDir('fugue-truth-')
   const init = spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' })
   assert.equal(init.status, 0, init.stderr)
   return root
@@ -160,7 +160,7 @@ test('断言①：N=4 并发提交 → 4 个有效提交，git fsck 干净，零
 
 test('断言②：同一个 expectedOld 并发 advance 同一个 ref → 恰一个成功', async (ctx) => {
   const root = tmpRoot()
-  const barrier = join(mkdtempSync(join(tmpdir(), 'fugue-bar-')), 'go')
+  const barrier = join(tmpDir('fugue-bar-'), 'go')
 
   const t = openTruth(root)
 

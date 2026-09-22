@@ -5,11 +5,10 @@
 // 那一件事：这个操作不依赖任何一个面。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { test } from 'node:test'
+import { tmpDir } from '../test/helpers/tmp.ts'
 import { checkpoint } from './checkpoint.ts'
 import { refFor, agentFor } from './identity.ts'
 import { openLog } from './log/log.ts'
@@ -27,7 +26,7 @@ const GIT_ENV: NodeJS.ProcessEnv = {
 }
 
 function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'fugue-ckpt-'))
+  const root = tmpDir('fugue-ckpt-')
   const init = spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' })
   assert.equal(init.status, 0, init.stderr)
   return root

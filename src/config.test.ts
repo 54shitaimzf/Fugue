@@ -13,11 +13,11 @@
 // 空的——一个谁都够不到的文件，和一条谁都够不到的路，看着一样）。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+import { tmpDir } from '../test/helpers/tmp.ts'
 import { configFileOf } from './config.ts'
 
 const CLI = fileURLToPath(new URL('./cli/fugue.ts', import.meta.url))
@@ -47,7 +47,7 @@ function fugueStdin(root: string, input: string, ...args: string[]): Run {
 }
 
 function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'fugue-config-'))
+  const root = tmpDir('fugue-config-')
   const init = spawnSync('git', ['init', '-q', '.'], { cwd: root, encoding: 'utf8' })
   assert.equal(init.status, 0, init.stderr)
   return root
@@ -88,7 +88,7 @@ function commitOf(run: Run): string {
 
 test('config：缺文件是空配置 · 坏文件拒绝加载 · 一次改动原子地落一个文件', () => {
   // **故意不 git init**：配置是工作区的输入，不是它的状态，所以它不需要对象库。
-  const root = mkdtempSync(join(tmpdir(), 'fugue-config-'))
+  const root = tmpDir('fugue-config-')
   const file = configFileOf(root)
 
   const empty = fugue(root, 'config', 'show')

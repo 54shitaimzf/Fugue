@@ -4,11 +4,11 @@
 // 用吗**——单次进程 + 每次重建，所以每条命令都是一次完整的加载。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+import { tmpDir } from '../../test/helpers/tmp.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { BlobId, CommitId, RefName } from '../terms.ts'
 
@@ -39,7 +39,7 @@ function fugueStdin(root: string, input: string, ...args: string[]): Run {
 }
 
 function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'fugue-cli-'))
+  const root = tmpDir('fugue-cli-')
   const init = spawnSync('git', ['init', '-q', '.'], { cwd: root, encoding: 'utf8' })
   assert.equal(init.status, 0, init.stderr)
   return root

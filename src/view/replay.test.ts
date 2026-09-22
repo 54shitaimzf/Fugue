@@ -9,11 +9,11 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+import { tmpDir } from '../../test/helpers/tmp.ts'
 import type { Delta } from '../delta.ts'
 import type { TreeEntry } from '../entries.ts'
 import { mergedFace, openLog } from '../log/log.ts'
@@ -53,7 +53,7 @@ function fugueStdin(root: string, input: string, ...args: string[]): Run {
 }
 
 function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'fugue-replay-'))
+  const root = tmpDir('fugue-replay-')
   const init = spawnSync('git', ['init', '-q', '.'], { cwd: root, encoding: 'utf8' })
   assert.equal(init.status, 0, init.stderr)
   return root
