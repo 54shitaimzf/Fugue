@@ -9,7 +9,8 @@
 //
 // 第 4 条那份清单在 V2 里多了一处：`.fugue/mat/`——物化的根（§ 8.4）。白名单与那一跑是
 // 成对的：加了位置就要有一条真跑过它的命令，否则白名单是白加的。**V3 的 `ensure` 也要跑**：
-// 它往同一个根里落 delta、往 `log/` 里追加 `mat/sync`——两处位置都靠它才算真跑过。
+// 它往同一个根里落 delta、往 `log/` 里追加 `mat/sync`；**V5 的 `dispose`** 把那一组收尾，
+// 验的是"删干净之后也不在声明之外留下东西"。
 //
 // 用法：
 //   node tools/scope-check.js <rev> --allow <path> [--allow <path> …]
@@ -116,8 +117,13 @@ function checkRun() {
       }),
     )
     runs.push(spawnSync(process.execPath, [CLI, '--root', tmp, 'ensure'], { encoding: 'utf8' }))
+    // 物化那一组收尾：`dispose` 把四个坐标删干净（它不新增位置，但它**删**位置——留在白名单
+    // 底下的一堆空目录也是"跑过之后留下的东西"）。
+    runs.push(spawnSync(process.execPath, [CLI, '--root', tmp, 'dispose'], { encoding: 'utf8' }))
     const broke = runs.findIndex((r) => r.status !== 0)
-    if (broke === -1) ok('write · read · commit · config set · config get · fork · write · ensure 八条命令都退 0')
+    if (broke === -1) {
+      ok('write · read · commit · config set · config get · fork · write · ensure · dispose 九条命令都退 0')
+    }
     else bad(`第 ${broke + 1} 条命令退 ${runs[broke].status}：${runs[broke].stderr.trim()}`)
 
     // 4 · 持久化位置：临时工作区里只该有**声明过的那几处**——§ 9.1 的状态表与 § 9.2 的

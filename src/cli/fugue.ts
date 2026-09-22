@@ -30,6 +30,7 @@ import type { LogHandle, SyncLevel } from '../log/log.ts'
 import type { ChangeStatus, TreeStat } from '../materialize/diffstat.ts'
 import { TreeStatError, WORKSPACE_STATE, diffStat, loadTreeStat, scanTree, storeTreeStat } from '../materialize/diffstat.ts'
 import { DEFAULT_MATERIALIZE } from '../materialize/contract.ts'
+import { dispose } from '../materialize/dispose.ts'
 import { EnsureRefused, ensure } from '../materialize/ensure.ts'
 import { ForkRefused, fork } from '../materialize/fork.ts'
 import { LandError } from '../materialize/land.ts'
@@ -78,6 +79,9 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
   verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
                              里那几条，三者两两相等，并报 materialize-precision（§ 8.15 的比值）。
                              不等就退 1——**只报不修**（§ 8.5 的失败处理是删除重建）
+  dispose                    把这个 agent 的物化删干净：先卸后删，四个坐标一起（§ 8.4）。
+                             幂等——本来就没有也成功。**它是物化的退化档**：dispose 之后
+                             fork + ensure 就是一次全量重铺（§ 3）
   config show                工作区配置的全文
   config get <key>           配置里的一条；<key> 是点分路径，如 docs.trace.path
   config set <key> <value>   改一条；<value> 整份解析得了就当 JSON 值，否则当字符串
@@ -661,6 +665,37 @@ async function verifyMatCmd(root: string, flags: Map<string, string | true>, jso
   }
 }
 
+/**
+ * `fugue dispose`：删掉这个 agent 的整份物化（§ 8.5 的失败处理 · § 9.6 的物化行）。
+ *
+ * **它不建视图、不读日志**：`dispose` 是删除，不是一次状态迁移——它要的只是四个坐标（§ 8.4），
+ * 而那四个由 `--root` 与 `--agent` 就定得下来。于是"物化目录损坏，删掉重来"这条路上，没有
+ * 任何一处要先信任日志或视图。
+ *
+ * 退出码：0 删干净了（本来就没有也算）· 1 删不动（卸不下来）。
+ */
+async function disposeCmd(root: string, flags: Map<string, string | true>, json: boolean): Promise<number> {
+  const abs = resolve(root)
+  const agent = agentFor(writerOf(flags))
+  try {
+    const res = await dispose({ roots: createRoots(abs) }, agent)
+    if (json) emitJson(res)
+    else {
+      // 过程走 stderr（§ 9.8 的 stdout 纪律）；stdout 上那一行是这次动过的坐标。
+      process.stderr.write(
+        res.existed
+          ? `卸下并删掉 ${res.mat}：四个坐标${res.left.length === 0 ? '一个不剩' : `还剩 ${res.left.join(' · ')}`} · ${res.ms} ms\n`
+          : `${res.mat} 下本来就没有物化树——幂等，照常成功\n`,
+      )
+      emitLine(res.mat)
+    }
+    return res.left.length === 0 ? 0 : 1
+  } catch (err) {
+    if (err instanceof MountError) return fail(err.message)
+    throw err
+  }
+}
+
 /** `p` 是不是在 `dir` 这棵树里。两边都已经 `resolve` 过；`dir` 自己不算"在树里"。 */
 function insideTree(dir: string, p: string): boolean {
   const rel = relative(dir, p)
@@ -742,6 +777,7 @@ async function run(argv: readonly string[]): Promise<number> {
   if (cmd === 'fork') return await forkCmd(root, flags, positional.slice(1), json)
   if (cmd === 'ensure') return await ensureCmd(root, flags, positional.slice(1), json)
   if (cmd === 'verify-mat') return await verifyMatCmd(root, flags, json)
+  if (cmd === 'dispose') return await disposeCmd(root, flags, json)
 
   const args = positional.slice(1)
   const need = (n: number): boolean => args.length >= n && !args.slice(0, n).some((a) => a === '')

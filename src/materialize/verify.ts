@@ -24,7 +24,7 @@
 //
 // **它只读，而且不修。** § 8.5 把 `diff-stat` 与 `verify-mat` 并列写成只读，失败处理那一句
 // 是"删除重建，不尝试修复"——修不是这条命令的事，它只把不等报出来。
-import { lstatSync, readdirSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Log } from '../log/events.ts'
 import type { Roots } from '../roots/contract.ts'
@@ -120,6 +120,13 @@ export async function verifyMat(deps: VerifyDeps, agent: AgentId): Promise<Verif
   const overlay = st.strategy === 'overlayfs'
   const upper = deps.roots.scratchRoot(agent)
   const merged = deps.roots.mergedRoot(agent)
+  // **落地根不在就没什么可核的。** 清单是从日志来的，它还在；而盘上那一份已经被丢掉了
+  // （`dispose` 是删除，它不写日志——§ 8.1 的事件表里没有 `mat/dispose`），所以这里要分开说。
+  if (!existsSync(upper) || (!overlay && !existsSync(merged))) {
+    throw new VerifyRefused(
+      `物化树不在：${overlay ? upper : merged}\n它被丢掉了（dispose 过？）——清单在日志里还留着，物化是派生的：fugue fork <base> 重铺一棵。`,
+    )
+  }
   const manifest = new Map<RelPath, string>()
   st.paths.forEach((p, i) => manifest.set(p, st.hashes[i] ?? ''))
 
