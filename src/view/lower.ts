@@ -4,7 +4,7 @@
 // M2 的代码里没有一处 import M1 的契约；换后端（内存假体 · 快照 · 将来的 Rust 侧）只需
 // 要另写一个这样的小文件。`base` 为 null 时下层是空的——新仓库一个提交都没有。
 import type { DirEntry, EntryMeta } from '../entries.ts'
-import { refFor } from '../refs.ts'
+import { refFor } from '../identity.ts'
 import { RefNotFoundError } from '../truth/truth.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { BlobId, CommitId, RelPath, WriterId } from '../terms.ts'

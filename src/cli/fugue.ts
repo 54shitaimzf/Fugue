@@ -2,8 +2,7 @@
 // fugue —— 环境的操作面。出处：架构 § 9.6。
 //
 // **单次进程 + 每次重建**：不需要守护进程、不需要常驻状态、崩溃恢复就是"下一条命令照常
-// 加载"。命令逐个单元长出来：U1 挂上 `log`，U2 挂上 `commit`，U3 挂上视图的八条（§ 9.6
-// 的读 · 写 · 检视三组），U4 挂上 `replay`；U6 收口时这张表才齐。
+// 加载"。§ 9.6 那张表里属于 S1 的每一行都在这里：读 · 写 · 检视 · 提交 · 重放 · 配置。
 //
 // 这一层只做三件事：解析参数 · 把结构化结果排成两列（人读的与 `--json` 的）· 决定退出码。
 // **语义不在这里**：一次变更的顺序与校验住在 `src/view/edit.ts`，提交住在
@@ -27,7 +26,7 @@ import type { TreeEntry } from '../entries.ts'
 import type { LogEvent } from '../log/events.ts'
 import { LogCorruptError, logDir, mergedFace, openLog } from '../log/log.ts'
 import type { LogHandle, SyncLevel } from '../log/log.ts'
-import type { AgentId, LogPos, ViewRev, WriterId } from '../terms.ts'
+import type { LogPos, ViewRev, WriterId } from '../terms.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import type { View } from '../view/contract.ts'
@@ -48,6 +47,7 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
   rename <from> <to>         改名
   chmod <path> <mode>        改模式；<mode> 是八进制，如 755
   diff [--since <rev>]       自某个修订点以来的变更
+  revs                       全部可达修订点，升序；0 是 base 本身
   commit -m <msg>            把当前视图提交成一个提交点，推进它的 ref
   replay [--to <rev>]        从日志重建视图并报出它；--verify 逐 agent 比对两条重建路径
   config show                工作区配置的全文
@@ -119,7 +119,11 @@ function usageFail(msg: string): number {
   return 2
 }
 
-/** `--agent` 决定操作哪个视图；未指定时取主线。主 agent 的标识还没有规范命名（§ 4 只给了 ref 方案），这里沿用 round 这个写者。 */
+/**
+ * `--agent` 决定操作哪个视图，等价于选择一份日志（§ 9.6）。未指定时取主线：`round` 是
+ * 持轮者这个位置的名字，它在 git 侧的落点是 `refs/heads/main`（§ 4）——所以不带参数读到
+ * 的视图，与 git 侧的主干是同一段历史。
+ */
 function writerOf(flags: Map<string, string | true>): WriterId {
   const a = flags.get('agent')
   return (typeof a === 'string' ? a : 'round') as WriterId
@@ -171,7 +175,7 @@ async function openCtx(
         : await readSnapshot(root, writer, opts.upToRev === undefined ? {} : { upToRev: opts.upToRev })
     const view = await loadView(
       log,
-      writer as AgentId,
+      writer,
       snap === null ? { lower, upToRev: opts.upToRev } : { lower, upToRev: opts.upToRev, snap },
     )
     const t = truth
@@ -201,7 +205,7 @@ async function readStdin(): Promise<Uint8Array> {
 
 function parseOctal(raw: string): number {
   const text = raw.trim().replace(/^0o?/, '')
-  if (!/^[0-7]{3,4}$/.test(text)) throw new Error(`模式要八进制三位或四位：${raw}`)
+  if (!/^[0-7]{3,4}$/.test(text)) throw new UsageError(`模式要八进制三位或四位：${raw}`)
   return parseInt(text, 8)
 }
 
@@ -318,17 +322,34 @@ async function config(root: string, args: string[], json: boolean): Promise<numb
   }
 }
 
+/**
+ * 最外面那一层只做一件事：**把用法错翻成退出码 2**（§ 9.8 的退出码行）。
+ *
+ * 判据是"这条命令行本身就不成立"。它与"做不成"（1）分开是有用的：脚本要能一眼分出
+ * "我敲错了"与"我敲对了，只是这件事没成"。
+ */
 export async function main(argv: readonly string[]): Promise<number> {
+  try {
+    return await run(argv)
+  } catch (err) {
+    if (err instanceof UsageError) return usageFail(err.message)
+    throw err
+  }
+}
+
+async function run(argv: readonly string[]): Promise<number> {
   const { flags, positional } = parseArgv(argv)
   const json = flags.has('json')
   const rootFlag = flags.get('root')
   const root = typeof rootFlag === 'string' ? rootFlag : process.cwd()
   const cmd = positional[0]
 
-  if (flags.has('help') || cmd === undefined) {
+  // `--help` 是一条成功的命令；什么都不给是用法错——两者的退出码不一样。
+  if (flags.has('help')) {
     process.stdout.write(USAGE)
-    return cmd === undefined ? 1 : 0
+    return 0
   }
+  if (cmd === undefined) return usageFail('需要一个命令')
 
   if (cmd === 'log') {
     const only = flags.get('agent')
@@ -426,13 +447,33 @@ export async function main(argv: readonly string[]): Promise<number> {
       }
     }
 
+    case 'revs': {
+      // 检视组的一条（§ 9.6）：输出就是 `View.revs` 这个字段（§ 8.3）。**不看历史**——
+      // 修订点跟着状态走，快照带着它，所以从快照起的视图答得一样全，这也是
+      // `replay --verify` 把 `revs` 列进比对项的原因。
+      const ctx = await openCtx(root, flags)
+      try {
+        const revs = ctx.view.revs
+        if (json) emitJson(revs)
+        else for (const r of revs) emitLine(String(r))
+        return 0
+      } finally {
+        await ctx.close()
+      }
+    }
+
     case 'write':
     case 'remove':
     case 'rename':
     case 'chmod': {
+      // 参数先收齐，再开视图：一条用法错的命令不该在磁盘上留下任何东西。
+      const delta = await deltaFrom(cmd, args, flags)
       const ctx = await openCtx(root, flags)
       try {
-        const rev = await edit(ctx, cmd, args, flags)
+        const rev = await applyEdit(
+          { log: ctx.log, truth: ctx.truth, view: ctx.view, writer: ctx.writer },
+          delta,
+        )
         if (json) emitJson({ rev, agent: ctx.writer })
         else emitLine(`${rev}\t${ctx.writer}`)
         return 0
@@ -484,7 +525,7 @@ async function replay(
     const snap = await readSnapshot(root, writer, upToRev === undefined ? {} : { upToRev })
     const view = await loadView(
       log,
-      writer as AgentId,
+      writer,
       snap === null ? { lower, upToRev } : { lower, upToRev, snap },
     )
     const entries = await snapshotOf(view)
@@ -578,12 +619,12 @@ async function verify(
     let snapInfo: Record<string, unknown> | null = null
     try {
       const lower = await lowerFor(truth, writer)
-      const full = await loadView(log, writer as AgentId, { lower, upToRev })
+      const full = await loadView(log, writer, { lower, upToRev })
       const want = await snapshotOf(full)
       rev = full.rev
       count = want.length
 
-      const inter = await loadView(mergedFace(log, writer), writer as AgentId, { lower, upToRev })
+      const inter = await loadView(mergedFace(log, writer), writer, { lower, upToRev })
       checks.push({
         what: '交错读 == 按 writer 读',
         ok: sameView(full, want, inter, await snapshotOf(inter), 0),
@@ -598,7 +639,7 @@ async function verify(
         })
       } else {
         snapInfo = { seq: snap.seq, rev: snap.state.rev }
-        const fast = await loadView(log, writer as AgentId, { lower, upToRev, snap })
+        const fast = await loadView(log, writer, { lower, upToRev, snap })
         checks.push({
           what: `从快照 seq ${snap.seq}（rev ${snap.state.rev}）起 == 从 0 起`,
           ok: sameView(full, want, fast, await snapshotOf(fast), snap.state.rev),
@@ -629,49 +670,54 @@ async function verify(
   return 0
 }
 
-/** 四条写命令共用的那一小段：把命令行收成一个 delta，落下去，报 rev。 */
-async function edit(
-  ctx: Ctx,
+/**
+ * 用法错：**这条命令行本身就不成立**——参数缺了 · 模式不是八进制 · 动词不认识。§ 9.8 给了它
+ * 自己的退出码（2），与"做不成"（1）分开是有用的：`read` 一个不存在的路径是一次成立的请求
+ * 得到的一个结果，而 `write` 少一个来源根本不是一次请求。
+ */
+class UsageError extends Error {}
+
+/**
+ * 把命令行收成一个 delta。**这一步不开视图、不读日志**——参数不对的命令不该在磁盘上留下
+ * 任何东西，而"先建再检查"会让一条用法错的命令也留下一个日志目录。
+ *
+ * 四条写命令共用它；与模型侧共用的是更下面那次 `applyEdit`——这里只做参数那一半。
+ */
+async function deltaFrom(
   cmd: string,
   args: string[],
   flags: Map<string, string | true>,
-): Promise<ViewRev> {
-  let delta: Delta
+): Promise<Delta> {
   switch (cmd) {
     case 'write': {
       const p = args[0]
-      if (p === undefined) throw new Error('write 需要 <path>')
+      if (p === undefined) throw new UsageError('write 需要 <path>')
       const from = flags.get('from')
       let bytes: Uint8Array
       if (typeof from === 'string') bytes = readFileSync(from)
       else if (flags.has('stdin')) bytes = await readStdin()
-      else throw new Error('write 需要 --from <file> 或 --stdin')
+      else throw new UsageError('write 需要 --from <file> 或 --stdin')
       // 默认 644；要可执行就再敲一条 chmod——两条命令各说一件事，不从写里猜。
-      delta = { kind: 'add', path: p, bytes, mode: 0o100644 }
-      break
+      return { kind: 'add', path: p, bytes, mode: 0o100644 }
     }
     case 'remove': {
       const p = args[0]
-      if (p === undefined) throw new Error('remove 需要 <path>')
-      delta = { kind: 'delete', path: p }
-      break
+      if (p === undefined) throw new UsageError('remove 需要 <path>')
+      return { kind: 'delete', path: p }
     }
     case 'rename': {
       const from = args[0]
       const to = args[1]
-      if (from === undefined || to === undefined) throw new Error('rename 需要 <from> <to>')
-      delta = { kind: 'rename', from, to }
-      break
+      if (from === undefined || to === undefined) throw new UsageError('rename 需要 <from> <to>')
+      return { kind: 'rename', from, to }
     }
     default: {
       const p = args[0]
       const mode = args[1]
-      if (p === undefined || mode === undefined) throw new Error('chmod 需要 <path> <mode>')
-      delta = { kind: 'chmod', path: p, mode: parseOctal(mode) }
-      break
+      if (p === undefined || mode === undefined) throw new UsageError('chmod 需要 <path> <mode>')
+      return { kind: 'chmod', path: p, mode: parseOctal(mode) }
     }
   }
-  return await applyEdit({ log: ctx.log, truth: ctx.truth, view: ctx.view, writer: ctx.writer }, delta)
 }
 
 /**

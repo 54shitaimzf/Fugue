@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { test } from 'node:test'
 import { checkpoint } from './checkpoint.ts'
-import { refFor } from './refs.ts'
+import { refFor, agentFor } from './identity.ts'
 import { openLog } from './log/log.ts'
 import { openTruth, RefConflictError } from './truth/truth.ts'
 import type { TreeEntry } from './entries.ts'
@@ -37,6 +37,15 @@ test('refFor：§ 4 的命名方案，writer → 它推进的 ref', () => {
   assert.equal(refFor('round'), 'refs/heads/main')
   assert.equal(refFor('agent/r1/1' as WriterId), 'refs/heads/agent/r1/1')
   assert.equal(refFor('agent/r2/7' as WriterId), 'refs/heads/agent/r2/7')
+})
+
+test('agentFor：writer → 它落日志与视图时用的 agent 署名（§ 4 · § 8.1 · § 8.3）', () => {
+  // 主线的写者署名是一句**名字**，不是空白占位：它就是持轮者那个位置上写的名字。
+  assert.equal(agentFor('round'), 'round')
+  assert.equal(agentFor('agent/r1/1' as WriterId), 'agent/r1/1')
+  // 两处翻译都从同一个 WriterId 出发，所以主线只有一种说法（§ 4 的 ref 方案 + 署名）。
+  assert.equal(agentFor('round'), agentFor('round' as unknown as WriterId))
+  assert.equal(refFor(agentFor('round') as unknown as WriterId), 'refs/heads/main')
 })
 
 test('checkpoint：两个写者抢同一个 ref → 恰一个成功，**输的那个在日志里一句都不留**', async (ctx) => {

@@ -1,10 +1,10 @@
-// § 9.6 的读 · 写 · 检视三组的端到端：真 git · 真日志 · 真进程。
+// § 9.6 全表的端到端：读 · 写 · 检视 · 提交 · 重放 · 配置，真 git · 真日志 · 真进程。
 //
 // 断言在 `src/view/view.test.ts` 里（纯逻辑）；这一份问的是另一件事：**这些命令真的能
 // 用吗**——单次进程 + 每次重建，所以每条命令都是一次完整的加载。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -157,16 +157,104 @@ test('下层才有的文件：改名与改权限先把它钉进日志，base 前
   assert.equal(fugue(root, 'read', 'again.txt').stdout, '底稿的内容\n')
 })
 
-test('拒绝与退出码：不存在的路径 1 · 用法错 2', async () => {
+test('revs：修订点由事件给出，提交也是一个点（§ 9.6 的检视组）', async () => {
+  const root = tmpRoot()
+  const revsOf = (): number[] => JSON.parse(fugue(root, '--json', 'revs').stdout) as number[]
+
+  assert.deepEqual(revsOf(), [0], '还没有任何修订时，0 就是 base 本身')
+  assert.equal(fugue(root, 'revs').stdout, '0\n', '人读的那一面：一行一个')
+
+  assert.equal(fugueStdin(root, '一\n', 'write', 'a.txt', '--stdin').stdout, '1\tround\n')
+  assert.equal(fugueStdin(root, '二\n', 'write', 'b.txt', '--stdin').stdout, '2\tround\n')
+  assert.deepEqual(revsOf(), [0, 1, 2])
+
+  const c = JSON.parse(fugue(root, '--json', '-m', '第一次提交', 'commit').stdout) as { rev: number }
+  assert.equal(c.rev, 2, '提交不改视图的内容：它停在当刻那个 rev 上')
+  assert.deepEqual(revsOf(), [0, 1, 2], '提交把已有的点又记了一遍——修订点是集合，不是计数')
+
+  assert.equal(fugueStdin(root, '三\n', 'write', 'c.txt', '--stdin').stdout, '3\tround\n')
+  assert.deepEqual(revsOf(), [0, 1, 2, 3])
+
+  // 快照换掉的是历史，不是状态：修订点跟着状态走，所以把快照删掉答得一样全（§ 9.4）。
+  rmSync(join(root, '.fugue', 'snap'), { recursive: true, force: true })
+  assert.deepEqual(revsOf(), [0, 1, 2, 3])
+
+  // 报出来的每一个点，`diff --since` 都答得上来——这条命令给的东西是能用的。
+  for (const r of revsOf()) {
+    assert.equal(fugue(root, '--json', 'diff', '--since', String(r)).code, 0, `--since ${r}`)
+  }
+})
+
+test('--agent 切视图：换一个参数就是换一份日志 · 一条分支头 · 一段 base（§ 9.6）', async () => {
+  const root = tmpRoot()
+  const sub = 'agent/r1/1'
+
+  // 主线：写两个、提交。
+  assert.equal(fugueStdin(root, '主线的\n', 'write', 'main.txt', '--stdin').code, 0)
+  assert.equal(fugueStdin(root, '主线的第二个\n', 'write', 'main2.txt', '--stdin').code, 0)
+  assert.equal(fugue(root, 'commit', '-m', '主线的提交').code, 0)
+
+  // 子 agent：自己的日志、自己的分支头、自己的 rev 序列。
+  const w = fugueStdin(root, '子 agent 的\n', '--agent', sub, 'write', 'sub.txt', '--stdin')
+  assert.equal(w.code, 0, w.stderr)
+  assert.equal(w.stdout, `1\t${sub}\n`, '它从 rev 1 数起，与主线各数各的')
+  assert.equal(fugue(root, '--agent', sub, 'commit', '-m', '子 agent 的提交').code, 0)
+
+  // 两份视图互不可见：路径是身份的判据，读得到的才是它的。
+  assert.equal(fugue(root, 'read', 'main.txt').stdout, '主线的\n')
+  assert.equal(fugue(root, 'read', 'sub.txt').code, 1, '主线的视图里没有子 agent 写的路径')
+  assert.equal(fugue(root, '--agent', sub, 'read', 'sub.txt').stdout, '子 agent 的\n')
+  assert.equal(fugue(root, '--agent', sub, 'read', 'main.txt').code, 1, '子 agent 铺在自己的分支头上')
+  assert.equal(fugue(root, '--agent', sub, 'stat', 'main2.txt').code, 1)
+
+  // 修订点各是各的。
+  assert.deepEqual(JSON.parse(fugue(root, '--json', 'revs').stdout), [0, 1, 2])
+  assert.deepEqual(JSON.parse(fugue(root, '--json', '--agent', sub, 'revs').stdout), [0, 1])
+
+  // git 侧两条分支头 · 日志侧两份日志——同一个 writer，两种落点（§ 4）。
+  const refs = spawnSync('git', ['show-ref'], { cwd: root, encoding: 'utf8' }).stdout
+  assert.equal(refs.split('\n').filter((l) => l.endsWith(' refs/heads/main')).length, 1)
+  assert.equal(refs.split('\n').filter((l) => l.endsWith(' refs/heads/agent/r1/1')).length, 1)
+  assert.equal(existsSync(join(root, '.fugue', 'log', 'round.jsonl')), true)
+  assert.equal(existsSync(join(root, '.fugue', 'log', 'agent', 'r1', '1.jsonl')), true)
+
+  // 重放的两条路对这两份视图都成立：快照是加速项，交错读不串味。
+  const v = fugue(root, '--json', 'replay', '--verify')
+  assert.equal(v.code, 0, v.stderr)
+  const report = JSON.parse(v.stdout) as { ok: boolean; agents: { writer: string }[] }
+  assert.equal(report.ok, true)
+  assert.deepEqual(
+    report.agents.map((a) => a.writer),
+    ['agent/r1/1', 'round'],
+    '每一个写过日志的 writer 各比一遍',
+  )
+})
+
+test('拒绝与退出码：0 成功 · 1 做不成 · 2 用法错（§ 9.8 的退出码行）', async () => {
   const root = tmpRoot()
   const miss = fugue(root, 'read', '没有这个')
   assert.equal(miss.code, 1)
   assert.match(miss.stderr, /不是可读的路径/)
 
+  // 1 · 成立的请求，得到一个"没成"的结果。
   assert.equal(fugue(root, 'stat', '没有这个').code, 1)
   assert.equal(fugue(root, 'remove', '没有这个').code, 1)
-  assert.equal(fugue(root, 'write', 'a.txt').code, 1, 'write 少了 --from/--stdin')
-  assert.equal(fugue(root, 'chmod', 'a.txt', '999').code, 1, '999 不是八进制模式')
+  assert.equal(fugue(root, 'write', 'a.txt', '--from', '/没有这个文件').code, 1, '来源读不到')
+  assert.equal(fugue(root, '--agent', 'agent/r1/1', 'read', 'a.txt').code, 1, '子视图里没有主线的路径')
+
+  // 2 · 命令行本身就不成立——它有自己的退出码。
+  assert.equal(fugue(root, 'write', 'a.txt').code, 2, 'write 少了 --from/--stdin')
+  assert.equal(fugue(root, 'remove').code, 2)
+  assert.equal(fugue(root, 'rename', 'a.txt').code, 2)
+  assert.equal(fugue(root, 'chmod', 'a.txt').code, 2)
+  assert.equal(fugue(root, 'chmod', 'a.txt', '999').code, 2, '999 不是八进制模式')
+  assert.equal(fugue(root, 'diff', '--since', 'x').code, 2)
   assert.equal(fugue(root, '把目录挪走', 'd', 'd2').code, 2, '未知命令')
-  assert.equal(fugue(root, 'write', 'a.txt', '--from', '/没有这个文件').code, 1)
+  assert.equal(fugue(root).code, 2, '不给命令是用法错')
+  assert.equal(fugue(root, 'config', 'set', 'a.b').code, 2, 'config set 少了值')
+  assert.equal(fugue(root, '--help').code, 0, '要帮助是一条成功的命令')
+  assert.equal(fugue(root, '--help').stdout.startsWith('用法: fugue'), true)
+
+  // **用法错的命令在磁盘上留不下任何东西**：参数先收成一个 delta，视图后开（`deltaFrom`）。
+  assert.equal(existsSync(join(root, '.fugue')), false, '用法错不该建出日志目录')
 })

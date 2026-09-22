@@ -9,7 +9,7 @@
 // **`sync: 'each'`**：§ 9.5 把这个档位留给"提交点、检查点、崩溃一致性实验"，这里正是它。
 import { openLog } from '../../src/log/log.ts'
 import { openTruth } from '../../src/truth/truth.ts'
-import type { AgentId, WriterId } from '../../src/terms.ts'
+import type { WriterId } from '../../src/terms.ts'
 import { applyEdit } from '../../src/view/edit.ts'
 import { lowerFor } from '../../src/view/lower.ts'
 import { loadView } from '../../src/view/view.ts'
@@ -31,7 +31,7 @@ const log = openLog(root, { sync: 'each' })
 const truth = await openTruth(root)
 try {
   const w = writer as WriterId
-  const view = await loadView(log, w as AgentId, { lower: await lowerFor(truth, w) })
+  const view = await loadView(log, w, { lower: await lowerFor(truth, w) })
   for (let i = 0; i < count; i++) {
     await applyEdit(
       { log, truth, view, writer: w },

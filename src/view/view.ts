@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto'
 import type { Delta } from '../delta.ts'
 import { EMPTY_TREE_ID } from '../entries.ts'
 import type { DirEntry, EntryMeta } from '../entries.ts'
+import { agentFor } from '../identity.ts'
 import type { LogEvent, LogReader } from '../log/events.ts'
 import type { AgentId, BlobId, CommitId, RelPath, ViewRev, WriterId } from '../terms.ts'
 import type {
@@ -577,13 +578,13 @@ class MemoryView implements View {
  * **快照只在它不晚于 `upToRev` 时才用**——它换掉的是历史，问一个比它更早的修订点时它帮不上
  * 忙，忽略它只是慢一点。除此之外没有任何一条判断依赖快照有没有、对不对。
  */
-export async function loadView(log: LogReader, agent: AgentId, opts: LoadViewOptions): Promise<View> {
-  const view = new MemoryView(agent, opts.lower)
+export async function loadView(log: LogReader, agent: WriterId, opts: LoadViewOptions): Promise<View> {
+  const view = new MemoryView(agentFor(agent), opts.lower)
   const stop = opts.upToRev
   const snap = opts.snap
   const useSnap = snap !== undefined && (stop === undefined || snap.state.rev <= stop)
   if (snap !== undefined && useSnap) await view.seed(snap.state)
-  for await (const e of log.readByWriter(agent as WriterId, useSnap ? snap.seq : 0)) {
+  for await (const e of log.readByWriter(agent, useSnap ? snap.seq : 0)) {
     const rev = (e as { rev?: unknown }).rev
     if (stop !== undefined && typeof rev === 'number' && rev > stop) continue
     await view.replay(e)

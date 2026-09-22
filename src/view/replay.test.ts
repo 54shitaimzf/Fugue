@@ -322,7 +322,7 @@ test('③ 快照删掉 · 写坏 · 比日志新 · 与文件名不符：重建�
     const w = 'round' as WriterId
     const snap = await readSnapshot(root, w)
     assert.ok(snap !== null, '三号提交过后应当有一份快照')
-    const fast = await loadView(log, w as never, { lower: await lowerFor(truth, w), snap })
+    const fast = await loadView(log, w, { lower: await lowerFor(truth, w), snap })
     assert.throws(() => fast.diff(0), /从 rev \d+ 的快照起/)
     assert.deepEqual(fast.diff(snap.state.rev), [], '快照之后没有变更')
   } finally {
@@ -348,7 +348,7 @@ test('④ 4 个 writer 交错写着各自的历史：交错重建 == 各自重�
     const writers = ['agent/r1/1', 'agent/r1/2', 'agent/r1/3', 'agent/r1/4'] as WriterId[]
     const live = new Map<WriterId, View>()
     for (const w of writers) {
-      live.set(w, await loadView(log, w as never, { lower: await lowerFor(truth, w) }))
+      live.set(w, await loadView(log, w, { lower: await lowerFor(truth, w) }))
     }
 
     // 四条序列轮流落地：日志文件是四份，交错序里它们真的夹在一起。路径**故意重叠**
@@ -378,13 +378,13 @@ test('④ 4 个 writer 交错写着各自的历史：交错重建 == 各自重�
       const mine = live.get(w) as View
       const want = await snapshotOf(mine)
       // 各自重建：按 writer 读它自己的那份日志。
-      const again = await loadView(log, w as never, { lower })
+      const again = await loadView(log, w, { lower })
       const got = await snapshotOf(again)
       assert.deepEqual(got, want, `${w}：按 writer 重放出来的不是它自己的终态`)
       assert.equal(again.rev, mine.rev)
       assert.deepEqual(again.diff(0).map(dkey), mine.diff(0).map(dkey))
       // 交错重建：从**交错的全序流**里筛出它那一份再重放。
-      const inter = await loadView(mergedFace(log, w), w as never, { lower })
+      const inter = await loadView(mergedFace(log, w), w, { lower })
       const got2 = await snapshotOf(inter)
       assert.deepEqual(got2, want, `${w}：交错流里读出来的不是它自己的终态`)
       assert.deepEqual(inter.revs, again.revs)

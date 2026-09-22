@@ -28,6 +28,15 @@ node tools/test-entry.js
 
 **断言在位，不断言快慢。** 要进架构当常数的读数一律在一等档主机（ext4）上取。
 
+**走查**——§ 9.6 那张表逐行走一遍，连命令带输出：
+
+```
+sh tools/walkthrough.sh
+```
+
+它起一个真仓库：写 · 提交 · 杀进程 · 重放 · 看变更，最后自己断言七条，并在结尾把表里属于
+S1 的每一行再走一遍、报退出码。`KEEP=1` 把临时工作区留下，`FUGUE=<cli>` 换掉被走查的那个命令行。
+
 ## 只写可擦除的 TypeScript
 
 Node 直跑 `.ts` 是 **strip-only**：**参数属性**（`constructor(readonly x: T)`）、`enum`、

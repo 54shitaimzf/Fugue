@@ -10,7 +10,7 @@
 // **它不认识视图语义。** 条目 · rev · 这份条目长在哪个提交上，都从外面给（U3 之后是 `M2`
 // 的全量读出 · `View.rev` · `View.base`），所以 M2 落地时这个文件一行都不用改——换掉的
 // 是调用者那一段折叠。
-import { refFor } from './refs.ts'
+import { refFor } from './identity.ts'
 import type { Log } from './log/events.ts'
 import type { TreeEntry } from './entries.ts'
 import type { Truth } from './truth/contract.ts'
