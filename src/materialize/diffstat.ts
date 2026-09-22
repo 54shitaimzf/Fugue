@@ -89,7 +89,7 @@ function leafOf(root: AbsPath, rel: RelPath): Leaf {
   const kind: LeafKind = st.isSymbolicLink() ? 'symlink' : st.isFile() ? 'file' : 'other'
   // **`readlink` 而不是 `readFile`。** 软链的内容就是它指向的那一串，不是那份被指向的字节：
   // `readFileSync` 会跟过去读，于是两条指向不同、内容相同的链看起来一样，而悬空的那条直接把
-  // 整棵树扫崩。§ 8.5 的差异集口径写的是"符号链接比目标"（V1.2 修正）。
+  // 整棵树扫崩。§ 8.5 的差异集口径写的是"符号链接比目标"（PLAN § 5.2 的 V1.2 行）。
   const target = kind === 'symlink' ? readlinkSync(abs) : ''
   const hash =
     kind === 'file'

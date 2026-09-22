@@ -153,7 +153,8 @@ test('④ 增 · 删 · 软链重指 · chmod：各报各的列', () => {
   )
 })
 
-test('⑧ 软链记的是"指向哪"，不是"指向的那份内容"（V1.2 修正）', () => {
+test('⑧ 软链记的是"指向哪"，不是"指向的那份内容"', () => {
+  // 出处：§ 8.5 的差异集口径（"符号链接比目标"）· PLAN § 5.2 的 V1.2 行。
   const root = tree({ 'same1.txt': 'same', 'same2.txt': 'same' })
   symlinkSync('same1.txt', join(root, 'link'))
   symlinkSync('nowhere.txt', join(root, 'dead'))
