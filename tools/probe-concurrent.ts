@@ -23,8 +23,26 @@
 //   D · 四个 agent 并发 `fork`（同一个工作区）：四个都 exit 0；唯一那个共享的可变文件
 //       `<root>/.fugue/config`（平台事实的缓存）读得回来、人写的那条键还在。
 //
-// 结论一句话：**N 个不同 agent 的并发今天就是通的；同一个 agent 的两个写者今天没有栅栏**
-// （序号会重复，快照的戳与内容会错位），而 M3 连身份模型里的名字都装不下（`agent/r1/1` 被拒）。
+// 结论一句话（**那时**）：**N 个不同 agent 的并发当时就是通的；同一个 agent 的两个写者是缺口**
+// ——序号会重复、快照的戳与内容会错位，它正是 S3 的 W0 立的那道栅栏要收的；而 M3 连身份模型里的
+// 名字都装不下（`agent/r1/1` 被 fork 拒，W3 收）。
+//
+// **重跑（W0 与 W1 之后 · 2026-09-23 · 内核 6.18.33.2 · WSL2 · ext4 · Node v24.21.0）**：A · C ·
+// C2 · C3 这四条量的是"没有栅栏"的现场，而栅栏在了（W0 的 `log/<writer>.lock`）——同一批命令再跑
+// 一遍，四条各换了一种读数：
+//
+//   A · 两路并发 `ensure`（同一个 agent）：**5 次全是一路 0、一路 1**，文案是"a1 的日志已经有写者：
+//       pid …（起始于 …）"；盘上照旧全对（树对 · 挂载在 · verify 0 · verify-mat 0 · 序号无重复）。
+//       一次成功的操作不再被报成"overlay 卸不下来"。
+//   C · 两路并发 `write`：序号 `[1]`——被拒的那一路一条事件都没写。
+//   C2 · 有快照之后两路并发写：序号 `[1,2,3]`，`replay --verify` 0（不再有重复的那一号）。
+//   C3 · 一个进程提交、一个进程写：两个抢一个序号的那一幕没有了（一个 0 一个 1），从快照重放不再
+//       丢事件。
+//   B · D · 不变：四个不同 agent 的并发照样四个都 0（B 239 ms · D 275 ms，逐个 236–239 ms），各自
+//       的树对 · 别人的一条看不见 · 配置里人写的那条键还在。
+//
+// 于是**并发这一维今天只剩两个已知代价**：同一个 agent 的两个写者里被拒的那一个（退 1，不等待——
+// 一次 CLI 调用就是这条命令的全部生命），以及 PLAN § 5.3 疑点清单里那条"接管陈旧锁"的窄窗。
 import { spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -137,9 +155,18 @@ function body(p: string): string {
 
 const AGENTS = ['a1', 'a2', 'a3', 'a4']
 
-/** 分枝：把该 agent 的分支头定格在 base 上。今天没有一条命令做这件事，所以探针自己来。 */
+/**
+ * 分枝：把该 agent 的分支头定格在 base 上。
+ *
+ * **走命令面**（`fugue branch`，W1 的交付物）。这六条读数最初是探针自己 `git update-ref` 出来的
+ * ——那时还没有这条命令，而那是 W1 的退化档；现在命令在，探针就照产品的那条路走（四条分支头是
+ * `fork` 的前提）。
+ */
 function branch(root: string, agent: string, commit: string): void {
-  git(root, ['update-ref', 'refs/heads/' + agent, commit])
+  const r = spawnSync('node', [CLI, '--root', root, '--agent', agent, 'branch', commit], {
+    encoding: 'utf8',
+  })
+  if (r.status !== 0) throw new Error(`branch ${agent} 退 ${r.status}：${r.stderr}`)
 }
 
 async function caseA(): Promise<void> {
