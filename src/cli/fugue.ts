@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BranchRefused, branchAt, forkBaseRefusal } from '../branch.ts'
 import { checkpoint } from '../checkpoint.ts'
 import {
   ConfigError,
@@ -46,7 +47,7 @@ import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import type { View } from '../view/contract.ts'
 import { applyEdit } from '../view/edit.ts'
-import { lowerAt, lowerFor } from '../view/lower.ts'
+import { baseFor, lowerAt, lowerFor } from '../view/lower.ts'
 import { readSnapshot, saveSnapshot, snapshotOf } from '../view/snapshot.ts'
 import { loadView } from '../view/view.ts'
 
@@ -64,15 +65,22 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
   diff [--since <rev>]       自某个修订点以来的变更
   revs                       全部可达修订点，升序；0 是 base 本身
   commit -m <msg>            把当前视图提交成一个提交点，推进它的 ref
+  branch <base>              把本 agent 的分支头定格在 <base> 上——§ 4 的那个"分出去"。
+                             幂等：已经指着它就什么都不做；指着别处就拒绝并给出两条路。
+                             它是视图的底与物化的底对齐的那一步：fork 之前，本 agent 的
+                             分支头必须就是 <base>，否则 fork 拦在落地之前（§ 4 末段）
   replay [--to <rev>]        从日志重建视图并报出它；--verify 逐 agent 比对两条重建路径
   diff-stat [<dir>] [--baseline <f>] [--save <f>]
                              全树 (mtime,size,hash) 快照对比；不给 <dir> 时扫本 agent 的合并树，
                              基线由 --baseline 读、--save 存（三个路径都相对当前目录，不是 --root）
   fork <base> [--strategy <s>] [--ro <p1,p2>] [--no-preserve-mtime]
                              把 base 那棵树物化出来并挂上，返回合并树（本 agent 的坐标）
-                             <base> 是一个提交，**要与真实工作树当前所在的那个提交一致**：
-                             物化的底就是那棵树（§ 8.4），不一致时物化树里没被本 agent 碰过的
-                             路径给的是工作树的内容而不是 base 的——这一层不做检测（检测在合并之前）
+                             <base> 是一个提交，**必须就是本 agent 的分支头**（branch <base>
+                             定的那一步）。物化的底是真实工作树，视图的底是分支头，
+                             两者得是同一个提交（§ 4），所以落地之前查一次 ref——不一致就拒绝
+                             并指路。**真实工作树是不是 base 的那棵树，这一层不查**（§ 8.4：
+                             检测在合并之前）：不一致时物化树里本 agent 没碰过的路径给的是
+                             工作树的内容而不是 base 的
                              --strategy 取 overlayfs | hardlink-ro | copy，
                              不给就按策略表探着退档，用了哪一档写在 stderr 与 --json 里；
                              --ro 声明哪几处子树只读（hardlink-ro 那一档只链它们）；
@@ -332,6 +340,52 @@ async function commit(ctx: Ctx, msg: string, json: boolean): Promise<number> {
 }
 
 /**
+ * `fugue branch <base>`：把本 agent 的分支头定格在 <base> 上（§ 4 的"分出去" · § 9.6 的提交组）。
+ *
+ * **它不建视图、不读日志**：这个动作改的是 ref（真源那一侧），而"视图的底现在是哪个提交"是
+ * 下一条命令加载时现读出来的。所以它和 `config` · `dispose` 一样，排在建视图的命令之前。
+ *
+ * 退出码：0 定好了（本来就指着它也算）· 1 做不成（<base> 不是一个提交 · 指着别处）· 2 用法错。
+ */
+async function branchCmd(
+  root: string,
+  flags: Map<string, string | true>,
+  args: string[],
+  json: boolean,
+): Promise<number> {
+  const base = args[0]
+  if (base === undefined || base === '') return usageFail('branch 需要 <base>：一个提交')
+  const abs = resolve(root)
+  const writer = writerOf(flags)
+  const truth = openTruth(abs)
+  try {
+    let commit: CommitId
+    try {
+      commit = await truth.resolve(base)
+    } catch (err) {
+      return fail(`branch：${base} 不是这个工作区里一个能用的提交\n  ${(err as Error).message}`)
+    }
+    const res = await branchAt(truth, writer, commit)
+    if (json) emitJson({ agent: agentFor(writer), ref: res.ref, base: res.base, moved: res.moved })
+    else {
+      // 过程走 stderr（§ 9.8 的 stdout 纪律）：stdout 上那一行是这次的坐标，与 `commit` 一致。
+      process.stderr.write(
+        res.moved
+          ? `${res.ref} 定格在 ${res.base}\n`
+          : `${res.ref} 本来就指着 ${res.base}——幂等，什么都没动\n`,
+      )
+      emitLine(`${res.base}\t${res.ref}`)
+    }
+    return 0
+  } catch (err) {
+    if (err instanceof BranchRefused) return fail(err.why)
+    throw err
+  } finally {
+    await truth.close()
+  }
+}
+
+/**
  * `fugue config show|get|set`（§ 9.6 的配置组 · § 15.3.a 的工作区级配置）。
  *
  * 三条命令都**不建视图、不读日志**——配置是工作区的输入，不是它的状态。所以它们在一个还
@@ -511,6 +565,11 @@ async function forkCmd(
         `fork：${base} 不是这个工作区里一个能用的提交——<base> 要指向一棵树\n  ${(err as Error).message}`,
       )
     }
+    // **视图的底与物化的底必须是同一个提交**（§ 4）：物化的底是真实工作树，视图的底是本 agent
+    // 的分支头。不一致时症状是静默的，所以拦在落地之前——这一趟只读了 ref，盘上还什么都没动。
+    const disagree = forkBaseRefusal(writer, commit, await baseFor(truth, writer))
+    if (disagree !== null) return fail(disagree)
+
     const res = await fork({ roots: createRoots(abs), log, root: abs }, agent, commit, {
       ...DEFAULT_MATERIALIZE,
       // `preserveMtime` 只在铺底的两档上有意义（overlayfs 档什么都不铺，§ 8.5）。它默认开着，
@@ -835,6 +894,9 @@ async function run(argv: readonly string[]): Promise<number> {
       await ctx.close()
     }
   }
+
+  // 分出去改的是 ref（真源那一侧），不建视图、不读日志——所以它排在建视图的命令之前。
+  if (cmd === 'branch') return await branchCmd(root, flags, positional.slice(1), json)
 
   // 配置不建视图、不读日志：它是工作区的输入，不是它的状态（§ 15.3.a 末段）。
   if (cmd === 'config') return await config(root, positional.slice(1), json)
