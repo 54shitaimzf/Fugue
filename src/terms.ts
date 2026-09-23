@@ -53,6 +53,12 @@ export type RoundState =
   | 'Rebuilding'
   | 'Aborted'
 
+/**
+ * 架构 § 8.6 的 `RunSpec.action` · § 15.3.a 的"动作名"：工作区配置里 `actions.<名字>` 的那个
+ * 名字。它是一个键，不是一段路径——所以没有品牌，与 `StepId` 同一条口径。
+ */
+export type ActionName = string
+
 /** 架构 § 8.8 的策略面：一份策略值，两个强制点。 */
 export type PolicyMode = 'read-only' | 'workspace-write'
 export type Enforcement = 'full' | 'partial'

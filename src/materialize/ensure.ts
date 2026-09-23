@@ -22,7 +22,7 @@
 // **幂等**（§ 8.5："已最新则空操作"）：目标 rev 就是已经落到的那个，那就不卸不落不写事件，只把
 // 挂载态补齐。**往回走不是一条路**（§ 9.6 那张表里没有"回退"），所以 `upTo` 比已落的 rev 小时
 // 原样拒绝，不当作"重放一遍"。
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Delta } from '../delta.ts'
 import type { Log } from '../log/events.ts'
@@ -82,6 +82,12 @@ export interface EnsureDeps {
    * 而 `ensure` 与 `verify-mat` 都要它——读两遍不会更对。
    */
   readonly state?: MatState
+  /**
+   * 声明目录（架构 § 8.6 第 1 步）：**在卸载态于 `upper` 里预建**——它们同时充当 bwrap 的
+   * 挂载点，而目标不在树里时 bwrap 当场失败（实测 `Can't chdir to --bind`）。
+   * 只有 `fugue run` 知道该声明什么；`fugue ensure` 自己不带它。
+   */
+  readonly declared?: readonly RelPath[]
 }
 
 export interface EnsureResult {
@@ -97,6 +103,8 @@ export interface EnsureResult {
   readonly untouched: readonly RelPath[]
   readonly whiteouts: number
   readonly pruned: number
+  /** 这一趟预建的挂载点：声明要绑、而树里本来没有的那些目录（架构 § 8.6 第 1 步）。 */
+  readonly prepared: readonly RelPath[]
   /** 落地之后清单的条数。**§ 9.7 的 `mat/sync.touched` 就是它**（进度事件不带清单本身）。 */
   readonly touched: number
   /** 已最新：没有 delta 要落，也没写事件。 */
@@ -156,24 +164,34 @@ export async function ensure(deps: EnsureDeps, agent: AgentId, upTo: ViewRev): P
 
   // **已最新就是空操作**：不卸 · 不落 · 不写事件。挂载态仍然补齐（上面那段）。
   const dirty = upTo !== st.rev
+  // 声明目录里树里还没有的那些。**它写的是 `upper`，而写 `upper` 只能在卸载态**（§ 8.5），
+  // 所以它与"有 delta 要落"共用同一个卸载窗口——两条都不需要时，一个字节都不碰。
+  const missing = (deps.declared ?? []).filter((rel) => !existsSync(join(merged, rel)))
   let out: LandResult = { manifest: manifestMap(st), landed: [], untouched: [], whiteouts: 0, pruned: 0 }
-  if (dirty) {
+  const prepared: RelPath[] = []
+  if (dirty || missing.length > 0) {
     if (overlay) unmountOverlay(merged)
     try {
-      out = await landDeltas(
-        {
-          target,
-          lower: roots.realRoot,
-          base: deps.base,
-          overlay,
-          whiteout:
-            whiteoutMode === null ? null : (abs: AbsPath) => makeWhiteout(abs, whiteoutMode as MountMode),
-          pruneEmptyDirs: opt.pruneEmptyDirs,
-          view: deps.view,
-        },
-        manifestMap(st),
-        deps.view.deltasSince(st.rev),
-      )
+      if (dirty) {
+        out = await landDeltas(
+          {
+            target,
+            lower: roots.realRoot,
+            base: deps.base,
+            overlay,
+            whiteout:
+              whiteoutMode === null ? null : (abs: AbsPath) => makeWhiteout(abs, whiteoutMode as MountMode),
+            pruneEmptyDirs: opt.pruneEmptyDirs,
+            view: deps.view,
+          },
+          manifestMap(st),
+          deps.view.deltasSince(st.rev),
+        )
+      }
+      for (const rel of missing) {
+        mkdirSync(join(target, rel), { recursive: true })
+        prepared.push(rel)
+      }
     } catch (err) {
       // 落不完也要把树挂回去：**半落的 delta 不影响下一次 ensure**（它会重对一遍），而树不挂着
       // 就什么都跑不了。
@@ -207,6 +225,7 @@ export async function ensure(deps: EnsureDeps, agent: AgentId, upTo: ViewRev): P
     untouched: out.untouched,
     whiteouts: out.whiteouts,
     pruned: out.pruned,
+    prepared,
     touched: payload.paths.length,
     noop: !dirty,
     ms,

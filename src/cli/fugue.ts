@@ -8,7 +8,7 @@
 // **语义不在这里**：一次变更的顺序与校验住在 `src/view/edit.ts`，提交住在
 // `src/checkpoint.ts`——两个都是跨层接线（§ 7），这里只是它们的一个人侧入口。
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BranchRefused, branchAt, forkBaseRefusal } from '../branch.ts'
@@ -22,6 +22,10 @@ import {
   setConfig,
   writeConfig,
 } from '../config.ts'
+import { BindingError, envFor, parseInjections, portRangeOf, readBinding } from '../execute/binding.ts'
+import type { ActionBinding } from '../execute/binding.ts'
+import { cacheLayoutOf, confine } from '../execute/confine.ts'
+import { createExecutor } from '../execute/exec.ts'
 import { agentFor } from '../identity.ts'
 import type { Delta } from '../delta.ts'
 import type { TreeEntry } from '../entries.ts'
@@ -34,15 +38,17 @@ import { TreeStatError, WORKSPACE_STATE, diffStat, loadTreeStat, scanTree, store
 import { DEFAULT_MATERIALIZE } from '../materialize/contract.ts'
 import { dispose } from '../materialize/dispose.ts'
 import { EnsureRefused, ensure } from '../materialize/ensure.ts'
+import type { EnsureResult } from '../materialize/ensure.ts'
 import { ForkRefused, fork } from '../materialize/fork.ts'
 import { LandError } from '../materialize/land.ts'
 import { LayError } from '../materialize/lay.ts'
 import { matState } from '../materialize/manifest.ts'
+import type { MatState } from '../materialize/manifest.ts'
 import { MountError } from '../materialize/mount.ts'
 import { VerifyRefused, verifyMat } from '../materialize/verify.ts'
 import { HostError, assertHost } from '../roots/host.ts'
 import { createRoots } from '../roots/roots.ts'
-import type { CommitId, ForkStrategy, LogPos, ViewRev, WriterId } from '../terms.ts'
+import type { CommitId, ForkStrategy, LogPos, StepId, ViewRev, WriterId } from '../terms.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import type { View } from '../view/contract.ts'
@@ -92,6 +98,14 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              把这个 agent 到 <rev> 为止的改动落到物化树里（不给 --to 就是此刻），
                              返回合并树；已最新就什么都不落。一次落哪些路径由日志里的 mat/*
                              重放得来，落完追加一条 mat/sync
+  run <action> [-- k=v…]     在沙箱里跑一个声明过的动作（§ 8.6）：先物化一次，再把本 agent 的
+                             坐标注进环境（HOME · TMPDIR · XDG_CACHE_HOME · PORT · PORTS），
+                             然后 bwrap 起进程。动作写在配置里，例如
+                             fugue config set actions.build '{"argv":["make"],"cache":["dist"]}'
+                             「-- k=v」注入子进程的环境变量；上面那几样盖不了（撞上就拒绝）。
+                             子进程的两股输出走 stderr；产物落在声明目录绑的那份缓存里，
+                             视图一个字节都不动（回写视图是 X2）。--step <id> 是这一步的署名，
+                             不给就是「-」（轮次是 S7 的事）。退出码：0 子进程成功 · 1 没成功
   verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
                              里那几条，三者两两相等，并报 materialize-precision（§ 8.15 的比值）。
                              不等就退 1——**只报不修**（§ 8.5 的失败处理是删除重建）
@@ -111,7 +125,7 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
   --help          这张表
 
  一份日志一个写者进程：写命令（write · remove · rename · chmod · commit · fork · ensure ·
- dispose）取该 agent 的锁 <root>/.fugue/log/<agent>.lock，同一个 agent 的两条写命令因此
+ run · dispose）取该 agent 的锁 <root>/.fugue/log/<agent>.lock，同一个 agent 的两条写命令因此
  不会同时在跑——拿不到的那一条退 1 并报出持者。读命令一律不取锁；锁按 agent 分，
  不同 agent 之间互不阻塞
 `
@@ -119,6 +133,8 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
 interface Parsed {
   flags: Map<string, string | true>
   positional: string[]
+  /** `--` 之后那几段的原文。**只有 `run` 收它**（`-- k=v…` 的注入，§ 9.6 的执行行）。 */
+  rest: string[]
 }
 
 /**
@@ -126,13 +142,21 @@ interface Parsed {
  * `fugue [--root <dir>] [--agent <id>] [--json] <command>`，开关排在命令**前面**，
  * 一个贪心的解析器会把命令当成开关的值吃掉。
  */
-const VALUED: ReadonlySet<string> = new Set(['root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro'])
+const VALUED: ReadonlySet<string> = new Set([
+  'root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro', 'step',
+])
 
 function parseArgv(argv: readonly string[]): Parsed {
   const flags = new Map<string, string | true>()
   const positional: string[] = []
+  const rest: string[] = []
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
+    // `--` 之后一律是原文：`k=v` 的值里可能有 `-`、有 `=`，再解析下去就是替人猜。
+    if (a === '--') {
+      rest.push(...argv.slice(i + 1))
+      break
+    }
     if (!a.startsWith('-') || a === '-') {
       positional.push(a)
       continue
@@ -152,7 +176,7 @@ function parseArgv(argv: readonly string[]): Parsed {
       flags.set(key, true)
     }
   }
-  return { flags, positional }
+  return { flags, positional, rest }
 }
 
 function emitJson(v: unknown): void {
@@ -656,32 +680,7 @@ async function ensureCmd(
         `ensure：rev ${upTo} 不是一个修订点\n可用的有 ${ctx.view.revs.join(' · ')}（fugue revs 列的就是它们）`,
       )
     }
-    const res = await ensure(
-      {
-        roots: createRoots(abs),
-        log: ctx.log,
-        root: abs,
-        opt: DEFAULT_MATERIALIZE,
-        // 视图那一侧的读口：M4 不 import M2，所以由这里接上（§ 8.3：两者只共享 `Delta`）。
-        view: {
-          stat: (p) => ctx.view.stat(p),
-          read: (p) => ctx.view.read(p),
-          rev: ctx.view.rev,
-          deltasSince: (from) => ctx.view.diff(from),
-          // 墓碑只给"一条 whiteout 打不开"那一支用：视图删过一个目录，而底里它还在。
-          tombstones: () =>
-            ctx.view
-              .state()
-              .upper.filter((e) => e.kind === 'tombstone')
-              .map((e) => e.path),
-        },
-        base: lowerAt(ctx.truth, st.base),
-        // 上面那一趟已经读过的清单：不为了同一个答案再全量重放一次（§ 9.4 的重放代价）。
-        state: st,
-      },
-      agent,
-      upTo,
-    )
+    const res = await landOnce(ctx, abs, agent, st, upTo)
     if (json) {
       emitJson({
         agent: res.agent,
@@ -711,6 +710,197 @@ async function ensureCmd(
       emitLine(res.merged)
     }
     return 0
+  } catch (err) {
+    if (err instanceof EnsureRefused) return fail(err.why)
+    if (err instanceof MountError || err instanceof LandError) return fail(err.message)
+    throw err
+  } finally {
+    await ctx.close()
+  }
+}
+
+/**
+ * `ensure` 那一趟的装配。**两条命令共用它**：`fugue ensure` 与 `fugue run`——后者在执行前
+ * 隐式兑现一次物化（D3 的"先物化"），并把自己的声明目录递给它（`declared`，架构 § 8.6
+ * 第 1 步：挂载点要在卸载态预建）。
+ *
+ * 上面那一趟已经读过的清单从这里递进去：不为了同一个答案再全量重放一次（§ 9.4 的重放代价）。
+ */
+async function landOnce(
+  ctx: Ctx,
+  abs: string,
+  agent: ReturnType<typeof agentFor>,
+  st: MatState,
+  upTo: ViewRev,
+  declared?: readonly string[],
+): Promise<EnsureResult> {
+  return await ensure(
+    {
+      roots: createRoots(abs),
+      log: ctx.log,
+      root: abs,
+      opt: DEFAULT_MATERIALIZE,
+      // 视图那一侧的读口：M4 不 import M2，所以由这里接上（§ 8.3：两者只共享 `Delta`）。
+      view: {
+        stat: (p) => ctx.view.stat(p),
+        read: (p) => ctx.view.read(p),
+        rev: ctx.view.rev,
+        deltasSince: (from) => ctx.view.diff(from),
+        // 墓碑只给"一条 whiteout 打不开"那一支用：视图删过一个目录，而底里它还在。
+        tombstones: () =>
+          ctx.view
+            .state()
+            .upper.filter((e) => e.kind === 'tombstone')
+            .map((e) => e.path),
+      },
+      base: lowerAt(ctx.truth, st.base),
+      state: st,
+      ...(declared === undefined ? {} : { declared }),
+    },
+    agent,
+    upTo,
+  )
+}
+
+/**
+ * `fugue run <action> [-- k=v…]`：在一个动作自己的物化环境里跑它（架构 § 8.6 · § 9.6 的执行行）。
+ *
+ * 一趟四件事：**先物化**（`ensure`——D3 的"执行前隐式兑现"）→ 建本 agent 的缓存与声明目录的
+ * 挂载点（`cache` 不在 `fork` 的四个坐标里：它是 M5 的，架构 § 8.6）→ 包命令行（`confine`）→
+ * 起进程，并把三件事记进日志（`run/start` · `run/confined` · `run/end`）。**回写视图那一半是
+ * X2**：这一趟的产物落在声明目录绑的那份缓存里，视图一个字节都不动。
+ *
+ * **它也是写命令**：那三条事件要追加，所以整条命令握着该 agent 的锁（与 write · ensure 同一道
+ * 栅栏）——同一个 agent 的另一个写者拿不到，不同 agent 之间照旧零协调。
+ *
+ * 退出码：0 子进程成功 · 1 子进程没成功或这一趟做不成（含配置里没有这个动作）· 2 用法错。
+ * **子进程真实的退出码在 `run/end` 与 `--json` 里**——§ 9.8 的退出码只有三个数。
+ *
+ * 输出：子进程的 stdout 与 stderr 都走我们的 **stderr**（那是过程，§ 9.8 的 stdout 纪律）；
+ * stdout 上那一行是结果——默认 `退出码\t毫秒\t档`，`--json` 一个对象。
+ */
+async function runCmd(
+  root: string,
+  flags: Map<string, string | true>,
+  args: string[],
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const name = args[0]
+  if (name === undefined || name === '') return usageFail('run 需要 <action>')
+  const stepRaw = flags.get('step')
+  // 这一站没有轮次（S7 才有）：默认 `-`，读日志时一眼看得出"这不是某一轮里的那一步"。
+  const step: StepId = typeof stepRaw === 'string' ? stepRaw : '-'
+
+  const abs = resolve(root)
+  let binding: ActionBinding
+  let injections: Record<string, string>
+  let range: string
+  try {
+    const doc = await readConfig(abs)
+    binding = readBinding(doc, name)
+    injections = parseInjections(rest)
+    range = portRangeOf(doc)
+  } catch (err) {
+    // 配置错是「做不成」（1），不是「敲错了」（2）：命令行的形状是对的，缺的是工作区那一份。
+    if (err instanceof ConfigError || err instanceof BindingError) return fail(err.message)
+    throw err
+  }
+
+  const agent = agentFor(writerOf(flags))
+  const peek = openLog(abs)
+  let st: MatState
+  try {
+    st = await matState(peek, agent)
+  } finally {
+    await peek.close()
+  }
+
+  const ctx = await openCtx(abs, flags, { snapUpTo: st.rev, write: true })
+  try {
+    // 端口那一片按"日志里 writer 的次序"切：同一个工作区里不同的 agent 拿到不同的片，而同一批
+    // agent 的两次跑（X3 的并行一趟与串行一趟）拿到同一片——逐字节可比的前提就是这个。
+    const writers = (await ctx.log.writers()).slice().sort()
+    const at = writers.indexOf(ctx.writer)
+    const portIndex = at < 0 ? writers.length : at
+
+    const roots = createRoots(abs)
+    const cache = cacheLayoutOf(roots, agent)
+    // 缓存是 M5 的（`fork` 不建它）：三个落点先建出来，绑定才挂得上。
+    mkdirSync(cache.home, { recursive: true })
+    mkdirSync(cache.xdgCache, { recursive: true })
+    for (const rel of binding.cache) mkdirSync(cache.bound(rel), { recursive: true })
+
+    const landed = await landOnce(ctx, abs, agent, st, ctx.view.rev, binding.cache)
+    const env = envFor({ roots, agent, binding, injections, portIndex, range })
+    const confined = confine({
+      roots,
+      agent,
+      argv: binding.argv,
+      cwd: binding.cwd,
+      declared: binding.cache,
+      env,
+    })
+
+    await ctx.log.append(ctx.writer, {
+      t: 'run/start',
+      agent,
+      step,
+      action: name,
+      argv0: binding.argv[0],
+    })
+    await ctx.log.append(ctx.writer, {
+      t: 'run/confined',
+      agent,
+      mode: confined.mode,
+      enforcement: confined.enforcement,
+    })
+    // 中止信号这一站不给：Ctrl-C 由 `--die-with-parent` 把子进程带走（那正是那个开关的用处）。
+    // 代价写在疑点里——那一下 `run/end` 不会落下，日志上留一条没合上的 `run/start`。
+    const res = await createExecutor({
+      onChunk: (_which, chunk) => process.stderr.write(chunk),
+    }).run(agent, { action: name, confined, cwd: binding.cwd, env }, new AbortController().signal)
+    await ctx.log.append(ctx.writer, {
+      t: 'run/end',
+      agent,
+      step,
+      exit: res.exit,
+      ms: res.ms,
+      denied: res.denied,
+    })
+
+    if (json) {
+      emitJson({
+        agent,
+        action: name,
+        step,
+        exit: res.exit,
+        ms: res.ms,
+        denied: res.denied,
+        mode: confined.mode,
+        enforcement: confined.enforcement,
+        mechanism: confined.mechanism,
+        argv0: binding.argv[0],
+        cwd: binding.cwd,
+        declared: binding.cache,
+        outputs: binding.outputs,
+        prepared: landed.prepared,
+        merged: landed.merged,
+        home: env.HOME,
+        tmp: env.TMPDIR,
+        xdgCache: env.XDG_CACHE_HOME,
+        port: Number(env.PORT),
+        ports: env.PORTS,
+      })
+    } else {
+      process.stderr.write(
+        `退出码 ${res.exit} · ${res.ms} ms · ${confined.mode} · ${confined.enforcement} 档` +
+          `${res.denied ? ' · 有被拒的写入' : ''}` +
+          `${landed.prepared.length === 0 ? '' : ` · 预建挂载点 ${landed.prepared.length} 个`}\n`,
+      )
+      emitLine(`${res.exit}\t${res.ms}\t${confined.enforcement}`)
+    }
+    return res.exit === 0 ? 0 : 1
   } catch (err) {
     if (err instanceof EnsureRefused) return fail(err.why)
     if (err instanceof MountError || err instanceof LandError) return fail(err.message)
@@ -846,7 +1036,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 }
 
 async function run(argv: readonly string[]): Promise<number> {
-  const { flags, positional } = parseArgv(argv)
+  const { flags, positional, rest } = parseArgv(argv)
   const json = flags.has('json')
   const rootFlag = flags.get('root')
   const root = typeof rootFlag === 'string' ? rootFlag : process.cwd()
@@ -858,6 +1048,11 @@ async function run(argv: readonly string[]): Promise<number> {
     return 0
   }
   if (cmd === undefined) return usageFail('需要一个命令')
+  // `--` 只对执行那一行有意义（`fugue run <action> -- k=v…`）。别的命令收到它就说不清，
+  // 所以拒绝，而不是把后面那几段悄悄咽下去。
+  if (rest.length > 0 && cmd !== 'run') {
+    return usageFail(`\`--\` 之后的东西只有 run 收（这次给的是 ${cmd}）：只有 run 往子进程里注入 k=v`)
+  }
 
   // 落点先探（架构 § 15.7 的 E1）。**E1 是硬要求，所以这里是拒绝启动，不是降级运行**：
   // 落在 9p / drvfs 那一类跨内核的落点上时，失败模式是静默的（§ 15.8 的"不成立"档）。
@@ -907,6 +1102,8 @@ async function run(argv: readonly string[]): Promise<number> {
   if (cmd === 'diff-stat') return diffStatCmd(root, flags, positional.slice(1), json)
   if (cmd === 'fork') return await forkCmd(root, flags, positional.slice(1), json)
   if (cmd === 'ensure') return await ensureCmd(root, flags, positional.slice(1), json)
+  // 执行排在物化那一组之后：它先兑现一次 `ensure`（D3），再起进程。
+  if (cmd === 'run') return await runCmd(root, flags, positional.slice(1), rest, json)
   if (cmd === 'verify-mat') return await verifyMatCmd(root, flags, json)
   if (cmd === 'dispose') return await disposeCmd(root, flags, json)
 
