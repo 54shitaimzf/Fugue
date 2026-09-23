@@ -31,7 +31,7 @@ import {
   readBinding,
 } from '../execute/binding.ts'
 import type { ActionBinding } from '../execute/binding.ts'
-import { cacheLayoutOf, confine } from '../execute/confine.ts'
+import { cacheLayoutOf, confine, degradedArgv, probeBwrap } from '../execute/confine.ts'
 import { createExecutor } from '../execute/exec.ts'
 import { ReclaimRefused, createReclaim } from '../execute/reclaim.ts'
 import type { DeclaredSet, Reclaim } from '../execute/reclaim.ts'
@@ -119,8 +119,12 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              目录（不存在就预建）；被盖住时它是落在缓存里的一条路径，例如
                              cache:["dist"] 配 outputs:["dist/app"] 收的就是那个可执行文件。
                              声明集外的写入：默认档由内核拒（子进程非零退出、树一个字节没变），
-                             树可写那一档由回收拒并记一条 mat/reclaim。--step <id> 是这一步的
-                             署名，不给就是「-」（轮次是 S7 的事）。退出码：0 子进程成功 · 1 没成功
+                             树可写那一档由回收拒并记一条 mat/reclaim。
+                             --no-sandbox 关掉沙箱（§ 15.7 的 E4 退化档：树可写 + 回收兜底，
+                             不再有只读树那一道围栏）。bwrap 不在 PATH 上时自动走这一档——
+                             两处都如实报 enforcement=partial，不静默降级。
+                             --step <id> 是这一步的署名，不给就是「-」（轮次是 S7 的事）。
+                             退出码：0 子进程成功 · 1 没成功
   verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
                              里那几条，三者两两相等，并报 materialize-precision（§ 8.15 的比值）。
                              不等就退 1——**只报不修**（§ 8.5 的失败处理是删除重建）
@@ -852,8 +856,21 @@ async function runCmd(
 
     const landed = await landOnce(ctx, abs, agent, st, ctx.view.rev, bind)
     assertDeclaredDirs(landed.merged, bind)
+    // **这一趟走哪一档**：`bwrap` 在不在（§ 15.7 的 E4）加命令行上有没有点名要关掉它。
+    // 不在 → 退化档：没有沙箱可包、树可写、回收兜底，`enforcement` 如实报 partial。
+    // **这条读数现探**，不从 `<realRoot>/.fugue/config` 的 `platform` 键里读——那份缓存的寿命
+    // 是给"挂一次试试"那类贵探针定的，E4 的答案会随机器变（见 `confine.ts` 的 `probeBwrap`）。
+    const named = flags.has('no-sandbox')
+    const bw = probeBwrap()
+    const sandboxed = !named && bw.ok
+    const sandboxNote = sandboxed ? '' : named ? '命令行上点名关掉（--no-sandbox）' : bw.note
     // 减数是**这一趟落地之后**的清单：上面那一下已经把视图里没落地的 delta 落进了 `upper`。
-    const reclaim = createReclaim({ roots, strategy: st.strategy, manifest: landed.manifest })
+    const reclaim = createReclaim({
+      roots,
+      strategy: st.strategy,
+      manifest: landed.manifest,
+      treeWritable: !sandboxed,
+    })
     let declared: DeclaredSet
     try {
       declared = reclaim.declare(agent, binding.outputs)
@@ -862,14 +879,16 @@ async function runCmd(
       throw err
     }
     const env = envFor({ roots, agent, binding, injections, portIndex, range })
-    const confined = confine({
-      roots,
-      agent,
-      argv: binding.argv,
-      cwd: binding.cwd,
-      declared: bind,
-      env,
-    })
+    const confined = sandboxed
+      ? confine({
+          roots,
+          agent,
+          argv: binding.argv,
+          cwd: binding.cwd,
+          declared: bind,
+          env,
+        })
+      : degradedArgv(binding.argv)
 
     await ctx.log.append(ctx.writer, {
       t: 'run/start',
@@ -888,6 +907,9 @@ async function runCmd(
     // 代价写在疑点里——那一下 `run/end` 不会落下，日志上留一条没合上的 `run/start`。
     const res = await createExecutor({
       onChunk: (_which, chunk) => process.stderr.write(chunk),
+      // `RunSpec.cwd` 翻成物理路径归 `M5`（架构 § 8.6 那一栏的注）：沙箱那一档它同时进
+      // `--chdir`，**退化档里它是唯一的那一处**——没有沙箱可 chdir，子进程就在这棵树里跑。
+      cwdOf: (a, rel) => join(roots.mergedRoot(a), rel),
     }).run(agent, { action: name, confined, cwd: binding.cwd, env }, new AbortController().signal)
     await ctx.log.append(ctx.writer, {
       t: 'run/end',
@@ -916,6 +938,8 @@ async function runCmd(
         cwd: binding.cwd,
         declared: [...bind],
         outputs: [...declared.paths],
+        sandbox: sandboxed,
+        sandboxNote,
         reclaimed: gate.wrote,
         missing: gate.missing,
         undeclared: gate.undeclared,
@@ -930,6 +954,7 @@ async function runCmd(
     } else {
       process.stderr.write(
         `退出码 ${res.exit} · ${res.ms} ms · ${confined.mode} · ${confined.enforcement} 档` +
+          `${sandboxed ? '' : ` · 没有沙箱（${sandboxNote}）——树可写，回收兜底`}` +
           `${res.denied ? ' · 有被拒的写入' : ''}` +
           `${landed.prepared.length === 0 ? '' : ` · 预建挂载点 ${landed.prepared.length} 个`}` +
           `${gate.wrote.length === 0 ? '' : ` · 回收 ${gate.wrote.length} 条进视图`}` +

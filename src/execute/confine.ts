@@ -18,6 +18,7 @@
 // **`--unshare-net` 不在这里**：网络的边界是 S5 的事（架构 § 8.8 的 `Policy`）。所以这一站
 // 的围栏只有"树只读 + 声明目录可写"这一条，`full` 报的是**这一条真的关上了**，不是"整个宿主
 // 够不到"——物理可达集那一维是 S5 的 U13，断言不许声称够不到别处。
+import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import type { Roots } from '../roots/contract.ts'
 import type { AbsPath, AgentId, RelPath } from '../terms.ts'
@@ -39,6 +40,44 @@ export interface CacheLayout {
 export function cacheLayoutOf(roots: Roots, a: AgentId): CacheLayout {
   const cache = roots.cacheRoot(a)
   return { home: cache, xdgCache: join(cache, 'xdg-cache'), bound: (rel: RelPath) => join(cache, rel) }
+}
+
+/**
+ * **`bwrap` 在不在（§ 15.7 的 E4）：每次现探，不进那份平台事实的缓存。**
+ *
+ * 缓存（`materialize/capability.ts` 的 `ensureFacts`）是为"挂一次试试"那类**贵**探针定的：
+ * `overlayfs` 探一次要真挂一次再卸掉，而它的答案在一台机器上基本不变（§ 8.5 的"探针 + 缓存"）。
+ * E4 这条正相反：探一次只是一次 `spawn`，而它的答案会随机器变——`bwrap` 被删、PATH 被换、
+ * 换了一门命名空间。**读一份过期的"在"，代价是这一趟直接跑不起来**（X4 的④读到过：退出码 1、
+ * stderr 一个字不说，而 `run/confined` 照旧报 `enforcement: 'full'`——§ 15.7 要求"如实报告，
+ * 绝不夸大"，那份过期的缓存正好把它变成一句夸大）。
+ *
+ * 判据是**在 PATH 里找得到、跑得起来**，不是文件存在：与 `overlayfs` 真挂一次同一条道理——
+ * 光看它在，说明不了它在这门命名空间里起不起得来。
+ */
+export function probeBwrap(): { ok: boolean; note: string } {
+  const r = spawnSync('bwrap', ['--version'], { encoding: 'utf8' })
+  if (r.error !== undefined && r.error !== null) {
+    return { ok: false, note: `PATH 里起不来 bwrap：${String((r.error as Error).message)}` }
+  }
+  if (r.status !== 0) {
+    return { ok: false, note: `bwrap --version 退 ${r.status ?? '?'}：${(r.stderr ?? '').trim()}` }
+  }
+  return { ok: true, note: `${(r.stdout ?? '').trim()}（user namespace 与 mount 围栏都在）` }
+}
+
+/**
+ * 退化档的"怎么包"：**没有沙箱可包**（§ 15.7 的 E4）——命令行就是它自己。
+ *
+ * 三样如实报出来，一个字不夸大：`mechanism: 'none'` · `mode: 'workspace-write'`（树可写）·
+ * `enforcement: 'partial'`。**子进程的 cwd 不在这里**：沙箱那一档由 `--chdir` 落，这一档
+ * 由 `M5` 的 `spawn({ cwd })` 落（`RunSpec.cwd` 翻成物理路径那一步，架构 § 8.6 那一栏的注）。
+ *
+ * **声明目录在这一档里没有绑定**：产物落在树自己那一侧，回收读的是树（见 `reclaim.ts` 的落点
+ * 那一段）。预建的挂载点照样要——`cc -o dist/app` 要那个目录先在（架构 § 8.6 第 1 步）。
+ */
+export function degradedArgv(argv: readonly string[]): ConfinedArgv {
+  return { argv: [...argv], mechanism: 'none', mode: 'workspace-write', enforcement: 'partial' }
 }
 
 export interface ConfineInput {

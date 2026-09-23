@@ -3,8 +3,10 @@
 // 它是"视图是唯一写入者"与"子进程会写盘"共存的那一半（架构 § 2 的 C3 · D1）。两件事，
 // 判据都是**枚举**而不是 diff（§ 8.7 的机制那一段）：
 //
-//   一 · **声明集内的产出。** 声明目录整个绑到 per-agent 缓存上（§ 8.6 第 2 步），子进程写
-//        进去的字节落在**绑定那一侧**——`collect()` 走的就是那份落点：`cacheRoot(a)/<rel>`。
+//   一 · **声明集内的产出。** 落点看档：默认档里声明目录整个绑到 per-agent 缓存上
+//        （§ 8.6 第 2 步），字节落在**绑定那一侧**——`collect()` 走 `cacheRoot(a)/<rel>`；
+//        **退化档里没有绑定**（没有沙箱就没有挂载），字节落在树自己那一侧，于是落点是树
+//        （overlayfs 档读 `upper`，另两档就是 `merged`）——同一份 `collect()`，两处落点。
 //        一条绑定盖住它下面的一切，所以落点与"这条声明是自己被绑的、还是被祖先那条绑的"
 //        无关（`cacheLayoutOf().bound` 一处定义那个坐标）。产出与 `M2.diff()` 同构，
 //        `M2.applyDelta()` 直接消费。
@@ -25,7 +27,7 @@ import { join } from 'node:path'
 import { normMode } from '../delta.ts'
 import type { Delta } from '../delta.ts'
 import type { Roots } from '../roots/contract.ts'
-import type { AgentId, ForkStrategy, RelPath } from '../terms.ts'
+import type { AbsPath, AgentId, ForkStrategy, RelPath } from '../terms.ts'
 import { cacheLayoutOf } from './confine.ts'
 
 /**
@@ -71,6 +73,14 @@ export interface ReclaimDeps {
    * 拿旧的清单去减，第二趟运行会把上一趟的产出报成"越了声明"——实测撞到过。
    */
   readonly manifest: readonly RelPath[]
+  /**
+   * 这一趟的树可不可写——**退化档**（§ 15.7 的 E4：沙箱不在）里它是 `true`。
+   *
+   * 它决定两件事：产出的落点（可写 = 落点在树那一侧，见 `landingOf`），以及"声明集外的改动"
+   * 这道闸门可不可读。**默认档里树是只读的**（`--ro-bind`），所以那里没有什么可查——但读数
+   * 照取（那一条写在下面 `undeclared` 里）。
+   */
+  readonly treeWritable: boolean
 }
 
 /** 架构 § 8.7 的接口。两个方法逐字，加上那条闸门的读口。 */
@@ -86,6 +96,19 @@ export interface Reclaim {
    * 返回值是 `Delta[]`（逐字），装不下这一栏。事件本身的形状没动（§ 8.1）。
    */
   undeclared(a: AgentId, declared: DeclaredSet): Promise<RelPath[]>
+}
+
+/**
+ * 声明产出的落点：**看档**。
+ *
+ *   · 默认档（有沙箱）：`cacheRoot(a)`——声明目录整个绑到那儿，字节从绑定那一侧过去。
+ *   · 退化档（没有沙箱）：**树自己那一侧**——没有挂载就没有绑定，子进程写的是 `merged/<rel>`，
+ *     而它落在 `upper`（overlayfs）或干脆就是 `merged`（另两档）。**枚举与回收都在卸载之后**
+ *     （§ 8.7），所以 overlayfs 档读的是 `upper`：卸载之后 `merged` 只是一个空挂载点。
+ */
+function landingOf(deps: ReclaimDeps, a: AgentId): AbsPath {
+  if (!deps.treeWritable) return cacheLayoutOf(deps.roots, a).home
+  return deps.strategy === 'overlayfs' ? deps.roots.scratchRoot(a) : deps.roots.mergedRoot(a)
 }
 
 export function createReclaim(deps: ReclaimDeps): Reclaim {
@@ -110,10 +133,10 @@ export function createReclaim(deps: ReclaimDeps): Reclaim {
     },
 
     async collect(a: AgentId, declared: DeclaredSet): Promise<Delta[]> {
-      const cache = cacheLayoutOf(roots, a)
+      const landing = landingOf(deps, a)
       const out: Delta[] = []
       for (const rel of topLevel(declared.paths)) {
-        const at = cache.bound(rel)
+        const at = join(landing, rel)
         const st = lstatSync(at, { throwIfNoEntry: false })
         // 声明了却没产出不是错：那一条这次没有东西要回。它由命令面报成 `missing`。
         if (st === undefined || st === null) continue
@@ -125,6 +148,18 @@ export function createReclaim(deps: ReclaimDeps): Reclaim {
     },
 
     async undeclared(a: AgentId, declared: DeclaredSet): Promise<RelPath[]> {
+      // **树可写而没有 `upper` 可枚举**：这一档查不出"声明集外被改动了什么"（§ 8.5 末段：
+      // 另两档的落地集是从清单推的，落地根里多出来一条在那两档上看不见）。**当场拒绝，不静默
+      // 收下**——要跑退化档就得让 `fork` 走 overlayfs（E2 的地板是另一条，两条地板叠在一起
+      // 的现场不在这一站的范围里）。
+      if (deps.treeWritable && deps.strategy !== 'overlayfs') {
+        throw new ReclaimRefused(
+          `这一档树可写，却查不出声明集外的改动：${deps.strategy} 没有 \`upper\` 可枚举（§ 8.5）\n` +
+            `退化档靠枚举 \`upper\` 兑现"未声明却被改动 → 拒绝并记事件"；这两档叠在一起时那道闸门\n` +
+            `就是一句空话。要么让 fork 走 overlayfs（fugue fork <base> --strategy overlayfs），` +
+            `要么先装回 bwrap。`,
+        )
+      }
       if (deps.strategy !== 'overlayfs') return []
       const legit = new Set<RelPath>(deps.manifest)
       const out: RelPath[] = []

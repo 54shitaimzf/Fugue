@@ -11,10 +11,24 @@ import { spawn } from 'node:child_process'
 import type { AgentId } from '../terms.ts'
 import type { Executor, RunResult, RunSpec } from './contract.ts'
 
-/** 沙箱拒绝的三种文案（内核给的 errno 我们读不到，只有这一句）。 */
-const DENY = /Read-only file system|Permission denied|Operation not permitted/
+/**
+ * 沙箱拒绝的文案集（内核给的 errno 我们读不到，只有这一句）。
+ *
+ * **`EROFS` 那一支是 X4 补上的**：同一个 errno 30，两种子进程报法不一样——`sh` 那些走
+ * `Read-only file system`，而 node 的 `open()` 报 `EROFS: read-only file system, open 'junk.txt'`。
+ * 少了它，一次真被内核拒掉的运行会读成 `denied: false`（X4 的②亲眼读到过）。
+ */
+const DENY = /EROFS|Read-only file system|Permission denied|Operation not permitted/
 
 export interface ExecOptions {
+  /**
+   * `RunSpec.cwd` 翻成物理路径（架构 § 8.6 那一栏的注：这一步归 `M5`）。
+   *
+   * 沙箱那一档里它同时进了 `--chdir`，所以这里给不给都跑得对；**退化档里它是唯一的那一处**
+   * ——没有沙箱可 `--chdir`，子进程的工作目录就是 `spawn` 的这个 `cwd`。不给就照旧继承
+   * 调用者的（单测里那些直接驱动 `confine` 的用例走的就是那条路）。
+   */
+  readonly cwdOf?: (a: AgentId, rel: string) => string
   /** 超时按杀掉它算，与收到中止信号同一条路。不给就没有超时。 */
   readonly timeoutMs?: number
   /** 过程往哪儿流（命令面接 stderr）。完整的两股仍然在返回值里。 */
@@ -30,6 +44,7 @@ export function createExecutor(opts: ExecOptions = {}): Executor {
         const child = spawn(argv[0], argv.slice(1), {
           env: spec.env,
           stdio: ['ignore', 'pipe', 'pipe'],
+          ...(opts.cwdOf === undefined ? {} : { cwd: opts.cwdOf(_a, spec.cwd) }),
         })
         let out = ''
         let err = ''
