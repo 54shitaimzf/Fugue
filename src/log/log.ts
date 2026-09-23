@@ -12,6 +12,7 @@
 import type { FileHandle } from 'node:fs/promises'
 import { mkdir, open, readFile, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { assertIdent } from '../identity.ts'
 import { decodeLine, encodeEvent } from './envelope.ts'
 import type { Log, LogEvent, LogReader } from './events.ts'
 import { holdWriter } from './hold.ts'
@@ -74,21 +75,13 @@ const DEFAULT_BATCH_EVERY = 64
 const TAIL_WINDOW = 64 * 1024
 
 /**
- * writer 标识同时是文件名，所以它先过一遍路径检查。拒绝空、绝对路径、反斜杠、
- * 空字节，以及任何以点开头的段——那些会走出 log 目录，或者藏起来。
+ * writer 标识同时是文件名，所以它先过一遍身份名的检查。`snap/<writer>/` 也走这一关。
+ *
+ * **规矩只有一处**（`identity.ts` 的 `assertIdent`）：`M0` 与 `M3` 各调它一次，所以同一个名字在
+ * 日志与物化两侧得到同一个答案——这条规矩原先两处各写一遍，已经漂移过一次（见那一份的文件头）。
  */
-/** `snap/<writer>/` 也要过这一关：writer 标识同时是目录名。 */
 export function assertWriterId(w: WriterId): void {
-  const bad = (why: string): never => {
-    throw new Error(`writer 标识非法（${why}）：${JSON.stringify(w)}`)
-  }
-  if (typeof w !== 'string' || w.length === 0) bad('空')
-  if (w.startsWith('/') || w.includes('\\') || w.includes('\0')) bad('含路径分隔符或空字节')
-  for (const seg of w.split('/')) {
-    if (seg === '') bad('含空段')
-    if (seg === '.' || seg === '..') bad('含相对段')
-    if (seg.startsWith('.')) bad('含以点开头的段')
-  }
+  assertIdent(w, 'writer 标识')
 }
 
 /**

@@ -16,6 +16,7 @@
 // 大小写不敏感认的是另一套语义，它们随 Windows 作为执行目标那一步才进来），所以 `\` 不是
 // 一个普通字符，是一个"在另一套语义里才是分隔符"的字符。
 import { isAbsolute, join, normalize } from 'node:path'
+import { identSegments } from '../identity.ts'
 import type { AbsPath, AgentId, RelPath } from '../terms.ts'
 import type { DenyKind } from './contract.ts'
 
@@ -40,21 +41,6 @@ export function isRelPath(raw: string): boolean {
 
 export function assertRelPath(raw: string): RelPath {
   if (!isRelPath(raw)) throw new Error(`不是视图内的路径：${JSON.stringify(raw)}`)
-  return raw
-}
-
-/**
- * 身份段（agent · writer）：它同时是一个目录名，所以还要不藏在点后面——`mat/<agent>/` 与
- * `log/<writer>.jsonl` 都拿它当名字用。
- *
- * 与 `M0` 的 `assertWriterId` 是同一条规矩，两处各写一遍是因为依赖方向：M0 不认识 M3，而
- * 让日志去 import 路径模块是把两层的顺序倒过来。合并它们的时机是 M1／M2 也走
- * `resolveVirtual` 那一次——那时这条规矩才真的只有一个执行点。
- */
-export function assertIdent(raw: string, who: string): string {
-  if (!isSegment(raw) || raw.startsWith('.')) {
-    throw new Error(`${who}同时是一个目录名，不能是 ${JSON.stringify(raw)}`)
-  }
   return raw
 }
 
@@ -131,9 +117,15 @@ export function underRoot(root: AbsPath, abs: AbsPath): RelPath | null {
   return isRelPath(rel) ? rel : null
 }
 
-/** 这个 agent 那一套物化的根：`<realRoot>/.fugue/mat/<agent>/`（架构 § 8.4）。 */
+/**
+ * 这个 agent 那一套物化的根：`<realRoot>/.fugue/mat/<agent>/`（架构 § 8.4）。
+ *
+ * **名字按段展开**（`agent/r1/1` → `mat/agent/r1/1/`）：它与 `log/<writer>.jsonl` 同一层、
+ * 同一个名字（§ 9.2 的布局），所以"身份名同时是一条路径"这条规矩由 `identity.ts` 一处说了算，
+ * 这里只把段拼起来。
+ */
 export function matRoot(realRoot: AbsPath, a: AgentId): AbsPath {
-  return join(assertRoot(realRoot), '.fugue', 'mat', assertIdent(a, 'agent 标识'))
+  return join(assertRoot(realRoot), '.fugue', 'mat', ...identSegments(a, 'agent 标识'))
 }
 
 /**

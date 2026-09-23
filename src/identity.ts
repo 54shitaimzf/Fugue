@@ -15,6 +15,10 @@
 // `agentFor` 给日志侧——这一行是谁写的。二者都从同一个 `WriterId` 出发，所以"谁是主线"
 // 这个问题只有 § 4 一处答案，没有第二份。
 //
+// **身份名同时是一条路径**（§ 4 的 `agent/<round>/<n>` 就是三层目录）：这条规矩与上面两处
+// 翻译同住一份，因为它同样"不属于任何一个模块"——`M0` 与 `M3` 都要它，而两边都不该认识
+// 对方那半。
+//
 // 只有行为是纯函数、没有任何 import 之外的副作用——所以谁都可以 import 它。
 import type { AgentId, RefName, WriterId } from './terms.ts'
 
@@ -37,4 +41,44 @@ export function refFor(writer: WriterId): RefName {
  */
 export function agentFor(writer: WriterId): AgentId {
   return writer as AgentId
+}
+
+/**
+ * 身份名（agent · writer）的形状：**同一个名字落在两侧，所以这条规矩只有一处答案。**
+ *
+ * 它同时是一条路径——`mat/<agent>/`（§ 8.4）· `log/<writer>.jsonl` · `snap/<writer>/`
+ * （§ 9.2）都拿它当名字用，而且**按段展开**：`agent/r1/1` 是三层目录，不是一个"名字里带斜杠"
+ * 的文件。于是每一段都得是一个能当目录名的段——空 · `.` · `..` · 以点开头 · 反斜杠 · 空字节
+ * 一律拒。
+ *
+ * **拒绝就是抛，不是返回一个 Denied。** 这不是用户输入：围栏（`M4`）收的是没解析过的字符串，
+ * 它返回带指路文案的 `Denied`；而到了这里，那个字符串已经是一条身份——里面出现非法段，说明
+ * 调用点把一个没检查过的名字当成了身份，那是程序错误，不是一次可以指路的拒绝。
+ *
+ * **一处实现，两处调用**：`M0` 的 `assertWriterId`（日志那一侧）与 `M3` 的 `matRoot`（物化那一侧）
+ * 各调它一次。这条规矩原先在两边各写了一遍——而它已经漂移过一次：日志那一侧收 `agent/r1/1`，
+ * 物化那一侧拒它，同一个名字在两处得到两个答案（PLAN § 5.3 站前那次检查的第三条读数）。
+ */
+export function assertIdent(raw: string, who: string): string {
+  const bad = (why: string): never => {
+    throw new Error(`${who}非法（${why}）：${JSON.stringify(raw)}`)
+  }
+  if (typeof raw !== 'string' || raw.length === 0) bad('是空的')
+  if (raw.startsWith('/')) bad('以 / 开头')
+  if (raw.includes('\\')) bad('含反斜杠')
+  if (raw.includes('\0')) bad('含空字节')
+  for (const seg of raw.split('/')) {
+    if (seg === '') bad('含空段')
+    if (seg === '.' || seg === '..') bad('含相对段')
+    if (seg.startsWith('.')) bad('含以点开头的段')
+  }
+  return raw
+}
+
+/**
+ * 身份名的各段。**`M3` 按段拼**（`mat/` 底下是目录），`M0` 那一侧由 `join` 展开
+ * （`log/agent/r1/1.jsonl` 与 `snap/agent/r1/1/`）——两处都从这一处拿答案。
+ */
+export function identSegments(raw: string, who: string): string[] {
+  return assertIdent(raw, who).split('/')
 }

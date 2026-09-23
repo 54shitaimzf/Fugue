@@ -82,10 +82,16 @@ test('① 落点：往返 · 前缀守恒 · 非法 RelPath 与非法身份当�
     assert.throws(() => roots.toReal(bad), `${JSON.stringify(bad)} 该抛`)
   }
 
-  // 身份段同时是目录名，所以它自己也要过一遍
-  for (const bad of ['..', '', 'a/b', '.hidden', 'a\\b']) {
+  // 身份名同时是一条路径（W3 起按段展开），所以每一段都得是一个能当目录名的段
+  for (const bad of ['..', '', 'a//b', '.hidden', 'a\\b', 'a/./b', '/a']) {
     assert.throws(() => roots.scratchRoot(bad as AgentId), `${JSON.stringify(bad)} 该抛`)
   }
+  // **带 `/` 的名字是合法的**（架构 § 4 的 `agent/<round>/<n>`）：它按段展开，不是被拒
+  assert.equal(
+    roots.scratchRoot('agent/r1/1' as AgentId),
+    join(root, '.fugue', 'mat', 'agent', 'r1', '1', 'upper'),
+    '带 / 的名字按段展开',
+  )
   // 落点要绝对且规整：`.` 与结尾带 / 的都当场抛，而不是拼出一串相对坐标
   assert.throws(() => createRoots('.'))
   assert.throws(() => createRoots(root + '/'))
