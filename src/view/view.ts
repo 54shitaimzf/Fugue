@@ -14,6 +14,7 @@
 //      条"，而 § 8.5 要求 `applyDelta` 覆盖 `rename` 这一情形。序列是重放的片段：把它
 //      交给 `applyDelta`，与交给任何一批 delta 没有区别。
 import { createHash } from 'node:crypto'
+import { MODE_FILE, normMode } from '../delta.ts'
 import type { Delta } from '../delta.ts'
 import { EMPTY_TREE_ID } from '../entries.ts'
 import type { DirEntry, EntryMeta } from '../entries.ts'
@@ -33,18 +34,6 @@ import type {
 
 const DIR_MODE = 0o40000
 const SYMLINK_MODE = 0o120000
-const FILE_MODE = 0o100644
-
-/**
- * git 只把文件记成这两种模式；`chmod 664` 与 `chmod 644` 是同一件事。
- *
- * **归一只有这一处。** `chmod 700` 落在一个 755 的文件上不是一次变更，判它的
- * `edit.ts` 的 `chmodNoop` 也从这里出发——两处各写一遍的话，那句"没有变化"就会漏，
- * 假变更又回了日志（§ 8.3）。
- */
-export function normMode(mode: number): number {
-  return (mode & 0o111) === 0 ? FILE_MODE : 0o100755
-}
 
 /**
  * 内容的 blob id：`sha1("blob <字节数>\0" + 内容)`。
@@ -382,7 +371,7 @@ class MemoryView implements View {
         }
         if (!(await this.existsAt(f))) throw new Error(`改名：${f} 不存在`)
         if (await this.existsAt(t)) throw new Error(`改名：${t} 已经存在`)
-        await this.check({ kind: 'add', path: t, bytes: new Uint8Array(0), mode: FILE_MODE })
+        await this.check({ kind: 'add', path: t, bytes: new Uint8Array(0), mode: MODE_FILE })
         return
       }
       case 'chmod': {
@@ -442,7 +431,7 @@ class MemoryView implements View {
     }
   }
 
-  async write(path: RelPath, bytes: Uint8Array, mode: number = FILE_MODE): Promise<ViewRev> {
+  async write(path: RelPath, bytes: Uint8Array, mode: number = MODE_FILE): Promise<ViewRev> {
     const p = pathOf(path)
     const d: Delta = { kind: this.kindFor(p), path: p, bytes, mode: normMode(mode) }
     await this.check(d)

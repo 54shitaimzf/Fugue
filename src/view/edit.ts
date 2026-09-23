@@ -11,12 +11,12 @@
 // 来自 base 提交——base 不是固定的，它随提交前移，于是"当时那个文件"在重放时可能已经不在
 // 原处（改名过 · 删过）。所以上层没有的内容，先把它钉进日志（一条 `view/write`），再执行
 // 那次变更。**重放因此不看 base 里有什么，只看日志。**
+import { normMode } from '../delta.ts'
 import type { Delta } from '../delta.ts'
 import type { Log, LogEvent } from '../log/events.ts'
 import type { AgentId, RelPath, ViewRev, WriterId } from '../terms.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { View } from './contract.ts'
-import { normMode } from './view.ts'
 
 export interface EditTarget {
   log: Log

@@ -187,7 +187,7 @@ async function sixShapes(s: Stage): Promise<void> {
   await s.edit({ kind: 'delete', path: 'docs/manual.md' })
   await s.edit({ kind: 'rename', from: 'vendor/lib.txt', to: 'vendor/lib2.txt' })
   // **`chmod` 要挑一个真的会变的模式。** 视图的模式模型是 git 那一种：普通文件只有 `100644`
-  // 与 `100755` 两种（`view.ts` 的 `normMode`），所以"644 → 700"在视图里什么都没变，也就没有
+  // 与 `100755` 两种（`delta.ts` 的 `normMode`），所以"644 → 700"在视图里什么都没变，也就没有
   // 可落的 delta。要动就动可执行位本身。
   await s.edit({ kind: 'chmod', path: 'src/c.ts', mode: 0o100755 })
   await s.edit({ kind: 'symlink', path: 'notes/link.ts', target: 'src/a.ts' })

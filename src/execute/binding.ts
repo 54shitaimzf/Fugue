@@ -103,6 +103,20 @@ export function readBinding(doc: ConfigDoc, name: string): ActionBinding {
   return { name, argv, cwd, outputs, cache, env }
 }
 
+/**
+ * 声明目录：**要挂进树里的那些**——`cache` 与 `outputs` 的并集，嵌套的收成最外层
+ * （架构 § 8.6 第 1 步要的就是这一份）。
+ *
+ * **收成最外层不是省事，是必须。** `--bind <缓存>/dist <树>/dist` 那一条已经把 `dist` 下面
+ * 的一切换成了缓存那一侧；再为 `dist/app` 挂一条的话，它的挂载点得先在树里是一个**空文件**
+ * ——而空文件是叶子：它进清单、进差异集，`verify-mat` 当场就不等了。所以挂的永远是目录这一级，
+ * `dist/app` 这样的声明是"落在缓存里的那条路径"（回收读它，见 `reclaim.ts`）。
+ */
+export function declaredDirs(binding: ActionBinding): string[] {
+  const all = [...new Set([...binding.cache, ...binding.outputs])].sort()
+  return all.filter((p) => !all.some((q) => q !== p && p.startsWith(`${q}/`)))
+}
+
 /** 本 agent 的坐标不许被盖。两处入口（动作的 `env` 与 `-- k=v`）都过它。 */
 export function assertNotReserved(keys: readonly string[], where: string): void {
   const hit = keys.filter((k) => RESERVED.includes(k))

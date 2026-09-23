@@ -107,6 +107,14 @@ export interface EnsureResult {
   readonly prepared: readonly RelPath[]
   /** 落地之后清单的条数。**§ 9.7 的 `mat/sync.touched` 就是它**（进度事件不带清单本身）。 */
   readonly touched: number
+  /**
+   * 落地之后清单的**路径表**（排序过的那一份，条数就是 `touched`）。
+   *
+   * 上面那个数答不了"是哪些"，而有一处要的正是那些：`fugue run` 的反向通道要拿它当减数——
+   * `upper` 里本来就有东西（这一趟落下去的 delta 就是），"子进程改了什么"只能是"枚举到的
+   * 减去清单里的"（§ 8.7 的 `collect`）。少这一减，第二趟运行会把上一趟的产出当成越声明。
+   */
+  readonly manifest: readonly RelPath[]
   /** 已最新：没有 delta 要落，也没写事件。 */
   readonly noop: boolean
   readonly ms: number
@@ -227,6 +235,7 @@ export async function ensure(deps: EnsureDeps, agent: AgentId, upTo: ViewRev): P
     pruned: out.pruned,
     prepared,
     touched: payload.paths.length,
+    manifest: payload.paths,
     noop: !dirty,
     ms,
     facts,

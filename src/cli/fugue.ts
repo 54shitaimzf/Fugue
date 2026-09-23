@@ -8,8 +8,8 @@
 // **语义不在这里**：一次变更的顺序与校验住在 `src/view/edit.ts`，提交住在
 // `src/checkpoint.ts`——两个都是跨层接线（§ 7），这里只是它们的一个人侧入口。
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BranchRefused, branchAt, forkBaseRefusal } from '../branch.ts'
 import { checkpoint } from '../checkpoint.ts'
@@ -22,10 +22,19 @@ import {
   setConfig,
   writeConfig,
 } from '../config.ts'
-import { BindingError, envFor, parseInjections, portRangeOf, readBinding } from '../execute/binding.ts'
+import {
+  BindingError,
+  declaredDirs,
+  envFor,
+  parseInjections,
+  portRangeOf,
+  readBinding,
+} from '../execute/binding.ts'
 import type { ActionBinding } from '../execute/binding.ts'
 import { cacheLayoutOf, confine } from '../execute/confine.ts'
 import { createExecutor } from '../execute/exec.ts'
+import { ReclaimRefused, createReclaim } from '../execute/reclaim.ts'
+import type { DeclaredSet, Reclaim } from '../execute/reclaim.ts'
 import { agentFor } from '../identity.ts'
 import type { Delta } from '../delta.ts'
 import type { TreeEntry } from '../entries.ts'
@@ -44,11 +53,11 @@ import { LandError } from '../materialize/land.ts'
 import { LayError } from '../materialize/lay.ts'
 import { matState } from '../materialize/manifest.ts'
 import type { MatState } from '../materialize/manifest.ts'
-import { MountError } from '../materialize/mount.ts'
+import { MountError, unmountOverlay } from '../materialize/mount.ts'
 import { VerifyRefused, verifyMat } from '../materialize/verify.ts'
 import { HostError, assertHost } from '../roots/host.ts'
 import { createRoots } from '../roots/roots.ts'
-import type { CommitId, ForkStrategy, LogPos, StepId, ViewRev, WriterId } from '../terms.ts'
+import type { CommitId, ForkStrategy, LogPos, RelPath, StepId, ViewRev, WriterId } from '../terms.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import type { View } from '../view/contract.ts'
@@ -103,9 +112,15 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              然后 bwrap 起进程。动作写在配置里，例如
                              fugue config set actions.build '{"argv":["make"],"cache":["dist"]}'
                              「-- k=v」注入子进程的环境变量；上面那几样盖不了（撞上就拒绝）。
-                             子进程的两股输出走 stderr；产物落在声明目录绑的那份缓存里，
-                             视图一个字节都不动（回写视图是 X2）。--step <id> 是这一步的署名，
-                             不给就是「-」（轮次是 S7 的事）。退出码：0 子进程成功 · 1 没成功
+                             子进程的两股输出走 stderr。跑完把声明过的产出收回视图（§ 8.7）：
+                             cache 是绑到本 agent 缓存的声明目录——构建产物落那儿，**不回写**；
+                             outputs 是要回写视图的产出声明：收进来的那几条 fugue diff 报得出、
+                             fugue ensure 落得到盘上。一条声明若没被别的声明盖住，它自己是一条
+                             目录（不存在就预建）；被盖住时它是落在缓存里的一条路径，例如
+                             cache:["dist"] 配 outputs:["dist/app"] 收的就是那个可执行文件。
+                             声明集外的写入：默认档由内核拒（子进程非零退出、树一个字节没变），
+                             树可写那一档由回收拒并记一条 mat/reclaim。--step <id> 是这一步的
+                             署名，不给就是「-」（轮次是 S7 的事）。退出码：0 子进程成功 · 1 没成功
   verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
                              里那几条，三者两两相等，并报 materialize-precision（§ 8.15 的比值）。
                              不等就退 1——**只报不修**（§ 8.5 的失败处理是删除重建）
@@ -765,13 +780,13 @@ async function landOnce(
 /**
  * `fugue run <action> [-- k=v…]`：在一个动作自己的物化环境里跑它（架构 § 8.6 · § 9.6 的执行行）。
  *
- * 一趟四件事：**先物化**（`ensure`——D3 的"执行前隐式兑现"）→ 建本 agent 的缓存与声明目录的
+ * 一趟五件事：**先物化**（`ensure`——D3 的"执行前隐式兑现"）→ 建本 agent 的缓存与声明目录的
  * 挂载点（`cache` 不在 `fork` 的四个坐标里：它是 M5 的，架构 § 8.6）→ 包命令行（`confine`）→
- * 起进程，并把三件事记进日志（`run/start` · `run/confined` · `run/end`）。**回写视图那一半是
- * X2**：这一趟的产物落在声明目录绑的那份缓存里，视图一个字节都不动。
+ * 起进程，并把三件事记进日志（`run/start` · `run/confined` · `run/end`）→ **回收**（架构 § 8.7
+ * 的反向通道）：声明集内的产出进视图、声明集外的改动记一条 `mat/reclaim`。
  *
- * **它也是写命令**：那三条事件要追加，所以整条命令握着该 agent 的锁（与 write · ensure 同一道
- * 栅栏）——同一个 agent 的另一个写者拿不到，不同 agent 之间照旧零协调。
+ * **它也是写命令**：那三条事件与回收都是写，所以整条命令握着该 agent 的锁（与 write · ensure
+ * 同一道栅栏）——同一个 agent 的另一个写者拿不到，不同 agent 之间照旧零协调。
  *
  * 退出码：0 子进程成功 · 1 子进程没成功或这一趟做不成（含配置里没有这个动作）· 2 用法错。
  * **子进程真实的退出码在 `run/end` 与 `--json` 里**——§ 9.8 的退出码只有三个数。
@@ -816,6 +831,11 @@ async function runCmd(
     await peek.close()
   }
 
+  // `bind` 是绑进树里、让子进程写得动的那些目录（§ 8.6 第 1 步）；`declared` 是要收回视图的
+  // 产出（§ 8.7），两件事两处。回收那份装配排在**物化之后**：它的减数是"落地之后"的清单。
+  const roots = createRoots(abs)
+  const bind = declaredDirs(binding)
+
   const ctx = await openCtx(abs, flags, { snapUpTo: st.rev, write: true })
   try {
     // 端口那一片按"日志里 writer 的次序"切：同一个工作区里不同的 agent 拿到不同的片，而同一批
@@ -824,21 +844,30 @@ async function runCmd(
     const at = writers.indexOf(ctx.writer)
     const portIndex = at < 0 ? writers.length : at
 
-    const roots = createRoots(abs)
     const cache = cacheLayoutOf(roots, agent)
     // 缓存是 M5 的（`fork` 不建它）：三个落点先建出来，绑定才挂得上。
     mkdirSync(cache.home, { recursive: true })
     mkdirSync(cache.xdgCache, { recursive: true })
-    for (const rel of binding.cache) mkdirSync(cache.bound(rel), { recursive: true })
+    for (const rel of bind) mkdirSync(cache.bound(rel), { recursive: true })
 
-    const landed = await landOnce(ctx, abs, agent, st, ctx.view.rev, binding.cache)
+    const landed = await landOnce(ctx, abs, agent, st, ctx.view.rev, bind)
+    assertDeclaredDirs(landed.merged, bind)
+    // 减数是**这一趟落地之后**的清单：上面那一下已经把视图里没落地的 delta 落进了 `upper`。
+    const reclaim = createReclaim({ roots, strategy: st.strategy, manifest: landed.manifest })
+    let declared: DeclaredSet
+    try {
+      declared = reclaim.declare(agent, binding.outputs)
+    } catch (err) {
+      if (err instanceof ReclaimRefused) return fail(err.message)
+      throw err
+    }
     const env = envFor({ roots, agent, binding, injections, portIndex, range })
     const confined = confine({
       roots,
       agent,
       argv: binding.argv,
       cwd: binding.cwd,
-      declared: binding.cache,
+      declared: bind,
       env,
     })
 
@@ -869,6 +898,9 @@ async function runCmd(
       denied: res.denied,
     })
 
+    // ── 反向通道：产出收进视图、越了声明的地方记下来（架构 § 8.7 · PLAN § 5.4 的 X2）
+    const gate = await reclaimRun(ctx, roots, agent, st, bind, declared, reclaim)
+
     if (json) {
       emitJson({
         agent,
@@ -882,8 +914,11 @@ async function runCmd(
         mechanism: confined.mechanism,
         argv0: binding.argv[0],
         cwd: binding.cwd,
-        declared: binding.cache,
-        outputs: binding.outputs,
+        declared: [...bind],
+        outputs: [...declared.paths],
+        reclaimed: gate.wrote,
+        missing: gate.missing,
+        undeclared: gate.undeclared,
         prepared: landed.prepared,
         merged: landed.merged,
         home: env.HOME,
@@ -896,7 +931,11 @@ async function runCmd(
       process.stderr.write(
         `退出码 ${res.exit} · ${res.ms} ms · ${confined.mode} · ${confined.enforcement} 档` +
           `${res.denied ? ' · 有被拒的写入' : ''}` +
-          `${landed.prepared.length === 0 ? '' : ` · 预建挂载点 ${landed.prepared.length} 个`}\n`,
+          `${landed.prepared.length === 0 ? '' : ` · 预建挂载点 ${landed.prepared.length} 个`}` +
+          `${gate.wrote.length === 0 ? '' : ` · 回收 ${gate.wrote.length} 条进视图`}` +
+          `${gate.missing.length === 0 ? '' : ` · 声明了没产出 ${gate.missing.length} 条`}` +
+          `${gate.undeclared.length === 0 ? '' : ` · 声明集外 ${gate.undeclared.length} 条（mat/reclaim）`}` +
+          `\n`,
       )
       emitLine(`${res.exit}\t${res.ms}\t${confined.enforcement}`)
     }
@@ -904,10 +943,94 @@ async function runCmd(
   } catch (err) {
     if (err instanceof EnsureRefused) return fail(err.why)
     if (err instanceof MountError || err instanceof LandError) return fail(err.message)
+    if (err instanceof BindingError || err instanceof ReclaimRefused) return fail(err.message)
     throw err
   } finally {
     await ctx.close()
   }
+}
+
+/** 声明目录在树里的位置上**必须是一个目录**：bwrap 的一条目录绑定挂不到一个文件上。 */
+function assertDeclaredDirs(merged: string, bind: readonly string[]): void {
+  for (const rel of bind) {
+    const st = lstatSync(join(merged, rel), { throwIfNoEntry: false })
+    if (st === undefined || st === null || st.isDirectory()) continue
+    throw new BindingError(
+      `声明的目录在树里不是一个目录：${rel}（${join(merged, rel)}）\n` +
+        `一条声明要么自己是一条目录（不存在就预建），要么写成已经被另一条声明盖住的那条路径` +
+        `（如 cache:["dist"] + outputs:["dist/app"]）。`,
+    )
+  }
+}
+
+interface ReclaimOutcome {
+  /** 收进视图的那些路径（一次回写一条事件，rev 按这个次序往前推）。 */
+  readonly wrote: readonly RelPath[]
+  /** 声明了、这一趟却一条产出都没收到的那些。 */
+  readonly missing: readonly RelPath[]
+  /** 声明集**外**被改动的路径——有它就记了一条 `mat/reclaim`。 */
+  readonly undeclared: readonly RelPath[]
+}
+
+/**
+ * `fugue run` 的最后一步：把这一趟的产出收回视图、把越了声明的地方记下来（架构 § 8.7）。
+ *
+ * **次序是硬的：卸 → 收 → 记 → 挂回。** 枚举 `upper` 必须在卸载之后（§ 8.7 与 § 8.5 的第一条
+ * 机制约束），而挂回排在 `finally` 里——中途抛错也留不下一棵卸着的树。挂回给的是**清单那个
+ * rev**，于是它只补挂载态、不落 delta：回写视图的是 `collect` 的产出，落盘由下一条 `ensure`
+ * 负责（§ 9.6：执行前隐式兑现，执行后不追着落）。
+ */
+async function reclaimRun(
+  ctx: Ctx,
+  roots: ReturnType<typeof createRoots>,
+  agent: ReturnType<typeof agentFor>,
+  st: MatState,
+  bind: readonly string[],
+  declared: DeclaredSet,
+  reclaim: Reclaim,
+): Promise<ReclaimOutcome> {
+  const cache = cacheLayoutOf(roots, agent)
+  unmountOverlay(roots.mergedRoot(agent))
+  let deltas: Delta[]
+  let outside: RelPath[]
+  try {
+    deltas = await reclaim.collect(agent, declared)
+    outside = await reclaim.undeclared(agent, declared)
+  } finally {
+    await landOnce(ctx, ctx.root, agent, st, st.rev, bind)
+  }
+  // 越了声明的地方先记：它是这一趟的判决；回写进去的是判决之后放行的那几条。
+  if (outside.length > 0) {
+    await ctx.log.append(ctx.writer, {
+      t: 'mat/reclaim',
+      agent,
+      declared: [...declared.paths],
+      changed: [...outside],
+    })
+  }
+  const wrote: RelPath[] = []
+  for (const d of deltas) {
+    await applyEdit(ctx, d)
+    wrote.push(d.kind === 'rename' ? d.to : d.path)
+  }
+  const got = new Set(wrote)
+  return {
+    wrote,
+    missing: topDeclared(declared.paths).filter(
+      (p) => !got.has(p) && !wrote.some((w) => w.startsWith(`${p}/`)),
+    ),
+    undeclared: outside,
+  }
+}
+
+/** 声明表里没被别的声明盖住的那些（排过序，所以祖先一定在后代前面）。`collect` 的收法同此。 */
+function topDeclared(paths: readonly RelPath[]): RelPath[] {
+  const out: RelPath[] = []
+  for (const p of paths) {
+    if (out.some((q) => p.startsWith(`${q}/`))) continue
+    out.push(p)
+  }
+  return out
 }
 
 /**

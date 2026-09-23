@@ -84,7 +84,7 @@ const ROUTES: readonly Route[] = [
     ops: [
       { k: 'write', path: 'own/a4.txt', body: 'a4 的\n' },
       { k: 'write', path: 'src/a.ts', body: "export const a = 'a4'\n" },
-      // **模式这一维只认两种**（`normMode`：有执行位就是 755）——`chmod 700` 与 755 是同一件事，
+      // **模式这一维只认两种**（`delta.ts` 的 `normMode`：有执行位就是 755）——`chmod 700` 与 755 是同一件事，
       // 量出来的是『没有变化』（`ensure` 会把它报成原样一条）。所以这里去掉执行位：644。
       { k: 'chmod', path: 'bin/run.sh', mode: '644' },
     ],
