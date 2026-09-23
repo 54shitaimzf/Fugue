@@ -35,8 +35,14 @@ const DIR_MODE = 0o40000
 const SYMLINK_MODE = 0o120000
 const FILE_MODE = 0o100644
 
-/** git 只把文件记成这两种模式；`chmod 664` 与 `chmod 644` 是同一件事。 */
-function normMode(mode: number): number {
+/**
+ * git 只把文件记成这两种模式；`chmod 664` 与 `chmod 644` 是同一件事。
+ *
+ * **归一只有这一处。** `chmod 700` 落在一个 755 的文件上不是一次变更，判它的
+ * `edit.ts` 的 `chmodNoop` 也从这里出发——两处各写一遍的话，那句"没有变化"就会漏，
+ * 假变更又回了日志（§ 8.3）。
+ */
+export function normMode(mode: number): number {
   return (mode & 0o111) === 0 ? FILE_MODE : 0o100755
 }
 

@@ -135,7 +135,7 @@ async function stage(f: Fixture): Promise<Stage> {
     roots,
     view,
     log,
-    edit: (d) => applyEdit({ log, truth, view, writer: AGENT }, d),
+    edit: async (d) => (await applyEdit({ log, truth, view, writer: AGENT }, d)).rev,
     // **`history: true` 那一半在这里由全量重放体现**：`ensure` 要变更序列，快照答不了它（§ 9.4）。
     ensure: (upTo, opt) =>
       ensure(

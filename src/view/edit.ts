@@ -13,9 +13,10 @@
 // 那次变更。**重放因此不看 base 里有什么，只看日志。**
 import type { Delta } from '../delta.ts'
 import type { Log, LogEvent } from '../log/events.ts'
-import type { AgentId, ViewRev, WriterId } from '../terms.ts'
+import type { AgentId, RelPath, ViewRev, WriterId } from '../terms.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { View } from './contract.ts'
+import { normMode } from './view.ts'
 
 export interface EditTarget {
   log: Log
@@ -23,6 +24,16 @@ export interface EditTarget {
   view: View
   writer: WriterId
 }
+
+/**
+ * 一次变更落下去的结果。
+ *
+ * `changed: false` 只有一种情形：**改权限归一之后与现值相同**（`chmodNoop`）——那次什么
+ * 都不落。`mode` 就是判过的那个现值（归一过的数），好让命令面把话说准，不必自己再问一遍。
+ */
+export type EditResult =
+  | { rev: ViewRev; changed: true }
+  | { rev: ViewRev; changed: false; mode: number }
 
 async function eventFor(agent: AgentId, rev: ViewRev, d: Delta, truth: Truth): Promise<LogEvent> {
   switch (d.kind) {
@@ -81,9 +92,36 @@ async function pinDown(t: EditTarget, d: Delta): Promise<Delta | null> {
   return null
 }
 
-/** 落一条变更。返回它的 rev（一次改名/改权限可能是两条事件，返回的是最后一条的）。 */
-export async function applyEdit(target: EditTarget, raw: Delta): Promise<ViewRev> {
-  const d = normalize(target.view, raw)
+/**
+ * 归一之后与现值相同的改权限：**没有变化**，返回那个现值；有变化（或读不出一个文件）时返回
+ * null，让调用者照旧走那条会给出理由的路。
+ *
+ * `mode` 进来时已经收成两档之一（见 `applyEdit` 接缝上那一步），所以这里是直接比。现值从
+ * `view.stat` 读：上层与下层两条路都从那里答，`chmod` 那一支的判据也是它。
+ */
+async function chmodNoop(view: View, path: RelPath, mode: number): Promise<number | null> {
+  const m = await view.stat(path)
+  if (m === null || m.kind !== 'file') return null
+  return m.mode === mode ? m.mode : null
+}
+
+/**
+ * 落一条变更。返回它的 rev（一次改名/改权限可能是两条事件，返回的是最后一条的）。
+ *
+ * **"没有变化"的那一次什么都不落**：不落 `view/chmod`（那会是一条假变更——`diff` 里报得
+ * 出来，而视图里那个路径一个字节都没变），也不把它从下层拷上来（拷贝只为了让这次改得动
+ * 它，而没有东西要改）。日志不动，重放自然也没有它（§ 8.3）。
+ */
+export async function applyEdit(target: EditTarget, raw: Delta): Promise<EditResult> {
+  const named = normalize(target.view, raw)
+  // **模式也在接缝上归一**：`Delta` 里 chmod 的 `mode` 是 git 的那两档，而命令面递进来的是人
+  // 敲的那个八进制数（`chmod 700`）。写进日志之前收一次，日志里就只剩 100644 与 100755——
+  // `diff()` 报出来的于是能与 `stat` 直接对照。规则只有 `normMode` 一处，两张面都从这里过。
+  const d: Delta = named.kind === 'chmod' ? { ...named, mode: normMode(named.mode) } : named
+  if (d.kind === 'chmod') {
+    const now = await chmodNoop(target.view, d.path, d.mode)
+    if (now !== null) return { rev: target.view.rev, changed: false, mode: now }
+  }
   const pin = await pinDown(target, d)
   const deltas: Delta[] = pin === null ? [d] : [pin, d]
   const first = target.view.rev + 1
@@ -102,5 +140,5 @@ export async function applyEdit(target: EditTarget, raw: Delta): Promise<ViewRev
   if (got !== want) {
     throw new Error(`视图的 rev 与日志对不上：日志写到 ${want}，视图给 ${got}`)
   }
-  return got
+  return { rev: got, changed: true }
 }

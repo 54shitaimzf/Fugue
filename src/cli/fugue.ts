@@ -62,6 +62,8 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
   remove <path>              删一个路径（目录连同它下面）
   rename <from> <to>         改名
   chmod <path> <mode>        改模式；<mode> 是八进制，如 755
+                             模式只认两档：有执行位就是 100755，否则 100644。归一之后与现值
+                             相同就只说一句「没有变化」（stderr），日志与 diff 里都不出现
   diff [--since <rev>]       自某个修订点以来的变更
   revs                       全部可达修订点，升序；0 是 base 本身
   commit -m <msg>            把当前视图提交成一个提交点，推进它的 ref
@@ -997,12 +999,17 @@ async function run(argv: readonly string[]): Promise<number> {
       const delta = await deltaFrom(cmd, args, flags)
       const ctx = await openCtx(root, flags, { write: true })
       try {
-        const rev = await applyEdit(
+        const res = await applyEdit(
           { log: ctx.log, truth: ctx.truth, view: ctx.view, writer: ctx.writer },
           delta,
         )
-        if (json) emitJson({ rev, agent: ctx.writer })
-        else emitLine(`${rev}\t${ctx.writer}`)
+        if (json) emitJson({ rev: res.rev, agent: ctx.writer })
+        else emitLine(`${res.rev}\t${ctx.writer}`)
+        // 「没有变化」不是失败（§ 8.3 的模式两档）：**stdout 的形状与别的写命令一样**——
+        // 给的是视图此刻的 rev，它没有动；那句话去 stderr，报的是判过的那个现值。
+        if (!res.changed && delta.kind === 'chmod') {
+          process.stderr.write(`没有变化：${delta.path} 已经是 ${res.mode.toString(8)}\n`)
+        }
         return 0
       } finally {
         await ctx.close()

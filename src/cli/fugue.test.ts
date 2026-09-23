@@ -4,7 +4,7 @@
 // 用吗**——单次进程 + 每次重建，所以每条命令都是一次完整的加载。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
@@ -257,4 +257,124 @@ test('拒绝与退出码：0 成功 · 1 做不成 · 2 用法错（§ 9.8 的�
 
   // **用法错的命令在磁盘上留不下任何东西**：参数先收成一个 delta，视图后开（`deltaFrom`）。
   assert.equal(existsSync(join(root, '.fugue')), false, '用法错不该建出日志目录')
+})
+
+// ── X0（S4 之前要收的那一处）──────────────────────────────────────────────────
+//
+// `fugue chmod <path> 700` 以前会落一条 `view/chmod` 而视图里那个路径的模式一个字没变：
+// **报出来的与做的不一致**（模式只认两档，见 § 8.3）。三条断言逐条对 PLAN § 5.3 尾的 X0 行。
+
+/** 一条 git 命令：身份与时间戳钉死，全局/系统配置不参与（与 `concurrent.test.ts` 同一套）。 */
+function gitIn(cwd: string, args: readonly string[]): string {
+  const r = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_SYSTEM: '/dev/null',
+      GIT_AUTHOR_NAME: 'fugue',
+      GIT_AUTHOR_EMAIL: 'fugue@localhost',
+      GIT_COMMITTER_NAME: 'fugue',
+      GIT_COMMITTER_EMAIL: 'fugue@localhost',
+      GIT_AUTHOR_DATE: '2026-02-01T00:00:00+0000',
+      GIT_COMMITTER_DATE: '2026-02-01T00:00:00+0000',
+    },
+  })
+  assert.equal(r.status, 0, `git ${args.join(' ')}：${r.stderr}`)
+  return r.stdout.trim()
+}
+
+test('X0 · chmod 的「没有变化」：一句话、不落一条变更；真变化照旧落（§ 8.3 的模式两档）', (t) => {
+  const root = tmpDir('fugue-x0-')
+  t.after(() => {
+    fugue(root, 'dispose')
+  })
+
+  // 一棵真仓库加一个提交：`fork` 的底就是工作树与 HEAD（§ 8.4），底里有一个 755 的文件。
+  writeFileSync(join(root, 'run.sh'), '#!/bin/sh\necho hi\n')
+  chmodSync(join(root, 'run.sh'), 0o755)
+  gitIn(root, ['init', '-q', '-b', 'main', '.'])
+  gitIn(root, ['add', '-A'])
+  gitIn(root, ['commit', '-qm', '起点'])
+  const base = gitIn(root, ['rev-parse', 'HEAD'])
+  assert.equal(gitIn(root, ['status', '--porcelain']), '', '夹具的工作树要是干净的')
+
+  const br = fugue(root, 'branch', base)
+  assert.equal(br.code, 0, br.stderr)
+  const fk = fugue(root, 'fork', base)
+  assert.equal(fk.code, 0, fk.stderr)
+  const merged = fk.stdout.trim()
+  assert.equal(statSync(join(merged, 'run.sh')).mode & 0o777, 0o755, '底里那个文件的模式')
+
+  /** 日志里的事件类型，按顺序。**清单那一侧的读数从这里来，不靠命令的自述。** */
+  const eventTypes = (): string[] =>
+    fugue(root, '--json', 'log')
+      .stdout.trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => (JSON.parse(l) as { e: { t: string } }).e.t)
+  const syncs = (): number => eventTypes().filter((x) => x === 'mat/sync').length
+
+  const e1 = fugue(root, '--json', 'ensure')
+  assert.equal(e1.code, 0, e1.stderr)
+  assert.equal((JSON.parse(e1.stdout) as { noop: boolean }).noop, true, '底就是清单那个 rev')
+  const sync0 = syncs()
+
+  // ① 归一之后与现值相同：底里那个 755 的文件上敲 700 不是一次变更——**一条都不落**。
+  const n1 = fugue(root, 'chmod', 'run.sh', '700')
+  assert.equal(n1.code, 0, n1.stderr)
+  assert.equal(n1.stderr, '没有变化：run.sh 已经是 100755\n')
+  assert.match(n1.stdout, /^0\tround\n$/, 'rev 不动（底就是 rev 0）')
+  assert.equal(fugue(root, '--json', 'diff').stdout.trim(), '[]', 'diff 里没有这一条')
+  assert.equal((JSON.parse(fugue(root, '--json', 'stat', 'run.sh').stdout) as { mode: number }).mode, 0o100755)
+  assert.equal(syncs(), sync0, '清单不增：日志里没有多一条 mat/sync')
+  const e2 = fugue(root, '--json', 'ensure')
+  assert.equal(e2.code, 0, e2.stderr)
+  assert.equal((JSON.parse(e2.stdout) as { landed: string[] }).landed.length, 0, '没有 delta 要落')
+
+  // ③ 归一只有一处：`700` 与 `755` 是同一件事，两条命令给的话逐字相同。
+  const n2 = fugue(root, 'chmod', 'run.sh', '700')
+  const n3 = fugue(root, 'chmod', 'run.sh', '755')
+  assert.equal(n2.stderr, n3.stderr)
+  assert.equal(n2.stdout, n3.stdout)
+
+  // ② 负对照一：底下那个文件上的真变化，照旧落两条（先拷上来，再改）· `diff` 报得出 · 落地。
+  const real = fugue(root, 'chmod', 'run.sh', '644')
+  assert.equal(real.code, 0, real.stderr)
+  assert.equal(real.stderr, '', '真变化不说什么')
+  assert.match(real.stdout, /^2\tround\n$/)
+  assert.deepEqual(JSON.parse(fugue(root, '--json', 'diff').stdout), [
+    { kind: 'add', path: 'run.sh', mode: 0o100755, size: 18 },
+    { kind: 'chmod', path: 'run.sh', mode: 0o100644 },
+  ], '报出来的是两档里的数，不是人敲的那个八进制串')
+  const e3 = fugue(root, '--json', 'ensure')
+  assert.equal(e3.code, 0, e3.stderr)
+  const r3 = JSON.parse(e3.stdout) as { noop: boolean; landed: string[] }
+  assert.equal(r3.noop, false)
+  assert.deepEqual(r3.landed, ['run.sh'], '落地记的是路径：两条事件落在同一个文件上')
+  assert.equal(statSync(join(merged, 'run.sh')).mode & 0o777, 0o644, '落地到了盘上')
+  assert.equal(fugue(root, 'verify-mat').code, 0, '清单 == 差异集')
+
+  // ② 负对照二：上层那个文件上同样是一句话，而它连"拷贝上来"那一条都不需要。
+  const w = fugueStdin(root, '自己写的\n', 'write', 'own.txt', '--stdin')
+  assert.equal(w.code, 0, w.stderr)
+  // 人敲 700，报出来的是 100755——接缝上收过一次。
+  const up = fugue(root, 'chmod', 'own.txt', '700')
+  assert.equal(up.code, 0, up.stderr)
+  assert.match(up.stdout, /^4\tround\n$/)
+  assert.deepEqual(JSON.parse(fugue(root, '--json', 'diff', '--since', '3').stdout), [
+    { kind: 'chmod', path: 'own.txt', mode: 0o100755 },
+  ])
+  const e4 = fugue(root, '--json', 'ensure')
+  assert.equal(e4.code, 0, e4.stderr)
+  const sync4 = syncs()
+  const n4 = fugue(root, 'chmod', 'own.txt', '755')
+  assert.equal(n4.code, 0, n4.stderr)
+  assert.equal(n4.stderr, '没有变化：own.txt 已经是 100755\n')
+  assert.match(n4.stdout, /^4\tround\n$/, 'rev 不动')
+  assert.equal(fugue(root, '--json', 'diff', '--since', '4').stdout.trim(), '[]')
+  assert.equal(syncs(), sync4, '清单不增')
+  assert.equal((JSON.parse(fugue(root, '--json', 'ensure').stdout) as { noop: boolean }).noop, true)
+  assert.equal(statSync(join(merged, 'own.txt')).mode & 0o777, 0o755, '盘上还是那次真变化的模式')
 })
