@@ -4,6 +4,9 @@
 // 计数器——**并发写者之间不阻塞、不协调**（D11）。全序由 `(seq, writer)` 的字典序
 // 隐含确定，不消费任何协调。
 //
+// **一份日志一个写者进程**：`write` 选项一给，句柄就握着那个 writer 的锁（`hold.ts`）直到
+// `close()`。跨 writer 仍然是零协调（D11）——这道栅栏挡的是同一个 writer 的两个进程，不是并发。
+//
 // 写者一侧的三步顺序是：先落 blob · 再追加日志 · 最后改内存视图。本模块是中间那
 // 一步，也是唯一需要保证顺序的一步；另外两步归 M1 与 M2。
 import type { FileHandle } from 'node:fs/promises'
@@ -11,6 +14,8 @@ import { mkdir, open, readFile, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { decodeLine, encodeEvent } from './envelope.ts'
 import type { Log, LogEvent, LogReader } from './events.ts'
+import { holdWriter } from './hold.ts'
+import type { Hold } from './hold.ts'
 import type { LogPos, LogSeq, WriterId } from '../terms.ts'
 
 export type SyncLevel = 'each' | 'batch' | 'never'
@@ -23,6 +28,15 @@ export interface LogOptions {
   sync?: SyncLevel
   /** `batch` 档每多少次追加落一次 fsync。 */
   batchEvery?: number
+  /**
+   * 这条句柄要**改**哪一份日志（不给 = 只读）。给了就在 `openLog` 里取那个 writer 的锁、
+   * `close()` 里放——**一份日志一个写者进程**（`hold.ts`）。
+   *
+   * 取锁是同步的一步，因为 `openLog` 就是个同步工厂，而这一步只是建一个小文件。
+   * **整条命令一个写者**（不是"只括住追加"）：一条 `ensure` 的写入不止一次追加，而它的
+   * 挂载与落地那两段同样不许有第二个进程插进来（PLAN § 5.3 的疑点第一条）。
+   */
+  write?: WriterId
 }
 
 /** `Log` 加一个生命周期口。契约本身仍是 § 8.1 的三个方法。 */
@@ -188,6 +202,8 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
   const sync: SyncLevel = opts.sync ?? 'batch'
   const batchEvery = opts.batchEvery ?? DEFAULT_BATCH_EVERY
   const writers = new Map<WriterId, WriterState>()
+  // **拿不到就当场抛**——不等一个不知道多久的持者（`hold.ts` 的头一段）。
+  const hold: Hold | null = opts.write === undefined ? null : holdWriter(root, opts.write)
 
   async function state(w: WriterId): Promise<WriterState> {
     const hit = writers.get(w)
@@ -218,6 +234,12 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
   }
 
   async function append(w: WriterId, e: LogEvent): Promise<LogSeq> {
+    // 持着 a1 的锁却往 a2 里追加，是"一次命令一个 writer"这条规矩被违反——当面报出来。
+    if (hold !== null && hold.writer !== w) {
+      throw new Error(
+        `这条句柄持的是 ${hold.writer} 的锁，却要往 ${w} 的日志里追加：一次命令只写一个 writer`,
+      )
+    }
     const s = await state(w)
     return serialize(s, async () => {
       const seq = s.nextSeq
@@ -271,6 +293,7 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
     const all = [...writers.values()]
     writers.clear()
     await Promise.all(all.map((s) => s.fh.close().catch(() => undefined)))
+    if (hold !== null) hold.release()
   }
 
   return { append, readByWriter, readMerged, writers: () => listWriters(root), close }

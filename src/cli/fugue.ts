@@ -25,6 +25,7 @@ import { agentFor } from '../identity.ts'
 import type { Delta } from '../delta.ts'
 import type { TreeEntry } from '../entries.ts'
 import type { LogEvent } from '../log/events.ts'
+import { LogHeldError, holdWriter } from '../log/hold.ts'
 import { LogCorruptError, logDir, mergedFace, openLog } from '../log/log.ts'
 import type { LogHandle, SyncLevel } from '../log/log.ts'
 import type { ChangeStatus, TreeStat } from '../materialize/diffstat.ts'
@@ -98,6 +99,11 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
   --agent <id>    操作哪个视图；未指定时取 round（主线）
   --json          结构化输出
   --help          这张表
+
+ 一份日志一个写者进程：写命令（write · remove · rename · chmod · commit · fork · ensure ·
+ dispose）取该 agent 的锁 <root>/.fugue/log/<agent>.lock，同一个 agent 的两条写命令因此
+ 不会同时在跑——拿不到的那一条退 1 并报出持者。读命令一律不取锁；锁按 agent 分，
+ 不同 agent 之间互不阻塞
 `
 
 interface Parsed {
@@ -191,6 +197,12 @@ interface OpenOptions {
   snapUpTo?: ViewRev
   /** 日志的耐久档位。提交点用 `each`（§ 9.5 把提交点与检查点列在同一档）。 */
   sync?: SyncLevel
+  /**
+   * 这条命令**会改状态**：于是它要取该 agent 的锁（`hold.ts`），整条命令一个写者。
+   * 写组（`write` · `remove` · `rename` · `chmod` · `commit` · `fork` · `ensure` · `dispose`）
+   * 给 `true`；读命令一律不给——架构 § 9.7 把加锁与预取并列，观察不得影响状态。
+   */
+  write?: boolean
 }
 
 /**
@@ -206,7 +218,12 @@ async function openCtx(
   opts: OpenOptions = {},
 ): Promise<Ctx> {
   const writer = writerOf(flags)
-  const log = openLog(root, opts.sync === undefined ? {} : { sync: opts.sync })
+  // **锁在这里取、整条命令握着**（`close()` 里放）：写命令要挡的不止「追加那一下」——
+  // `ensure` 的挂载与落地那两段同样不许有第二个进程插进来（PLAN § 5.3 的疑点第一条）。
+  const log = openLog(root, {
+    ...(opts.sync === undefined ? {} : { sync: opts.sync }),
+    ...(opts.write === true ? { write: writer } : {}),
+  })
   let truth: TruthHandle | null = null
   try {
     truth = openTruth(root)
@@ -479,8 +496,10 @@ async function forkCmd(
     typeof roRaw === 'string' ? roRaw.split(',').map((s) => s.trim()).filter((s) => s !== '') : undefined
 
   const abs = resolve(root)
-  const agent = agentFor(writerOf(flags))
-  const log = openLog(abs)
+  const writer = writerOf(flags)
+  const agent = agentFor(writer)
+  // `fork` 既要追加一条 `mat/fork`，又要挂载——同样整条命令一个写者。
+  const log = openLog(abs, { write: writer })
   let truth: TruthHandle | null = null
   try {
     truth = openTruth(abs)
@@ -568,7 +587,7 @@ async function ensureCmd(
   }
   // 视图要载到 `want`；而快照只敢用 rev ≤ 清单那个 rev 的那一份——`diff(st.rev)` 要算得出来
   // （§ 9.4：快照换掉的是历史）。没有快照就是全量重放，慢一点，答案一样。
-  const ctx = await openCtx(abs, flags, { upToRev: want, snapUpTo: st.rev })
+  const ctx = await openCtx(abs, flags, { upToRev: want, snapUpTo: st.rev, write: true })
   try {
     const upTo = want ?? ctx.view.rev
     if (!ctx.view.revs.includes(upTo)) {
@@ -716,7 +735,11 @@ async function verifyMatCmd(root: string, flags: Map<string, string | true>, jso
  */
 async function disposeCmd(root: string, flags: Map<string, string | true>, json: boolean): Promise<number> {
   const abs = resolve(root)
-  const agent = agentFor(writerOf(flags))
+  const writer = writerOf(flags)
+  const agent = agentFor(writer)
+  // **`dispose` 不改日志，却拿同一道锁**：它改的是物化，而物化与日志是同一条命令序列的
+  // 两半——一条 `ensure` 正落着的时候四个坐标被删掉，与两个写者抢一个序号是同一类事。
+  const hold = holdWriter(abs, writer)
   try {
     const res = await dispose({ roots: createRoots(abs) }, agent)
     if (json) emitJson(res)
@@ -733,6 +756,8 @@ async function disposeCmd(root: string, flags: Map<string, string | true>, json:
   } catch (err) {
     if (err instanceof MountError) return fail(err.message)
     throw err
+  } finally {
+    hold.release()
   }
 }
 
@@ -753,6 +778,8 @@ export async function main(argv: readonly string[]): Promise<number> {
     return await run(argv)
   } catch (err) {
     if (err instanceof UsageError) return usageFail(err.message)
+    // 同一个 agent 的另一个写者正写着：这是「做不成」（1），不是「敲错了」（2）。
+    if (err instanceof LogHeldError) return fail(err.message)
     throw err
   }
 }
@@ -801,7 +828,7 @@ async function run(argv: readonly string[]): Promise<number> {
   if (cmd === 'commit') {
     const msg = flags.get('m')
     if (typeof msg !== 'string' || msg === '') return usageFail('commit 需要 -m <msg>')
-    const ctx = await openCtx(root, flags, { sync: 'each' })
+    const ctx = await openCtx(root, flags, { sync: 'each', write: true })
     try {
       return await commit(ctx, msg, json)
     } finally {
@@ -906,7 +933,7 @@ async function run(argv: readonly string[]): Promise<number> {
     case 'chmod': {
       // 参数先收齐，再开视图：一条用法错的命令不该在磁盘上留下任何东西。
       const delta = await deltaFrom(cmd, args, flags)
-      const ctx = await openCtx(root, flags)
+      const ctx = await openCtx(root, flags, { write: true })
       try {
         const rev = await applyEdit(
           { log: ctx.log, truth: ctx.truth, view: ctx.view, writer: ctx.writer },
