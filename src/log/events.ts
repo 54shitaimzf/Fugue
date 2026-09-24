@@ -80,7 +80,19 @@ export type LogEvent =
   | { t: 'round/state'; round: RoundId; from: RoundState; to: RoundState }
   | { t: 'round/intent'; round: RoundId; digest: string; body: string }
   | { t: 'holder/distill'; agent: AgentId; digest: string; body: string }
-  | { t: 'contract/issue'; round: RoundId; contract: ContractId; owner: AgentId; paths: RelPath[] }
+  | {
+      t: 'contract/issue'
+      round: RoundId
+      contract: ContractId
+      owner: AgentId
+      paths: RelPath[]
+      /**
+       * 契约正文（JSON）。**契约住日志里**（架构 § 8.12）：重启之后"这一轮派过什么活、按什么
+       * 验收"重放得出。形状与 `round/intent` · `holder/distill` 同一路（`digest` + 正文），
+       * 而这一条多给一份 `paths`：读日志的人先看"这份契约要写哪儿"，要看全文再看正文。
+       */
+      body: string
+    }
   | { t: 'merge/attempt'; round: RoundId; branches: BranchId[]; conflicts: number }
   | { t: 'merge/accept'; round: RoundId; commit: CommitId; assertions: AssertionResult[] }
   | {

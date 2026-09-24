@@ -78,6 +78,8 @@ import { emptyState, HOLDER, SourceError, sourcesFor } from '../assemble/sources
 import type { AgentCoord } from '../assemble/sources.ts'
 import { stateWithState } from '../assemble/sources-state.ts'
 import { loadView } from '../view/view.ts'
+import type { SplitAssignment } from '../contract/build.ts'
+import { RoundStartError, startRound } from '../round/start.ts'
 
 const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 
@@ -141,6 +143,26 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              enforcement=partial，不静默降级。
                              --step <id> 是这一步的署名，不给就是「-」（轮次是 S7 的事）。
                              退出码：0 子进程成功 · 1 没成功
+  round new <目标> [--materialize]
+                             开一个轮次（架构 § 8.13 的 Idle → Planning → Delegated → Working）：
+                             钉住真实工作树的 HEAD 当这一轮的底 · 把持轮者给的拆分草案造成契约
+                             （§ 8.12）· Planning 那一档跑一次写入集相交预检 · 一份一条
+                             contract/issue（契约住日志里，带正文）· N 条 refs/heads/<agent>
+                             定在同一个底上。
+                             拆分草案读配置里的 round.split（一份草案一笔）：
+                               fugue config set round.split '[{"goal":"…","ownedPaths":["src/a.ts"],
+                                 "assertions":[{"action":"test","name":"单元测试全过"}]}]'
+                             一条草案至少要有 goal · ownedPaths · assertions（零条断言会让
+                             「打回率低」这句话没有分母）。草案里没有 deliverables 就是没有
+                             交付物——那一格可以空，不是缺省。
+                             agent 名按位置发：agent/<轮次>/1 … agent/<轮次>/n——于是分支是
+                             refs/heads/agent/<轮次>/<n>（架构 § 4 那张表），物化在
+                             .fugue/mat/agent/<轮次>/<n>/，日志在 .fugue/log/agent/<轮次>/<n>.jsonl。
+                             相交时**报出来、照发**（这一站的口径，PLAN § 5.7 的口径一）：
+                             撞上了由合并那一步的冲突环接住，不静默。
+                             **物化缺省不做**（架构 § 14.1 的 deferMaterialize：走按需物化）。
+                             给 --materialize 就把 N 棵树也铺出来——那一步落的是 mat/fork 事件，
+                             每条分支一份，落在**那个 agent 自己的日志**里。
   verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
                              里那几条，三者两两相等，并报 materialize-precision（§ 8.15 的比值）。
                              不等就退 1——**只报不修**（§ 8.5 的失败处理是删除重建）
@@ -184,6 +206,7 @@ interface Parsed {
  */
 const VALUED: ReadonlySet<string> = new Set([
   'root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro', 'step', 'mode', 'against',
+  'split',
 ])
 
 function parseArgv(argv: readonly string[]): Parsed {
@@ -490,6 +513,177 @@ async function branchCmd(
     throw err
   } finally {
     await truth.close()
+  }
+}
+
+/**
+ * `fugue round new <目标>`：开一个轮次（架构 § 8.13 的三步转移 · § 8.14 的 C7 前半 · § 8.12 的
+ * 第一次预检 · PLAN § 5.7 的 A4 行）。
+ *
+ * **这一层只做三件事**：读配置里的拆分草案 · 把位置发成身份（`<轮次>/<n>` 与 `agent/<轮次>/<n>`）·
+ * 把 `startRound` 的产出排成两列。钉底 · 构造 · 预检 · 发契约 · 起分支全在 `src/round/start.ts`
+ * 里——这一层不认识状态机，也不认识契约的形状。
+ *
+ * **两个写者口**：持轮者那一份（`round/state` · `round/intent` · `contract/issue`）走 `openCtx`
+ * 那条句柄；物化那一档每铺一条分支开一个那个 agent 的句柄（`mat/fork` 落在它自己的日志里）。
+ * 栅栏按 writer 分文件（§ 9.2），所以这是两个写者，不是一个写者写两份。
+ */
+async function roundCmd(
+  root: string,
+  flags: Map<string, string | true>,
+  args: string[],
+  json: boolean,
+): Promise<number> {
+  const verb = args[0]
+  if (verb !== 'new') {
+    return usageFail(`round 的子命令只有 new（这一站）：拿到的是 ${verb === undefined ? '（空）' : verb}`)
+  }
+  const goal = args[1]
+  if (goal === undefined || goal === '') return usageFail('round new 需要 <目标>：轮级意图的那一句')
+
+  let split: SplitAssignment[]
+  let doc: ConfigDoc
+  try {
+    doc = await readConfig(root)
+    split = readSplit(doc, flags.get('split'))
+  } catch (err) {
+    if (err instanceof RoundStartError) return fail(err.message)
+    if (err instanceof ConfigError) return fail(err.message)
+    throw err
+  }
+  if (split.length === 0) {
+    return usageFail(
+      '这一轮一份拆分草案都没有：配置里的 round.split 是空的\n' +
+        `加一份：fugue --root ${root} config set round.split '[{"goal":"…","ownedPaths":["src/a.ts"],"assertions":[{"action":"test","name":"测试全过"}]}]'`,
+    )
+  }
+
+  // 轮次号：配置里有就用它，否则 `r1`。**一个工作区开箱就能开一轮**，不必先配一遍。
+  const rawRound = getConfig(doc, 'round.id')
+  const round = typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1'
+
+  // **身份名就是那条 ref 的中间那一段。** `refFor(agent)` 给的是 `refs/heads/<agent>`，而架构 § 4
+  // 那张表写的是 `refs/heads/agent/<round>/<n>`——所以 agent 那一栏是 `agent/<round>/<n>`，
+  // 于是这一份里的每一处都从同一个名字出发：分支 ref · 物化根 `mat/<agent>/` · 日志
+  // `log/<agent>.jsonl`（§ 9.2 那张布局表）。
+  const agents: AgentId[] = split.map((_, i) => `agent/${round}/${i + 1}` as AgentId)
+  const branchOf = (a: AgentId): BranchId => `agent/${a}` as BranchId
+  const materialize = flags.has('materialize')
+
+  const ctx = await openCtx(root, flags, { sync: 'each', write: true })
+  try {
+    const started = await startRound({
+      roots: ctx.roots,
+      truth: ctx.truth,
+      log: ctx.log,
+      round,
+      intent: { goal },
+      split,
+      agents,
+      branchOf,
+      seedOf: () => [] as readonly RelPath[],
+      // 物化那一档：每一条分支一个口，那个 agent 自己的日志。
+      logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
+      materialize,
+    })
+    if (json) {
+      emitJson({
+        round: started.round,
+        base: started.base,
+        contracts: started.built.contracts,
+        owners: started.owners,
+        seedLimit: started.built.seedLimit,
+        seedBytes: started.built.seedBytes,
+        intersections: started.precheck.lines,
+        materialized: materialize,
+        branches: started.forks.map((f) => ({ agent: f.agent, base: f.base, strategy: f.strategy, merged: f.merged })),
+        trail: started.trail,
+      })
+    } else {
+      emitLine(`${started.round}\t${started.base}\t${started.built.contracts.length} 份契约\t${agents.length} 条分支`)
+      for (const c of started.built.contracts) {
+        emitLine(`  ${c.id}\t${c.agent}\t${c.kind}\t${writeSetLine(c)}`)
+      }
+      for (const f of started.forks) emitLine(`  ${f.agent}\tfork ${f.strategy}\t${f.merged}`)
+      if (started.forks.length === 0) {
+        process.stderr.write('物化没有铺（架构 § 14.1 的 deferMaterialize：走按需物化）；要现在铺就加 --materialize\n')
+      }
+      if (started.precheck.lines.length > 0) {
+        process.stderr.write(`写入集有 ${started.precheck.lines.length} 对相交，照发：\n`)
+        for (const l of started.precheck.lines) process.stderr.write(`  ${l}\n`)
+      }
+    }
+    return 0
+  } catch (err) {
+    if (err instanceof RoundStartError) return fail(err.message)
+    throw err
+  } finally {
+    await ctx.close()
+  }
+}
+
+/** 契约要写哪儿，给那一行印出来（三种来源各自那一份）。 */
+function writeSetLine(c: {
+  kind: string
+  ownedPaths?: readonly RelPath[]
+  conflictPaths?: readonly RelPath[]
+  evidenceRequired?: readonly { artifact: RelPath }[]
+}): string {
+  if (c.kind === 'implement') return (c.ownedPaths ?? []).join(' · ')
+  if (c.kind === 'resolve') return (c.conflictPaths ?? []).join(' · ')
+  return (c.evidenceRequired ?? []).map((e) => e.artifact).join(' · ')
+}
+
+/**
+ * 读配置里的拆分草案（`round.split`）。**给的就是一份数组，一份草案一笔**——不另造一套键名，
+ * 因为草案的键就是契约的键（架构 § 15.1.a）。
+ *
+ * 解析不了就拒，不当成空草案：把一份坏配置读成"这一轮没有草案"，症状是"开不出轮次"而说不出为什么。
+ * `--split <json>` 盖过配置——一个工作区想开两轮不同拆法的轮次时用它，不必改配置。
+ */
+function readSplit(doc: ConfigDoc, override: string | true | undefined): SplitAssignment[] {
+  const raw = override === true ? undefined : override
+  let text: string
+  if (raw !== undefined) {
+    text = raw
+  } else {
+    const v = getConfig(doc, 'round.split')
+    if (v === undefined) return []
+    text = typeof v === 'string' ? v : JSON.stringify(v)
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch (err) {
+    throw new RoundStartError(`round.split 不是一份完整的 JSON：${(err as Error).message}`)
+  }
+  if (!Array.isArray(parsed)) throw new RoundStartError('round.split 要是一个数组：一份草案一笔')
+  return parsed.map((one, i) => splitOf(one, i + 1))
+}
+
+/** 一份草案：`goal` · `ownedPaths` · `assertions` 三样必给，`deliverables` 可空。 */
+function splitOf(raw: unknown, n: number): SplitAssignment {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new RoundStartError(`第 ${n} 份草案要是一个对象`)
+  }
+  const o = raw as Record<string, unknown>
+  const goal = o.goal
+  if (typeof goal !== 'string' || goal === '') throw new RoundStartError(`第 ${n} 份草案缺 goal`)
+  const ownedPaths = o.ownedPaths
+  if (!Array.isArray(ownedPaths) || ownedPaths.length === 0 || !ownedPaths.every((x) => typeof x === 'string')) {
+    throw new RoundStartError(`第 ${n} 份草案的 ownedPaths 要是一个非空的字符串数组`)
+  }
+  const assertions = o.assertions
+  if (!Array.isArray(assertions) || assertions.length === 0) {
+    throw new RoundStartError(`第 ${n} 份草案没有断言：零条断言会让「打回率低」这句话没有分母`)
+  }
+  const deliverables = o.deliverables === undefined ? [] : o.deliverables
+  if (!Array.isArray(deliverables)) throw new RoundStartError(`第 ${n} 份草案的 deliverables 要是一个数组`)
+  return {
+    goal,
+    ownedPaths: ownedPaths as readonly string[],
+    assertions: assertions as SplitAssignment['assertions'],
+    deliverables: deliverables as SplitAssignment['deliverables'],
   }
 }
 
@@ -1521,6 +1715,10 @@ async function run(argv: readonly string[]): Promise<number> {
 
   // 分出去改的是 ref（真源那一侧），不建视图、不读日志——所以它排在建视图的命令之前。
   if (cmd === 'branch') return await branchCmd(root, flags, positional.slice(1), json)
+
+  // 轮次那一条自己开上下文（它要 truth 与 log 两个句柄、还要写日志），排在通用视图之前：
+  // 它的参数与其他命令不共用。
+  if (cmd === 'round') return await roundCmd(root, flags, positional.slice(1), json)
 
   // 配置不建视图、不读日志：它是工作区的输入，不是它的状态（§ 15.3.a 末段）。
   if (cmd === 'config') return await config(root, positional.slice(1), json)
