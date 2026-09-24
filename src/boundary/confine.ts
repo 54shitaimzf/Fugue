@@ -10,7 +10,15 @@
 //         --ro-bind <merged> /work                            ← 树只读；树可写那一档换 `--bind`
 //         --tmpfs /work/.fugue --remount-ro /work/.fugue       ← 树里那块挖掉（空且只读）
 //         --bind <cache>/<声明目录> /work/<声明目录>            ← 每个声明目录一条
-//         --setenv <k> <v> …  --chdir /work/<cwd>  -- <argv…>
+//         --ro-bind <包装器> /.fugue/landlock-exec             ← 第二层（Y6；只在它到场时）
+//         --remount-ro /
+//         --setenv <k> <v> …  --chdir /work/<cwd>
+//         -- <包装器> --rw <可写落点>… -- <argv…>               ← 两层叠在一起时中间多这一截
+//
+// **第二层叠在里面**（Y6）：挂载层把包装器只读挂进沙箱的 `/.fugue/landlock-exec`，argv 里那一截
+// 就是它。**点名字挂是有意的**：`ls /` 那份读数（Y3 量过的十二条）一个字节不变，`ls -a /` 才
+// 多出它（实测两条都取过）。包装器自己不认策略——可写集由 `landlock.ts` 的 `writableFor(policy)`
+// 推出来，坐标跟着档走，两档各给各的。
 //
 // **五样缺一不可，都是实测撞出来的**：`--dev /dev`（只 `--ro-bind / /` 时 `/dev/null` 写不动）·
 // 按 agent 的 temp 的 `--bind`（只重写 `TMPDIR` 不够——`Cannot create temporary file in ./`）·
@@ -34,6 +42,7 @@ import { join } from 'node:path'
 import type { Roots } from '../roots/contract.ts'
 import type { AbsPath, AgentId, RelPath } from '../terms.ts'
 import type { ConfinedArgv } from '../execute/contract.ts'
+import { deviceFiles, helperPath, LANDLOCK_SANDBOX_PATH, landlockArgv, writableFor } from './landlock.ts'
 import type { Policy } from './policy.ts'
 
 /**
@@ -81,18 +90,38 @@ export function probeBwrap(): { ok: boolean; note: string } {
   return { ok: true, note: `${(r.stdout ?? '').trim()}（user namespace 与 mount 围栏都在）` }
 }
 
+/** 退化档要的那两样：包的是哪一份可写集（策略值），包装器落在哪个工作区（`roots`）。 */
+export interface Unmounted {
+  readonly roots: Roots
+  readonly policy: Policy
+}
+
 /**
- * 退化档的"怎么包"：**没有沙箱可包**（§ 15.7 的 E4）——命令行就是它自己。
+ * 退化档的"怎么包"：**没有挂载层可包**（§ 15.7 的 E4）——命令行前面那一层不是 `bwrap` 了。
  *
- * 三样如实报出来，一个字不夸大：`mechanism: 'none'` · `mode: 'workspace-write'`（树可写）·
- * `enforcement: 'partial'`。**子进程的 cwd 不在这里**：沙箱那一档由 `--chdir` 落，这一档
- * 由 `M5` 的 `spawn({ cwd })` 落（`RunSpec.cwd` 翻成物理路径那一步，架构 § 8.6 那一栏的注）。
+ * **第二层在场时它接过来**（Y6）：`<realRoot>/.fugue/bin/landlock-exec --rw … -- <原命令行>`，
+ * `mechanism` 记 `landlock`，两栏照抄策略值。两层都不在时**命令行就是它自己**，三样如实报：
+ * `mechanism: 'none'` · `mode: 'workspace-write'`（树可写）· `enforcement: 'partial'`。
+ *
+ * **不给 `land` 就是两层都不套**——X4 那条负对照（"把沙箱那一层拆掉"）走的正是这条路：它问的
+ * 是"没有这一层会怎样"，所以这里不能替它把第二层套上。
+ *
+ * **子进程的 cwd 不在这里**：挂载档由 `--chdir` 落，这一档由 `M5` 的 `spawn({ cwd })` 落
+ * （`RunSpec.cwd` 翻成物理路径那一步，架构 § 8.6 那一栏的注）。
  *
  * **声明目录在这一档里没有绑定**：产物落在树自己那一侧，回收读的是树（见 `reclaim.ts` 的落点
  * 那一段）。预建的挂载点照样要——`cc -o dist/app` 要那个目录先在（架构 § 8.6 第 1 步）。
  */
-export function degradedArgv(argv: readonly string[]): ConfinedArgv {
-  return { argv: [...argv], mechanism: 'none', mode: 'workspace-write', enforcement: 'partial' }
+export function degradedArgv(argv: readonly string[], land?: Unmounted): ConfinedArgv {
+  if (land === undefined || !land.policy.layers.includes('landlock')) {
+    return { argv: [...argv], mechanism: 'none', mode: 'workspace-write', enforcement: 'partial' }
+  }
+  return {
+    argv: landlockArgv(helperPath(land.roots), writableFor(land.policy), argv),
+    mechanism: 'landlock',
+    mode: land.policy.mode,
+    enforcement: land.policy.enforcement,
+  }
 }
 
 export interface ConfineInput {
@@ -108,8 +137,8 @@ export interface ConfineInput {
   readonly env: Readonly<Record<string, string>>
   /**
    * 这一趟的策略值（架构 § 8.8）：`M7` 只读它——树可写与否看 `mode` · 网络看 `net` ·
-   * **够得着的宿主路径看 `reach`** · 沙箱里的坐标看 `coords`。一处解析（`resolvePolicy`），
-   * 命令行与日志两处读的是同一份；这里不另算一遍。
+   * **够得着的宿主路径看 `reach`** · 沙箱里的坐标看 `coords` · **第二层在不在场看 `layers`**。
+   * 一处解析（`resolvePolicy`），命令行与日志两处读的是同一份；这里不另算一遍。
    */
   readonly policy: Policy
 }
@@ -121,6 +150,8 @@ export function confine(i: ConfineInput): ConfinedArgv {
   const temp = i.roots.tempRoot(i.agent)
   const cache = cacheLayoutOf(i.roots, i.agent)
   const writable = i.policy.mode === 'workspace-write'
+  // 第二层在不在场：在的话把包装器挂进来、argv 末尾那一截就是它（见文件头）。
+  const land = i.policy.layers.includes('landlock')
 
   const argv: string[] = ['bwrap', '--die-with-parent']
   // **只读清单逐条挂进来**：一份真构建在树外碰过的那些路径（`/usr` · `/opt` · `/etc` 的三条）。
@@ -146,6 +177,23 @@ export function confine(i: ConfineInput): ConfinedArgv {
     argv.push('--tmpfs', at, '--remount-ro', at)
   }
   for (const rel of i.declared) argv.push('--bind', cache.bound(rel), join(c.tree, rel))
+  // 第二层那个包装器：**只读挂进来**（它是这一层自己的实现，不是孩子够得着的东西）。它必须排在
+  // 根 remount 之前——反了的话 bwrap 在只读的根上建不出挂载点。
+  // **第二层的可写集 = 上面真挂成可写的那几处**（一处一处数出来的，不是另算一遍）：坐标那两条
+  // （temp 与家/缓存）· 树自己（只在树可写那一档）· 每个声明目录 · 以及那几条设备（不含它们
+  // 任何一次重定向都翻车）。两层的可写面因此逐条对齐——错位的那一半是静默的。
+  const rw = [
+    ...new Set<string>([
+      c.tmp,
+      c.home,
+      ...(writable ? [c.tree] : []),
+      ...i.declared.map((rel) => join(c.tree, rel)),
+      ...deviceFiles(),
+    ]),
+  ]
+  // 包装器自己：**只读挂进来**（它是这一层自己的实现，不是孩子够得着的东西）。它必须排在
+  // 根 remount 之前——反了的话 bwrap 在只读的根上建不出挂载点。
+  if (land) argv.push('--ro-bind', helperPath(i.roots), LANDLOCK_SANDBOX_PATH)
   // **根自己也要只读，这一条排在所有挂载之后。** bwrap 的新根是一份 tmpfs：没挂进来的那些顶层
   // 路径（`/` 自己，以及为 `/etc/ld.so.cache` 那样一条被建出来的 `/etc`）就住在它上面，不
   // remount 成 ro 的话它们是**写得进去的**——"没点名的一律不在"会多出一个静默的例外（实测：
@@ -155,11 +203,12 @@ export function confine(i: ConfineInput): ConfinedArgv {
   argv.push('--remount-ro', '/')
   for (const [k, v] of Object.entries(i.env)) argv.push('--setenv', k, v)
   argv.push('--chdir', join(c.tree, i.cwd))
-  argv.push('--', ...i.argv)
+  // **两层叠在一起**：第二层在里面——它先把自己关进规则集，再 `exec` 原命令行。
+  argv.push('--', ...(land ? landlockArgv(LANDLOCK_SANDBOX_PATH, rw, i.argv) : i.argv))
 
   // **两栏照抄策略值**：`confine()` 不自己判断这是哪一档，它只负责把那一档包出来——`fugue policy`
   // 与 `run/confined` 报的因此是同一个来源。调用方给一份不带 `bwrap` 的策略值就是调用方的错
-  // （命令行那一面从不那样做：没有层在场时它走 `degradedArgv()`）。
+  // （命令行那一面从不那样做：没有挂载层时它走 `degradedArgv()`）。
   return {
     argv,
     mechanism: 'bwrap',

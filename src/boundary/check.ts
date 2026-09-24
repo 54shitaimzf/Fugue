@@ -15,9 +15,10 @@
 //   · `checkMountPoints()` —— 落地之后：树里那些挂载点是不是目录（bwrap 的一条目录绑定挂不到
 //     一个文件上）。它要的是落地之后那棵树，所以只能排在后面。
 //
-// **层不在场时不查清单**（声明那一条照查）：清单只被 `confine()` 读，一层都没有时它不参与任何
-// 事——那时拒绝启动就是把地板调低（AGENTS § 五 的第一条：任何单元都不许让地板变低）。所以
-// `--mode workspace-write` 那一档上，一份过期的清单**拦不住这一趟**。
+// **挂载层不在场时不查清单**（声明那一条照查）：清单只被 `confine()` 读——它是那些 `--ro-bind`
+// 条目的来源。没有挂载层时它不参与任何事，那时拒绝启动就是把地板调低（AGENTS § 五 的第一条：
+// 任何单元都不许让地板变低）。所以 `--mode workspace-write` 那一档上，一份过期的清单**拦不住
+// 这一趟**；Y6 起"只有第二层"那一档也一样——第二层一个字节的清单都不读。
 //
 // **声明那一条过的是 M3 那道围栏**（`Roots.resolveVirtual`）——与 `M6` 的 `declare()` 同一个
 // 内核、同一个说法：绝对路径 · `..` 越界 · 穿过软链。这里只补一句"它写在哪一栏"，不另立一套判据。
@@ -76,8 +77,10 @@ export function checkReach(i: ReachCheckInput): Result<readonly RelPath[], Reach
     }
   }
 
-  // 层不在场：上面那一条照查，清单不查（见头注最后一段）。
-  if (i.policy.layers.length === 0) return { ok: true, value: [...i.declared] }
+  // **挂载层不在场就不查清单**：上面那一条照查。清单只被 `confine()` 读（它是 `--ro-bind` 那些
+  // 条目的来源），所以判据是"有没有挂载层"，不是"有没有层"——Y6 起第二层（Landlock）可以在挂载层
+  // 不在时一个人撑着，而它一个字节的清单都不读。那时查清单就是把地板调低（见头注最后一段）。
+  if (!i.policy.layers.includes('bwrap')) return { ok: true, value: [...i.declared] }
 
   const reach = i.policy.reach
   for (const p of reach.roRoots) {

@@ -7,8 +7,10 @@
 //   3. 没有多出常驻进程（跑完一条命令，没有还挂在这个工作区的 git 目录上的进程）
 //   4. 没有出现声明之外的持久化位置（临时工作区里只有 § 9.2 列出的那几处，且没有索引）
 //
-// 第 4 条那份清单在 V2 里多了一处：`.fugue/mat/`——物化的根（§ 8.4）。白名单与那一跑是
-// 成对的：加了位置就要有一条真跑过它的命令，否则白名单是白加的。**V3 的 `ensure` 也要跑**：
+// 第 4 条那份清单在 V2 里多了一处：`.fugue/mat/`——物化的根（§ 8.4）；Y6 又多了 `.fugue/bin/`
+// ——第二层（Landlock）那个包装器的源码与编译产物（架构 § 8.8 · PLAN § 5.5 的 Y6 行）。两处都是
+// **派生**：可弃、可重生成，`dispose` 不管它们。白名单与那一跑是成对的：加了位置就要有一条真跑过
+// 它的命令，否则白名单是白加的。**V3 的 `ensure` 也要跑**：
 // 它往同一个根里落 delta、往 `log/` 里追加 `mat/sync`；**V5 的 `dispose`** 把那一组收尾，
 // 验的是"删干净之后也不在声明之外留下东西"。
 //
@@ -117,12 +119,15 @@ function checkRun() {
       }),
     )
     runs.push(spawnSync(process.execPath, [CLI, '--root', tmp, 'ensure'], { encoding: 'utf8' }))
+    // **Y6 起多一条 `policy`**：它现探那两层，而第二层要 `cc` 编一份包装器落在 `.fugue/bin/`
+    // ——那是第六个声明过的位置。不跑一遍就等于把它白加进白名单（这一条与上一条同一个道理）。
+    runs.push(spawnSync(process.execPath, [CLI, '--root', tmp, 'policy'], { encoding: 'utf8' }))
     // 物化那一组收尾：`dispose` 把四个坐标删干净（它不新增位置，但它**删**位置——留在白名单
     // 底下的一堆空目录也是"跑过之后留下的东西"）。
     runs.push(spawnSync(process.execPath, [CLI, '--root', tmp, 'dispose'], { encoding: 'utf8' }))
     const broke = runs.findIndex((r) => r.status !== 0)
     if (broke === -1) {
-      ok('write · read · commit · config set · config get · fork · write · ensure · dispose 九条命令都退 0')
+      ok('write · read · commit · config set · config get · fork · write · ensure · policy · dispose 十条命令都退 0')
     }
     else bad(`第 ${broke + 1} 条命令退 ${runs[broke].status}：${runs[broke].stderr.trim()}`)
 
@@ -134,12 +139,20 @@ function checkRun() {
     // 那一份真源里本来就有的文件是这一跑的**输入**，不是命令落下的位置——量位置之前先把它
     // 拿走，否则"只有声明过的几处"会被一份跟持久化无关的项目文件撞出假阳性。
     rmSync(join(tmp, 'real.txt'), { force: true })
-    const ALLOWED = ['.git/', '.fugue/log/', '.fugue/snap/', '.fugue/config', '.fugue/mat/']
+    const ALLOWED = [
+      '.git/',
+      '.fugue/log/',
+      '.fugue/snap/',
+      '.fugue/config',
+      '.fugue/mat/',
+      // Y6：第二层那个包装器（§ 8.8 · PLAN § 5.5 的 Y6 行）——派生，可弃、可重生成。
+      '.fugue/bin/',
+    ]
     const declared = (p) => ALLOWED.some((a) => (a.endsWith('/') ? p.startsWith(a) : p === a))
     const outside = walk(tmp)
       .map((p) => relative(tmp, p))
       .filter((p) => !declared(p))
-    if (outside.length === 0) ok(`持久化位置只有声明过的五处：${ALLOWED.join(' · ')}`)
+    if (outside.length === 0) ok(`持久化位置只有声明过的六处：${ALLOWED.join(' · ')}`)
     else bad(`出现了声明之外的持久化位置：${outside.join(' · ')}`)
     if (!existsSync(join(tmp, '.git', 'index'))) ok('没有落索引（§ 8.2 硬约束 1 的第二种形态）')
     else bad('落下了 .git/index')

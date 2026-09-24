@@ -4,8 +4,9 @@
 //      `net` · `reach`）与某一趟 `fugue run` 写下的 `run/confined` 事件逐字相等
 //   ② **从同一处来**：改工作区配置里那一栏（`boundary.reach`）· 把动作的 `net` 点成 `"host"`，
 //      两处一起变——不是各读各的、碰巧一样
-//   ③ **负对照**：把 `bwrap` 从 PATH 上拿掉（§ 15.7 的 E4 真的不成立），两处一起降成
-//      `layers: []` · `enforcement: partial` · `net: host`（没有哪一层能把它拿走）
+//   ③ **负对照**：把 `bwrap` 从 PATH 上拿掉（§ 15.7 的 E4 真的不成立），两处一起降——
+//      **第二层接过来**（Y6）：`layers: ['landlock']` · `mode: 'read-only'`（它管着"写得动什么"
+//      那一维，所以树不可写）· `enforcement: partial` · `net: host`（没有哪一层能把网拿走）
 //
 // **"逐字相等"只有一种做法**：两处都读同一个 `resolvePolicy()` 的返回值。所以这个测试同时也是
 // 那条机制的负对照——把事件那一侧换成自己算的一份，① 当场红。
@@ -161,8 +162,8 @@ test('Y2 ① · 两处读同一份：fugue policy 与 run/confined 的五栏逐�
 
   // **空对空也算"相等"**：那五栏各要有实测值，否则 ① 会被一份空策略值蒙混过去。
   assert.equal(p.mode, 'read-only', '缺省档')
-  assert.equal(p.enforcement, 'full', 'bwrap 在场')
-  assert.deepEqual(p.layers, ['bwrap'], '这一趟在场的层')
+  assert.equal(p.enforcement, 'full', '两层都在场才是 full（§ 15.7 的 E5：少一层纵深，如实降）')
+  assert.deepEqual(p.layers, ['bwrap', 'landlock'], '这一趟在场的层：挂载层 + 第二层')
   assert.equal(p.net, 'none', '没有动作点名要网')
   assert.equal(roRoots(p).length, 5, '缺省清单 = /usr · /opt · /etc 的三条')
 
@@ -173,7 +174,7 @@ test('Y2 ① · 两处读同一份：fugue policy 与 run/confined 的五栏逐�
   const evs2 = events(root, 'run/confined')
   assert.equal(evs2.length, 2)
   assert.deepEqual(fiveOfPolicy(p2), fiveOfEvent(evs2[1] as Record<string, unknown>), '那一档也是同一份')
-  assert.deepEqual(p2.layers, [], '这一档不用挂载围栏那一层')
+  assert.deepEqual(p2.layers, ['landlock'], '这一档不用挂载围栏那一层，第二层照上（它与档正交）')
   assert.equal(p2.enforcement, 'partial')
 })
 
@@ -197,7 +198,7 @@ test('Y2 ② · 从同一处来：配置里那一栏一改，两处一起变', (
   assert.equal(events(root, 'run/confined').pop()?.net, 'host', '那一趟的事件跟着变')
 })
 
-test('Y2 ③ · 负对照：bwrap 不在 PATH 上，两处一起降', () => {
+test('Y2 ③ · 负对照：bwrap 不在 PATH 上，两处一起降（降一档，不是降到底：第二层接过来）', () => {
   const root = workspace()
   // 一面"除了 bwrap 什么都有"的 PATH：把两个 bin 目录整个镜像过来，去掉那一个。
   const bin = mkdtempSync(join(tmpdir(), 'fugue-y2-bin-'))
@@ -219,14 +220,14 @@ test('Y2 ③ · 负对照：bwrap 不在 PATH 上，两处一起降', () => {
   const r = fugueEnv(noBwrap, root, '--json', 'policy')
   assert.equal(r.code, 0, r.err)
   const p = JSON.parse(r.out.trim()) as Record<string, unknown>
-  assert.deepEqual(p.layers, [], '一层都没有')
-  assert.equal(p.enforcement, 'partial', '如实降，不夸大')
-  assert.equal(p.mode, 'workspace-write', '没有层在场 → 树可写是那一档的事实')
+  assert.deepEqual(p.layers, ['landlock'], '挂载层没了，第二层还在（Y6 的同一件事）')
+  assert.equal(p.enforcement, 'partial', '如实降，不夸大：少一层就少一维')
+  assert.equal(p.mode, 'read-only', '第二层管着"写得动什么"那一维 → 树不可写')
   assert.equal(p.net, 'host', '没有哪一层能把网拿走，就不许报 none')
 
   const run = fugueEnv(noBwrap, root, '--json', 'run', 'build')
   assert.equal(run.code, 0, run.err)
-  assert.equal(JSON.parse(run.out.trim()).mode as string, 'workspace-write', '那一趟也报同一档')
+  assert.equal(JSON.parse(run.out.trim()).mode as string, 'read-only', '那一趟也报同一档')
   const e = events(root, 'run/confined').pop() as Record<string, unknown>
   assert.deepEqual(fiveOfPolicy(p), fiveOfEvent(e), '两处一起降，不是只有一处')
 })

@@ -290,7 +290,7 @@ check "退化档 · 正好一条 mat/reclaim" "$(count_of "$A1" mat/reclaim)" "1
 check "退化档 · 视图里读不到 junk.txt" "$(node "$FUGUE" --root "$WORK" --agent "$A1" read junk.txt >/dev/null 2>&1; echo $?)" "1"
 
 # ── 七 · 地板：把 bwrap 从 PATH 上拿掉 ─────────────────────────────────────
-printf '\n══ 七 · 地板：bwrap 从 PATH 上拿掉，同一趟照样跑得出同一份声明集 ══\n'
+printf '\n══ 七 · 地板：bwrap 从 PATH 上拿掉——第二层接过来，同一趟照样跑得出同一份声明集 ══\n'
 BIN=$(mktemp -d "$OUT/bin-XXXXXX")
 for d in /usr/bin /usr/local/bin; do
   for n in "$d"/*; do
@@ -309,7 +309,11 @@ env PATH="$BIN" node "$FUGUE" --root "$WORK" --json --agent "$A1" run build >"$O
 RC=$?
 check "地板 · run build 退码" "$RC" "0"
 check "地板 · 如实报 partial" "$(jget "$OUT/floor.json" enforcement)" "partial"
-check "地板 · 机制报 none" "$(jget "$OUT/floor.json" mechanism)" "none"
+# **Y6 起这一档降一档而不是降到底**：`bwrap` 不在，第二层（Landlock）接过来——`mechanism` 报的
+# 是它，`mode` 报 `read-only`（它管着"写得动什么"那一维，所以树不可写），产出照旧收得回来。
+# 两层都不在时才是 X4 原样那一档（`mechanism: none` · 树可写 + 回收兜底）。
+check "地板 · 机制报 landlock（第二层接过来）" "$(jget "$OUT/floor.json" mechanism)" "landlock"
+check "地板 · 档如实报 read-only（树不可写）" "$(jget "$OUT/floor.json" mode)" "read-only"
 check "地板 · 自己探出来沙箱不在" "$(jget "$OUT/floor.json" sandbox)" "false"
 check "地板 · 声明集内的产出照样收得回来" "$(jget "$OUT/floor.json" reclaimed)" "dist/app"
 check "地板 · 收进视图的那一条与全档同一份" "$(lastblob "$A1" dist/app)" "$BLOB_BEFORE"

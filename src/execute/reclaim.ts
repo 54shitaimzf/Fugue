@@ -74,13 +74,19 @@ export interface ReclaimDeps {
    */
   readonly manifest: readonly RelPath[]
   /**
-   * 这一趟的树可不可写——**退化档**（§ 15.7 的 E4：沙箱不在）里它是 `true`。
+   * **声明的产出落在哪一侧**：`cache` = 绑定那一侧（有挂载层时，字节从绑定过去），
+   * `tree` = 树自己那一侧（没有挂载层：没有挂载就没有绑定）。
    *
-   * 它决定两件事：产出的落点（可写 = 落点在树那一侧，见 `landingOf`），以及"声明集外的改动"
-   * 这道闸门可不可读。**默认档里树是只读的**（`--ro-bind`），所以那里没有什么可查——但读数
-   * 照取（那一条写在下面 `undeclared` 里）。
+   * 它由**机制**决定，不由档决定：Y6 起"没有 bwrap 但有 Landlock"那一档的树是只读的
+   * （未声明的写入当场拒），而声明的产出照样落在树那一侧——两件事分开。
    */
-  readonly treeWritable: boolean
+  readonly landing: 'cache' | 'tree'
+  /**
+   * **树是不是敞开的**：敞开 = 未声明的写入可能落进树里，于是"声明集外的改动"这道闸门要查
+   * （`undeclared()` 靠枚举 `upper` 兑现）；不敞开 = 那些写入由内核当场拒（挂载层的只读绑定，
+   * 或第二层的规则集），树里没有可查的东西。
+   */
+  readonly treeOpen: boolean
 }
 
 /** 架构 § 8.7 的接口。两个方法逐字，加上那条闸门的读口。 */
@@ -99,7 +105,7 @@ export interface Reclaim {
 }
 
 /**
- * 声明产出的落点：**看档**。
+ * 声明产出的落点：**看机制**（有没有挂载层），不看档。
  *
  *   · 默认档（有沙箱）：`cacheRoot(a)`——声明目录整个绑到那儿，字节从绑定那一侧过去。
  *   · 退化档（没有沙箱）：**树自己那一侧**——没有挂载就没有绑定，子进程写的是 `merged/<rel>`，
@@ -107,7 +113,7 @@ export interface Reclaim {
  *     （§ 8.7），所以 overlayfs 档读的是 `upper`：卸载之后 `merged` 只是一个空挂载点。
  */
 function landingOf(deps: ReclaimDeps, a: AgentId): AbsPath {
-  if (!deps.treeWritable) return cacheLayoutOf(deps.roots, a).home
+  if (deps.landing === 'cache') return cacheLayoutOf(deps.roots, a).home
   return deps.strategy === 'overlayfs' ? deps.roots.scratchRoot(a) : deps.roots.mergedRoot(a)
 }
 
@@ -152,7 +158,7 @@ export function createReclaim(deps: ReclaimDeps): Reclaim {
       // 另两档的落地集是从清单推的，落地根里多出来一条在那两档上看不见）。**当场拒绝，不静默
       // 收下**——要跑退化档就得让 `fork` 走 overlayfs（E2 的地板是另一条，两条地板叠在一起
       // 的现场不在这一站的范围里）。
-      if (deps.treeWritable && deps.strategy !== 'overlayfs') {
+      if (deps.treeOpen && deps.strategy !== 'overlayfs') {
         throw new ReclaimRefused(
           `这一档树可写，却查不出声明集外的改动：${deps.strategy} 没有 \`upper\` 可枚举（§ 8.5）\n` +
             `退化档靠枚举 \`upper\` 兑现"未声明却被改动 → 拒绝并记事件"；这两档叠在一起时那道闸门\n` +

@@ -126,7 +126,9 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              树可写那一档由回收拒并记一条 mat/reclaim。
                              --mode <read-only|workspace-write> 选哪一档（缺省 read-only）。
                              workspace-write 是 § 15.7 的 E4 退化档：树可写 + 回收兜底，不再有
-                             只读树那一道围栏。bwrap 不在 PATH 上时自动走这一档——两处都如实报
+                             只读树那一道围栏。bwrap 不在 PATH 上时自动降一档——Landlock 那一层
+                             还在的话（Y6）它接过「写得动什么」那一维：未声明的写入当场拒，档如实
+                             报 read-only；两层都不在才是树可写 + 回收兜底。两处都如实报
                              enforcement=partial，不静默降级。
                              --step <id> 是这一步的署名，不给就是「-」（轮次是 S7 的事）。
                              退出码：0 子进程成功 · 1 没成功
@@ -528,8 +530,9 @@ async function policyCmd(
   try {
     const doc = await readConfig(abs)
     const binding = name === undefined || name === '' ? undefined : readBinding(doc, name)
-    const probed = probeLayers()
-    const policy = resolvePolicy({ roots: createRoots(abs), agent, doc, mode, binding, probed })
+    const roots = createRoots(abs)
+    const probed = probeLayers(roots)
+    const policy = resolvePolicy({ roots, agent, doc, mode, binding, probed })
     if (json) {
       emitJson({ agent, action: name ?? null, ...policy, note: probed.note })
     } else {
@@ -918,7 +921,7 @@ async function runCmd(
   const bind = declaredDirs(binding)
   // **一处解析**（架构 § 8.8）：这一趟的档 · 网络 · 可达集都在这一份值里——`fugue policy` 读的是
   // 同一份。层现探一次（§ 15.7 的 E4）：值本身与"为什么不在"那句话都从这一次探来。
-  const probed = probeLayers()
+  const probed = probeLayers(roots)
   let policy: Policy
   try {
     policy = resolvePolicy({ roots, agent, doc, mode, binding, probed })
@@ -950,22 +953,30 @@ async function runCmd(
     const landed = await landOnce(ctx, abs, agent, st, ctx.view.rev, bind)
     const mounts = checkMountPoints(landed.merged, bind)
     if (!mounts.ok) return fail(mounts.error.message)
-    // **这一趟走哪一档**由上面那一份策略值说了算（架构 § 8.8）：在场的层里有 `bwrap` 就是沙箱档；
-    // 一层都没有就是 § 15.7 的 E4 退化档——树可写、回收兜底、`enforcement` 如实报 partial。
-    // **这条读数现探**（`probeLayers`），不从 `<realRoot>/.fugue/config` 的 `platform` 键里读——
-    // 那份缓存的寿命是给"挂一次试试"那类贵探针定的，E4 的答案会随机器变。
-    const sandboxed = policy.layers.length > 0
+    // **这一趟走哪一档**由上面那一份策略值说了算（架构 § 8.8）：在场的层里有挂载层 `bwrap` 就是
+    // 沙箱档；只有第二层（Landlock）时它接过"写得动什么"那一维（Y6）；两层都不在才是 § 15.7 的
+    // E4 退化档——树可写、回收兜底。**这条读数现探**（`probeLayers`），不从
+    // `<realRoot>/.fugue/config` 的 `platform` 键里读——那份缓存的寿命是给"挂一次试试"那类贵
+    // 探针定的，E4 · E5 的答案会随机器变。
+    const sandboxed = policy.layers.includes('bwrap')
+    // 第二层一个人撑着的那一档：没有挂载围栏，可是边界还在（未声明的写入当场拒）。
+    const bareLandlock = !sandboxed && policy.layers.includes('landlock')
+    // **树敞不敞开**看档：`workspace-write` 是**有人点名**要树可写（挂载层不挂、第二层把整棵树
+    // 开出来）；其余档里树是只读的，未声明的写入由内核当场拒，树里没有可查的东西。
+    const treeOpen = policy.mode === 'workspace-write'
     const sandboxNote = sandboxed
       ? ''
       : mode === 'workspace-write'
         ? '命令行上点名要树可写那一档（--mode workspace-write）'
         : probed.note
     // 减数是**这一趟落地之后**的清单：上面那一下已经把视图里没落地的 delta 落进了 `upper`。
+    // 产出落在哪一侧由**机制**定（有没有挂载层），不由档定：没有挂载层就没有绑定。
     const reclaim = createReclaim({
       roots,
       strategy: st.strategy,
       manifest: landed.manifest,
-      treeWritable: !sandboxed,
+      landing: sandboxed ? 'cache' : 'tree',
+      treeOpen,
     })
     let declared: DeclaredSet
     try {
@@ -985,7 +996,7 @@ async function runCmd(
           env,
           policy,
         })
-      : degradedArgv(binding.argv)
+      : degradedArgv(binding.argv, { roots, policy })
 
     await ctx.log.append(ctx.writer, {
       t: 'run/start',
@@ -1060,7 +1071,9 @@ async function runCmd(
     } else {
       process.stderr.write(
         `退出码 ${res.exit} · ${res.ms} ms · ${policy.mode} · ${policy.enforcement} 档` +
-          `${sandboxed ? '' : ` · 没有沙箱（${sandboxNote}）——树可写，回收兜底`}` +
+          `${sandboxed ? '' : ` · 没有沙箱（${sandboxNote}）`}` +
+          `${bareLandlock ? ' · landlock 那一层还在：未声明的写入当场拒' : ''}` +
+          `${treeOpen ? '——树可写，回收兜底' : ''}` +
           `${res.denied ? ' · 有被拒的写入' : ''}` +
           `${landed.prepared.length === 0 ? '' : ` · 预建挂载点 ${landed.prepared.length} 个`}` +
           `${gate.wrote.length === 0 ? '' : ` · 回收 ${gate.wrote.length} 条进视图`}` +

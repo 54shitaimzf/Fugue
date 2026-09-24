@@ -5,7 +5,9 @@
 //      `changed` 两栏）——第三条验证"记事件"那一半在这里兑现
 //   ③ 如实报出这次是哪个档（`run/confined` 的 `enforcement`），不静默降级
 //   ④ **地板**：把 `bwrap` 从 PATH 上拿掉（§ 15.7 的 E4 真的不成立），同一趟照样跑得出同一份
-//      声明集，并且如实报 partial——判据是"变慢，还是跑不起来"
+//      声明集，并且如实报 partial——判据是"变慢，还是跑不起来"。**Y6 起这里降一档而不是降到
+//      底**：第二层（Landlock）接过来，"未声明的写入当场拒"那一维还在，于是树不可写
+//      （`mode` 如实报 `read-only`）。两层都不在时才是原样那一档（树可写 + 回收兜底）。
 //
 // **两处落点**是这一档最要紧的一件事：默认档里声明目录整个绑到 per-agent 缓存上（§ 8.6 第 2 步），
 // 产出落在**绑定那一侧**；退化档里没有挂载就没有绑定，产出落在**树自己那一侧**。所以
@@ -266,12 +268,13 @@ test('X4 ④ · 地板：bwrap 从 PATH 上拿掉，同一趟照样跑得出同�
   const probe = spawnSync('bwrap', ['--version'], { env: { ...process.env, ...noBwrap }, encoding: 'utf8' })
   assert.equal((probe.error as NodeJS.ErrnoException | undefined)?.code, 'ENOENT', '这条路上真没有 bwrap')
 
-  // 机制死掉了：同一趟照样跑得出来——**报 partial，不静默降级，也不是跑不起来**。
+  // 挂载层死掉了：同一趟照样跑得出来，第二层接过来——**报 partial，不静默降级，也不是跑不起来**。
   assert.equal(fugue(w.root, 'ensure').code, 0)
   const deg = fugueEnv(noBwrap, w.root, '--json', 'run', 'build')
   assert.equal(deg.code, 0, deg.err)
   const j = JSON.parse(deg.out.trim()) as Record<string, unknown>
   assert.equal(j.sandbox, false, '自己探出来 bwrap 不在')
+  assert.deepEqual(j.layers, ['landlock'], '挂载层不在，第二层还在场（Y6）')
   assert.equal(j.enforcement, 'partial')
   assert.match(String(j.sandboxNote), /bwrap/)
   assert.deepEqual(j.reclaimed, ['dist/app'])
@@ -280,9 +283,9 @@ test('X4 ④ · 地板：bwrap 从 PATH 上拿掉，同一趟照样跑得出同�
   const confined = rowsOf(w.root).filter((r) => r.e.t === 'run/confined').pop()
   assert.deepEqual(
     { mode: confined?.e.mode, enforcement: confined?.e.enforcement },
-    { mode: 'workspace-write', enforcement: 'partial' },
-     '`run/confined` 那一条也如实报 partial',
+    { mode: 'read-only', enforcement: 'partial' },
+     '`run/confined` 那一条也如实报：树不可写（第二层管着那一维）· 少一层纵深',
   )
-  // 这一档没有沙箱，`junk.txt` 那类写入进不来视图——回收那一半照旧管用。
+  // 这一档里 `junk.txt` 那类写入**由内核当场拒**（第二层），树里长不出来、也进不来视图。
   assert.equal(fugue(w.root, 'read', 'junk.txt').code, 1)
 })

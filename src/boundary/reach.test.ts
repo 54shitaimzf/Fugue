@@ -227,7 +227,7 @@ function runConfined(m: Made, reach: ReachSpec, argv: readonly string[]) {
 
 test('Y3 ① · 六条泄漏用例全部翻成"拒"，且 `ls /` 只剩清单那几条', () => {
   const m = fixture()
-  assert.deepEqual([...m.fx.policy.layers], ['bwrap'], '这一趟 bwrap 在场——不在场的话下面读的不是沙箱档')
+  assert.ok(m.fx.policy.layers.includes('bwrap'), '这一趟 bwrap 在场——不在场的话下面读的不是沙箱档')
   const rows = runEscapeTable(ESCAPE_CASES, m.fx)
   console.log('\n── Y3 ① · 全档（清单落地之后）：十九条 ──')
   for (const r of rows) console.log(`  ${formatReading(r)}`)
@@ -267,7 +267,7 @@ test('Y3 ① · 六条泄漏用例全部翻成"拒"，且 `ls /` 只剩清单那
 
 test('Y3 ② · 正对照：真构建 + 真测试在沙箱里照跑得出，产物落声明目录、`upper` 里 0 个文件', () => {
   const m = fixture()
-  assert.deepEqual([...m.fx.policy.layers], ['bwrap'], '这一趟 bwrap 在场——不在场的话下面读的不是沙箱档')
+  assert.ok(m.fx.policy.layers.includes('bwrap'), '这一趟 bwrap 在场——不在场的话下面读的不是沙箱档')
   const cache = cacheLayoutOf(m.fx.roots, AGENT)
   const upper = join(m.root, '.fugue', 'mat', AGENT, 'upper')
 
@@ -300,7 +300,7 @@ test('Y3 ② · 正对照：真构建 + 真测试在沙箱里照跑得出，产�
 
 test('Y3 ③ · 负对照：从清单里抽掉 `/lib64` 与 `/etc/alternatives` 各一次，当场起不来', () => {
   const m = fixture()
-  assert.deepEqual([...m.fx.policy.layers], ['bwrap'], '这一趟 bwrap 在场')
+  assert.ok(m.fx.policy.layers.includes('bwrap'), '这一趟 bwrap 在场')
   const base = m.fx.policy.reach
 
   // **正对照先来**：清单不抽，那两条都起得来——否则下面那两条红的可能只是"这台机器上 bwrap
@@ -318,7 +318,11 @@ test('Y3 ③ · 负对照：从清单里抽掉 `/lib64` 与 `/etc/alternatives` 
     'hi',
   ])
   assert.notEqual(noLib64.status, 0, '清单少一条：当场起不来')
-  assert.equal(lastLine(noLib64.stderr), 'bwrap: execvp /usr/bin/echo: No such file or directory')
+  // **Y6 起报这句话的是第二层那个包装器**（它排在孩子前面），不再是 `bwrap`：它自己先起来了
+  // ——静态链，所以它不看清单里那条动态链接器——起不来的是它要 `exec` 的那一条。这句话里出现
+  // 的因此是**孩子自己**的路径；要是包装器自己没起来，那里会写着包装器的路径，而那才是"清单
+  // 少一条把边界自己也带走"。
+  assert.equal(lastLine(noLib64.stderr), 'landlock: 起不来：/usr/bin/echo（errno=2 No such file or directory）')
 
   // ② 抽掉 `/etc/alternatives`：`cc` 那条链子断在半路（`/usr/bin/cc` 指向它）。
   const noAlt = runConfined(m, { ...base, roRoots: base.roRoots.filter((p) => p !== '/etc/alternatives') }, [
@@ -326,5 +330,5 @@ test('Y3 ③ · 负对照：从清单里抽掉 `/lib64` 与 `/etc/alternatives` 
     '--version',
   ])
   assert.notEqual(noAlt.status, 0, '清单少一条：当场起不来')
-  assert.equal(lastLine(noAlt.stderr), 'bwrap: execvp cc: No such file or directory')
+  assert.equal(lastLine(noAlt.stderr), 'landlock: 起不来：cc（errno=2 No such file or directory）')
 })

@@ -13,8 +13,11 @@ import type { ActionName, AgentId, Enforcement, PolicyMode, RelPath } from '../t
 export interface ConfinedArgv {
   /** 真正 spawn 的那个命令行。 */
   readonly argv: readonly string[]
-  /** 用哪一层关起来的。`none` 是 X4 的退化档，这一站还没有它。 */
-  readonly mechanism: 'bwrap' | 'none'
+  /**
+   * 用哪一层关起来的：`bwrap`（挂载层。两层叠着时也记它——主层是它）· `landlock`（挂载层不在，
+   * 第二层接过来，Y6 那一档）· `none`（两层都不在，X4 的退化档：命令行就是它自己）。
+   */
+  readonly mechanism: 'bwrap' | 'landlock' | 'none'
   /** 架构 § 8.8 的策略面：这一趟跑在哪个模式下（那个事件要它）。 */
   readonly mode: PolicyMode
   /** 如实报告，绝不夸大：`full` = 树只读 + 声明目录可写这一档真的关上了。 */

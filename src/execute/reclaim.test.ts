@@ -307,7 +307,14 @@ test('X2 ④ · 树可写那一档：回收拒掉声明集外的改动，声明�
 
   // **回收在卸载之后**（§ 8.7）：枚举 `upper` 之前先把树卸下来。
   unmountOverlay(roots.mergedRoot(agent))
-  const reclaim = createReclaim({ roots, strategy: 'overlayfs', manifest: [] })
+  // 这一份回收读的是**绑定那一侧**（产出一路走 `--bind` 过去的），而树在那一档里是敞开的。
+  const reclaim = createReclaim({
+    roots,
+    strategy: 'overlayfs',
+    manifest: [],
+    landing: 'cache',
+    treeOpen: true,
+  })
   const declared = reclaim.declare(agent, ['gen'])
   const deltas = await reclaim.collect(agent, declared)
   // **收的是那条声明落点的全貌**（§ 8.7：读绑定落点、不做内容比对）：种子那一趟的两条还在缓存里，
