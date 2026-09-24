@@ -14,12 +14,13 @@
 //
 // 今天只有一层（`bwrap`）。第二层（Landlock，Y6）进来时往 `layers` 里加一项就够——`full` 与
 // `partial` 的判据（"这一档承诺的那几道围栏关上了没有"）不用改。
+import { join } from 'node:path'
 import type { ConfigDoc } from '../config.ts'
 import type { ActionBinding } from '../execute/binding.ts'
-import { cacheLayoutOf, probeBwrap } from '../execute/confine.ts'
+import { cacheLayoutOf, probeBwrap } from './confine.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { AbsPath, AgentId, Enforcement, NetMode, PolicyLayer, PolicyMode } from '../terms.ts'
-import { readReach, type ReachSpec } from './reach.ts'
+import { readReach, SANDBOX_COORDS, type Coords, type ReachSpec } from './reach.ts'
 
 export { PolicyError } from './reach.ts'
 
@@ -28,6 +29,12 @@ export interface Policy {
   readonly writableRoots: readonly AbsPath[]
   readonly enforcement: Enforcement
   readonly reach: ReachSpec
+  /**
+   * **子进程那一侧的坐标**（树 · 家与缓存 · temp）：`confine()` 的 argv 与 `envFor()` 的那几个
+   * 变量读的都是它，一处定下来。它是**这一档的事实**——有层在场就是沙箱里的三条（`/work`
+   * `/cache` `/tmp`），一层都没有时子进程就在宿主上跑，坐标照实写宿主那三条。
+   */
+  readonly coords: Coords
   readonly net: NetMode
   readonly layers: readonly PolicyLayer[]
 }
@@ -68,14 +75,22 @@ export function resolvePolicy(i: PolicyInput): Policy {
   const layers: readonly PolicyLayer[] = wanted === 'read-only' ? probed.layers : []
   const fenced = layers.length > 0
   const cache = cacheLayoutOf(i.roots, i.agent)
+  // **坐标跟着档走**：有层在场就是沙箱里那三条；一层都没有时子进程就在宿主上跑，坐标照实写
+  // 宿主那三条——两档各是各的事实，而 `envFor()` 与 `confine()` 读的是同一份。
+  const coords: Coords = fenced
+    ? SANDBOX_COORDS
+    : { tree: i.roots.mergedRoot(i.agent), home: cache.home, tmp: i.roots.tempRoot(i.agent) }
   const declared = [...(i.binding?.cache ?? []), ...(i.binding?.outputs ?? [])]
   return {
     mode: fenced ? wanted : 'workspace-write',
+    // 可写落点按**子进程那一侧的坐标**写：沙箱档是 `/cache` `/tmp` `/work/<声明目录>`，
+    // 退化档就是宿主那三条（声明目录在那一档里落在树自己那一侧）。
     writableRoots: [
-      ...new Set<AbsPath>([cache.home, i.roots.tempRoot(i.agent), ...declared.map((rel) => cache.bound(rel))]),
+      ...new Set<AbsPath>([coords.home, coords.tmp, ...declared.map((rel) => join(coords.tree, rel))]),
     ],
     enforcement: fenced ? 'full' : 'partial',
     reach: readReach(i.doc),
+    coords,
     net: fenced ? (i.binding?.net ?? 'none') : 'host',
     layers,
   }

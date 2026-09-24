@@ -14,25 +14,25 @@
 //
 // `@work` 是**子进程眼里的树根** · `@real` 是**树在宿主上的路径** · `@cache` 是它的家 ·
 // `@outside` 是工作区之外、那个人自己写得动的一处 · `@home` 是宿主那个家（不是本 agent 的
-// 缓存）。由跑器翻成这一次的真路径。这一栏是为第三处待批（沙箱里的坐标：树挂 `/work`）留的：
-// 批下来之后改的是跑器里那五个字符串，**表一个字节不动**。
+// 缓存）。**同一张表两个坐标面**（Y3 落的）：argv 那一侧按 `fx.coords` 翻——沙箱档的 `work`
+// 是挂载点 `/work`；**读数**那一侧按 `fx.host` 翻——读文件的是跑器自己，它在宿主上，读不到
+// `/work`。表一个字节没动，改的只是跑器里那两张表。
 //
-// 今天 `@work` 与 `@real` 落在同一棵树上，可它们问的不是同一件事：前者问"树里的东西读得到
-// 吗"（该通），后者问"宿主上那条路径够得着吗"（该拒）。Y3 把坐标换掉之后这两条读数才真正
-// 分开——今天它们都是"通"，那不是巧合，正是这一站要关掉的那件事。
+// 今天 `@work` 与 `@real` 落在两条不同的路径上，可它们问的仍不是同一件事：前者问"树里的东西
+// 读得到吗"（该通），后者问"宿主上那条路径够得着吗"（该拒）。Y3 之前它们是同一棵树，那两条
+// 读数因此也都是"通"——正是这一站要关掉的那件事。
 //
-// ## 今天读到什么（S5 站前那次探针 `f9ff1b7` 的逐条复现）
+// ## 今天读到什么（Y3 之后：`confine()` 落的是清单，不是整个宿主）
 //
 //   甲 该通      树内读 · 树内读（相对 cwd）· 声明目录写 · 本 agent 的家          四条全"通"
 //   乙 树内该拒  原地改源文件 · 树内新建 · 删除源文件                              三条全"拒"（内核 EROFS）
-//   丙 树外该拒  写工作区外                                                          "拒"（内核 EROFS）
-//                绝对路径读宿主 · `..` 穿越读宿主 · 软链指向树外 · 经 /proc 的
-//                另一条坐标 · shell 里 cd / 再读                                  五条全"**通**"
-//   丁 泄漏      工作区配置 · 工作区日志 · 真源工作树（宿主路径）·
-//                别家的物化树（宿主路径）· 宿主那个家 · 挂进来的宿主盘              六条全"**通**"
+//   丙 树外该拒  写工作区外 · 绝对路径读宿主 · `..` 穿越读宿主 · 软链指向树外 ·
+//                经 /proc 的另一条坐标 · shell 里 cd / 再读                          **六条全"拒"**
+//   丁 宿主该拒  工作区配置 · 工作区日志 · 真源工作树（宿主路径）·
+//                别家的物化树（宿主路径）· 宿主那个家 · 挂进来的宿主盘               **六条全"拒"**
 //
-// **这些是读数，不是断言**（PLAN § 5.5 的 ③）：九条"该拒而今天通"就是 Y3 的负对照——那一
-// 单元要把它们逐条翻过来。所以这里一个字都不许美化：读出来什么就写什么。
+// **十九条里十九条**：该通的四条通着，该拒的十五条拒着。Y1 立表那天这里写的是九条"该拒而
+// 今天通"（`f9ff1b7` 的逐条复现），Y3 把它们逐条翻了过来——那正是 Y3 的断言 ①。
 //
 // ## 量过、但没进这张表的一条（硬链接别名）
 //
@@ -47,7 +47,7 @@ import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, linkSync, mkdirSync, readFileSync, symlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { confine, degradedArgv } from '../execute/confine.ts'
+import { confine, degradedArgv } from './confine.ts'
 import type { ConfinedArgv } from '../execute/contract.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { AgentId, RelPath } from '../terms.ts'
@@ -66,7 +66,7 @@ export const GROUPS = {
   ok: '甲 · 该通',
   inside: '乙 · 树内该拒',
   outside: '丙 · 树外该拒',
-  leak: '丁 · 物理侧今天够得着的',
+  leak: '丁 · 宿主那一侧该拒',
 } as const
 export type Group = (typeof GROUPS)[keyof typeof GROUPS]
 
@@ -444,7 +444,17 @@ export interface EscapeReading {
 export interface EscapeFixture {
   readonly roots: Roots
   readonly agent: AgentId
+  /**
+   * **子进程那一侧的坐标**：argv 里那五个记号按它翻。沙箱档的 `work` 是挂载点（`/work`），
+   * 退化档就是宿主上那条路径——两个档各给一份，别混。
+   */
   readonly coords: Readonly<Record<Coord, string>>
+  /**
+   * **宿主那一侧的坐标**：**读数**按它翻——`at` 那几条路径是跑器在宿主上读的，`/work` 在
+   * 宿主上不存在。`work` 是物化树在盘上的路径（与 `real` 今天可能落在同一条，但问的不是
+   * 同一件事）。
+   */
+  readonly host: Readonly<Record<Coord, string>>
   readonly declared: readonly RelPath[]
   readonly env: Readonly<Record<string, string>>
   /** 这一趟的策略值：**跑器照它包**（Y2 起）——表里那些读数因此是在一份真策略下取的。 */
@@ -523,9 +533,12 @@ export function runEscapeTable(
 }
 
 function runOne(c: EscapeCase, fx: EscapeFixture, sandbox: boolean): EscapeReading {
+  // **argv 翻成子进程的坐标，读数翻成宿主的坐标**（Y3）：一个问"孩子够得着什么"，一个问
+  // "盘上变成了什么样"。两处各一份，混了的话沙箱档的读数会去读 `/work`——那条路径在宿主上
+  // 不存在，读出来的是"没变"，而那是假的。
   const argv = c.argv.map((s) => expand(s, fx.coords))
   const merged = fx.roots.mergedRoot(fx.agent)
-  const ats = atsOf(c.read, fx.coords)
+  const ats = atsOf(c.read, fx.host)
   const at = ats[0] ?? ''
   // 读法的"改之前"：**在起进程之前取**，否则读的是自己写的那一份。
   const before = c.read.how === 'bytes' ? shaOf(at) : null

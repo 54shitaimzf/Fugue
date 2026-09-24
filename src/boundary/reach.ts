@@ -57,6 +57,29 @@ export const DEFAULT_REACH: ReachSpec = {
 }
 
 /**
+ * 沙箱里那三条坐标（PLAN § 5.5「站前要批的三处」的第 3 条）：树挂 `/work` · 家与缓存挂 `/cache` ·
+ * temp 挂 `/tmp`。**它是"子进程看到的路径"**，与宿主那一侧一一对应（`mergedRoot(a)` ·
+ * `cacheRoot(a)` · `tempRoot(a)`）。
+ *
+ * 为什么要固定：宿主布局一旦漏进沙箱，**产物里就带着它**（`cc -g` 的 `DW_AT_comp_dir`），
+ * 跨 agent 比字节从"可断言"退成"归因读数"。实测：两个不同宿主路径各编一次产物不同，都挂到
+ * `/work` 则逐字节相同。
+ *
+ * 两条读同一份：`confine()` 的 argv 与 `envFor()` 的那几个变量（架构 § 8.6 的头三行）。
+ */
+export interface Coords {
+  /** 物化树在子进程眼里的挂载点。 */
+  readonly tree: string
+  /** 家与缓存：`HOME` 与 `XDG_CACHE_HOME` 的父目录。 */
+  readonly home: string
+  /** `TMPDIR`。 */
+  readonly tmp: string
+}
+
+/** 有层在场时那三条（`policy.coords` 在有沙箱的档上就是它）。 */
+export const SANDBOX_COORDS: Coords = { tree: '/work', home: '/cache', tmp: '/tmp' }
+
+/**
  * 读清单。**没配过就是缺省值**（与 `ports.range` 同一个口径），配了就要成立：非空数组 ·
  * 每一条都是绝对路径 · 里面不许有 `..`——那是"换一条坐标再说"，正是清单要关掉的东西。
  */

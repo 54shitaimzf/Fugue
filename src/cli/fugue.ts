@@ -34,7 +34,7 @@ import {
   readBinding,
 } from '../execute/binding.ts'
 import type { ActionBinding } from '../execute/binding.ts'
-import { cacheLayoutOf, confine, degradedArgv } from '../execute/confine.ts'
+import { cacheLayoutOf, confine, degradedArgv } from '../boundary/confine.ts'
 import { createExecutor } from '../execute/exec.ts'
 import { ReclaimRefused, createReclaim } from '../execute/reclaim.ts'
 import type { DeclaredSet, Reclaim } from '../execute/reclaim.ts'
@@ -966,7 +966,7 @@ async function runCmd(
       if (err instanceof ReclaimRefused) return fail(err.message)
       throw err
     }
-    const env = envFor({ roots, agent, binding, injections, portIndex, range })
+    const env = envFor({ agent, binding, injections, portIndex, range, policy })
     const confined = sandboxed
       ? confine({
           roots,
@@ -1042,6 +1042,7 @@ async function runCmd(
         undeclared: gate.undeclared,
         prepared: landed.prepared,
         merged: landed.merged,
+        tree: policy.coords.tree,
         home: env.HOME,
         tmp: env.TMPDIR,
         xdgCache: env.XDG_CACHE_HOME,

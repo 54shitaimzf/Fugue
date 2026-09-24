@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { after, test } from 'node:test'
 import { envFor } from './binding.ts'
 import type { ActionBinding } from './binding.ts'
-import { cacheLayoutOf, confine } from './confine.ts'
+import { cacheLayoutOf, confine } from '../boundary/confine.ts'
 import { createExecutor } from './exec.ts'
 import { createReclaim } from './reclaim.ts'
 import { resolvePolicy } from '../boundary/policy.ts'
@@ -281,10 +281,11 @@ test('X2 ④ · 树可写那一档：回收拒掉声明集外的改动，声明�
   const agent = 'round' as AgentId
   const cache = cacheLayoutOf(roots, agent)
   const binding: ActionBinding = { name: 'mixed', argv: [], cwd: '', outputs: ['gen'], cache: ['dist'], env: {}, net: 'none' }
-  const env = envFor({ roots, agent, binding, injections: {}, portIndex: 0, range: '31000-31099' })
   // 树可写那一档得配一份那一档的策略值（Y2 起 `confine()` 读它，不再自己判断档）：
-  // 没有层在场 → mode 记 workspace-write · enforcement 记 partial · net 记 host。
+  // 没有层在场 → mode 记 workspace-write · enforcement 记 partial · net 记 host · **坐标是
+  // 宿主那三条**（Y3 起），所以 `envFor` 也读它。
   const policy = resolvePolicy({ roots, agent, doc: {}, mode: 'workspace-write' })
+  const env = envFor({ agent, binding, injections: {}, portIndex: 0, range: '31000-31099', policy })
   const confined = confine({
     roots,
     agent,

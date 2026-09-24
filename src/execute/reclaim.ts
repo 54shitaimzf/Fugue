@@ -28,7 +28,7 @@ import { normMode } from '../delta.ts'
 import type { Delta } from '../delta.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { AbsPath, AgentId, ForkStrategy, RelPath } from '../terms.ts'
-import { cacheLayoutOf } from './confine.ts'
+import { cacheLayoutOf } from '../boundary/confine.ts'
 
 /**
  * 一次运行的声明集：**要回写视图的那一份产出**——工作区配置里 `actions.<名字>.outputs`

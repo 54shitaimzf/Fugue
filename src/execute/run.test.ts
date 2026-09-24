@@ -16,12 +16,12 @@
 // 再交给 `createExecutor()` 跑。这样红的才是"少了那一样就不行"，不是"另一个手写的骨架不行"。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, test } from 'node:test'
-import { cacheLayoutOf, confine } from './confine.ts'
+import { cacheLayoutOf, confine } from '../boundary/confine.ts'
 import { createExecutor } from './exec.ts'
 import { envFor } from './binding.ts'
 import type { ActionBinding } from './binding.ts'
@@ -77,6 +77,11 @@ console.log(JSON.stringify({
   devnull: t(() => writeFileSync('/dev/null', 'x')),
   home: t(() => writeFileSync(process.env.HOME + '/home.txt', 'x')),
   tmp: t(() => writeFileSync(process.env.TMPDIR + '/tmp.txt', 'x')),
+  // **同名不同地**（Y3 的批语第三处）：坐标的名字四个 agent 一样，落点各是各的——who.txt
+  // 里写下自己的号，宿主那一侧读它就知道那一趟写进了哪一份缓存。（这里不能用反引号：
+  // 这一段住在模板串里，一个反引号就把探针那一段截断了。）
+  who: t(() => writeFileSync(process.env.HOME + '/who.txt', process.env.PORT ?? 'x')),
+  whoTmp: t(() => writeFileSync(process.env.TMPDIR + '/who.txt', process.env.PORT ?? 'x')),
 }))
 console.log(JSON.stringify({
   HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
@@ -218,25 +223,38 @@ test('X1 ② · 树内四项全拒（errno 30），而树里其他位置一个�
   )
 })
 
-test('X1 ③ · 四个 agent 的坐标两两不同：HOME · TMPDIR · XDG_CACHE_HOME · 端口', () => {
+test('X1 ③ · 四个 agent 的子进程看到同一套坐标，而那一套各自落在自己的缓存与 temp 上', () => {
+  // **这一条的形状随 Y3 的批语第三处改了**：坐标固定成 `/work` `/cache` `/tmp` 之后，四个
+  // agent 的子进程看到的名字**一模一样**（宿主布局不再漏进沙箱），隔离从"名字不同"落到"同一个
+  // 名字在宿主上是四处"——所以下面读的是**落点**：各自那份缓存里的 `who.txt` 各是各的号。
   const agents = ['agent/r1/1', 'agent/r1/2', 'agent/r1/3', 'agent/r1/4']
   const w = workspace(agents)
-  const seen: Record<string, Set<string>> = { HOME: new Set(), TMPDIR: new Set(), XDG_CACHE_HOME: new Set(), PORTS: new Set() }
+  const ports: string[] = []
   for (const a of agents) {
     const r = fugue(w.root, '--agent', a, 'run', 'probe')
     assert.equal(r.code, 0, r.err)
     const { env } = readings(r.err)
-    assert.equal(env.cwd, join(w.root, '.fugue', 'mat', a, 'merged'), 'cwd 是自己的合并树')
-    assert.equal(env.HOME, join(w.root, '.fugue', 'mat', a, 'cache'), '家在自己的缓存里')
-    assert.equal(env.TMPDIR, join(w.root, '.fugue', 'mat', a, 'tmp'), 'temp 是自己的坐标')
-    assert.equal(env.XDG_CACHE_HOME, join(w.root, '.fugue', 'mat', a, 'cache', 'xdg-cache'))
-    for (const k of ['HOME', 'TMPDIR', 'XDG_CACHE_HOME', 'PORTS']) seen[k]?.add(env[k] ?? '')
+    assert.equal(env.cwd, '/work', 'cwd 是树那一处（沙箱里的坐标）')
+    assert.equal(env.HOME, '/cache', '家与缓存在沙箱里是那一处')
+    assert.equal(env.TMPDIR, '/tmp', 'temp 在沙箱里是那一处')
+    assert.equal(env.XDG_CACHE_HOME, '/cache/xdg-cache')
+    ports.push(env.PORT ?? '')
     // 命令行给的那一片号与子进程看到的一致。
     const slice = env.PORTS ?? ''
     assert.equal(env.PORT, slice.split('-')[0], 'PORT 是自己那一片的第一个号')
   }
-  for (const [k, set] of Object.entries(seen)) {
-    assert.equal(set.size, 4, `${k} 四个 agent 两两不同：${[...set].join(' · ')}`)
+  // 端口那一片两两不同（它不靠坐标隔离，靠池子按 writer 次序切）。
+  assert.equal(new Set(ports).size, 4, `四个 agent 的号两两不同：${ports.join(' · ')}`)
+  // **同名不同地**：`$HOME/who.txt` 与 `$TMPDIR/who.txt` 在宿主上落在各自那一份里。
+  for (let i = 0; i < agents.length; i++) {
+    const home = join(w.root, '.fugue', 'mat', agents[i], 'cache')
+    const tmp = join(w.root, '.fugue', 'mat', agents[i], 'tmp')
+    assert.equal(readFileSync(join(home, 'who.txt'), 'utf8'), ports[i], `${agents[i]}：家是它自己那一份`)
+    assert.equal(readFileSync(join(tmp, 'who.txt'), 'utf8'), ports[i], `${agents[i]}：temp 是它自己那一份`)
+    // 也别家的号写进来了：这一份里只有自己那一个。
+    for (const other of ports.filter((p) => p !== ports[i])) {
+      assert.equal(existsSync(join(home, `who-${other}.txt`)), false)
+    }
   }
 })
 
@@ -267,21 +285,27 @@ test('X1 ④ · 负对照：摘掉 `--dev /dev` 与摘掉按 agent 的 temp 的�
   const agent = 'round' as AgentId
   const cache = cacheLayoutOf(roots, agent)
   const binding: ActionBinding = { name: 'probe', argv: [], cwd: '', outputs: [], cache: [], env: {}, net: 'none' }
-  const env = envFor({ roots, agent, binding, injections: {}, portIndex: 0, range: '31000-31099' })
-  const run = createExecutor({ onChunk: () => {} })
   // 这一趟的策略值（Y2 起 `confine()` 要它）：缺省档——bwrap 在场 · 网切掉 · 清单是缺省那份。
+  // `envFor` 的坐标也从它来（Y3 起），所以它排在前面。
   const policy = resolvePolicy({ roots, agent, doc: {} })
+  const env = envFor({ agent, binding, injections: {}, portIndex: 0, range: '31000-31099', policy })
+  const run = createExecutor({ onChunk: () => {} })
 
   // ① 摘掉 `--dev /dev`：写 /dev/null 当场失败（子进程自己报 errno）。
-  // 走 shell：内核那句话（`Permission denied`）原样落进 stderr，正是 `denied` 读的那一处。
+  // 走 shell：内核那句话原样落进 stderr。**这一趟 `denied` 读出来是 false**——`DENY` 那一条正则
+  // 收的是"内核把写入拒了"（EROFS · EACCES · EPERM），而清单落地之后（Y3）`/dev/null` 是**不在**
+  // （ENOENT）：那不是拒绝，是够不着。`--dev /dev` 的承重性照旧（非零退出 + 那句文案），
+  // 但 `denied` 这一栏的形状随骨架变了——读数记在这里，不把它悄悄抹平。
   const probeArgv = ['sh', '-c', 'echo x > /dev/null']
   const full = confine({ roots, agent, argv: probeArgv, cwd: '', declared: [], env, policy }).argv.slice()
   const devAt = full.indexOf('--dev')
   const noDev = [...full.slice(0, devAt), ...full.slice(devAt + 2)]
   const a1 = await run.run(agent, { action: 'probe', confined: { argv: noDev, mechanism: 'bwrap', mode: 'read-only', enforcement: 'full' }, cwd: '', env }, new AbortController().signal)
   assert.notEqual(a1.exit, 0, '--dev /dev 不在时写 /dev/null 失败')
-  assert.match(a1.stderr, /Permission denied/)
-  assert.equal(a1.denied, true, '这一趟的 denied 读出来了')
+  // 文案随骨架变，两句话都是"那一样缺了"的读数：`--ro-bind / /` 那会儿 `/dev/null` **在**、只是
+  // 只读（`Permission denied`）；清单落地之后（Y3）它**不在**——所以现在是 `Directory nonexistent`。
+  assert.match(a1.stderr, /Directory nonexistent|Permission denied/)
+  assert.equal(a1.denied, false, 'ENOENT 不算"被内核拒"（DENY 收的是 EROFS 与 EACCES）')
 
   // ② 摘掉按 agent 的 temp 的绑定：编译器当场起不来（TMPDIR 指向的那条在树里，只读）。
   const tmp = roots.tempRoot(agent)

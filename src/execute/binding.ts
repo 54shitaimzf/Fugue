@@ -8,15 +8,17 @@
 // 落这里）分开，是这一处唯一要紧的取舍：架构 § 8.7 明说构建产物**不回收**，而 `run_action`
 // 的产出要回收，两者靠"声明在哪个键里"分开，比在运行模式里加开关干净。
 //
-// **本 agent 的坐标也在这里给**（架构 § 8.6 那张表的头三行）：`HOME` / `XDG_CACHE_HOME` 落在
-// `cacheRoot(a)` 里、`TMPDIR` 落在 `tempRoot(a)` 里、端口从池里切一片给自己的 agent。**另一样
+// **本 agent 的坐标从策略值来**（架构 § 8.6 那张表的头三行 · § 8.8 的 `Policy.coords`）：
+// `HOME` / `XDG_CACHE_HOME` / `TMPDIR` 落在**子进程那一侧的坐标**上——沙箱档是 `/cache` 与
+// `/tmp`，退化档是 `cacheRoot(a)` 与 `tempRoot(a)`；端口从池里切一片给自己的 agent。**另一样
 // 是照旧递进去的**：宿主环境不清洗（凭据那一类在 S5 的 `Policy` 与 S6 的 `envRealize` 手里），
 // 这一站只保证表里这几项在子进程里是本 agent 的坐标。
+import { join } from 'node:path'
+import { XDG_DIR } from '../boundary/confine.ts'
+import type { Policy } from '../boundary/policy.ts'
 import type { ConfigDoc } from '../config.ts'
 import { getConfig } from '../config.ts'
-import type { Roots } from '../roots/contract.ts'
 import type { ActionName, AgentId, NetMode } from '../terms.ts'
-import { cacheLayoutOf } from './confine.ts'
 
 /** 这一层自己的失败：配置里的动作绑定不成立。**拒绝并指路**，与围栏同一个口径。 */
 export class BindingError extends Error {}
@@ -183,12 +185,17 @@ export function portSlice(range: string, index: number): { port: number; ports: 
 }
 
 export interface EnvInput {
-  readonly roots: Roots
   readonly agent: AgentId
   readonly binding: ActionBinding
   readonly injections: Readonly<Record<string, string>>
   readonly portIndex: number
   readonly range: string
+  /**
+   * 这一趟的策略值：**本 agent 的坐标从它来**（架构 § 8.8 的 `Policy.coords`）。沙箱档那三条是
+   * 子进程在沙箱里看到的（`HOME=/cache` · `TMPDIR=/tmp`），退化档是宿主上的那三条——两档各是
+   * 各的事实，一处定，`confine()` 的 argv 读的是同一份。
+   */
+  readonly policy: Policy
 }
 
 /**
@@ -196,15 +203,15 @@ export interface EnvInput {
  * 已经在各自的入口上过了保留清单，盖不到坐标）。
  */
 export function envFor(i: EnvInput): Record<string, string> {
-  const cache = cacheLayoutOf(i.roots, i.agent)
+  const c = i.policy.coords
   const slice = portSlice(i.range, i.portIndex)
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
   return {
     ...env,
-    HOME: cache.home,
-    XDG_CACHE_HOME: cache.xdgCache,
-    TMPDIR: i.roots.tempRoot(i.agent),
+    HOME: c.home,
+    XDG_CACHE_HOME: join(c.home, XDG_DIR),
+    TMPDIR: c.tmp,
     PORT: String(slice.port),
     PORTS: slice.ports,
     ...i.binding.env,

@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url'
 import { after, test } from 'node:test'
 import { envFor } from './binding.ts'
 import type { ActionBinding } from './binding.ts'
-import { confine } from './confine.ts'
+import { confine } from '../boundary/confine.ts'
 import { createExecutor } from './exec.ts'
 import { resolvePolicy } from '../boundary/policy.ts'
 import { isMounted } from '../materialize/mount.ts'
@@ -285,7 +285,7 @@ test('X3 ① · 四路并发一趟 · 逐个串行一趟：同一批 agent 的�
   }
 })
 
-test('X3 ② · 无串扰：四项坐标两两不同，各自的坐标里只有自己的号（四路并发里各自绑得上号）', async () => {
+test('X3 ② · 无串扰：宿主那一侧的坐标两两不同，各自的坐标里只有自己的号（四路并发里各自绑得上号）', async () => {
   const w = workspace()
   const res = await fugueAll(
     w.root,
@@ -294,10 +294,16 @@ test('X3 ② · 无串扰：四项坐标两两不同，各自的坐标里只有�
   const jsons = res.map(cliJson)
   const child = res.map((r) => childJson(r.err))
 
-  // 四项坐标两两不同：家 · temp · XDG 缓存 · 端口。缓存目录由家那一条代表（`HOME == cacheRoot(a)`）。
-  for (const k of ['home', 'tmp', 'xdgCache', 'merged', 'ports'] as const) {
+  // **两两不同的是宿主那一侧**（Y3 的批语第三处之后）：物化树 `merged` 与端口。家 · temp ·
+  // XDG 那三条子进程看到的名字四个 agent **一样**（`/cache` `/tmp` `/cache/xdg-cache`），
+  // 隔离落在"同一个名字绑到各自的缓存"上——那一条的读数在下面（各自的坐标里只有自己的号）。
+  for (const k of ['merged', 'ports'] as const) {
     const seen = new Set(jsons.map((j) => String(j[k])))
     assert.equal(seen.size, AGENTS.length, `${k} 四个 agent 两两不同：${[...seen].join(' · ')}`)
+  }
+  for (const k of ['home', 'tmp', 'xdgCache'] as const) {
+    const seen = new Set(jsons.map((j) => String(j[k])))
+    assert.equal(seen.size, 1, `${k} 四个 agent 的名字一样（沙箱里那一条坐标）：${[...seen].join(' · ')}`)
   }
   // 端口那一片两两不相交（四个号，池子按 4 个一片切开）。
   const ports = jsons.map((j) => Number(j.port))
@@ -324,13 +330,13 @@ test('X3 ③ 负对照 · 四个进程指到同一份坐标：串扰出现', asy
   const agent = AGENTS[0] as AgentId
   const binding: ActionBinding = { name: 'seen', argv: [], cwd: '', outputs: [], cache: [], env: {}, net: 'none' }
   const executor = createExecutor({ onChunk: () => {} })
-  // 四个进程同一份策略值（Y2 起 `confine()` 要它）：缺省档。
+  // 四个进程同一份策略值（Y2 起 `confine()` 要它）：缺省档——`envFor` 的坐标也从它来（Y3 起）。
   const policy = resolvePolicy({ roots, agent, doc: {} })
   // **四个进程同一个 agent**：`confine` 因此把同一份缓存绑给四个（家 · temp · XDG 都是同一处），
   // 只有端口那一片按 portIndex 分开。
   const results = await Promise.all(
     [0, 1, 2, 3].map(async (i) => {
-      const env = envFor({ roots, agent, binding, injections: {}, portIndex: i, range: '31000-31099' })
+      const env = envFor({ agent, binding, injections: {}, portIndex: i, range: '31000-31099', policy })
       const confined = confine({ roots, agent, argv: ['node', 'seen.mjs'], cwd: '', declared: [], env, policy })
       return await executor.run(agent, { action: 'seen', confined, cwd: '', env }, new AbortController().signal)
     }),
