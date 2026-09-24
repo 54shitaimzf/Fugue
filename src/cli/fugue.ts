@@ -189,8 +189,9 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              --retry <n>  Verifying → Working 那条回边允许走几次（缺省 0）
                              --report     印打回那三个数（从日志重算，不采集）
                              --materialize 起头时把 N 棵树也铺出来（缺省不铺）
-                             --poke <路径>  **在合并之前手改一条路径**（走查要量漂移那一条）
                              --soft-merge-gate 合并前那一档预检的严宽拉平到 Planning 那一档
+                             --poke <路径>  **在合并之前手改一条路径**（模拟轮次中用户的手，
+                             用来量漂移那一档）；缺省什么都不做
                              （缺省是报出即拒——合并不可逆）；真冲突仍由折叠当场报出，不静默
   verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
                              里那几条，三者两两相等，并报 materialize-precision（§ 8.15 的比值）。
