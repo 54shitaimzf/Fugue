@@ -7,7 +7,8 @@
 #   `round new` 钉底（分支的底 · 日志里那几条事件 · 契约正文 · 相交报出而照发 · 不相交报 0 对）→
 #   `round run` 干净一趟（折 → 验 → 定格 → 推进）→
 #   故意撞红一趟（一处冲突 → 冲突树物化 → 解决 → 重折 · 一次验收打回 · 一次动作被拒 · 真实工作树不动）→
-#   打回那三个数与日志重放对账 → 漂移那一档（改一条会被覆盖的路径 → 拒 · 改一条不相交的 → 照合并 · 红负对照）→
+#   打回那三个数与日志重放对账 → 漂移那一档（判据是「目标树 vs 盘上」：会被改写 → 拒 · 只被删 → 拒 ·
+#   两边逐字节相同 → 照合并 · 红负对照）→
 #   地板两档（一份契约直合 · 验收门只剩一条断言）→ 收尾：不留挂载 · 不留进程 · 不留孤儿分支。
 #
 # **它只用手边的东西**（与 S2–S6 那几份同一个形状）：每一步都是独立进程（§ 9.6），
@@ -56,6 +57,29 @@ readings() {
 # 一个另开的 index、`write-tree`，再与那个提交的树比 id。`.fugue/` 那条保留前缀写进
 # `$GIT_DIR/info/exclude` 里排除（工作区的状态目录不是产品内容）。
 tree_now() { rm -f "$T/tree-index"; GIT_INDEX_FILE="$T/tree-index" git -C "$W" add -A > /dev/null 2>&1; GIT_INDEX_FILE="$T/tree-index" git -C "$W" write-tree 2>/dev/null; }
+# **每一趟轮次开跑之前把盘上与主线对齐。** A10 之后漂移那一档的判据是三方比出来的（底 · 盘上 ·
+# 目标树），它看得见"轮次开始之前就存在的手改"——走查自己留下的那点脏（`--poke` 追加过的文件 ·
+# 上一趟没推进而多出来的路径）会被判据当场拦下，而那不是这一趟要量的东西。
+#
+# 三件事，缺一不可：**空 index 摊平不了任何东西**（`checkout-index` 只按 index 写，index 是空的
+# 它就一条都不写——实测 rc 0 而盘上纹丝不动），所以要先把主线那棵树读进一个另开的 index；
+# `checkout-index` 也不删文件，所以主线里没有的得自己列出来删；落单的空目录也收掉（git 不当它是
+# 条目，而 `scanTree` 扫的是盘上的目录）。
+sync_disk() {
+  want=$(git -C "$W" ls-tree -r --name-only refs/heads/main)
+  have=$(cd "$W" && find . -type f -not -path './.git/*' -not -path './.fugue/*' | sed 's|^\./||')
+  for f in $have; do
+    case "$(printf '%s\n' "$want")" in
+      *"$f"*) : ;;
+      *) rm -f "$W/$f" ;;
+    esac
+  done
+  (cd "$W" && find . -depth -type d -empty -not -path './.git*' -not -path './.fugue*' -exec rmdir {} + 2> /dev/null) || true
+  rm -f "$T/sync-index"
+  GIT_INDEX_FILE="$T/sync-index" git -C "$W" read-tree refs/heads/main > /dev/null 2>&1
+  GIT_INDEX_FILE="$T/sync-index" git -C "$W" checkout-index -a -f > /dev/null 2>&1
+  return 0
+}
 # 三条 agent 分支要在每一趟轮次之前是**空的**：`round run` 拒绝复用一条指过东西的分支
 # （它不会搬别人的分支头）。所以收下一趟之前把这一趟的 agent 连分支带物化一起收掉。
 drop_agents() {
@@ -75,9 +99,11 @@ mkdir -p "$W/src" "$W/.fugue" "$W/.git/info"
 printf '.fugue/\n' > "$W/.git/info/exclude"
 printf 'export const a = 1\n' > "$W/src/a.ts"
 printf 'export const b = 2\n' > "$W/src/b.ts"
-$FUGUE --root "$W" write src/a.ts --from "$W/src/a.ts" > /dev/null || bad "write a.ts"
-$FUGUE --root "$W" write src/b.ts --from "$W/src/b.ts" > /dev/null || bad "write b.ts"
-$FUGUE --root "$W" commit -m '起点' > /dev/null || bad "commit"
+# **起点用 git 落**（不是 `fugue commit`）：A10 之后漂移那一档的判据是三方比出来的（底 · 盘上 ·
+# 目标树），它看得见"轮次开始之前就存在的手改"——每一趟轮次开跑时盘上必须与主线一致（下面那个
+# `sync_disk`）。而 `fugue` 的提交没有父，主线要的是一条真历史。
+git -C "$W" add -A > /dev/null 2>&1
+git -C "$W" -c user.name=fugue -c user.email=fugue@local commit -q -m '起点' || bad "起点的提交"
 BASE=$(git -C "$W" rev-parse refs/heads/main)
 # 两条**真断言**：它们在合并之后那棵树上跑真进程（`test -f`），不是打桩的。
 $FUGUE --root "$W" config set round.assertions \
@@ -150,6 +176,9 @@ echo
 echo "=== 三 · round run 干净一趟：拆分 → 并行 → 合并 → 验收 ==="
 # **收口四样里的 1（一条命令跑完一个轮次）与 3（地板第一档）。**
 # 干净那一趟的三份草案里第一与第三都写 `src/a.ts` —— 折叠时真撞一次车，冲突环解掉它。
+sync_disk
+# 盘上就是底那一份（`sync_disk` 刚摊平过）——漂移那一档照样放行：推进是在写新内容，**合并本来
+# 就该改它**（判据放行的两档之一是"盘上 == 底"，见 `src/merge/drift.ts` 的文件头）。
 $FUGUE --root "$W" round run '把 a 与 b 各改一处' --soft-merge-gate --report > "$T/run1.out" 2> "$T/run1.err"
 RC1=$?
 printf '  rc = %s\n' "$RC1"
@@ -194,6 +223,7 @@ GIT_INDEX_FILE= git -C "$W" checkout-index -a -f 2> /dev/null
 SNAP=$(tree_now)
 if [ -z "$SNAP" ]; then bad "这一趟的起点读数没取到（tree_now 给的是空串）"; fi
 printf '  这一趟之前的树 = %s（= 那个底）\n' "$SNAP"
+sync_disk
 $FUGUE --root "$W" round run '再跑一趟，故意撞红' --soft-merge-gate \
   --fail '合并之后 src/b.ts 在' --deny --retry 1 --report --json > "$T/run2.json" 2> "$T/run2.err"
 RC2=$?
@@ -261,31 +291,88 @@ process.exit(same ? 0 : 1)
 readings "$T/r5.tsv"
 
 echo
-echo "=== 六 · 漂移那一档：轮次中改一条会被这次合并覆盖的路径 → 拒 ==="
-# `--poke src/a.ts`：**在合并之前**手改一条会被覆盖的路径（第一份与第三份契约都写它）。
-# 上一趟撞红没有推进，所以工作树与 `main` 那棵树仍然一致。
-$FUGUE --root "$W" round run '漂移那一趟' --soft-merge-gate --poke src/a.ts > "$T/run3.out" 2> "$T/run3.err"
+echo "=== 六 · 漂移那一档：判据是「目标树 vs 盘上」（A10）==="
+# **`--poke` 落在折叠之后、物化之前**（A10 把漂移检挪到了那个位置：判据的另一边是折出来的那棵
+# 目标树）。上一趟撞红没有推进，所以工作树与 `main` 那棵树仍然一致，底是 `$BASE`。
+
+# 六之一 · **两边逐字节相同 → 照合并**。这一档量的是：这次合并**要写** `src/a.ts`，而盘上那份
+# 与它算出来的结果**逐字节相同**——`--poke-exact` 抄的正是折出来的目标树里那条路径的字节
+# （`--poke` 是「追加上一行」，抄不出「一样」）。于是推进之后工作树与提交仍然一致：没人丢字节。
+sync_disk
+$FUGUE --root "$W" round run '两边一样那一趟' --soft-merge-gate --poke-exact src/a.ts > "$T/run3.out" 2> "$T/run3.err"
 RC3=$?
-printf '  rc = %s\n' "$RC3"
+printf '  两边一样那一趟 rc = %s\n' "$RC3"
 sed 's/^/  err| /' "$T/run3.err"
-check "漂移那一趟的退出码" "1" "$RC3"
-has "$T/run3.err" '漂移' "拒的话里说是漂移"
-has "$T/run3.err" 'src/a.ts' "拒的话里报出是哪一条"
-# **第三条验证的负对照的一半**：同一条判据、同一趟流程，换成一条动不了的路径就不该拒。
-printf 'export const z = 9\n' > "$W/src/z.ts"
-$FUGUE --root "$W" write src/z.ts --from "$W/src/z.ts" > /dev/null || bad "write z.ts"
-$FUGUE --root "$W" commit -m '加一条谁都不写的路径' > /dev/null || bad "commit z.ts"
+check "盘上与目标树逐字节相同 → 照合并（不退回「脏了就拒」）" "0" "$RC3"
+has "$T/run3.err" '这次合并动到' "漂移读数印出来了：这次合并动到几条 · 盘上与目标树有没有差"
+has "$T/run3.err" '盘上与目标树不同 \[\]' "读数里那一条是空的：盘上与目标树一处都不同"
+if grep -q '会被覆盖掉' "$T/run3.err"; then
+  bad "两边一样却按覆盖拒了（判据退回「脏了就拒」）"
+else
+  ok "两边一样的那一条没有被拒（拦的果真是「会被覆盖的那些」）"
+fi
+if [ "$(tree_now)" = "$(git -C "$W" rev-parse 'refs/heads/main^{tree}')" ]; then
+  ok "两边一样那一趟推进了，工作树与那个提交逐字节一致"
+else
+  bad "两边一样那一趟之后工作树与提交不一致"
+fi
+# 这一趟定格的那一次接受：**恰好一条** `merge/accept`（不是"两次尝试都记成接受"）。
+$FUGUE --root "$W" --json log > "$T/log-drift.json" 2>/dev/null
+node -e '
+const fs = require("fs")
+const T = process.argv[1]
+const W = process.argv[2]
+const lines = fs.readFileSync(T + "/log-drift.json", "utf8").trim().split("\n").map((l) => JSON.parse(l))
+const all = lines.map((l) => l.e).filter((e) => e.t === "merge/accept")
+// **按提交数，不按轮次号**：每一趟轮次的名字都是 r1（走查里就那么配的），轮次号分不开它们。
+// 定格的提交是唯一的，而这一趟那一份必须与主线现在指着的那一个相同。
+const commits = [...new Set(all.map((e) => e.commit))]
+const head = require("child_process").execFileSync("git", ["-C", W, "rev-parse", "refs/heads/main"]).toString().trim()
+const rows = [
+  [all.length > 0, "两边一样那一趟定格了提交点（merge/accept）", "全场 " + all.length + " 条 · 提交 " + commits.map((c) => c.slice(0, 7)).join(" · ")],
+  [commits.length === 2, "每一趟各定格一次（两次尝试不会都记成接受）", "实得 " + commits.length + " 个提交"],
+  [commits.includes(head), "这一趟定格的那个提交就是主线现在指着的那一个", head.slice(0, 7)]
+]
+fs.writeFileSync(T + "/r6.tsv", rows.map((r) => (r[0] ? "ok" : "bad") + "\t" + r[1] + "\t" + r[2]).join("\n") + "\n")
+process.exit(commits.length === 2 && commits.includes(head) ? 0 : 1)
+' "$T" "$W" || bad "两边一样那一趟的事件读数：node 那一段自己挂了"
+readings "$T/r6.tsv"
 drop_agents
-printf 'export const z = 10\n' > "$W/src/z.ts"
-$FUGUE --root "$W" round run '不相交那一趟' --soft-merge-gate --poke src/z.ts > "$T/run4.out" 2> "$T/run4.err"
+
+# 六之二 · **只被删的那一条 → 拒**（A10 补上的那一栏）。
+# 六之一那一趟把 `src/z.ts` 新写上去、随提交点进了主线。这一趟先 `sync_disk`（盘上摊回主线那棵
+# 树：z 因此回到盘上），再把它从盘上拿掉——于是底与主线里都**在**、盘上**没有**，而目标树里也
+# 没有（谁都不写这一条路径）：第 7 步推进会把它删掉。`--poke` 再把一条手改写上去，判据那一档要
+# 拦的正是这个（换判据之前，这一条一处都不「写」，「会被覆盖的那些」是空的，两个集合没得相交
+# ——手改被静默退回底那一版，退出码 0）。
+sync_disk
+rm -f "$W/src/z.ts"
+SNAP_D=$(tree_now)
+HEAD_D=$(git -C "$W" rev-parse 'refs/heads/main')
+$FUGUE --root "$W" round run '只被删那一趟' --soft-merge-gate --poke src/z.ts > "$T/run4.out" 2> "$T/run4.err"
 RC4=$?
-printf '  不相交那一趟 rc = %s\n' "$RC4"
+printf '  只被删那一趟 rc = %s\n' "$RC4"
 sed 's/^/  err| /' "$T/run4.err"
-check "改一条不相交的路径 → 照合并" "0" "$RC4"
-has "$T/run4.err" '这次合并要写' "漂移读数照旧印出来（不是不查，是查了不拦）"
+check "一条只被删的路径上有手改 → 拒" "1" "$RC4"
+has "$T/run4.err" '会被删掉' "拒的话里说得出它推进时会被删掉"
+has "$T/run4.err" 'src/z.ts' "拒的话里报出是哪一条"
+# **量"推进没有发生"**：主线一个字节没挪（工作树这一趟是 `--poke` 自己写的那一条，不算）。
+if [ "$(git -C "$W" rev-parse 'refs/heads/main')" = "$HEAD_D" ]; then
+  ok "拒的时候主线没挪（推进没有发生）"
+else
+  bad "拒的时候主线挪了：$(git -C "$W" rev-parse 'refs/heads/main')"
+fi
+if [ "$(cat "$W/src/z.ts" 2>/dev/null)" = "轮次中有人手改了这条：src/z.ts" ]; then
+  ok "拒的时候那条手改的字节还在（没被覆盖 · 也没被删）"
+else
+  bad "拒的时候那条手改的字节没了"
+fi
+drop_agents
 
 echo
-echo "=== 六之二 · 第四条验证的红负对照：手改一个字节 → 那把尺子当场变红 ==="
+echo "=== 六之三 · 第四条验证的红负对照：手改一个字节 → 那把尺子当场变红 ==="
+# 上一趟被拒了，盘上还留着 `--poke` 写的那一条（主线里没有它）：先摊回主线那棵树，再量这一档。
+sync_disk
 # 合并已经做完、工作树与提交一致，这时候动它一个字节：逐字节对账必须立刻变红。
 # 变红就证明上面那几条绿不是瞎绿——同一把尺子对"就是不一致"有分辨力。
 cp "$W/src/b.ts" "$T/b.keep"
@@ -313,6 +400,7 @@ $FUGUE --root "$W" config set round.assertions \
 $FUGUE --root "$W" config set round.split \
   '[{"goal":"只改 a","ownedPaths":["src/a.ts"],"assertions":[{"action":"x","name":"x"}]}]' > /dev/null || bad "地板那一档的拆分配置"
 SNAP6=$(tree_now)
+sync_disk
 $FUGUE --root "$W" round run '地板那一趟' --report --json > "$T/run5.json" 2> "$T/run5.err"
 RC5=$?
 printf '  rc = %s\n' "$RC5"
@@ -326,11 +414,14 @@ const j = JSON.parse(fs.readFileSync(T + "/run5.json", "utf8"))
 const plan = j.precheckPlanning
 const vs = j.verify
 const adv = j.advanced
-const ok = plan === 0 && vs.pass === 1 && vs.fail === 0 && vs.unrunnable === 0 && vs.ok === true && adv !== null && adv.written.length > 0
+// **"推进发生了"看的是"工作树与那个提交点一致"**，不是"写了几条"：盘上就是底那一份时
+// `advance` 一条都不用写（它只改与目标不同的那些，§ 8.5 的"不 touch 一致的"），而那正是
+// A10 判据放行的两档之一。写了 0 条也是推进做完了。
+const ok = plan === 0 && vs.pass === 1 && vs.fail === 0 && vs.unrunnable === 0 && vs.ok === true && adv !== null
 console.log("  Planning 预检 " + plan + " 对 · 验收 " + JSON.stringify(vs) + " · 推进 " + JSON.stringify(adv))
 const rows7 = [
   [ok, "地板两档：一份契约直合 + 一条断言的验收门，轮次照收", "预检 " + plan + " 对 · " + JSON.stringify(vs)],
-  [adv !== null && adv.written.length > 0, "地板那一档照样推进（写了 " + (adv === null ? 0 : adv.written.length) + " 条）", JSON.stringify(adv)]
+  [adv !== null, "地板那一档照样推进（写 " + (adv === null ? 0 : adv.written.length) + " 条 · 删 " + (adv === null ? 0 : adv.removed.length) + " 条）", JSON.stringify(adv)]
 ]
 fs.writeFileSync(T + "/r7.tsv", rows7.map((r) => (r[0] ? "ok" : "bad") + "\t" + r[1] + "\t" + r[2]).join("\n") + "\n")
 process.exit(ok ? 0 : 1)

@@ -26,7 +26,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openLog } from '../src/log/log.ts'
 import type { LogEvent } from '../src/log/events.ts'
-import { WORKSPACE_STATE, diffStat, scanTree } from '../src/materialize/diffstat.ts'
+import { WORKSPACE_STATE, diffStat, hashBytes, scanTree } from '../src/materialize/diffstat.ts'
 import type { Change } from '../src/materialize/diffstat.ts'
 import { openTruth } from '../src/truth/truth.ts'
 import type { AgentId, BlobId, BranchId, CommitId, TreeId } from '../src/terms.ts'
@@ -238,12 +238,27 @@ console.log('\n二 · 真实工作树的脏路径集：`scanTree` 与 `diffStat`
   // 自检：`scanTree` 是按路径排序的，两次扫同一棵静置的树逐字节相同——A7 的判据要能比。
   eq('静置的树两次扫出来相同', JSON.stringify(scanTree(root, { skip: WORKSPACE_STATE })), JSON.stringify(afterSkipped))
 
-  // 自检：脏路径集能不能"只取会被覆盖的那些"——那正是 A7 的判据形状（相交，不是相等）。
-  const mergePaths = ['src/a.ts', 'src/other.ts']
-  const dirty = paths(skipped).map((p) => p.slice(p.indexOf(':') + 1))
-  const hit = dirty.filter((p) => mergePaths.some((m) => p === m || p.startsWith(m + '/')))
-  eq('脏路径 ∩ 这次合并要写的路径', hit, ['src/a.ts'])
-  read('判据形状', '脏路径 ∩ 合并要写的路径 —— 相交即拒，不相交照常（不新造检测机制）')
+  // 自检：判据那两条线能不能从这几份读数上算出来——那正是 A7 立起来、A10 做全的三方比法
+  // （底 · 盘上 · 目标树）。这里用手边三份快照冒充那三方：`before` 当底、`afterSkipped` 当盘上、
+  // 一份"合并算出来的"目标树（`src/a.ts` 是合并结果 · `src/new.ts` 谁都不写）。
+  const at = (s: typeof afterSkipped, p: string): string => s.leaves.find((l) => l.path === p)?.hash ?? '（没有）'
+  const target: Record<string, string> = {
+    'src/a.ts': hashBytes('export const a = 11\n'),
+    'src/deep/b.ts': hashBytes('export const b = 2\n'),
+    'README.md': hashBytes('# x\n'),
+  }
+  const colliding = afterSkipped.leaves
+    .filter((l) => {
+      const t = target[l.path]
+      if (t === undefined) return true // 目标树里没有、而盘上有 → 推进会把它删掉
+      if (t === l.hash) return false // 与目标树逐字节相同 → 推进之后就是它
+      return at(beforeSkipped, l.path) !== l.hash // 与底也不同 → 这一份会被覆盖
+    })
+    .map((l) => l.path)
+    .sort()
+  eq('两两都不同 · 或目标树里没有的（该拒的那些）', colliding, ['src/new.ts'])
+  read('判据形状', '底 · 盘上 · 目标树三方逐条路径比：盘上 == 底 → 放行（合并本来就该改它）· 盘上 == 目标树 → 放行 · 两两都不同或目标树里没有 → 拒')
+  eq('盘上 == 底那一档（用户没碰过）的读数', at(beforeSkipped, 'src/deep/b.ts') === at(afterSkipped, 'src/deep/b.ts') ? '相同' : '不同', '相同')
 
   // `diffStat` 的列能不能分出"只碰了时间"与"改了内容"——A6 的"全树哈希与逐条 (size,mtime,mode)
   // 一个都没动"读的是同一把尺子。

@@ -8,7 +8,7 @@
 // **语义不在这里**：一次变更的顺序与校验住在 `src/view/edit.ts`，提交住在
 // `src/checkpoint.ts`——两个都是跨层接线（§ 7），这里只是它们的一个人侧入口。
 import { createHash } from 'node:crypto'
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkMountPoints, checkReach } from '../boundary/check.ts'
@@ -190,9 +190,11 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              --report     印打回那三个数（从日志重算，不采集）
                              --materialize 起头时把 N 棵树也铺出来（缺省不铺）
                              --soft-merge-gate 合并前那一档预检的严宽拉平到 Planning 那一档
-                             --poke <路径>  **在合并之前手改一条路径**（模拟轮次中用户的手，
-                             用来量漂移那一档）；缺省什么都不做
                              （缺省是报出即拒——合并不可逆）；真冲突仍由折叠当场报出，不静默
+                             --poke <路径>  **在折叠之后、物化之前手改一条路径**（模拟轮次中
+                             用户的手，用来量漂移那一档）；缺省什么都不做
+                             --poke-exact <路径> 同上，但抄的是这一趟目标树里那条路径的
+                             字节（量"两边逐字节相同 → 照合并"那一档）
   verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
                              里那几条，三者两两相等，并报 materialize-precision（§ 8.15 的比值）。
                              不等就退 1——**只报不修**（§ 8.5 的失败处理是删除重建）
@@ -236,7 +238,7 @@ interface Parsed {
  */
 const VALUED: ReadonlySet<string> = new Set([
   'root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro', 'step', 'mode', 'against',
-  'split', 'fail', 'retry', 'poke',
+  'split', 'fail', 'retry', 'poke', 'poke-exact',
 ])
 
 function parseArgv(argv: readonly string[]): Parsed {
@@ -710,8 +712,16 @@ async function roundRun(
   // `--soft-merge-gate` 把它拉平到 `Planning` 那一档（报出、照发）——真冲突由折叠当场报出，
   // 不静默。走查要撞出折叠里那一次冲突，就得走这一档（两份契约的写入面相交时，硬那一档先拦）。
   const softMergeGate = flags.has('soft-merge-gate')
-  // `--poke <路径>`：**在合并之前手改一条路径**（走查要量漂移那一条）。不给就什么都不做。
+  // `--poke <路径>`：**在漂移检之前手改一条路径**（走查要量漂移那一条）。不给就什么都不做。
   const poke = typeof flags.get('poke') === 'string' ? (flags.get('poke') as string) : undefined
+  // `--poke-exact <路径>[,<路径>…]`：**把这一趟折出来的目标树里那几条路径的字节照抄到盘上**，
+  // 位置与 `--poke` 相同。走查要量"两边逐字节相同 → 照合并"那一档（A10 的断言 ③）：用户手里
+  // 那份**恰好就是**合并算出来的结果，于是推进不会覆盖任何人的字节。抄的是树上的字节，所以与
+  // 打桩那几行无关。**逗号分隔**：参数解析器一 flag 一个值（重复给只留最后一个）。
+  const pokeExact =
+    typeof flags.get('poke-exact') === 'string'
+      ? (flags.get('poke-exact') as string).split(',').map((x) => x.trim()).filter((x) => x !== '')
+      : []
 
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   try {
@@ -737,9 +747,12 @@ async function roundRun(
           const id = await ctx.truth.putBlob(new TextEncoder().encode(text))
           entries.push({ name: path, mode: 0o100644, id })
         }
-        // 新树 = 底那棵树 + 这一格的改动（打桩不删、只加改）。
+        // **新树 = 底那棵树 + 这一格的改动。** 这一句是承重的：折出来的那棵目标树就是第 7 步
+        // 要推进工作树的那一棵，所以它必须是**底的整棵树**加上改动——只落改动那几条的话，
+        // 底里其余的路径在目标树里都不存在，推进会当成"要删"（A10 把判据换成"目标树 vs 盘上"
+        // 之后，走查当场量到了这一条）。打桩不删、只加改。
         const inherited = await entriesOf(ctx.truth, base)
-        const merged = new Map(inherited.map((e) => [e.name, e]))
+        const merged = new Map(inherited.map((e): [string, (typeof entries)[number]] => [e.name, e]))
         for (const e of entries) merged.set(e.name, e)
         return ctx.truth.commit(await ctx.truth.putTree([...merged.values()]), [base], `（打桩）${agent}`)
       },
@@ -776,9 +789,10 @@ async function roundRun(
       retriesLeft,
       softMergeGate,
       onDrift: (d) => {
+        const covered = d.drift.colliding.length === 0 ? '（没有）' : d.drift.colliding.join(' · ')
         process.stderr.write(
-          `漂移检：HEAD ${d.drift.headMoved ? '动了' : '没动'} · 脏路径 [${d.drift.dirty.join(' · ')}] · ` +
-            `这次合并要写 [${d.drift.mergePaths.join(' · ')}] · 相交 [${d.drift.colliding.join(' · ')}]\n`,
+          `漂移检：HEAD ${d.drift.headMoved ? '动了' : '没动'} · 这次合并动到 [${d.drift.touched.join(' · ')}] · ` +
+            `盘上与目标树不同 [${d.drift.divergent.join(' · ')}] · 会被覆盖的（盘上既不是底也不是目标树）[${covered}]\n`,
         )
       },
       ...(poke === undefined
@@ -792,6 +806,23 @@ async function roundRun(
               process.stderr.write(
                 `--poke ${poke}：${abs}（${before} → ${statSync(abs).size} 字节）· realRoot=${ctx.roots.realRoot}\n`,
               )
+            },
+          }),
+      ...(pokeExact.length === 0
+        ? {}
+        : {
+            afterFold: async (target: CommitId) => {
+              for (const p of pokeExact) {
+                const abs = join(ctx.roots.realRoot, p)
+                const before = existsSync(abs) ? statSync(abs).size : -1
+                const bytes = await ctx.truth.readAt(target, p)
+                if (bytes === null) throw new Error(`--poke-exact ${p}：目标树里没有这条路径`)
+                mkdirSync(join(abs, '..'), { recursive: true })
+                writeFileSync(abs, bytes)
+                process.stderr.write(
+                  `--poke-exact ${p}：${abs}（${before} → ${statSync(abs).size} 字节）——盘上抄的是目标树里那一份\n`,
+                )
+              }
             },
           }),
     })

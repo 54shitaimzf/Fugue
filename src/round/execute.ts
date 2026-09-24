@@ -7,8 +7,8 @@
 //   `startRound`（A4：钉底 · 造契约 · 预检 · 发契约 · 起分支）
 //     → 每个 agent 一格（模型那一侧今天是打桩的，见下面那条"打桩"）
 //     → `mergeGate`（A2 的第二个调用点：合并前兜底，报出即拒）
-//     → `mergeDrift`（A7：HEAD 动了或会被覆盖的手改 → 拒）
 //     → `fold`（A5：逐路折叠，冲突就停下）
+//     → `mergeDrift`（A7 · A10：HEAD 动了，或盘上与**目标树**不同的路径 → 拒）
 //     → `verify`（A6：跑在物化出来的那棵树上）
 //     → `commitThenAdvance`（A6：通过才定格 + 推进；没过 → 真实工作树一个字节不动）
 //
@@ -26,7 +26,7 @@ import type { AgentId, BranchId, CommitId, ContractId, RelPath, RoundId, WriterI
 import type { Built, Intent, SplitAssignment } from '../contract/build.ts'
 import type { Contract } from '../contract/types.ts'
 import { mergeGate, precheck } from '../contract/precheck.ts'
-import { baselineOf, mergeDrift } from '../merge/drift.ts'
+import { mergeDrift } from '../merge/drift.ts'
 import type { DriftVerdict } from '../merge/drift.ts'
 import { conflictCount, conflictTreeEntries, fold, refold } from '../merge/merge.ts'
 import type { FoldOutcome } from '../merge/merge.ts'
@@ -133,6 +133,12 @@ export interface RoundRunDeps extends Omit<RoundStartDeps, 'log'> {
    * 漂移检之前"这个窗口里。缺省什么都不做——真轮次里那个窗口是用户自己的手。
    */
   readonly beforeMerge?: () => Promise<void> | void
+  /**
+   * **折叠跑完、漂移检跑之前**的那一下（**给走查用**）：拿到了这一趟的目标树（折出来的那个提交），
+   * 而盘上一个字节都还没动。走查用它把目标树里某条路径的字节抄到盘上——那是"用户手里那份恰好
+   * 就是合并算出来的结果"那一档（A10 的断言 ③）。缺省什么都不做。
+   */
+  readonly afterFold?: (target: CommitId) => Promise<void> | void
   /** 漂移检跑完之后的读数口（**原始读数**：HEAD 动没动 · 脏路径 · 要写的路径 · 相交的那几条）。 */
   readonly onDrift?: (d: DriftVerdict) => void
 }
@@ -144,17 +150,17 @@ export interface RoundRunDeps extends Omit<RoundStartDeps, 'log'> {
  *   1. `startRound` —— 钉底 · 造契约 · `Planning` 预检 · 发契约 · 起分支（架构 § 8.13 的三步）
  *   2. 每个 agent 一格（打桩）
  *   3. **合并前兜底预检**（架构 § 8.12：第二次预检，报出即拒——合并是不可逆点）
- *   4. **漂移检**（架构 § 8.14 的 C7：HEAD 动了或会被覆盖的手改 → 拒）
- *   5. `fold` —— 逐路折叠（A5）；**冲突就停在冲突环的第一步**
+ *   4. `fold` —— 逐路折叠（A5）；**冲突就停在冲突环的第一步**
+ *   5. **漂移检**（架构 § 8.14 的 C7：HEAD 动了，或盘上与目标树不同的路径 → 拒）——判据的另一边
+ *      是第 4 步折出来的那棵树，所以它落在这里；它仍然在物化之前（**盘上一个字节都没动**）
  *   6. `verify` —— 跑在物化出来的那棵树上（A6）
  *   7. `commitThenAdvance` —— 通过才定格 + 推进（A6 那句"顺序即不变量"）
  */
 export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
   const { roots, truth, log, round } = deps
 
-  // 一 · 起头。基线在钉底那一刻取一次——**它就是漂移检的另一半输入**（A7 那句"由调用方在钉底
-  // 那一刻取一次带下来"）。
-  const baseline = baselineOf(roots.realRoot)
+  // 一 · 起头。**不再取盘上那份基线**（A10）：判据换成"目标树 vs 盘上"之后，基线那一侧读的是
+  // 轮次开始时钉住的那个底本身——它由 `M1` 拿着，不需要在盘上扫一遍。
   const started = await startRound(deps)
 
   // 二 · 每个 agent 一格。契约按顺序，底是钉住的那一个——**每条分支的底相同**，所以一个 agent
@@ -175,31 +181,16 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
     throw new RoundRunError('merge', `合并前的写入集预检不放行：\n  ${mergeCheck.result.lines.join('\n  ')}`)
   }
 
-  // 四 · 漂移检（A7）。**合并不可逆，所以这一档 fail-closed。**
+  // 四 · 折叠之前的两件事：兜底预检的读数与两条记账。
   const foldable = started.built.contracts
     .filter((c) => c.kind !== 'investigate')
     .map((c) => work[c.id] as CommitId)
-  const mergePaths = await writeSurfaceOf(truth, started.base, foldable)
   // 折之前先记一笔尝试：`merge/attempt` 记的是"这次合并撞了几条路径"，而冲突那一档的最后一次
   // 尝试在下面（撞上时）单独落一条——两条各是各的读数。
   await log.append('round', { t: 'merge/attempt', round, branches: [] as never, conflicts: 0 })
   // **轮次中的手改**：走查要量"手改一条会被这次合并覆盖的路径 → 拒"，而手改必须发生在
-  // **基线取完之后、合并之前**。这一处是那个位置的唯一入口（缺省什么都不做）。
+  // **轮次开始之后、漂移检之前**。这一处是那个位置的唯一入口（缺省什么都不做）。
   if (deps.beforeMerge !== undefined) await deps.beforeMerge()
-  let drift: DriftVerdict | null = null
-  if (deps.checkDrift !== false) {
-    drift = await mergeDrift({
-      truth,
-      realRoot: roots.realRoot,
-      base: started.base,
-      baseline,
-      mergePaths,
-    })
-    // **三条读数原样报出来**：这一档的判据是"脏路径 ∩ 合并要写的路径"，两边的集合都要看得见，
-    // 否则拒了也说不清是哪一边空了。它走 `onDrift`（CLI 把它接到 stderr）。
-    deps.onDrift?.(drift)
-    if (!drift.ok) throw new RoundRunError('drift', drift.say)
-  }
 
   // 五 · 逐路折叠（A5）。一路的情况折 0 次（地板那一档）——`fold` 里那一圈从 i=1 起就是这个意思。
   const folded = await fold({ truth, msgOf: (i) => `${round} 折叠第 ${i} 步` }, foldable)
@@ -248,6 +239,22 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
         `重折之后仍然冲突：${outcome.conflicts.map((c) => c.path).join(' · ')}（冲突环一轮没解掉）`,
       )
     }
+  }
+
+  // 五之二 · 漂移检（A7 · A10）。**判据是"目标树 vs 盘上"，所以它落在折叠之后**——目标树就是
+  // 刚折出来的那个提交。这一档 fail-closed：物化不可逆。
+  //
+  // **为什么不在折叠之前判**：折叠之前手上只有各条分支的写入面（那一份反推出来的"合并要写"），
+  // 而它算漏两处（A9 量到：只被删的路径不在里头；底已经带着合并结果时它整个是空的）。目标树要等
+  // 折完才有，而它一处就把两处补齐了。折叠只往对象库里落中间提交，盘上一个字节都不动。
+  if (deps.afterFold !== undefined) await deps.afterFold(outcome.commit)
+  let drift: DriftVerdict | null = null
+  if (deps.checkDrift !== false) {
+    drift = await mergeDrift({ truth, realRoot: roots.realRoot, base: started.base, target: outcome.commit })
+    // **三条读数原样报出来**：判据的两边（这次合并动到哪些 · 盘上与目标树不同的那些）都要看得见，
+    // 否则拒了也说不清是哪一边。它走 `onDrift`（CLI 把它接到 stderr）。
+    deps.onDrift?.(drift)
+    if (!drift.ok) throw new RoundRunError('drift', drift.say)
   }
 
   // 六 · 验收：**跑在物化出来的那棵树上**（架构 § 8.14 第 5 步）。
@@ -323,18 +330,6 @@ async function withAgentLog<T>(logOf: (a: AgentId) => Log, a: AgentId, fn: (l: L
   } finally {
     await (l as { close?: () => Promise<void> }).close?.()
   }
-}
-
-/** 折出来的那一份要写的路径集：折过的每一路相对 `base` 的差异集的并集。 */
-async function writeSurfaceOf(truth: Truth, base: CommitId, commits: readonly CommitId[]): Promise<RelPath[]> {
-  const out = new Set<RelPath>()
-  for (const c of commits) {
-    for (const e of await entriesOf(truth, c)) {
-      const atBase = await truth.statAt(base, e.name)
-      if (atBase === null || atBase.id !== e.id || atBase.mode !== e.mode) out.add(e.name)
-    }
-  }
-  return [...out].sort()
 }
 
 /** 冲突时给"解决者"的那份契约值。**它不是构造器造的那一份**（那一份要提前知道冲突），

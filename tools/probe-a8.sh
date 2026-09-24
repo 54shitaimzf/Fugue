@@ -73,10 +73,13 @@ has "$T/run1.out" '打回读数' "--report 印了三个数"
 
 echo
 echo "=== 三 · 故意撞红的一趟：三个数逐个大于 0 ==="
-# 把工作树推回起点（上一趟推进过了），再开一轮：这次带 --fail 与 --deny。
-printf 'x\n' > "$W/src/a.ts"
-$FUGUE --root "$W" --agent 'agent/r1/1' write src/a.ts --from "$W/src/a.ts" > /dev/null 2>&1
+# 把主线与工作树一起推回起点（上一趟推进过了），再开一轮：这次带 --fail 与 --deny。
+# **盘上也要摊回起点那一份**：A10 之后漂移那一档的判据看得见"盘上与底/目标树都不同的那些"，
+# 只挪主线、让盘上停在上一趟的结果上的话，这一趟会先被漂移那一档拦下（拒的话里报出 `src/a.ts`），
+# 撞红的读数就读不出来了。
 git -C "$W" update-ref refs/heads/main "$BASE"
+printf 'export const a = 1\n' > "$W/src/a.ts"
+printf 'export const b = 2\n' > "$W/src/b.ts"
 # `--retry 1`：给那条回边一次余量，于是这一趟停在 `Working`（回边走了一次 = 打回读数第二个数）。
 $FUGUE --root "$W" round run '再跑一趟，故意撞红' --soft-merge-gate --fail '合并之后 src/b.ts 在' --deny --retry 1 --report --json > "$T/run2.json" 2> "$T/run2.err"
 RC2=$?
