@@ -28,6 +28,12 @@ export interface Target {
   /** 端点 = `host` + 路那一段。 */
   readonly path: string
   readonly model: string
+  /**
+   * 这一份是从哪儿来的：`'decl'` = 由声明拼出来的（真发请求那一档）· `'fixture'` = 从夹具读出来的
+   * （**不发真请求**那一档）。它是一栏**说明**，不是开关——`fetchTransport` 认的是 host 本身，
+   * 而 host 空着的时候它当场拒（而不是拼出一个相对的 URL 去 fetch）。
+   */
+  readonly from: 'decl' | 'fixture'
   /** 鉴权的头。**值在构造它的时候取一次**——这一份自己不存凭据。 */
   readonly headers: Readonly<Record<string, string>>
 }
@@ -42,6 +48,7 @@ export function targetOf(declId: string): Target {
     wire: wireNamed(decl.wire),
     path: WIRES[decl.wire].path,
     model: decl.model,
+    from: 'decl',
     headers: wireHeader(decl.wire, authOf(provider)),
   }
 }
@@ -79,6 +86,9 @@ export class HttpError extends Error {
 /** 真网络那一档。**整个仓库里唯一一处 `fetch`。** */
 export const fetchTransport: Transport = {
   async *post(t: Target, body: Uint8Array, signal?: AbortSignal): AsyncGenerator<Uint8Array> {
+    if (!t.host.startsWith('http')) {
+      throw new HttpError(0, `这一份目标没有 host（来自 ${t.from}），发不了真请求：${JSON.stringify(t.host)}`)
+    }
     const res = await fetch(t.host + t.path, {
       method: 'POST',
       headers: t.headers,

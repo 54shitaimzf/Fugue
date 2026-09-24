@@ -41,6 +41,13 @@ export const HOLDER: null = null
 /** 装配这一步的全部输入。**每个字段都是值**，没有一处要现读视图或现读日志。 */
 export interface AssembleState {
   /** 项目方针：`<realRoot>/AGENTS.md` 的字节，人编辑，不在视图里（架构 § 9.9）。 */
+  /**
+   * 这一步是第几步（从 0 起）。
+   *
+   * **它是这个形状里唯一"随步走"的坐标**：`llm/call` 那一条的 `step` 读它，而 B 区那些段
+   * （跨步稳定）一个都不读它——所以它进状态、不进前缀。
+   */
+  readonly step: number
   readonly policy: string
   /** 系统状态：配置对本工作区的投影（架构 § 15.3.a）。**这个仓库里的第一版**（Z5 接手）。 */
   readonly system: SegmentValue
@@ -61,6 +68,15 @@ export interface AssembleState {
   readonly distill: string
   readonly recent: string
   readonly runtime: string
+  /**
+   * **这一步那一段**（`Runtime.step` 往里追加：模型说了什么 · 工具回了什么）。
+   *
+   * 它是 C 区那个积累段（架构 § 8.11 的「运行时上下文」：**只追加、不进日志、跨进程即失**）。
+   * 单独一栏而不是拼进 `runtime` 那个字符串，是因为"只追加"这条性质要在**值**上看得见：
+   * 拼字符串的话，改一个字与追加一段在类型上分不开，而 `B4` 的断言 ② 量的正是这件事
+   * （相邻两步 `hash(A+B)` 不变 · 只有 C 那一串往后长）。
+   */
+  readonly turns?: readonly string[]
   readonly signals: readonly string[]
   readonly lastStep: string
 }
@@ -68,6 +84,7 @@ export interface AssembleState {
 /** 一份最小的输入：十二个段各有其空值，测试与走查从一个确定的形状出发。 */
 export function emptyState(): AssembleState {
   return {
+    step: 0,
     policy: '',
     system: {},
     codeTree: [],
@@ -187,7 +204,14 @@ const SOURCES: Readonly<Record<SegmentId, SourceRule>> = {
   我的任务: { value: (s, who) => taskText(s.task, who === null ? [] : who.outputPaths) },
   凝聚理解: { value: (s) => s.distill },
   压缩前最近几次原文: { value: (s) => s.recent },
-  运行时上下文: { value: (s) => s.runtime },
+  // 运行时上下文是**积累段**：一句话加一串只追加的尾巴。空串与空尾巴都不产出分隔符。
+  运行时上下文: {
+    value: (s) => {
+      const turns = s.turns ?? []
+      if (turns.length === 0) return s.runtime
+      return s.runtime === '' ? turns.join('\n') : `${s.runtime}\n${turns.join('\n')}`
+    },
+  },
   信号摘要: { value: (s) => [...s.signals] },
   上一步结果: { value: (s) => s.lastStep },
 }

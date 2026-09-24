@@ -76,6 +76,7 @@ async function serveSplit(
       wire: fixtureTarget(fixture('deepseek-chat-anthropic')).wire,
       path,
       model: DECL.model,
+      from: 'decl',
       headers: { 'content-type': 'application/json' },
     },
     writes,

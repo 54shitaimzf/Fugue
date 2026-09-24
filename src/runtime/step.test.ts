@@ -1,0 +1,427 @@
+// B4 的断言（PLAN § 5.8 的 B4 行 · 架构 § 14.2 的六步与三档 · § 8.11 的验证性质（相邻两步仅 C
+// 变化）· § 8.13（`M12` 只做转移））。跑法：cd ~/fugue && node --test src/runtime/step.test.ts
+//
+// **这一份里没有一条会出网**，也没有一处需要密钥：驱动它的是一个**假模型**（一串脚本化的响应），
+// 目标是一个 `from: 'fixture'` 的 `Target`（`B3` 夹具档那个形状：`fetchTransport` 见了当场拒）。
+// 第五条断言反过来接上真接缝——`wireCall` + `B3` 的夹具传输——仍然不发一个字节出去。
+//
+//   ① 每一步落一条 `prefix/assemble` 与一条 `llm/call`，**步号单调**且有且只有一条
+//   ② **C 区只追加**：相邻两步的 `hash(A+B)` 不变（架构 § 8.11 那条验证性质的机制侧兑现），
+//      C 只是一串只追加的尾巴
+//   ③ 三种 `StopReason`（调用工具 · 自然停 · 预算耗尽）**分得开**，不混成"结束了"
+//   ④ 用**假模型**（一串脚本化的响应）驱动它，三区稳定性照旧成立
+//      · 负对照：让循环在每步重写 C 区中部 → ② 变红
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import type { ModelEvent } from '../model/contract.ts'
+import { modelDeclOf } from '../model/contract.ts'
+import { openLog } from '../log/log.ts'
+import type { LogHandle, LogEvent } from '../log/events.ts'
+import { assemble, firstDivergence, hashOf } from '../assemble/assemble.ts'
+import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
+import { sourcesFor } from '../assemble/sources.ts'
+import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
+import { fixtureState } from '../model/fixture-state.ts'
+import { readFixture } from '../model/session.ts'
+import { fixtureTarget } from '../model/session.ts'
+import type { Fixture } from '../model/session.ts'
+import { callModel } from '../model/http.ts'
+import { fixtureTransport } from '../model/session.ts'
+import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
+import type { AgentId, BranchId, ContractId } from '../terms.ts'
+import type { ModelId } from '../model/contract.ts'
+import type { AgentHandle, CallModel, StepOutcome, ToolCallRequest } from './step.ts'
+import { HarnessError, createRuntime, recordingExecutor, scriptedModel, wireCall } from './step.ts'
+import { runSteps } from './run.ts'
+
+const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: ['deliver/agent-1/'] }
+const FIXTURES = fileURLToPath(new URL('../model/fixtures/', import.meta.url))
+const DECL = modelDeclOf('deepseek-chat/anthropic')
+const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
+
+/** 一次调用的四个数（假模型也守 `B1` 的口径：用量可以缺，缺了是 `null`）。 */
+const USAGE = { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, rawStop: null, model: null }
+
+/** 一条工具调用（三段：起点 · 分片 · 收尾）。 */
+function callOne(index: number, id: string, name: string, args: string): ModelEvent[] {
+  return [
+    { t: 'tool-start', index, id, name },
+    { t: 'tool-delta', index, args },
+    { t: 'tool-call', index, id, name, arguments: args },
+  ]
+}
+
+/** 第一步调一次工具，第二步说完。 */
+const SCRIPTS: readonly (readonly ModelEvent[])[] = [
+  [
+    { t: 'delta', text: '先看一眼。' },
+    ...callOne(0, 'call_1', 'read', '{"path":"a.ts"}'),
+    { t: 'usage', usage: USAGE },
+    { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+  ],
+  [
+    { t: 'delta', text: '数完了。' },
+    { t: 'usage', usage: USAGE },
+    { t: 'stop', reason: 'end-turn', raw: 'end_turn' },
+  ],
+]
+
+/** 一个夹具（`deleted` 那一档不存在：夹具是盘上的文件）。 */
+const FIXTURE: Fixture = readFixture(FIXTURES + 'deepseek-chat-anthropic.json')
+
+/** 一个临时工作区：日志落在它里面，跑完删干净。**写口一条命令一个**（`hold` 那条纪律）。 */
+async function withRoot<T>(fn: (root: string, log: LogHandle) => Promise<T>): Promise<T> {
+  const root = mkdtempSync(join(tmpdir(), 'fugue-b4-'))
+  const log = openLog(root, { write: 'agent-1' as AgentId })
+  try {
+    return await fn(root, log)
+  } finally {
+    await log.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+/** 读一个 writer 的全部事件（**重放那一侧**：它只读，不写）。 */
+async function eventsOf(root: string): Promise<LogEvent[]> {
+  const log = openLog(root)
+  const out: LogEvent[] = []
+  for await (const e of log.readByWriter('agent-1' as AgentId)) out.push(e)
+  return out
+}
+
+function handleOf(state: AssembleState, f: Fixture = FIXTURE): AgentHandle {
+  return {
+    agent: 'agent-1' as AgentId,
+    coord: WHO,
+    branch: 'refs/heads/agent-1' as BranchId,
+    contract: 'c-1' as ContractId,
+    protocol: SUBAGENT_PROTOCOL,
+    model: DECL.id as ModelId,
+    wireModel: f.target,
+    target: fixtureTarget(f),
+    adapter: fixtureTarget(f).wire,
+    state,
+    call: f.call,
+  }
+}
+
+/** 一次装配（与 `step` 里那一步同一条路：`assemble` 是纯函数，再算一次不碰任何状态）。 */
+function prefixAt(h: AgentHandle) {
+  return assemble({ protocol: h.protocol, model: h.model, segments: sourcesFor(h.protocol, h.state, h.coord) })
+}
+
+/** 一个运行时：假模型 + 记账的执行器 + 那个日志口。 */
+function runtimeWith(log: LogHandle, scripts: readonly (readonly ModelEvent[])[] = SCRIPTS) {
+  const executor = recordingExecutor((call) => ({ ok: true, output: `${call.name} 回了：2 个文件` }))
+  const rt = createRuntime({
+    logOf: () => log,
+    call: scriptedModel(scripts),
+    execute: executor,
+    tools,
+  })
+  return { rt, executor }
+}
+
+// ── ① 每一步两条事件，步号单调 ────────────────────────────────────────────────
+
+test('① 每一步落一条 `prefix/assemble` 与一条 `llm/call`，步号单调且有且只有一条', async () => {
+  await withRoot(async (root, log) => {
+    const { rt } = runtimeWith(log)
+    const r = await runSteps(rt, handleOf(fixtureState(0)), new AbortController().signal)
+    assert.equal(r.steps, 2)
+    assert.equal(r.last.outcome.kind, 'done')
+
+    const events = await eventsOf(root)
+    const prefix = events.filter((e) => e.t === 'prefix/assemble')
+    const calls = events.filter((e) => e.t === 'llm/call')
+    assert.equal(prefix.length, 2, `两步应该两条 prefix/assemble，盘上是 ${prefix.length} 条`)
+    assert.equal(calls.length, 2, `两步应该两条 llm/call，盘上是 ${calls.length} 条`)
+    // 顺序：先 assemble 后 call，一步一对。
+    assert.deepEqual(
+      events.map((e) => e.t),
+      ['prefix/assemble', 'llm/call', 'prefix/assemble', 'llm/call'],
+    )
+    // 步号单调（`llm/call` 的 `step` 读的是**这一步看的那个状态**的步号：0 之后 1）。
+    const steps = calls.map((e) => (e as { step: string }).step)
+    assert.deepEqual(steps, ['0', '1'])
+    // 那几个数：模型 · 线协议 · 工具条数 · 用量四个数 · 停因。
+    const first = calls[0] as {
+      model: string
+      wire: string
+      toolCount: number
+      stop: string | null
+      rawStop: string | null
+      usage: Record<string, number | null>
+    }
+    assert.equal(first.model, DECL.id)
+    assert.equal(first.wire, 'anthropic-messages')
+    assert.equal(first.toolCount, tools.length)
+    assert.equal(first.stop, 'tool-calls')
+    assert.equal(first.rawStop, 'tool_use')
+    assert.deepEqual(first.usage, { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64 })
+    console.log(
+      `① 读数：${r.steps} 步 · ${events.length} 条事件（${prefix.length} assemble + ${calls.length} call）· ` +
+        `步号 ${steps.join(' → ')} · 公布工具 ${first.toolCount} 条 · 用量 ${JSON.stringify(first.usage)}`,
+    )
+  })
+})
+
+// ── ② C 区只追加：相邻两步 hash(A+B) 不变 ──────────────────────────────────────
+
+test('② C 区只追加：相邻两步的 hash(A+B) 不变，C 只是一串只追加的尾巴', async () => {
+  await withRoot(async (root, log) => {
+    const { rt } = runtimeWith(log)
+    const h0 = handleOf(fixtureState(0))
+    const one = await rt.step(h0, new AbortController().signal)
+    const two = await rt.step({ ...h0, state: one.next }, new AbortController().signal)
+    assert.equal(one.outcome.kind, 'continue')
+    assert.equal(two.outcome.kind, 'done')
+
+    const events = await eventsOf(root)
+    const zones = events
+      .filter((e) => e.t === 'prefix/assemble')
+      .map((e) => e as { zoneAHash: string; zoneBHash: string; zoneCHash: string })
+    assert.equal(zones.length, 2)
+    // **A 与 B 逐字节相同**（相邻两步只有 C 变）：架构 § 8.11 那条验证性质的机制侧兑现。
+    assert.equal(zones[0]?.zoneAHash, zones[1]?.zoneAHash)
+    assert.equal(zones[0]?.zoneBHash, zones[1]?.zoneBHash)
+    // C 变了。
+    assert.notEqual(zones[0]?.zoneCHash, zones[1]?.zoneCHash)
+    // C 有两件事要量，而它们不是同一件事：
+    //
+    //   一 · **积累段只追加**：`turns` 是那条尾巴（「运行时上下文」那一段），下一步是这一步的
+    //        超集——逐项相同、只多几项。
+    //   二 · **"每步被换掉"的那一段排在最后**：`上一步结果` 不是积累段（它是"刚过去那一步"的
+    //        回执），所以它在 C 的**末尾**（架构 § 8.11 的区表：运行时上下文 · 信号摘要 ·
+    //        上一步结果）。排在中间的话，"每步换掉它"就等于每步作废 C 的中段。
+    //
+    // **"C 整段是下一步的前缀"这句话是错的**，别把它写进断言：上面第一条（积累段往前长）与
+    // 第二条（换掉的那段在末尾）合起来**不蕴含**整段是前缀——长出来的那几项插在积累段的末尾，
+    // 而积累段后面还有一段（信号摘要）。**相邻两步真正的性质是"分歧点不早于积累段的起点"**：
+    // 分歧不可能发生在 A+B（它们是同一串字节），只可能落在 C 里那两个该变的段上。
+    const baseTurns = h0.state.turns ?? []
+    const turnsNow = one.next.turns ?? []
+    assert.deepEqual(turnsNow.slice(0, baseTurns.length), baseTurns, '积累段的前缀变了')
+    assert.ok(turnsNow.length > baseTurns.length, '这一步没有往积累段里追加东西')
+    const p1 = prefixAt({ ...h0, state: one.next })
+    const c1 = p1.zoneC
+    const after: AssembleState = {
+      ...one.next,
+      step: one.next.step + 1,
+      // 换掉末尾那一段（**比原来长**：这样"分歧点"那条断言才有内容）
+      lastStep: `工具的另一次回执：${'x'.repeat(200)}`,
+      turns: [...turnsNow, '第二步新加的一段。'],
+    }
+    const c2 = prefixAt({ ...h0, state: after }).zoneC
+    assert.ok(c2.length > c1.length, `C 没有长：${c1.length} → ${c2.length}`)
+    // 分歧点不早于积累段的起点：C 里"运行时上下文"那一段的正文在两步之间逐字节相同，
+    // 而第一个不同的字节落在它后面。
+    const text1 = new TextDecoder().decode(c1)
+    const accStart = text1.indexOf('第 0 步。')
+    assert.equal(accStart, 0, '「运行时上下文」不在 C 的开头——那这一条度量的是别的段')
+    // 积累段那一段正文的**长度**：从它开头到「信号摘要」那一段的开头。
+    const sigAt = text1.indexOf('sig-1')
+    assert.ok(sigAt > 0, 'C 里找不到「信号摘要」那一段')
+    const accBytes = new TextEncoder().encode(text1.slice(0, sigAt)).length
+    const diverge = firstDivergence(c1, c2)
+    assert.ok(
+      diverge >= accBytes,
+      `分歧点 ${diverge} 落在积累段内部（它到 ${accBytes} 字节处）——长出来的那几项插在了中段，不是末尾`,
+    )
+    // 换掉的那一段在末尾：它落在**最后一次**出现的位置上（前面那些出现是积累段里的同一段文本），
+    // 而且 C1 以它收尾。
+    assert.ok(text1.lastIndexOf(one.next.lastStep) > sigAt, '「上一步结果」不在「信号摘要」之后')
+    assert.ok(text1.endsWith(`${one.next.lastStep}\n`), `C1 不是以「上一步结果」收尾：${JSON.stringify(text1.slice(-40))}`)
+    // 而换掉的那一段（`上一步结果`）在 C 的末尾：它的正文在 C1 里找得到，且它在 C1 里一直到尾。
+    assert.deepEqual(after.lastStep, `工具的另一次回执：${'x'.repeat(200)}`)
+    assert.notDeepEqual(after.lastStep, one.next.lastStep)
+
+    // A 与 B 也逐字节相同（不是只有哈希相同）。
+    const p2 = prefixAt({ ...h0, state: one.next })
+    assert.deepEqual(p1.zoneA, p2.zoneA)
+    assert.deepEqual(p1.zoneB, p2.zoneB)
+    console.log(
+      `② 读数：A ${p1.zoneA.length} 字节 ${zones[0]?.zoneAHash} · B ${p1.zoneB.length} 字节 ${zones[0]?.zoneBHash} · ` +
+        `C ${c1.length} → ${c2.length} 字节（${zones[0]?.zoneCHash} → ${zones[1]?.zoneCHash}）· ` +
+        `第一步那一段仍逐字节在第二步的头部`,
+    )
+  })
+})
+
+// ── ③ 三种停因分得开 ─────────────────────────────────────────────────────────
+
+test('③ 三种 StopReason（调用工具 · 自然停 · 预算耗尽）分得开，不混成"结束了"', async () => {
+  await withRoot(async (root, log) => {
+    const cases: { readonly stop: string; readonly kind: StepOutcome['kind']; readonly why: string | null }[] = [
+      { stop: 'tool-calls', kind: 'continue', why: null },
+      { stop: 'end-turn', kind: 'done', why: null },
+      { stop: 'max-tokens', kind: 'failed', why: 'max-tokens' },
+      { stop: 'stop-sequence', kind: 'failed', why: 'stop-sequence' },
+      { stop: 'refusal', kind: 'failed', why: 'refusal' },
+    ]
+    const readings: string[] = []
+    for (const one of cases) {
+      const script: ModelEvent[] = [
+        ...(one.stop === 'tool-calls' ? callOne(0, 'call_1', 'read', '{"path":"a.ts"}') : []),
+        { t: 'usage', usage: USAGE },
+        { t: 'stop', reason: one.stop as 'tool-calls', raw: `raw-${one.stop}` },
+      ]
+      const { rt, executor } = runtimeWith(log, [script])
+      const r = await rt.step(handleOf(fixtureState(0)), new AbortController().signal)
+      assert.equal(r.outcome.kind, one.kind, `${one.stop} 判成了 ${r.outcome.kind}`)
+      if (one.kind === 'failed') {
+        const err = (r.outcome as { error: HarnessError }).error
+        assert.ok(err instanceof HarnessError, `${one.stop} 的 failed 没带 HarnessError`)
+        assert.equal(err.why, one.why)
+      } else {
+        // 那两档的用量是**那四个数**（不是 0 顶出来的）。
+        assert.equal((r.outcome as { usage: { cacheReadTokens: number | null } }).usage?.cacheReadTokens, 24000)
+      }
+      // 只有"要调工具"那一档才真的执行了工具。
+      assert.equal(executor.seen.length, one.stop === 'tool-calls' ? 1 : 0)
+      readings.push(`${one.stop}→${r.outcome.kind}${one.why === null ? '' : `(${one.why})`}`)
+    }
+    assert.equal(new Set(cases.map((c) => c.kind)).size, 3)
+    console.log(`③ 读数：${readings.join(' · ')}`)
+  })
+})
+
+// ── ④ 假模型 + 负对照 ────────────────────────────────────────────────────────
+
+test('④ 用假模型驱动它，三区稳定性照旧成立；负对照：每步重写 C 区中部 → ② 变红', async () => {
+  await withRoot(async (root, log) => {
+    // 三步才收敛（前两步各调一次工具）。
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      [...callOne(0, 'call_1', 'read', '{"path":"a.ts"}'), { t: 'usage', usage: USAGE }, { t: 'stop', reason: 'tool-calls' }],
+      [...callOne(0, 'call_2', 'glob', '{"pattern":"*.ts"}'), { t: 'usage', usage: USAGE }, { t: 'stop', reason: 'tool-calls' }],
+      [{ t: 'delta', text: '好了。' }, { t: 'usage', usage: USAGE }, { t: 'stop', reason: 'end-turn' }],
+    ]
+    const { rt, executor } = runtimeWith(log, scripts)
+    const h0 = handleOf(fixtureState(0))
+    const r = await runSteps(rt, h0, new AbortController().signal)
+    assert.equal(r.steps, 3)
+    assert.equal(r.last.outcome.kind, 'done')
+    assert.equal(executor.seen.length, 2)
+    const seen: ToolCallRequest[] = executor.seen
+
+    const events = await eventsOf(root)
+    const zones = events
+      .filter((e) => e.t === 'prefix/assemble')
+      .map((e) => e as { zoneAHash: string; zoneBHash: string; zoneCHash: string })
+    assert.equal(zones.length, 3)
+    // 三步的 A 与 B 各一种指纹，C 三种（只追加）。
+    assert.equal(new Set(zones.map((z) => z.zoneAHash)).size, 1)
+    assert.equal(new Set(zones.map((z) => z.zoneBHash)).size, 1)
+    assert.equal(new Set(zones.map((z) => z.zoneCHash)).size, 3)
+
+    // 负对照：把 C 区**中部**改掉（重写，不是追加）→ ② 那条"只追加"当场变红。
+    const base = fixtureState(0)
+    const withTail: AssembleState = { ...base, turns: ['甲', '乙', '丙'] }
+    const rewritten: AssembleState = { ...withTail, turns: ['甲', 'X', '丙'] }
+    const a = prefixAt({ ...h0, state: withTail })
+    const b = prefixAt({ ...h0, state: rewritten })
+    assert.notDeepEqual(a.zoneC, b.zoneC, '重写中部之后 C 竟然没变——那"只追加"这条就没有判据了')
+    assert.notEqual(hashOf(a.zoneC), hashOf(b.zoneC))
+    // 而 A 与 B 一个字都没动（改的只是 C 那一段）。
+    assert.deepEqual(a.zoneA, b.zoneA)
+    assert.deepEqual(a.zoneB, b.zoneB)
+    console.log(
+      `④ 读数：假模型 ${r.steps} 步收敛 · A/B 各一种指纹（${zones[0]?.zoneAHash}/${zones[0]?.zoneBHash}）· ` +
+        `C 三种 · 工具被调 ${seen.length} 次（${seen.map((c) => c.name).join(' · ')}）`,
+    )
+  })
+})
+
+// ── ⑤ 真接缝：夹具走 `wireCall`（不是假模型），仍然不发一个字节出去 ─────────────
+
+test('⑤ `wireCall` 接上 `B3` 的夹具档：夹具里那两条调用被执行，三区稳定性照旧', async () => {
+  await withRoot(async (root, log) => {
+    const executor = recordingExecutor((call) => ({ ok: true, output: `${call.name} 的回执` }))
+    // 第一步走**真接缝**（`wireCall` + 夹具传输：夹具里那条响应是 `tool-calls`，有两条调用）；
+    // 第二步用脚本说"说完了"（否则夹具那一份会被一直重放）。
+    let at = 0
+    const reply = scriptedModel([[{ t: 'delta', text: '数完了。' }, { t: 'usage', usage: USAGE }, { t: 'stop', reason: 'end-turn' }]])
+    const call: CallModel = (request, signal) => {
+      at += 1
+      if (at > 1) return reply(request, signal)
+      // `wireCall` 用的是 `fetchTransport`，那会真出网——所以这一档换掉传输：夹具那一份直接喂回去。
+      const stream = callModel(
+        request.target,
+        {
+          model: request.model,
+          zones: { A: request.prefix.zoneA, B: request.prefix.zoneB, C: request.prefix.zoneC },
+          tools: request.tools,
+          ...(request.call === undefined ? {} : { call: request.call }),
+        },
+        fixtureTransport(FIXTURE, 1),
+      )
+      return {
+        events: stream.events,
+        ledger: () => {
+          const l = stream.ledger()
+          return { call: l.call, failure: l.failure }
+        },
+      }
+    }
+    const rt = createRuntime({ logOf: () => log, call, execute: executor, tools })
+    const r = await runSteps(rt, handleOf(fixtureState(0)), new AbortController().signal)
+    assert.equal(r.steps, 2)
+    assert.equal(r.last.outcome.kind, 'done')
+    // 夹具里那两条调用都被执行了（`bash` 与 `glob`），名字与参数就是夹具里写的那两份。
+    assert.deepEqual(executor.seen.map((c) => c.name), ['bash', 'glob'])
+    assert.equal(executor.seen[0]?.arguments, '{"command":"ls -la","timeout_ms":10000}')
+
+    const events = await eventsOf(root)
+    const calls = events.filter((e) => e.t === 'llm/call') as { usage: Record<string, number | null>; stop: string | null }[]
+    assert.equal(calls.length, 2)
+    assert.equal(calls[0]?.usage.cacheReadTokens, 24000)
+    assert.equal(calls[0]?.usage.cacheWriteTokens, 0)
+    assert.equal(calls[0]?.stop, 'tool-calls')
+    assert.equal(calls[1]?.stop, 'end-turn')
+    // 三区稳定性在真接缝上照旧（A/B 一种指纹，C 两种）。
+    const zones = events
+      .filter((e) => e.t === 'prefix/assemble')
+      .map((e) => e as { zoneAHash: string; zoneBHash: string; zoneCHash: string })
+    assert.equal(new Set(zones.map((z) => z.zoneAHash)).size, 1)
+    assert.equal(new Set(zones.map((z) => z.zoneBHash)).size, 1)
+    assert.equal(new Set(zones.map((z) => z.zoneCHash)).size, 2)
+    console.log(
+      `⑤ 读数：夹具那两条调用被 ${executor.seen.map((c) => c.name).join(' · ')} 执行 · ` +
+        `用量 ${JSON.stringify(calls[0]?.usage)} · 停因 ${calls[0]?.stop} → ${calls[1]?.stop} · ` +
+        `C 两种指纹（${zones.map((z) => z.zoneCHash).join(' → ')}）`,
+    )
+  })
+})
+
+// ── ⑥ 半截的流：三档里的 failed，账仍然落一条（`stop: null`） ────────────────────
+
+test('⑥ 半截的流 → `failed` · 不静默重试，而 `llm/call` 仍然落一条（`stop: null`）', async () => {
+  await withRoot(async (root, log) => {
+    let asked = 0
+    const cut: CallModel = () => {
+      asked += 1
+      return {
+        events: (async function* (): AsyncGenerator<ModelEvent> {
+          yield { t: 'delta', text: '说到一半' }
+          throw new HarnessError('cut-stream', '上游掐了')
+        })(),
+        ledger: () => ({ call: null, failure: 'HarnessError: 上游掐了' }),
+      }
+    }
+    const rt = createRuntime({ logOf: () => log, call: cut, execute: recordingExecutor(() => ({ ok: true, output: '' })), tools })
+    const r = await rt.step(handleOf(fixtureState(0)), new AbortController().signal)
+    // 抛在事件流里：`step` 把它收成 `failed`（而不是让异常一路穿出去）。
+    assert.equal(r.outcome.kind, 'failed')
+    assert.equal((r.outcome as { error: HarnessError }).error.why, 'cut-stream')
+    assert.equal(asked, 1, `上游被问了 ${asked} 次——"不静默重试"这条被破坏了`)
+    const events = await eventsOf(root)
+    const calls = events.filter((e) => e.t === 'llm/call') as { stop: string | null }[]
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0]?.stop, null, '半截的流那条 `llm/call` 的 `stop` 不是 null')
+    console.log(`⑥ 读数：半截的流 → ${(r.outcome as { error: HarnessError }).error.why} · 上游被问 ${asked} 次 · llm/call 落 1 条（stop=null）`)
+  })
+})

@@ -138,6 +138,7 @@ export function fixtureTarget(f: Fixture): Target {
     wire: wireNamed(f.wire),
     path: '',
     model: f.target,
+    from: 'fixture',
     headers: {},
   }
 }
