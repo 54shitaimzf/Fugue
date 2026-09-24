@@ -311,6 +311,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         model: h.model,
         wire: h.target.wire.name,
         toolCount: tools.length,
+        invocations: calls.length,
         usage: {
           inputTokens: usage?.inputTokens ?? null,
           cacheReadTokens: usage?.cacheReadTokens ?? null,

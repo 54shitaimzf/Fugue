@@ -37,7 +37,14 @@ import { startRound } from './start.ts'
 import type { RoundStart, RoundStartDeps } from './start.ts'
 import { step } from './machine.ts'
 import type { Cause, RoundState } from './machine.ts'
-import { baseFor } from '../view/lower.ts'
+import { baseFor, lowerAt } from '../view/lower.ts'
+import { loadView } from '../view/view.ts'
+import type { View } from '../view/contract.ts'
+import type { AgentDriver, DriverAsk } from './driver.ts'
+import type { ModelDecl } from '../model/contract.ts'
+import type { CallModel, ToolExecutor } from '../runtime/step.ts'
+import type { AssembleState } from '../assemble/sources.ts'
+import type { ToolEntry } from '../tools/catalog.ts'
 
 /** 这一层自己的失败：某一步拒了（预检 · 漂移 · 冲突解不掉 · 验收不过）。**话原样带给调用点。** */
 export class RoundRunError extends Error {
@@ -72,6 +79,13 @@ export interface ResolveHint {
   readonly nextBranch: CommitId
 }
 
+/**
+ * 打桩那一份的形状（**S7 定下的接缝**：收一份契约、一个底、一句提示，给一个提交）。
+ *
+ * `B7.5` 之后 `runRound` 收的不是它，是 `AgentDriver`（一个函数）——这一份由 `stubDriver()`
+ * 包一层。**包而不是改**：这一份是 S7 · CLI · 走查三处都指着的形状，多一个参数也是改形状；
+ * 而"换成真模型时换的是哪一个函数、其余一个字不动"这句话，靠的就是那个函数类型。
+ */
 export interface Stub {
   /** 一个 agent 干完它那一格，给一个提交。`hint` 是"冲突要往哪边收"（只有解决那一格有）。 */
   run(agent: AgentId, contract: Contract, base: CommitId, hint?: ResolveHint): Promise<CommitId>
@@ -92,7 +106,14 @@ export interface RoundRun {
   readonly conflictTree: { readonly paths: readonly RelPath[]; readonly entries: number } | null
   readonly report: VerifyReport
   readonly advanced: AdvanceResult | null
-  /** 走到的最后一个状态。**通过就停在 `Committed`，没过就回 `Working`**（架构 § 8.13 那两条边）。 */
+  /**
+   * 走到的最后一个状态。
+   *
+   * **通过那一档的终点是 `Rebuilding`，不是 `Committed`**：这一份的第七步在定格之后还要把真实
+   * 工作树推进到目标树（架构 § 8.14 的 `Committed ──advanced──> Rebuilding`），而状态机的两步
+   * 都落了 `round/state`。所以"这一轮通过了"的判据是 `report.ok` 与 `advanced !== null`，
+   * 不是这个栏等于 `Committed`。没过那一档回 `Working`（还有回边额度）或 `Aborted`。
+   */
   readonly state: RoundState
 }
 
@@ -101,11 +122,28 @@ export interface RoundRunDeps extends Omit<RoundStartDeps, 'log'> {
   /**
    * 某个 agent 自己的日志口。**`ckpt/commit` 是那个 agent 自己落的**（§ 8.1 的事件里 `agent`
    * 那一栏就是它），而持轮者那条句柄握着 `round` 的栅栏——一次命令一个 writer（`hold.ts` 那条
-   * 禁令要防的是"同一个 writer 的序号被两个进程领到"）。所以每落一条开一个口、落完就关。
+   * 禁令要防的是"同一个 writer 的序号被两个进程领到"）。
+   *
+   * **一个 agent 一个口，这个口由调用方持有**：同一个 agent 在一轮里会被要两次（视图铺在它那条
+   * 分支上一次 · 真驱动那一趟一次），而 `holdWriter` 是**开一次取一次锁**——同一个 writer 开第二个
+   * 口就是"已经有写者"。所以这一栏必须是**记住过的那个口**（调用方那一侧按 agent 记忆），
+   * 而关它也是调用方的事（`closeAgentLogs`）——`runRound` 自己不关别人手上的口。
    */
   readonly logOf: (a: AgentId) => Log
-  /** 合并前那一档要读 HEAD，所以要一个 `Truth`（`startRound` 那一份已经够了）。 */
-  readonly stub: Stub
+  /**
+   * 这一轮开过的那些 agent 日志口，由调用方在轮次结束后关掉（**可选**：夹具与单测可以不关）。
+   * 与 `logOf` 配对：`runRound` 只借不还。
+   */
+  readonly closeAgentLogs?: () => Promise<void>
+  /**
+   * **干一格的那一个函数**（S7 定下的接缝，形状不动：`run(agent, contract, base, hint?) → CommitId`）。
+   *
+   * 打桩那一档给 `stubDriver(stub)`；真驱动那一档给 `realDriver({ deliver })`（`B7.5`）。**两者在
+   * 这一份眼里没有区别**——它只调那一个函数。
+   */
+  readonly stub: AgentDriver
+  /** `AgentDriver` 那一份 ask 要的那几样（**打桩那一档一个都不读**）。 */
+  readonly driver?: DriverSupport
   /** 验收要跑的那几条（已经包好的命令行）。**按契约给**：`contractOf` 给哪几份就跑哪几条。 */
   readonly specsOf: (c: Contract, agent: AgentId) => readonly AssertionRunSpec[]
   /** 要不要在合并前判漂移（缺省判）。判的时候用的是**轮次开始时那份基线**。 */
@@ -144,6 +182,27 @@ export interface RoundRunDeps extends Omit<RoundStartDeps, 'log'> {
 }
 
 /**
+ * 真驱动那一条路要多带的那几样。**不给就是打桩那一档**（`DriverAsk` 里那些可选栏一个都不读）。
+ *
+ * 它为什么是 `RoundRunDeps` 上的一个可选栏而不是塞进 `AgentDriver`：`AgentDriver` 是**那道缝**
+ * （S7 定下的，形状不动），而这几样是"这一轮拿什么去跑"——装配状态 · 公布的工具目录 · 模型声明 ·
+ * 两个接缝。**它们由调用方按 agent 记忆**（`state` 与 `handle` 都收一个 agent 名）：每一条分支
+ * 的坐标各是各的，所以"整轮一份"会在第二个 agent 上给出第一个的状态。
+ */
+export interface DriverSupport {
+  /**
+   * 这一步的装配状态。**收契约**（B 区那几段照契约填，而契约是 `startRound` 造的）。
+   */
+  readonly state: (agent: AgentId, contract: Contract) => AssembleState
+  /** 这一格的句柄（分支 · 契约 · 模型 · 目标）。同样收契约（理由同上）。 */
+  readonly handle: (agent: AgentId, contract: Contract) => DriverAsk['handle']
+  readonly decl: ModelDecl
+  readonly call?: CallModel
+  readonly execute?: ToolExecutor
+  readonly tools?: readonly ToolEntry[]
+}
+
+/**
  * 跑一个完整的轮次。**每一步都留下读数**：预检报了几对 · 漂移判了什么 · 折了几步 · 三档各几条。
  *
  * 顺序是承重的，逐条指得出出处：
@@ -156,6 +215,55 @@ export interface RoundRunDeps extends Omit<RoundStartDeps, 'log'> {
  *   6. `verify` —— 跑在物化出来的那棵树上（A6）
  *   7. `commitThenAdvance` —— 通过才定格 + 推进（A6 那句"顺序即不变量"）
  */
+/**
+ * 一格的那一份 ask。
+ *
+ * **它把该给的一次给足**：`deps.driver` 在就是真驱动那一档（`call` · `execute` · `decl` ·
+ * `handle` 都从那儿来），不在就是打桩那一档（`stubDriver` 只读 `agent` · `contract` · `base` ·
+ * `hint` 四栏）。**两种情况下这个对象都是完整的**——一处 `if`，不散在调用点上。
+ */
+async function askOf(deps: RoundRunDeps, c: Contract, agent: AgentId, base: CommitId): Promise<DriverAsk> {
+  const support = deps.driver
+  if (support === undefined) {
+    // 打桩那一档：给一份形状完整但内容为空的 ask（`stubDriver` 一个字节都不读它们）。
+    const empty = {} as unknown as AssembleState
+    return {
+      agent,
+      contract: c,
+      base,
+      openView: async () => loadView(deps.logOf(agent), agent as WriterId, { lower: lowerAt(deps.truth, base) }),
+      logOf: () => deps.logOf(agent),
+      truth: deps.truth,
+      writer: agent as WriterId,
+      state: empty,
+      handle: { agent, state: empty } as unknown as DriverAsk['handle'],
+      decl: {} as ModelDecl,
+    }
+  }
+  return {
+    agent,
+    contract: c,
+    base,
+    openView: () => openAgentView(deps, agent, base),
+    logOf: () => deps.logOf(agent),
+    truth: deps.truth,
+    writer: agent as WriterId,
+    roots: deps.roots,
+    state: support.state(agent, c),
+    handle: support.handle(agent, c),
+    decl: support.decl,
+    ...(support.tools === undefined ? {} : { tools: support.tools }),
+    ...(support.call === undefined ? {} : { call: support.call }),
+    ...(support.execute === undefined ? {} : { execute: support.execute }),
+  }
+}
+
+/** 这一格自己的视图（铺在它自己那条分支上：`refs/heads/<agent>`）。 */
+async function openAgentView(deps: RoundRunDeps, agent: AgentId, base: CommitId): Promise<View> {
+  const log = deps.logOf(agent)
+  return loadView(log, agent as WriterId, { lower: lowerAt(deps.truth, base) })
+}
+
 export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
   const { roots, truth, log, round } = deps
 
@@ -168,11 +276,15 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
   const work: Record<ContractId, CommitId> = {}
   for (const c of started.built.contracts) {
     const agent = c.agent as AgentId
-    const commit = await deps.stub.run(agent, c, started.base)
+    const commit = await deps.stub(await askOf(deps, c, agent, started.base))
     work[c.id] = commit
-    await withAgentLog(deps.logOf, agent, (l) =>
-      l.append(agent as WriterId, { t: 'ckpt/commit', agent, commit, rev: 1, msg: `（打桩）${c.id}` }),
-    )
+    // **真驱动自己落 `ckpt/commit`**（它走的是 § 9.6 那份 `checkpoint()`）；打桩那一份只算一棵树，
+    // 所以它那一条由这里补。**两条路的交接面就是这一个函数**（`AgentDriver`）。
+    if (deps.driver === undefined) {
+      await withAgentLog(deps.logOf, agent, (l) =>
+        l.append(agent as WriterId, { t: 'ckpt/commit', agent, commit, rev: 1, msg: `（打桩）${c.id}` }),
+      )
+    }
   }
 
   // 三 · 合并前那一次预检：**兜底那一侧报出即拒**（架构 § 8.12 的第二次预检）。
@@ -207,20 +319,23 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
     resolvedContract = resolveContractOf(started.built.contracts, outcome.conflicts.map((c) => c.path), outcome.folded)
     const nextBranch = outcome.rest[0]
     if (nextBranch === undefined) throw new RoundRunError('merge', '撞上冲突却没有下一折——折叠表不成立')
-    const resolved = await deps.stub.run(resolvedContract.agent as AgentId, resolvedContract, outcome.folded, {
-      conflictPaths: outcome.conflicts.map((c) => c.path),
-      nextBranch,
+    const resolvedAgent = resolvedContract.agent as AgentId
+    const resolved = await deps.stub({
+      ...(await askOf(deps, resolvedContract, resolvedAgent, outcome.folded)),
+      hint: { conflictPaths: outcome.conflicts.map((c) => c.path), nextBranch },
     })
     work[resolvedContract.id] = resolved
-    await withAgentLog(deps.logOf, resolvedContract.agent as AgentId, (l) =>
-      l.append(resolvedContract.agent as WriterId, {
-        t: 'ckpt/commit',
-        agent: resolvedContract.agent as AgentId,
-        commit: resolved,
-        rev: 1,
-        msg: `（打桩·解冲突）${resolvedContract.id}`,
-      }),
-    )
+    if (deps.driver === undefined) {
+      await withAgentLog(deps.logOf, resolvedContract.agent as AgentId, (l) =>
+        l.append(resolvedContract.agent as WriterId, {
+          t: 'ckpt/commit',
+          agent: resolvedContract.agent as AgentId,
+          commit: resolved,
+          rev: 1,
+          msg: `（打桩·解冲突）${resolvedContract.id}`,
+        }),
+      )
+    }
     await log.append('round', {
       t: 'merge/attempt',
       round,
@@ -321,15 +436,10 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
   }
 }
 
-/** 开一个 agent 的口、落一条、关掉。**每一条都新开**：句柄持有那个 writer 的栅栏，而这一条
- * 命令可能同时要给好几个 agent 落事件——一次只握一个。 */
+/** 用某个 agent 那个口落一条。**口不在这里开，也不在这里关**（见 `logOf` 那一栏：一个 agent
+ * 一个口，持有者是调用方）。 */
 async function withAgentLog<T>(logOf: (a: AgentId) => Log, a: AgentId, fn: (l: Log) => Promise<T>): Promise<T> {
-  const l = logOf(a)
-  try {
-    return await fn(l)
-  } finally {
-    await (l as { close?: () => Promise<void> }).close?.()
-  }
+  return await fn(logOf(a))
 }
 
 /** 冲突时给"解决者"的那份契约值。**它不是构造器造的那一份**（那一份要提前知道冲突），

@@ -176,6 +176,7 @@ test('② 一次调用落一条 llm/call：模型 · 步 · 工具调用条数 �
     model: DECL.id,
     wire: f.wire,
     toolCount: tools.length,
+    invocations: record.toolCalls.length,
     usage: {
       inputTokens: record.usage?.inputTokens ?? null,
       cacheReadTokens: record.usage?.cacheReadTokens ?? null,
@@ -188,6 +189,7 @@ test('② 一次调用落一条 llm/call：模型 · 步 · 工具调用条数 �
   assert.equal(event.usage.cacheReadTokens, 24000)
   assert.equal(event.usage.outputTokens, 64)
   assert.equal(event.toolCount, 15)
+  assert.equal(event.invocations, 2, '这一趟响应里拼出来两条工具调用')
   assert.equal(event.stop, 'tool-calls')
   assert.equal(event.rawStop, 'tool_use')
   // 那两条调用的名字，在**这一次公布**的目录里找得到（`B5` 接得上）。

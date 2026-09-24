@@ -9,7 +9,7 @@
 // `src/checkpoint.ts`——两个都是跨层接线（§ 7），这里只是它们的一个人侧入口。
 import { createHash } from 'node:crypto'
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkMountPoints, checkReach } from '../boundary/check.ts'
 import { PolicyError, probeLayers, resolvePolicy } from '../boundary/policy.ts'
@@ -62,7 +62,7 @@ import { VerifyRefused, verifyMat } from '../materialize/verify.ts'
 import type { Denied, Result, Roots } from '../roots/contract.ts'
 import { HostError, assertHost } from '../roots/host.ts'
 import { createRoots } from '../roots/roots.ts'
-import type { CommitId, ForkStrategy, LogPos, PolicyMode, RelPath, StepId, ViewRev, WriterId } from '../terms.ts'
+import type { AgentId, BranchId, CommitId, ContractId, ForkStrategy, LogPos, PolicyMode, RelPath, StepId, ViewRev, WriterId } from '../terms.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import type { View } from '../view/contract.ts'
@@ -75,13 +75,22 @@ import { DEFAULT_MODEL } from '../assemble/models.ts'
 import { HOLDER_PROTOCOL, protocolNamed } from '../assemble/protocol.ts'
 import { checkConstraints, formatViolation } from '../assemble/constraints.ts'
 import { emptyState, HOLDER, SourceError, sourcesFor } from '../assemble/sources.ts'
+import type { AssembleState } from '../assemble/sources.ts'
 import type { AgentCoord } from '../assemble/sources.ts'
 import { stateWithState } from '../assemble/sources-state.ts'
 import { loadView } from '../view/view.ts'
 import type { SplitAssignment } from '../contract/build.ts'
 import { RoundStartError, startRound } from '../round/start.ts'
 import { RoundRunError, materializeCommit, runRound } from '../round/execute.ts'
-import type { Stub } from '../round/execute.ts'
+import type { DriverSupport, Stub } from '../round/execute.ts'
+import { realDriver, stubDriver } from '../round/driver.ts'
+import { wireCall } from '../runtime/step.ts'
+import type { AgentHandle } from '../runtime/step.ts'
+import { targetOf } from '../model/http.ts'
+import { modelDeclOf } from '../model/contract.ts'
+import { wireHeader } from '../model/wire/headers.ts'
+import { implementedNames, publishedTools } from '../tools/execute.ts'
+import { CATALOG_STATES, TOOL_NAMES, catalog } from '../tools/catalog.ts'
 import type { Contract } from '../contract/types.ts'
 import type { AssertionRunSpec } from '../merge/accept.ts'
 import { entriesOf } from '../merge/accept.ts'
@@ -725,6 +734,25 @@ async function roundRun(
       ? (flags.get('poke-exact') as string).split(',').map((x) => x.trim()).filter((x) => x !== '')
       : []
 
+  // **`--live`：接真驱动**（`B7.5`）。不给就是打桩那一档——它一条断言都不需要凭据。
+  const live = flags.has('live')
+  const credentialPath = typeof flags.get('credential') === 'string' ? (flags.get('credential') as string) : CREDENTIAL_FILE
+  // **一个 agent 一个日志口、由调用方持有**（`hold.ts` 那道栅栏：同一个 writer 开第二个口就是
+  // "已经有写者"）。这一份记着开过的口，轮次跑完一起关（`closeAgentLogs`）。
+  const agentLogs = new Map<AgentId, LogHandle>()
+  const agentLogOf = (a: AgentId): Log => {
+    const hit = agentLogs.get(a)
+    if (hit !== undefined) return hit
+    const made = openLog(root, { write: a as WriterId, sync: 'each' })
+    agentLogs.set(a, made)
+    return made
+  }
+  const closeAgentLogs = async (): Promise<void> => {
+    for (const [a, l] of agentLogs) {
+      agentLogs.delete(a)
+      await l.close()
+    }
+  }
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   try {
     const stub: Stub = {
@@ -777,16 +805,21 @@ async function roundRun(
       roots: ctx.roots,
       truth: ctx.truth,
       log: ctx.log,
-      logOf: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
+      logOf: agentLogOf,
+      closeAgentLogs,
       round,
       intent: { goal },
       split,
       agents,
       branchOf,
       seedOf: () => [] as readonly RelPath[],
-      logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
+      logForAgent: agentLogOf,
       materialize: flags.has('materialize'),
-      stub,
+      // **两条路在 `runRound` 眼里没有区别**（同一个 `AgentDriver`）：打桩那一档把 `Stub` 包
+      // 一层（S7 定下的那个形状不动），真驱动那一档走 `realDriver` + `DriverSupport`。凭据那一
+      // 步只在这一档走（不打 `--live` 的话 `driverSupport` 一次都不被调）。
+      stub: stubDriver(stub),
+      ...(live ? { driver: driverSupport({ root, doc, credential: credentialAt(credentialPath) }) } : {}),
       specsOf,
       retriesLeft,
       softMergeGate,
@@ -911,6 +944,8 @@ async function roundRun(
     if (err instanceof RoundStartError) return fail(err.message)
     throw err
   } finally {
+    // **agent 那几个口由调用方关**（`runRound` 只借不还）。
+    await closeAgentLogs()
     await ctx.close()
   }
 }
@@ -1387,6 +1422,115 @@ async function agentCoord(
     return { state, who: { id: who, branch: ref, outputPaths: [`deliver/${who}/`] } }
   } finally {
     truth.close()
+  }
+}
+
+/**
+ * **凭据落在工作区外的那个路径**（架构 § 14.4 那份"沙箱里看得见的环境"仍是闭的）。
+ *
+ * 它是一条**路径**，不是值：值由 harness 进程在真要出网那一刻读一次，不落进事件、不进夹具、
+ * 不进沙箱环境（PLAN § 5.8 的口径一）。`ProviderDecl.auth` 那一栏是声明；这一份是壳。
+ */
+const CREDENTIAL_FILE = '/home/ubuntu/.fugue/credentials/deepseek.key'
+
+/** 公布给模型的那一份目录：**目录 ∩ 实现表**（`B5` 的纪律：只公布能兑现的）。 */
+function publishedCatalog(): ReturnType<typeof catalog> {
+  return publishedTools(implementedNames(TOOL_NAMES), catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number]))
+}
+
+/**
+ * 凭据的值：**环境变量优先，其次那个文件**。
+ *
+ * 两条都是"工作区外的一个声明路径"（`ProviderDecl.auth` 的两种取法），而这里只是**把来源收窄
+ * 到一处**：值取来交给 `wireHeader`，别处一个字节都不碰它。读不到时报的话要把两条路都写出来
+ * ——只说"读不到文件"会让人以为环境变量那条路不存在。
+ */
+function credentialAt(path: string): string {
+  const fromEnv = process.env.DEEPSEEK_API_KEY
+  if (fromEnv !== undefined && fromEnv !== '') return fromEnv
+  let text: string
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch (err) {
+    throw new SourceError(
+      `凭据不在：环境变量 DEEPSEEK_API_KEY 没有设，也读不到 ${path}（${(err as NodeJS.ErrnoException).code ?? '未知原因'}）。\n` +
+        `  放一份进去：mkdir -p ${dirname(path)} && printf '%s' '<key>' > ${path}\n` +
+        '  或者不接驱动：不给 --live 就是打桩那一档（PLAN § 5.8 的口径一：它一条断言都不需要凭据）。',
+    )
+  }
+  const v = text.trim()
+  if (v === '') throw new SourceError(`凭据文件是空的：${path}`)
+  return v
+}
+
+/**
+ * 真驱动那一档要的那几样（`DriverSupport`）。**打桩那一档一个都不读**——所以这一份只在
+ * `--live` 下拼，凭据那一步也就只在真要出网时才走（PLAN § 5.8 的口径一）。
+ *
+ * **一个 agent 一份状态、一个句柄**：`sourcesFor(protocol, state, who)` 的输入里有坐标
+ * （分支 · 产物路径），而每一条分支的坐标各是各的。所以这一份按 agent 记忆，不是"整轮一份"。
+ *
+ * 目标那一栏（`Target`）**是唯一碰凭据的地方**，而它在这里就拼好（不是每一步现取）：一次轮次
+ * 一个目标，出网那一刻用的就是它。头的名字按**这一条线协议**给（`wireHeader`）——两条线各一套
+ * 头，那一栏的差别不是这里的分岔。
+ */
+function driverSupport(o: { readonly root: string; readonly doc: ConfigDoc; readonly credential: string }): DriverSupport {
+  const decl = modelDeclOf(DEFAULT_MODEL)
+  const tools = publishedCatalog()
+  const states = new Map<string, AssembleState>()
+  const handles = new Map<string, AgentHandle>()
+  const target = { ...targetOf(decl.id), headers: wireHeader(decl.wire, o.credential) }
+
+  /**
+   * 这个 agent 的第一步那一份状态：**契约值就是它的任务**（B 区那几段照契约填）。
+   *
+   * 记忆按 agent：同一个 agent 只干一格（一份契约），而记忆是为了让 `state` 与 `handle` 两次问
+   * 拿到**同一份对象**（`handle.state` 与 `ask.state` 是同一个值——驱动两边都读）。
+   */
+  const stateFor = (agent: string, c: Contract): AssembleState => {
+    const hit = states.get(agent)
+    if (hit !== undefined) return hit
+    const base = stateWithState(emptyState(), o.doc, o.root)
+    const made: AssembleState = {
+      ...base,
+      ...(c.kind === 'implement' ? { goal: c.goal, files: c.ownedPaths.map((path) => ({ path, text: '' })) } : {}),
+      task: {
+        goal: c.kind === 'implement' ? c.goal : c.kind === 'investigate' ? c.question : base.task.goal,
+        question: c.kind === 'investigate' ? c.question : '',
+        deliverables: c.kind === 'resolve' ? [...c.conflictPaths] : c.deliverables.map((d) => d.path),
+        evidenceRequired: c.assertions.map((a) => a.name),
+        assertions: c.assertions.map((a) => a.name),
+      },
+    }
+    states.set(agent, made)
+    return made
+  }
+
+  const handleFor = (agent: string, c: Contract): AgentHandle => {
+    const hit = handles.get(agent)
+    if (hit !== undefined) return hit
+    const made: AgentHandle = {
+      agent: agent as AgentId,
+      coord: { id: agent, branch: `refs/heads/agent/${agent}`, outputPaths: [`deliver/${agent}/`] },
+      branch: `refs/heads/agent/${agent}` as BranchId,
+      contract: (c?.id ?? '') as ContractId,
+      protocol: HOLDER_PROTOCOL,
+      model: decl.id,
+      wireModel: decl.model,
+      target,
+      adapter: { name: decl.wire },
+      state: stateFor(agent, c),
+    }
+    handles.set(agent, made)
+    return made
+  }
+
+  return {
+    state: (a, c) => stateFor(String(a), c),
+    handle: (a, c) => handleFor(String(a), c),
+    decl,
+    call: wireCall,
+    tools,
   }
 }
 

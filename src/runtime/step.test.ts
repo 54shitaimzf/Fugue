@@ -153,6 +153,7 @@ test('① 每一步落一条 `prefix/assemble` 与一条 `llm/call`，步号单�
       model: string
       wire: string
       toolCount: number
+      invocations: number
       stop: string | null
       rawStop: string | null
       usage: Record<string, number | null>
@@ -160,6 +161,9 @@ test('① 每一步落一条 `prefix/assemble` 与一条 `llm/call`，步号单�
     assert.equal(first.model, DECL.id)
     assert.equal(first.wire, 'anthropic-messages')
     assert.equal(first.toolCount, tools.length)
+    // **两栏是两件事**：公布了几条 ≠ 它调了几条。`zero-tool-call-rate` 的分子问的是后者。
+    assert.equal(first.invocations, 1)
+    assert.equal((calls[1] as { invocations: number }).invocations, 0)
     assert.equal(first.stop, 'tool-calls')
     assert.equal(first.rawStop, 'tool_use')
     assert.deepEqual(first.usage, { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64 })

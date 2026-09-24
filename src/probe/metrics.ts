@@ -60,8 +60,9 @@ export interface MetricValue {
  */
 export const METRIC_HOW: Readonly<Record<MetricId, string>> = {
   'zero-tool-call-rate':
-    '分子：`llm/call` 里 `toolCount` 为 0 的条数（**它一次都没伸手**）；分母：全部 `llm/call` 的条数。' +
-    '本架构最危险的失败模式：约束导致模型不伸手。',
+    '分子：`llm/call` 里 **`invocations`（模型这一趟调了几条工具）为 0** 的条数（**它一次都没伸手**）；' +
+    '分母：全部 `llm/call` 的条数。本架构最危险的失败模式：约束导致模型不伸手。' +
+    '**分子用的是 `invocations`，不是 `toolCount`**：后者是"我们公布了几条"，与它伸不伸手无关。',
   'detour-rate':
     '分子：`run/start` 的 `argv` 里那一行命令**提到了某个已公布工具的名字**（`read` · `grep` · …）的条数' +
     '——模型绕开工具、用 shell 干同一件事；分母：全部 `run/start` 的条数。' +
@@ -154,7 +155,7 @@ export function metricsOf(rows: readonly MergedRow[], range: MetricsRange = {}):
     switch (e.t) {
       case 'llm/call': {
         calls += 1
-        if (e.toolCount === 0) zeroCalls += 1
+        if (e.invocations === 0) zeroCalls += 1
         if ((e.usage.cacheReadTokens ?? 0) > 0) cachedCalls += 1
         for (const [who, n] of waiting) waiting.set(who, n + 1)
         break
