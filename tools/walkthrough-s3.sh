@@ -56,10 +56,16 @@ leaf() { printf '%s/.fugue/mat/%s' "$WORK" "$1"; }
 merged_of() { printf '%s/merged' "$(leaf "$1")"; }
 
 # 一份 --json 里那一行长这样：{"merged":"…","strategy":"overlayfs",…}
+#
+# **打印与返回的都是那条命令的退出码**：打印出来给人看（`RC=$(json_run …)`），返回给 `par` 里
+# 那一路（落进 `.code`）。只打印不返回的话，包在外面的 `printf` 让函数返回值恒 0，于是"四路并发
+# 都退 0"这条 check 永远绿——哪怕 `fork` 当场失败（实测：那一趟退 2，而这条报 0）。
 json_run() { # json_run <out 文件> <args…>
   out=$1; shift
   node "$FUGUE" --root "$WORK" --json "$@" >"$out" 2>"$out.err"
-  printf '%s' "$?"
+  c=$?
+  printf '%s' "$c"
+  return "$c"
 }
 
 # 全树摘要：路径 · 模式 · 内容哈希。**与 W2 的断言同一条尺子**（scanTree 的同一份实现）。
@@ -138,7 +144,7 @@ done
 
 # ── 三 · 四路并发 fork ────────────────────────────────────────────────────
 printf '\n══ 二 · 四路并发 fork ══\n'
-do_fork() { printf '%s' "$(json_run "$OUT/fork-$(label "$1").json" --agent "$1" fork "$BASE")"; }
+do_fork() { json_run "$OUT/fork-$(label "$1").json" --agent "$1" fork "$BASE" >/dev/null; }
 par fork do_fork
 STRATEGY=''
 for a in $AGENTS; do
@@ -174,7 +180,7 @@ printf '  改动：每人 own/<标签>.txt 与 src/a.ts 各一条 · agent/r1/1 
 
 # ── 五 · 四路并发 ensure ──────────────────────────────────────────────────
 printf '\n══ 四 · 四路并发 ensure ══\n'
-do_ensure() { printf '%s' "$(json_run "$OUT/ensure-$(label "$1").json" --agent "$1" ensure)"; }
+do_ensure() { json_run "$OUT/ensure-$(label "$1").json" --agent "$1" ensure >/dev/null; }
 par ensure do_ensure
 for a in $AGENTS; do
   lbl=$(label "$a")
