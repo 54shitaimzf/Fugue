@@ -7,25 +7,14 @@
 // **这里只声明，不装配。** 渲染与拼接在 Z1，段的源在 Z4。这一份的产出就是那两个值加一条
 // 载入时的核对：**两份声明的段的域必须恰好等于区表的域**——多一段少一段都只是字节不同，
 // 没有别的报错，所以它必须是当场炸，不能等。
+//
+// **工具名的定义处不在这里**，在 src/capability/table.ts（架构 § 8.10 的工具目录 · § 8.9 的
+// 能力表以它为键）。这一份只声明协议值，所以它读那一处，不另立一份：两份名字表不一致时，
+// 前缀字节只是不同，没有别的报错。转发一行是为了让 Z0 的消费者（探针 · 走查）不必改 import。
+export { TOOL_NAMES } from '../capability/table.ts'
+import { TOOL_NAMES } from '../capability/table.ts'
 import type { Protocol, RendererId, SegmentId, Zone } from './contract.ts'
 import { HOLDER_B, ZONE_SEGMENTS } from './contract.ts'
-
-/**
- * 工具目录的名字（架构 § 8.10 那张目录逐字，十五个）。
- *
- * **名字住在这里，schema 不住在这里**：schema 由 `M9` 的工具目录给（Z3），位置的解释权在
- * 提供方。这一份只回答"这一轮的协议声明了哪些名字"——`fugue assemble` 印的就是它。
- */
-export const TOOL_NAMES: readonly string[] = [
-  'read', 'write', 'edit', 'read_image',
-  'bash',
-  'glob', 'grep',
-  'todo_write',
-  'subagent', 'list_agents', 'send_message',
-  'ask_user_question',
-  'exit_plan_mode',
-  'checkpoint', 'run_action',
-]
 
 /**
  * 每段的渲染规则（架构 § 8.11 的 `renderers`）。
