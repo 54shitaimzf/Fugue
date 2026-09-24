@@ -277,3 +277,313 @@ for (const [name, m] of Object.entries(MODEL_DECLS)) {
 if (mismatch.length > 0) {
   throw new Error(`模型声明与它的投影对不上：\n  ${mismatch.join('\n  ')}`)
 }
+
+// ── B1 · 调用的边界（冻结接口点）────────────────────────────────────────────────
+//
+// 出处：架构 § 14.2 那六步里的第 2 步（`resp = llm.call(prefix, tools = M9.schema())`）·
+// § 10.1（内部 `Protocol` 保持规范形状，适配器只做翻译）· § 10.2 的必固四条 · § 8.10（工具
+// schema 的形状与硬纪律 2）· § 8.15（用量四个数是"钱"那一侧的读数）。PLAN § 5.8 的 `B1`。
+//
+// **这一份冻结的是三个世界之间的那道边界**：左边是装配出来的三区字节，右边是线协议上的
+// 请求与事件，两个适配器 · 循环 · 夹具 · 录制全押在下面这几个形状上。
+//
+// **`ModelRequest` 是**值**，不是一次发送。** 它里面没有 host · 没有凭据 · 没有线协议的名字：
+// 三样都属于"怎么送出去"，归 `B2` 的适配器与 `B3` 的传输（架构 § 10.1 的四层里，这里是**传输**
+// 那一层的边界）。所以断言 ④"凭据的值不出现在请求体里"不是靠自觉，是**签名里没有那个位置**。
+//
+// **三区就是稳定性等级**（架构 § 8.11），所以请求里也按区带着：`zones.A` 跨 N 个 agent 全等 ·
+// 相邻两步只有 `zones.C` 变。适配器把它们拼成自己那边的形状（`system` 那一条放 A 区，历史放
+// B 区，最新那一段放 C 区），而**区与区的分界是装配的结论，不是适配器的选择**。
+//
+// **事件流是唯一一份"一次调用发生了什么"。** `usage` 可以**没有**（流式请求里提供方常常不带），
+// 那时它就是"没有读数"——**不拿 0 顶**（PLAN § 5.8 的 `B1` 断言 ②）：0 是一个真实的值（缓存
+// 写入 0 · 输出 0），与"没量到"必须分得开，否则 `B7` 的 `prefix-hit-rate` 会把"没量到"算成 0%。
+
+/** 用量。**四个数是"钱"那一侧的读数**（架构 § 8.15 的 `prefix-hit-rate` 读它）。 */
+export interface Usage {
+  /** 输入里**没命中**缓存的那一部分。 */
+  readonly inputTokens: number | null
+  /** 命中缓存、按折扣计价的那一部分（Anthropic 系的 `cache_read_input_tokens` 那一档）。 */
+  readonly cacheReadTokens: number | null
+  /** 这次调用**写进**缓存的那一部分（有断点的协议才有这一项；隐式缓存的那条线上是 `null`）。 */
+  readonly cacheWriteTokens: number | null
+  readonly outputTokens: number | null
+  /** 提供方自己的结束原因，原样带过来（不是我们那套 `StopReason`）。 */
+  readonly rawStop: string | null
+  /** 提供方报的模型名——**它可能与声明的 `model` 不同**（别名 · 路由），所以两个都留着。 */
+  readonly model: string | null
+}
+
+/**
+ * **用量的四个数**：架构 § 8.15 与 § 14.2 说的"用量的四个数"就是这四个（缓存命中率那个指标的
+ * 全部输入）。名字一处，报错的话与读数表读的是同一串。
+ */
+export const USAGE_COUNTS: readonly (keyof Usage)[] = [
+  'inputTokens',
+  'cacheReadTokens',
+  'cacheWriteTokens',
+  'outputTokens',
+]
+
+/**
+ * 这一栏的全部字段：四个数 + 提供方自己的结束原因 + 它报的模型名。后两样不是用量，是**读数旁边
+ * 的两个坐标**（一个是"为什么停"的原始说法，一个是"它说它是谁"）——分开列，是为了让"四个数"
+ * 这句话有一处指得出来，而不是被这两个坐标混进去变成六个。
+ */
+export const USAGE_FIELDS: readonly (keyof Usage)[] = [...USAGE_COUNTS, 'rawStop', 'model']
+
+/**
+ * 一段工具调用**收尾之前**的样子：参数是一串还没拼完的 JSON（线协议上它是分片流过来的）。
+ *
+ * `id` 允许是 `null`：两条线协议里，`tool_use` 那种带 id，而有些兼容实现不发 id。**不替它编一个**
+ * ——编出来的 id 会进日志，而日志是"模型做了什么"的账。
+ */
+export interface ToolCallDelta {
+  readonly index: number
+  readonly id: string | null
+  readonly name: string | null
+  readonly args: string
+}
+
+/** 一条收尾的工具调用。`arguments` 是**原样的参数 JSON 文本**（不在这里解析成对象）。 */
+export interface ToolCall {
+  readonly id: string | null
+  readonly name: string
+  readonly arguments: string
+}
+
+/**
+ * 一次调用为什么结束。**五种，不合成"结束了"**（PLAN § 5.8 的 `B4` 断言 ③ 要它们分得开）。
+ */
+export type StopReason =
+  | 'tool-calls'
+  | 'end-turn'
+  | 'max-tokens'
+  | 'stop-sequence'
+  | 'refusal'
+
+/** 五种结束原因在盘上的名字，一处。 */
+export const STOP_REASONS: readonly StopReason[] = ['tool-calls', 'end-turn', 'max-tokens', 'stop-sequence', 'refusal']
+
+/**
+ * 发给模型的一个请求。四个字段，**一个都不多**（PLAN § 5.8 的 `B1` 断言 ①）：
+ *
+ * - `model`：声明里**提供方那边**的名字（`ModelDecl.model`，不是我们这边的 `id`）。适配器拿它
+ *   填自己那边的 `model` 字段——一条记录里两个名字，一个是对内的键，一个是对外的名。
+ * - `zones`：三个区的字节，**按区带**（不是拼好的一条）。装配的结论（哪一段属于哪个稳定性等级）
+ *   在这一层仍然看得见，适配器不需要自己猜。
+ * - `tools`：工具 schema。**它是随请求走的那份数据**（架构 § 8.11 表外那一项：位置由提供方定），
+ *   所以它不在三区里，而是这里的一个字段。缺省 = 这次不带工具。
+ * - `call`：轮内固定的调用配置（架构 § 10.2 的必固四条之一）。
+ */
+export interface ModelRequest {
+  readonly model: WireModel
+  readonly zones: {
+    /** 跨 N 个 agent 逐字节相同的那一段（架构 § 8.11 的验证性质）。 */
+    readonly A: Uint8Array
+    /** 同一 agent 跨步稳定的那一段。 */
+    readonly B: Uint8Array
+    /** 只追加的那一段——相邻两步只有它变。 */
+    readonly C: Uint8Array
+  }
+  readonly tools?: readonly ToolEntry[]
+  readonly call?: {
+    readonly temperature?: number
+    readonly maxTokens?: number
+  }
+}
+
+/**
+ * 一次调用里流出来的事件。**六种，顺序有约束**（`checkEvents` 把约束写成一条会失败的检查）：
+ *
+ *   delta…（任意多条）  tool-start / tool-delta… / tool-call（可重复，按 `index` 交错）
+ *   usage（可以没有；给了就并进总账）  stop（**恰好一条，且是最后一条**）
+ *
+ * **文本增量与工具调用可以交错**——真实的两条线协议都允许，所以这里不假设先后。
+ */
+export type ModelEvent =
+  | { readonly t: 'delta'; readonly text: string }
+  | { readonly t: 'tool-start'; readonly index: number; readonly id: string | null; readonly name: string | null }
+  | { readonly t: 'tool-delta'; readonly index: number; readonly args: string }
+  | {
+      readonly t: 'tool-call'
+      readonly index: number
+      readonly id: string | null
+      readonly name: string
+      readonly arguments: string
+    }
+  /** 这一份**只是这一条事件报的那几个数**；没报的字段不在这里（并账见 `usageUpdate`）。 */
+  | { readonly t: 'usage'; readonly usage: Partial<Usage> }
+  | { readonly t: 'stop'; readonly reason: StopReason; readonly raw?: string }
+
+/** `USAGE_FIELDS` 里那几个数取到一个真值：`null` 与"这个键根本不在"都算没有读数。 */
+export function usageCount(u: Usage): number {
+  const one = (v: number | null | undefined): number => (typeof v === 'number' ? 1 : 0)
+  return one(u.inputTokens) + one(u.cacheReadTokens) + one(u.cacheWriteTokens) + one(u.outputTokens)
+}
+
+/** 一次调用积出来的东西。**`usage` 与 `stop` 的 `null` 是"没有读数"，不是 0**（见下面两条）。 */
+export interface ModelCall {
+  readonly text: string
+  readonly toolCalls: readonly ToolCall[]
+  /** `null` = 这一串事件里没有任何读数；字段为 `null` = 那一项没量到。**两级都不是 0。** */
+  readonly usage: Usage | null
+  /** `null` = 一个 `stop` 事件都没有（这一串事件是半截的）。 */
+  readonly stop: StopReason | null
+  /** 提供方自己的结束原因，原样带过来（没有就是 `null`）。 */
+  readonly rawStop: string | null
+}
+
+/** 事件序列不成立：次序乱了 · 少了收尾 · 多了收尾 · 数字不是整数 · 参数分片落在一个没开过的调用上。 */
+export class EventSequenceError extends Error {}
+
+/** 一条事件报的那几个数并进总账：**只覆盖它真的报了的字段**，别的保持原样（包括保持 `null`）。 */
+export function usageUpdate(prev: Usage | null, part: Partial<Usage>): Usage {
+  const base: Usage = prev ?? {
+    inputTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    outputTokens: null,
+    rawStop: null,
+    model: null,
+  }
+  const out: Record<string, unknown> = { ...base }
+  for (const [k, v] of Object.entries(part)) {
+    if (v !== undefined && v !== null) out[k] = v
+  }
+  return out as unknown as Usage
+}
+
+function isIndex(v: number): boolean {
+  return Number.isInteger(v) && v >= 0
+}
+
+/**
+ * 一串事件 → 一次调用的账。**顺序的约束在这一处**，五种坏法各抛一条带指路的话。
+ *
+ * 它是 `B3` 的两个适配器的共同出口：适配器负责"字节 → 事件"，这一份负责"事件 → 一次调用"。
+ * **两条线协议的差别到此为止**——所以"同一模型两个协议可比"这条验证（架构 § 20 S2）比的是
+ * 这里积出来的东西，不是上游那两串字节。
+ */
+export function checkEvents(events: readonly ModelEvent[]): ModelCall {
+  let text = ''
+  let usage: Usage | null = null
+  let rawStop: string | null = null
+  let stop: StopReason | null = null
+  /** `undefined` = 还没有 `stop`；一旦有了就不再接受任何事件（收尾只有一条，架构 § 14.2 第 2 步）。 */
+  let over: StopReason | undefined
+  const parts = new Map<number, { id: string | null; name: string | null; args: string }>()
+  const done: ToolCall[] = []
+
+  for (const [at, e] of events.entries()) {
+    if (over !== undefined) throw new EventSequenceError(`第 ${at} 条事件排在 \`stop\` 之后：一次调用的收尾只有一条（架构 § 14.2 的第 2 步）`)
+    switch (e.t) {
+      case 'delta':
+        if (typeof e.text !== 'string') throw new EventSequenceError(`第 ${at} 条 \`delta\` 的 text 不是字符串`)
+        text += e.text
+        break
+      case 'tool-start': {
+        if (!isIndex(e.index)) throw new EventSequenceError(`第 ${at} 条 \`tool-start\` 的 index 要是一个非负整数：${String(e.index)}`)
+        if (parts.has(e.index)) throw new EventSequenceError(`第 ${at} 条 \`tool-start\` 又开了一次已经在跑的 index ${e.index}`)
+        if (e.id !== null && (typeof e.id !== 'string' || e.id === '')) {
+          throw new EventSequenceError(`第 ${at} 条 \`tool-start\` 的 id 要么是 null（这条线协议不发 id），要么是一个非空字符串`)
+        }
+        if (e.name !== null && (typeof e.name !== 'string' || e.name === '')) {
+          throw new EventSequenceError(`第 ${at} 条 \`tool-start\` 的 name 要么是 null（分片里后到），要么是一个非空字符串`)
+        }
+        parts.set(e.index, { id: e.id, name: e.name, args: '' })
+        break
+      }
+      case 'tool-delta': {
+        if (!isIndex(e.index)) throw new EventSequenceError(`第 ${at} 条 \`tool-delta\` 的 index 要是一个非负整数：${String(e.index)}`)
+        const p = parts.get(e.index)
+        if (p === undefined) throw new EventSequenceError(`第 ${at} 条 \`tool-delta\` 落在一个没开过的 index ${e.index} 上（要先有 \`tool-start\`）`)
+        if (typeof e.args !== 'string') throw new EventSequenceError(`第 ${at} 条 \`tool-delta\` 的 args 不是字符串`)
+        parts.set(e.index, { id: p.id, name: p.name, args: p.args + e.args })
+        break
+      }
+      case 'tool-call': {
+        if (!isIndex(e.index)) throw new EventSequenceError(`第 ${at} 条 \`tool-call\` 的 index 要是一个非负整数：${String(e.index)}`)
+        if (typeof e.name !== 'string' || e.name === '') throw new EventSequenceError(`第 ${at} 条 \`tool-call\` 的 name 不能是空的`)
+        if (typeof e.arguments !== 'string') throw new EventSequenceError(`第 ${at} 条 \`tool-call\` 的 arguments 要是原样的参数 JSON 文本`)
+        // 两样都能是"收尾"：一直在分片的那一条（累下来的参数就是它）与整条到手的那一条。
+        // **两样都给了的话必须对得上**——对不上就是这一份账自己矛盾，报出来，不挑一个用。
+        const open = parts.get(e.index)
+        if (open === undefined) {
+          done.push({ id: e.id, name: e.name, arguments: e.arguments })
+        } else {
+          if (e.arguments !== '' && e.arguments !== open.args) {
+            throw new EventSequenceError(
+              `第 ${at} 条 \`tool-call\` 说这条路（index ${e.index}）在这一步收尾，可它的参数与分片累下来的那一串对不上：` +
+                `分片给了 ${open.args.length} 个字符，这一条给了 ${e.arguments.length} 个`,
+            )
+          }
+          done.push({ id: e.id, name: open.name ?? e.name, arguments: open.args })
+          parts.delete(e.index)
+        }
+        break
+      }
+      case 'usage': {
+        if (typeof e.usage !== 'object' || e.usage === null) throw new EventSequenceError(`第 ${at} 条 \`usage\` 要带一个对象`)
+        usage = usageUpdate(usage, e.usage)
+        break
+      }
+      case 'stop': {
+        if (!STOP_REASONS.includes(e.reason)) throw new EventSequenceError(`第 ${at} 条 \`stop\` 的 reason 没有这一种：${String(e.reason)}`)
+        stop = e.reason
+        over = e.reason
+        rawStop = typeof e.raw === 'string' ? e.raw : null
+        break
+      }
+      default: {
+        const never: never = e
+        throw new EventSequenceError(`没有这一种事件：${JSON.stringify(never)}`)
+      }
+    }
+  }
+
+  if (over === undefined) throw new EventSequenceError('这一串事件里没有 `stop`：一次调用的收尾必须恰好有一条（半截的响应不许当完整的用）')
+  if (parts.size > 0) {
+    const open = [...parts.keys()].join(' · ')
+    throw new EventSequenceError(`有 ${parts.size} 条工具调用开着没收尾（index ${open}）：分片拼完了要有 \`tool-call\``)
+  }
+  // `stop` 已经是一条 `stop` 事件给的（上面那次检查），所以这里的 `stop` 一定是那五种之一。
+  return { text, toolCalls: done, usage, stop: stop as StopReason, rawStop }
+}
+
+/** 把分片拼完的那几条工具调用取出来。**与 `checkEvents` 同一条实现**（一处，两个出口）。 */
+export function toolCallsIn(events: readonly ModelEvent[]): ToolCall[] {
+  return checkEvents(events).toolCalls
+}
+
+/** 一次调用停成了什么。**给循环判"还要不要再走一步"用**（`B4` 的三档 `StepOutcome`）。 */
+export function stopped(events: readonly ModelEvent[]): StopReason {
+  const stop = checkEvents(events).stop
+  if (stop === null) throw new EventSequenceError('这一串事件里没有 `stop`')
+  return stop
+}
+
+/**
+ * 一个请求的 JSON 文本：**键按字典序**（同 `render.ts` 的 `stableStringify` 那条口径）。
+ *
+ * 它是断言 ③ 的度量：**同一份状态装配两次，请求体逐字节相同**。对象字面量的键序是写下来的顺序，
+ * 而缓存要求的是**字节**——所以"逐字节相同"这句话得有一个确定的序列化才对得上。
+ */
+export function requestJson(r: ModelRequest): string {
+  const order = (v: unknown): unknown => {
+    if (v instanceof Uint8Array) return new TextDecoder().decode(v)
+    if (Array.isArray(v)) return v.map(order)
+    if (typeof v === 'object' && v !== null) {
+      const out: Record<string, unknown> = {}
+      for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+        const one = (v as Record<string, unknown>)[k]
+        // `undefined` 的那一栏**整个不出现**（不是 `null`）：`JSON.stringify` 就是这么做的，
+        // 而"这次不带工具"必须在字节上看得出来——写成 `null` 会让两条不同的请求长得一样。
+        if (one !== undefined) out[k] = order(one)
+      }
+      return out
+    }
+    return v
+  }
+  return JSON.stringify(order(r))
+}
