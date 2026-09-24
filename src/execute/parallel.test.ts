@@ -294,7 +294,7 @@ test('X3 ② · 无串扰：宿主那一侧的坐标两两不同，各自的坐�
   const jsons = res.map(cliJson)
   const child = res.map((r) => childJson(r.err))
 
-  // **两两不同的是宿主那一侧**（Y3 的批语第三处之后）：物化树 `merged` 与端口。家 · temp ·
+  // **两两不同的是宿主那一侧**：物化树 `merged` 与端口。家 · temp ·
   // XDG 那三条子进程看到的名字四个 agent **一样**（`/cache` `/tmp` `/cache/xdg-cache`），
   // 隔离落在"同一个名字绑到各自的缓存"上——那一条的读数在下面（各自的坐标里只有自己的号）。
   for (const k of ['merged', 'ports'] as const) {

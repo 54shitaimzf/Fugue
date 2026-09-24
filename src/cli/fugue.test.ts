@@ -259,13 +259,13 @@ test('拒绝与退出码：0 成功 · 1 做不成 · 2 用法错（§ 9.8 的�
   assert.equal(existsSync(join(root, '.fugue')), false, '用法错不该建出日志目录')
 })
 
-// ── S5 步骤审批下来的收口（Y7 的走查量到的那一处）──────────────────────────────
+// ── 走出工作区的路径：拒在围栏上，文案带指路（Y7 的走查量到的那一处）──────────────
 //
-// `read ../outside.txt` 与 `read /etc/passwd` 以前报在视图那一步的路径检查上（`view.pathOf` 的
-// `throw new Error`）：拒是拒了，**文案里没有去处**。架构 § 8.4 纪律 2 要求拒绝必须指路，而
-// S1 那道围栏（`fence.ts` 的 `Denied.message`）本来就带着那句原话——命令行没有从那条路走。
-// 现在四条写命令与读命令都在围栏上过一道，拒的时候报的是围栏那句话。
-test('路径走出工作区：拒在围栏上，文案带指路（S5 步骤审的收口）', async () => {
+// `read ../outside.txt` 与 `read /etc/passwd` 这一类输入在视图那一步的路径检查上（`view.pathOf`
+// 的 `throw new Error`）**拒得出，而文案里没有去处**。架构 § 8.4 纪律 2 要求拒绝必须指路，
+// 而那道围栏（`fence.ts` 的 `Denied.message`）本来就带着那句原话。四条写命令与两条读命令因此
+// 都在围栏上过一道，拒的时候报的是围栏那句话。
+test('路径走出工作区：拒在围栏上，文案带指路', async () => {
   const root = tmpRoot()
   const w = fugueStdin(root, 'hi\n', 'write', 'a.txt', '--stdin')
   assert.equal(w.code, 0, w.stderr)
@@ -296,8 +296,8 @@ test('路径走出工作区：拒在围栏上，文案带指路（S5 步骤审�
 
 // ── X0（S4 之前要收的那一处）──────────────────────────────────────────────────
 //
-// `fugue chmod <path> 700` 以前会落一条 `view/chmod` 而视图里那个路径的模式一个字没变：
-// **报出来的与做的不一致**（模式只认两档，见 § 8.3）。三条断言逐条对 PLAN § 5.3 尾的 X0 行。
+// 模式只认两档（§ 8.3），所以 `fugue chmod <path> 700` 这条命令要禁的是**落一条 `view/chmod` 而
+// 视图里那个路径的模式没变**——报出来的与做的不一致。三条断言逐条对 PLAN § 5.3 尾的 X0 行。
 
 /** 一条 git 命令：身份与时间戳钉死，全局/系统配置不参与（与 `concurrent.test.ts` 同一套）。 */
 function gitIn(cwd: string, args: readonly string[]): string {

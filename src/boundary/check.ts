@@ -91,7 +91,7 @@ export function checkReach(i: ReachCheckInput): Result<readonly RelPath[], Reach
         'missing-in-host',
         p,
         `boundary.reach 里这一条在宿主上不存在：${p}\n` +
-          `清单是**量出来的**（S5 站前的探针 f9ff1b7）：换机器、换工具链之后要跟着改，` +
+          `清单是**量出来的**：换机器、换工具链之后要跟着改，` +
           `比如 fugue config set boundary.reach '["/usr","/opt"]'。\n` +
           `不在这儿拦的话，这一趟报的是 bwrap 那句 "Can't find source path ${p}"——` +
           `它说的是"源找不到"，而真正要改的是这一栏。`,

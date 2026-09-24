@@ -77,7 +77,7 @@ console.log(JSON.stringify({
   devnull: t(() => writeFileSync('/dev/null', 'x')),
   home: t(() => writeFileSync(process.env.HOME + '/home.txt', 'x')),
   tmp: t(() => writeFileSync(process.env.TMPDIR + '/tmp.txt', 'x')),
-  // **同名不同地**（Y3 的批语第三处）：坐标的名字四个 agent 一样，落点各是各的——who.txt
+  // **同名不同地**：坐标的名字四个 agent 一样，落点各是各的——who.txt
   // 里写下自己的号，宿主那一侧读它就知道那一趟写进了哪一份缓存。（这里不能用反引号：
   // 这一段住在模板串里，一个反引号就把探针那一段截断了。）
   who: t(() => writeFileSync(process.env.HOME + '/who.txt', process.env.PORT ?? 'x')),
@@ -224,9 +224,9 @@ test('X1 ② · 树内四项全拒（errno 30），而树里其他位置一个�
 })
 
 test('X1 ③ · 四个 agent 的子进程看到同一套坐标，而那一套各自落在自己的缓存与 temp 上', () => {
-  // **这一条的形状随 Y3 的批语第三处改了**：坐标固定成 `/work` `/cache` `/tmp` 之后，四个
-  // agent 的子进程看到的名字**一模一样**（宿主布局不再漏进沙箱），隔离从"名字不同"落到"同一个
-  // 名字在宿主上是四处"——所以下面读的是**落点**：各自那份缓存里的 `who.txt` 各是各的号。
+  // 坐标固定成 `/work` `/cache` `/tmp` 之后，四个 agent 的子进程看到的名字**一模一样**（宿主布局
+  // 不再漏进沙箱），隔离从"名字不同"落到"同一个名字在宿主上是四处"——所以下面读的是**落点**：
+  // 各自那份缓存里的 `who.txt` 各是各的号。
   const agents = ['agent/r1/1', 'agent/r1/2', 'agent/r1/3', 'agent/r1/4']
   const w = workspace(agents)
   const ports: string[] = []

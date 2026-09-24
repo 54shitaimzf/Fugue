@@ -225,8 +225,8 @@ check "list-etc · 退码" "$RC" "0"
 check "沙箱里那份 /etc 就是清单那几条" "$(grep -v '^$' "$OUT/list-etc.json.err" | grep -v '^退出码 ' | tr '\n' ' ' | sed 's/ *$//')" ". .. alternatives ld.so.cache resolv.conf ssl"
 
 printf '  ── 虚拟侧（文件工具那一面：拒了，文案原样印出来）──\n'
-# 这两条走的是 S1 那道围栏（`resolveVirtual`）：拒的时候要把指路原样带出来——S5 步骤审之前
-# 它们报在视图那一步的路径检查上，拒是拒了，文案里没有去处。
+# 这两条走的是 S1 那道围栏（`resolveVirtual`）：拒的时候要把指路原样带出来（视图那一步的路径
+# 检查拒得出它们，可它的文案里没有去处）。
 for p in ../outside.txt /etc/passwd; do
   MSG=$(fugue --agent "$AGENT" read "$p" 2>&1 >/dev/null)
   RC=$?

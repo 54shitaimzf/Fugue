@@ -44,8 +44,8 @@ export const REACH_KEY = 'boundary.reach'
  * `/etc` 的三条（动态链接器缓存 · 证书 · `cc` 那条 alternatives）· 宿主根上那四条软链 ·
  * `/proc` 与 `/dev`。
  *
- * **第六项 `/etc/resolv.conf` 是 S5 步骤审批下来的**（Y5 那条"点名要网只给出网，不给名字"的收口）：
- * 前五项是"起得来"要的，它是"点名要网之后够得着名字"要的。分档量过（同一个工作区里改这一栏，再跑
+ * **第六项 `/etc/resolv.conf` 是"点名要网之后够得着名字"要的**：
+ * 前五项是"起得来"要的。分档量过（同一个工作区里改这一栏，再跑
  * 一个按域名连一次的动作）：缺省清单 `err:EAI_AGAIN` · **只并这一条** `dns=ok:104.20.23.154` 且
  * `https=ok:200`（连跑五遍五通）· `/etc/hosts` 与 `/etc/nsswitch.conf` **不必要**（名字解析走
  * glibc 的 `dns` 那一支，`files` 那一支缺 `/etc/hosts` 也不影响）· 缺省档（不点名要网）一个字节
@@ -64,7 +64,7 @@ export const DEFAULT_REACH: ReachSpec = {
 }
 
 /**
- * 沙箱里那三条坐标（PLAN § 5.5「站前要批的三处」的第 3 条）：树挂 `/work` · 家与缓存挂 `/cache` ·
+ * 沙箱里那三条坐标：树挂 `/work` · 家与缓存挂 `/cache` ·
  * temp 挂 `/tmp`。**它是"子进程看到的路径"**，与宿主那一侧一一对应（`mergedRoot(a)` ·
  * `cacheRoot(a)` · `tempRoot(a)`）。
  *
