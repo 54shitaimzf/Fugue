@@ -32,11 +32,11 @@ import { conflictCount, conflictTreeEntries, fold, refold } from '../merge/merge
 import type { FoldOutcome } from '../merge/merge.ts'
 import { commitThenAdvance, entriesOf, verify } from '../merge/accept.ts'
 import type { AdvanceResult, AssertionRunSpec, VerifyReport } from '../merge/accept.ts'
+import { refFor } from '../identity.ts'
 import { startRound } from './start.ts'
 import type { RoundStart, RoundStartDeps } from './start.ts'
 import { step } from './machine.ts'
 import type { Cause, RoundState } from './machine.ts'
-import { refFor } from '../identity.ts'
 import { baseFor } from '../view/lower.ts'
 
 /** 这一层自己的失败：某一步拒了（预检 · 漂移 · 冲突解不掉 · 验收不过）。**话原样带给调用点。** */
@@ -128,6 +128,13 @@ export interface RoundRunDeps extends Omit<RoundStartDeps, 'log'> {
    * 当场报出——**没有任何东西被静默**，只是同一件事报在哪一步。
    */
   readonly softMergeGate?: boolean
+  /**
+   * 合并之前那一下（**给走查用**）：轮次中有人手改了工作树时，那一次改动要落在"基线取完之后、
+   * 漂移检之前"这个窗口里。缺省什么都不做——真轮次里那个窗口是用户自己的手。
+   */
+  readonly beforeMerge?: () => Promise<void> | void
+  /** 漂移检跑完之后的读数口（**原始读数**：HEAD 动没动 · 脏路径 · 要写的路径 · 相交的那几条）。 */
+  readonly onDrift?: (d: DriftVerdict) => void
 }
 
 /**
@@ -176,6 +183,9 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
   // 折之前先记一笔尝试：`merge/attempt` 记的是"这次合并撞了几条路径"，而冲突那一档的最后一次
   // 尝试在下面（撞上时）单独落一条——两条各是各的读数。
   await log.append('round', { t: 'merge/attempt', round, branches: [] as never, conflicts: 0 })
+  // **轮次中的手改**：走查要量"手改一条会被这次合并覆盖的路径 → 拒"，而手改必须发生在
+  // **基线取完之后、合并之前**。这一处是那个位置的唯一入口（缺省什么都不做）。
+  if (deps.beforeMerge !== undefined) await deps.beforeMerge()
   let drift: DriftVerdict | null = null
   if (deps.checkDrift !== false) {
     drift = await mergeDrift({
@@ -185,6 +195,9 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
       baseline,
       mergePaths,
     })
+    // **三条读数原样报出来**：这一档的判据是"脏路径 ∩ 合并要写的路径"，两边的集合都要看得见，
+    // 否则拒了也说不清是哪一边空了。它走 `onDrift`（CLI 把它接到 stderr）。
+    deps.onDrift?.(drift)
     if (!drift.ok) throw new RoundRunError('drift', drift.say)
   }
 
@@ -254,6 +267,10 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
       tree: matDir,
       specs,
       commit: outcome.commit,
+      // **定格之后主线要挪到新提交**：不然工作树是新树、主线还指着轮次开始时的底，
+      // 下一轮读到的底就是旧的（走查量到过）。CAS 钉在轮次开始时的那个底上。
+      ref: refFor('round'),
+      refExpectedOld: started.base,
     })
 
     // 状态机那两步（A3）：**通过 → Committed；没过 → 回 Working 或 Aborted**。判决来自 `machine.ts`。

@@ -27,6 +27,7 @@ import { resultOf } from '../contract/types.ts'
 import { WORKSPACE_STATE } from '../materialize/diffstat.ts'
 import { treeOfCommit } from '../merge/merge.ts'
 import type { Truth } from '../truth/contract.ts'
+import type { RefName } from '../terms.ts'
 import type { TreeEntry } from '../entries.ts'
 
 /** 这一层自己的失败：验收跑不起来 · 推进时撞上写不动的东西。 */
@@ -274,6 +275,13 @@ export async function commitThenAdvance(deps: {
   /** 要定格的那个提交：`fold` 折出来的。 */
   readonly commit: CommitId
   readonly preserve?: readonly RelPath[]
+  /**
+   * 定格之后把**哪一条 ref** 挪到新提交（§ 4：持轮者那个位置在 git 侧的落点是 `refs/heads/main`）。
+   * 不给就不挪——"只推工作树、不推主线"在只读那几站是合法的形状。
+   */
+  readonly ref?: RefName
+  /** 挪 ref 时钉住的旧值（CAS）：轮次开始时钉住的那个底。给了就要求它没被别人动过。 */
+  readonly refExpectedOld?: CommitId
 }): Promise<AcceptOutcome> {
   const report = verify(deps.tree, deps.specs)
   if (!report.ok) {
@@ -281,6 +289,9 @@ export async function commitThenAdvance(deps: {
     return { report }
   }
   const advanced = await advance({ truth: deps.truth, realRoot: deps.realRoot, ...(deps.preserve === undefined ? {} : { preserve: deps.preserve }) }, deps.commit)
+  // **顺序即不变量**（PLAN § 5.7 的 A6）：验收 → 推进真实工作树 → 挪主线。挪 ref 放在最后，
+  // 因为它是唯一一步"挪了就不回头"的：前面任何一步没过，主线仍指着轮次开始时的底。
+  if (deps.ref !== undefined) await deps.truth.advance(deps.ref, deps.commit, deps.refExpectedOld ?? null)
   return { report, commit: deps.commit, advanced }
 }
 

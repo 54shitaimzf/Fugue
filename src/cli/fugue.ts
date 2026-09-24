@@ -8,7 +8,7 @@
 // **语义不在这里**：一次变更的顺序与校验住在 `src/view/edit.ts`，提交住在
 // `src/checkpoint.ts`——两个都是跨层接线（§ 7），这里只是它们的一个人侧入口。
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkMountPoints, checkReach } from '../boundary/check.ts'
@@ -87,7 +87,6 @@ import type { AssertionRunSpec } from '../merge/accept.ts'
 import { entriesOf } from '../merge/accept.ts'
 import type { Assertion } from '../contract/types.ts'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { computeAll, reportOf } from '../probe/round.ts'
 
@@ -190,6 +189,7 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              --retry <n>  Verifying → Working 那条回边允许走几次（缺省 0）
                              --report     印打回那三个数（从日志重算，不采集）
                              --materialize 起头时把 N 棵树也铺出来（缺省不铺）
+                             --poke <路径>  **在合并之前手改一条路径**（走查要量漂移那一条）
                              --soft-merge-gate 合并前那一档预检的严宽拉平到 Planning 那一档
                              （缺省是报出即拒——合并不可逆）；真冲突仍由折叠当场报出，不静默
   verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
@@ -235,7 +235,7 @@ interface Parsed {
  */
 const VALUED: ReadonlySet<string> = new Set([
   'root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro', 'step', 'mode', 'against',
-  'split', 'fail', 'retry',
+  'split', 'fail', 'retry', 'poke',
 ])
 
 function parseArgv(argv: readonly string[]): Parsed {
@@ -637,9 +637,14 @@ async function roundCmd(
       if (started.forks.length === 0) {
         process.stderr.write('物化没有铺（架构 § 14.1 的 deferMaterialize：走按需物化）；要现在铺就加 --materialize\n')
       }
+      // **不交时也印这一行**：走查里第一条验证的负对照就是"同一把尺子报 0 对"——
+      // 不印的话那一档与"预检压根没跑"在读数上分不开（都是没有这一行）。
+      process.stderr.write(`写入集预检：${writeSetPaths(started.built.contracts).length} 条路径 · ${started.precheck.lines.length} 对相交`)
       if (started.precheck.lines.length > 0) {
-        process.stderr.write(`写入集有 ${started.precheck.lines.length} 对相交，照发：\n`)
+        process.stderr.write('，照发：\n')
         for (const l of started.precheck.lines) process.stderr.write(`  ${l}\n`)
+      } else {
+        process.stderr.write('\n')
       }
     }
     return 0
@@ -704,6 +709,8 @@ async function roundRun(
   // `--soft-merge-gate` 把它拉平到 `Planning` 那一档（报出、照发）——真冲突由折叠当场报出，
   // 不静默。走查要撞出折叠里那一次冲突，就得走这一档（两份契约的写入面相交时，硬那一档先拦）。
   const softMergeGate = flags.has('soft-merge-gate')
+  // `--poke <路径>`：**在合并之前手改一条路径**（走查要量漂移那一条）。不给就什么都不做。
+  const poke = typeof flags.get('poke') === 'string' ? (flags.get('poke') as string) : undefined
 
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   try {
@@ -721,7 +728,9 @@ async function roundRun(
         const covers = (a: string, b: string): boolean => a === b || b.startsWith(`${a}/`)
         const isPrefix = surface.some((q) => surface.some((r) => r !== q && covers(q, r)))
         const where = surface.find((q) => !isPrefix || !surface.some((r) => r !== q && covers(q, r) && r !== q)) ?? `stub-${agents.indexOf(agent) + 1}`
-        const files: Record<string, string> = { [where]: `（打桩）${agent} 改了 ${where}\n` }
+        // 内容带上契约的 id：**两份契约改同一条路径时，两条分支的那一条内容不同**——否则
+        // "相对底改了哪些路径"算出来是空的（内容一样 = 与底一样）。
+        const files: Record<string, string> = { [where]: `（打桩）${c.id} 改了 ${where}\n` }
         const entries = []
         for (const [path, text] of Object.entries(files)) {
           const id = await ctx.truth.putBlob(new TextEncoder().encode(text))
@@ -765,6 +774,25 @@ async function roundRun(
       specsOf,
       retriesLeft,
       softMergeGate,
+      onDrift: (d) => {
+        process.stderr.write(
+          `漂移检：HEAD ${d.drift.headMoved ? '动了' : '没动'} · 脏路径 [${d.drift.dirty.join(' · ')}] · ` +
+            `这次合并要写 [${d.drift.mergePaths.join(' · ')}] · 相交 [${d.drift.colliding.join(' · ')}]\n`,
+        )
+      },
+      ...(poke === undefined
+        ? {}
+        : {
+            beforeMerge: () => {
+              const abs = join(ctx.roots.realRoot, poke)
+              mkdirSync(join(abs, '..'), { recursive: true })
+              const before = existsSync(abs) ? statSync(abs).size : -1
+              appendFileSync(abs, `轮次中有人手改了这条：${poke}\n`)
+              process.stderr.write(
+                `--poke ${poke}：${abs}（${before} → ${statSync(abs).size} 字节）· realRoot=${ctx.roots.realRoot}\n`,
+              )
+            },
+          }),
     })
 
     // `--deny`：**真让内核拒一次写**，把那一趟记成 `run/end`。三个数里第三个的来源就是这一条
@@ -910,9 +938,19 @@ function readAssertions(doc: ConfigDoc): AssertionSpec[] {
   })
 }
 
+/** 这一轮几份契约一共占了多少条路径（读数的分母，与判决无关）。 */
+function writeSetPaths(contracts: readonly Contract[]): string[] {
+  const all = new Set<string>()
+  for (const c of contracts) {
+    const paths = c.kind === 'implement' ? c.ownedPaths : c.kind === 'resolve' ? c.conflictPaths : []
+    for (const p of paths) all.add(p)
+  }
+  return [...all]
+}
+
 /** 那几面 `--fail`/`--deny`/`--retry` 的开关：不给就是 `undefined`（"没要求"），给了要是个正整数。 */
 function numberOf(v: string | true | undefined): number | undefined {
-  if (v === undefined || v === true) return v === true ? undefined : undefined
+  if (v === undefined || v === true) return undefined
   const n = Number(v)
   return Number.isInteger(n) && n > 0 ? n : undefined
 }
