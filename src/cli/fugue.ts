@@ -80,6 +80,16 @@ import { stateWithState } from '../assemble/sources-state.ts'
 import { loadView } from '../view/view.ts'
 import type { SplitAssignment } from '../contract/build.ts'
 import { RoundStartError, startRound } from '../round/start.ts'
+import { RoundRunError, materializeCommit, runRound } from '../round/execute.ts'
+import type { Stub } from '../round/execute.ts'
+import type { Contract } from '../contract/types.ts'
+import type { AssertionRunSpec } from '../merge/accept.ts'
+import { entriesOf } from '../merge/accept.ts'
+import type { Assertion } from '../contract/types.ts'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { computeAll, reportOf } from '../probe/round.ts'
 
 const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 
@@ -163,6 +173,25 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              **物化缺省不做**（架构 § 14.1 的 deferMaterialize：走按需物化）。
                              给 --materialize 就把 N 棵树也铺出来——那一步落的是 mat/fork 事件，
                              每条分支一份，落在**那个 agent 自己的日志**里。
+  round run <目标> [--report] [--fail <n>] [--deny <n>] [--retry <n>] [--materialize]
+                             跑一个完整的轮次（架构 § 20 S7 的可用性那一句）：
+                             起头（钉底 · 造契约 · Planning 预检 · 发契约 · 起分支）→ 每个 agent
+                             干一格（**模型这一侧今天是打桩的**，PLAN § 5.7 的"不在这一站里的"
+                             第一行）→ 合并前兜底预检（报出即拒）→ 漂移检 → 逐路折叠（撞上冲突
+                             就物化冲突树、交给解决者、重折）→ 验收（跑在**物化出来的那棵树上**）
+                             → 通过才定格 + 推进（没过则真实工作树一个字节不动）。
+                             断言从工作区配置里读：round.assertions 那一栏
+                               fugue config set round.assertions '[{"name":"测试全过","argv":["/bin/sh","-c","true"]}]'
+                             每一条断言在**合并之后那棵树上**跑：argv 起真进程，退出码等于
+                             expect（缺省 0）算过。"命令不在 / 退出码 127"那一类判成**跑不起来**
+                             ——它不进打回计数，单独成一栏（架构 § 8.12 末段）。
+                             --fail <n>   让第 n 个 agent 交一个"必然失败"的提交（走查要撞红）
+                             --deny <n>   第 n 个 agent 的格子里多跑一条必然被拒的动作
+                             --retry <n>  Verifying → Working 那条回边允许走几次（缺省 0）
+                             --report     印打回那三个数（从日志重算，不采集）
+                             --materialize 起头时把 N 棵树也铺出来（缺省不铺）
+                             --soft-merge-gate 合并前那一档预检的严宽拉平到 Planning 那一档
+                             （缺省是报出即拒——合并不可逆）；真冲突仍由折叠当场报出，不静默
   verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
                              里那几条，三者两两相等，并报 materialize-precision（§ 8.15 的比值）。
                              不等就退 1——**只报不修**（§ 8.5 的失败处理是删除重建）
@@ -206,7 +235,7 @@ interface Parsed {
  */
 const VALUED: ReadonlySet<string> = new Set([
   'root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro', 'step', 'mode', 'against',
-  'split',
+  'split', 'fail', 'retry',
 ])
 
 function parseArgv(argv: readonly string[]): Parsed {
@@ -620,6 +649,279 @@ async function roundCmd(
   } finally {
     await ctx.close()
   }
+}
+
+/**
+ * `fugue round run <目标>`：**一条命令跑完一个轮次**（架构 § 20 S7 的可用性 · PLAN § 5.7 的收口
+ * 第一条）。这一层只做三件事：把配置读成"拆分草案 + 断言"两栏 · 给打桩一个形状 · 把读数排成两列。
+ *
+ * 轮次本身的顺序住在 `src/round/execute.ts`，验收住 `src/merge/accept.ts`，折叠住
+ * `src/merge/merge.ts`——这一层不认识状态机、不认识契约的形状、不认识冲突。
+ *
+ * **模型那一侧今天是打桩的**（PLAN § 5.7 的"不在这一站里的"第一行）。打桩的形状是：每个 agent
+ * 在它自己的底上造一棵树、落一个提交——一份契约一个提交。`--fail n` 让第 n 个交一棵"必然不满足
+ * 断言"的树（走查要撞红那一次），`--deny n` 让第 n 个的格子里多跑一条必然被拒的动作。
+ */
+async function roundRun(
+  root: string,
+  flags: Map<string, string | true>,
+  args: string[],
+  json: boolean,
+): Promise<number> {
+  const goal = args[0]
+  if (goal === undefined || goal === '') return usageFail('round run 需要 <目标>：轮级意图的那一句')
+
+  let doc: ConfigDoc
+  let split: SplitAssignment[]
+  let assertions: AssertionSpec[]
+  try {
+    doc = await readConfig(root)
+    split = readSplit(doc, flags.get('split'))
+    assertions = readAssertions(doc)
+  } catch (err) {
+    if (err instanceof RoundStartError) return fail(err.message)
+    if (err instanceof ConfigError) return fail(err.message)
+    throw err
+  }
+  if (split.length === 0) return usageFail('这一轮一份拆分草案都没有：配置里的 round.split 是空的')
+  if (assertions.length === 0) {
+    return usageFail(
+      '一条断言都没有：零条会让「打回率低」这句话没有分母（PLAN § 5.7 的地板第二档）\n' +
+        `加一条：fugue --root ${root} config set round.assertions '[{"name":"测试全过","argv":["/bin/sh","-c","true"]}]'`,
+    )
+  }
+
+  const rawRound = getConfig(doc, 'round.id')
+  const round = typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1'
+  const agents: AgentId[] = split.map((_, i) => `agent/${round}/${i + 1}` as AgentId)
+  const branchOf = (a: AgentId): BranchId => `agent/${a}` as BranchId
+  // `--fail <断言名>`：把配置里**那一条**断言换成必然失败的一条。撞不上就什么都不做——这一档是
+  // "走查要撞红"，不是"让这一趟注定失败"。
+  const failTarget = typeof flags.get('fail') === 'string' ? (flags.get('fail') as string) : undefined
+  const retriesLeft = numberOf(flags.get('retry')) ?? 0
+  const deny = flags.has('deny')
+  // 合并前那一档预检的严宽：**缺省报出即拒**（不可逆点，A2 的 `mergeGate`）。
+  // `--soft-merge-gate` 把它拉平到 `Planning` 那一档（报出、照发）——真冲突由折叠当场报出，
+  // 不静默。走查要撞出折叠里那一次冲突，就得走这一档（两份契约的写入面相交时，硬那一档先拦）。
+  const softMergeGate = flags.has('soft-merge-gate')
+
+  const ctx = await openCtx(root, flags, { sync: 'each', write: true })
+  try {
+    const stub: Stub = {
+      run: async (agent, c, base, hint) => {
+        // **解决那一格走另一条路**：把冲突路径上的内容**收敛到下一折那一路**（`hint.nextBranch`），
+        // 于是下一折的逐文件比对什么都看不到——折得下去。这是"逐路折叠"这条路的真实形状。
+        if (c.kind === 'resolve' && hint !== undefined) {
+          const inherited = new Map((await entriesOf(ctx.truth, hint.nextBranch)).map((e) => [e.name, e]))
+          return ctx.truth.commit(await ctx.truth.putTree([...inherited.values()]), [base], `（打桩·解冲突：收敛到下一折那一路）${agent}`)
+        }
+        // **打桩改的是"这一份契约的写入面里第一条真路径"**：写入面里有两条时第一条往往是目录、
+        // 第二条是它底下的文件。这样"撞不撞车"由拆分草案决定（走查要拿它撞一次），打桩自己不猜。
+        const surface: readonly string[] = c.kind === 'implement' ? c.ownedPaths : c.kind === 'resolve' ? c.conflictPaths : [`evidence-${agents.indexOf(agent) + 1}`]
+        const covers = (a: string, b: string): boolean => a === b || b.startsWith(`${a}/`)
+        const isPrefix = surface.some((q) => surface.some((r) => r !== q && covers(q, r)))
+        const where = surface.find((q) => !isPrefix || !surface.some((r) => r !== q && covers(q, r) && r !== q)) ?? `stub-${agents.indexOf(agent) + 1}`
+        const files: Record<string, string> = { [where]: `（打桩）${agent} 改了 ${where}\n` }
+        const entries = []
+        for (const [path, text] of Object.entries(files)) {
+          const id = await ctx.truth.putBlob(new TextEncoder().encode(text))
+          entries.push({ name: path, mode: 0o100644, id })
+        }
+        // 新树 = 底那棵树 + 这一格的改动（打桩不删、只加改）。
+        const inherited = await entriesOf(ctx.truth, base)
+        const merged = new Map(inherited.map((e) => [e.name, e]))
+        for (const e of entries) merged.set(e.name, e)
+        return ctx.truth.commit(await ctx.truth.putTree([...merged.values()]), [base], `（打桩）${agent}`)
+      },
+    }
+
+    const specsOf = (c: Contract, agent: AgentId): readonly AssertionRunSpec[] => {
+      void c
+      void agent
+      return assertions.map((a) => {
+        const fail = failTarget !== undefined && a.name === failTarget
+        return {
+          assertion: { action: a.name, name: a.name, expect: a.expect } as Assertion,
+          argv: fail ? ['/bin/sh', '-c', 'exit 1'] : a.argv,
+          env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/tmp' },
+        }
+      })
+    }
+
+    const started = await runRound({
+      roots: ctx.roots,
+      truth: ctx.truth,
+      log: ctx.log,
+      logOf: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
+      round,
+      intent: { goal },
+      split,
+      agents,
+      branchOf,
+      seedOf: () => [] as readonly RelPath[],
+      logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
+      materialize: flags.has('materialize'),
+      stub,
+      specsOf,
+      retriesLeft,
+      softMergeGate,
+    })
+
+    // `--deny`：**真让内核拒一次写**，把那一趟记成 `run/end`。三个数里第三个的来源就是这一条
+    // 事件；而这一跑要给的是一个**真的**被拒，不是一个自己写的 `denied: true`。
+    let deniedAction: { agent: AgentId; exit: number; denied: boolean; note: string } | null = null
+    if (deny) {
+      const agent = agents[0]
+      if (agent === undefined) return usageFail('--deny：这一轮一个 agent 都没有')
+      const r = await refuseOneWrite(ctx.truth, started.base, 'round-deny-')
+      deniedAction = { agent, exit: r.exit, denied: r.denied, note: r.note }
+      const agentLog = openLog(root, { write: agent as WriterId, sync: 'each' })
+      try {
+        await agentLog.append(agent as WriterId, {
+          t: 'run/end',
+          agent,
+          step: 'deny',
+          exit: r.exit,
+          ms: 0,
+          denied: r.denied,
+        })
+      } finally {
+        await agentLog.close()
+      }
+    }
+
+    // 打回那三个数：**从日志重算**（架构 § 8.15）。同一份日志算两次同值——所以 `--report` 印的
+    // 就是刚才那一趟跑出来的那份日志。
+    const readings = await computeAll(() => ctx.log.readMerged(), { round })
+    const report = reportOf({ round }, readings)
+
+    if (json) {
+      emitJson({
+        round: started.round,
+        base: started.base,
+        state: started.state,
+        contracts: started.started.built.contracts.map((c) => ({ id: c.id, agent: c.agent, kind: c.kind })),
+        precheckPlanning: started.precheckPlanning,
+        precheckMerge: started.precheckMerge,
+        drift: started.drift === null ? null : { ok: started.drift.ok, dirty: started.drift.dirty, colliding: started.drift.colliding },
+        fold: started.fold.kind === 'folded' ? { kind: 'folded', steps: started.fold.steps } : { kind: 'conflict' },
+        conflictTree: started.conflictTree,
+        verify: { pass: started.report.pass, fail: started.report.fail, unrunnable: started.report.unrunnable, ok: started.report.ok },
+        assertions: started.report.results,
+        advanced: started.advanced === null ? null : { written: started.advanced.written, removed: started.advanced.removed, skipped: started.advanced.skipped },
+        deniedAction,
+        metrics: report.readings,
+      })
+    } else {
+      emitLine(`${started.round}\t${started.base}\t${started.state}`)
+      emitLine(`  契约 ${started.started.built.contracts.length} 份：${started.started.built.contracts.map((c) => c.id).join(' · ')}`)
+      emitLine(`  预检：Planning ${started.precheckPlanning} 对 · 合并前 ${started.precheckMerge.count} 对`)
+      emitLine(`  折叠：${started.fold.kind === 'folded' ? `折了 ${started.fold.steps} 步` : '停在冲突上'}`)
+      emitLine(`  验收：通过 ${started.report.pass} · 没通过 ${started.report.fail} · 跑不起来 ${started.report.unrunnable}`)
+      if (started.advanced !== null) {
+        emitLine(`  推进：写 ${started.advanced.written.length} 条 · 删 ${started.advanced.removed.length} 条 · 跳过 ${started.advanced.skipped.length} 条`)
+      } else {
+        emitLine('  推进：没有（验收没过——真实工作树一个字节都没动）')
+      }
+      if (deniedAction !== null) emitLine(`  被拒的动作：exit ${deniedAction.exit} · denied=${String(deniedAction.denied)}（${deniedAction.note}）`)
+      if (flags.has('report')) {
+        emitLine('打回读数（从日志重算，不采集）：')
+        for (const l of report.lines) emitLine(`  ${l}`)
+      }
+      if (!started.report.ok) {
+        for (const r of started.report.results.filter((x) => x.verdict !== 'pass')) {
+          process.stderr.write(`${r.verdict}\t${r.assertion}\t${r.note}\n`)
+        }
+      }
+    }
+    // 没通过那一档：退出码 1（**不是用法错**：这一趟真的跑了，只是没通过）。
+    return started.report.ok ? 0 : 1
+  } catch (err) {
+    if (err instanceof RoundRunError) return fail(`${err.at}：${err.message}`)
+    if (err instanceof RoundStartError) return fail(err.message)
+    throw err
+  } finally {
+    await ctx.close()
+  }
+}
+
+/**
+ * **真让内核拒一次写。** 把那棵树设成只读，再往树里一条**已经存在的文件**追加一个字节——
+ * `open(O_APPEND)` 拿 EROFS / EACCES，退出码非零，stderr 上是内核那句话。
+ *
+ * `denied` 是**读出来的**（`exec.ts` 读 stderr 上的拒绝签名，与 `run/end` 那一栏同一个口径），
+ * 所以这一处读的也是 stderr，**不自己写一个 `denied: true`**。
+ */
+async function refuseOneWrite(
+  truth: TruthHandle,
+  commit: CommitId,
+  prefix: string,
+): Promise<{ exit: number; denied: boolean; note: string }> {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  await materializeCommit(truth, commit, dir)
+  const victim = join(dir, (await entriesOf(truth, commit))[0]?.name ?? 'x')
+  const readOnly = (p: string): void => {
+    chmodSync(p, 0o444)
+  }
+  try {
+    readOnly(victim)
+    const r = spawnSync('/bin/sh', ['-c', `printf x >> ${JSON.stringify(victim)}`], { encoding: 'utf8' })
+    const stderr = r.stderr ?? ''
+    const denied = (r.status ?? 1) !== 0 && /read-only|Read-only|EROFS|Permission denied|Permission denied/i.test(stderr)
+    return {
+      exit: r.status ?? 1,
+      denied,
+      note: denied ? `内核拒了这次写（${stderr.trim().split('\n')[0] ?? ''}）` : `写入没被拒（stderr：${stderr.trim().slice(0, 80)}）`,
+    }
+  } finally {
+    chmodSync(victim, 0o644)
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/** 配置里的一条断言：`{ name, argv, expect?, where? }`。**它与契约的 `Assertion` 是两个形状**
+ * （那一份只有动作名），所以这一步是"动作名 → 命令行"翻译的落点，而今天它读的是配置。 */
+interface AssertionSpec {
+  readonly name: string
+  readonly argv: readonly string[]
+  readonly expect: number
+}
+
+/** 读配置里的断言那一栏。**解析不了就拒**，不当成"没有断言"（那会让轮次静默地没有判据）。 */
+function readAssertions(doc: ConfigDoc): AssertionSpec[] {
+  const v = getConfig(doc, 'round.assertions')
+  if (v === undefined) return []
+  const list = typeof v === 'string' ? JSON.parse(v) : v
+  if (!Array.isArray(list)) throw new RoundStartError('round.assertions 要是一个数组')
+  return list.map((raw, i) => {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new RoundStartError(`第 ${i + 1} 条断言要是一个对象`)
+    }
+    const o = raw as Record<string, unknown>
+    if (typeof o.name !== 'string' || o.name === '') throw new RoundStartError(`第 ${i + 1} 条断言缺 name`)
+    if (!Array.isArray(o.argv) || o.argv.length === 0 || !o.argv.every((x) => typeof x === 'string')) {
+      throw new RoundStartError(`第 ${i + 1} 条断言的 argv 要是一个非空的字符串数组`)
+    }
+    const expect = o.expect === undefined ? 0 : o.expect
+    if (typeof expect !== 'number' || !Number.isInteger(expect)) {
+      throw new RoundStartError(`第 ${i + 1} 条断言的 expect 要是一个整数`)
+    }
+    return { name: o.name, argv: o.argv as readonly string[], expect }
+  })
+}
+
+/** 那几面 `--fail`/`--deny`/`--retry` 的开关：不给就是 `undefined`（"没要求"），给了要是个正整数。 */
+function numberOf(v: string | true | undefined): number | undefined {
+  if (v === undefined || v === true) return v === true ? undefined : undefined
+  const n = Number(v)
+  return Number.isInteger(n) && n > 0 ? n : undefined
+}
+
+/** 把一个提交铺到一个临时目录里——`--deny` 那一档要在真盘上试一次写入。 */
+async function scratchTree(truth: TruthHandle, commit: CommitId): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), 'fugue-round-deny-'))
+  await materializeCommit(truth, commit, dir)
+  return dir
 }
 
 /** 契约要写哪儿，给那一行印出来（三种来源各自那一份）。 */
@@ -1716,9 +2018,13 @@ async function run(argv: readonly string[]): Promise<number> {
   // 分出去改的是 ref（真源那一侧），不建视图、不读日志——所以它排在建视图的命令之前。
   if (cmd === 'branch') return await branchCmd(root, flags, positional.slice(1), json)
 
-  // 轮次那一条自己开上下文（它要 truth 与 log 两个句柄、还要写日志），排在通用视图之前：
+  // 轮次那一组自己开上下文（它要 truth 与 log 两个句柄、还要写日志），排在通用视图之前：
   // 它的参数与其他命令不共用。
-  if (cmd === 'round') return await roundCmd(root, flags, positional.slice(1), json)
+  if (cmd === 'round') {
+    const sub = positional[1]
+    if (sub === 'run') return await roundRun(root, flags, positional.slice(2), json)
+    return await roundCmd(root, flags, positional.slice(1), json)
+  }
 
   // 配置不建视图、不读日志：它是工作区的输入，不是它的状态（§ 15.3.a 末段）。
   if (cmd === 'config') return await config(root, positional.slice(1), json)

@@ -1,0 +1,386 @@
+// 一个完整轮次：**拆分 → 并行 → 合并 → 验收**（架构 § 20 S7 的可用性那一句）。出处：
+// § 8.13 的状态图（每一步都是一条转移）· § 8.14 的七步 · § 8.12 的第一次预检 ·
+// PLAN § 5.7 的 A8 行与"收口四样"第一条。
+//
+// **这一份是接线，不是机制。** 它把前面七份按架构那张图的顺序串起来：
+//
+//   `startRound`（A4：钉底 · 造契约 · 预检 · 发契约 · 起分支）
+//     → 每个 agent 一格（模型那一侧今天是打桩的，见下面那条"打桩"）
+//     → `mergeGate`（A2 的第二个调用点：合并前兜底，报出即拒）
+//     → `mergeDrift`（A7：HEAD 动了或会被覆盖的手改 → 拒）
+//     → `fold`（A5：逐路折叠，冲突就停下）
+//     → `verify`（A6：跑在物化出来的那棵树上）
+//     → `commitThenAdvance`（A6：通过才定格 + 推进；没过 → 真实工作树一个字节不动）
+//
+// **打桩在哪里，说清楚。** 这一步的"每个 agent 干一格活"今天是**打桩**的：真模型要 S8
+// （PLAN § 5.7 的"不在这一站里的"第一行）。打桩的形状是 `stub` —— 一个收契约、给一个提交的
+// 函数。**它与真模型的差别只有"谁来改那棵树"**：契约 · 分支 · 提交 · 折叠 · 验收全都不变，
+// 所以这一条命令从打桩换到真模型时，动的只有 `stub` 那一个参数。
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { Log } from '../log/events.ts'
+import type { Roots } from '../roots/contract.ts'
+import type { Truth } from '../truth/contract.ts'
+import type { AgentId, BranchId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../terms.ts'
+import type { Built, Intent, SplitAssignment } from '../contract/build.ts'
+import type { Contract } from '../contract/types.ts'
+import { mergeGate, precheck } from '../contract/precheck.ts'
+import { baselineOf, mergeDrift } from '../merge/drift.ts'
+import type { DriftVerdict } from '../merge/drift.ts'
+import { conflictCount, conflictTreeEntries, fold, refold } from '../merge/merge.ts'
+import type { FoldOutcome } from '../merge/merge.ts'
+import { commitThenAdvance, entriesOf, verify } from '../merge/accept.ts'
+import type { AdvanceResult, AssertionRunSpec, VerifyReport } from '../merge/accept.ts'
+import { startRound } from './start.ts'
+import type { RoundStart, RoundStartDeps } from './start.ts'
+import { step } from './machine.ts'
+import type { Cause, RoundState } from './machine.ts'
+import { refFor } from '../identity.ts'
+import { baseFor } from '../view/lower.ts'
+
+/** 这一层自己的失败：某一步拒了（预检 · 漂移 · 冲突解不掉 · 验收不过）。**话原样带给调用点。** */
+export class RoundRunError extends Error {
+  /** 拒在哪一步。**给报告与走查用**：`planning` · `drift` · `merge` · `accept`。 */
+  readonly at: string
+
+  constructor(at: string, why: string) {
+    super(why)
+    this.name = 'RoundRunError'
+    this.at = at
+  }
+}
+
+/**
+ * 模型那一侧今天长什么样：**一份打桩**。它收一份契约与它的底，给一个提交。
+ *
+ * 打桩的形状定在这里（而不是在 CLI 里）是因为它是这一条命令的一个**参数**：换成真模型时，
+ * 换的是这个函数，其余一个字不动（架构 § 14.1 的 `SpawnKit` 那七步里的"跑"那一段）。
+ */
+export interface ResolveHint {
+  /** 那几条冲突路径。 */
+  readonly conflictPaths: readonly RelPath[]
+  /**
+   * **下一折要折进来的那一路。**
+   *
+   * 为什么它在这一份提示里：折叠是**逐路**的，撞上冲突时手上那个累积提交（`folded`）是
+   * "已经折好的那几路与底"的合并结果，而下一折会把 `rest[0]` 与它再合一次。所以解决那一笔
+   * 只要让冲突路径上的内容**收敛到 `rest[0]` 那一侧**，下一折的逐文件比对就什么都看不到——
+   * 折得下去。目标取另一侧（`folded`）的话下一折照样报同一个冲突（`rest[0]` 相对底的改动还在，
+   * 而 `folded` 里那一条与它不同）——**这是逐路折叠这条路的真实形状**，不是这一份的取舍。
+   */
+  readonly nextBranch: CommitId
+}
+
+export interface Stub {
+  /** 一个 agent 干完它那一格，给一个提交。`hint` 是"冲突要往哪边收"（只有解决那一格有）。 */
+  run(agent: AgentId, contract: Contract, base: CommitId, hint?: ResolveHint): Promise<CommitId>
+}
+
+/** 一次轮次跑完之后的全部读数。**它是"A8 收口"那条命令的返回值**，也是走查印的东西。 */
+export interface RoundRun {
+  readonly round: RoundId
+  readonly base: CommitId
+  readonly started: RoundStart
+  /** 每个 agent 交的那个提交（按契约顺序）。 */
+  readonly work: Readonly<Record<ContractId, CommitId>>
+  readonly precheckPlanning: number
+  readonly precheckMerge: { readonly ok: boolean; readonly count: number }
+  readonly drift: DriftVerdict | null
+  readonly fold: FoldOutcome
+  /** 冲突那一档才有：物化出来的冲突树（那份 `TreeEntry[]`）。 */
+  readonly conflictTree: { readonly paths: readonly RelPath[]; readonly entries: number } | null
+  readonly report: VerifyReport
+  readonly advanced: AdvanceResult | null
+  /** 走到的最后一个状态。**通过就停在 `Committed`，没过就回 `Working`**（架构 § 8.13 那两条边）。 */
+  readonly state: RoundState
+}
+
+export interface RoundRunDeps extends Omit<RoundStartDeps, 'log'> {
+  readonly log: Log
+  /**
+   * 某个 agent 自己的日志口。**`ckpt/commit` 是那个 agent 自己落的**（§ 8.1 的事件里 `agent`
+   * 那一栏就是它），而持轮者那条句柄握着 `round` 的栅栏——一次命令一个 writer（`hold.ts` 那条
+   * 禁令要防的是"同一个 writer 的序号被两个进程领到"）。所以每落一条开一个口、落完就关。
+   */
+  readonly logOf: (a: AgentId) => Log
+  /** 合并前那一档要读 HEAD，所以要一个 `Truth`（`startRound` 那一份已经够了）。 */
+  readonly stub: Stub
+  /** 验收要跑的那几条（已经包好的命令行）。**按契约给**：`contractOf` 给哪几份就跑哪几条。 */
+  readonly specsOf: (c: Contract, agent: AgentId) => readonly AssertionRunSpec[]
+  /** 要不要在合并前判漂移（缺省判）。判的时候用的是**轮次开始时那份基线**。 */
+  readonly checkDrift?: boolean
+  /**
+   * `Verifying → Working` 那条回边还允许走几次（架构 § 8.13 图上那两条分叉：没通过 ∧ 未超界 → 回
+   * `Working` · 没通过 ∧ 超界 → `Aborted`）。**缺省 0**：没通过就 `Aborted`。
+   *
+   * 这一条命令今天**不真的重跑失败的那几支**（重跑要重新派发，归 A4 起头那一段），所以它判的是
+   * "这一次没通过之后该往哪条边走"——走回边的次数就是打回读数的第二个数。
+   */
+  readonly retriesLeft?: number
+  /**
+   * 合并前那一档预检的严宽。**缺省 `false`：报出即拒**（`mergeGate`——合并是不可逆点，兜底那
+   * 一侧 fail-closed，架构 § 8.12 的第二次预检）。给 `true` 就把它拉平到 `Planning` 那一档：
+   * **报出来、照发**。
+   *
+   * 这一档存在的理由是走查：两份契约的写入面相交时（`Planning` 那一档的口径是报出照发），
+   * 硬那一档会先拦住合并，于是"折叠里真撞出一次冲突"这件事走不到。拉平之后，真冲突由 `fold`
+   * 当场报出——**没有任何东西被静默**，只是同一件事报在哪一步。
+   */
+  readonly softMergeGate?: boolean
+}
+
+/**
+ * 跑一个完整的轮次。**每一步都留下读数**：预检报了几对 · 漂移判了什么 · 折了几步 · 三档各几条。
+ *
+ * 顺序是承重的，逐条指得出出处：
+ *   1. `startRound` —— 钉底 · 造契约 · `Planning` 预检 · 发契约 · 起分支（架构 § 8.13 的三步）
+ *   2. 每个 agent 一格（打桩）
+ *   3. **合并前兜底预检**（架构 § 8.12：第二次预检，报出即拒——合并是不可逆点）
+ *   4. **漂移检**（架构 § 8.14 的 C7：HEAD 动了或会被覆盖的手改 → 拒）
+ *   5. `fold` —— 逐路折叠（A5）；**冲突就停在冲突环的第一步**
+ *   6. `verify` —— 跑在物化出来的那棵树上（A6）
+ *   7. `commitThenAdvance` —— 通过才定格 + 推进（A6 那句"顺序即不变量"）
+ */
+export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
+  const { roots, truth, log, round } = deps
+
+  // 一 · 起头。基线在钉底那一刻取一次——**它就是漂移检的另一半输入**（A7 那句"由调用方在钉底
+  // 那一刻取一次带下来"）。
+  const baseline = baselineOf(roots.realRoot)
+  const started = await startRound(deps)
+
+  // 二 · 每个 agent 一格。契约按顺序，底是钉住的那一个——**每条分支的底相同**，所以一个 agent
+  // 交上来的提交可以直接拿去折（它的父是 base）。
+  const work: Record<ContractId, CommitId> = {}
+  for (const c of started.built.contracts) {
+    const agent = c.agent as AgentId
+    const commit = await deps.stub.run(agent, c, started.base)
+    work[c.id] = commit
+    await withAgentLog(deps.logOf, agent, (l) =>
+      l.append(agent as WriterId, { t: 'ckpt/commit', agent, commit, rev: 1, msg: `（打桩）${c.id}` }),
+    )
+  }
+
+  // 三 · 合并前那一次预检：**兜底那一侧报出即拒**（架构 § 8.12 的第二次预检）。
+  const mergeCheck = mergeGate(started.built.contracts)
+  if (!mergeCheck.ok && deps.softMergeGate !== true) {
+    throw new RoundRunError('merge', `合并前的写入集预检不放行：\n  ${mergeCheck.result.lines.join('\n  ')}`)
+  }
+
+  // 四 · 漂移检（A7）。**合并不可逆，所以这一档 fail-closed。**
+  const foldable = started.built.contracts
+    .filter((c) => c.kind !== 'investigate')
+    .map((c) => work[c.id] as CommitId)
+  const mergePaths = await writeSurfaceOf(truth, started.base, foldable)
+  // 折之前先记一笔尝试：`merge/attempt` 记的是"这次合并撞了几条路径"，而冲突那一档的最后一次
+  // 尝试在下面（撞上时）单独落一条——两条各是各的读数。
+  await log.append('round', { t: 'merge/attempt', round, branches: [] as never, conflicts: 0 })
+  let drift: DriftVerdict | null = null
+  if (deps.checkDrift !== false) {
+    drift = await mergeDrift({
+      truth,
+      realRoot: roots.realRoot,
+      base: started.base,
+      baseline,
+      mergePaths,
+    })
+    if (!drift.ok) throw new RoundRunError('drift', drift.say)
+  }
+
+  // 五 · 逐路折叠（A5）。一路的情况折 0 次（地板那一档）——`fold` 里那一圈从 i=1 起就是这个意思。
+  const folded = await fold({ truth, msgOf: (i) => `${round} 折叠第 ${i} 步` }, foldable)
+  let outcome: FoldOutcome = folded
+  let conflictTree: RoundRun['conflictTree'] = null
+  let resolvedContract: Contract | null = null
+  if (outcome.kind === 'conflict') {
+    // 冲突环的第一步：物化冲突树，把它交给"解决者"（打桩那一侧）。**这一份不替它判该留哪一段。**
+    const { entries } = await conflictTreeEntries(truth, outcome.folded, outcome.conflicts)
+    conflictTree = { paths: outcome.conflicts.map((c) => c.path), entries: entries.length }
+    // 给解决者的那一份契约值：**它不进 `contract/issue`**（那是 A4 发出去的那四份），它是"折到
+    // 这一步才知道"的那一份——`conflictPaths` 就是实际冲突集，`base` 是冲突报告给的那棵树
+    // （架构 § 8.12 那张表的最后两行）。解决完它要跟着重折，所以也进 `work`。
+    resolvedContract = resolveContractOf(started.built.contracts, outcome.conflicts.map((c) => c.path), outcome.folded)
+    const nextBranch = outcome.rest[0]
+    if (nextBranch === undefined) throw new RoundRunError('merge', '撞上冲突却没有下一折——折叠表不成立')
+    const resolved = await deps.stub.run(resolvedContract.agent as AgentId, resolvedContract, outcome.folded, {
+      conflictPaths: outcome.conflicts.map((c) => c.path),
+      nextBranch,
+    })
+    work[resolvedContract.id] = resolved
+    await withAgentLog(deps.logOf, resolvedContract.agent as AgentId, (l) =>
+      l.append(resolvedContract.agent as WriterId, {
+        t: 'ckpt/commit',
+        agent: resolvedContract.agent as AgentId,
+        commit: resolved,
+        rev: 1,
+        msg: `（打桩·解冲突）${resolvedContract.id}`,
+      }),
+    )
+    await log.append('round', {
+      t: 'merge/attempt',
+      round,
+      branches: foldable as never,
+      conflicts: conflictCount(outcome.conflicts),
+    })
+    outcome = await refold(
+      { truth, msgOf: (i) => `${round} 重折第 ${i} 步` },
+      outcome,
+      resolved,
+      outcome.conflicts.map((c) => c.path),
+    )
+    if (outcome.kind === 'conflict') {
+      throw new RoundRunError(
+        'merge',
+        `重折之后仍然冲突：${outcome.conflicts.map((c) => c.path).join(' · ')}（冲突环一轮没解掉）`,
+      )
+    }
+  }
+
+  // 六 · 验收：**跑在物化出来的那棵树上**（架构 § 8.14 第 5 步）。
+  const matDir = mkdtempSync(join(tmpdir(), 'fugue-round-verify-'))
+  try {
+    await materializeCommit(truth, outcome.commit, matDir)
+    const specs: AssertionRunSpec[] = []
+    for (const c of started.built.contracts) specs.push(...deps.specsOf(c, c.agent as AgentId))
+    // 冲突解决那一份也要验：它是这一轮里真的干了活的一份，跳过它等于验收少了一条。
+    if (resolvedContract !== null) specs.push(...deps.specsOf(resolvedContract, resolvedContract.agent as AgentId))
+    const report = verify(matDir, specs)
+
+    // 七 · 通过才定格 + 推进（A6）。没过时 `commitThenAdvance` 提前返回——**真实工作树一个字节不动**。
+    const accepted = await commitThenAdvance({
+      truth,
+      realRoot: roots.realRoot,
+      tree: matDir,
+      specs,
+      commit: outcome.commit,
+    })
+
+    // 状态机那两步（A3）：**通过 → Committed；没过 → 回 Working 或 Aborted**。判决来自 `machine.ts`。
+    // **回边还是超界**：`retriesLeft` 由调用方给（`--retry <n>`），缺省 0 —— 也就是"没通过就
+    // `Aborted`"。这一档进 `round/state`，A8 的第二个数数的就是这条回边。
+    const retriesLeft = deps.retriesLeft ?? 0
+    let state: RoundState = 'Verifying'
+    if (accepted.report.ok) {
+      state = step(state, 'verdict-pass')
+      state = step(state, 'advanced')
+    } else {
+      const cause: Cause = retriesLeft > 0 ? 'verdict-fail' : 'retry-exceeded'
+      state = step(state, cause, cause === 'verdict-fail' ? { retryLeft: true } : {})
+    }
+    await log.append('round', { t: 'round/state', round, from: 'Verifying', to: state })
+    if (accepted.commit !== undefined) {
+      await log.append('round', {
+        t: 'merge/accept',
+        round,
+        commit: accepted.commit,
+        assertions: accepted.report.results.map((r) => ({ assertion: r.assertion, verdict: r.verdict })),
+      })
+    }
+
+    return {
+      round,
+      base: started.base,
+      started,
+      work,
+      precheckPlanning: started.precheck.intersections.length,
+      precheckMerge: { ok: mergeCheck.ok, count: mergeCheck.result.intersections.length },
+      drift,
+      fold: outcome,
+      conflictTree,
+      report: accepted.report,
+      advanced: accepted.advanced ?? null,
+      state,
+    }
+  } finally {
+    rmSync(matDir, { recursive: true, force: true })
+  }
+}
+
+/** 开一个 agent 的口、落一条、关掉。**每一条都新开**：句柄持有那个 writer 的栅栏，而这一条
+ * 命令可能同时要给好几个 agent 落事件——一次只握一个。 */
+async function withAgentLog<T>(logOf: (a: AgentId) => Log, a: AgentId, fn: (l: Log) => Promise<T>): Promise<T> {
+  const l = logOf(a)
+  try {
+    return await fn(l)
+  } finally {
+    await (l as { close?: () => Promise<void> }).close?.()
+  }
+}
+
+/** 折出来的那一份要写的路径集：折过的每一路相对 `base` 的差异集的并集。 */
+async function writeSurfaceOf(truth: Truth, base: CommitId, commits: readonly CommitId[]): Promise<RelPath[]> {
+  const out = new Set<RelPath>()
+  for (const c of commits) {
+    for (const e of await entriesOf(truth, c)) {
+      const atBase = await truth.statAt(base, e.name)
+      if (atBase === null || atBase.id !== e.id || atBase.mode !== e.mode) out.add(e.name)
+    }
+  }
+  return [...out].sort()
+}
+
+/** 冲突时给"解决者"的那份契约值。**它不是构造器造的那一份**（那一份要提前知道冲突），
+ * 而是"折到这一步才知道"的那一份——所以形状照 `resolve` 变体给，`conflictPaths` 就是实际冲突集。 */
+function resolveContractOf(contracts: readonly Contract[], conflictPaths: readonly RelPath[], base: CommitId): Contract {
+  const first = contracts[0]
+  return {
+    kind: 'resolve',
+    id: `${first?.id ?? 'r1'}#resolve`,
+    agent: (first?.agent ?? 'round') as AgentId,
+    branch: (first?.branch ?? 'agent/round/0') as BranchId,
+    goal: `解掉这些路径上的冲突：${conflictPaths.join(' · ')}`,
+    base,
+    conflictPaths: [...conflictPaths],
+    assertions: first === undefined || first.kind === 'investigate' ? [] : [...first.assertions],
+  }
+}
+
+/**
+ * 把一个提交的条目落到一个目录里（**验收跑在哪棵树上**）。**它不是 `advance`**：
+ * `advance` 推的是真实工作树、还要算差异与删多余；这一处只是"把这棵树铺出来给验收跑"。
+ */
+export async function materializeCommit(truth: Truth, commit: CommitId, dir: string): Promise<void> {
+  mkdirSync(dir, { recursive: true })
+  for (const e of await entriesOf(truth, commit)) {
+    const abs = join(dir, e.name)
+    mkdirSync(join(abs, '..'), { recursive: true })
+    const bytes = (await truth.getBlob(e.id as never)) as Uint8Array
+    if (e.mode === 0o120000) {
+      rmSync(abs, { force: true })
+      symlinkSync(new TextDecoder().decode(bytes), abs)
+      continue
+    }
+    writeFileSync(abs, bytes)
+    chmodSync(abs, e.mode & 0o7777)
+  }
+}
+
+/** 一个提交的冲突条数——`merge/attempt` 那条事件要它（A5 的 `onAttempt` 已经算过一遍）。 */
+export function conflictsOf(o: Extract<FoldOutcome, { kind: 'conflict' }>): number {
+  return conflictCount(o.conflicts)
+}
+
+/** 折起来的那个提交（`folded` 那一支）——给报告印。 */
+export function commitOfOutcome(o: FoldOutcome): CommitId {
+  return o.kind === 'folded' ? o.commit : o.folded
+}
+
+/** 预检那一条的读数（`Planning` 那一次与合并前那一次各一份）——**两处同一个函数**。 */
+export function precheckOf(contracts: readonly Contract[]): { readonly count: number; readonly lines: readonly string[] } {
+  const r = precheck(contracts)
+  return { count: r.intersections.length, lines: r.lines }
+}
+
+/** 一个 agent 的分支头（走查与报告要印）。 */
+export async function headOf(truth: Truth, agent: AgentId): Promise<CommitId | null> {
+  return baseFor(truth, agent as WriterId)
+}
+
+/** 那个 agent 的分支 ref 名（印出来给人看）。 */
+export function refOf(agent: AgentId): string {
+  return refFor(agent as WriterId)
+}
+
+/** `Intent` 与 `SplitAssignment` 从这一份再导出一次：调用点（CLI）不必同时 import 两个模块。 */
+export type { Intent, SplitAssignment, Built, Contract }
