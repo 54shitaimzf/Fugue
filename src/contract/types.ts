@@ -1,7 +1,7 @@
 // M11 的三个形状与那份核对清单。出处：架构 § 8.12（三种契约的字段表 · 值域持有者表 ·
 // 可验性的三级分工）· 架构 § 14.6（`verifyGate` 的两个消费者）· 架构 § 23 U9（S7 的 A0 关掉它）。
 //
-// **A0 只定形状，不造值。** 这一份里没有一件事会去造契约——构造是 A1（`build.ts`）、相交是 A2
+// **A0 只定造，不造值。** 这一份里没有一件事会去造契约——构造是 A1（`build.ts`）、相交是 A2
 // （`precheck.ts`）。U9 是这一站的**入口条件**，与 S6 的 U7 同一个位置：三个形状不补齐，后面
 // 八个单元对"一条断言"各写各的，而"打回率"这个读数连分母都没有。
 //
@@ -272,12 +272,16 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
     check: (v) => pathArrayField(v, 'seed', upperBoundField),
   },
 
+  // 留空是合法的：**"这一份没有交付物"与"这份契约没声明交付物"是两件事**，
+  // 而后者是 `kind` 那一级的事（`investigate` 与 `resolve` 压根没有这一格）。
+  // 交不交得出东西，判据是 `assertions`——那一格非空。
   deliverables: {
     holder: '工作区配置',
-    check: (v) => listProblem(v, 'deliverables', deliverableProblem, { nonEmpty: true }),
+    check: (v) => listProblem(v, 'deliverables', deliverableProblem),
   },
-  // `assertions` 留空是合法的：**验收门只剩一条断言那一档**从"零条"开始就没有下限了，
-  // 而"零条"会让「打回率低」这句话没有分母。所以这一格非空（PLAN § 5.7 的地板第二档）。
+  // 这一格非空：**"验收门只剩一条断言"那一档有下限，下限是一条**——零条会让
+  // 「打回率低」这句话没有分母。地板那一档说的是"只剩一条"，不是"一条都没有"
+  // （PLAN § 5.7 的地板第二档）。
   assertions: {
     holder: '工作区配置（候选）· 验证门（可执行性）',
     check: (v) => listProblem(v, 'assertions', assertionProblem, { nonEmpty: true }),
