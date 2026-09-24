@@ -450,6 +450,12 @@ export const HANDOFF_MARGIN = 16_000
  */
 export interface ContractContext {
   readonly seedLimit?: number
+  /**
+   * 模型的上界。**由调用方从模型声明里取**（`src/model/contract.ts` 的 `contextLimit`，S8 的
+   * `B0` 起它有了真值）：这一份不认识模型目录，认识它就会把 `contract/` 与那一层绑在一起。
+   * 不给就走 `DEFAULT_MODEL_LIMIT`——那是这一份的缺省，不是任何一个模型的声明。
+   */
+  readonly modelLimit?: number
   readonly seedBytes?: (paths: readonly RelPath[]) => number
   /** 字节数的算法：UTF-8 的字节。`Buffer` 在宿主上，`TextEncoder` 在两处都在。 */
   readonly limitNote?: string
@@ -458,7 +464,7 @@ export interface ContractContext {
 /** `seed` 那一条：总字节 ≤ 模型上限 − Zone A − 交接余量（架构 § 8.12 的两条准则共用一个上界）。 */
 export function seedLimitOf(ctx: ContractContext): number {
   if (ctx.seedLimit !== undefined) return ctx.seedLimit
-  return DEFAULT_MODEL_LIMIT - ZONE_A_BUDGET - HANDOFF_MARGIN
+  return (ctx.modelLimit ?? DEFAULT_MODEL_LIMIT) - ZONE_A_BUDGET - HANDOFF_MARGIN
 }
 
 /**
@@ -507,7 +513,9 @@ export function checkContract(c: Contract, ctx: ContractContext = {}): ContractI
       issues.push(`seed：没判超限——这一跑没给 seedBytes（缺省上限 ${seedLimitOf(ctx)} 字节）`)
     } else {
       const limit = seedLimitOf(ctx)
-      if (bytes > limit) issues.push(`seed：${bytes} 字节超过上限 ${limit} 字节——超限要拒绝派发，不裁剪后照发`)
+      if (bytes > limit) {
+        issues.push(`seed：${bytes} 字节超过上限 ${limit} 字节——超 ${bytes - limit} 字节，超限要拒绝派发，不裁剪后照发`)
+      }
     }
   }
   return issues

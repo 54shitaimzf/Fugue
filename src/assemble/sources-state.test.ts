@@ -170,3 +170,26 @@ function fixtureRoot(tag: string): string {
   mkdirSync(join(root, '.fugue'), { recursive: true })
   return root
 }
+
+test('⑥ 地板那一档：配置里一栏都没有时，系统状态不投影出 undefined，A 区照样装得出', () => {
+  const root = fixtureRoot('empty')
+  try {
+    // ① 段值里一个 undefined 都没有：有的话 `json` 渲染器会抛（那是"跑不起来"，不是地板）。
+    const sys = projectConfig({}) as Record<string, unknown>
+    assert.deepEqual(Object.values(sys).filter((v) => v === undefined), [], '空配置投影出了 undefined')
+    assert.deepEqual(sys['entries'], [])
+    assert.deepEqual(Object.keys(sys), ['entries'], '空配置下只该有 entries 那一栏')
+
+    // ② 装配照跑，而且没有把字面量 `undefined` 拼进前缀。负对照：真把 undefined 拼进去过。
+    const { segs, a } = assembleA({}, root, AGENTS[0] as AgentCoord)
+    assert.ok(a.length === 16, '空配置下 A 区照样出得来哈希')
+    const rendered = JSON.stringify(segs['系统状态'])
+    assert.ok(!rendered.includes('undefined'), `系统状态里出现了字面量 undefined：${rendered}`)
+    assert.equal(rendered, '{"entries":[]}', `空配置下那一段就是 entries 那一栏：${rendered}`)
+
+    // ③ 空配置与配全了的 A 区**不同**：这两条读数不是同一个值（否则上面那条是恒等式）。
+    assert.notEqual(a, assembleA(CONFIG, root, AGENTS[0] as AgentCoord).a, '空配置与配全了的 A 区居然相同')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

@@ -8,13 +8,18 @@
 // **它是声明值，不是分支。** 架构 § 10.3 的判据：适配器里出现 `if (model === 'x')` 就是漏了
 // 一个声明式字段。所以这一份里只有常量表与查表，没有一行按名字分岔的逻辑。
 //
-// **今天这一份是打桩的。** 真实模型目录属于 S8（选型在架构 § 10.3，接模型在架构 § 20 的 S8），
-// 这一站只要求"有一个值能走通装配"，所以下面那一条是**占位名**，`contextLimit` 取的是这一档
-// 常见量级。换真模型时改的是这张表的值，`ModelDecl` 的类型与读它的那一处都不动。
-import type { ModelId } from './contract.ts'
+// **占位表在这一站撤掉了（S8 的 B0）。** 真的那份住 `src/model/contract.ts`（PLAN § 5.8）：
+// 那里有 `provider` · `wire` · `model`（发给谁 · 走哪条线 · 那边叫什么）与凭据的引用。装配
+// 这四样一个都不读，所以这一份拿的是它的**投影** `PREFIX_MODELS`——四个字段（名字 · 系统提示词
+// 的更新方式 · 上限 · 调用配置），键域与声明表同域，载入时核对。
+//
+// **一份记录，两个面。** 上面那一段与这一段说的是同一件事：`fugue assemble` 读到的模型与
+// `B2` 的适配器读到的模型不是两份数据。改一个模型的上限，改的是 `src/model/contract.ts` 那一行。
+import { DEFAULT_MODEL as DECLARED_DEFAULT, MODEL_DECLS, PREFIX_MODELS, modelDeclOf, prefixDeclOf } from '../model/contract.ts'
+import type { ModelDecl as ModelDeclaration } from '../model/contract.ts'
 
 /**
- * 一个模型的声明。
+ * 一个模型的声明（前缀那一侧的那四个字段）。
  *
  * `systemPromptUpdate` 的两行逐字来自架构 § 8.11 那张"模型的声明 → C 怎么增长"的表：
  * `'in-history'` 是"把历史中任意位置最新的 `system` 消息读作有效系统提示词"（于是 C 的变化
@@ -23,40 +28,29 @@ import type { ModelId } from './contract.ts'
  * 这一份只回答"这个模型声明了哪一种"。
  *
  * `call` 只要求**轮内固定**（§ 10.2 的必固四条之一）：它没有位置，所以不进前缀。
+ *
+ * **它是一条子集关系，不是第二份定义**：`Pick<ModelDecl, …>`——往声明里加一个前缀那一侧要读的
+ * 字段，忘了投影就编译不过。
  */
-export interface ModelDecl {
-  readonly id: ModelId
-  readonly systemPromptUpdate: 'in-history' | 'rewrite-head'
-  readonly contextLimit: number
-  readonly call: {
-    readonly temperature?: number
-    readonly maxTokens?: number
-  }
-}
+export type ModelDecl = Pick<ModelDeclaration, 'id' | 'systemPromptUpdate' | 'contextLimit' | 'call'>
 
-/** 缺省模型。占位名——真目录在 S8。 */
-export const DEFAULT_MODEL: ModelDecl = {
-  id: 'fugue-default' as ModelId,
-  systemPromptUpdate: 'in-history',
-  contextLimit: 200_000,
-  call: { temperature: 0.2 },
-}
+/** 缺省模型：声明表的第一条（Messages 优先，架构 § 10.3）。 */
+export const DEFAULT_MODEL: ModelDecl = prefixDeclOf(DECLARED_DEFAULT)
 
 /** 常量表：名字 → 声明。与 `PROTOCOLS` 同一种查法（`fugue assemble --model <id>` 读它）。 */
-export const MODELS: Readonly<Record<string, ModelDecl>> = {
-  [DEFAULT_MODEL.id]: DEFAULT_MODEL,
-}
+export const MODELS: Readonly<Record<string, ModelDecl>> = PREFIX_MODELS
 
 /**
  * 按名字取一个声明。**查不到就拒，不替它挑一个**——"没写 model"与"写了一个没有的 model"是
  * 两件事：前者走缺省，后者是打错了一个字，静默替他选一个会让命令行那次装配的读数指着另一个
  * 模型。这一条与 `--agent` 拒未知名字是同一条口径（PLAN § 5.6 的 Z4）。
+ *
+ * **它就是 `modelDeclOf`**（`src/model/contract.ts` 那一处），转发一行是为了让 Z0 起的消费者
+ * 不必改 import——两份查表逻辑会漂，一份不会。
  */
 export function modelOf(id: string | undefined): ModelDecl {
-  if (id === undefined || id === '') return DEFAULT_MODEL
-  const m = MODELS[id]
-  if (m === undefined) {
-    throw new Error(`没有这个模型：${id}（目录里只有 ${Object.keys(MODELS).join(' · ')}）`)
-  }
-  return m
+  return prefixDeclOf(modelDeclOf(id))
 }
+
+/** 这一份认识的模型名，按声明表的键序。**给探针与走查对账用**，不是第二张表。 */
+export const MODEL_IDS: readonly string[] = Object.keys(MODEL_DECLS)

@@ -37,9 +37,11 @@ const EXPOSED: readonly string[] = ['platform', 'workspace', 'config.net', 'port
  */
 export interface SystemStatus {
   readonly entries: readonly { readonly key: string; readonly value: unknown }[]
-  readonly platform: unknown
-  readonly workspace: unknown
-  readonly net: unknown
+  /** 下面三栏**不在配置里就不投影**（不是投影成 `undefined`）：`json` 渲染器序列化不了
+   *  undefined，而"这个工作区没配这三样"是常态，不是异常——一份空配置照样装得出 A 区。 */
+  readonly platform?: unknown
+  readonly workspace?: unknown
+  readonly net?: unknown
 }
 
 /**
@@ -52,12 +54,21 @@ export function projectConfig(config: ConfigDoc): SystemStatus {
   const entries = EXPOSED.filter((k) => k !== 'platform' && k !== 'workspace')
     .map((key) => ({ key, value: getConfig(config, key) }))
     .filter((e) => e.value !== undefined)
-  return {
-    entries,
-    platform: config['platform'],
-    workspace: config['workspace'],
-    net: getConfig(config, 'config.net'),
-  }
+  // 三栏逐个按"在不在"接上：配置里没有的键不进这一份。写成 `platform: config['platform']`（值
+  // 是 `undefined`）也能通过类型检查，而它到渲染那一步会抛——**`json` 渲染器序列化不了
+  // undefined**，于是"没配那三栏"这个常态把整条装配打翻。地板那一档要的是"那一段短了、装配
+  // 照跑"，所以这里按在场与否逐个接。
+  const out: {
+    entries: readonly { readonly key: string; readonly value: unknown }[]
+    platform?: unknown
+    workspace?: unknown
+    net?: unknown
+  } = { entries }
+  if (config['platform'] !== undefined) out.platform = config['platform']
+  if (config['workspace'] !== undefined) out.workspace = config['workspace']
+  const net = getConfig(config, 'config.net')
+  if (net !== undefined) out.net = net
+  return out
 }
 
 /** 系统状态那一段的段值：`json` 那一档，键序由 `render.ts` 的稳定序列化定。 */
