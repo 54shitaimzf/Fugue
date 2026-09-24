@@ -116,8 +116,20 @@ export function triggerAt(contextLimit: number): number {
   return Math.floor(contextLimit * 0.75)
 }
 
-/** 两条路上的一份调用配置：轮内固定（架构 § 10.2）。 */
-export const DEFAULT_CALL: Readonly<{ temperature?: number; maxTokens?: number }> = { temperature: 0.2 }
+/**
+ * 两条路上的一份调用配置：轮内固定（架构 § 10.2 的必固四条之一）——**今天它是空的**。
+ *
+ * 空不是遗漏，是两件事的结论：
+ *
+ *   一 · **"缺省"在两个线协议上语义不同**。Messages 那条线上 `temperature` 不填 = 由提供方定
+ *        （那边默认是 1），填 0.2 就是**真的要 0.2**；Chat Completions 那条线上同理。所以"我们
+ *        这边的缺省值"这句话没有唯一的意思——一个共用常量表达不了它。适配器各自把"没填"翻成
+ *        自己那条线上的"不出现"（`B2`）。
+ *   二 · **温度要给哪一档，得等读数**。它改的是模型的伸手率与零工具调用率（`B7` 的两个一线
+ *        指标），而在 `B7` 之前定一个数，就是在拿一个没有依据的值当基线。声明里留着这一栏：
+ *        真要固定，它是一个模型一条记录的字段，不是全站共用的常量。
+ */
+export const DEFAULT_CALL: Readonly<{ temperature?: number; maxTokens?: number }> = {}
 
 /**
  * 模型目录。**今天两条记录，同一个模型的两个线协议。**
