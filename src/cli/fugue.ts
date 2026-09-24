@@ -8,9 +8,10 @@
 // **语义不在这里**：一次变更的顺序与校验住在 `src/view/edit.ts`，提交住在
 // `src/checkpoint.ts`——两个都是跨层接线（§ 7），这里只是它们的一个人侧入口。
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { checkMountPoints, checkReach } from '../boundary/check.ts'
 import { PolicyError, probeLayers, resolvePolicy } from '../boundary/policy.ts'
 import type { Policy } from '../boundary/policy.ts'
 import { BranchRefused, branchAt, forkBaseRefusal } from '../branch.ts'
@@ -926,6 +927,12 @@ async function runCmd(
     throw err
   }
 
+  // **启动前的一致性检查**（Y4 · 架构 § 8.8 的 fail-closed）：声明的目录落不到视图里 · 清单里
+  // 那一条在宿主上不成立 · 软链指不到清单里——都在这里拒。**它排在物化之前**：这一层报的是
+  // "哪一栏写错了"，而再往后报的是 bwrap 的话（"源找不到"），指向的是错的地方。
+  const checked = checkReach({ roots, policy, declared: bind })
+  if (!checked.ok) return fail(checked.error.message)
+
   const ctx = await openCtx(abs, flags, { snapUpTo: st.rev, write: true })
   try {
     // 端口那一片按"日志里 writer 的次序"切：同一个工作区里不同的 agent 拿到不同的片，而同一批
@@ -941,7 +948,8 @@ async function runCmd(
     for (const rel of bind) mkdirSync(cache.bound(rel), { recursive: true })
 
     const landed = await landOnce(ctx, abs, agent, st, ctx.view.rev, bind)
-    assertDeclaredDirs(landed.merged, bind)
+    const mounts = checkMountPoints(landed.merged, bind)
+    if (!mounts.ok) return fail(mounts.error.message)
     // **这一趟走哪一档**由上面那一份策略值说了算（架构 § 8.8）：在场的层里有 `bwrap` 就是沙箱档；
     // 一层都没有就是 § 15.7 的 E4 退化档——树可写、回收兜底、`enforcement` 如实报 partial。
     // **这条读数现探**（`probeLayers`），不从 `<realRoot>/.fugue/config` 的 `platform` 键里读——
@@ -1070,19 +1078,6 @@ async function runCmd(
     throw err
   } finally {
     await ctx.close()
-  }
-}
-
-/** 声明目录在树里的位置上**必须是一个目录**：bwrap 的一条目录绑定挂不到一个文件上。 */
-function assertDeclaredDirs(merged: string, bind: readonly string[]): void {
-  for (const rel of bind) {
-    const st = lstatSync(join(merged, rel), { throwIfNoEntry: false })
-    if (st === undefined || st === null || st.isDirectory()) continue
-    throw new BindingError(
-      `声明的目录在树里不是一个目录：${rel}（${join(merged, rel)}）\n` +
-        `一条声明要么自己是一条目录（不存在就预建），要么写成已经被另一条声明盖住的那条路径` +
-        `（如 cache:["dist"] + outputs:["dist/app"]）。`,
-    )
   }
 }
 
