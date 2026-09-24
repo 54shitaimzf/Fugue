@@ -3,6 +3,7 @@
 // 这张联合是**消息的模式**，不是 M0 的解释对象。M0 不读 `t`，也不读任何载荷字段；
 // 它只做一件事——按 § 9.2 的信封写下去，再原样读回来。因此下面引用的类型即使改了
 // 值域（例如两处未决项定下来），M0 的实现一行都不用动。
+import type { ModelId, StopReason } from '../model/contract.ts'
 import type {
   AgentId,
   AssertionResult,
@@ -101,6 +102,31 @@ export type LogEvent =
       zoneAHash: string
       zoneBHash: string
       zoneCHash: string
+    }
+  | {
+      t: 'llm/call'
+      agent: AgentId
+      step: StepId
+      /** 我们这边的键（`ModelId`）。**另一个名字是 `request.model`**：提供方那边叫什么，在夹具里。 */
+      model: ModelId
+      /** 走哪条线协议（`WireName`）。两条线跑同一份状态时，这一栏是那两组读数的分组键。 */
+      wire: string
+      /** 这一次请求公布了几条工具（**条数**进日志，schema 本身不进：`B7` 的哈希从这几样算得出）。 */
+      toolCount: number
+      /**
+       * 用量的四个数（架构 § 8.15）。**四个都可缺**，缺了是 `null`——提供方没报就是没报，
+       * **不拿 0 顶**（`B1` 的 `Usage` 那一条）；指标重算时"没量到"与"量到 0"分得开。
+       */
+      usage: {
+        inputTokens: number | null
+        cacheReadTokens: number | null
+        cacheWriteTokens: number | null
+        outputTokens: number | null
+      }
+      /** 提供方自己的结束原因（原话）。半截的流是 `null`。 */
+      rawStop: string | null
+      /** 一次调用的收尾；半截的流是 `null`（**不许当"走完了"**，架构 § 14.2 第 2 步）。 */
+      stop: StopReason | null
     }
 
 /**

@@ -1,0 +1,446 @@
+{
+  "version": 1,
+  "id": "recorded-deepseek-chat-anthropic",
+  "model": "deepseek-chat/anthropic",
+  "wire": "anthropic-messages",
+  "target": "deepseek-chat",
+  "zones": {
+    "A": "# 项目方针\n\n- 一条方针。\n\n{\"net\":\"none\",\"platform\":\"linux\"}src/model/http.ts\nsrc/model/session.ts\n",
+    "B": "把模型这一路接上：录一份夹具，回放得出同一串事件。\n--- src/model/http.ts ---\n// 唯一碰网的那一处。\n\n--- src/model/session.ts ---\n// 录一份夹具 · 回放一份夹具。\n\n75b0e30 B0 · 模型与提供方的声明\nbf65726 B1 · 调用的边界\n\n总目标：把模型这一路接上。\n问题：\n交付物：src/model/http.ts\n要交的证据：node --test src/model/http.test.ts\n断言：上游分片不丢不重 · 回放两次请求体逐字节相同\n产物路径：deliver/agent-1/\n",
+    "C": "第 0 步。\nsig-1\n\n"
+  },
+  "tools": [
+    {
+      "name": "write",
+      "description": "把一个文件的全部内容写成给定文本。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "视图内的相对路径"
+          },
+          "content": {
+            "type": "string",
+            "description": "要写进去的文本"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "edit",
+      "description": "在一处精确替换一个文件里的字符串；不唯一时先报出来，不猜是哪一处。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "视图内的相对路径"
+          },
+          "old_string": {
+            "type": "string",
+            "description": "要被替换掉的那一段原文"
+          },
+          "new_string": {
+            "type": "string",
+            "description": "换成的那一段"
+          },
+          "replace_all": {
+            "type": "boolean",
+            "description": "把每一处都换掉（缺省只换一处）"
+          }
+        },
+        "required": [
+          "path",
+          "old_string",
+          "new_string"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_image",
+      "description": "读一张图片，返回图片本身。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "视图内的相对路径"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "bash",
+      "description": "执行一条命令。工作区是只读的；要产出文件请用动作。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "要执行的命令行"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "在哪个相对路径下执行（缺省是视图的根）"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read",
+      "description": "读一个文件的内容。可以只读一段。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "视图内的相对路径"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "从第几行开始（从 1 数）"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "最多读几行"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "glob",
+      "description": "按路径模式找文件，返回路径。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "路径模式，例如 src/**/*.ts"
+          },
+          "path": {
+            "type": "string",
+            "description": "在哪个相对路径下找（缺省是视图的根）"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "grep",
+      "description": "按内容找文件，返回匹配的行、文件名或条数。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "要匹配的正则"
+          },
+          "path": {
+            "type": "string",
+            "description": "在哪个相对路径下找（缺省是视图的根）"
+          },
+          "glob": {
+            "type": "string",
+            "description": "只看这些路径（路径模式）"
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "content",
+              "files_with_matches",
+              "count"
+            ],
+            "description": "要哪一种结果"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "todo_write",
+      "description": "记下当前的待办清单，整体覆盖上一次。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "todos": {
+            "type": "array",
+            "description": "这一份完整的清单",
+            "items": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string",
+                  "description": "这件事要做什么"
+                },
+                "activeForm": {
+                  "type": "string",
+                  "description": "正在做它时的说法"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "in_progress",
+                    "completed"
+                  ],
+                  "description": "它到哪一步了"
+                }
+              },
+              "required": [
+                "content",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "todos"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "subagent",
+      "description": "把一个自足的任务派给另一个 agent，它在自己的上下文里做完再把结果交回来。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "三五个词的任务名，给人看"
+          },
+          "prompt": {
+            "type": "string",
+            "description": "完整的任务说明——它看不到这里的对话"
+          },
+          "run_in_background": {
+            "type": "boolean",
+            "description": "派出去就返回，不等结果（缺省等）"
+          }
+        },
+        "required": [
+          "description",
+          "prompt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_agents",
+      "description": "列出自己派出去的那些 agent：它们的 id 与状态。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "children",
+              "descendants"
+            ],
+            "description": "只看直接子 agent，还是整棵树"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "send_message",
+      "description": "给一个已经派出去的 agent 发一条消息：它在忙就插到最近的一步，闲下来就让它接着做。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "目标 agent 的 id"
+          },
+          "message": {
+            "type": "string",
+            "description": "要说的话"
+          }
+        },
+        "required": [
+          "agent_id",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "ask_user_question",
+      "description": "问人一个问题，给出可选的答案。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "questions": {
+            "type": "array",
+            "description": "要问的问题，一次可以问几个",
+            "items": {
+              "type": "object",
+              "properties": {
+                "question": {
+                  "type": "string",
+                  "description": "问什么"
+                },
+                "header": {
+                  "type": "string",
+                  "description": "短标题"
+                },
+                "multiSelect": {
+                  "type": "boolean",
+                  "description": "可以多选吗"
+                },
+                "options": {
+                  "type": "array",
+                  "description": "可选的答案",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string",
+                        "description": "答案本身"
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "一句话说清这个选择的代价"
+                      }
+                    },
+                    "required": [
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "question"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "questions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "exit_plan_mode",
+      "description": "说一声预备态做完了：接下来要动真东西。门由人开。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plan": {
+            "type": "string",
+            "description": "接下来打算怎么做"
+          },
+          "planFilePath": {
+            "type": "string",
+            "description": "这份计划写在哪个文件里"
+          }
+        },
+        "required": [
+          "plan"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "checkpoint",
+      "description": "把当前视图定格成一次提交。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "这一次提交说的是什么"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "run_action",
+      "description": "跑一个已经绑好的动作（构建 · 测试一类），它声明的产出会写回视图。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "动作的名字，绑在配置里"
+          },
+          "args": {
+            "type": "array",
+            "description": "传给这个动作的参数",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "call": {},
+  "bodyHash": "7166600d5d50be8c",
+  "bytes": 7284,
+  "response": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture_01\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"deepseek-chat\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":88,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":24000,\"output_tokens\":1}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: ping\ndata: {\"type\":\"ping\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"先看一眼工作树。\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_fixture_01\",\"name\":\"bash\",\"input\":{}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"ls -la\\\",\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"timeout_ms\\\":\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"10000}\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_fixture_02\",\"name\":\"glob\",\"input\":{}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"pattern\\\":\\\"**/*.\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"ts\\\"}\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":2}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":64}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+  "record": {
+    "usage": {
+      "inputTokens": 88,
+      "cacheReadTokens": 24000,
+      "cacheWriteTokens": 0,
+      "outputTokens": 64,
+      "rawStop": null,
+      "model": "deepseek-chat"
+    },
+    "text": "先看一眼工作树。",
+    "toolCalls": [
+      {
+        "id": "toolu_fixture_01",
+        "name": "bash",
+        "arguments": "{\"command\":\"ls -la\",\"timeout_ms\":10000}"
+      },
+      {
+        "id": "toolu_fixture_02",
+        "name": "glob",
+        "arguments": "{\"pattern\":\"**/*.ts\"}"
+      }
+    ],
+    "stop": "tool-calls",
+    "rawStop": "tool_use",
+    "ms": 0
+  }
+}
