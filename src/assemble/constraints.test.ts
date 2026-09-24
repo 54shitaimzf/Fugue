@@ -30,7 +30,7 @@ import { stateWithState } from './sources-state.ts'
 const CLI = fileURLToPath(new URL('../cli/fugue.ts', import.meta.url))
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 
-const WHO: AgentCoord = { id: 'agent-2', branch: 'agent/r1/agent-2', outputPaths: ['deliver/agent-2/report.md'] }
+const WHO: AgentCoord = { id: 'agent-2', branch: 'agent-2', outputPaths: ['deliver/agent-2/report.md'] }
 
 /** 一份干净的段值：拿真源造，四个渲染器都用得上。 */
 function cleanSegments(): Record<SegmentId, SegmentValue> {
@@ -240,7 +240,7 @@ function fixtureRoot(tag: string): string {
   run('git', ['init', '-q'], root)
   cli('write', 'seed.txt', '--from', seed)
   cli('commit', '-m', '起点')
-  cli('branch', 'main', '--agent', 'agent/r1/agent-2')
+  cli('branch', 'main', '--agent', 'agent-2')
   return root
 }
 

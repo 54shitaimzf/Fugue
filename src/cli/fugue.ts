@@ -800,7 +800,8 @@ async function agentCoord(
   if (who === null) return { state, who: HOLDER }
   const truth = openTruth(root)
   try {
-    const ref = refFor(`agent/r1/${who}`)
+    // --agent 收的那一串就是日志里那条 ref 的名字（与 writerOf 同一条口径）。
+    const ref = refFor(who)
     const head = await truth.resolve(ref).catch(() => null)
     if (head === null) {
       throw new SourceError(
