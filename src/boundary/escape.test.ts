@@ -35,6 +35,7 @@ import {
   type EscapeFixture,
   type EscapeReading,
 } from './escape.ts'
+import { resolvePolicy } from './policy.ts'
 
 const CLI = fileURLToPath(new URL('../cli/fugue.ts', import.meta.url))
 const C_SRC = '#include <stdio.h>\nint main(void){ printf("hi\\n"); return 0; }\n'
@@ -116,7 +117,7 @@ function fixture(): Made {
   const env = envFor({
     roots,
     agent: AGENT,
-    binding: { name: 'y1', argv: ['true'], cwd: '', outputs: [], cache: [...DECLARED], env: {} },
+    binding: { name: 'y1', argv: ['true'], cwd: '', outputs: [], cache: [...DECLARED], env: {}, net: 'none' },
     injections: {},
     portIndex: 0,
     range: DEFAULT_PORTS,
@@ -130,6 +131,8 @@ function fixture(): Made {
       coords: { work: roots.mergedRoot(AGENT), real: root, cache: cache.home, outside, home },
       declared: DECLARED,
       env,
+      // 跑器照一份真策略包（Y2 起）：缺省档——bwrap 在场 · 网切掉 · 清单是缺省那份。
+      policy: resolvePolicy({ roots, agent: AGENT, doc: {} }),
     },
   }
   MADE.push(made)

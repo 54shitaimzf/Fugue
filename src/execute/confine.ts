@@ -15,11 +15,13 @@
 // 以及挂载点必须**先存在**（`bwrap: Can't chdir to --bind: No such file or directory`）。
 // 最后这一条由 `M4.ensure` 在卸载态预建（架构 § 8.6 第 1 步），`confine` 只要求它已经在了。
 //
-// **`--unshare-net` 不在这里**：网络的边界是 S5 的事（架构 § 8.8 的 `Policy`）。所以这一站
-// 的围栏只有"树只读 + 声明目录可写"这一条，`full` 报的是**这一条真的关上了**，不是"整个宿主
-// 够不到"——物理可达集那一维是 S5 的 U13，断言不许声称够不到别处。
+// **网络那一档（`--unshare-net`）在这里**：架构 § 8.8 的 `Policy.net`，S5 的 Y2 落的——缺省把网
+// 切掉，动作在配置里点名要网才留宿主的网。回环照旧（实测：服务端与客户端一次真连通），所以
+// "跑测试"不吃亏。**可达集那一维还没落**（Y3）：`--ro-bind / /` 就是那个洞，所以今天 `full` 报的
+// 是"树只读 + 声明目录可写 + 网切掉了"这一条真的关上了，不是"整个宿主够不到"。
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
+import type { Policy } from '../boundary/policy.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { AbsPath, AgentId, RelPath } from '../terms.ts'
 import type { ConfinedArgv } from './contract.ts'
@@ -91,17 +93,22 @@ export interface ConfineInput {
   readonly declared: readonly RelPath[]
   /** 子进程的环境，`binding.ts` 一处给。 */
   readonly env: Readonly<Record<string, string>>
-  /** 树可写那一档（X4 的退化档）。默认 false = 只读绑定，那是 S4 的默认档。 */
-  readonly treeWritable?: boolean
+  /**
+   * 这一趟的策略值（架构 § 8.8）：`M7` 只读它——**树可写与否看 `mode`，网络那一档看 `net`**。
+   * 一处解析（`resolvePolicy`），命令行与日志两处读的是同一份；这里不另算一遍。
+   */
+  readonly policy: Policy
 }
 
 export function confine(i: ConfineInput): ConfinedArgv {
   const merged = i.roots.mergedRoot(i.agent)
   const temp = i.roots.tempRoot(i.agent)
   const cache = cacheLayoutOf(i.roots, i.agent)
-  const writable = i.treeWritable === true
+  const writable = i.policy.mode === 'workspace-write'
 
   const argv: string[] = ['bwrap', '--ro-bind', '/', '/', '--die-with-parent', '--dev', '/dev']
+  // 网络那一档：缺省把它切掉（架构 § 8.8 的 `net`）——要网的动作在配置里点名，不是在这里加开关。
+  if (i.policy.net === 'none') argv.push('--unshare-net')
   // 两处按 agent 的可写落点：temp 与整个缓存（家 · XDG · 声明目录的源都在缓存底下）。
   argv.push('--bind', temp, temp)
   argv.push('--bind', cache.home, cache.home)
@@ -113,10 +120,13 @@ export function confine(i: ConfineInput): ConfinedArgv {
   argv.push('--chdir', join(merged, i.cwd))
   argv.push('--', ...i.argv)
 
+  // **两栏照抄策略值**：`confine()` 不自己判断这是哪一档，它只负责把那一档包出来——`fugue policy`
+  // 与 `run/confined` 报的因此是同一个来源。调用方给一份不带 `bwrap` 的策略值就是调用方的错
+  // （命令行那一面从不那样做：没有层在场时它走 `degradedArgv()`）。
   return {
     argv,
     mechanism: 'bwrap',
-    mode: writable ? 'workspace-write' : 'read-only',
-    enforcement: 'full',
+    mode: i.policy.mode,
+    enforcement: i.policy.enforcement,
   }
 }

@@ -14,6 +14,8 @@ import type {
   ForkStrategy,
   LogPos,
   LogSeq,
+  NetMode,
+  PolicyLayer,
   PolicyMode,
   RelPath,
   RoundId,
@@ -53,7 +55,18 @@ export type LogEvent =
   | { t: 'mat/reclaim'; agent: AgentId; declared: RelPath[]; changed: RelPath[] }
   | { t: 'run/start'; agent: AgentId; step: StepId; action: string; argv0: string }
   | { t: 'run/end'; agent: AgentId; step: StepId; exit: number; ms: number; denied: boolean }
-  | { t: 'run/confined'; agent: AgentId; mode: PolicyMode; enforcement: Enforcement }
+  | {
+      t: 'run/confined'
+      agent: AgentId
+      mode: PolicyMode
+      enforcement: Enforcement
+      /** 网络那一档（架构 § 8.8 的 `Policy.net`）：缺省 `none`，动作点名才是 `host`。 */
+      net: NetMode
+      /** 这一趟在场的层（探出来的）：空数组 = § 15.7 的 E4 那一档。 */
+      layers: readonly PolicyLayer[]
+      /** 这一趟的只读根清单（`Policy.reach.roRoots`）：事件记的是**要求**，供给看 `enforcement`。 */
+      reach: readonly string[]
+    }
   | { t: 'bound/deny'; agent: AgentId; path: string; space: 'virtual' | 'physical'; rule: string }
   | { t: 'signal'; agent: AgentId; id: SignalId; kind: SignalKind; digest: string }
   | {

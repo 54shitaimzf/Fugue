@@ -25,6 +25,7 @@ import { cacheLayoutOf, confine } from './confine.ts'
 import { createExecutor } from './exec.ts'
 import { envFor } from './binding.ts'
 import type { ActionBinding } from './binding.ts'
+import { resolvePolicy } from '../boundary/policy.ts'
 import { createRoots } from '../roots/roots.ts'
 import type { AgentId, RelPath } from '../terms.ts'
 
@@ -265,14 +266,16 @@ test('X1 ④ · 负对照：摘掉 `--dev /dev` 与摘掉按 agent 的 temp 的�
   const roots = createRoots(w.root)
   const agent = 'round' as AgentId
   const cache = cacheLayoutOf(roots, agent)
-  const binding: ActionBinding = { name: 'probe', argv: [], cwd: '', outputs: [], cache: [], env: {} }
+  const binding: ActionBinding = { name: 'probe', argv: [], cwd: '', outputs: [], cache: [], env: {}, net: 'none' }
   const env = envFor({ roots, agent, binding, injections: {}, portIndex: 0, range: '31000-31099' })
   const run = createExecutor({ onChunk: () => {} })
+  // 这一趟的策略值（Y2 起 `confine()` 要它）：缺省档——bwrap 在场 · 网切掉 · 清单是缺省那份。
+  const policy = resolvePolicy({ roots, agent, doc: {} })
 
   // ① 摘掉 `--dev /dev`：写 /dev/null 当场失败（子进程自己报 errno）。
   // 走 shell：内核那句话（`Permission denied`）原样落进 stderr，正是 `denied` 读的那一处。
   const probeArgv = ['sh', '-c', 'echo x > /dev/null']
-  const full = confine({ roots, agent, argv: probeArgv, cwd: '', declared: [], env }).argv.slice()
+  const full = confine({ roots, agent, argv: probeArgv, cwd: '', declared: [], env, policy }).argv.slice()
   const devAt = full.indexOf('--dev')
   const noDev = [...full.slice(0, devAt), ...full.slice(devAt + 2)]
   const a1 = await run.run(agent, { action: 'probe', confined: { argv: noDev, mechanism: 'bwrap', mode: 'read-only', enforcement: 'full' }, cwd: '', env }, new AbortController().signal)
@@ -289,6 +292,7 @@ test('X1 ④ · 负对照：摘掉 `--dev /dev` 与摘掉按 agent 的 temp 的�
     cwd: '',
     declared: ['dist'],
     env,
+    policy,
   }).argv.slice()
   const at = build.findIndex((x, i) => x === '--bind' && build[i + 1] === tmp)
   assert.notEqual(at, -1, '骨架里本来有那一条绑定')

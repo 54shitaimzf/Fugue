@@ -281,7 +281,7 @@ check "默认档 · dirty 退码（子进程没成功）" "$RC" "1"
 check "默认档 · denied 读出来了" "$(jget "$OUT/dirty-default.json" denied)" "true"
 check "默认档 · 树里没有 junk.txt" "$([ -e "$(upper_of "$A1")/junk.txt" ] && echo 有 || echo 没有)" "没有"
 check "默认档 · 没有 mat/reclaim" "$(count_of "$A1" mat/reclaim)" "0"
-RC=$(json_run "$OUT/dirty-deg.json" --agent "$A1" run dirty --no-sandbox)
+RC=$(json_run "$OUT/dirty-deg.json" --agent "$A1" run dirty --mode workspace-write)
 check "退化档 · dirty 退码（子进程成功了）" "$RC" "0"
 check "退化档 · enforcement 如实报 partial" "$(jget "$OUT/dirty-deg.json" enforcement)" "partial"
 check "退化档 · undeclared" "$(jget "$OUT/dirty-deg.json" undeclared)" "junk.txt"

@@ -2,7 +2,7 @@
 //
 // **它是这一站唯一一处新接口，也是人唯一要手写的东西。** 形状按设计预期批过（PLAN § 5.4 尾）：
 //
-//   actions.<名字> = { argv: [...] · cwd?: <视图内路径> · outputs?: [...] · cache?: [...] · env?: {} }
+//   actions.<名字> = { argv: [...] · cwd?: <视图内路径> · outputs?: [...] · cache?: [...] · env?: {} } · net?: "host"
 //
 // `outputs`（回写视图的产出，X2 的回收读它）与 `cache`（绑到本 agent 的缓存、不回写，构建产物
 // 落这里）分开，是这一处唯一要紧的取舍：架构 § 8.7 明说构建产物**不回收**，而 `run_action`
@@ -15,7 +15,7 @@
 import type { ConfigDoc } from '../config.ts'
 import { getConfig } from '../config.ts'
 import type { Roots } from '../roots/contract.ts'
-import type { ActionName, AgentId } from '../terms.ts'
+import type { ActionName, AgentId, NetMode } from '../terms.ts'
 import { cacheLayoutOf } from './confine.ts'
 
 /** 这一层自己的失败：配置里的动作绑定不成立。**拒绝并指路**，与围栏同一个口径。 */
@@ -31,6 +31,11 @@ export interface ActionBinding {
   /** 绑到本 agent 缓存的目录：构建产物落这里，**不回写**。 */
   readonly cache: readonly string[]
   readonly env: Readonly<Record<string, string>>
+  /**
+   * 这个动作要不要网（架构 § 8.8 的 `Policy.net` · § 15.3.a）：缺省 `'none'`——沙箱把网切掉。
+   * **要出网的动作在这里点名**；点名之后 `fugue policy <动作>` 与那一趟的 `run/confined` 都如实报。
+   */
+  readonly net: NetMode
 }
 
 /** 端口池那一个键。不给就用这个默认值——一个工作区开箱就有一片号。 */
@@ -99,8 +104,13 @@ export function readBinding(doc: ConfigDoc, name: string): ActionBinding {
       env[k] = v
     }
   }
+  const rawNet = raw.net
+  if (rawNet !== undefined && rawNet !== 'none' && rawNet !== 'host') {
+    throw new BindingError(`动作 ${name} 的 net 取 "none" 或 "host"：${JSON.stringify(rawNet)}`)
+  }
+  const net: NetMode = rawNet === 'host' ? 'host' : 'none'
   assertNotReserved(Object.keys(env), `动作 ${name} 的 env`)
-  return { name, argv, cwd, outputs, cache, env }
+  return { name, argv, cwd, outputs, cache, env, net }
 }
 
 /**

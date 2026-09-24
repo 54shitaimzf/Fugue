@@ -63,6 +63,12 @@ export type ActionName = string
 export type PolicyMode = 'read-only' | 'workspace-write'
 export type Enforcement = 'full' | 'partial'
 
+/** 架构 § 8.8 的 `Policy.net`：网络那一档。缺省 `none`；动作在配置里点名才 `host`（§ 15.3.a）。 */
+export type NetMode = 'none' | 'host'
+
+/** 架构 § 8.8 的 `Policy.layers`：这一趟在场的层——**探出来的，不是人写的**（§ 15.7 的 E4）。 */
+export type PolicyLayer = 'bwrap' | 'landlock'
+
 /** 架构 § 8.5 的四档 fork 策略。 */
 export type ForkStrategy = 'reflink' | 'overlayfs' | 'hardlink-ro' | 'copy'
 

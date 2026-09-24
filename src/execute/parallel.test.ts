@@ -28,6 +28,7 @@ import { envFor } from './binding.ts'
 import type { ActionBinding } from './binding.ts'
 import { confine } from './confine.ts'
 import { createExecutor } from './exec.ts'
+import { resolvePolicy } from '../boundary/policy.ts'
 import { isMounted } from '../materialize/mount.ts'
 import { createRoots } from '../roots/roots.ts'
 import type { AgentId } from '../terms.ts'
@@ -321,14 +322,16 @@ test('X3 ③ 负对照 · 四个进程指到同一份坐标：串扰出现', asy
   assert.equal(fugue(w.root, '--agent', AGENTS[0], 'run', 'seen').code, 0)
   const roots = createRoots(w.root)
   const agent = AGENTS[0] as AgentId
-  const binding: ActionBinding = { name: 'seen', argv: [], cwd: '', outputs: [], cache: [], env: {} }
+  const binding: ActionBinding = { name: 'seen', argv: [], cwd: '', outputs: [], cache: [], env: {}, net: 'none' }
   const executor = createExecutor({ onChunk: () => {} })
+  // 四个进程同一份策略值（Y2 起 `confine()` 要它）：缺省档。
+  const policy = resolvePolicy({ roots, agent, doc: {} })
   // **四个进程同一个 agent**：`confine` 因此把同一份缓存绑给四个（家 · temp · XDG 都是同一处），
   // 只有端口那一片按 portIndex 分开。
   const results = await Promise.all(
     [0, 1, 2, 3].map(async (i) => {
       const env = envFor({ roots, agent, binding, injections: {}, portIndex: i, range: '31000-31099' })
-      const confined = confine({ roots, agent, argv: ['node', 'seen.mjs'], cwd: '', declared: [], env })
+      const confined = confine({ roots, agent, argv: ['node', 'seen.mjs'], cwd: '', declared: [], env, policy })
       return await executor.run(agent, { action: 'seen', confined, cwd: '', env }, new AbortController().signal)
     }),
   )

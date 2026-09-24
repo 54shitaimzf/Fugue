@@ -158,7 +158,7 @@ test('X4 ① · 同一份声明集：全档与退化档的产出逐字节相同�
 
   // 对齐之后跑退化档：**同一个 agent 的第二次**，比的是同一棵树里的同一份产出。
   assert.equal(fugue(w.root, 'ensure').code, 0)
-  const deg = fugue(w.root, '--json', 'run', 'build', '--no-sandbox')
+  const deg = fugue(w.root, '--json', 'run', 'build', '--mode', 'workspace-write')
   assert.equal(deg.code, 0, deg.err)
   const second = JSON.parse(deg.out.trim()) as Record<string, unknown>
   assert.equal(second.exit, first.exit, '退出码相同')
@@ -184,7 +184,7 @@ test('X4 ② · 未声明的写入：这一档长得出来，被回收拒，日�
   assert.equal(existsSync(at(w.root, 'upper', 'junk.txt')), false)
 
   // 退化档：同一条写入长得出来，被回收拒，并记一条 `mat/reclaim`。
-  const r = fugue(w.root, '--json', 'run', 'dirty', '--no-sandbox')
+  const r = fugue(w.root, '--json', 'run', 'dirty', '--mode', 'workspace-write')
   assert.equal(r.code, 0, r.err)
   const j = JSON.parse(r.out.trim()) as Record<string, unknown>
   assert.deepEqual(j.reclaimed, ['dist/app'], '声明过的照样收')
@@ -217,10 +217,10 @@ test('X4 ② · 未声明的写入：这一档长得出来，被回收拒，日�
 
 test('X4 ③ · 如实报档：run/confined 与 stderr 都说清这一次是哪个档', () => {
   const w = workspace()
-  const deg = fugue(w.root, 'run', 'build', '--no-sandbox')
+  const deg = fugue(w.root, 'run', 'build', '--mode', 'workspace-write')
   assert.equal(deg.code, 0, deg.err)
   assert.match(deg.err, /workspace-write · partial 档/)
-  assert.match(deg.err, /没有沙箱（命令行上点名关掉（--no-sandbox））/)
+  assert.match(deg.err, /没有沙箱（命令行上点名要树可写那一档（--mode workspace-write））/)
   assert.match(deg.out, /^0\t\d+\tpartial\n$/, 'stdout 上那一行也报的是 partial')
 
   const confined = rowsOf(w.root).filter((r) => r.e.t === 'run/confined')

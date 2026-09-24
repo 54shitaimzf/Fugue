@@ -11,6 +11,8 @@ import { createHash } from 'node:crypto'
 import { existsSync, lstatSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { PolicyError, probeLayers, resolvePolicy } from '../boundary/policy.ts'
+import type { Policy } from '../boundary/policy.ts'
 import { BranchRefused, branchAt, forkBaseRefusal } from '../branch.ts'
 import { checkpoint } from '../checkpoint.ts'
 import {
@@ -22,6 +24,7 @@ import {
   setConfig,
   writeConfig,
 } from '../config.ts'
+import type { ConfigDoc } from '../config.ts'
 import {
   BindingError,
   declaredDirs,
@@ -31,7 +34,7 @@ import {
   readBinding,
 } from '../execute/binding.ts'
 import type { ActionBinding } from '../execute/binding.ts'
-import { cacheLayoutOf, confine, degradedArgv, probeBwrap } from '../execute/confine.ts'
+import { cacheLayoutOf, confine, degradedArgv } from '../execute/confine.ts'
 import { createExecutor } from '../execute/exec.ts'
 import { ReclaimRefused, createReclaim } from '../execute/reclaim.ts'
 import type { DeclaredSet, Reclaim } from '../execute/reclaim.ts'
@@ -57,7 +60,7 @@ import { MountError, unmountOverlay } from '../materialize/mount.ts'
 import { VerifyRefused, verifyMat } from '../materialize/verify.ts'
 import { HostError, assertHost } from '../roots/host.ts'
 import { createRoots } from '../roots/roots.ts'
-import type { CommitId, ForkStrategy, LogPos, RelPath, StepId, ViewRev, WriterId } from '../terms.ts'
+import type { CommitId, ForkStrategy, LogPos, PolicyMode, RelPath, StepId, ViewRev, WriterId } from '../terms.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import type { View } from '../view/contract.ts'
@@ -120,9 +123,10 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              cache:["dist"] 配 outputs:["dist/app"] 收的就是那个可执行文件。
                              声明集外的写入：默认档由内核拒（子进程非零退出、树一个字节没变），
                              树可写那一档由回收拒并记一条 mat/reclaim。
-                             --no-sandbox 关掉沙箱（§ 15.7 的 E4 退化档：树可写 + 回收兜底，
-                             不再有只读树那一道围栏）。bwrap 不在 PATH 上时自动走这一档——
-                             两处都如实报 enforcement=partial，不静默降级。
+                             --mode <read-only|workspace-write> 选哪一档（缺省 read-only）。
+                             workspace-write 是 § 15.7 的 E4 退化档：树可写 + 回收兜底，不再有
+                             只读树那一道围栏。bwrap 不在 PATH 上时自动走这一档——两处都如实报
+                             enforcement=partial，不静默降级。
                              --step <id> 是这一步的署名，不给就是「-」（轮次是 S7 的事）。
                              退出码：0 子进程成功 · 1 没成功
   verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
@@ -131,6 +135,11 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
   dispose                    把这个 agent 的物化删干净：先卸后删，四个坐标一起（§ 8.4）。
                              幂等——本来就没有也成功。**它是物化的退化档**：dispose 之后
                              fork + ensure 就是一次全量重铺（§ 3）
+  policy [<action>]          把这一趟的策略值印出来（架构 § 8.8：一份策略值，两个强制点）：
+                             哪一档 · enforcement · 在场的层 · 网络那一档 · 可达集清单 · 可写落点。
+                             给了 <action> 就报那个动作那一趟的值（它有没有点名要网）。
+                             fugue run 写进 run/confined 的是同一个 resolvePolicy() 的返回值——
+                             两处读同一份，不是各自算一遍再对答案
   config show                工作区配置的全文
   config get <key>           配置里的一条；<key> 是点分路径，如 docs.trace.path
   config set <key> <value>   改一条；<value> 整份解析得了就当 JSON 值，否则当字符串
@@ -162,7 +171,7 @@ interface Parsed {
  * 一个贪心的解析器会把命令当成开关的值吃掉。
  */
 const VALUED: ReadonlySet<string> = new Set([
-  'root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro', 'step',
+  'root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro', 'step', 'mode',
 ])
 
 function parseArgv(argv: readonly string[]): Parsed {
@@ -196,6 +205,16 @@ function parseArgv(argv: readonly string[]): Parsed {
     }
   }
   return { flags, positional, rest }
+}
+
+/**
+ * 命令行上那一档（架构 § 8.8 的 `Policy.mode`）：不给就是缺省档 `read-only`。
+ * **`null` 是"敲错了"**（退出码 2），与"这一趟跑不成"（1）分开。
+ */
+function modeOf(flags: Map<string, string | true>): PolicyMode | null {
+  const raw = flags.get('mode')
+  if (raw === undefined) return 'read-only'
+  return raw === 'read-only' || raw === 'workspace-write' ? raw : null
 }
 
 function emitJson(v: unknown): void {
@@ -479,6 +498,56 @@ async function config(root: string, args: string[], json: boolean): Promise<numb
     return usageFail(`config 需要 show|get|set，收到：${verb ?? '(空)'}`)
   } catch (err) {
     if (err instanceof ConfigError) return fail(err.message)
+    throw err
+  }
+}
+
+/**
+ * `fugue policy [<action>]`——把这一趟的策略值印出来（架构 § 8.8 · § 9.6 的边界那一行）。
+ *
+ * **两处读同一份**：这里印的与 `fugue run` 写进 `run/confined` 的，是同一个 `resolvePolicy()`
+ * 的返回值——不是两处各算一遍再对答案。所以它不需要视图、不需要日志：策略值的输入是配置与
+ * 探针，不是工作区的状态（与 `config` 同一条道理）。
+ *
+ * 给了 `<action>` 就报**那个动作那一趟**的值：动作是唯一能点名要网的地方（`net` 那一栏）。
+ */
+async function policyCmd(
+  root: string,
+  flags: Map<string, string | true>,
+  args: string[],
+  json: boolean,
+): Promise<number> {
+  const mode = modeOf(flags)
+  if (mode === null) {
+    return usageFail(`--mode 取 read-only 或 workspace-write：${JSON.stringify(flags.get('mode'))}`)
+  }
+  const abs = resolve(root)
+  const agent = agentFor(writerOf(flags))
+  const name = args[0]
+  try {
+    const doc = await readConfig(abs)
+    const binding = name === undefined || name === '' ? undefined : readBinding(doc, name)
+    const probed = probeLayers()
+    const policy = resolvePolicy({ roots: createRoots(abs), agent, doc, mode, binding, probed })
+    if (json) {
+      emitJson({ agent, action: name ?? null, ...policy, note: probed.note })
+    } else {
+      const layers = policy.layers.length === 0 ? '没有（§ 15.7 的 E4 退化档）' : policy.layers.join(' + ')
+      process.stdout.write(
+        `档 ${policy.mode} · enforcement ${policy.enforcement} · 在场的层 ${layers}\n` +
+          `网络 ${policy.net}${policy.net === 'none' ? '（--unshare-net 把网切掉；回环照旧）' : '（动作点名要的）'}\n` +
+          `可达集 ${policy.reach.roRoots.length} 条只读根 · ${policy.reach.symlinks.length} 条软链 · ` +
+          `${policy.reach.devices.length} 处设备与进程 · 树里挖掉 ${policy.reach.mask.join(' · ')}\n` +
+          `  只读根 ${policy.reach.roRoots.join(' · ')}\n` +
+          `可写落点 ${policy.writableRoots.join(' · ')}\n` +
+          `${probed.note}\n`,
+      )
+    }
+    return 0
+  } catch (err) {
+    if (err instanceof ConfigError || err instanceof BindingError || err instanceof PolicyError) {
+      return fail(err.message)
+    }
     throw err
   }
 }
@@ -811,12 +880,19 @@ async function runCmd(
   // 这一站没有轮次（S7 才有）：默认 `-`，读日志时一眼看得出"这不是某一轮里的那一步"。
   const step: StepId = typeof stepRaw === 'string' ? stepRaw : '-'
 
+  // 命令行上那一档（架构 § 8.8 的 `Policy.mode`）：**敲错了是 2**，与"这一趟跑不成"（1）分开。
+  const mode = modeOf(flags)
+  if (mode === null) {
+    return usageFail(`--mode 取 read-only 或 workspace-write：${JSON.stringify(flags.get('mode'))}`)
+  }
+
   const abs = resolve(root)
+  let doc: ConfigDoc
   let binding: ActionBinding
   let injections: Record<string, string>
   let range: string
   try {
-    const doc = await readConfig(abs)
+    doc = await readConfig(abs)
     binding = readBinding(doc, name)
     injections = parseInjections(rest)
     range = portRangeOf(doc)
@@ -839,6 +915,16 @@ async function runCmd(
   // 产出（§ 8.7），两件事两处。回收那份装配排在**物化之后**：它的减数是"落地之后"的清单。
   const roots = createRoots(abs)
   const bind = declaredDirs(binding)
+  // **一处解析**（架构 § 8.8）：这一趟的档 · 网络 · 可达集都在这一份值里——`fugue policy` 读的是
+  // 同一份。层现探一次（§ 15.7 的 E4）：值本身与"为什么不在"那句话都从这一次探来。
+  const probed = probeLayers()
+  let policy: Policy
+  try {
+    policy = resolvePolicy({ roots, agent, doc, mode, binding, probed })
+  } catch (err) {
+    if (err instanceof PolicyError) return fail(err.message)
+    throw err
+  }
 
   const ctx = await openCtx(abs, flags, { snapUpTo: st.rev, write: true })
   try {
@@ -856,14 +942,16 @@ async function runCmd(
 
     const landed = await landOnce(ctx, abs, agent, st, ctx.view.rev, bind)
     assertDeclaredDirs(landed.merged, bind)
-    // **这一趟走哪一档**：`bwrap` 在不在（§ 15.7 的 E4）加命令行上有没有点名要关掉它。
-    // 不在 → 退化档：没有沙箱可包、树可写、回收兜底，`enforcement` 如实报 partial。
-    // **这条读数现探**，不从 `<realRoot>/.fugue/config` 的 `platform` 键里读——那份缓存的寿命
-    // 是给"挂一次试试"那类贵探针定的，E4 的答案会随机器变（见 `confine.ts` 的 `probeBwrap`）。
-    const named = flags.has('no-sandbox')
-    const bw = probeBwrap()
-    const sandboxed = !named && bw.ok
-    const sandboxNote = sandboxed ? '' : named ? '命令行上点名关掉（--no-sandbox）' : bw.note
+    // **这一趟走哪一档**由上面那一份策略值说了算（架构 § 8.8）：在场的层里有 `bwrap` 就是沙箱档；
+    // 一层都没有就是 § 15.7 的 E4 退化档——树可写、回收兜底、`enforcement` 如实报 partial。
+    // **这条读数现探**（`probeLayers`），不从 `<realRoot>/.fugue/config` 的 `platform` 键里读——
+    // 那份缓存的寿命是给"挂一次试试"那类贵探针定的，E4 的答案会随机器变。
+    const sandboxed = policy.layers.length > 0
+    const sandboxNote = sandboxed
+      ? ''
+      : mode === 'workspace-write'
+        ? '命令行上点名要树可写那一档（--mode workspace-write）'
+        : probed.note
     // 减数是**这一趟落地之后**的清单：上面那一下已经把视图里没落地的 delta 落进了 `upper`。
     const reclaim = createReclaim({
       roots,
@@ -887,6 +975,7 @@ async function runCmd(
           cwd: binding.cwd,
           declared: bind,
           env,
+          policy,
         })
       : degradedArgv(binding.argv)
 
@@ -897,11 +986,16 @@ async function runCmd(
       action: name,
       argv0: binding.argv[0],
     })
+    // 这一条事件记的是**上面那一份策略值**（要求），不是包出来的那条命令行自己算的：两处读同一份，
+    // `fugue policy` 印的与它逐字相等（PLAN § 5.5 的 Y2 断言 ①）。
     await ctx.log.append(ctx.writer, {
       t: 'run/confined',
       agent,
-      mode: confined.mode,
-      enforcement: confined.enforcement,
+      mode: policy.mode,
+      enforcement: policy.enforcement,
+      net: policy.net,
+      layers: [...policy.layers],
+      reach: [...policy.reach.roRoots],
     })
     // 中止信号这一站不给：Ctrl-C 由 `--die-with-parent` 把子进程带走（那正是那个开关的用处）。
     // 代价写在疑点里——那一下 `run/end` 不会落下，日志上留一条没合上的 `run/start`。
@@ -931,9 +1025,12 @@ async function runCmd(
         exit: res.exit,
         ms: res.ms,
         denied: res.denied,
-        mode: confined.mode,
-        enforcement: confined.enforcement,
+        mode: policy.mode,
+        enforcement: policy.enforcement,
         mechanism: confined.mechanism,
+        net: policy.net,
+        layers: [...policy.layers],
+        reach: [...policy.reach.roRoots],
         argv0: binding.argv[0],
         cwd: binding.cwd,
         declared: [...bind],
@@ -953,7 +1050,7 @@ async function runCmd(
       })
     } else {
       process.stderr.write(
-        `退出码 ${res.exit} · ${res.ms} ms · ${confined.mode} · ${confined.enforcement} 档` +
+        `退出码 ${res.exit} · ${res.ms} ms · ${policy.mode} · ${policy.enforcement} 档` +
           `${sandboxed ? '' : ` · 没有沙箱（${sandboxNote}）——树可写，回收兜底`}` +
           `${res.denied ? ' · 有被拒的写入' : ''}` +
           `${landed.prepared.length === 0 ? '' : ` · 预建挂载点 ${landed.prepared.length} 个`}` +
@@ -962,7 +1059,7 @@ async function runCmd(
           `${gate.undeclared.length === 0 ? '' : ` · 声明集外 ${gate.undeclared.length} 条（mat/reclaim）`}` +
           `\n`,
       )
-      emitLine(`${res.exit}\t${res.ms}\t${confined.enforcement}`)
+      emitLine(`${res.exit}\t${res.ms}\t${policy.enforcement}`)
     }
     return res.exit === 0 ? 0 : 1
   } catch (err) {
@@ -1245,6 +1342,9 @@ async function run(argv: readonly string[]): Promise<number> {
 
   // 配置不建视图、不读日志：它是工作区的输入，不是它的状态（§ 15.3.a 末段）。
   if (cmd === 'config') return await config(root, positional.slice(1), json)
+
+  // 策略值读的也是配置与探针，不是工作区的状态——所以它也排在视图之前（架构 § 8.8）。
+  if (cmd === 'policy') return await policyCmd(root, flags, positional.slice(1), json)
 
   // 尺子只读，也不进那份"状态"——所以它排在视图之前（§ 8.5 把 diff-stat 与 verify-mat 并列只读）。
   if (cmd === 'diff-stat') return diffStatCmd(root, flags, positional.slice(1), json)

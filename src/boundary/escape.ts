@@ -51,6 +51,7 @@ import { confine, degradedArgv } from '../execute/confine.ts'
 import type { ConfinedArgv } from '../execute/contract.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { AgentId, RelPath } from '../terms.ts'
+import type { Policy } from './policy.ts'
 
 /** 通 · 拒。**只有一个含义**：那条路走通了没有（够到了 · 做成了）。 */
 export type Verdict = 'pass' | 'deny'
@@ -446,6 +447,8 @@ export interface EscapeFixture {
   readonly coords: Readonly<Record<Coord, string>>
   readonly declared: readonly RelPath[]
   readonly env: Readonly<Record<string, string>>
+  /** 这一趟的策略值：**跑器照它包**（Y2 起）——表里那些读数因此是在一份真策略下取的。 */
+  readonly policy: Policy
 }
 
 export interface EscapeRunOptions {
@@ -535,6 +538,7 @@ function runOne(c: EscapeCase, fx: EscapeFixture, sandbox: boolean): EscapeReadi
         cwd: c.cwd,
         declared: fx.declared,
         env: fx.env,
+        policy: fx.policy,
       })
     : degradedArgv(argv)
 
