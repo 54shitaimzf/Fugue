@@ -75,5 +75,17 @@ export type ForkStrategy = 'reflink' | 'overlayfs' | 'hardlink-ro' | 'copy'
 /** 未决：架构 § 23 U4 —— `SignalKind` 的类型系统与触发判据都还没定。 */
 export type SignalKind = string
 
-/** 未决：架构 § 23 U9 —— 形状待补，值域持有者已指名（§ 8.12）。 */
-export type AssertionResult = unknown
+/**
+ * 一次验收的取值：**通过 · 没通过 · 跑不起来**（架构 § 8.12 末段 · § 23 U9「已定：S7 的 A0」）。
+ *
+ * **它进事件，所以只带取值。** 架构 § 8.1 的 `merge/accept` 那一行是 `assertions:
+ * AssertionResult[]`，而事件联合只依赖这一份词汇表。三档一次定在这里、事件那一头直接引它，
+ * 比在事件里另写一遍判别联合少一个会漂的副本。
+ *
+ * **档案（哪一条断言 · 退出码 · 几毫秒 · 为什么跑不起来）在 `contract/types.ts` 的
+ * `AssertionResult` 里**：报告与打回率读那一份，事件这一头只读这个取值。
+ */
+export type AssertionVerdict = 'pass' | 'fail' | 'unrunnable'
+
+/** 一条断言的判决：值域见 `AssertionVerdict`，形状见 `contract/types.ts`。 */
+export type AssertionResult = { readonly assertion: string; readonly verdict: AssertionVerdict }
