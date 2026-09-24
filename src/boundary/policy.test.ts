@@ -165,7 +165,7 @@ test('Y2 ① · 两处读同一份：fugue policy 与 run/confined 的五栏逐�
   assert.equal(p.enforcement, 'full', '两层都在场才是 full（§ 15.7 的 E5：少一层纵深，如实降）')
   assert.deepEqual(p.layers, ['bwrap', 'landlock'], '这一趟在场的层：挂载层 + 第二层')
   assert.equal(p.net, 'none', '没有动作点名要网')
-  assert.equal(roRoots(p).length, 5, '缺省清单 = /usr · /opt · /etc 的三条')
+  assert.equal(roRoots(p).length, 6, '缺省清单 = /usr · /opt · /etc 的三条 · /etc/resolv.conf（点名要网那一档要的）')
 
   // 换一档也一样是同一份：`--mode workspace-write` 时两处一起变成那一档的三栏。
   const deg = fugue(root, '--json', 'run', 'build', '--mode', 'workspace-write')

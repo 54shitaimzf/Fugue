@@ -43,9 +43,16 @@ export const REACH_KEY = 'boundary.reach'
  * 缺省清单 = S5 站前那次探针量出来的那几项（`f9ff1b7`）：`/usr` 与 `/opt`（node 在那儿）·
  * `/etc` 的三条（动态链接器缓存 · 证书 · `cc` 那条 alternatives）· 宿主根上那四条软链 ·
  * `/proc` 与 `/dev`。
+ *
+ * **第六项 `/etc/resolv.conf` 是 S5 步骤审批下来的**（Y5 那条"点名要网只给出网，不给名字"的收口）：
+ * 前五项是"起得来"要的，它是"点名要网之后够得着名字"要的。分档量过（同一个工作区里改这一栏，再跑
+ * 一个按域名连一次的动作）：缺省清单 `err:EAI_AGAIN` · **只并这一条** `dns=ok:104.20.23.154` 且
+ * `https=ok:200`（连跑五遍五通）· `/etc/hosts` 与 `/etc/nsswitch.conf` **不必要**（名字解析走
+ * glibc 的 `dns` 那一支，`files` 那一支缺 `/etc/hosts` 也不影响）· 缺省档（不点名要网）一个字节
+ * 没变（`err:EAI_AGAIN`）。
  */
 export const DEFAULT_REACH: ReachSpec = {
-  roRoots: ['/usr', '/opt', '/etc/ld.so.cache', '/etc/ssl', '/etc/alternatives'],
+  roRoots: ['/usr', '/opt', '/etc/ld.so.cache', '/etc/ssl', '/etc/alternatives', '/etc/resolv.conf'],
   symlinks: [
     { at: '/bin', to: 'usr/bin' },
     { at: '/sbin', to: 'usr/sbin' },

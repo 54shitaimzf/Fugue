@@ -11,10 +11,13 @@
 // **靶子为什么不挑公网地址**：那要看这台机器有没有出口，读数就成了机器的读数。宿主自己起的那个
 // 服务端不依赖出口——净结果只由"在不在同一门命名空间"决定。公网那一条照测、照印，只当读数。
 //
-// **一条实测的边角**（记在提交信息里，不进断言）：点名要网那一档拿到了宿主的命名空间，可**按域名
-// 出网仍然不通**（`err:EAI_AGAIN`）——因为解析器配置（`/etc/resolv.conf` 那几条）不在缺省清单里。
-// 把 `/etc/resolv.conf` · `/etc/hosts` · `/etc/nsswitch.conf` 并进 `boundary.reach` 之后，
-// 要网那一档按域名也通了（`ok:104.20.23.154`），而缺省档一个字节没变（`err:EAI_AGAIN`）。
+// **"点名要网"这条点名原先只兑现一半**（Y5 量到 · S5 步骤审批下来的收口）：要网那一档拿到了宿主的
+// 命名空间，可**按域名出网仍然不通**（`err:EAI_AGAIN`）——解析器配置不在缺省清单里。分档量过（同一个
+// 工作区里改 `boundary.reach`，再跑一个按域名连一次的动作）：缺省清单 `err:EAI_AGAIN` · **只并
+// `/etc/resolv.conf` 这一条**就 `dns=ok:104.20.23.154` 且 `https=ok:200`（连跑五遍五通）·
+// `/etc/hosts` 与 `/etc/nsswitch.conf` **不必要**。所以缺省清单的第六项就是那一条，断言 ② 里因此多了
+// 一条正向读数：**要网那一档按域名连得上**；缺省档一个字节没变（这一门命名空间里只有回环，
+// `err:EAI_AGAIN` / `err:ENETUNREACH`）。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -165,7 +168,7 @@ test('Y5 ① · 缺省档：DNS 不通 · 直连 IP 不通 · 回环照旧（服
     const m = fixture()
     const r = run(m, 'netprobe', port)
     console.log('\n── ① 缺省档（net: none）──\n  ' + JSON.stringify(r.json))
-    assert.match(r.json.dns, /^err:/, 'DNS 不通：解析器配置不在清单里，也没有出去的路')
+    assert.match(r.json.dns, /^err:/, 'DNS 不通：这一门命名空间里没有出去的路（解析器配置在不在清单里都一样）')
     assert.equal(r.json.ip, 'err:ENETUNREACH', '直连 IP 不通：这一门命名空间里只有回环')
     assert.equal(r.json.self, 'ok', '回环照旧：沙箱里起个服务端、客户端一次真连得上')
     assert.equal(r.json.hostLoop, 'err:ECONNREFUSED', '宿主的回环不是孩子的回环：同一个端口，连不上')
@@ -186,6 +189,10 @@ test('Y5 ② · 负对照：动作点名要网 → 与宿主同一门命名空�
     // 公网那一条：**不挑机器**——这一档的读数只要不再是"隔离命名空间里那句 ENETUNREACH"就成立，
     // 真值随这台机器有没有出口（读数印在上面）。
     assert.notEqual(on.json.ip, 'err:ENETUNREACH', '出了那一门隔离的命名空间')
+    // **按域名一次真解析**：这是"要网"这条点名兑现的那一半里，缺省清单必须带 `/etc/resolv.conf` 的
+    // 全部理由（`/etc/hosts` 与 `/etc/nsswitch.conf` 量下来不必要）。公网那一条读数不挑机器，
+    // 这一条挑：它要的是**名字解得开**，而解析器配置就在清单里列着。
+    assert.match(on.json.dns, /^ok:/, '要网那一档按域名解得出地址（`/etc/resolv.conf` 在缺省清单里）')
   })
 })
 

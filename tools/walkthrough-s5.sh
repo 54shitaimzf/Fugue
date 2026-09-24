@@ -11,6 +11,10 @@
 # 档）：**这条命令今天拿在一个真工作区上跑，跑得起来吗、外面够得着吗**。所以它每类只取一条代表，
 # 印的是读数本身。
 #
+# **点名要网那一档不在这里连公网**：那要看这台机器有没有出口，走查就成了一份机器的读数。它在这里
+# 只读策略值那一栏（`want-net`），行为读数在 Y5 的断言 ②（同一个宿主服务端、两个答案，不依赖出口）。
+# 「要网那一档按域名解得出地址」那一条同样是机器相关的（它要出口），门在 `src/boundary/net.test.ts`。
+#
 # 跑法（在 ext4 上 · 仓库根）：sh tools/walkthrough-s5.sh
 # `KEEP=1` 把工作区留下；`FUGUE=<path>` 换实现（默认仓库里那个命令行）。
 set -u
@@ -171,7 +175,7 @@ check "档" "$(jget "$OUT/policy.json" mode)" "read-only"
 check "enforcement" "$(jget "$OUT/policy.json" enforcement)" "full"
 check "在场的层" "$(jget "$OUT/policy.json" layers)" "bwrap,landlock"
 check "网络那一档（没有动作点名）" "$(jget "$OUT/policy.json" net)" "none"
-check "清单里只读根的条数" "$(node -e 'const o=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(String(o.reach.roRoots.length))' "$OUT/policy.json")" "5"
+check "清单里只读根的条数" "$(node -e 'const o=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(String(o.reach.roRoots.length))' "$OUT/policy.json")" "6"
 check "清单里的软链条数" "$(node -e 'const o=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(String(o.reach.symlinks.length))' "$OUT/policy.json")" "4"
 printf '  可达集 %s\n' "$(node -e 'const o=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(o.reach.roRoots.join(" · "))' "$OUT/policy.json")"
 printf '  可写落点 %s\n' "$(jget "$OUT/policy.json" writableRoots)"
@@ -218,7 +222,7 @@ escape_reading peek-other peek-other false
 escape_reading peek-config peek-config false
 RC=$(json_run "$OUT/list-etc.json" --agent "$AGENT" run list-etc)
 check "list-etc · 退码" "$RC" "0"
-check "沙箱里那份 /etc 就是清单那三条" "$(grep -v '^$' "$OUT/list-etc.json.err" | grep -v '^退出码 ' | tr '\n' ' ' | sed 's/ *$//')" ". .. alternatives ld.so.cache ssl"
+check "沙箱里那份 /etc 就是清单那几条" "$(grep -v '^$' "$OUT/list-etc.json.err" | grep -v '^退出码 ' | tr '\n' ' ' | sed 's/ *$//')" ". .. alternatives ld.so.cache resolv.conf ssl"
 
 printf '  ── 虚拟侧（文件工具那一面：拒了，文案原样印出来）──\n'
 for p in ../outside.txt /etc/passwd; do
