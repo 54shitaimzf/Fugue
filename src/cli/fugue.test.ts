@@ -259,6 +259,41 @@ test('拒绝与退出码：0 成功 · 1 做不成 · 2 用法错（§ 9.8 的�
   assert.equal(existsSync(join(root, '.fugue')), false, '用法错不该建出日志目录')
 })
 
+// ── S5 步骤审批下来的收口（Y7 的走查量到的那一处）──────────────────────────────
+//
+// `read ../outside.txt` 与 `read /etc/passwd` 以前报在视图那一步的路径检查上（`view.pathOf` 的
+// `throw new Error`）：拒是拒了，**文案里没有去处**。架构 § 8.4 纪律 2 要求拒绝必须指路，而
+// S1 那道围栏（`fence.ts` 的 `Denied.message`）本来就带着那句原话——命令行没有从那条路走。
+// 现在四条写命令与读命令都在围栏上过一道，拒的时候报的是围栏那句话。
+test('路径走出工作区：拒在围栏上，文案带指路（S5 步骤审的收口）', async () => {
+  const root = tmpRoot()
+  const w = fugueStdin(root, 'hi\n', 'write', 'a.txt', '--stdin')
+  assert.equal(w.code, 0, w.stderr)
+
+  // 两条由头各来一次：`..` 越界（escape）与绝对路径（absolute）。四条写命令与读命令同一条路。
+  for (const p of ['../outside.txt', '/etc/passwd']) {
+    for (const [what, r] of [
+      ['read', fugue(root, 'read', p)],
+      ['stat', fugue(root, 'stat', p)],
+      ['list', fugue(root, 'list', p)],
+      ['write', fugueStdin(root, 'hi\n', 'write', p, '--stdin')],
+      ['remove', fugue(root, 'remove', p)],
+      ['rename', fugue(root, 'rename', p, 'x.txt')],
+      ['chmod', fugue(root, 'chmod', p, '755')],
+    ] as [string, Run][]) {
+      assert.equal(r.code, 1, `${what} ${p} 该拒：${r.stderr}`)
+      assert.match(r.stderr, /^\[boundary: /, `${what} ${p} 报的是围栏那句话：${r.stderr}`)
+      assert.match(r.stderr, /走申请（§ 15\.3\.b）/, `${what} ${p} 带指路：${r.stderr}`)
+    }
+  }
+  // 围栏不误伤：根之上不许走，**根之内可以走**（`a.txt` 与 `./a.txt` 是同一条路径）。
+  assert.equal(fugue(root, 'read', 'a.txt').stdout, 'hi\n')
+  assert.equal(fugue(root, 'read', './a.txt').stdout, 'hi\n')
+
+  // 拒的时候磁盘上一个字节都不该动：围栏排在开视图之前（用法错那一条也是这个口径）。
+  assert.equal(existsSync(join(root, '..', 'outside.txt')), false, '工作区外没有落下东西')
+})
+
 // ── X0（S4 之前要收的那一处）──────────────────────────────────────────────────
 //
 // `fugue chmod <path> 700` 以前会落一条 `view/chmod` 而视图里那个路径的模式一个字没变：

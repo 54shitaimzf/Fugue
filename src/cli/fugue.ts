@@ -59,6 +59,7 @@ import { matState } from '../materialize/manifest.ts'
 import type { MatState } from '../materialize/manifest.ts'
 import { MountError, unmountOverlay } from '../materialize/mount.ts'
 import { VerifyRefused, verifyMat } from '../materialize/verify.ts'
+import type { Denied, Result, Roots } from '../roots/contract.ts'
 import { HostError, assertHost } from '../roots/host.ts'
 import { createRoots } from '../roots/roots.ts'
 import type { CommitId, ForkStrategy, LogPos, PolicyMode, RelPath, StepId, ViewRev, WriterId } from '../terms.ts'
@@ -239,6 +240,28 @@ function usageFail(msg: string): number {
 }
 
 /**
+ * 原始输入 → 视图内的路径，或者**围栏那句给人看的话**（`Denied.message` 里带着指路）。
+ *
+ * **命令行的文件工具都走这里**（架构 § 8.4 硬纪律 1 的"唯一入口"）。在这之前，`read ../a.txt`
+ * 这一类输入掉在视图那一步的路径检查上、被 `throw new Error` 接住——拒是拒了，可文案里没有去处
+ * （Y7 的走查量到，S5 步骤审批下来的收口）。围栏里那份 `Denied` 本来就是给人看的整句，所以这里
+ * 不另造一句话，只把两种结果分清楚：出来的要么是一条视图内的路径，要么是一句话。
+ *
+ * **它只拿 `Roots`，不拿开好的视图**：这条路要在开视图之前走完——一条用法错、或者路径走出
+ * 工作区的命令，不该在磁盘上留下一个日志目录（`cli/fugue.test.ts` 里那条断言在管这个）。
+ *
+ * 基准目录是**工作区的根**：命令行没有"当前目录"这一维（壳让人在任何目录里敲 `fugue`），
+ * 凡是相对的输入都相对根读。空串与 `.` 因此都读成根。
+ */
+/** 围栏那两半。**带 `ok` 分**：路径与消息都是字符串，`typeof` 分不开。 */
+type Fenced = { readonly ok: true; readonly rel: RelPath } | { readonly ok: false; readonly message: string }
+
+function fence(roots: Roots, raw: string): Fenced {
+  const r = roots.resolveVirtual(raw, '')
+  return r.ok ? { ok: true, rel: r.value } : { ok: false, message: r.error.message }
+}
+
+/**
  * `--agent` 决定操作哪个视图，等价于选择一份日志（§ 9.6）。未指定时取主线：`round` 是
  * 持轮者这个位置的名字，它在 git 侧的落点是 `refs/heads/main`（§ 4）——所以不带参数读到
  * 的视图，与 git 侧的主干是同一段历史。
@@ -250,6 +273,11 @@ function writerOf(flags: Map<string, string | true>): WriterId {
 
 interface Ctx {
   root: string
+  /**
+   * 这一份落点。**命令行这一层要用的那一处**是 `resolveVirtual`：原始输入 → 视图内的路径，
+   * 或者一条带指路的拒绝（架构 § 8.4 硬纪律 1 的"唯一入口"）。
+   */
+  roots: Roots
   log: LogHandle
   truth: TruthHandle
   view: View
@@ -291,8 +319,12 @@ async function openCtx(
   root: string,
   flags: Map<string, string | true>,
   opts: OpenOptions = {},
+  given?: Roots,
 ): Promise<Ctx> {
   const writer = writerOf(flags)
+  // 这一份落点：命令行过围栏要它（`pathOrMessage`），`read` · `list` · `stat` 也顺手用它。
+  // **无状态，所以可以传进来**：写命令那一支要在开视图之前先过围栏。
+  const roots = given ?? createRoots(resolve(root))
   // **锁在这里取、整条命令握着**（`close()` 里放）：写命令要挡的不止「追加那一下」——
   // `ensure` 的挂载与落地那两段同样不许有第二个进程插进来（PLAN § 5.3 的疑点第一条）。
   const log = openLog(root, {
@@ -318,6 +350,7 @@ async function openCtx(
     const t = truth
     return {
       root,
+      roots,
       log,
       truth: t,
       view,
@@ -1372,10 +1405,13 @@ async function run(argv: readonly string[]): Promise<number> {
       if (!need(1)) return usageFail('read 需要 <path>')
       const ctx = await openCtx(root, flags)
       try {
-        const bytes = await ctx.view.read(args[0])
+        const fenced = fence(ctx.roots, args[0])
+        if (!fenced.ok) return fail(fenced.message)
+        const rel = fenced.rel
+        const bytes = await ctx.view.read(rel)
         if (bytes === null) return fail(`read：${args[0]} 不是可读的路径（目录 · gitlink · 或者不存在）`)
         if (json) {
-          const meta = await ctx.view.stat(args[0])
+          const meta = await ctx.view.stat(rel)
           emitJson({ path: args[0], size: bytes.length, ...meta })
         } else {
           process.stdout.write(Buffer.from(bytes))
@@ -1389,7 +1425,10 @@ async function run(argv: readonly string[]): Promise<number> {
     case 'list': {
       const ctx = await openCtx(root, flags)
       try {
-        const rows = await ctx.view.list(args[0] ?? '')
+        const fenced = fence(ctx.roots, args[0] ?? '')
+        if (!fenced.ok) return fail(fenced.message)
+        const rel = fenced.rel
+        const rows = await ctx.view.list(rel)
         if (json) emitJson(rows)
         else for (const r of rows) emitLine(`${r.kind}\t${r.mode.toString(8)}\t${r.size}\t${r.name}`)
         return 0
@@ -1402,7 +1441,10 @@ async function run(argv: readonly string[]): Promise<number> {
       if (!need(1)) return usageFail('stat 需要 <path>')
       const ctx = await openCtx(root, flags)
       try {
-        const meta = await ctx.view.stat(args[0])
+        const fenced = fence(ctx.roots, args[0])
+        if (!fenced.ok) return fail(fenced.message)
+        const rel = fenced.rel
+        const meta = await ctx.view.stat(rel)
         if (meta === null) return fail(`stat：${args[0]} 不存在`)
         if (json) emitJson({ path: args[0], ...meta })
         else emitLine(`${meta.kind}\t${meta.mode.toString(8)}\t${meta.size}\t${meta.id}`)
@@ -1449,9 +1491,13 @@ async function run(argv: readonly string[]): Promise<number> {
     case 'remove':
     case 'rename':
     case 'chmod': {
-      // 参数先收齐，再开视图：一条用法错的命令不该在磁盘上留下任何东西。
-      const delta = await deltaFrom(cmd, args, flags)
-      const ctx = await openCtx(root, flags, { write: true })
+      // 参数先收齐（含"这几条路径能不能落地"那一步过围栏），**再开视图**：一条用法错的命令
+      // 不该在磁盘上留下任何东西，而围栏要的只是落点，不必等日志与快照建起来——围栏拿的是
+      // 一份无状态的 `Roots`，`openCtx` 收同一份（第四个数），所以那两处说的是同一个根。
+      const roots = createRoots(resolve(root))
+      const delta = await deltaFrom(roots, cmd, args, flags)
+      if (typeof delta === 'string') return fail(delta)
+      const ctx = await openCtx(root, flags, { write: true }, roots)
       try {
         const res = await applyEdit(
           { log: ctx.log, truth: ctx.truth, view: ctx.view, writer: ctx.writer },
@@ -1669,17 +1715,24 @@ class UsageError extends Error {}
  * 把命令行收成一个 delta。**这一步不开视图、不读日志**——参数不对的命令不该在磁盘上留下
  * 任何东西，而"先建再检查"会让一条用法错的命令也留下一个日志目录。
  *
+ * **每一条路径都过围栏**（`fence`）：`write ../x` 这一类输入在这里就变成一条带指路
+ * 的拒绝（退出码 1），而不是等视图那一步的路径检查来 `throw`——那是两个不同的话（一个是
+ * "这条请求不成立"，一个是"这条请求做不成"），拒绝时该说的是后一句。基准目录是工作区的根。
+ *
  * 四条写命令共用它；与模型侧共用的是更下面那次 `applyEdit`——这里只做参数那一半。
  */
 async function deltaFrom(
+  roots: Roots,
   cmd: string,
   args: string[],
   flags: Map<string, string | true>,
-): Promise<Delta> {
+): Promise<Delta | string> {
   switch (cmd) {
     case 'write': {
-      const p = args[0]
-      if (p === undefined) throw new UsageError('write 需要 <path>')
+      if (args[0] === undefined) throw new UsageError('write 需要 <path>')
+      const fenced = fence(roots, args[0])
+      if (!fenced.ok) return fenced.message
+      const p = fenced.rel
       const from = flags.get('from')
       let bytes: Uint8Array
       if (typeof from === 'string') bytes = readFileSync(from)
@@ -1689,21 +1742,30 @@ async function deltaFrom(
       return { kind: 'add', path: p, bytes, mode: 0o100644 }
     }
     case 'remove': {
-      const p = args[0]
-      if (p === undefined) throw new UsageError('remove 需要 <path>')
+      if (args[0] === undefined) throw new UsageError('remove 需要 <path>')
+      const fenced = fence(roots, args[0])
+      if (!fenced.ok) return fenced.message
+      const p = fenced.rel
       return { kind: 'delete', path: p }
     }
     case 'rename': {
-      const from = args[0]
-      const to = args[1]
-      if (from === undefined || to === undefined) throw new UsageError('rename 需要 <from> <to>')
+      const [rawFrom, rawTo] = args
+      if (rawFrom === undefined || rawTo === undefined) throw new UsageError('rename 需要 <from> <to>')
+      const a = fence(roots, rawFrom)
+      if (!a.ok) return a.message
+      const b = fence(roots, rawTo)
+      if (!b.ok) return b.message
+      const from = a.rel
+      const to = b.rel
       return { kind: 'rename', from, to }
     }
     default: {
       const p = args[0]
       const mode = args[1]
       if (p === undefined || mode === undefined) throw new UsageError('chmod 需要 <path> <mode>')
-      return { kind: 'chmod', path: p, mode: parseOctal(mode) }
+      const fenced = fence(roots, p)
+      if (!fenced.ok) return fenced.message
+      return { kind: 'chmod', path: fenced.rel, mode: parseOctal(mode) }
     }
   }
 }

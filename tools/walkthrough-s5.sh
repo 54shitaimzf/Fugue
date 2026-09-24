@@ -225,19 +225,27 @@ check "list-etc · 退码" "$RC" "0"
 check "沙箱里那份 /etc 就是清单那几条" "$(grep -v '^$' "$OUT/list-etc.json.err" | grep -v '^退出码 ' | tr '\n' ' ' | sed 's/ *$//')" ". .. alternatives ld.so.cache resolv.conf ssl"
 
 printf '  ── 虚拟侧（文件工具那一面：拒了，文案原样印出来）──\n'
+# 这两条走的是 S1 那道围栏（`resolveVirtual`）：拒的时候要把指路原样带出来——S5 步骤审之前
+# 它们报在视图那一步的路径检查上，拒是拒了，文案里没有去处。
 for p in ../outside.txt /etc/passwd; do
   MSG=$(fugue --agent "$AGENT" read "$p" 2>&1 >/dev/null)
   RC=$?
   printf '  read  %-18s 退 %s：%s\n' "$p" "$RC" "$MSG"
   check "read $p · 拒了" "$RC" "1"
+  check "read $p · 文案带指路（那句原话在）" "$(printf '%s' "$MSG" | grep -c '走申请')" "1"
 done
 for p in ../outside.txt /etc/passwd; do
   MSG=$(printf 'hi\n' | fugue --agent "$AGENT" write "$p" --stdin 2>&1 >/dev/null)
   RC=$?
   printf '  write %-18s 退 %s：%s\n' "$p" "$RC" "$MSG"
   check "write $p · 拒了" "$RC" "1"
+  check "write $p · 文案带指路（那句原话在）" "$(printf '%s' "$MSG" | grep -c '走申请')" "1"
 done
-printf '  （这两条报在路径检查那一步；文案的形状与指路那一句一并记在步骤审的疑点里）\n'
+check "工作区外没有落下东西" "$([ -e "$WORK/outside.txt" ] && echo 有 || echo 没有)" "没有"
+# 正对照：拒的是"走出工作区"，不是"路径写法"。这两条照读照写（`src/a.c` 是夹具里那份源码：
+# 一条普通路径读出来就是它），与单元判据里那几条正对照同一个口径。
+check "正对照 · read 一条普通路径" "$(fugue --agent "$AGENT" read src/a.c 2>/dev/null | head -1)" "#include <stdio.h>"
+check "正对照 · write 一条普通路径（落在视图里）" "$(printf 'hi\n' | fugue --agent "$AGENT" write src/ok.txt --stdin 2>/dev/null | cut -f2)" "$AGENT"
 
 printf '  ── 配置那一侧（清单里一条写错了：拒在起进程之前，话指回那一栏）──\n'
 BEFORE=$(fugue --agent "$AGENT" --json log | grep -c '"t":"run/start"' || true)
@@ -248,7 +256,7 @@ check "badreach · 一条 run/start 都没多" "$(fugue --agent "$AGENT" --json 
 printf '  %s\n' "$(head -1 "$OUT/badreach.json.err")"
 check "badreach · 那句指路指回配置那一栏（给出一条能照抄的命令）" "$(grep -c "fugue config set boundary.reach" "$OUT/badreach.json.err" || true)" "1"
 fugue config set boundary.reach '["/usr","/opt","/etc/ld.so.cache","/etc/ssl","/etc/alternatives"]' >/dev/null
-printf '  （清单改回来了：缺省那五条）\n'
+printf '  （清单改回来了：缺省那六条，含要网那一档要的 /etc/resolv.conf）\n'
 
 printf '  ── 启动前（声明本身就是坏的：Y4 那条 fail-closed）──\n'
 RC=$(json_run "$OUT/badcache.json" --agent "$AGENT" run badcache)
