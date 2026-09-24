@@ -89,6 +89,7 @@ import type { Assertion } from '../contract/types.ts'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { computeAll, reportOf } from '../probe/round.ts'
+import { computeAllMetrics, lineOf } from '../probe/metrics.ts'
 
 const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 
@@ -172,7 +173,7 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              **物化缺省不做**（架构 § 14.1 的 deferMaterialize：走按需物化）。
                              给 --materialize 就把 N 棵树也铺出来——那一步落的是 mat/fork 事件，
                              每条分支一份，落在**那个 agent 自己的日志**里。
-  round run <目标> [--report] [--fail <n>] [--deny <n>] [--retry <n>] [--materialize]
+  round run <目标> [--report] [--metrics] [--fail <n>] [--deny <n>] [--retry <n>] [--materialize]
                              跑一个完整的轮次（架构 § 20 S7 的可用性那一句）：
                              起头（钉底 · 造契约 · Planning 预检 · 发契约 · 起分支）→ 每个 agent
                              干一格（**模型这一侧今天是打桩的**，PLAN § 5.7 的"不在这一站里的"
@@ -188,6 +189,7 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              --deny <n>   第 n 个 agent 的格子里多跑一条必然被拒的动作
                              --retry <n>  Verifying → Working 那条回边允许走几次（缺省 0）
                              --report     印打回那三个数（从日志重算，不采集）
+                             --metrics    印八元指标（**每个指标的分子与分母一起印**，从日志重算）
                              --materialize 起头时把 N 棵树也铺出来（缺省不铺）
                              --soft-merge-gate 合并前那一档预检的严宽拉平到 Planning 那一档
                              （缺省是报出即拒——合并不可逆）；真冲突仍由折叠当场报出，不静默
@@ -854,6 +856,9 @@ async function roundRun(
     // 就是刚才那一趟跑出来的那份日志。
     const readings = await computeAll(() => ctx.log.readMerged(), { round })
     const report = reportOf({ round }, readings)
+    // 八元指标（架构 § 8.15）：**与上面那三个数同一个来源**（同一份日志 · 同样重算）。
+    // 那一趟的日志就是刚才跑出来的那一份——所以 `--metrics` 印的就是这一趟。
+    const metrics = flags.has('metrics') ? await computeAllMetrics(() => ctx.log.readMerged(), { round }) : null
 
     if (json) {
       emitJson({
@@ -871,6 +876,7 @@ async function roundRun(
         advanced: started.advanced === null ? null : { written: started.advanced.written, removed: started.advanced.removed, skipped: started.advanced.skipped },
         deniedAction,
         metrics: report.readings,
+        probe: metrics,
       })
     } else {
       emitLine(`${started.round}\t${started.base}\t${started.state}`)
@@ -887,6 +893,10 @@ async function roundRun(
       if (flags.has('report')) {
         emitLine('打回读数（从日志重算，不采集）：')
         for (const l of report.lines) emitLine(`  ${l}`)
+      }
+      if (metrics !== null) {
+        emitLine('八元指标（从日志重算，不采集；分子与分母一起印）：')
+        for (const m of metrics) emitLine(`  ${lineOf(m)}`)
       }
       if (!started.report.ok) {
         for (const r of started.report.results.filter((x) => x.verdict !== 'pass')) {
