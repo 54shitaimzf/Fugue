@@ -164,6 +164,16 @@ function pathArrayField(v: unknown, what: string, item: (p: unknown, w: string) 
   return bad.length === 0 ? null : bad.join('；')
 }
 
+/**
+ * 构造器留给调查型产物目录的那一段（架构 § 8.12：`investigate` 的产物落在"构造器按位置定名的
+ * 专属目录"里，因此它的写入面**不可能与任何契约相交**）。名字住在这里而不是住在 `build.ts`：
+ * `ownedPaths` 那一格的检查（本文件）要拒它，而 `build.ts` 的构造器要用它——**一个名字一处**。
+ *
+ * 代价写明白：真实项目里有一个叫 `evidence/` 的顶层目录时，它落不进任何契约的写入集。
+ * 那是个常量，换一个名字是一行。
+ */
+export const EVIDENCE_PREFIX = 'evidence'
+
 /** 契约的 id：`<轮次>.<变体>.<序号>`（A1 的构造器按这个形状发）。**序号从 1 起。** */
 export function idShapeOf(id: unknown): { round: string; kind: 'implement' | 'investigate' | 'resolve'; n: number } | null {
   if (typeof id !== 'string') return null
@@ -259,9 +269,18 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   question: { holder: 'round/intent（轮级意图是它的上界）', check: (v) => nonEmptyString(v, 'question') },
 
   // 两格路径集合：语法归 M3（`isRelPath`），这里只用它。
+  // `ownedPaths` 另有一条：不许占住构造器留给调查型的那一段——那一段是
+  // "investigate 不可能与任何契约相交"（架构 § 8.12 的验证性质）唯一的守卫。
   ownedPaths: {
-    holder: 'M3（路径语法）',
-    check: (v) => pathArrayField(v, 'ownedPaths', upperBoundField),
+    holder: 'M3（路径语法）· 构造器（`evidence` 那一段归它）',
+    check: (v) => {
+      const syntax = pathArrayField(v, 'ownedPaths', upperBoundField)
+      if (syntax !== null) return syntax
+      const hit = (v as readonly string[]).filter((p) => p === EVIDENCE_PREFIX || p.startsWith(`${EVIDENCE_PREFIX}/`))
+      return hit.length === 0
+        ? null
+        : `ownedPaths 占住了构造器留给调查型的位置（${EVIDENCE_PREFIX}/）：${hit.join(' · ')}`
+    },
   },
   conflictPaths: {
     holder: 'M13（即报告的冲突路径集）',

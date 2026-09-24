@@ -25,6 +25,7 @@ import type { ActionName, BranchId, CommitId, ContractId, RelPath, RoundId } fro
 import type { Assertion, Contract, Evidence, ImplementContract, InvestigateContract, ResolveContract } from './types.ts'
 import {
   DEFAULT_MODEL_LIMIT,
+  EVIDENCE_PREFIX,
   HANDOFF_MARGIN,
   seedLimitOf,
   VARIANT_FIELDS,
@@ -319,7 +320,7 @@ export function evidenceFor(agent: string, intent: Intent): Evidence[] {
     if (!isSegment(name)) {
       throw new BuildError(`第 ${i + 1} 条证据的备注要是一个段（不含 / 与 \\，不以点开头）：${JSON.stringify(one.note)}`)
     }
-    const artifact = ['evidence', ...who, name].join('/')
+    const artifact = [EVIDENCE_PREFIX, ...who, name].join('/')
     identSegments(artifact, `第 ${i + 1} 条证据的产物目录`)
     return { artifact, note: one.note }
   })
@@ -328,7 +329,7 @@ export function evidenceFor(agent: string, intent: Intent): Evidence[] {
 /** 构造器认的那几个字面量，给走查与报告印用。 */
 export const KIND_OF: Readonly<Record<Contract['kind'], string>> = {
   implement: '实现型：写入集由持轮者声明（`ownedPaths`），交付物与断言随契约',
-  investigate: '调查型：产物落在构造器按位置定名的专属目录（`evidence/<agent 的每一段>/<备注>`），因此不与任何契约相交',
+  investigate: `调查型：产物落在构造器按位置定名的专属目录（\`${EVIDENCE_PREFIX}/<agent 的每一段>/<备注>\`），因此不与任何契约相交`,
   resolve: '解决型：写入集 = 冲突路径集（`conflictPaths`），底是冲突报告给的那棵树',
 }
 
