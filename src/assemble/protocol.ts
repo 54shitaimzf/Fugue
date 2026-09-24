@@ -8,11 +8,11 @@
 // 载入时的核对：**两份声明的段的域必须恰好等于区表的域**——多一段少一段都只是字节不同，
 // 没有别的报错，所以它必须是当场炸，不能等。
 //
-// **工具名的定义处不在这里**，在 src/capability/table.ts（架构 § 8.10 的工具目录 · § 8.9 的
-// 能力表以它为键）。这一份只声明协议值，所以它读那一处，不另立一份：两份名字表不一致时，
-// 前缀字节只是不同，没有别的报错。转发一行是为了让 Z0 的消费者（探针 · 走查）不必改 import。
-export { TOOL_NAMES } from '../capability/table.ts'
-import { TOOL_NAMES } from '../capability/table.ts'
+// **工具名的定义处不在这里**，在 src/tools/catalog.ts（架构 § 8.10 的工具目录：名字 · 描述 ·
+// parameters）。这一份只声明协议值，所以它读那一处，不另立一份；而目录的字节与它的指纹在
+// catalog.ts 里，两者同源。转发一行是为了让 Z0 的消费者（探针 · 走查）不必改 import。
+export { TOOL_NAMES } from '../tools/catalog.ts'
+import { TOOL_NAMES } from '../tools/catalog.ts'
 import type { Protocol, RendererId, SegmentId, Zone } from './contract.ts'
 import { HOLDER_B, ZONE_SEGMENTS } from './contract.ts'
 
@@ -113,7 +113,14 @@ export function checkProtocolInvariant(p: Protocol, zoneB: readonly SegmentId[])
   for (const id of table) {
     if (!seen.has(id)) bad.push(`区表里有这一段，段序里没有：${id}`)
   }
-  if (p.toolCatalog.length === 0) bad.push('工具目录是空的')
+  const names = [...p.toolCatalog]
+  if (names.length === 0) bad.push('工具目录是空的')
+  // 工具目录与它的定义处同一份：架构 § 8.10 说这张目录是工具名的唯一定义处，而协议值里的
+  // 那一栏只是把它搬过来。搬错了（少一个 · 多一个 · 换了顺序）前缀的字节只是不同，没有别的
+  // 报错——所以在这里核一遍。
+  if (names.length !== TOOL_NAMES.length || names.some((n, i) => n !== TOOL_NAMES[i])) {
+    bad.push('协议里的工具目录与工具目录那一份不是同一份：' + names.length + ' 个，应当是 ' + TOOL_NAMES.length + ' 个')
+  }
   return bad
 }
 
