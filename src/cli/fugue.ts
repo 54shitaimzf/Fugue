@@ -39,7 +39,7 @@ import { cacheLayoutOf, confine, degradedArgv } from '../boundary/confine.ts'
 import { createExecutor } from '../execute/exec.ts'
 import { ReclaimRefused, createReclaim } from '../execute/reclaim.ts'
 import type { DeclaredSet, Reclaim } from '../execute/reclaim.ts'
-import { agentFor } from '../identity.ts'
+import { agentFor, refFor } from '../identity.ts'
 import type { Delta } from '../delta.ts'
 import type { TreeEntry } from '../entries.ts'
 import type { LogEvent } from '../log/events.ts'
@@ -69,6 +69,14 @@ import type { View } from '../view/contract.ts'
 import { applyEdit } from '../view/edit.ts'
 import { baseFor, lowerAt, lowerFor } from '../view/lower.ts'
 import { readSnapshot, saveSnapshot, snapshotOf } from '../view/snapshot.ts'
+import { assemble, firstDivergence, hashOf } from '../assemble/assemble.ts'
+import type { Prefix, SegmentId, SegmentValue } from '../assemble/contract.ts'
+import { DEFAULT_MODEL } from '../assemble/models.ts'
+import { HOLDER_PROTOCOL, protocolNamed } from '../assemble/protocol.ts'
+import { checkConstraints, formatViolation } from '../assemble/constraints.ts'
+import { emptyState, HOLDER, SourceError, sourcesFor } from '../assemble/sources.ts'
+import type { AgentCoord } from '../assemble/sources.ts'
+import { stateWithState } from '../assemble/sources-state.ts'
 import { loadView } from '../view/view.ts'
 
 const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
@@ -175,7 +183,7 @@ interface Parsed {
  * 一个贪心的解析器会把命令当成开关的值吃掉。
  */
 const VALUED: ReadonlySet<string> = new Set([
-  'root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro', 'step', 'mode',
+  'root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro', 'step', 'mode', 'against',
 ])
 
 function parseArgv(argv: readonly string[]): Parsed {
@@ -673,6 +681,137 @@ const STATUS_MARK: Record<ChangeStatus, string> = { added: '+', removed: '-', ch
 
 /** 策略名——给用法错与 `--json` 用；次序就是 § 8.5 策略表里的那三档（`reflink` 不在列）。 */
 const STRATEGIES: readonly ForkStrategy[] = ['overlayfs', 'hardlink-ro', 'copy']
+
+/**
+ * `fugue assemble <protocol> [--agent <id>] [--against <protocol>] [--json]`（架构 § 9.6 的装配行 ·
+ * § 20 S6 的交付物）。
+ *
+ * **它是结账口**：三区哈希 · 每区的字节数 · 第一处不同（给了 `--against` 时）· 四条约束的检查
+ * 结果，一次全印出来。命令行这一层只做三件事——解析参数 · 把结构化结果排成两列 · 决定退出码；
+ * 段值从哪来住在 `sources.ts`，装配住在 `assemble.ts`，四条约束住在 `constraints.ts`。
+ *
+ * **两个面共用一个形状**（架构 § 9.6：「CLI 的输出就是 `M9` 工具的返回形状」）：`zones` 那三栏
+ * 就是 `assemble()` 的三个区按同一套哈希口径读出来的——`--json` 那一份与程序里那次装配逐字节
+ * 对得上（`constraints.test.ts` 的 ② 量这一条）。
+ *
+ * **拒的三处**：协议名不认得（`protocolNamed`）· `--agent` 指了一个不存在的 agent（`resolverFor`，
+ * 不给就是持轮者那条路）· `--against` 指的协议不认得。三处都是退出码 1，都报出那个名字。
+ */
+async function assembleCmd(
+  root: string,
+  flags: Map<string, string | true>,
+  args: string[],
+  json: boolean,
+): Promise<number> {
+  const abs = resolve(root)
+  const name = args[0]
+  if (name === undefined || name === '') {
+    return usageFail(`assemble 需要 <protocol>：${Object.keys(PROTOCOLS).join(' 或 ')}`)
+  }
+  const who = flags.get('agent')
+  const against = flags.get('against')
+  try {
+    const doc = await readConfig(abs)
+    const protocol = protocolNamed(name)
+    const coord = await agentCoord(abs, typeof who === 'string' ? who : null, doc)
+    const segments = sourcesFor(protocol, coord.state, coord.who)
+    const prefix = assemble({ protocol, model: DEFAULT_MODEL.id, segments })
+    const violations = checkConstraints(protocol, segments, null, '这一步', undefined, prefix)
+
+    const zoneLine = (z: 'A' | 'B' | 'C'): { hash: string; bytes: number } => {
+      const bytes = z === 'A' ? prefix.zoneA : z === 'B' ? prefix.zoneB : prefix.zoneC
+      return { hash: hashOf(bytes), bytes: bytes.length }
+    }
+    const zones = { A: zoneLine('A'), B: zoneLine('B'), C: zoneLine('C') }
+
+    let divergence: { against: string; at: number; note: string } | null = null
+    if (typeof against === 'string' && against !== '') {
+      const other = protocolNamed(against)
+      const otherCoord = await agentCoord(abs, typeof who === 'string' ? who : null, doc)
+      const otherSegments = sourcesFor(other, otherCoord.state, otherCoord.who)
+      const otherPrefix = assemble({ protocol: other, model: DEFAULT_MODEL.id, segments: otherSegments })
+      const a = firstDivergence(prefix.zoneA, otherPrefix.zoneA)
+      const at = a >= 0 ? a : prefix.zoneA.length + firstDivergenceOrEnd(prefix.zoneB, otherPrefix.zoneB)
+      divergence = {
+        against,
+        at,
+        note:
+          a >= 0
+            ? `A 区第 ${a} 个字节起不同`
+            : `共同部分（A + B 相同的 ${at} 个字节）之后是这两份声明各自的地方`,
+      }
+    }
+
+    if (json) {
+      emitJson({
+        protocol: name,
+        version: protocol.version,
+        agent: typeof who === 'string' ? who : null,
+        segments: protocol.segmentOrder.length,
+        toolCatalog: protocol.toolCatalog.length,
+        zones,
+        firstDivergence: divergence,
+        violations,
+      })
+    } else {
+      emitLine(`协议 ${name} · 版本 ${protocol.version} · ${typeof who === 'string' ? `agent ${who}` : '持轮者那条路'}`)
+      emitLine(`段 ${protocol.segmentOrder.length} 段 · 工具目录 ${protocol.toolCatalog.length} 个`)
+      for (const z of ['A', 'B', 'C'] as const) {
+        emitLine(`${z} 区 ${zones[z].bytes} 字节 · ${zones[z].hash}`)
+      }
+      if (divergence !== null) emitLine(`与 ${divergence.against} 的第一处不同：第 ${divergence.at} 个字节（${divergence.note}）`)
+      emitLine(
+        violations.length === 0
+          ? '四条约束：一处都不报'
+          : `四条约束：报了 ${violations.length} 处\n  ${violations.map(formatViolation).join('\n  ')}`,
+      )
+    }
+    return violations.length === 0 ? 0 : 1
+  } catch (err) {
+    if (err instanceof SourceError || err instanceof ConfigError || err instanceof Error) {
+      return fail(err.message)
+    }
+    throw err
+  }
+}
+
+/** 两个字节串从头起相同的长度（`firstDivergence` 在 A 区相同时给 -1，这里要的是那个位置）。 */
+function firstDivergenceOrEnd(a: Uint8Array, b: Uint8Array): number {
+  const n = Math.min(a.length, b.length)
+  let i = 0
+  while (i < n && a[i] === b[i]) i += 1
+  return i
+}
+
+/**
+ * 这一次装配用的是谁：不给 `--agent` 就是持轮者那条路（`HOLDER`），给了就去日志里查它的分支头
+ * ——查不到当场拒（退出码 1，报出那个名字），**不给主线当默认**（PLAN § 5.6 的 Z4 行那句）。
+ *
+ * 坐标那两栏的当下取值：`branch` 是日志里那条 ref，`outputPaths` 是契约要求的产物路径（架构
+ * § 8.12）——契约值的读取与逐 `kind` 的裁剪落在 S7，所以这一份今天给的是"这个 agent 的产物
+ * 目录"这一条机械的取值。
+ */
+async function agentCoord(
+  root: string,
+  who: string | null,
+  doc: ConfigDoc,
+): Promise<{ state: ReturnType<typeof stateWithState>; who: AgentCoord | null }> {
+  const state = stateWithState(emptyState(), doc, root)
+  if (who === null) return { state, who: HOLDER }
+  const truth = openTruth(root)
+  try {
+    const ref = refFor(`agent/r1/${who}`)
+    const head = await truth.resolve(ref).catch(() => null)
+    if (head === null) {
+      throw new SourceError(
+        `没有这个 agent：${who}——日志里没有 ${ref}。不给 --agent 走的是持轮者那条路，两者不是一回事（架构 § 8.11）。`,
+      )
+    }
+    return { state, who: { id: who, branch: ref, outputPaths: [`deliver/${who}/`] } }
+  } finally {
+    truth.close()
+  }
+}
 
 /**
  * `fugue fork <base>`：把 base 那棵树物化出来，返回合并树（§ 8.5 · § 9.6）。
@@ -1396,6 +1535,7 @@ async function run(argv: readonly string[]): Promise<number> {
   if (cmd === 'run') return await runCmd(root, flags, positional.slice(1), rest, json)
   if (cmd === 'verify-mat') return await verifyMatCmd(root, flags, json)
   if (cmd === 'dispose') return await disposeCmd(root, flags, json)
+  if (cmd === 'assemble') return await assembleCmd(root, flags, positional.slice(1), json)
 
   const args = positional.slice(1)
   const need = (n: number): boolean => args.length >= n && !args.slice(0, n).some((a) => a === '')
