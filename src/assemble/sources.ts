@@ -48,6 +48,14 @@ export interface AssembleState {
    * （跨步稳定）一个都不读它——所以它进状态、不进前缀。
    */
   readonly step: number
+  /**
+   * 这一步的工作目录（视图内的相对路径，`''` 就是根）。
+   *
+   * **它与 `step` 同类：是坐标，不是段。** 前缀十二段一个都不读它，所以它进状态、不进前缀
+   * （B/C 两区的哈希因此与它无关）。工具面要它：`glob`/`grep` 不给 `path` 时相对它走，围栏
+   * 拿它当 `cwd` 解相对路径（架构 § 8.4 的 `resolveVirtual(path, cwd)`）。
+   */
+  readonly cwd: string
   readonly policy: string
   /** 系统状态：配置对本工作区的投影（架构 § 15.3.a）。**这个仓库里的第一版**（Z5 接手）。 */
   readonly system: SegmentValue
@@ -85,6 +93,7 @@ export interface AssembleState {
 export function emptyState(): AssembleState {
   return {
     step: 0,
+    cwd: '',
     policy: '',
     system: {},
     codeTree: [],

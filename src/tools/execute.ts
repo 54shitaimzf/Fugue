@@ -1,0 +1,382 @@
+// 工具面：**工具名 → 会跑的那一段**。出处：架构 § 8.10（那十五个工具的目录）· § 8.9（能力表
+// 以工具名为键）· § 14.2 第 4 步（`calls.map(dispatch)`）。
+//
+// **它是目录与实现之间的那一半。** `catalog.ts` 说"公布给模型的是哪几条"，这一份说"哪几条
+// 真的跑得起来"。两者今天是两个集合，而**公布的那一份必须是跑得起来的那一份的子集**——否则
+// 模型点了一条我们再回一句"这条没接上"，那是把我们的缺口当成它的一次错误（架构 § 8.4 纪律 2
+// 的同一件事：拒的话里要指得出名字从哪来）。
+//
+// **这一层不认识沙箱、不认识视图。** 手里只有 `ToolHost`（B5 定的一道缝：读 · 写 · 改 ·
+// 列 · 跑 · 提交 · 动作）。谁实现它，"路径怎么围栏 · 子进程怎么关起来"就在谁那儿；这一层只管
+// "哪个工具收哪几个参数、把结果说成什么话"。**也因此它没有一处 `if (action === …)`**——那类
+// 分岔归 `capability/dispatch.ts` 那张表。
+//
+// **为什么"有实现"这件事要能被指着问出来**（`faceOf` · `IMPLEMENTED`）：`B5` 的断言 ① 是
+// "公布的工具每一条都有实现"，而这句话只有在"实现表"是一份**读得出来的名单**时才量得到。
+// 写成"调用时才 `throw`"就量不到了——那时缺口只在真被调到时才现形。
+import type { Capability, Denied } from '../capability/table.ts'
+import type { ToolEntry } from './catalog.ts'
+// 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
+// 因为下面那条签名指着它——**形状住能力表，这一层不复制第二份**。
+/** 一次工具调用要跑，得先知道是哪个 agent 的哪一步（日志与坐标都要它）。 */
+export interface ToolContext {
+  readonly agent: string
+  readonly step: number
+  /** 视图内的相对路径，工具收的那种路径都相对它（`bash` 的 `cwd` 也是）。 */
+  readonly cwd: string
+}
+
+/**
+ * 工具能碰的那几样东西。**八条，就是这九个工具全部要的。**
+ *
+ * `deny` 是"你自己拒了"那道口：路径围栏（`M3` 的 `resolveVirtual`）与能力表都不在这一层，
+ * 所以拒的话由实现那一侧给整句，这一层只把它原样变成一次失败的结果。**拒的话里指得出名字
+ * 从哪来**（§ 8.4 纪律 2），所以那道口收的是 `Denied`（能力表那份形状）而不是一段字符串。
+ */
+export interface ToolHost {
+  /**
+   * 读一个路径。**给的是字节，不是字符串**：`read_image` 那一格要能原样取出图，
+   * 而"字节 → 字符串"这一步会替掉非法序列（同一个字节串读两次会变成两样）。
+   * 文本工具自己在这一层解（`utf8Of`），二进制工具原样拿走。
+   */
+  readBytes(rel: string): Promise<{ readonly bytes: Uint8Array; readonly mode: number } | null>
+  writeBytes(rel: string, bytes: Uint8Array): Promise<{ readonly rev: number }>
+  /**
+   * 列一层。**只列直接的孩子，不递归**——递归是另一条（`walk`），因为"走多深"这件事
+   * 在视图那边要一层一层问，而在工具这边要一次拿全。
+   */
+  list(dir: string): Promise<readonly ToolListing[]>
+  /**
+   * 这棵树里的全部文件（相对根的路径）。
+   *
+   * **它不走软链、有层级与条数上限**：软链穿过去就绕开了路径围栏（§ 8.4 的 `through-symlink`
+   * 那一条），而不封顶的深树能把一步走成挂死。两条都由实现那一侧封——这一层只消费结果。
+   */
+  walk(): Promise<readonly string[]>
+  readonly edit: (rel: string, raw: EditRaw) => Promise<{ readonly rev: number; readonly changed: boolean }>
+  run(req: RunAsk): Promise<RunReply>
+  checkpoint(msg: string): Promise<{ readonly commit: string }>
+  runAction(req: ActionAsk): Promise<RunReply>
+  /**
+   * 自己拒了一次（路径在视图外 · 视图层只读 …）。**整句由拒的那一方给**，这一条口子只负责
+   * "把这次拒记下来"：落一条 `bound/deny`（`path` · `space` · `rule` 就是那条事件的三个字段），
+   * 再把同一句话交回去当这一步的结果。
+   */
+  deny(d: DenyAsk): Promise<void>
+}
+
+/** 一次"我自己拒了"：`bound/deny` 那三个字段加一句给人看的话。 */
+export interface DenyAsk {
+  /** 被拒的那一串原文（模型给的那个路径）。 */
+  readonly path: string
+  /** 拒在哪个空间里：视图内的相对路径是 `virtual`，物化出来的那棵树是 `physical`。 */
+  readonly space: 'virtual' | 'physical'
+  /** 哪一条规则拒的（机器可读的那半句，进日志）。 */
+  readonly rule: string
+  /** 给人看的整句，含指路（架构 § 8.4 纪律 2）。**它就是这一步的结果文本。** */
+  readonly message: string
+}
+
+/**
+ * 一条拒的话。**`rule` 是机器读的那半句，`message` 是给人看的那一整句。**
+ *
+ * 两个字段都要：`bound/deny` 记的是 `rule`（重算指标与走查按它分组），模型看到的是 `message`
+ * （带指路）。合成一段字符串就再也分不开了。
+ */
+export function refuse(rule: string, message: string, path: string, space: 'virtual' | 'physical' = 'virtual'): DenyAsk {
+  return { rule, message, path, space }
+}
+
+/** 一次改名/改权限的原文（`view/edit.ts` 那一族的一个最小子集：只收这一层用得上的三种）。 */
+export type EditRaw =
+  | { readonly kind: 'replace'; readonly find: string; readonly replace: string }
+  | { readonly kind: 'rename'; readonly to: string }
+  | { readonly kind: 'chmod'; readonly mode: number }
+
+/** 列目录给回的一行。`kind` 是"这一行是文件还是目录"——`glob` 按它决定走不走下去。 */
+export interface ToolListing {
+  readonly name: string
+  readonly kind: 'file' | 'dir' | 'symlink' | 'other'
+  readonly size: number
+}
+
+/** 起一个进程要什么。**`command` 是一行原样的命令**：怎么切词、怎么关起来是实现那一侧的事。 */
+export interface RunAsk {
+  readonly command: string
+  readonly cwd: string
+  readonly timeoutMs: number | null
+}
+
+/** 一次执行的回执（`execute/contract.ts` 的 `RunResult` 去掉这一层不读的那两栏）。 */
+export interface RunReply {
+  readonly exit: number
+  readonly ms: number
+  readonly denied: boolean
+  readonly stdout: string
+  readonly stderr: string
+}
+
+/** 一个具名动作（架构 § 8.9 里唯一有声明集的那一格：执行类经声明集回写）。 */
+export interface ActionAsk {
+  readonly action: string
+  readonly args: Readonly<Record<string, unknown>>
+  readonly cwd: string
+}
+
+/**
+ * 一条工具的实现。**收的是解过的参数**（`parseArgs` 之后的那一份），不是模型给的那串 JSON 文本。
+ *
+ * 出口是一段文本 + 它是不是失败。**失败也是一种结果**（`runtime/step.ts` 的 `ToolResult`）：
+ * 它要进 C 区被模型看见，而不是把这一层抛出去变成一个 `failed` 的步。
+ */
+export type ToolFn = (args: Readonly<Record<string, unknown>>, host: ToolHost, ctx: ToolContext) => Promise<FaceResult>
+
+export interface FaceResult {
+  readonly ok: boolean
+  readonly output: string
+}
+
+const ok = (output: string): FaceResult => ({ ok: true, output })
+const no = (output: string): FaceResult => ({ ok: false, output })
+
+/** 参数不是个对象（模型给了一串数组或一个标量）——每一处都要问这一句，所以只有一处。 */
+function arg(args: Readonly<Record<string, unknown>>, name: string): unknown {
+  return args[name]
+}
+
+function text(args: Readonly<Record<string, unknown>>, name: string): string | null {
+  const v = arg(args, name)
+  return typeof v === 'string' ? v : null
+}
+
+function num(args: Readonly<Record<string, unknown>>, name: string): number | null {
+  const v = arg(args, name)
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
+/**
+ * 一次调用给的参数原样文本 → 一个对象。**解不开就是一次失败的结果，不是抛。**
+ *
+ * 它为什么在这一层而不是在适配器那一侧：两条线协议给的 `arguments` 都是一串**文本**
+ * （`B1` 的 `ToolCall.arguments` 逐字如此），而"这串文本对不对"是工具面的事——适配器只管
+ * 把字节拼起来（`B2` 的 `input_json_delta`）。
+ */
+export function parseArgs(raw: string): { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly why: string } {
+  const trimmed = raw.trim()
+  if (trimmed === '') return { ok: true, value: {} }
+  let value: unknown
+  try {
+    value = JSON.parse(trimmed)
+  } catch (err) {
+    return { ok: false, why: `参数不是一段 JSON：${(err as Error).message}` }
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, why: '参数得是一个 JSON 对象（键值对），收到的是别的形状。' }
+  }
+  return { ok: true, value: value as Record<string, unknown> }
+}
+
+/** 少一个必填参数时那句统一的话（十五个工具里凡是必填的都走它，文案不各写一份）。 */
+function missing(tool: string, name: string): FaceResult {
+  return no(`${tool} 少了必填参数 ${name}——模型这一次给的对象里没有它。`)
+}
+
+const utf8Of = (b: Uint8Array): string => Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString('utf8')
+const bytesOf = (s: string): Uint8Array => new Uint8Array(Buffer.from(s, 'utf8'))
+
+// ── 视图类那五个 ───────────────────────────────────────────────────────────────
+//
+// 路径参数原样交给实现那一侧（`ToolHost`）：围栏在 `dispatch` 那一道（由能力表的 `fence` 推
+// 出来的），物理落点在 `Roots`。这一层不碰路径算术——§ 8.4 的"唯一入口"那句话说的就是它。
+
+const readFace: ToolFn = async (args, host) => {
+  const path = text(args, 'path')
+  if (path === null) return missing('read', 'path')
+  const got = await host.readBytes(path)
+  if (got === null) return no(`视图里没有 ${path}（读不到就是没有——这一层不区分"不存在"与"读不了"）。`)
+  const body = utf8Of(got.bytes)
+  const lines = body === '' ? 0 : body.split('\n').length
+  return ok(
+    `${path}（${got.bytes.byteLength} 字节 · ${lines} 行 · mode ${got.mode.toString(8)}）\n${body}`,
+  )
+}
+
+const writeFace: ToolFn = async (args, host) => {
+  const path = text(args, 'path')
+  const content = text(args, 'content')
+  if (path === null) return missing('write', 'path')
+  if (content === null) return missing('write', 'content')
+  const { rev } = await host.writeBytes(path, bytesOf(content))
+  return ok(`写了 ${path}（${Buffer.byteLength(content, 'utf8')} 字节），视图到 rev ${rev}。`)
+}
+
+const editFace: ToolFn = async (args, host) => {
+  const path = text(args, 'path')
+  if (path === null) return missing('edit', 'path')
+  const to = text(args, 'to')
+  const find = text(args, 'find')
+  const replace = text(args, 'replace')
+  const mode = num(args, 'mode')
+  let raw: EditRaw
+  if (to !== null) raw = { kind: 'rename', to }
+  else if (mode !== null) raw = { kind: 'chmod', mode }
+  else if (find !== null && replace !== null) raw = { kind: 'replace', find, replace }
+  else return no('edit 要三选一：给 to（改名）· 给 mode（改权限）· 给 find 与 replace（替换一段）。')
+  const got = await host.edit(path, raw)
+  if (!got.changed) return ok(`${path} 没有变化（归一之后与现值相同），视图还是 rev ${got.rev}。`)
+  const what = raw.kind === 'rename' ? `改名成 ${raw.to}` : raw.kind === 'chmod' ? `改权限成 ${raw.mode.toString(8)}` : '替换了一段'
+  return ok(`${path} ${what}，视图到 rev ${got.rev}。`)
+}
+
+const readImageFace: ToolFn = async (args, host) => {
+  const path = text(args, 'path')
+  if (path === null) return missing('read_image', 'path')
+  const got = await host.readBytes(path)
+  if (got === null) return no(`视图里没有 ${path}。`)
+  // **这一版不判像素，只报它是什么。** 真解码要一个图像库，而"运行时依赖不引入"是硬约束
+  // （PLAN § 6）——所以这一格今天兑现的是"能把它原样取出来并说清多大"，不是"能看懂它"。
+  return ok(`${path}：${got.bytes.byteLength} 字节的图（这一版只取字节 · 不判像素）。`)
+}
+
+/**
+ * 走一遍树。**走法归宿主**（`walk`）：它知道哪些行是目录、哪些是软链、能走多深。这一层只
+ * 拿结果去配 `glob` 的语法（`**` 要不要跨 `/` 是模式那边的事）。
+ */
+const globFace: ToolFn = async (args, host) => {
+  const pattern = text(args, 'pattern')
+  if (pattern === null) return missing('glob', 'pattern')
+  const dir = text(args, 'path') ?? ''
+  const all = await host.walk()
+  const re = globToRe(pattern)
+  const hit = all.filter((p) => (dir === '' || p.startsWith(dir + '/')) && re.test(p))
+  return ok(hit.length === 0 ? `没有匹配 ${pattern} 的路径。` : `${hit.length} 条：\n${hit.join('\n')}`)
+}
+
+const grepFace: ToolFn = async (args, host, ctx) => {
+  const pattern = text(args, 'pattern')
+  if (pattern === null) return missing('grep', 'pattern')
+  const dir = text(args, 'path') ?? ctx.cwd
+  let re: RegExp
+  try {
+    re = new RegExp(pattern)
+  } catch (err) {
+    return no(`这不是一条正则：${(err as Error).message}`)
+  }
+  const all = await host.walk()
+  const hits: string[] = []
+  for (const path of all) {
+    if (dir !== '' && !path.startsWith(dir + '/')) continue
+    const got = await host.readBytes(path)
+    if (got === null) continue
+    utf8Of(got.bytes)
+      .split('\n')
+      .forEach((line, i) => {
+        if (re.test(line)) hits.push(`${path}:${i + 1}:${line}`)
+      })
+  }
+  return ok(hits.length === 0 ? `没有匹配 ${pattern} 的行。` : `${hits.length} 行：\n${hits.join('\n')}`)
+}
+
+// ── 执行类那两个 ───────────────────────────────────────────────────────────────
+
+const bashFace: ToolFn = async (args, host, ctx) => {
+  const command = text(args, 'command')
+  if (command === null) return missing('bash', 'command')
+  const timeoutMs = num(args, 'timeout_ms')
+  const res = await host.run({ command, cwd: ctx.cwd, timeoutMs })
+  const head = `退出码 ${res.exit}（${res.ms} 毫秒）${res.denied ? ' · 被沙箱拒过' : ''}`
+  const body = [res.stdout === '' ? '' : `stdout:\n${res.stdout}`, res.stderr === '' ? '' : `stderr:\n${res.stderr}`]
+    .filter((s) => s !== '')
+    .join('\n')
+  return { ok: res.exit === 0, output: body === '' ? head : `${head}\n${body}` }
+}
+
+/**
+ * 具名动作。**它是唯一有声明集的那一格**（架构 § 8.9）：产出的字节经声明集回写视图。
+ *
+ * 回写的那一步归实现那一侧（`ToolHost.runAction`）——这一层不认识声明集，只知道"这一格与
+ * `bash` 的差别是它可以回写"，而那句话在能力表里（`decl: true`），不在这儿。
+ */
+const runActionFace: ToolFn = async (args, host, ctx) => {
+  const action = text(args, 'action')
+  if (action === null) return missing('run_action', 'action')
+  const rest: Record<string, unknown> = { ...args }
+  delete rest['action']
+  const res = await host.runAction({ action, args: rest, cwd: ctx.cwd })
+  const head = `动作 ${action} 退出码 ${res.exit}（${res.ms} 毫秒）`
+  const body = [res.stdout, res.stderr].filter((s) => s !== '').join('\n')
+  return { ok: res.exit === 0, output: body === '' ? head : `${head}\n${body}` }
+}
+
+// ── 真源层那一个 ───────────────────────────────────────────────────────────────
+
+const checkpointFace: ToolFn = async (args, host) => {
+  const msg = text(args, 'msg') ?? '（未给说明）'
+  const { commit } = await host.checkpoint(msg)
+  return ok(`提交了：${commit}——${msg}`)
+}
+
+/** 一个极小的 glob：`*` 不跨 `/`，`**` 跨，`?` 一个字符，其余按字面。够这一版的五个工具用。 */
+function globToRe(pattern: string): RegExp {
+  let out = '^'
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]!
+    if (c === '*') {
+      if (pattern[i + 1] === '*') {
+        out += '.*'
+        i++
+      } else out += '[^/]*'
+    } else if (c === '?') out += '[^/]'
+    else out += c.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  }
+  return new RegExp(out + '$')
+}
+
+/**
+ * 实现表。**它是"哪几条接上了"的唯一出处。**
+ *
+ * 今天接上八条（视图类五条 · 执行类两条 · 真源层一条），**没接上的七条各有各的下家**：
+ * 待办与两个交互工具等一次真人会话 · 委派那三条等 `S9` 的 fork/merge。**它们不出现在公布
+ * 名单里**（`publishedTools`），而不是公布了再回一句"没接上"。
+ */
+export const IMPLEMENTED: Readonly<Record<string, ToolFn>> = {
+  read: readFace,
+  write: writeFace,
+  edit: editFace,
+  read_image: readImageFace,
+  glob: globFace,
+  grep: grepFace,
+  bash: bashFace,
+  run_action: runActionFace,
+  checkpoint: checkpointFace,
+}
+
+/** 实现表里的名字，按目录的顺序（给"要一份名单"的地方用）。 */
+export function implementedNames(names: readonly string[]): string[] {
+  return names.filter((n) => IMPLEMENTED[n] !== undefined)
+}
+
+/**
+ * 公布给模型的那一份：**目录 ∩ 实现表**。
+ *
+ * 交集算在这一处，是为了让"公布了却跑不起来"这条错路**构造不出来**——断言 ① 量的就是这句话
+ * （把一条没实现的塞进公布名单，那一条当场变红）。
+ */
+export function publishedTools(names: readonly string[], entries: readonly ToolEntry[]): ToolEntry[] {
+  return entries.filter((e) => IMPLEMENTED[e.name] !== undefined && names.includes(e.name))
+}
+
+/** 一次调用能不能跑。**没实现就是拒，话里指得出这一条从哪来。** */
+export function faceOf(tool: string): ToolFn | null {
+  return IMPLEMENTED[tool] ?? null
+}
+
+/**
+ * 一条工具**为什么**跑不起来时那句统一的话。给 `capability/dispatch.ts` 用。
+ *
+ * 它要说清两件事，因为它们是两件事：能力表里有没有这一格，以及这一格接上了没有。
+ */
+export function noFace(tool: string, c: Capability | Denied): FaceResult {
+  const where = 'denied' in c ? `能力表里没有这一格：${c.message}` : `能力表里有它（${c.layer} 层 · 身份 ${c.capability}）`
+  return no(`${tool} 这一条今天没有接上实现——${where}。已经接上的是：${Object.keys(IMPLEMENTED).join(' · ')}。`)
+}
