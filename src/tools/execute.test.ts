@@ -378,3 +378,46 @@ test('⑤ 负对照：把判据换成"读回来的 UTF-8 文本相同"，一条�
     await b.close()
   }
 })
+
+// ── ①c `glob` 里那个 `**` 要匹配"零层目录" ─────────────────────────────────────
+//
+// 由头（第 5 批 · 联网验证第二次量到的）：模型先 `find` 看见根下的 `./count.ts`，再用惯常那条
+// "两个星号、斜杠、文件名模式"问 `glob`，得到的是**"没有匹配"**——于是它一直绕、一个字都不写
+// （`--max-steps 4` 那四步全是 `find`/`ls`，`写 0 条`）。原因在编译那一步：`**` 编译成 `.*`，
+// 而 `.*` **至少要吃一个字符**，于是 `**` 后面那个 `/` 逼着路径里必须有一层目录——根下的文件
+// 一个都匹配不上。**它不报错**：一个返回空列表的发现类工具看起来只是"真没有"。
+test('①c glob 的 `**` 匹配零层目录：根下的文件与子目录里的文件都要能发现', async () => {
+  const b = await bench()
+  try {
+    await face('write', { path: 'count.ts', content: 'export const one = 1\n' }, b.host)
+    await face('write', { path: 'src/deep.ts', content: 'export const two = 2\n' }, b.host)
+    await face('write', { path: 'src/notes.md', content: '# 不是 .ts\n' }, b.host)
+
+    // 一 · 惯常那条模式：**根下那一个也要在**（修之前它只给 `src/deep.ts` 一条）。
+    const all = await face('glob', { pattern: '**/*.ts' }, b.host)
+    assert.equal(all.ok, true, all.output)
+    assert.match(all.output, /count\.ts/, `根下的 count.ts 没被发现：${all.output}`)
+    assert.match(all.output, /src\/deep\.ts/, `子目录里那个没被发现：${all.output}`)
+    assert.equal(all.output.includes('notes.md'), false, '.md 不该被 *.ts 匹配上')
+
+    // 二 · `**` 在中间也是"零层或多层"：`src/**/*.ts` 要匹配 `src/` 自己那一层里的 `.ts`。
+    const nested = await face('glob', { pattern: 'src/**/*.ts' }, b.host)
+    assert.match(nested.output, /src\/deep\.ts/, `中间那个 ** 也要能匹配零层：${nested.output}`)
+
+    // 三 · 单独一个 `**`（在结尾）照旧是"任意多字符"：`src/**` 匹配 `src/` 里的一切。
+    const tree = await face('glob', { pattern: 'src/**' }, b.host)
+    assert.match(tree.output, /src\/deep\.ts/)
+    assert.match(tree.output, /src\/notes\.md/)
+
+    // 四 · 负对照：`*` 不跨 `/`。`*.ts` 只该给根下那一个（它是"不跨"那一档的判据）。
+    const shallow = await face('glob', { pattern: '*.ts' }, b.host)
+    assert.match(shallow.output, /count\.ts/)
+    assert.equal(shallow.output.includes('src/deep.ts'), false, `* 不该跨 /：${shallow.output}`)
+    console.log(
+      `①c 读数：**/*.ts → ${all.output.split('\n').length - 1} 条（含根下的 count.ts）· ` +
+        `src/**/*.ts → ${nested.output.split('\n').length - 1} 条 · *.ts → ${shallow.output.split('\n').length - 1} 条`,
+    )
+  } finally {
+    await b.close()
+  }
+})
