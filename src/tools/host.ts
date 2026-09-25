@@ -131,13 +131,29 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     return out
   }
 
+  /**
+   * 子进程从哪儿起步：**视图内的路径 → 这个根下的物理落点**（`M3` 的 `toPhysical`）。
+   *
+   * **空串就是根**——与围栏那一侧同一个意思（`roots.resolveVirtual(path, '')` 也把空 cwd 读成根），
+   * 而这一处原先落成 `process.cwd()`：那是**发出这条命令的人**的当前目录，不是这一格的根。后果
+   * 不是报错，是"工具在一棵别的树上干活"：`fugue round run --root /tmp/w` 从 `~/fugue` 里发出去
+   * 时，模型那一条 `find .` 跑在产品仓库上，它于是看见 187 个文件的树、永远看不到这一格刚写的那
+   * 一份——**模型据此绕圈，而命令面照旧报成功**（第一次联网验证量到的就是它：四步全在 `find`，
+   * `写 0 条`，退出码 0）。
+   */
+  function workdirOf(cwd: string): string {
+    return roots.toReal(cwd as RelPath)
+  }
+
   async function runWith(ask: RunAsk, userArgv: readonly string[], cwd: string): Promise<RunReply> {
     const timeoutMs = ask.timeoutMs
     // **命令行只拼这一处**：`commandFor` 给了就用它（那是调用方"怎么关起来"的那一半——`M7` 包
     // 命令行），没给就是"交给 shell"。所以工具面那一层不用知道沙箱存不存在。
     const made = opts.commandFor?.(ask)
     const argv = made?.argv ?? userArgv
-    const workdir = made?.cwd ?? cwd
+    // 沙箱那一档给的（`made.cwd`）是**绝对**落点：`M7` 包命令行时 `--chdir <物化根>/<cwd>` 与
+    // 这里拼的是同一个根。相对路径交给 `spawn` 会按进程自己的目录解——那是同一个坑换一层。
+    const workdir = made?.cwd ?? workdirOf(cwd)
     const t0 = Date.now()
     let stdout = ''
     let stderr = ''
@@ -219,8 +235,7 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     walk,
 
     async run(ask: RunAsk) {
-      // 空 cwd 就是根：`''` 交给 spawn 会被当成"没有这个目录"，所以落成进程自己的 cwd。
-      return runWith(ask, shellArgv(ask.command), ask.cwd === '' ? process.cwd() : ask.cwd)
+      return runWith(ask, shellArgv(ask.command), ask.cwd)
     },
 
     async runAction(ask: ActionAsk) {
@@ -228,7 +243,7 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
       // 而声明集是 `fugue run` 那一趟的（`reclaim.declare`）。所以这一格跑得起来，产出却留在
       // 沙箱里、不进视图——回写接上之前，它不比 `bash` 多什么。
       const asRun: RunAsk = { command: ask.action, cwd: ask.cwd, timeoutMs: null }
-      return runWith(asRun, shellArgv(ask.action), ask.cwd === '' ? process.cwd() : ask.cwd)
+      return runWith(asRun, shellArgv(ask.action), ask.cwd)
     },
 
     async checkpoint(msg) {

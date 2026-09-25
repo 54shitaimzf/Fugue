@@ -8,7 +8,7 @@
 //   ③ 交接那一趟接得上：触发点到了落 `agent/handoff`，后继接着干完
 //   ④ 驱动不在时**明确报出来**（不是静默地交一个空提交）
 import assert from 'node:assert/strict'
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -28,7 +28,7 @@ import { fixtureState } from '../model/fixture-state.ts'
 import { modelDeclOf } from '../model/contract.ts'
 import type { ModelEvent } from '../model/contract.ts'
 import { scriptedModel } from '../runtime/step.ts'
-import type { CallModel } from '../runtime/step.ts'
+import type { CallModel, RuntimeRequest } from '../runtime/step.ts'
 import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
 import { metricsOf } from '../probe/metrics.ts'
 import type { MergedRow } from '../probe/metrics.ts'
@@ -590,6 +590,102 @@ test('①c `maxSteps` 是真上界，而且它真的传到了驱动那一层（`
     } finally {
       await b2.close()
     }
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ①d 执行类工具落在哪棵树上 ──────────────────────────────────────────────────
+
+/**
+ * ①d **`bash` 落在这一格的根上**：这一格的根是 `roots.realRoot`（台子那个临时工作区），
+ * **不是发出这条命令的那个进程的目录**（跑测试时是 `~/fugue`）。
+ *
+ * 这条断言为什么值一条测试：cwd 落错**不报错**，它只是让模型在一棵别的树上干活——第一次联网
+ * 验证量到的就是这个（`--root /tmp/…` 从 `~/fugue` 里发出去，模型那一条 `find .` 把产品仓库
+ * 列了一遍，四步全在 `find`，`写 0 条`，而退出码 0）。
+ *
+ * 三半各量一件事，而**三半都只读**——不在这一格的根里落任何字节：落了会被这一轮末尾的漂移检
+ * 拦下（"盘上那一份既不是底、也不是这次合并算出来的"），而那是它对的行为。所以那一份要读的字节
+ * 不另放，用**这一轮自己刚落的日志**（`.fugue/log/round.jsonl`）：它在根里、也只有这个根里才有。
+ *
+ *   一 · 子进程的 cwd 就是这一格的根（`pwd` 那一句）；
+ *   二 · **相对路径落在根里，而且读得到这个根里的东西**：那一句从 `./.fugue/log/round.jsonl` 里
+ *        取出 `writer` 那一栏——台子那个底与这一格的每一步都在这里，而产品仓库的同一路径不是它；
+ *   三 · 工具结果进的是**模型真看见的那串字节**（下一步的 C 区是那份前缀的一段）。
+ */
+test('①d `bash` 落在这一格的根上（不是进程自己的目录）', async () => {
+  const b = await bench()
+  try {
+    // **要读的那一串字节**：写进这一格的日志（`msg` 那一栏）。它在根里、也只有这个根里才有，
+    // 而它不进任何一棵树——所以这一趟照旧是只读的（漂移检不会因为它报红）。
+    await b.log.append('round' as WriterId, {
+      t: 'ckpt/commit',
+      agent: 'round' as AgentId,
+      commit: b.base,
+      rev: 1,
+      msg: 'root-ok-in-round-log',
+    })
+    const cmd = (args: Record<string, unknown>): readonly ModelEvent[] => [
+      ...callOne(0, 'c1', 'bash', args),
+      { t: 'usage', usage: USAGE },
+      { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+    ]
+    // 前两条是工具调用；之后一直用最后一条（脚本用完了就用最后一条——`scriptedModel` 的口径）。
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      cmd({ command: 'pwd' }),
+      cmd({ command: "grep -c root-ok-in-round-log .fugue/log/round.jsonl; /bin/pwd" }),
+      [
+        { t: 'delta', text: '看过了。' },
+        { t: 'usage', usage: USAGE },
+        { t: 'stop', reason: 'end-turn', raw: 'end_turn' },
+      ],
+    ]
+    // **`scriptedModel` 只能建一次**：它内部那个"第几次被调"的计数是每建一份各算各的——写在回调
+    // 里就是每一步都从第 0 条脚本重来（那一步于是永远 `pwd`，后半条断言量不到东西）。
+    const scripted = scriptedModel(scripts)
+    // **把每一步发出去的那份前缀收下来**：C 区里就是模型看到的工具结果。
+    const asked: RuntimeRequest[] = []
+    const call: CallModel = (request, signal) => {
+      asked.push(request)
+      return scripted(request, signal)
+    }
+    const run = await runRound(depsOf(b, realDriver({}), supportOf(b, call)))
+    assertLanded(run, '①d cwd 那一趟')
+
+    const zoneC = (n: number): string => new TextDecoder().decode(asked[n]?.prefix.zoneC ?? new Uint8Array())
+    const first = zoneC(1)
+    const second = zoneC(2)
+    console.log(
+      `①d 读数：这一格的根 ${b.root} · 进程目录 ${process.cwd()}\n` +
+        `  第一次的 C 区尾：${JSON.stringify(first.slice(-200))}\n` +
+        `  第二次的 C 区尾：${JSON.stringify(second.slice(-260))}`,
+    )
+
+    // 一 · 子进程报出来的目录就是这一格的根（落成进程目录时这一条红）。
+    assert.ok(
+      first.includes(`\n${b.root}\n`),
+      `\`pwd\` 的读数该是这一格的根 ${b.root}——那一步的 C 区里没有它。\n` +
+        `  进程自己的目录是 ${process.cwd()}（它不该出现在模型看见的世界里）\n` +
+        `  C 区尾部：${first.slice(-300)}`,
+    )
+    // 二 · **相对路径落在根里，而且读到的就是这个根里的东西**：那一串只有这一格的日志里才有
+    //     （`grep -c` 给的是命中行数 1），而产品仓库的同一个路径里没有它。
+    assert.ok(
+      second.includes('\n1\n'),
+      `那一句该在这一格的日志里命中 1 行——C 区里没有那个读数。\n  C 区尾部：${second.slice(-400)}`,
+    )
+    // 三 · 同一次调用的收尾也报同一个落点（两半互为旁证：读到的东西对了，站的地方也对了）。
+    assert.ok(
+      second.includes(`\n${b.root}\n`),
+      `那一句的 cwd 该是 ${b.root}——C 区尾部：${second.slice(-400)}`,
+    )
+
+    const starts = (await eventsOf(b.root)).filter((e) => e.t === 'run/start')
+    assert.equal(starts.length, 2, `两次 bash 各落一条 run/start，实际 ${starts.length} 条`)
+    // **两次调用都是相对路径**（`cwd` 那一栏是空串 = 这一格的根）：落点错的时候，这两句正是那句
+    // `find .` 变成"把产品仓库列一遍"的形状。
+    assert.deepEqual(starts.map((e) => e.cwd), ['', ''], '两次 bash 的 cwd 都是这一格的根')
   } finally {
     await b.close()
   }
