@@ -21,7 +21,7 @@ import { snapshotOf } from '../view/snapshot.ts'
 import type { View } from '../view/contract.ts'
 import { checkpoint } from '../checkpoint.ts'
 import type { RunReply } from './execute.ts'
-import type { ActionAsk, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, ToolHost, ToolListing } from './execute.ts'
+import type { ActionAsk, AskItem, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, ToolHost, ToolListing } from './execute.ts'
 import { refuse } from './execute.ts'
 import { shellArgv } from '../capability/dispatch.ts'
 import { digestOf } from '../runtime/restart.ts'
@@ -262,6 +262,12 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
         expectedOld: parts.expectedOld,
       })
       return { commit: String(r.commit) }
+    },
+
+    async askUser(asks: readonly AskItem[]) {
+      if (parts === undefined) return
+      const body = JSON.stringify({ questions: asks })
+      await parts.log.append(parts.writer, { t: 'holder/ask', agent: view.id, digest: digestOf(body), body })
     },
 
     async declarePlan(ask: PlanAsk) {

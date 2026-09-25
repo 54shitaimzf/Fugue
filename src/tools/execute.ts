@@ -35,7 +35,7 @@ export interface ToolContext {
 }
 
 /**
- * 工具能碰的那几样东西。**十一条，就是工具这一侧全部要碰的那几样。**
+ * 工具能碰的那几样东西。**十二条，就是工具这一侧全部要碰的那几样。**
  *
  * `deny` 是"你自己拒了"那道口：路径围栏（`M3` 的 `resolveVirtual`）与能力表都不在这一层，
  * 所以拒的话由实现那一侧给整句，这一层只把它原样变成一次失败的结果。**拒的话里指得出名字
@@ -80,6 +80,11 @@ export interface ToolHost {
    * 派不派契约是 `round go` 那一档的事，不在这里。
    */
   declarePlan(ask: PlanAsk): Promise<void>
+  /**
+   * 问人（`ask_user_question` 那一条的落点）。**落事件 + 停在同一道门口**，与 `declarePlan`
+   * 共用那一个"停"——答案归人，人答了才接着跑。
+   */
+  askUser(asks: readonly AskItem[]): Promise<void>
   /**
    * 自己拒了一次（路径在视图外 · 视图层只读 …）。**整句由拒的那一方给**，这一条口子只负责
    * "把这次拒记下来"：落一条 `bound/deny`（`path` · `space` · `rule` 就是那条事件的三个字段），
@@ -138,6 +143,20 @@ export interface RunReply {
   readonly stdout: string
   readonly stderr: string
 }
+
+/** 问人的一问（形状与目录里 `ask_user_question` 那一条的参数面逐字相同）。 */
+export interface AskItem {
+  readonly question: string
+  readonly header?: string
+  readonly multiSelect?: boolean
+  readonly options?: readonly { readonly label: string; readonly description?: string }[]
+}
+
+/**
+ * 一次最多问几个。**它是常数，不是"模型看着办"**：答案归人，而人一次能答的是有限的；
+ * 问多了不是"更周全"，是让人没法答——所以超过就当场拒，并指得出去处（架构 § 8.4 纪律 2）。
+ */
+export const MAX_ASKS = 4
 
 /** 一份计划（`exit_plan_mode` 给的那两栏）。`plan` 是正文，`path` 是它写在哪个文件里（可缺）。 */
 export interface PlanAsk {
@@ -385,6 +404,50 @@ const todoWriteFace: ToolFn = async (args, host) => {
   return ok(`记下了 ${r.count} 条待办（整体覆盖上一次那一份）：\n${todos.map(todoLine).join('\n')}`)
 }
 
+const askUserQuestionFace: ToolFn = async (args, host, ctx) => {
+  const raw = arg(args, 'questions')
+  if (raw === undefined || raw === null) return missing('ask_user_question', 'questions')
+  if (!Array.isArray(raw)) return no('ask_user_question 的 questions 得是一个数组——这一次给的不是一个数组。')
+  if (raw.length === 0) return no('一个问题都没问：查得到的先自己查，能自己定的按"最干净、最可扩展"定下来。')
+  if (raw.length > MAX_ASKS) {
+    return no(
+      `一次最多问 ${MAX_ASKS} 个（这一次给了 ${raw.length} 个）——人一次能答的是有限的。` +
+        '留最要紧的那几个，其余的按"最干净、最可扩展"自己定下来，把定下来的那一条写进计划里。',
+    )
+  }
+  const asks: AskItem[] = []
+  for (const one of raw) {
+    if (one === null || typeof one !== 'object' || Array.isArray(one)) return no('问题里有一条不是一个对象。')
+    const row = one as Record<string, unknown>
+    const question = typeof row['question'] === 'string' ? (row['question'] as string) : null
+    if (question === null || question === '') return no('问题里有一条没写问什么（question）——空着的问题人没法答。')
+    const options = Array.isArray(row['options'])
+      ? (row['options'] as unknown[]).map((o) => {
+          const r = o as Record<string, unknown>
+          return {
+            label: String(r['label'] ?? ''),
+            ...(typeof r['description'] === 'string' ? { description: r['description'] as string } : {}),
+          }
+        })
+      : undefined
+    asks.push({
+      question,
+      ...(typeof row['header'] === 'string' ? { header: row['header'] as string } : {}),
+      ...(row['multiSelect'] === true ? { multiSelect: true } : {}),
+      ...(options === undefined ? {} : { options }),
+    })
+  }
+  if (!ctx.holder) {
+    return no('这不是你这一格的事：你拿到的是一份契约，照它做完这一步就行——要问人的时候把问题带回持轮者那一格。')
+  }
+  await host.askUser(asks)
+  return {
+    ok: true,
+    halt: true,
+    output: `问了 ${asks.length} 个问题，落进日志，**停在这儿等人答**（门由人开）。答了之后照答案接着跑。`,
+  }
+}
+
 const exitPlanModeFace: ToolFn = async (args, host, ctx) => {
   const plan = text(args, 'plan')
   if (plan === null) return missing('exit_plan_mode', 'plan')
@@ -447,12 +510,12 @@ function globToRe(pattern: string): RegExp {
 /**
  * 实现表。**它是"哪几条接上了"的唯一出处。**
  *
- * 今天接上十一条（视图类六条 · 执行类两条 · 真源层一条 · `log` 层两条），**没接上的一条有它的
- * 下家**：`ask_user_question` 等一次真人会话。**它不出现在公布名单里**（`publishedTools`），
- * 而不是公布了再回一句"没接上"。
+ * 今天十二条全部接上（视图类六条 · 执行类两条 · 真源层一条 · `log` 层三条）——**公布面与绑定面
+ * 的差为 0**：目录里的每一条都跑得起来，"公布了却跑不起来"这条错路构造不出来。
  */
 export const IMPLEMENTED: Readonly<Record<string, ToolFn>> = {
   todo_write: todoWriteFace,
+  ask_user_question: askUserQuestionFace,
   exit_plan_mode: exitPlanModeFace,
   read: readFace,
   write: writeFace,

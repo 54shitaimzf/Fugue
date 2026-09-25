@@ -126,6 +126,11 @@ export type LogEvent =
    * 子 agent 那一份是契约，不是计划，所以它调这一条只得到一句"这不是你这一格的事"。
    */
   | { t: 'holder/plan'; agent: AgentId; digest: string; body: string }
+  /**
+   * 持轮者问人（`ask_user_question` 那一条的落点）。**问完就停在同一道门口**：答案归人，而门
+   * 由人开——所以它落事件、叫停，与 `holder/plan` 共用那一个"停"（不引入"异步等待"这种持久态）。
+   */
+  | { t: 'holder/ask'; agent: AgentId; digest: string; body: string }
   | {
       t: 'contract/issue'
       round: RoundId

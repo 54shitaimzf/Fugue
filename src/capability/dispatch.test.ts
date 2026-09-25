@@ -25,7 +25,8 @@ import { emptyState } from '../assemble/sources.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
-import type { DenyAsk, PlanAsk, RunAsk, TodoItem, ToolHost } from '../tools/execute.ts'
+import type { AskItem, DenyAsk, PlanAsk, RunAsk, TodoItem, ToolHost } from '../tools/execute.ts'
+import { faceOf } from '../tools/execute.ts'
 import type { ToolCallRequest } from '../runtime/step.ts'
 import type { AgentHandle } from '../runtime/step.ts'
 import { announce, createToolExecutor, dispatch } from './dispatch.ts'
@@ -52,6 +53,8 @@ interface FakeHost extends ToolHost {
   readonly todos: TodoItem[][]
   /** 交上来的计划（只有持轮者那一格会走到这里）。 */
   readonly plans: PlanAsk[]
+  /** 问人的那几问。 */
+  readonly asks: AskItem[][]
 }
 
 function fakeHost(paths: readonly string[] = []): FakeHost {
@@ -61,6 +64,7 @@ function fakeHost(paths: readonly string[] = []): FakeHost {
   const files = new Map<string, string>()
   const todos: TodoItem[][] = []
   const plans: PlanAsk[] = []
+  const asks: AskItem[][] = []
   return {
     files,
     runs,
@@ -68,6 +72,7 @@ function fakeHost(paths: readonly string[] = []): FakeHost {
     writes,
     todos,
     plans,
+    asks,
     readBytes: (rel) => {
       const text = files.get(rel)
       return Promise.resolve(text === undefined ? null : { bytes: new Uint8Array(Buffer.from(text, 'utf8')), mode: 0o100644 })
@@ -89,6 +94,10 @@ function fakeHost(paths: readonly string[] = []): FakeHost {
     runAction: (ask) => {
       runs.push({ command: `action:${ask.action}`, cwd: ask.cwd, timeoutMs: null })
       return Promise.resolve({ exit: 0, ms: 1, denied: false, stdout: '', stderr: '' })
+    },
+    askUser: (list) => {
+      asks.push([...list])
+      return Promise.resolve()
     },
     declarePlan: (ask) => {
       plans.push(ask)
@@ -226,12 +235,12 @@ test('① 公布给模型的每一条都有实现，而没实现的一条都不�
   const published = announce(CATALOG, TOOL_NAMES)
   const names = published.map((e) => e.name)
 
-  // 目录里 12 条，公布的是其中 11 条：视图六 · 执行二 · 真源一 · `log` 层二。
-  assert.equal(names.length, 11, `公布的有 ${names.length} 条：${names.join(' ')}`)
-  assert.deepEqual(
-    [...names].sort(),
-    ['bash', 'checkpoint', 'edit', 'exit_plan_mode', 'glob', 'grep', 'read', 'read_image', 'run_action', 'todo_write', 'write'],
-    '公布的那一份就是实现表里那十一条',
+  // **公布面 = 绑定面 = 12**：目录里每一条都跑得起来，差值为 0。
+  assert.equal(names.length, CATALOG.length, `公布的有 ${names.length} 条，目录 ${CATALOG.length} 条：${names.join(' ')}`)
+  assert.equal(
+    CATALOG.filter((e) => !names.includes(e.name)).length,
+    0,
+    `这几条在目录里却没公布：${CATALOG.filter((e) => !names.includes(e.name)).map((e) => e.name).join(' · ')}`,
   )
 
   // 这一条是那句话本身：**公布 ⊆ 实现**（拿"一次调用能不能跑"那一处问每一格）。
@@ -240,9 +249,9 @@ test('① 公布给模型的每一条都有实现，而没实现的一条都不�
     assert.ok(!('denied' in got), `${name} 在能力表里查不到`)
   }
 
-  // 没接上的那七条：一条都不在公布名单里（而不是公布了再回一句"没接上"）。
-  for (const missing of ['ask_user_question']) {
-    assert.ok(!names.includes(missing), `${missing} 今天没有实现，却在公布名单里`)
+  // 每一条都查得出推论，且**都能跑**（`faceOf` 给得回一面）："公布了却跑不起来"构造不出来。
+  for (const name of names) {
+    assert.ok(faceOf(name) !== null, `${name} 公布了，却拿不出实现`)
   }
 })
 
@@ -257,7 +266,7 @@ test('① 负对照：往公布名单里塞一条没实现的 → 那一条被�
     !published.some((e) => e.name === 'subagent'),
     '没实现的那一条被公布了——"公布了却跑不起来"这条错路就构造得出来',
   )
-  assert.equal(published.length, 11, '筛掉一条之后还是那十一条')
+  assert.equal(published.length, CATALOG.length, '公布面仍是目录那一份（多出来的一条被筛掉）')
 })
 
 // ── ② 四条推论从表里读出来 ────────────────────────────────────────────────────
