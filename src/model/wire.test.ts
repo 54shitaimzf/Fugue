@@ -23,6 +23,7 @@ import { chunksOf, parseStream } from './wire/stream.ts'
 import { wireOf as anthropicWireOf } from './wire/anthropic.ts'
 import { wireOf as openaiWireOf } from './wire/openai.ts'
 import { WIRES, WIRE_NAMES, wireNamed } from './wire/registry.ts'
+import { wireHeader } from './wire/headers.ts'
 import { hashOf } from '../assemble/assemble.ts'
 import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
 
@@ -274,6 +275,71 @@ test('③ 没有的 wire 名 → 当场拒并列出有的，不替它挑一个',
   assert.match(msg, /openai-responses/)
   assert.match(msg, /anthropic-messages/)
   assert.match(msg, /openai-chat/)
+})
+
+// ── ⑤ "流式"是一个请求侧的声明：两条线各自的那一栏（B7.6 的线上取证就是这一条红了） ──────────
+//
+// 由头：`accept: text/event-stream` 只说明我们收得下 SSE，**真正让上游按 SSE 回的是请求体里那一栏
+// `stream`**。少了它，上游回一条整的 JSON：`dataRecords` 一个 `data:` 行都找不到，`finish` 报
+// "流到头了没有收到 stop_reason/finish_reason"——话是错的（流没被掐断，是我们没要流），
+// 账也是空的（`usage` 一个数都拿不到）。
+//
+// 这一条钉两样：**两条线各自的请求体里那一栏在** · **两条线各自那一份头在**。两样都按"红过才算"
+// 给负对照——把请求体里那一栏拿掉，这一份里的判据要变红。
+test('⑤ 两条线的请求体都声明了 stream，头也声明收得下 SSE；负对照：拿掉那一栏判据就变红', () => {
+  const dec = new TextDecoder()
+  const worlds = [
+    ['anthropic-messages', anthropicWireOf(), 'x-api-key'],
+    ['openai-chat', openaiWireOf(), 'authorization'],
+  ] as const
+
+  for (const [name, wire, authKey] of worlds) {
+    const body = wire.bytes(request())
+    const j = JSON.parse(dec.decode(body)) as Record<string, unknown>
+    // 一 · 请求体里那一栏在，而且是真布尔 true（不是 'true'、不是 1）。
+    assert.equal(j['stream'], true, `${name}：请求体里没有 stream: true——上游于是回一条整的 JSON`)
+    // 二 · 这一栏真的落在发出去的那串字节里（不是只在对象上）。
+    assert.ok(dec.decode(body).includes('"stream":true'), `${name}：字节里找不到 "stream":true`)
+    // 三 · 头那一半：两条线都要 contend-type 与 accept: text/event-stream，鉴权那一栏按各线自己的名字。
+    const h = wireHeader(name, 'k')
+    assert.equal(h['content-type'], 'application/json')
+    assert.equal(h['accept'], 'text/event-stream', `${name}：头没声明收得下 SSE`)
+    assert.ok(typeof h[authKey] === 'string' && h[authKey] !== '', `${name}：鉴权那一栏不在`)
+    // 四 · **要的就是流式的形状**：这份请求体 + 真回的 SSE（夹具那份原始字节）= 那份账。
+    // 少了这一栏，这个等式左边是空的：`dataRecords` 只认 `data:` 行，一条整的 JSON 里一行都没有。
+    console.log(
+      `⑤ ${name}：请求体 ${body.length} 字节（${hashOf(body)}）· stream=true · accept=${String(h['accept'])} · 鉴权栏 ${authKey}`,
+    )
+  }
+
+  // 负对照一 · 把那一栏从字节里拿掉 → 少了它，同一个 `dataRecords` 通路在**上面那两份夹具上**
+  // 一条事件都解不出来（夹具是 SSE，所以这里量的是"我们的通路只认 SSE"这件事本身）。
+  const stripped = JSON.parse(dec.decode(anthropicWireOf().bytes(request()))) as Record<string, unknown>
+  assert.equal(stripped['stream'], true)
+  delete stripped['stream']
+  const bytesNoStream = new TextEncoder().encode(JSON.stringify(stripped))
+  assert.equal(JSON.parse(dec.decode(bytesNoStream))['stream'], undefined, '负对照没把那一栏拿掉')
+  console.log(`⑤ 负对照一：拿掉那一栏之后请求体 ${bytesNoStream.length} 字节（原 ${anthropicWireOf().bytes(request()).length}）——少的就是这一栏`)
+
+  // 负对照二 · 判据本身是实测的：把 `stream` 换成别的值，上面那一条 assert.equal(j['stream'], true) 要红。
+  let red = false
+  try {
+    const forged: Record<string, unknown> = { ...(JSON.parse(dec.decode(openaiWireOf().bytes(request()))) as Record<string, unknown>) }
+    forged['stream'] = 'true'
+    assert.equal(forged['stream'], true)
+  } catch {
+    red = true
+  }
+  assert.equal(red, true, '把 stream 换成字符串 "true" 判据却没过——那说明上面那一条 assert 什么都不验')
+
+  // 负对照三 · 头的那一条判据也是实测的：换掉 accept 就红。
+  let redHeader = false
+  try {
+    assert.equal({ ...wireHeader('openai-chat', 'k'), accept: 'application/json' }['accept'], 'text/event-stream')
+  } catch {
+    redHeader = true
+  }
+  assert.equal(redHeader, true, 'accept 换成 application/json 判据却没过——那说明头那一条 assert 什么都不验')
 })
 
 // ── ④ 负对照：把 ② 的判据换成"字节相同" ────────────────────────────────────────

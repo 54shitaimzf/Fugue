@@ -28,10 +28,11 @@ import type { AgentCoord } from '../assemble/sources.ts'
 import { fixtureState } from './fixture-state.ts'
 import { CATALOG_STATES, catalog, catalogHash } from '../tools/catalog.ts'
 import type { Target, Transport } from './http.ts'
-import { callModel, fetchTransport, makeDumpCall, targetOf, wireFactsOf } from './http.ts'
+import { callModel, fetchTransport, makeDumpCall, targetAt, targetOf, wireFactsOf } from './http.ts'
 import { wireCall } from '../runtime/step.ts'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { tmpDir } from '../../test/helpers/tmp.ts'
 import type { Fixture } from './session.ts'
 import { canonicalOf, fixtureTarget, fixtureTransport, readFixture, recordOf, replayOf, requestFrom, requestOf } from './session.ts'
@@ -278,6 +279,52 @@ test('⑤ 夹具档不取凭据：`targetOf` 会去取，夹具档那一份不�
   assert.equal(hashOf(t.wire.bytes(requestFrom(f))), f.bodyHash)
 })
 
+// ── ⑤b 凭据"从哪取"与"目标长什么样"是两件事（给值那一档不许再取一次） ─────────────
+//
+// 由头（线上实测）：壳那一档 `--live --credential <工作区之外的路径>` 走 `credentialAt()`，
+// 它自己读文件、读到了；可拼目标时走的是 `targetOf()`，而那一处**按提供方的声明再取一次**
+// （声明的是环境变量）。于是"用文件里那份 key 跑一个轮次"根本走不通——**读到的那份没被用上**，
+// 报的话却是"环境变量没有设"。这一条把"给值那一档不读环境变量"钉住。
+test('⑤b targetAt：值从参数进来，不看环境变量；而没有值的那一档照旧当场拒', () => {
+  const before = process.env['DEEPSEEK_API_KEY']
+  delete process.env['DEEPSEEK_API_KEY']
+  try {
+    // 一 · 给值那一档：环境变量没设也拼得出来，头里带的就是给的那个值（**两条线各一套头**）。
+    const a = targetAt('deepseek-chat/anthropic', 'k-给的值')
+    assert.equal(a.headers['x-api-key'], 'k-给的值')
+    assert.equal(a.headers['accept'], 'text/event-stream')
+    assert.equal(a.headers['anthropic-version'], '2023-06-01')
+    const o = targetAt('deepseek-chat/openai', 'k-给的值')
+    assert.equal(o.headers['authorization'], 'Bearer k-给的值')
+    // 目标那几栏与声明一致（"给值"不改目标，只改凭据从哪来）。
+    assert.equal(a.host, 'https://api.deepseek.com')
+    assert.equal(a.path, '/anthropic/v1/messages')
+    assert.equal(o.path, '/v1/chat/completions')
+    assert.equal(a.model, 'deepseek-chat')
+    assert.equal(a.from, 'decl')
+    assert.equal(a.wire.name, 'anthropic-messages')
+
+    // 二 · 负对照：不给值的那一档照旧当场拒（说明上面那一条不是"谁都放行"）。
+    let threw = false
+    try {
+      targetOf('deepseek-chat/anthropic')
+    } catch (err) {
+      threw = true
+      assert.match((err as Error).message, /DEEPSEEK_API_KEY/)
+    }
+    assert.equal(threw, true, '环境变量没设，targetOf 却没拒——那这一条负对照什么都没证明')
+
+    // 三 · 给的值要是空串就没有意义：空凭据发出去换来一个 401，那看起来像"模型不行"。
+    assert.throws(() => targetAt('deepseek-chat/anthropic', ''), /不能是空/)
+    console.log(
+      `⑤b 读数：targetAt（给值）anthropic 头 [${Object.keys(a.headers).join(' · ')}] · openai 鉴权栏 authorization · ` +
+        '环境变量没设也拼得出来；targetOf（自己取）照旧拒',
+    )
+  } finally {
+    if (before !== undefined) process.env['DEEPSEEK_API_KEY'] = before
+  }
+})
+
 // ── ⑦ `--dump-wire`：默认不落，而落的时候发出去的字节一模一样 ────────────────────
 
 test('⑦ dump-wire：不带它时一个文件都不写；带它时那一串请求体与夹具记的逐字节相同', async () => {
@@ -323,9 +370,11 @@ test('⑦ dump-wire：不带它时一个文件都不写；带它时那一串请�
   assert.equal(meta.zoneCHash, hashOf(prefix.zoneC))
   assert.equal(meta.events, dumped.length)
   assert.equal(meta.stop, 'tool-calls')
+  // **标准 sha256**（原先这里对的是 `hashOf()` 那把 16 个字符的短指纹——而那两份 `*.sha256`
+  // 是给 `sha256sum -c` 用的，口径本来就不该是短指纹。⑦b 那一条把它单独钉住了）。
   assert.equal(
     readFileSync(join(at, 'response.sha256'), 'utf8').trim().split(/\s+/)[0],
-    hashOf(readFileSync(join(at, 'response.sse'))),
+    createHash('sha256').update(readFileSync(join(at, 'response.sse'))).digest('hex'),
   )
 
   // 四 · **目录没给这一层就不存在**：再跑一趟不带 dump 的，那个目录里一个新文件都没有。
@@ -340,6 +389,38 @@ test('⑦ dump-wire：不带它时一个文件都不写；带它时那一串请�
 })
 
 // ── ⑧ 上游非 2xx：原话留在错误上（白名单之外的不留）─────────────────────────────
+
+// ── ⑦b dump 里那两份 `sha256` 是**标准 sha256**（`sha256sum -c` 认得的那一把） ──────────
+//
+// 由头（线上实测）：那两份文件原先落的是产品内部那把**16 个字符的短指纹**，而同一份目录里的
+// `README` 写着"取值顺序：1. `sha256sum -c request.sha256`"。于是照着 README 敲一律报
+// "对不上"——**一份取证物自己说自己被改过**，而排障的人正在查别的问题。
+test('⑦b dump 的 *.sha256 是标准 sha256：sha256sum -c 对得上（短指纹那把不算）', async () => {
+  const f = fixture('deepseek-chat-anthropic')
+  const dir = tmpDir('fugue-dump-sha-')
+  const t = fixtureTarget(f)
+  const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
+  const prefix = prefixOf(0)
+  const dumping = makeDumpCall(wireCall, dir, fixtureTransport(f, 1))
+  const stream = dumping({ target: t, model: t.model, prefix, tools, call: f.call } as never, new AbortController().signal)
+  for await (const e of stream.events) void e
+  stream.ledger()
+
+  const at = join(dir, 'call-0001')
+  const shaIn = (name: string): string => readFileSync(join(at, name), 'utf8').trim().split(/\s+/)[0] ?? ''
+  const real = (name: string): string => createHash('sha256').update(readFileSync(join(at, name))).digest('hex')
+  // 一 · 64 个十六进制字符（短指纹是 16 个）。
+  assert.equal(shaIn('request.sha256').length, 64, `request.sha256 里那一串是 ${shaIn('request.sha256').length} 个字符`)
+  assert.equal(shaIn('response.sha256').length, 64, 'response.sha256 里那一串不是标准 sha256')
+  // 二 · 与盘上那份字节的真 sha256 相同（这一条就是 `sha256sum -c` 的那条判据）。
+  assert.equal(shaIn('request.sha256'), real('request.json'), 'request.sha256 与盘上的请求体对不上')
+  assert.equal(shaIn('response.sha256'), real('response.sse'), 'response.sha256 与盘上的响应对不上')
+  // 三 · `meta.json` 里那两栏**照旧是短指纹**（它要与日志的指纹对，不是给 sha256sum 的）。
+  const meta = JSON.parse(readFileSync(join(at, 'meta.json'), 'utf8')) as Record<string, unknown>
+  assert.equal(String(meta['requestHash']).length, 16, 'meta.requestHash 变了口径——它与日志那几栏是同一把尺')
+  assert.equal(String(meta['requestHash']), hashOf(readFileSync(join(at, 'request.json'))))
+  console.log(`⑦b 读数：request.sha256 ${shaIn('request.sha256').slice(0, 12)}…（64 字符）· meta.requestHash ${String(meta['requestHash'])}（16 字符）`)
+})
 
 test('⑧ 非 2xx：状态码与白名单响应头读得出来，响应体照旧带上前一截', async () => {
   const t = { ...fixtureTarget(fixture('deepseek-chat-anthropic')), host: 'https://example.invalid', path: '/v1/messages' }

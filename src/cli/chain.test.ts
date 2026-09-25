@@ -7,7 +7,7 @@
 // `deps.stub is not a function`，而 294 条单测全绿），所以"能不能跑"要有一条自己的断言。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
@@ -21,11 +21,20 @@ interface Run {
   stderr: string
 }
 
+/**
+ * 起一个 CLI 子进程。
+ *
+ * **环境是给定了的**（只留 `PATH` 与 `HOME`）：这一份里那几条"凭据不在"的断言原先靠"跑测试的
+ * 那个人恰好没设 `DEEPSEEK_API_KEY`、`/home/ubuntu/.fugue/credentials/deepseek.key` 恰好不存在"
+ * ——那是环境在断言，不是测试在断言（实测：把那份凭据文件放好之后，一条既有断言从退 1 变成退 0）。
+ * 这一份给不了它就不该拿得到：那两条路都要**显式**给（`--credential`）。
+ */
 function fugue(root: string, ...args: string[]): Run {
   const r = spawnSync(process.execPath, [CLI, '--root', root, ...args], {
     encoding: 'utf8',
     input: '',
     maxBuffer: 1 << 26,
+    env: { PATH: process.env['PATH'] ?? '/usr/bin:/bin', HOME: process.env['HOME'] ?? '/tmp' },
   })
   return { code: r.status ?? 1, stdout: r.stdout, stderr: r.stderr }
 }
@@ -293,6 +302,70 @@ test('零成本：给 --dump-wire 而这一档不接真驱动时，落盘那一�
   )
 })
 
+// ── 真驱动那一档真的发了一次请求：不是"参数收下了就算接上了" ────────────────────
+//
+// 由头（线上实测）：`--live` 那一趟里 `runRound` 拿到的**恒是打桩那一个驱动**——一次调用都没发，
+// 盘上落的是"（打桩）…"，命令面照旧退 0。整条链的取证是"日志里一条 `llm/call` 都没有"。
+//
+// 这一条**不出网**：凭据给一个假的（那边答 401）。判据落在**这一趟留下的证据**上——
+//   · 有一条 `llm/call`（打桩那一档一条都不落）
+//   · 那一条带着上游的事实：`status: 401`
+//   · 用量四个数全是 `null`（没走完就没有账——"半截的流不是一次调用"）
+//   · 而这一趟**没静默地成功**：盘上没有 a.ts（打桩那一档会写它）
+test('--live 那一档接的是真驱动：日志里有一条带 401 的 llm/call（打桩那一档一条都不落）', () => {
+  const root = tmpRoot()
+  const outside = tmpDir('fugue-chain-src-')
+  const src = join(outside, 'bottom.txt')
+  writeFileSync(src, '底。\n')
+  assert.equal(fugue(root, 'write', 'README.md', '--from', src).code, 0)
+  assert.equal(fugue(root, 'commit', '-m', '底').code, 0)
+  assert.equal(fugue(root, 'config', 'set', 'actions.ok', JSON.stringify({ argv: ['/bin/sh', '-c', 'true'], outputs: [] })).code, 0)
+  assert.equal(
+    fugue(root, 'config', 'set', 'round.assertions', JSON.stringify([{ name: '总是过', action: 'ok', argv: ['/bin/sh', '-c', 'true'] }])).code,
+    0,
+  )
+  assert.equal(
+    fugue(
+      root,
+      'config',
+      'set',
+      'round.split',
+      JSON.stringify([
+        { goal: '写一份 a.ts', ownedPaths: ['a.ts'], deliverables: [{ path: 'a.ts', form: '一份文件' }], assertions: [{ name: '总是过', action: 'ok' }] },
+      ]),
+    ).code,
+    0,
+  )
+  // **凭据要是 ASCII**：头值是一个 ByteString，非 ASCII 的字符在 `fetch` 那一层就抛
+  // （"Cannot convert argument to a ByteString…"）——那样这一条量的就不是"那边答 401"。
+  const fake = join(outside, 'fake.key')
+  writeFileSync(fake, 'sk-not-a-real-key\n')
+  const dump = join(outside, 'wire')
+  const r = fugue(root, 'round', 'run', '写一份 a.ts', '--live', '--credential', fake, '--dump-wire', dump)
+  // 一 · 打桩那一档退 0；接了真驱动又碰上一次 401 时，轮次**报成功但推进是空的**（那一步不算干完）。
+  assert.equal(r.code, 0, `这一条不判退出码（打桩与 401 都是 0），实际 ${r.code}；stderr：${r.stderr.slice(0, 300)}`)
+  // 二 · 证据：agent 日志里那一条 `llm/call`
+  const logAt = join(root, '.fugue', 'log', 'agent', 'r1', '1.jsonl')
+  assert.ok(existsSync(logAt), `agent 日志不在：${logAt}（打桩那一档会落，只是里面没有 llm/call）`)
+  const events = readFileSync(logAt, 'utf8')
+    .split('\n')
+    .filter((l) => l.trim() !== '')
+    .map((l) => JSON.parse(l) as Record<string, unknown>)
+  const calls = events.filter((e) => e['t'] === 'llm/call')
+  assert.equal(calls.length, 1, `该恰好有一条 llm/call，实际 ${calls.length} 条：${events.map((e) => String(e['t'])).join(' · ')}`)
+  const one = calls[0] as { status?: number; invocations?: number; usage?: Record<string, number | null>; model?: string }
+  assert.equal(one.status, 401, `那一条 llm/call 上的 status 该是 401（假凭据），实际 ${String(one.status)}`)
+  assert.equal(one.invocations, 0)
+  assert.deepEqual(Object.values(one.usage ?? {}).filter((v) => v !== null), [], '没走完的调用不该有用量读数')
+  assert.equal(one.model, 'deepseek-chat/anthropic', '这一格该走默认模型那条声明')
+  // 三 · 没静默地成功：盘上没有 a.ts（真驱动那一档没干完就不产出）。
+  assert.equal(existsSync(join(root, 'a.ts')), false, '盘上出现了 a.ts——那说明这一趟不是真驱动那一条路')
+  console.log(
+    `真驱动读数：llm/call ${calls.length} 条 · status ${String(one.status)} · 用量四个数全 null · ` +
+      `model ${String(one.model)} · 盘上没有 a.ts（打桩那一档会写它）`,
+  )
+})
+
 test('--dump-wire 的守卫：落在工作区里当场拒（并给出两条路）', () => {
   const root = tmpRoot()
   const outside = tmpDir('fugue-chain-src-')
@@ -324,7 +397,9 @@ test('--dump-wire 的守卫：落在工作区里当场拒（并给出两条路�
   assert.match(bad.stderr, /不许落在工作区里/)
   assert.match(bad.stderr, /换个工作区之外的目录/)
   // 而工作区之外的那一份走到"凭据读不到"那一档（**没有真出网**）。
-  const ok = fugue(root, 'round', 'run', '写一份 a.ts', '--live', '--dump-wire', join(outside, 'wire'))
+  // 凭据**显式**指一条读不到的路：机器上恰好放了一份真凭据时，这一条原先会真出网（实测退 0）。
+  const nowhere = join(outside, '没有这一份.key')
+  const ok = fugue(root, 'round', 'run', '写一份 a.ts', '--live', '--credential', nowhere, '--dump-wire', join(outside, 'wire'))
   assert.equal(ok.code, 1, `该退 1（凭据不在），实际 ${ok.code}`)
   assert.match(ok.stderr, /凭据不在/)
   console.log(`守卫读数：工作区里 → "${bad.stderr.split('\n')[0]}" · 工作区外 → "${ok.stderr.split('\n')[0].slice(0, 60)}"`)

@@ -122,6 +122,11 @@ export function wireOf(): WireAdapter {
         // 认的形状（`src/model/contract.ts` 的 `WIRES` 里那一段读数）。
         system: systemField(req.zones.A, req.promptCache === 'explicit'),
         messages,
+        // **流式是一个请求侧的声明，不是响应侧的惊喜**：`accept: text/event-stream` 只是"我们
+        // 收得下 SSE"，真正让上游按 SSE 回的是这一栏。不给它的话上游回**一条整的 JSON**，而
+        // `dataRecords` 只认 `data:` 行——解出 0 条事件，`finish` 再把"没有 stop_reason"当半截
+        // 的流报出来（实测：同一条请求体加不加这一栏，回的是 705 字节 JSON 与 18404 字节 SSE）。
+        stream: true,
         // **两个线协议在"省略"这一件事上语义不同**：这一条线上 `temperature` 不填 = 由提供方定，
         // 填 0.2 就是**真的要 0.2**（而那条线的默认值是 1）。所以缺省不是常量 0.2，是"不填"。
         ...(req.call?.temperature === undefined ? {} : { temperature: req.call.temperature }),

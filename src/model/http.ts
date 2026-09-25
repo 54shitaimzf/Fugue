@@ -11,12 +11,13 @@
 // **凭据只在 `targetOf` 里被取一次**，也就是说"取凭据"这件事只发生在**真要发一次请求**的
 // 时候——装配 · 重放 · 夹具档一条断言都不经过这里（PLAN § 5.8 的口径一）。
 import type { ModelCall, ModelEvent, ModelRequest } from './contract.ts'
-import { WIRES, authOf, modelDeclOf, providerOf } from './contract.ts'
+import { ModelDeclError, WIRES, authOf, modelDeclOf, providerOf } from './contract.ts'
 import { checkEvents } from './contract.ts'
 import { hashOf } from '../assemble/assemble.ts'
 import type { WireAdapter } from './wire/stream.ts'
 import { concatBytes, parseStream } from './wire/stream.ts'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { wireNamed } from './wire/registry.ts'
 import { wireHeader } from './wire/headers.ts'
@@ -90,6 +91,23 @@ export interface Target {
 /** 声明 → 目标。**`authOf()` 的唯一调用点。** */
 export function targetOf(declId: string): Target {
   const decl = modelDeclOf(declId)
+  return targetAt(declId, authOf(providerOf(decl.provider)))
+}
+
+/**
+ * 声明 + **一个已经取来的凭据值** → 目标。同一个目标，只是凭据不由这一份去取。
+ *
+ * **为什么要有它**（实测撞出来的）：壳那一档的 `--live --credential <工作区之外的路径>` 走的是
+ * `credentialAt()`——它自己读文件、读到了，可拼目标时又调了一次 `targetOf()`，而那一处按
+ * **提供方的声明**去取（今天声明的是环境变量 `DEEPSEEK_API_KEY`）。于是"用一个文件里的 key
+ * 跑一个轮次"这条路**根本走不通**：文件里那份读到了也没用，`authOf()` 没设环境变量就抛。
+ * 探针没露出这一条，是因为它自己 catch 住那次取用、又自己拼了一份头（两处各取一次就会这样
+ * 漂）。给值的那一档让**取凭据**与**拼目标**这两件事分开：谁取、从哪取归壳，目标长什么样归
+ * 这一份。**它不读环境变量、不读文件**——值必须从参数进来。
+ */
+export function targetAt(declId: string, credential: string): Target {
+  if (credential === '') throw new ModelDeclError('凭据不能是空串：空凭据发出去换来一个 401，那看起来像"模型不行"，其实是没给值')
+  const decl = modelDeclOf(declId)
   const provider = providerOf(decl.provider)
   return {
     providerId: provider.id,
@@ -98,7 +116,7 @@ export function targetOf(declId: string): Target {
     path: WIRES[decl.wire].path,
     model: decl.model,
     from: 'decl',
-    headers: wireHeader(decl.wire, authOf(provider)),
+    headers: wireHeader(decl.wire, credential),
   }
 }
 
@@ -215,6 +233,11 @@ export interface ModelStream {
  * **落哪儿由调用方定，而它必须在工作区之外**：这一层只管写；"不许落进 `<realRoot>`"那条由
  * CLI 拦（落进去会被下一轮的 `fork` 当成漂移——PLAN § 5.8.a 那条现场更正）。
  */
+/** 标准 sha256（64 个十六进制字符）：`sha256sum -c` 认得的那一把。**与 `hashOf()` 不是同一把**。 */
+function sha256Hex(b: Uint8Array): string {
+  return createHash('sha256').update(b).digest('hex')
+}
+
 export function makeDumpCall(inner: CallModel, dir: string, transport: Transport = fetchTransport): CallModel {
   let n = 0
   return (request, signal) => {
@@ -262,8 +285,12 @@ export function makeDumpCall(inner: CallModel, dir: string, transport: Transport
           const body = sent[0] ?? new Uint8Array()
           writeFileSync(join(at, 'request.json'), body)
           writeFileSync(join(at, 'response.sse'), l.raw)
-          writeFileSync(join(at, 'request.sha256'), `${hashOf(body)}  request.json\n`)
-          writeFileSync(join(at, 'response.sha256'), `${hashOf(l.raw)}  response.sse\n`)
+          // **这一栏是给 `sha256sum -c` 用的**（上面的 README 就是这么写的），所以落的必须是
+          // **标准 sha256**——而 `hashOf()` 是产品内部那把 16 个字符的短指纹（`meta.json` 里那两栏
+          // 用它，与日志对得上）。实测：原先这里落的是短指纹，于是照着 README 敲
+          // `sha256sum -c request.sha256` 一律报"对不上"——**一份取证物自己说自己被改过**。
+          writeFileSync(join(at, 'request.sha256'), `${sha256Hex(body)}  request.json\n`)
+          writeFileSync(join(at, 'response.sha256'), `${sha256Hex(l.raw)}  response.sse\n`)
           writeFileSync(
             join(at, 'meta.json'),
             JSON.stringify(

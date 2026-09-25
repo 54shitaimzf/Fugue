@@ -26,6 +26,7 @@ import type { ModelEvent, Usage } from '../src/model/contract.ts'
 import { callModel } from '../src/model/http.ts'
 import type { Target } from '../src/model/http.ts'
 import { wireNamed } from '../src/model/wire/registry.ts'
+import { wireHeader } from '../src/model/wire/headers.ts'
 import { estimateTokens } from '../src/runtime/budget.ts'
 
 const argv = process.argv.slice(2)
@@ -64,12 +65,19 @@ if (credential === null) {
 
 // ── 二 · 一段最小的 A 区 ────────────────────────────────────────────────────────
 //
-// **只有 A 区**：B 区与 C 区留空（它们随轮次与步变，而这一份要的是"同一段前缀两次"）。
-// 这一段是真项目方针的前若干行——真字节才有真的 token 账。
+// **A 区跨两趟完全相同**（缓存要的就是这个），B 区给一句最小的话、C 区留空。
+//
+// **B 区为什么不能空**（这一条是实测撞出来的）：Messages 那条线上 B 区是 messages 里那一条 user，
+// 空 B 区发出去的是 `"messages":[]`——上游 400（"messages: at least one message is required"）。
+// 而**产品里 B 区永远不空**（轮级意图那一栏），所以那是探针自己造出来的形状，不是产品的缺陷。
 const policy = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8')
 const zoneA = new TextEncoder().encode(policy.split('\n').slice(0, 40).join('\n'))
-const zones: Prefix = { zoneA, zoneB: new Uint8Array(), zoneC: new Uint8Array() }
-say(`A 区：${zoneA.length} 字节（AGENTS.md 前 40 行）· 估 ${estimateTokens(zoneA)} token（粗尺）· B/C 区空`)
+const zoneB = new TextEncoder().encode('工作总目标：把工作树里的 .ts 数一遍。')
+const zones: Prefix = { zoneA, zoneB, zoneC: new Uint8Array() }
+say(
+  `A 区：${zoneA.length} 字节（AGENTS.md 前 40 行）· 估 ${estimateTokens(zoneA)} token（粗尺）· ` +
+    `B 区 ${zoneB.length} 字节（一句话）· C 区空`,
+)
 
 /** 一次最小调用：不带工具 · `max_tokens` 压到 1（只要用量那笔账，不要内容）。 */
 async function once(
@@ -112,11 +120,10 @@ for (const declId of MODEL_IDS) {
     path: WIRES[decl.wire].path,
     model: decl.model,
     from: 'decl',
-    // 两条线的头各一套（`wireHeader` 是产品里那一处；这里显式写出来，好在读数里看见发了什么）。
-    headers:
-      decl.wire === 'anthropic-messages'
-        ? { 'content-type': 'application/json', 'x-api-key': credential, 'anthropic-version': '2023-06-01' }
-        : { 'content-type': 'application/json', authorization: `Bearer ${credential}` },
+    // **头就用产品那一处 `wireHeader`**：探针原先自己手写过一套，而它已经与产品漂过一次
+    // （产品那头多一栏 `accept: text/event-stream`）——探针的用处就是"照产品那样发一次"，
+    // 两处各写一套就会再漂一次。凭据仍然只从外面取来、只在这里过一个值。
+    headers: wireHeader(decl.wire, credential),
   }
   line(`\n二 · ${declId}（${p.host}${t.path} · 那边叫它 ${decl.model}）`)
   try {

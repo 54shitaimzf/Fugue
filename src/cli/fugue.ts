@@ -87,7 +87,7 @@ import { realDriver, stubDriver } from '../round/driver.ts'
 import { wireCall } from '../runtime/step.ts'
 import { makeDumpCall } from '../model/http.ts'
 import type { AgentHandle } from '../runtime/step.ts'
-import { targetOf } from '../model/http.ts'
+import { targetAt } from '../model/http.ts'
 import { modelDeclOf } from '../model/contract.ts'
 import { wireHeader } from '../model/wire/headers.ts'
 import { implementedNames, publishedTools } from '../tools/execute.ts'
@@ -854,7 +854,12 @@ async function roundRun(
       // **两条路在 `runRound` 眼里没有区别**（同一个 `AgentDriver`）：打桩那一档把 `Stub` 包
       // 一层（S7 定下的那个形状不动），真驱动那一档走 `realDriver` + `DriverSupport`。凭据那一
       // 步只在这一档走（不打 `--live` 的话 `driverSupport` 一次都不被调）。
-      stub: stubDriver(stub),
+      //
+      // **这里原先恒是 `stubDriver(stub)`**，于是 `--live` 那一档只是把 `driverSupport` 传了下去
+      // （ask 那一侧因此是完整的），而**干一格的那一个函数还是打桩**：一次真调用都没发，盘上落的
+      // 是"（打桩）… 改了 …"，而命令面照旧报成功。整条链的取证（dump 一份都不落）就是这么露的。
+      // `driverSupport` 那一栏照旧给（ask 要从它拿 `call` · `execute` · `decl` · `handle`）。
+      stub: live && credential !== null ? realDriver() : stubDriver(stub),
       ...(maxSteps === undefined ? {} : { maxSteps }),
       ...(handoff === undefined ? {} : { handoff }),
       ...(live && credential !== null
@@ -1533,7 +1538,10 @@ export function driverSupport(o: {
   const tools = publishedCatalog()
   const states = new Map<string, AssembleState>()
   const handles = new Map<string, AgentHandle>()
-  const target = { ...targetOf(decl.id), headers: wireHeader(decl.wire, o.credential) }
+  // **凭据已经在 `o.credential` 里**（壳那一档从环境变量或那个文件取来），所以这里走
+  // `targetAt`——走 `targetOf` 的话它会**按提供方的声明再取一次**，而那段声明只认环境变量：
+  // `--credential <文件>` 这条路于是走不通（实测）。
+  const target = targetAt(decl.id, o.credential)
 
   /**
    * 这个 agent 的第一步那一份状态：**契约值就是它的任务**（B 区那几段照契约填）。

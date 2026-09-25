@@ -107,6 +107,10 @@ export function wireOf(): WireAdapter {
       return bodyOf({
         model: req.model,
         messages,
+        // **流式是一个请求侧的声明**（理由与 Messages 那条线上同一处相同）：不给这一栏，上游回
+        // 的是一条整的 `chat.completion`，`dataRecords` 一个 `data:` 行都找不到，`finish` 报
+        // "流到头了没有收到 finish_reason"——话是错的，账也是空的（`usage` 拿不到）。
+        stream: true,
         // 这一条线上省略 `temperature` = 由提供方定（那边默认是 1）；填了就是要那个数。**缺省不是
         // 常量**：两个适配器共用一份 `call`，各自那边的"省略"含义不同，所以"缺省填什么"归各自。
         ...(req.call?.temperature === undefined ? {} : { temperature: req.call.temperature }),
