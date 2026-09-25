@@ -295,8 +295,8 @@ function requestWith(step: number, tools: readonly (typeof TOOL_ENTRIES)[number]
   // **第二档用 `null` 说"这次不带工具"**：显式传 `undefined` 会吃到缺省参数（JS 的规矩），
   // 那样"带工具"与"不带工具"两档就分不开了。
   return tools === null
-    ? { model: DECL.model, zones: { A: prefix.zoneA, B: prefix.zoneB, C: prefix.zoneC }, call: DECL.call }
-    : { model: DECL.model, zones: { A: prefix.zoneA, B: prefix.zoneB, C: prefix.zoneC }, tools, call: DECL.call }
+    ? { model: DECL.model, zones: { A: prefix.zoneA, B: prefix.zoneB, C: prefix.zoneC }, call: DECL.call, promptCache: 'implicit' }
+    : { model: DECL.model, zones: { A: prefix.zoneA, B: prefix.zoneB, C: prefix.zoneC }, tools, call: DECL.call, promptCache: 'implicit' }
 }
 
 /**
@@ -342,8 +342,8 @@ function producedKeys(call: ModelCall): string[] {
 
 test('① 一个请求与一串事件能往返序列化，字段一个不多一个不少', () => {
   // 请求那一栏：接口上的键 == 声明的那四个 == 从盘上读出来的那四个。
-  assert.deepEqual(interfaceKeys('ModelRequest'), ['call', 'model', 'tools', 'zones'])
-  assert.deepEqual(interfaceKeys('ModelRequest').filter((k) => k !== 'tools' && k !== 'call'), ['model', 'zones'])
+  assert.deepEqual(interfaceKeys('ModelRequest'), ['call', 'model', 'promptCache', 'tools', 'zones'])
+  assert.deepEqual(interfaceKeys('ModelRequest').filter((k) => k !== 'tools' && k !== 'call'), ['model', 'promptCache', 'zones'])
   assert.deepEqual(interfaceKeys('Usage'), [...USAGE_FIELDS].sort(), '用量那一栏与 USAGE_FIELDS 对不上')
   assert.equal(USAGE_FIELDS.length, 6)
   // 架构 § 8.15 说的"用量的四个数"就是这四个——`USAGE_FIELDS` 多出来的两样是坐标，不是用量。

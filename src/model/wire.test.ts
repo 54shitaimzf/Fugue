@@ -57,6 +57,7 @@ function request(tools = true): ModelRequest {
     },
     ...(tools ? { tools: catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number]) } : {}),
     call: DEFAULT_CALL,
+    promptCache: 'implicit',
   }
 }
 
@@ -183,6 +184,7 @@ function requestWithEscapes(): ModelRequest {
     },
     tools: catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number]),
     call: DEFAULT_CALL,
+    promptCache: 'implicit',
   }
 }
 
@@ -292,4 +294,47 @@ test('④ 负对照：② 的判据换成"字节相同" → 变红（说明适�
   const other: ModelRequest = { ...r, zones: { ...r.zones, A: new TextEncoder().encode('你是子 agent。') } }
   assert.notEqual(hashOf(anthropicWireOf().bytes(other)), hashOf(anthropicWireOf().bytes(r)))
   assert.notEqual(hashOf(openaiWireOf().bytes(other)), hashOf(openaiWireOf().bytes(r)))
+})
+
+// ── ②d 断点那一档：声明说 implicit 就一个都不发，说 explicit 就发在 A 区与 B 区的边界 ────────
+//
+// 由头：cache_control 是 **Anthropic Messages 这条线上的显式数据**（架构 § 10.3），而我们这条线
+// 的 system 今天是一串纯文本——纯文本发不出断点。所以断点发不发**是一个声明**（WIRES 那一栏，
+// 经 promptCacheFor 带过来），而不是适配器自己判断该不该发。这一条把两档的字节都钉住。
+test('②d 断点按声明走：implicit 一个不发 · explicit 发在 A 区与 B 区末尾（C 区不发）', () => {
+  const dec = new TextDecoder()
+  const base = request()
+  const implicit = dec.decode(anthropicWireOf().bytes({ ...base, promptCache: 'implicit' }))
+  const explicit = dec.decode(anthropicWireOf().bytes({ ...base, promptCache: 'explicit' }))
+
+  // 一 · 隐式那一档：整份请求体里一个 cache_control 都没有，system 仍是一串纯文本。
+  assert.equal((implicit.match(/cache_control/g) ?? []).length, 0, 'implicit 那一档不该出现 cache_control')
+  const iBody = JSON.parse(implicit) as Record<string, unknown>
+  assert.equal(typeof iBody['system'], 'string', 'implicit 那一档的 system 应当是一串纯文本')
+
+  // 二 · 显式那一档：恰好两处断点，system 换成内容块数组，B 区那条 user 也是。
+  assert.equal((explicit.match(/cache_control/g) ?? []).length, 2, 'explicit 那一档应当恰好两处断点')
+  const eBody = JSON.parse(explicit) as Record<string, unknown>
+  const sys = eBody['system'] as { text: string; cache_control?: unknown }[]
+  assert.ok(Array.isArray(sys) && sys.length === 1, 'explicit 那一档的 system 应当是单元素内容块数组')
+  assert.deepEqual(sys[0]?.cache_control, { type: 'ephemeral' }, 'system 那一块的末尾要给断点')
+  assert.equal(sys[0]?.text, dec.decode(base.zones.A), '断点不该改 system 的正文')
+  const msgs = eBody['messages'] as { role: string; content: unknown }[]
+  const bMsg = msgs[0]?.content as { text: string; cache_control?: unknown }[]
+  assert.ok(Array.isArray(bMsg), 'B 区那条 user 的 content 应当是内容块数组')
+  assert.deepEqual(bMsg[0]?.cache_control, { type: 'ephemeral' }, 'B 区末尾要给断点')
+  assert.equal(bMsg[0]?.text, dec.decode(base.zones.B), '断点不该改 B 区的正文')
+  assert.equal(typeof msgs[1]?.content, 'string', 'C 区那一条不给断点（它每一步都变）')
+
+  // 三 · 两档的差别只有那两处断点：把 content 摊平之后，两条消息的正文逐字相同。
+  const flat = (c: unknown): string => (typeof c === 'string' ? c : ((c as { text: string }[])[0]?.text ?? ''))
+  const iMsgs = iBody['messages'] as { content: unknown }[]
+  assert.equal(flat(msgs[1]?.content), flat(iMsgs[1]?.content), 'C 区那条的正文两档应当相同')
+  console.log(
+    '②d 读数：implicit ' +
+      String(Buffer.byteLength(implicit, 'utf8')) +
+      ' 字节（0 处断点）· explicit ' +
+      String(Buffer.byteLength(explicit, 'utf8')) +
+      ' 字节（2 处断点）',
+  )
 })

@@ -27,6 +27,8 @@ interface MessagesRequest {
   readonly zones: { readonly A: Uint8Array; readonly B: Uint8Array; readonly C: Uint8Array }
   readonly tools?: readonly { readonly name: string; readonly description: string; readonly parameters: unknown }[]
   readonly call?: { readonly temperature?: number; readonly maxTokens?: number }
+  /** 断点发不发（`WIRES` 那一栏，经 `promptCacheFor` 带过来）。 */
+  readonly promptCache?: 'explicit' | 'implicit'
 }
 
 /**
@@ -72,6 +74,29 @@ interface MessagesState {
 }
 
 /** 这一条线的适配器。名字取 PLAN § 5.8 的 `B2` 行：一份 `wireOf()` 给请求体与事件流。 */
+/**
+ * `system` 那一栏：隐式那一档是一段纯文本；显式那一档是内容块数组，末尾一个断点。
+ *
+ * **断点放在内容的末尾**：它声明的是"到这里为止的内容是一个缓存单元"，放开头等于什么都没说。
+ * 空串不发给断点（那一栏就不出现内容块），它与"隐式那一档的空串"逐字节相同。
+ */
+function systemField(a: Uint8Array, breakpoint: boolean): unknown {
+  const text = new TextDecoder().decode(a)
+  if (!breakpoint) return text
+  return [{ type: 'text', text, cache_control: { type: 'ephemeral' } }]
+}
+
+/**
+ * 一条 user 消息的内容：要给断点时是内容块数组，否则是纯文本。
+ *
+ * **只有 B 区那一条给**：它跨步稳定（架构 § 8.11），断点放它末尾等于把 A+B 一起定成缓存
+ * 单元；C 区是只追加的那一段，每一步都变，给它放断点没有意义。
+ */
+function userContent(text: string, breakpoint: boolean): unknown {
+  if (!breakpoint) return text
+  return [{ type: 'text', text, cache_control: { type: 'ephemeral' } }]
+}
+
 export function wireOf(): WireAdapter {
   return {
     name: 'anthropic-messages',
@@ -83,7 +108,7 @@ export function wireOf(): WireAdapter {
       const messages: Record<string, unknown>[] = []
       const b = new TextDecoder().decode(req.zones.B)
       const c = new TextDecoder().decode(req.zones.C)
-      if (b !== '') messages.push({ role: 'user', content: b })
+      if (b !== '') messages.push({ role: 'user', content: userContent(b, req.promptCache === 'explicit') })
       if (c !== '') messages.push({ role: 'user', content: c })
       return bodyOf({
         model: req.model,
@@ -92,7 +117,10 @@ export function wireOf(): WireAdapter {
         max_tokens: req.call?.maxTokens ?? 4096,
         // 系统提示词在这一条线上是**顶层的 `system` 字段**，不是 messages 里的第一条。DeepSeek 那一侧
         // 只吃字符串（给数组会被 400 拒掉），所以这里发字符串。
-        system: new TextDecoder().decode(req.zones.A),
+        // **断点那一档要把 `system` 换成内容块数组**（纯文本发不出断点——架构 § 10.3 说
+        // Messages 的断点是显式数据）。隐式那一档照旧一串纯文本：那是 DeepSeek 那一侧今天
+        // 认的形状（`src/model/contract.ts` 的 `WIRES` 里那一段读数）。
+        system: systemField(req.zones.A, req.promptCache === 'explicit'),
         messages,
         // **两个线协议在"省略"这一件事上语义不同**：这一条线上 `temperature` 不填 = 由提供方定，
         // 填 0.2 就是**真的要 0.2**（而那条线的默认值是 1）。所以缺省不是常量 0.2，是"不填"。

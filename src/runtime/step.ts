@@ -38,6 +38,7 @@ import { parseStream } from '../model/wire/stream.ts'
 import type { Prefix, Protocol } from '../assemble/contract.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
 import { sourcesFor } from '../assemble/sources.ts'
+import { promptCacheFor } from '../model/contract.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { ModelId } from './contract.ts'
@@ -275,6 +276,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       adapter: h.adapter,
       prefix,
       tools,
+      promptCache: promptCacheFor(h.adapter.name),
       model: h.wireModel,
       ...(h.call === undefined ? {} : { call: h.call }),
     }

@@ -64,7 +64,15 @@ export interface WireDecl {
  * 两条线各自的路径与能力。**"同一个 host 上两条路"是一件事**，不是两条各写一遍的常量。
  */
 export const WIRES: Readonly<Record<WireName, WireDecl>> = {
-  'anthropic-messages': { path: '/anthropic/v1/messages', promptCache: 'explicit' },
+  // **今天这一档是 implicit**，判据是三条读数，不是"新东西还没接上"：
+  //   一 · DeepSeek 的上下文缓存是**自动前缀命中**（官方文档：缓存默认开启、按缓存前缀单元
+  //        完整匹配计费，命中报 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`）；
+  //   二 · 报缺陷那条读数说，`/anthropic` 那条路上把 `system` 发成**内容块数组**会被拒
+  //        （`unknown variant system`，那是 400），而把断点放进 `system` 就必须换成数组；
+  //   三 · 这个仓库那条线的 `system` 今天是一串**纯文本**（实测请求体 `"system":"…"`），
+  //        换形状是三样一起动的改动，而"这条端点收不收断点"本地验不了（要真出网）。
+  // **改成 explicit 是一行**：改完请求体里 A 区与 B 区各多一个断点，别的字节不动。
+  'anthropic-messages': { path: '/anthropic/v1/messages', promptCache: 'implicit' },
   'openai-chat': { path: '/v1/chat/completions', promptCache: 'implicit' },
 }
 
@@ -246,6 +254,18 @@ export function modelDeclOf(id: string | undefined): ModelDecl {
 }
 
 /** 按名字取一个提供方。同上：查不到就拒。 */
+/**
+ * 一条线协议的发断点方式。**声明 → 请求形状的唯一一处解析。**
+ *
+ * 为什么不把这一档抄进 `ModelDecl`：那样同一个事实就有两处（线协议一栏 · 模型一栏），
+ * 改一处漏一处**不报错**，只表现为多一个或少一个断点。
+ */
+export function promptCacheFor(wire: string): WireDecl['promptCache'] {
+  const w = WIRES[wire as WireName]
+  if (w === undefined) throw new ModelDeclError(`没有这条线协议：${wire}（有的是 ${WIRE_NAMES.join(' · ')}）`)
+  return w.promptCache
+}
+
 export function providerOf(id: string): ProviderDecl {
   const p = PROVIDERS[id]
   if (p === undefined) {
@@ -450,6 +470,14 @@ export interface ModelRequest {
     /** 只追加的那一段——相邻两步只有它变。 */
     readonly C: Uint8Array
   }
+  /**
+   * 这一条线的断点**由谁声明**（`WIRES` 那一栏原样带过来，见 `promptCacheFor`）。
+   *
+   * `'explicit'`：适配器在 A 区与 B 区的边界各放一个断点；`'implicit'`：什么都不发，命中由
+   * 这条线的自动前缀匹配决定。**必填**：给个缺省值就说不清"没声明"与"声明了隐式"这两件事，
+   * 而两者的请求体字节不同（多一个 `cache_control`）。
+   */
+  readonly promptCache: 'explicit' | 'implicit'
   readonly tools?: readonly ToolEntry[]
   readonly call?: {
     readonly temperature?: number
