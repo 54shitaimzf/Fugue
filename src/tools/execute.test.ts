@@ -263,7 +263,7 @@ test('④ 假模型驱动 读 → 写 → 检查点：走到一次真提交，�
       [
         { t: 'delta', text: '写一份，然后提交。' },
         ...callOne(0, 'call_2', 'write', { path: 'notes.md', content: '第一版\n' }),
-        ...callOne(1, 'call_3', 'checkpoint', { msg: '第一次检查点' }),
+        ...callOne(1, 'call_3', 'checkpoint', { message: '第一次检查点' }),
         { t: 'usage', usage: USAGE },
         { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
       ],
@@ -420,4 +420,35 @@ test('①c glob 的 `**` 匹配零层目录：根下的文件与子目录里的�
   } finally {
     await b.close()
   }
+})
+
+// ── ⑥ 目录说必填的键，实现读的名字与它逐字相等 ──────────────────────────────────
+//
+// 由头就是 `checkpoint` 那一处：目录里那一栏叫 `message`，实现读的是 `msg`，而一句兜底把这件
+// 事盖住了——**每一次提交都叫同一个名字，且不报错**。所以这一条不许有兜底：什么都不给时报缺，
+// 而报缺的那一栏必须是目录里声明过的键。它盯的是与架构 § 8.10 硬纪律 1 同一条病的轻症：
+// 公布了却读不到。
+test('⑥ 目录里 required 的键，实现读的名字与它逐字相等（不留兜底）', async () => {
+  // 一个会喊的宿主：实现要是**在问必填参数之前**先碰了它，这一条就该红（那说明它没先问）。
+  const host = new Proxy({} as ToolHost, {
+    get: (_t, k) => () => {
+      throw new Error(`实现在问必填参数之前就碰了宿主的 ${String(k)}——那说明它没先问。`)
+    },
+  })
+  const asked: string[] = []
+  for (const e of CATALOG) {
+    const fn = faceOf(e.name)
+    if (fn === null) continue // 没接上实现的那几条不在这一条范围内（W1 之后为 0）
+    const need = (e.parameters as unknown as { readonly required?: readonly string[] }).required ?? []
+    const got = await fn({}, host, { agent: AGENT, step: 0, cwd: '' })
+    if (need.length === 0) {
+      assert.equal(got.output.includes('少了必填参数'), false, `${e.name} 目录里没有必填键，实现却报了缺：${got.output}`)
+      continue
+    }
+    const m = /少了必填参数 (\S+?)——/.exec(got.output)
+    assert.ok(m !== null, `${e.name} 什么都不给时报的不是"少了必填参数"：${got.output}`)
+    assert.ok(need.includes(m[1]!), `${e.name} 实现读的是 ${m[1]}，而目录的 required 是 ${need.join(' · ')}`)
+    asked.push(`${e.name}:${m[1]}`)
+  }
+  console.log(`⑥ 读数 · 逐条实现读的必填键：${asked.join(' · ')}`)
 })

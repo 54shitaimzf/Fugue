@@ -362,7 +362,7 @@ test('⑤ 执行类两次调用各落一对 run/start · run/end（完整 argv �
     for (const req of [
       call('bash', { command: 'true' }),
       call('read', { path: 'a.ts' }),
-      call('checkpoint', { msg: '一个检查点' }),
+      call('checkpoint', { message: '一个检查点' }),
       call('run_action', { action: 'true' }),
     ]) {
       await executor.execute(req, h)

@@ -27,7 +27,7 @@ export interface ToolContext {
 }
 
 /**
- * 工具能碰的那几样东西。**八条，就是这九个工具全部要的。**
+ * 工具能碰的那几样东西。**九条，就是这九条工具全部要的。**
  *
  * `deny` 是"你自己拒了"那道口：路径围栏（`M3` 的 `resolveVirtual`）与能力表都不在这一层，
  * 所以拒的话由实现那一侧给整句，这一层只把它原样变成一次失败的结果。**拒的话里指得出名字
@@ -311,7 +311,10 @@ const runActionFace: ToolFn = async (args, host, ctx) => {
 // ── 真源层那一个 ───────────────────────────────────────────────────────────────
 
 const checkpointFace: ToolFn = async (args, host) => {
-  const msg = text(args, 'msg') ?? '（未给说明）'
+  const msg = text(args, 'message')
+  // **不给就报缺，不替它补一句**：目录里这一栏叫 `message`。原先那个 `?? '（未给说明）'`
+  // 把"实现读的是另一个名字"这件事盖住了——每一次提交都叫同一个名字，而且不报错。
+  if (msg === null) return missing('checkpoint', 'message')
   const { commit } = await host.checkpoint(msg)
   return ok(`提交了：${commit}——${msg}`)
 }
@@ -350,7 +353,7 @@ function globToRe(pattern: string): RegExp {
 /**
  * 实现表。**它是"哪几条接上了"的唯一出处。**
  *
- * 今天接上八条（视图类五条 · 执行类两条 · 真源层一条），**没接上的七条各有各的下家**：
+ * 今天接上九条（视图类六条 · 执行类两条 · 真源层一条），**没接上的六条各有各的下家**：
  * 待办与两个交互工具等一次真人会话 · 委派那三条等 `S9` 的 fork/merge。**它们不出现在公布
  * 名单里**（`publishedTools`），而不是公布了再回一句"没接上"。
  */
