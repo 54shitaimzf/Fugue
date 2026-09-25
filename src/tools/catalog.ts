@@ -45,7 +45,7 @@ const PATH = { type: 'string', description: '视图内的相对路径' } as cons
 export const TOOL_ENTRIES: readonly ToolEntry[] = [
   {
     name: 'write',
-    description: '把一个文件的全部内容写成给定文本。',
+    description: '把一个文件的全部内容写成给定文本：新建，或整篇替换。每一次都写全文，所以改文件中间的一小处应当用 edit，不要重抄一遍（那会把别处的改动抹掉）。写完这一步的文件就在视图里，后续的读与跑都看得见。',
     parameters: {
       type: 'object',
       properties: { path: PATH, content: { type: 'string', description: '要写进去的文本' } },
@@ -55,7 +55,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'edit',
-    description: '在一处精确替换一个文件里的字符串；不唯一时先报出来，不猜是哪一处。',
+    description: '在一处精确替换一个文件里的字符串：old_string 要带上足够的上下文，好让它在文件里只出现一次。不唯一时它先报出来，不猜是哪一处——那时把 old_string 写长一点，或者给 replace_all。整篇换掉用 write。',
     parameters: {
       type: 'object',
       properties: {
@@ -70,7 +70,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'read_image',
-    description: '读一张图片，返回图片本身。',
+    description: '读一张图片，返回图片本身。read 只认文本文件，图片要走这一个。',
     parameters: {
       type: 'object',
       properties: { path: PATH },
@@ -80,7 +80,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'bash',
-    description: '执行一条命令。工作区是只读的；要产出文件请用动作。',
+    description: '执行一条命令，拿到它的退出码与输出。**工作区是只读的**：这条命令改不了任何文件，要产出文件用 write 或跑一个动作（run_action）。适合验证与查看这一类只读的活（跑测试、看仓库状态、算个数）。',
     parameters: {
       type: 'object',
       properties: {
@@ -93,7 +93,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'read',
-    description: '读一个文件的内容。可以只读一段。',
+    description: '读一个文件的内容，返回带行号的原文。可以只读一段（offset 从 1 数，limit 是最多几行）——长文件先用 grep 定位，再读那一段，比整篇读进来省。要改它用 edit 或 write；图片用 read_image。',
     parameters: {
       type: 'object',
       properties: {
@@ -107,7 +107,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'glob',
-    description: '按路径模式找文件，返回路径。',
+    description: '按路径模式找文件，返回匹配的路径。知道文件名的一部分而不知道它在哪时用它；要找的是文件的内容用 grep。缺省从这一步的工作目录起找。',
     parameters: {
       type: 'object',
       properties: {
@@ -120,7 +120,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'grep',
-    description: '按内容找文件，返回匹配的行、文件名或条数。',
+    description: '按内容找文件，返回匹配的行、文件名或条数（output_mode 决定哪一种；不确定要哪一种时用 content）。要找的是路径而不是内容用 glob。',
     parameters: {
       type: 'object',
       properties: {
@@ -135,7 +135,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'todo_write',
-    description: '记下当前的待办清单，整体覆盖上一次。',
+    description: '记下当前的待办清单：一次给全，它整体覆盖上一次那一份。多步的活开始前写上，每推进一步更新那一行（正在做的那一条用 in_progress）。它是给自己看的进度，不是给人看的汇报。',
     parameters: {
       type: 'object',
       properties: {
@@ -174,7 +174,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'list_agents',
-    description: '列出自己派出去的那些 agent：它们的 id 与状态。',
+    description: '列出自己派出去的那些 agent：它们的 id 与状态。派出去之后要动手（追问、打断、收结果）先在这里拿 id；**回话会自己送到**，不用一直查。',
     parameters: {
       type: 'object',
       properties: { scope: { type: 'string', enum: ['children', 'descendants'], description: '只看直接子 agent，还是整棵树' } },
@@ -196,7 +196,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'ask_user_question',
-    description: '问人一个问题，给出可选的答案。',
+    description: '问人一个问题，给出可选的答案。**只在答案归人时用它**：查得到的（代码在哪、现在怎么做的）先自己查，能自己定的按"最干净、最可扩展"定下来。一次可以问几个，每个给几个选项、各带一句代价说明。',
     parameters: {
       type: 'object',
       properties: {
@@ -234,7 +234,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'exit_plan_mode',
-    description: '说一声预备态做完了：接下来要动真东西。门由人开。',
+    description: '说一声预备态做完了：接下来要动真东西，门由人开。计划写完整了再调它，而且它是那一步的最后一个调用——交出去之后等人批，批了才动手。',
     parameters: {
       type: 'object',
       properties: {
@@ -247,7 +247,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'checkpoint',
-    description: '把当前视图定格成一次提交。',
+    description: '把当前视图定格成一次提交，拿到它的提交号。产出告一段落时用它留一个可以回的落点；一轮结束时系统也会自己收一次。',
     parameters: {
       type: 'object',
       properties: { message: { type: 'string', description: '这一次提交说的是什么' } },
@@ -257,7 +257,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'run_action',
-    description: '跑一个已经绑好的动作（构建 · 测试一类），它声明的产出会写回视图。',
+    description: '跑一个已经绑好的动作（构建 · 测试一类），它声明的产出会写回视图。动作是配好的、可复现的那几条命令：要跑的是临时的一条命令用 bash，要看某个动作收什么参数用它的名字去配置里查。',
     parameters: {
       type: 'object',
       properties: {
