@@ -21,6 +21,7 @@
 // 一条断言都不碰凭据（PLAN § 5.8 的口径一），"沙箱里看得见的环境"（架构 § 14.4）也仍是闭的。
 import { readFileSync } from 'node:fs'
 import type { ModelId } from '../assemble/contract.ts'
+import { protocolNames } from '../assemble/protocol.ts'
 
 /** 提供方那边的一个模型名（发给它的 `model` 字段）。与 `ModelId` 不是一回事：那是我们这边的键。 */
 export type WireModel = string
@@ -34,10 +35,37 @@ export const WIRE_NAMES: readonly WireName[] = ['anthropic-messages', 'openai-ch
 /** 声明里写错一个线协议名是打错了一个字，不是"以后再支持"——所以它当场拒，并列出有的。 */
 export class ModelDeclError extends Error {}
 
-/** 一条线协议：它自己的路径那一段。**host 不在这一份里**——那是提供方的，不是协议的。 */
-export const WIRES: Readonly<Record<WireName, { readonly path: string }>> = {
-  'anthropic-messages': { path: '/anthropic/v1/messages' },
-  'openai-chat': { path: '/v1/chat/completions' },
+/**
+ * 一条线协议：它自己的路径那一段，加上**这条线在请求形状上的能力**。
+ *
+ * **能力住在线协议这一栏，不住在模型那一栏。** 判据是"这件事是谁的性质"：`cache_control` 是
+ * Anthropic Messages 这条线的东西（架构 § 10.3：断点是这条线上的显式数据），不是某个模型的
+ * 性质——同一个模型换一条线就没有这个字段了。声明在模型那一栏，两个模型走同一条线却要各写
+ * 一遍，而第三个模型接进来时没人知道该抄哪一份。
+ *
+ * **`host` 不在这一份里**——那是提供方的，不是协议的。
+ */
+export interface WireDecl {
+  readonly path: string
+  /**
+   * 提示词缓存的**显式断点**。
+   *
+   * `'explicit'`：这条线要我们声明断点（`{type:'ephemeral'}` 那一档），命中与否看我们放对位置。
+   * `'implicit'`：这条线按请求前缀自动命中，**多发一个字段都是噪声**（OpenAI Chat Completions
+   * 与 DeepSeek 那一侧的隐式前缀缓存都是这一档。
+   *
+   * 今天两条线各一档，而**这不是一个空缺**：它是有值域的声明，将来那条线上有第三种（比如
+   * 显式但用别的字段名）就加第三个值，适配器多一条分支。
+   */
+  readonly promptCache: 'explicit' | 'implicit'
+}
+
+/**
+ * 两条线各自的路径与能力。**"同一个 host 上两条路"是一件事**，不是两条各写一遍的常量。
+ */
+export const WIRES: Readonly<Record<WireName, WireDecl>> = {
+  'anthropic-messages': { path: '/anthropic/v1/messages', promptCache: 'explicit' },
+  'openai-chat': { path: '/v1/chat/completions', promptCache: 'implicit' },
 }
 
 /**
@@ -72,9 +100,12 @@ export const PROVIDERS: Readonly<Record<string, ProviderDecl>> = {
 }
 
 /**
- * 一个模型的声明。七个字段，每一个都有一条被读的理由：
+ * 一个模型的声明。八个字段，每一个都有一条被读的理由：
  *
  * - `id`：我们这边的键，也是命令行 `--model` 收的那一串。
+ * - `protocol`：**这个模型读哪一份系统提示词**（架构 § 8.11 的 `Protocol` 值的名字）。它是
+ *   一个名字而不是一个值：解析成协议值是装配那一侧的事（`protocolFor`），这一份只声明"哪一份"。
+ *   于是"换一个模型换一份提示词"是一个数据字段，而不是某处的分支——§ 10.3 的判据。
  * - `provider` · `wire` · `model`：**请求发给谁 · 走哪条线 · 那边叫它什么名字**。三样分开是
  *   因为它们的值域各不相同：一个 host 上有两条路（`deepseek-chat` 两个线协议），一条路上有
  *   好几个模型。**适配器只读 `wire`，不读 `id`**——架构 § 10.3 的判据：适配器里出现
@@ -89,6 +120,8 @@ export const PROVIDERS: Readonly<Record<string, ProviderDecl>> = {
  */
 export interface ModelDecl {
   readonly id: ModelId
+  /** 系统提示词那一份的名字（`PROTOCOLS` 的键）。**载入时核对它真的存在**。 */
+  readonly protocol: string
   readonly provider: string
   readonly wire: WireName
   readonly model: WireModel
@@ -137,10 +170,15 @@ export const DEFAULT_CALL: Readonly<{ temperature?: number; maxTokens?: number }
  * 两条都留着，是因为"同一模型两个协议可比"是 S8 的第二条验证（架构 § 20）：只声明一条的话，
  * 那条验证在 `B2` 就没法落地（两个适配器里有一个没有声明喂它）。`budget` 两行都由
  * `triggerAt(contextLimit)` 算出来，于是"上限 · 触发点 · 交接余量"三者的关系只有一处。
+ *
+ * **`protocol` 两条都是 `'subagent'`。** 这不是抄的：`'holder'` 是**持轮者那一格**用的
+ * （B 区多两段、少一段），而模型目录描述的是"干一格的 agent"，不是轮次的主线。持轮者换不换
+ * 提示词由轮次那一层定（`round/driver.ts`），不由模型定。
  */
 export const MODEL_DECLS: Readonly<Record<string, ModelDecl>> = {
   'deepseek-chat/anthropic': {
     id: 'deepseek-chat/anthropic' as ModelId,
+    protocol: 'subagent',
     provider: 'deepseek',
     wire: 'anthropic-messages',
     model: 'deepseek-chat',
@@ -151,6 +189,7 @@ export const MODEL_DECLS: Readonly<Record<string, ModelDecl>> = {
   },
   'deepseek-chat/openai': {
     id: 'deepseek-chat/openai' as ModelId,
+    protocol: 'subagent',
     provider: 'deepseek',
     wire: 'openai-chat',
     model: 'deepseek-chat',
@@ -169,6 +208,10 @@ export const MODEL_IDS: readonly string[] = Object.keys(MODEL_DECLS)
  *
  * 它是 `ModelDecl` 的一个子集，而这件事由类型表达（`Pick<ModelDecl, …>`）——加一个字段忘了
  * 投影，编译不过。
+ *
+ * **`protocol` 不在这一份里。** 它不是"装配读的字段"，是"选哪一份装配"的键：`assemble()`
+ * 收到的是协议值本身，而不是一个名字。名字的解析在 `protocolFor()`，那里是唯一一处把
+ * `ModelDecl` 翻成 `Protocol` 的地方。
  */
 export type PrefixModelDecl = Pick<ModelDecl, 'id' | 'systemPromptUpdate' | 'contextLimit' | 'call'>
 
@@ -270,6 +313,9 @@ export function authOf(p: ProviderDecl): string {
  *
  * 它封的是"静默失效"那一类：投影漏掉一条记录，命令行那次装配的读数就指着另一个模型，而
  * 没有一处会报错。与 `contract/types.ts` 的 `unownedFields` 载入时当场炸是同一条纪律。
+ *
+ * **`protocol` 那一条同属这一类**：声明里写了一个不存在的协议名，后果是"装配出来的前缀是
+ * 别人的那一份"——多一段少一段都只是字节不同，没有别的报错。所以它和键域那几条一起当场炸。
  */
 const mismatch: string[] = []
 for (const name of MODEL_IDS) {
@@ -285,6 +331,12 @@ for (const [id, p] of Object.entries(PROVIDERS)) {
 for (const [name, m] of Object.entries(MODEL_DECLS)) {
   if (!WIRE_NAMES.includes(m.wire)) mismatch.push(`${name} 的线协议没有这一条：${m.wire}`)
   if (PROVIDERS[m.provider] === undefined) mismatch.push(`${name} 指的提供方没有声明：${m.provider}`)
+  if (!protocolNames().includes(m.protocol)) {
+    mismatch.push(`${name} 指的协议没有这一份：${m.protocol}（有的是 ${protocolNames().join(' · ')}）`)
+  }
+  if (m.systemPromptUpdate !== 'in-history' && m.systemPromptUpdate !== 'rewrite-head') {
+    mismatch.push(`${name} 的系统提示词更新方式没有这一档：${String(m.systemPromptUpdate)}`)
+  }
 }
 if (mismatch.length > 0) {
   throw new Error(`模型声明与它的投影对不上：\n  ${mismatch.join('\n  ')}`)

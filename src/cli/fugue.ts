@@ -72,7 +72,7 @@ import { readSnapshot, saveSnapshot, snapshotOf } from '../view/snapshot.ts'
 import { assemble, firstDivergence, hashOf } from '../assemble/assemble.ts'
 import type { Prefix, SegmentId, SegmentValue } from '../assemble/contract.ts'
 import { DEFAULT_MODEL } from '../assemble/models.ts'
-import { HOLDER_PROTOCOL, PROTOCOLS, protocolNamed } from '../assemble/protocol.ts'
+import { PROTOCOLS, protocolFor, protocolNamed } from '../assemble/protocol.ts'
 import { checkConstraints, formatViolation } from '../assemble/constraints.ts'
 import { emptyState, HOLDER, SourceError, sourcesFor } from '../assemble/sources.ts'
 import type { AssembleState } from '../assemble/sources.ts'
@@ -1514,18 +1514,22 @@ function credentialAt(path: string): string {
  * **一个 agent 一份状态、一个句柄**：`sourcesFor(protocol, state, who)` 的输入里有坐标
  * （分支 · 产物路径），而每一条分支的坐标各是各的。所以这一份按 agent 记忆，不是"整轮一份"。
  *
+ * **导出它是为了让它能被单独断言**：句柄里"这个 agent 读哪一份协议"这一栏原先写死过
+ * `HOLDER_PROTOCOL`，而那一处错了只表现为前缀短了一截（没有别的报错）——所以它要有一条
+ * 直接量它的断言（`protocol-wire.test.ts` 的 ①e），而不是靠走到真调用才看得见。
+ *
  * 目标那一栏（`Target`）**是唯一碰凭据的地方**，而它在这里就拼好（不是每一步现取）：一次轮次
  * 一个目标，出网那一刻用的就是它。头的名字按**这一条线协议**给（`wireHeader`）——两条线各一套
  * 头，那一栏的差别不是这里的分岔。
  */
-function driverSupport(o: {
+export function driverSupport(o: {
   readonly root: string
   readonly doc: ConfigDoc
   readonly credential: string
   /** `--dump-wire` 那一档的落点（**已经在工作区之外**——守卫在 `dumpWireDir`）。不给就不落。 */
   readonly dumpDir?: string
 }): DriverSupport {
-  const decl = modelDeclOf(DEFAULT_MODEL)
+  const decl = modelDeclOf(DEFAULT_MODEL.id)
   const tools = publishedCatalog()
   const states = new Map<string, AssembleState>()
   const handles = new Map<string, AgentHandle>()
@@ -1564,7 +1568,7 @@ function driverSupport(o: {
       coord: { id: agent, branch: `refs/heads/agent/${agent}`, outputPaths: [`deliver/${agent}/`] },
       branch: `refs/heads/agent/${agent}` as BranchId,
       contract: (c?.id ?? '') as ContractId,
-      protocol: HOLDER_PROTOCOL,
+      protocol: protocolFor(decl),
       model: decl.id,
       wireModel: decl.model,
       target,

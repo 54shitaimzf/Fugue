@@ -73,6 +73,21 @@ export const HOLDER_PROTOCOL: Protocol = {
   renderers: RENDERERS,
 }
 
+/**
+ * 那一份协议值的名字，一处。**顺序就是 PROTOCOLS 的键序**（第一条是缺省那一份）。
+ *
+ * 它是函数不是常量：`PROTOCOLS` 的声明在这一份的下面，常量会在模块求值时踩到 TDZ；
+ * 函数声明会提升，调用者读到的永远是"此刻的那张表"。
+ *
+ * 它是名字的值域，给两处读：命令行拒一个不认识的名字（protocolNamed），模型声明核对
+ * "这个模型指的协议真的存在"（src/model/contract.ts 载入时那一次核对）。后者是本条
+ * 存在的理由——声明里写错一个协议名，后果是**装配出来的前缀是别人的那一份**：多一段
+ * 少一段都只是字节不同，没有别的报错，前缀缓存静默失效。
+ */
+export function protocolNames(): readonly string[] {
+  return Object.keys(PROTOCOLS)
+}
+
 /** 按名字取一份协议。名字就是 `fugue assemble <protocol>` 那个参数。 */
 export const PROTOCOLS: Readonly<Record<string, Protocol>> = {
   subagent: SUBAGENT_PROTOCOL,
@@ -83,10 +98,30 @@ export const PROTOCOLS: Readonly<Record<string, Protocol>> = {
  * 按名字取一份协议。**查不到就拒，不替它挑一份**——打错一个字应当报出来，而不是装配出一份
  * 看起来对的前缀（命令行那一栏的用法在 Z6）。
  */
+/**
+ * 一个模型声明 → 它读的那一份协议。**这一份里唯一一处把声明翻成协议值的地方。**
+ *
+ * 为什么它必须是函数而不是调用点各查各的表：协议的选法原先散在调用点里（`handleFor` 那一处
+ * 就写死过 `HOLDER_PROTOCOL`），于是"子 agent 拿哪一份"这件事有两个答案，而两者不一致的后果
+ * **只有字节不同**——B 区少一段、前缀缓存静默失效，没有一处报错。收成一处之后，调用点只
+ * 知道"按这个声明装配"，不知道有哪两份协议。
+ *
+ * 声明里那个名字是不是存在，`src/model/contract.ts` 载入时已经核过一遍（那里有名字的值域）；
+ * 这里再核一次，理由是**这一份不该假设调用方核过**——命令行 `fugue assemble` 那一路拿到的
+ * 名字直接来自参数，不经过模型声明。
+ */
+export function protocolFor(m: { readonly protocol: string }): Protocol {
+  const p = PROTOCOLS[m.protocol]
+  if (p === undefined) {
+    throw new Error(`这个模型指的协议没有这一份：${m.protocol}（有的是 ${protocolNames().join(' · ')}）`)
+  }
+  return p
+}
+
 export function protocolNamed(name: string): Protocol {
   const p = PROTOCOLS[name]
   if (p === undefined) {
-    throw new Error(`没有这一份协议：${name}（有的是 ${Object.keys(PROTOCOLS).join(' · ')}）`)
+    throw new Error(`没有这一份协议：${name}（有的是 ${protocolNames().join(' · ')}）`)
   }
   return p
 }
