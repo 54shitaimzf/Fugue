@@ -164,13 +164,17 @@ async function bench(): Promise<Bench> {
  * `support` 给了就是真驱动那一档（`B7.5`）：`call` · `execute` · `decl` · `handle` · `state`
  * 由它带进来。不给就是打桩那一档。
  */
+/** `depsOf` 那一份拆分：一条契约，或者（给 `agents` 时）N 条只有目标与产物路径不同的。 */
+type SplitDraft = RoundRunDeps['split'][number]
+
 function depsOf(
   b: Bench,
   driver: RoundRunDeps['stub'],
   support?: RoundRunDeps['driver'],
   round = 'r1',
+  over: { readonly split?: readonly SplitDraft[]; readonly agents?: readonly AgentId[] } = {},
 ): RoundRunDeps {
-  const split = [
+  const split: readonly SplitDraft[] = over.split ?? [
     {
       goal: '写一份 a.ts',
       ownedPaths: ['a.ts' as RelPath],
@@ -201,7 +205,7 @@ function depsOf(
     // **`question` 不给**（给了就是派一份调查型契约，而那一份要一个非空的问题）。
     intent: { goal: '把一件事做完' },
     split,
-    agents: [AGENT],
+    agents: (over.agents ?? [AGENT]) as AgentId[],
     branchOf: (a) => `refs/heads/${a}` as BranchId,
     seedOf: () => [],
     stub: driver,
@@ -217,11 +221,22 @@ function depsOf(
   }
 }
 
-/** 真驱动那一档要的那几样（`DriverSupport`）：**一条契约一个 agent** · 同一份声明 · 同一串脚本。 */
-function supportOf(b: Bench, call: CallModel): RoundRunDeps['driver'] {
-  const state = { ...emptyState(), ...fixtureState(0), step: 0, cwd: '' }
+/**
+ * 真驱动那一档要的那几样（`DriverSupport`）：**一条契约一个 agent** · 同一份声明 · 同一串脚本。
+ *
+ * **状态与句柄都按 agent 走**（`B7.5` 之后签名就是 `(agent, contract)`）：两个 agent 的 B 区
+ * 里有它自己的目标与产物，所以两份 B 区**本来就该不同**——一处写死会把 ①b 那条断言变成
+ * "两个 agent 恰好装出同一份 B 区"，那是夹具的假象，不是产品。
+ */
+function supportOf(b: Bench, call: CallModel, agents: readonly AgentId[] = [AGENT]): RoundRunDeps['driver'] {
+  const base = { ...emptyState(), ...fixtureState(0), step: 0, cwd: '' }
+  const stateOf = (agent: AgentId): AssembleState => ({
+    ...base,
+    goal: `把「${agent}」那一格做完。`,
+    task: { ...(base.task as NonNullable<AssembleState['task']>), goal: `把「${agent}」那一格做完。` },
+  })
   return {
-    state: () => state,
+    state: (agent: AgentId) => stateOf(agent),
     handle: (agent: AgentId) => ({
       agent,
       coord: { id: agent, branch: `refs/heads/${agent}`, outputPaths: [] },
@@ -232,7 +247,7 @@ function supportOf(b: Bench, call: CallModel): RoundRunDeps['driver'] {
       wireModel: 'deepseek-chat',
       target: { providerId: 'fixture', host: '', wire: { name: 'anthropic-messages' }, path: '', model: 'deepseek-chat', from: 'fixture', headers: {} },
       adapter: { name: 'anthropic-messages' },
-      state,
+      state: stateOf(agent),
     }),
     decl: DECL,
     call,
@@ -282,11 +297,11 @@ function stubOf(b: Bench): Stub {
   }
 }
 
-async function eventsOf(root: string): Promise<LogEvent[]> {
+async function eventsOf(root: string, writers: readonly string[] = ['round', 'agent-1']): Promise<LogEvent[]> {
   const log = openLog(root)
   const out: LogEvent[] = []
-  for (const w of ['round', 'agent-1'] as WriterId[]) {
-    for await (const e of log.readByWriter(w)) out.push(e)
+  for (const w of writers) {
+    for await (const e of log.readByWriter(w as WriterId)) out.push(e)
   }
   return out
 }
@@ -355,6 +370,69 @@ test('① 负对照：把驱动换回打桩 → 一条 llm/call 都没有，指�
     const metrics = metricsOf(rows.map((e, i) => ({ pos: { writer: 'round', seq: i + 1 }, e })))
     assert.equal(metrics.find((m) => m.metric === 'zero-tool-call-rate')?.value, null)
     console.log('① 负对照读数：打桩那一趟 llm/call 0 条 · zero-tool-call-rate=null')
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ①b 两个 agent 的 A 区全等（在真轮次里量一遍）────────────────────────────────
+
+test('①b 真轮次里两个 agent 各走一格：各自的 prefix/assemble 里 hash(zoneA) 全等，而 B 区各不相同', async () => {
+  const b = await bench()
+  try {
+    const two: readonly AgentId[] = ['agent-1' as AgentId, 'agent-2' as AgentId]
+    const split: SplitDraft[] = [
+      {
+        goal: '写一份 a.ts' as never,
+        ownedPaths: ['a.ts' as RelPath],
+        deliverables: [{ path: 'a.ts' as RelPath, form: '一份文件' }],
+        assertions: [{ name: '总是过', action: 'ok' }],
+      },
+      {
+        goal: '写一份 b.ts' as never,
+        ownedPaths: ['b.ts' as RelPath],
+        deliverables: [{ path: 'b.ts' as RelPath, form: '一份文件' }],
+        assertions: [{ name: '总是过', action: 'ok' }],
+      },
+    ]
+    const seen: string[] = []
+    const run = await runRound(
+      depsOf(
+        b,
+        async (ask) => {
+          seen.push(ask.agent)
+          // 两个 agent 都按同一串脚本干：写它自己那一份产出（`a.ts` · `b.ts`）。
+          const first = ask.agent === 'agent-2' ? 'b.ts' : 'a.ts'
+          return realDriver({})(
+            ask,
+            scriptedModel([
+              [
+                { kind: 'tool', name: 'write', arguments: JSON.stringify({ path: first, content: `（模型写的）${first}\n` }) },
+                { kind: 'end' },
+              ],
+            ]),
+          )
+        },
+        supportOf(b, scriptedModel(SCRIPTS), two),
+        'r1',
+        { split, agents: two },
+      ),
+    )
+    assertLanded(run, '①b 两个 agent 各走一格')
+    assert.deepEqual(seen, ['agent-1', 'agent-2'], `两格各被驱动一次，实际 ${seen.join(' ')}`)
+
+    // **一个 agent 一份日志**：A 区的全等要在两份日志之间量，不是在同一份里量两次。
+    const a1 = (await eventsOf(b.root, ['agent-1'])).filter((e) => e.t === 'prefix/assemble')
+    const a2 = (await eventsOf(b.root, ['agent-2'])).filter((e) => e.t === 'prefix/assemble')
+    assert.ok(a1.length >= 1 && a2.length >= 1, `两份日志里都要有装配事件（${a1.length} · ${a2.length}）`)
+    const one = a1[0] as { zoneAHash: string; zoneBHash: string }
+    const two0 = a2[0] as { zoneAHash: string; zoneBHash: string }
+    assert.equal(one.zoneAHash, two0.zoneAHash, '两个 agent 的 A 区不是同一份字节——架筑 § 8.11 那条验证性质在真轮次里不成立')
+    assert.notEqual(one.zoneBHash, two0.zoneBHash, '两个 agent 的 B 区居然相同——那 B 区里没有它自己的那一段')
+    console.log(
+      `①b 读数：agent-1 的 hash(zoneA)=${one.zoneAHash} · agent-2 的 hash(zoneA)=${two0.zoneAHash}（全等）；` +
+        `各自的 hash(zoneB)=${one.zoneBHash} / ${two0.zoneBHash}（不相同）`,
+    )
   } finally {
     await b.close()
   }
