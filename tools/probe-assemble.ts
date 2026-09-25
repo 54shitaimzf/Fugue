@@ -25,6 +25,9 @@ import { fileURLToPath } from 'node:url'
 import type { RendererId, SegmentId, SegmentValue, Zone } from '../src/assemble/contract.ts'
 import { HOLDER_B, ZONE_SEGMENTS } from '../src/assemble/contract.ts'
 import { HOLDER_PROTOCOL, PROTOCOLS, SUBAGENT_PROTOCOL, TOOL_NAMES, checkProtocolInvariant } from '../src/assemble/protocol.ts'
+// 两处独立的证人：能力表那份名字域（它不 import 目录）与 § 8.10 那张表。
+import { namesOn } from '../src/capability/table.ts'
+import type { Layer } from '../src/capability/table.ts'
 import { render } from '../src/assemble/render.ts'
 
 /** 代码工作区：探针就住在它底下，所以它由 `import.meta.url` 定，不由环境变量定。 */
@@ -61,6 +64,39 @@ function eq<T>(what: string, got: T, want: T): void {
 }
 function say(msg: string): void {
   console.log(`  ·    ${msg}`)
+}
+
+/**
+ * 一条判据：两份名字表**名字集合相等**（个数也相等）。
+ *
+ * 顺序不比：架构 § 8.10 那张表按类别分行，而目录是一列扁平条目，"谁的先后"不是同一件事。
+ * 承重的是名字的域——**这张目录是 `ToolName` 的唯一定义处**，能力表以它为键；顺序承重的是
+ * 另一条：跨状态逐字节稳定（§ 8.10 硬纪律 2）。两边真的不同时，`say` 把差别说出来：它不
+ * 判红，但它不许悄没声地过去。**返回"这一比过没过"**，好让下面那条负对照问得出口；
+ * `quiet` 就是为那一问留的：它只回答，不出声——负对照的红行要是印进探针的输出，读者就
+ * 分不清那是"这一条判据坏了"还是"这一条判据好好的"。
+ */
+function sameNameSet(
+  what: string,
+  got: readonly string[],
+  want: readonly string[],
+  label: readonly [string, string] = ['读出来的', '目录里的'],
+  quiet?: boolean
+): boolean {
+  const g = [...new Set(got)].sort()
+  const w = [...new Set(want)].sort()
+  if (g.length !== w.length || g.some((n, i) => n !== w[i])) {
+    if (!quiet) bad(`${what}：${label[0]} ${JSON.stringify(got)}，${label[1]} ${JSON.stringify(want)}`)
+    return false
+  }
+  if (!quiet) ok(`${what}：${want.length} 个名字逐字相同（只比集合）`)
+  const at = new Map(want.map((n, i) => [n, i]))
+  const order = got.filter((n) => at.has(n)).sort((a, b) => (at.get(a) ?? 0) - (at.get(b) ?? 0))
+  if (!quiet && order.some((n, i) => n !== want[i])) {
+    say(`${what}：顺序不同（这一条不比顺序）——读出来的 ${JSON.stringify([...got])}`)
+    say(`${' '.repeat(what.length)} 目录那份是 ${JSON.stringify([...want])}`)
+  }
+  return true
 }
 
 /** 跳过一条与架构对照的检查：说得出来为什么，就不算静默通过。 */
@@ -136,7 +172,13 @@ function parseZoneTable(md: string): { zones: Record<Zone, string[]>; unknown: s
   return { zones, unknown }
 }
 
-/** 从架构 § 8.10 那张目录表里读出工具名：一行一条，反引号里的那几个。 */
+/**
+ * 从架构 § 8.10 那张目录表里读出工具名：一行一条，反引号里的那几个。
+ *
+ * **它读出来的是那张表的名字集合，不是一份顺序。** 那张表按类别分行，而目录是一列扁平的
+ * `ToolEntry`——两边的先后不是同一条信息，所以调用处比集合。`from` 那一行留着是有意的：
+ * 它让「头上没有 § 8.10 时整篇都扫」变成一次显式取舍，而不是一个悄悄生效的默认。
+ */
 function parseToolTable(md: string): string[] {
   const names: string[] = []
   const head = md.indexOf('## 8.10 ')
@@ -299,8 +341,22 @@ eq('两份声明的版本号', [SUBAGENT_PROTOCOL.version, HOLDER_PROTOCOL.versi
   ], [11, 13, 12, 13])
 }
 {
-  if (haveArch) eq('架构 § 8.10 读出来的工具名', parseToolTable(arch), [...TOOL_NAMES])
+  if (haveArch) sameNameSet('架构 § 8.10 那张表的名字', parseToolTable(arch), [...TOOL_NAMES])
   else note('架构 § 8.10 那张工具表没对照：同上')
+  {
+    // 负对照不是"故意让一条判据红"——那是把红当读数，探针的结论也就没意义了。
+    // 问的是这条判据自己：两组名字不同时，它答"不对"吗？答不出，上面那条绿的就不算数。
+    const junk = ['read', 'write', 'edit', 'read_image', 'bash', 'glob', 'grep', 'todo_write', 'subagent', 'list_agents', 'send_message', 'ask_user_question', 'exit_plan_mode', 'checkpoint']
+    const sawBad = sameNameSet('负对照（这条判据自己答不答得出不对）', junk, [...TOOL_NAMES], ['故意少一个的', '目录里的'], true)
+    if (!sawBad) ok('负对照：名字不同时它答"不对"')
+    else bad('负对照：两组名字不同，而这条判据说它们一样——它恒真')
+  }
+  {
+    // 第二个证人：能力表与目录是**各自独立**声明的两份名字域（这一份不 import 目录）。
+    // 它们同名同数，是「名字的域 == § 8.10 那张表」在两处各自成立，不是一处回声。
+    const capNames = ['view', 'execute', 'truth', 'orchestrate', 'log'].flatMap((l) => namesOn(l as Layer))
+    sameNameSet('能力表那份名字与目录同名同数', capNames, [...TOOL_NAMES], ['能力表里的', '目录里的'])
+  }
   eq('工具目录的个数', TOOL_NAMES.length, 15)
   eq('工具目录进的是 `toolCatalog`，不是段序', [
     SUBAGENT_PROTOCOL.toolCatalog.length,
