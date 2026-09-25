@@ -267,12 +267,23 @@ test('零成本：给 --dump-wire 而这一档不接真驱动时，落盘那一�
   const b = fugue(withDump, '--json', 'round', 'run', '写一份 a.ts', '--report', '--metrics', '--dump-wire', dir)
   assert.equal(b.code, 0, b.stderr)
 
-  // 两趟的读数逐字段相同（`base` 是各自那个底，所以它是唯一该不同的那一栏）。
+  // 两趟的读数逐字段相同。两处例外都要写明白：
+  //   · `base`：各自那个底（两个 root 各是一个仓库），本来就不同；
+  //   · `ms`：验收那几条**跑了多久**——它是真实耗时，两次不可能相同（第一版拿整份 JSON 比，
+  //     于是在正确的行为上报红：`exit 0, ms: 5` vs `exit 0, ms: 2`）。
+  const strip = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(strip)
+    if (v !== null && typeof v === 'object') {
+      const o = v as Record<string, unknown>
+      return Object.fromEntries(Object.entries(o).filter(([k]) => k !== 'ms').map(([k, x]) => [k, strip(x)]))
+    }
+    return v
+  }
   const ja = JSON.parse(a.stdout) as Record<string, unknown>
   const jb = JSON.parse(b.stdout) as Record<string, unknown>
   for (const k of Object.keys(ja)) {
     if (k === 'base') continue
-    assert.deepEqual(jb[k], ja[k], `加了 --dump-wire 之后 \`${k}\` 变了`)
+    assert.deepEqual(strip(jb[k]), strip(ja[k]), `加了 --dump-wire 之后 \`${k}\` 变了`)
   }
   assert.deepEqual(readdirSync(dir), [], `那一层不该被拼出来，却落了：${readdirSync(dir).join(' ')}`)
   assert.equal((jb['metrics'] as unknown[]).length, 8, '八元指标该照旧八条')

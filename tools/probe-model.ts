@@ -130,25 +130,30 @@ console.log('\n三 · 事件流里今天够不够算基线（B7 的判据是"从
 
 const eventsSrc = sourceOf('src/log/events.ts')
 const names = eventNames(eventsSrc)
-// 22 个类型名（架构 § 8.1 那条事件联合今天的实际条数）。**它不是判据**，是"探针读得出那份联合"
-// 的读数——判据在下面三条里。
-eq('事件联合里读得出的类型名个数', names.length, 22)
+// 类型名的**个数不是判据**，是"探针读得出那份联合"的读数；判据在下面几条里。
+say(`事件联合里读得出的类型名个数：${names.length}`)
 eq('事件联合里有 prefix/assemble', names.includes('prefix/assemble'), true)
-eq('事件联合里有 llm/call', names.includes('llm/call'), false)
+eq('事件联合里有 llm/call', names.includes('llm/call'), true)
 eq('事件联合里有 run/start 吗', names.includes('run/start'), true)
 {
   const line = eventsSrc.split('\n').find((l) => l.includes("t: 'run/start'")) ?? ''
   const fields = [...line.matchAll(/([a-zA-Z0-9]+)\??:/g)].map((m) => m[1])
   say(`run/start 的字段：${fields.join(' · ')}`)
-  eq('run/start 记不记完整 argv', fields.includes('argv'), false)
-  if (fields.includes('argv0') && !fields.includes('argv')) {
-    ok('run/start 今天只有 argv0——绕行率（架构 § 8.15 的三个一线指标之一）今天推不出来')
-  } else bad(`run/start 的形状要重看：${line.trim()}`)
+  // **读数随站走，而形状也跟着走**：`B0` 量的时候这一条只有 `argv0`，`B5` 让**工具面**那一侧
+  // 填上了 `argv` 与 `cwd`，而**声明里一栏都没有**——于是产品代码写的两个字段在类型上是隐形的
+  // （这一份没有 tsc），探针按类型读也读不到。修法是把它们声明成可选（`B5` 与命令行那一侧填的
+  // 完整程度不同，所以是可选），命令行那一侧一并填上。
+  say(`声明里有 argv：${fields.includes('argv')} · 有 cwd：${fields.includes('cwd')}`)
+  eq('run/start 的声明里有 argv（绕行率的数据源）', fields.includes('argv'), true)
+  eq('run/start 的声明里有 cwd', fields.includes('cwd'), true)
+  const toolSide = sourceOf('src/capability/dispatch.ts').includes('argv,')
+  const cliSide = sourceOf('src/cli/fugue.ts').includes('argv: policy.degraded')
+  eq('两处生产者都填 argv（工具面 · 命令行）', [toolSide, cliSide], [true, true])
 }
 {
-  // 发射处：在**产品本体**那几份里搜 `t: 'prefix/assemble'` 与 `t: 'llm/call'`。一处都没有 =
-  // 这两个数今天没有源。`src/log/log.test.ts` 不在这里：它拿一条 `prefix/assemble` 试日志的
-  // 往返，那是**写进日志再读回来**，不是谁在装配之后发射它（两者在读数上必须分得开）。
+  // 发射处：在**产品本体**那几份里搜 `t: 'prefix/assemble'` 与 `t: 'llm/call'`。
+  // `src/log/log.test.ts` 不在这里：它拿一条 `prefix/assemble` 试日志的往返，那是**写进日志
+  // 再读回来**，不是谁在装配之后发射它（两者在读数上必须分得开）。
   const files = ['src/cli/fugue.ts', 'src/round/execute.ts', 'src/round/start.ts', 'src/merge/accept.ts']
   const emitters: string[] = []
   for (const f of files) {
@@ -157,10 +162,13 @@ eq('事件联合里有 run/start 吗', names.includes('run/start'), true)
       if (src.includes(`t: '${name}'`)) emitters.push(`${f} → ${name}`)
     }
   }
-  eq('产品本体里的发射处（两个事件名）', emitters, [])
-  const testOnly = sourceOf('src/log/log.test.ts').includes("t: 'prefix/assemble'")
-  say(`而 \`src/log/log.test.ts\` 里${testOnly ? '有' : '没有'}一条 \`prefix/assemble\`：那是日志往返的用例，不是发射处`)
-  say('`prefix/assemble` 只定义、产品本体一处都没发射；`llm/call` 这个事件根本还没有——零工具调用率与绕行率今天都没有源')
+  // **`B4` 起这两条事件的发射处是 `src/runtime/step.ts`**（六步里的第 5 步），所以上面那四份
+  // 里一处都不该有——真正的判据是"那一条路上真的发射了"，它由 `src/runtime/step.ts` 与
+  // `src/round/driver.test.ts` 的一整趟读数守着（这一份探针只核"形状够不够"）。
+  eq('那四份里的发射处（都不该有）', emitters, [])
+  const inStep = ['prefix/assemble', 'llm/call'].map((n) => [n, sourceOf('src/runtime/step.ts').includes(`t: '${n}'`)] as const)
+  for (const [n, hit] of inStep) eq(`\`src/runtime/step.ts\` 里发不发射 ${n}`, hit, true)
+  say('两条事件都由 `src/runtime/step.ts` 发射（每一步各一条）——绕行率与零工具调用率今天都有源')
 }
 
 // ── 四 · 声明本身 ──────────────────────────────────────────────────────────────
