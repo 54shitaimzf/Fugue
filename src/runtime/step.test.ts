@@ -429,3 +429,40 @@ test('⑥ 半截的流 → `failed` · 不静默重试，而 `llm/call` 仍然�
     console.log(`⑥ 读数：半截的流 → ${(r.outcome as { error: HarnessError }).error.why} · 上游被问 ${asked} 次 · llm/call 落 1 条（stop=null）`)
   })
 })
+
+// ── ⑦ 上游给的原话：状态码与白名单响应头进已有的 `llm/call`（不新开一族事件）────────
+
+test('⑦ 失败那一趟：状态码与请求号进 `llm/call` 的 status/headers；成功那一趟两栏都是 null', async () => {
+  await withRoot(async (root, log) => {
+    const said = { status: 429, 'x-request-id': 'req-abc-123', 'retry-after': '7' }
+    const refused: CallModel = () => ({
+      events: (async function* (): AsyncGenerator<ModelEvent> {
+        throw new HarnessError('cut-stream', '上游 429', said)
+      })(),
+      ledger: () => ({ call: null, failure: 'HarnessError: 上游 429' }),
+    })
+    const rt = createRuntime({ logOf: () => log, call: refused, execute: recordingExecutor(() => ({ ok: true, output: '' })), tools })
+    const r = await rt.step(handleOf(fixtureState(0)), new AbortController().signal)
+    assert.equal(r.outcome.kind, 'failed')
+    const events = await eventsOf(root)
+    const bad = events.filter((e) => e.t === 'llm/call') as { status: number | null; headers: Record<string, string> | null; stop: string | null }[]
+    assert.equal(bad.length, 1)
+    assert.equal(bad[0]?.stop, null, '失败那一趟的 stop 该是 null')
+    assert.equal(bad[0]?.status, 429, '状态码没进日志——排障时只剩 stderr 上的一句话')
+    assert.equal(bad[0]?.headers?.['x-request-id'], 'req-abc-123')
+    assert.equal(bad[0]?.headers?.['retry-after'], '7')
+
+    // 成功那一趟：**两栏都是 null**（默认档一个字节都不多）。
+    await withRoot(async (root2, log2) => {
+      const reply = scriptedModel([[{ t: 'delta', text: '数完了。' }, { t: 'stop', reason: 'end-turn' }]])
+      const rt2 = createRuntime({ logOf: () => log2, call: reply, execute: recordingExecutor(() => ({ ok: true, output: '' })), tools })
+      const r2 = await rt2.step(handleOf(fixtureState(0)), new AbortController().signal)
+      assert.equal(r2.outcome.kind, 'done')
+      const good = (await eventsOf(root2)).filter((e) => e.t === 'llm/call') as { status: number | null; headers: unknown }[]
+      assert.equal(good.length, 1)
+      assert.equal(good[0]?.status, null, '成功那一趟的 status 该是 null')
+      assert.equal(good[0]?.headers, null, '成功那一趟的 headers 该是 null')
+    })
+    console.log(`⑦ 读数：失败那一趟 status=${bad[0]?.status} headers=${JSON.stringify(bad[0]?.headers)}；成功那一趟两栏都是 null`)
+  })
+})

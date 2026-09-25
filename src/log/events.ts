@@ -54,7 +54,14 @@ export type LogEvent =
       ms: number
     }
   | { t: 'mat/reclaim'; agent: AgentId; declared: RelPath[]; changed: RelPath[] }
-  | { t: 'run/start'; agent: AgentId; step: StepId; action: string; argv0: string }
+  /**
+   * 起一个进程的凭据。
+   *
+   * `argv` 与 `cwd` **是可以缺的**：工具面那一侧（`B5`）两样都填，而命令行那一侧
+   * （`fugue run <action>`）今天只填 `argv0`。**绕行率读的是 `argv`**（`METRIC_HOW` 里那张
+   * 模式表），所以这一栏缺了那条读数就没有源——缺了照旧能算，只是分母之外的那一半看不见。
+   */
+  | { t: 'run/start'; agent: AgentId; step: StepId; action: string; argv0: string; argv?: readonly string[]; cwd?: string }
   | { t: 'run/end'; agent: AgentId; step: StepId; exit: number; ms: number; denied: boolean }
   | {
       t: 'run/confined'
@@ -121,6 +128,18 @@ export type LogEvent =
        * **约束导致模型不伸手**）——公布几条与它伸不伸手无关，所以那一栏顶不了这一栏。
        */
       invocations: number
+      /**
+       * 上游在拒绝时给的状态码。**只有失败那一路有**，成功是 `null`——它与 `stop: null` 一起读：
+       * 「这一趟没走完」与「上游为什么没让它走完」是两件事。
+       *
+       * **算指标时一个都不看它**：八元指标的分子分母不认这一栏，所以加它不动任何读数。
+       */
+      status: number | null
+      /**
+       * 排障要的那几个响应头（请求号 · 限流那几条；**白名单在 `http.ts` 的 `KEPT_HEADERS`**）。
+       * 成功那一路是 `null`。
+       */
+      headers: Readonly<Record<string, string | number>> | null
       /**
        * 用量的四个数（架构 § 8.15）。**四个都可缺**，缺了是 `null`——提供方没报就是没报，
        * **不拿 0 顶**（`B1` 的 `Usage` 那一条）；指标重算时"没量到"与"量到 0"分得开。

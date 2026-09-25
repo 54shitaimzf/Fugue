@@ -31,7 +31,8 @@ import type { AgentId, BranchId, ContractId, LogSeq, StepId, WriterId } from '..
 import type { ModelCall, ModelEvent, StopReason, Usage } from '../model/contract.ts'
 import { checkEvents } from '../model/contract.ts'
 import type { Target } from '../model/http.ts'
-import { callModel } from '../model/http.ts'
+import type { WireFacts } from '../model/http.ts'
+import { callModel, wireFactsOf } from '../model/http.ts'
 import type { WireAdapter } from '../model/wire/stream.ts'
 import { parseStream } from '../model/wire/stream.ts'
 import type { Prefix, Protocol } from '../assemble/contract.ts'
@@ -126,9 +127,17 @@ export type StepOutcome =
 export class HarnessError extends Error {
   /** 一个短的分类（`cut-stream` · `tool-threw` · `max-tokens` · `step-limit` …）：读日志的人先看它。 */
   readonly why: string
-  constructor(why: string, message: string) {
+  /**
+   * 上游给的那几个事实（可选）——**它不是新的一族事件**：填进已有的 `llm/call`。
+   *
+   * 失败那一档原先只剩一句话在 stderr 上，而"上游为什么没让它走完"（状态码 · 请求号 · 限流）
+   * 是排障唯一要的几样。成功那一路没有这一栏。
+   */
+  readonly facts?: Readonly<Record<string, string | number>>
+  constructor(why: string, message: string, facts?: Readonly<Record<string, string | number>>) {
     super(message)
     this.why = why
+    if (facts !== undefined) this.facts = facts
   }
 }
 
@@ -285,6 +294,8 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     const events: ModelEvent[] = []
     let call: ModelCall | null = null
     let failure: string | null = null
+    /** 上游给的那几个事实：**只有失败那一路才有**（成功那一路是 `null`）。 */
+    let facts: Readonly<Record<string, string | number>> | null = null
     try {
       for await (const e of reply.events) events.push(e)
       const l = reply.ledger()
@@ -293,6 +304,8 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     } catch (err) {
       // 半截的流：**记一条 `llm/call`（`stop: null`）并报失败**，不重试（`B3` 断言 ④ 那条纪律）。
       failure = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+      // 上游的原话从**抛出来的那个错误对象**上读（`B3` 的传输把它挂在那里）。读不到就是没有。
+      facts = wireFactsOf(err)
     }
     if (call === null && failure === null) {
       call = safeCall(events)
@@ -322,6 +335,10 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         // 不是来自用量那一条（`usage.rawStop` 在两条线上常常是 null）。
         rawStop: call?.rawStop ?? null,
         stop: call?.stop ?? null,
+        // 上游给的那几个事实：**只有失败那一路才有**（状态码 · 请求号 · 限流那几条）。
+        // 成功那一路这里是 `null`——**默认档一个字节都不多**。
+        status: facts === null ? null : ((facts['status'] as number | undefined) ?? null),
+        headers: facts,
       }),
     )
 
