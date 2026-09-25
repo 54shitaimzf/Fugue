@@ -60,11 +60,22 @@ test('①e 真驱动那一档：子 agent 的句柄拿子 agent 那份协议，B
     segments: sourcesFor(handle.protocol, support.state('agent-1' as never, contract), handle.coord),
   })
   const b = new TextDecoder().decode(prefix.zoneB)
-  for (const line of ['总目标：写一份 README.md', '交付物：README.md', '断言：文件存在', '产物路径：deliver/agent-1/']) {
+  for (const line of ['总目标：写一份 README.md', '交付物：README.md', '断言：文件存在']) {
     assert.ok(b.includes(line), `B 区里没有这一行：${line}\nB 区是：${JSON.stringify(b)}`)
   }
+  // **`implement` 那一档末尾没有"产物路径"那一行**（第 5 批 · 之六）：它的落点由契约自己声明
+  // （`ownedPaths` / `deliverables`，就是上面"交付物"那一行），而"产物路径"那一栏是**只读型契约**
+  // 那一档的（架构 § 8.12 的 `Evidence` 注释 · § 22 的 D15：只读型的产物由构造器按位置定名）。
+  // 这一处原先无条件给 `deliver/agent-1/`，而验收跑的是契约声明的路径——**模型照那一行走**，
+  // 于是它把对的字节写到了错的地方（实测：`--live` 那一趟写出 `deliver/agent/r1/1/notes.md`，
+  // 而验收跑 `test -f notes.md`）。
+  assert.equal(
+    b.includes('产物路径：'),
+    false,
+    `implement 那一档的 B 区末尾不该有"产物路径"那一行（落点由契约声明）：${JSON.stringify(b)}`,
+  )
   console.log(
-    `①e 读数：句柄协议 = 子 agent 那一份 · B 区 ${prefix.zoneB.length} 字节 · A 区 ${prefix.zoneA.length} · C 区 ${prefix.zoneC.length}`,
+    `①e 读数：句柄协议 = 子 agent 那一份 · B 区 ${prefix.zoneB.length} 字节 · A 区 ${prefix.zoneA.length} · C 区 ${prefix.zoneC.length} · 末尾没有"产物路径"那一行`,
   )
 })
 

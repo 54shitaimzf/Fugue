@@ -1101,6 +1101,25 @@ interface AgentStop {
 }
 
 /** 这一轮几份契约一共占了多少条路径（读数的分母，与判决无关）。 */
+/**
+ * 这一格的**产物路径**（B 区末尾那一行的值）。
+ *
+ * **只有只读型的产物才由构造器按位置定名**（架构 § 8.12 的 `Evidence` 注释 · § 22 的 D15：
+ * "只读型契约的产物由构造器按位置定名，落进专属目录——产物命名冲突不可能发生"）。`implement`
+ * 与 `resolve` 的产物路径是**契约自己声明的**（`ownedPaths` / `deliverables`），所以那一行对它们
+ * 是空数组：它们的落点已经在"交付物"那一行里说清了。
+ *
+ * **这一处原先无条件给 `deliver/<agent>/`**，而验收跑的是契约声明的那些路径——于是 B 区末尾那
+ * 一行把模型指到别处去了。实测（`--live`，第三次联网验证）：模型**写出的是对的字节**
+ * （`数完了`），而它落在 `deliver/agent/r1/1/notes.md` 上，验收跑 `test -f notes.md` 不过，
+ * 推进一个字节都不动。模型照着"产物路径"那一行走，那是它对。
+ */
+function outputsOf(c: Contract): readonly string[] {
+  if (c.kind === 'implement') return []
+  if (c.kind === 'resolve') return []
+  return [`deliver/${c.agent}/`]
+}
+
 function writeSetPaths(contracts: readonly Contract[]): string[] {
   const all = new Set<string>()
   for (const c of contracts) {
@@ -1504,6 +1523,8 @@ async function agentCoord(
         `没有这个 agent：${who}——日志里没有 ${ref}。不给 --agent 走的是持轮者那条路，两者不是一回事（架构 § 8.11）。`,
       )
     }
+    // **这一条路（`--agent` 的临时装配）不知道契约是哪一种**：它按只读型那一档给（与 D15
+    // 同一条口径），因为这条路是「拿一份状态来量前缀」用的，不是让谁照它写文件的。
     return { state, who: { id: who, branch: ref, outputPaths: [`deliver/${who}/`] } }
   } finally {
     truth.close()
@@ -1591,7 +1612,8 @@ export function driverSupport(o: {
     if (hit !== undefined) return hit
     const made: AgentHandle = {
       agent: agent as AgentId,
-      coord: { id: agent, branch: `refs/heads/agent/${agent}`, outputPaths: [`deliver/${agent}/`] },
+      // **产物路径那一栏照契约给**（见 `outputsOf` 那一份注释：只有只读型才由构造器定名）。
+      coord: { id: agent, branch: `refs/heads/agent/${agent}`, outputPaths: outputsOf(c) },
       branch: `refs/heads/agent/${agent}` as BranchId,
       contract: (c?.id ?? '') as ContractId,
       protocol: protocolFor(decl),
