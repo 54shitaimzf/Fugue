@@ -562,3 +562,35 @@ test('④ 驱动不在：当场报出来，不交空提交', async () => {
     await b.close()
   }
 })
+
+// ── ①c 花钱的那道上界：`maxSteps` 真的停得住（第一次联网验证就按它压）──────────────
+
+test('①c `maxSteps` 是真上界，而且它真的传到了驱动那一层（`--max-steps` 接线的判据）', async () => {
+  const b = await bench()
+  try {
+    // `DETOUR_SCRIPTS` 那一串是 3 步（①量的就是它）。给 `maxSteps: 1` 必须恰好停在 1，
+    // 而停下来的理由是"步数到顶"——**不是"收敛"**（那是两件事：一个是我拦的，一个是它干完了）。
+    const run = await runRound({
+      ...depsOf(b, realDriver({}), supportOf(b, scriptedModel(DETOUR_SCRIPTS))),
+      maxSteps: 1,
+    })
+    assertLanded(run, '①c 上界那一趟')
+    const calls = (await eventsOf(b.root)).filter((e) => e.t === 'llm/call')
+    // **每一步一条 `llm/call`**（①那条口径），所以"恰好一条"就是"恰好一步"。
+    assert.equal(calls.length, 1, `给了 maxSteps 1，实际落了 ${calls.length} 条 llm/call`)
+
+    // 负对照：同一串脚本，不给上界 → 3 步（①那条读数）。**没有它，"恰好 1 条"可能只是脚本短。**
+    const b2 = await bench()
+    try {
+      const full = await runRound(depsOf(b2, realDriver({}), supportOf(b2, scriptedModel(DETOUR_SCRIPTS))))
+      assertLanded(full, '①c 负对照（不给上界）')
+      const calls2 = (await eventsOf(b2.root)).filter((e) => e.t === 'llm/call')
+      assert.equal(calls2.length, 3, `不给 maxSteps 时落了 ${calls2.length} 条——那"恰好 1 条"就不是上界的功劳`)
+      console.log(`①c 读数：maxSteps=1 → ${calls.length} 条 llm/call · 走完那一趟 ${calls2.length} 条（负对照）`)
+    } finally {
+      await b2.close()
+    }
+  } finally {
+    await b.close()
+  }
+})

@@ -157,6 +157,17 @@ export interface RoundRunDeps extends Omit<RoundStartDeps, 'log'> {
    */
   readonly retriesLeft?: number
   /**
+   * **这一格最多走几步**（`driver.ts` 的 `driveOnce` 按它停）。
+   *
+   * 它是**花钱的那道上界**：`--live` 下每一步是一次真调用。缺省 64（`driver.ts` 里那个数），
+   * 而"第一次真跑最多花多少"这件事必须在命令面上能设——第一次联网验证就是按它压到个位数跑的。
+   */
+  readonly maxSteps?: number
+  /**
+   * 到了预算触发点要不要交接（缺省要——`B6` 的停机纪律是"先停"）。给 `false` 就是"用完就停"那一档。
+   */
+  readonly handoff?: boolean
+  /**
    * 合并前那一档预检的严宽。**缺省 `false`：报出即拒**（`mergeGate`——合并是不可逆点，兜底那
    * 一侧 fail-closed，架构 § 8.12 的第二次预检）。给 `true` 就把它拉平到 `Planning` 那一档：
    * **报出来、照发**。
@@ -255,6 +266,9 @@ async function askOf(deps: RoundRunDeps, c: Contract, agent: AgentId, base: Comm
     ...(support.tools === undefined ? {} : { tools: support.tools }),
     ...(support.call === undefined ? {} : { call: support.call }),
     ...(support.execute === undefined ? {} : { execute: support.execute }),
+    // 两个数列：**它们是"这一趟最多花多少"的那两道闸**，缺省时 `driveOnce` 自己那份缺省说了算。
+    ...(deps.maxSteps === undefined ? {} : { maxSteps: deps.maxSteps }),
+    ...(deps.handoff === undefined ? {} : { handoff: deps.handoff }),
   }
 }
 

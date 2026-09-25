@@ -201,6 +201,12 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              --report     印打回那三个数（从日志重算，不采集）
                              --metrics    印八元指标（**每个指标的分子与分母一起印**，从日志重算）
                              --materialize 起头时把 N 棵树也铺出来（缺省不铺）
+                             --max-steps <n>  **这一格最多走几步**（缺省 64）。--live 下每一步
+                             是一次真调用，所以这是"这一趟最多花多少"在命令面上的那道闸；
+                             第一次联网把它压到个位数。
+                             --no-handoff   到了预算触发点**不交接**（用完就停那一档）：
+                             B6 的缺省是"先停"（写交接提示词 · 换一个 agent 接着干），
+                             而地板那一档要能把它关掉。
                              --dump-wire <目录>  **把每一次调用发出去与收回来的字节原样落盘**
                              （call-0001/request.json · response.sse · meta.json · 两条
                              sha256）。默认不落——不给这个开关时那一层根本不存在，一个字节
@@ -259,6 +265,8 @@ const VALUED: ReadonlySet<string> = new Set([
   // `--dump-wire <目录>`：**它取一个值**。不列在这里的话 `--dump-wire /tmp/x` 里的 `/tmp/x`
   // 会被当成位置参数，而开关本身成了 `true`——于是要么误报用法错，要么把目录名当成轮次目标。
   'dump-wire', 'credential',
+  // `--max-steps <n>`：同一条纪律——它取一个值，不列在这里那个数会被当成位置参数。
+  'max-steps',
 ])
 
 function parseArgv(argv: readonly string[]): Parsed {
@@ -754,6 +762,17 @@ async function roundRun(
   // 原先它们挤在 deps 那个对象字面量里求值，于是"落在工作区里"会被"凭据不在"抢答（实测）。
   const dumpDir = typeof dumpFlag === 'string' ? dumpWireDir(root, resolve(dumpFlag)) : undefined
   const credential = live ? credentialAt(credentialPath) : null
+  // `--max-steps`：**花钱的那道上界**。取值要是一个正整数；不认的写法当场拒（不替它猜）。
+  const stepsFlag = flags.get('max-steps')
+  let maxSteps: number | undefined
+  if (typeof stepsFlag === 'string') {
+    const n = Number(stepsFlag)
+    if (!Number.isInteger(n) || n < 1) return usageFail(`--max-steps 要一个正整数，拿到 ${JSON.stringify(stepsFlag)}`)
+    maxSteps = n
+  } else if (stepsFlag === true) {
+    return usageFail('--max-steps 要一个数：--max-steps 8')
+  }
+  const handoff = flags.has('no-handoff') ? false : undefined
   // **一个 agent 一个日志口、由调用方持有**（`hold.ts` 那道栅栏：同一个 writer 开第二个口就是
   // "已经有写者"）。这一份记着开过的口，轮次跑完一起关（`closeAgentLogs`）。
   const agentLogs = new Map<AgentId, LogHandle>()
@@ -836,6 +855,8 @@ async function roundRun(
       // 一层（S7 定下的那个形状不动），真驱动那一档走 `realDriver` + `DriverSupport`。凭据那一
       // 步只在这一档走（不打 `--live` 的话 `driverSupport` 一次都不被调）。
       stub: stubDriver(stub),
+      ...(maxSteps === undefined ? {} : { maxSteps }),
+      ...(handoff === undefined ? {} : { handoff }),
       ...(live && credential !== null
         ? { driver: driverSupport({ root, doc, credential, ...(dumpDir === undefined ? {} : { dumpDir }) }) }
         : {}),
