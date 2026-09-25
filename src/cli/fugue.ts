@@ -72,7 +72,7 @@ import { readSnapshot, saveSnapshot, snapshotOf } from '../view/snapshot.ts'
 import { assemble, firstDivergence, hashOf } from '../assemble/assemble.ts'
 import type { Prefix, SegmentId, SegmentValue } from '../assemble/contract.ts'
 import { DEFAULT_MODEL } from '../assemble/models.ts'
-import { HOLDER_PROTOCOL, protocolNamed } from '../assemble/protocol.ts'
+import { HOLDER_PROTOCOL, PROTOCOLS, protocolNamed } from '../assemble/protocol.ts'
 import { checkConstraints, formatViolation } from '../assemble/constraints.ts'
 import { emptyState, HOLDER, SourceError, sourcesFor } from '../assemble/sources.ts'
 import type { AssembleState } from '../assemble/sources.ts'
@@ -908,8 +908,12 @@ async function roundRun(
         assertions: started.report.results,
         advanced: started.advanced === null ? null : { written: started.advanced.written, removed: started.advanced.removed, skipped: started.advanced.skipped },
         deniedAction,
-        metrics: report.readings,
-        probe: metrics,
+        // **`--json` 与文字那一档给的是同一件事**：文字那一档 `--metrics` 印的是八元指标
+        // （`lineOf`），所以这一档的 `metrics` 就是那八条；不给 `--metrics` 时是 `null`。
+        // （原先这一栏放的是 `report.readings`——那是**打回**那三个数，与 `--report` 同源，
+        // 而八元指标另挂在 `probe` 那一栏。两条路给的不是一件事，名字还都叫指标。）
+        metrics: metrics === null ? null : [...metrics],
+        report: report.readings,
       })
     } else {
       emitLine(`${started.round}\t${started.base}\t${started.state}`)
