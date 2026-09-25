@@ -29,6 +29,50 @@ interface MessagesRequest {
   readonly call?: { readonly temperature?: number; readonly maxTokens?: number }
   /** 断点发不发（`WIRES` 那一栏，经 `promptCacheFor` 带过来）。 */
   readonly promptCache?: 'explicit' | 'implicit'
+  /** 已经走过的那几步（给了就发原生轮次，不给就照旧发 C 区那条文本）。 */
+  readonly turns?: readonly Turn[]
+}
+
+/**
+ * 一步 → 这一条线上那一对消息。**不变式在这里核**：一条 `tool_result` 的 `tool_use_id` 必须对
+ * 得上同一步里某个 `tool_use` 的 id——对不上就抛，不静默发出一个错的请求体。
+ */
+function turnMessages(turn: Turn, at: number): Record<string, unknown>[] {
+  const said: Record<string, unknown>[] = []
+  if (turn.text !== undefined && turn.text !== '') said.push({ type: 'text', text: turn.text })
+  const ids: string[] = []
+  turn.calls.forEach((c, i) => {
+    // 这条线给 id，有些兼容实现不给（contract.ts 那条读数）——不给就自己编一个，而它必须与
+    // 下面那条 `tool_result` 是同一个：**编也只编一处**。
+    const id = c.id ?? `tool_${at}_${i}`
+    ids.push(id)
+    let input: unknown = {}
+    try {
+      input = c.arguments === '' ? {} : JSON.parse(c.arguments)
+    } catch {
+      input = {}
+    }
+    said.push({ type: 'tool_use', id, name: c.name, input })
+  })
+  const results = turn.results.map((r, i) => {
+    const id = r.id ?? ids[i] ?? `tool_${at}_${i}`
+    if (!ids.includes(id)) {
+      throw new Error(
+        `第 ${at} 步有一条结果的 tool_use_id 对不上这一步里任何一个 tool_use：${id}` +
+          `（这一步调的是 ${ids.join(' · ') || '（一条都没有）'}）`,
+      )
+    }
+    return {
+      type: 'tool_result',
+      tool_use_id: id,
+      content: r.output,
+      ...(r.isError ? { is_error: true } : {}),
+    }
+  })
+  const out: Record<string, unknown>[] = []
+  if (said.length > 0) out.push({ role: 'assistant', content: said })
+  if (results.length > 0) out.push({ role: 'user', content: results })
+  return out
 }
 
 /**
@@ -107,9 +151,15 @@ export function wireOf(): WireAdapter {
       // B 区与 C 区各一条 user 消息——**区与区的分界是装配的结论**，这里只翻译，不重排。
       const messages: Record<string, unknown>[] = []
       const b = new TextDecoder().decode(req.zones.B)
-      const c = new TextDecoder().decode(req.zones.C)
       if (b !== '') messages.push({ role: 'user', content: userContent(b, req.promptCache === 'explicit') })
-      if (c !== '') messages.push({ role: 'user', content: c })
+      if (req.turns !== undefined && req.turns.length > 0) {
+        // **原生轮次**：模型看得见自己伸手的那一下（训练时就见过的那对形状）。
+        for (const [at, turn] of req.turns.entries()) messages.push(...turnMessages(turn, at))
+      } else {
+        // 没有走过的步（第 0 步 · 夹具 · 这条线不认结构化那一面时）：照旧发 C 区那条文本。
+        const c = new TextDecoder().decode(req.zones.C)
+        if (c !== '') messages.push({ role: 'user', content: c })
+      }
       return bodyOf({
         model: req.model,
         // `max_tokens` 在那条线上是**必填**，所以这里必须有个数兜底；真的那个数由声明给（`B6` 填

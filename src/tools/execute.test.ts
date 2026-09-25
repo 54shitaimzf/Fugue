@@ -149,7 +149,8 @@ test('② write 之后立刻 read：字节逐字节相同（含非 UTF-8 的字�
     const text = '第一行\n第二行 你好 🌱\n'
     const wrote = await face('write', { path: 'src/note.txt', content: text }, b.host)
     assert.equal(wrote.ok, true, wrote.output)
-    assert.match(wrote.output, /视图到 rev \d+/)
+    // 返回文案不带 rev：那是架构内部的坐标，模型不需要看（W6 拿掉了它）。
+    assert.match(wrote.output, /写了 src\/note\.txt（\d+ 字节）\。$/)
 
     const got = await face('read', { path: 'src/note.txt' }, b.host)
     assert.equal(got.ok, true, got.output)

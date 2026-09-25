@@ -272,7 +272,8 @@ const writeFace: ToolFn = async (args, host) => {
   if (path === null) return missing('write', 'path')
   if (content === null) return missing('write', 'content')
   const { rev } = await host.writeBytes(path, bytesOf(content))
-  return ok(`写了 ${path}（${Buffer.byteLength(content, 'utf8')} 字节），视图到 rev ${rev}。`)
+  // **不带修订号**：rev 是架构内部的坐标，模型不需要看（C 区那一侧同样不许出现环境标识）。
+  return ok(`写了 ${path}（${Buffer.byteLength(content, 'utf8')} 字节）。`)
 }
 
 const editFace: ToolFn = async (args, host) => {
@@ -290,7 +291,7 @@ const editFace: ToolFn = async (args, host) => {
   const got = await host.edit(path, raw)
   if (!got.changed) return ok(`${path} 没有变化（归一之后与现值相同），视图还是 rev ${got.rev}。`)
   const what = raw.kind === 'rename' ? `改名成 ${raw.to}` : raw.kind === 'chmod' ? `改权限成 ${raw.mode.toString(8)}` : '替换了一段'
-  return ok(`${path} ${what}，视图到 rev ${got.rev}。`)
+  return ok(`${path} ${what}。`)
 }
 
 const readImageFace: ToolFn = async (args, host) => {

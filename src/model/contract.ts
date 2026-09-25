@@ -537,6 +537,24 @@ export const STOP_REASONS: readonly StopReason[] = ['tool-calls', 'end-turn', 'm
  *   所以它不在三区里，而是这里的一个字段。缺省 = 这次不带工具。
  * - `call`：轮内固定的调用配置（架构 § 10.2 的必固四条之一）。
  */
+/**
+ * 一步的往返。**它是 C 区那个积累段的结构化那一面**（文本那一面由 `sources.ts` 的 `turnText`
+ * 从一个 `Turn` 渲染出来，两处同源，不许各写一份）。
+ *
+ * 为什么要两面：发出去的要是**原生轮次**——`tool_use` → `tool_result` 这条配对是所有模型训练
+ * 时就见过的形状，而把它重述成一段文本等于只用了前半段（模型在上下文里看不见自己伸手的那一下，
+ * 于是重复调用、也不知道该收工）。而字节那一面要留着：三区指纹 · 相邻两步的 `hash(A+B)` ·
+ * 只追加这条性质，量的都是它。
+ */
+export interface Turn {
+  /** 模型这一步说的话（没说就没有这一栏）。 */
+  readonly text?: string
+  /** 它调了哪几条工具（`arguments` 是原样那一串 JSON 文本）。 */
+  readonly calls: readonly { readonly id: string | null; readonly name: string; readonly arguments: string }[]
+  /** 每一条回了什么。与 `calls` 逐条对位。 */
+  readonly results: readonly { readonly id: string | null; readonly output: string; readonly isError: boolean }[]
+}
+
 export interface ModelRequest {
   readonly model: WireModel
   readonly zones: {
@@ -555,6 +573,14 @@ export interface ModelRequest {
    * 而两者的请求体字节不同（多一个 `cache_control`）。
    */
   readonly promptCache: 'explicit' | 'implicit'
+  /**
+   * 已经走过的那几步（**只追加**：新的一步在末尾）。
+   *
+   * 给了它，适配器就发**原生轮次**（assistant 的 tool_use，user 的 tool_result，一开一合）；不给（夹具 ·
+   * 第 0 步 · 另一条线协议）就照旧把 C 区那条文本当一条 user 消息发出去——**两条路都不改 A/B
+   * 两区的字节**，所以前缀那笔账不破。
+   */
+  readonly turns?: readonly Turn[]
   readonly tools?: readonly ToolEntry[]
   readonly call?: {
     readonly temperature?: number

@@ -26,7 +26,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CREDENTIAL_FILE, DEFAULT_CALL, DEFAULT_MODEL, MODEL_DECLS, MODEL_IDS, ModelDeclError, PREFIX_MODELS, PREFIX_MODEL_IDS, PROVIDERS, authWith, isAuthChain, STOP_REASONS, USAGE_COUNTS, USAGE_FIELDS, WIRES, WIRE_NAMES, authOf, checkEvents, isAuthRef, isModelRef, modelDeclOf, prefixDeclOf, providerOf, requestJson, stopped, toolCallsIn, triggerAt, usageCount } from './contract.ts'
-import type { ModelCall, ModelDecl, ModelEvent, ModelRequest, StopReason, ToolCall, Usage } from './contract.ts'
+import type { ModelCall, ModelDecl, ModelEvent, ModelRequest, StopReason, ToolCall, Turn, Usage } from './contract.ts'
 import { HANDOFF_MARGIN, ZONE_A_BUDGET, checkContract, seedLimitOf } from '../contract/types.ts'
 import type { ImplementContract } from '../contract/types.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
@@ -332,11 +332,23 @@ function stateWith(step: number): AssembleState {
 /** 装配出来的一个请求：三区 + 工具 + 调用配置。**区是按区带的，不是拼好的一条。** */
 function requestWith(step: number, tools: readonly (typeof TOOL_ENTRIES)[number][] | null = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])): ModelRequest {
   const prefix = assemble({ protocol: SUBAGENT_PROTOCOL, model: DECL.id, segments: sourcesFor(SUBAGENT_PROTOCOL, stateWith(step), WHO) })
+  // 走过的那几步：**第 0 步没有**（那时候还没有任何往返），第 1 步起有一条——两条路
+  // （有 turns · 没有 turns）都在这一份构造里盖到。
+  const walked: readonly Turn[] =
+    step === 0
+      ? []
+      : [
+          {
+            text: '先看一眼。',
+            calls: [{ id: 't1', name: 'read', arguments: '{"path":"a"}' }],
+            results: [{ id: 't1', output: '读到了。', isError: false }],
+          },
+        ]
   // **第二档用 `null` 说"这次不带工具"**：显式传 `undefined` 会吃到缺省参数（JS 的规矩），
   // 那样"带工具"与"不带工具"两档就分不开了。
   return tools === null
-    ? { model: DECL.model, zones: { A: prefix.zoneA, B: prefix.zoneB, C: prefix.zoneC }, call: DECL.call, promptCache: 'implicit' }
-    : { model: DECL.model, zones: { A: prefix.zoneA, B: prefix.zoneB, C: prefix.zoneC }, tools, call: DECL.call, promptCache: 'implicit' }
+    ? { model: DECL.model, zones: { A: prefix.zoneA, B: prefix.zoneB, C: prefix.zoneC }, ...(walked.length === 0 ? {} : { turns: walked }), call: DECL.call, promptCache: 'implicit' }
+    : { model: DECL.model, zones: { A: prefix.zoneA, B: prefix.zoneB, C: prefix.zoneC }, tools, ...(walked.length === 0 ? {} : { turns: walked }), call: DECL.call, promptCache: 'implicit' }
 }
 
 /**
@@ -382,8 +394,9 @@ function producedKeys(call: ModelCall): string[] {
 
 test('① 一个请求与一串事件能往返序列化，字段一个不多一个不少', () => {
   // 请求那一栏：接口上的键 == 声明的那四个 == 从盘上读出来的那四个。
-  assert.deepEqual(interfaceKeys('ModelRequest'), ['call', 'model', 'promptCache', 'tools', 'zones'])
-  assert.deepEqual(interfaceKeys('ModelRequest').filter((k) => k !== 'tools' && k !== 'call'), ['model', 'promptCache', 'zones'])
+  assert.deepEqual(interfaceKeys('ModelRequest'), ['call', 'model', 'promptCache', 'tools', 'turns', 'zones'])
+  // turns 与 tools/call 同一类：可选栏（第 0 步没有 · 另一条线不认结构化那一面时也没有）。
+  assert.deepEqual(interfaceKeys('ModelRequest').filter((k) => k !== 'tools' && k !== 'call' && k !== 'turns'), ['model', 'promptCache', 'zones'])
   assert.deepEqual(interfaceKeys('Usage'), [...USAGE_FIELDS].sort(), '用量那一栏与 USAGE_FIELDS 对不上')
   assert.equal(USAGE_FIELDS.length, 6)
   // 架构 § 8.15 说的"用量的四个数"就是这四个——`USAGE_FIELDS` 多出来的两样是坐标，不是用量。

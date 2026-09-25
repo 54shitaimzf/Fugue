@@ -77,14 +77,17 @@ export interface AssembleState {
   readonly recent: string
   readonly runtime: string
   /**
-   * **这一步那一段**（`Runtime.step` 往里追加：模型说了什么 · 工具回了什么）。
+   * **这一步那一段**（`Runtime.step` 往里追加：每一步一个 `Turn`）。
+   *
+   * 结构化那一面与文本那一面同源：文本由 `turnText` 一处渲染，字节那一面（三区指纹 · 只追加）
+   * 量的就是它，而发出去的那一面是 `ModelRequest.turns`（原生轮次）。两处不许各写一份。
    *
    * 它是 C 区那个积累段（架构 § 8.11 的「运行时上下文」：**只追加、不进日志、跨进程即失**）。
    * 单独一栏而不是拼进 `runtime` 那个字符串，是因为"只追加"这条性质要在**值**上看得见：
    * 拼字符串的话，改一个字与追加一段在类型上分不开，而 `B4` 的断言 ② 量的正是这件事
    * （相邻两步 `hash(A+B)` 不变 · 只有 C 那一串往后长）。
    */
-  readonly turns?: readonly string[]
+  readonly turns?: readonly Turn[]
   readonly signals: readonly string[]
   readonly lastStep: string
 }
@@ -185,6 +188,22 @@ export function appendOutputs(text: string, outputs: readonly string[]): string 
   return `${text === '' ? '' : `${text}\n`}产物路径：${outputs.join(' · ')}`
 }
 
+/**
+ * 一个 `Turn` → 它那一段文本。**这是结构化那一面唯一的文本投影**（两处不许各写一份）。
+ *
+ * 里面只有两样：模型说的话，与每一条工具回了什么。**不带修订号、不带执行序号**——那些是架构
+ * 内部的坐标，模型不需要看，看了也只是噪声（架构 § 8.11 约束 3 在 C 区这一侧的读法）。
+ */
+export function turnText(turn: Turn): string {
+  const lines: string[] = []
+  if (turn.text !== undefined && turn.text !== '') lines.push(`模型：${turn.text}`)
+  turn.results.forEach((r, i) => {
+    const name = turn.calls[i]?.name ?? '?'
+    lines.push(`${r.isError ? '工具（失败）' : '工具'} ${name}（第 ${i + 1} 条）：\n${r.output}`)
+  })
+  return lines.join('\n')
+}
+
 /** 段值从哪来：一句纯函数，收到（协议 · 状态 · 坐标）给出这一段的值。 */
 interface SourceRule {
   readonly value: (s: AssembleState, who: AgentCoord | null) => SegmentValue
@@ -216,7 +235,7 @@ const SOURCES: Readonly<Record<SegmentId, SourceRule>> = {
   // 运行时上下文是**积累段**：一句话加一串只追加的尾巴。空串与空尾巴都不产出分隔符。
   运行时上下文: {
     value: (s) => {
-      const turns = s.turns ?? []
+      const turns = (s.turns ?? []).map(turnText)
       if (turns.length === 0) return s.runtime
       return s.runtime === '' ? turns.join('\n') : `${s.runtime}\n${turns.join('\n')}`
     },

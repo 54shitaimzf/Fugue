@@ -404,3 +404,54 @@ test('②d 断点按声明走：implicit 一个不发 · explicit 发在 A 区�
       ' 字节（2 处断点）',
   )
 })
+
+// ── ⑥ W6 · 原生轮次：走过的步发 tool_use/tool_result 那一开一合，不发 C 区那条重述文本 ──
+
+test('⑥ 带走过的步：messages 里是 assistant 的 tool_use 与 user 的 tool_result 一开一合；不带则照旧发 C 区文本', () => {
+  const wire = anthropicWireOf()
+  const base = request()
+  const enc = new TextEncoder()
+  const dec = new TextDecoder()
+
+  // 一 · 不带 turns（第 0 步 · 夹具）：照旧 B、C 各一条 user——W6 之前的形状一条不变。
+  const plain = JSON.parse(new TextDecoder().decode(wire.bytes(base))) as { messages: { role: string; content: unknown }[] }
+  assert.equal(plain.messages.length, 2, '不带 turns：B 与 C 各一条 user')
+  assert.equal(plain.messages[0]?.role, 'user')
+  assert.equal(plain.messages[1]?.role, 'user')
+  assert.equal(plain.messages[1]?.content, '现在开始。', 'C 区那条文本照旧原样发')
+
+  // 二 · 带一步走过的往返（一条工具调用 + 它的回执）。
+  const walked = { ...base, turns: [{ text: '先数一下。', calls: [{ id: 'toolu_01', name: 'glob', arguments: '{"pattern":"**/*.ts"}' }], results: [{ id: 'toolu_01', output: '3 个文件', isError: false }] }] } satisfies ModelRequest
+  const body = JSON.parse(new TextDecoder().decode(wire.bytes(walked))) as { messages: { role: string; content: unknown }[] }
+  // B 区那条 user 还在第一位（两条路都不改 A/B 的字节），后面跟着一开一合。
+  assert.equal(body.messages[0]?.role, 'user')
+  const said = body.messages[1] as { role: string; content: { type: string; id?: string; name?: string; input?: unknown; text?: string }[] }
+  assert.equal(said.role, 'assistant', '第二步是 assistant 那条')
+  assert.equal(said.content[0]?.type, 'text')
+  assert.equal(said.content[0]?.text, '先数一下。')
+  const use = said.content[1]
+  assert.equal(use?.type, 'tool_use', '模型伸手的那一下要在场')
+  assert.equal(use?.id, 'toolu_01')
+  assert.equal(use?.name, 'glob')
+  assert.deepEqual(use?.input, { pattern: '**/*.ts' }, 'arguments 那串 JSON 要解析成对象再发')
+  const back = body.messages[2] as { role: string; content: { type: string; tool_use_id?: string; content?: unknown; is_error?: boolean }[] }
+  assert.equal(back.role, 'user', '第三步是 user 那条（工具的回执）')
+  assert.equal(back.content[0]?.type, 'tool_result')
+  assert.equal(back.content[0]?.tool_use_id, 'toolu_01', 'tool_use_id 要与 tool_use 那一条配得上对')
+  assert.equal(back.content[0]?.content, '3 个文件')
+  assert.equal(back.content[0]?.is_error, undefined, '不是错误就不带 is_error')
+  // C 区那条重述文本**不再发**：原生轮次取代它。
+  const flat = JSON.stringify(body.messages)
+  assert.ok(!flat.includes('现在开始。'), 'C 区那条文本不该再出现在 messages 里')
+  assert.equal(body.messages.length, 3, 'B + 一开一合，共三条')
+
+  // 三 · 失败的回执要带 is_error: true。
+  const failed = { ...base, turns: [{ calls: [{ id: 'toolu_02', name: 'bash', arguments: '{}' }], results: [{ id: 'toolu_02', output: '炸了', isError: true }] }] } satisfies ModelRequest
+  const fBody = JSON.parse(new TextDecoder().decode(wire.bytes(failed))) as { messages: { content: { is_error?: boolean }[] }[] }
+  assert.equal(fBody.messages[2]?.content[0]?.is_error, true, '失败的那条要带 is_error')
+
+  // 四 · 负对照：结果的 id 对不上这一步任何一条 tool_use → 当场抛，不静默发一个错的请求体。
+  const broken = { ...base, turns: [{ calls: [], results: [{ id: 'toolu_404', output: '孤儿回执', isError: false }] }] } satisfies ModelRequest
+  assert.throws(() => wire.bytes(broken), /tool_use_id 对不上/, '孤儿回执要当场抛')
+  console.log('⑥ 读数：原生轮次 ' + String(Buffer.byteLength(new TextDecoder().decode(wire.bytes(walked)), 'utf8')) + ' 字节 · 文本旧路 ' + String(Buffer.byteLength(new TextDecoder().decode(wire.bytes(base)), 'utf8')) + ' 字节')
+})

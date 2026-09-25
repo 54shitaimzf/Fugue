@@ -274,6 +274,7 @@ export function makeDumpCall(dir: string, transport: Transport = fetchTransport)
         model: request.model,
         zones: { A: request.prefix.zoneA, B: request.prefix.zoneB, C: request.prefix.zoneC },
         tools: request.tools,
+        ...(request.turns === undefined || request.turns.length === 0 ? {} : { turns: request.turns }),
         ...(request.call === undefined ? {} : { call: request.call }),
       },
       spying,

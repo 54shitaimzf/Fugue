@@ -141,7 +141,7 @@ export function successorOf(
     ...state,
     step: 0,
     handoff: prompt,
-    turns: [`【接手】${coord.id} 从这一步开始。上面"交接"那一段是前任留下的。`],
+    turns: [{ text: `【接手】${coord.id} 从这一步开始。上面"交接"那一段是前任留下的。`, calls: [], results: [] }],
     lastStep: '',
   }
 }

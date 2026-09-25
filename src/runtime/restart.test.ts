@@ -158,7 +158,7 @@ test('② 交接提示词落在 Zone B：A 区逐字节不变 · B 区里出现�
 
     // 而 C 区（那串只追加的尾巴）被清空了：那是前任的会话内积累（§ 8.11）。
     assert.equal(out.next.turns?.length, 1, '继任者手里只有"你接手了"那一句')
-    assert.match(out.next.turns![0]!, /【接手】/)
+    assert.match(out.next.turns![0]!.text ?? '', /【接手】/)
     assert.equal(out.next.lastStep, '', '前任的上一步回执不进下一格')
     assert.equal(out.next.step, 0, '步数是它自己的')
 

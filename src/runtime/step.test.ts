@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { ModelEvent } from '../model/contract.ts'
+import type { ModelEvent, Turn } from '../model/contract.ts'
 import { modelDeclOf } from '../model/contract.ts'
 import { openLog } from '../log/log.ts'
 import type { LogHandle, LogEvent } from '../log/events.ts'
@@ -29,7 +29,8 @@ import { fixtureState } from '../model/fixture-state.ts'
 import { readFixture } from '../model/session.ts'
 import { fixtureTarget } from '../model/session.ts'
 import type { Fixture } from '../model/session.ts'
-import { callModel } from '../model/http.ts'
+import { callModel, makeDumpCall } from '../model/http.ts'
+import type { Transport } from '../model/http.ts'
 import { fixtureTransport } from '../model/session.ts'
 import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
 import type { AgentId, BranchId, ContractId } from '../terms.ts'
@@ -107,6 +108,11 @@ function handleOf(state: AssembleState, f: Fixture = FIXTURE): AgentHandle {
     state,
     call: f.call,
   }
+}
+
+/** 一条只有文本的 `Turn`：测试自己往尾巴里塞东西时用的形状（W6 之后尾巴不是字符串了）。 */
+function turnOfText(text: string): Turn {
+  return { text, calls: [], results: [] }
 }
 
 /** 一次装配（与 `step` 里那一步同一条路：`assemble` 是纯函数，再算一次不碰任何状态）。 */
@@ -218,7 +224,7 @@ test('② C 区只追加：相邻两步的 hash(A+B) 不变，C 只是一串只�
       step: one.next.step + 1,
       // 换掉末尾那一段（**比原来长**：这样"分歧点"那条断言才有内容）
       lastStep: `工具的另一次回执：${'x'.repeat(200)}`,
-      turns: [...turnsNow, '第二步新加的一段。'],
+      turns: [...turnsNow, turnOfText('第二步新加的一段。')],
     }
     const c2 = prefixAt({ ...h0, state: after }).zoneC
     assert.ok(c2.length > c1.length, `C 没有长：${c1.length} → ${c2.length}`)
@@ -324,8 +330,8 @@ test('④ 用假模型驱动它，三区稳定性照旧成立；负对照：每�
 
     // 负对照：把 C 区**中部**改掉（重写，不是追加）→ ② 那条"只追加"当场变红。
     const base = fixtureState(0)
-    const withTail: AssembleState = { ...base, turns: ['甲', '乙', '丙'] }
-    const rewritten: AssembleState = { ...withTail, turns: ['甲', 'X', '丙'] }
+    const withTail: AssembleState = { ...base, turns: [turnOfText('甲'), turnOfText('乙'), turnOfText('丙')] }
+    const rewritten: AssembleState = { ...withTail, turns: [turnOfText('甲'), turnOfText('X'), turnOfText('丙')] }
     const a = prefixAt({ ...h0, state: withTail })
     const b = prefixAt({ ...h0, state: rewritten })
     assert.notDeepEqual(a.zoneC, b.zoneC, '重写中部之后 C 竟然没变——那"只追加"这条就没有判据了')
@@ -464,5 +470,85 @@ test('⑦ 失败那一趟：状态码与请求号进 `llm/call` 的 status/heade
       assert.equal(good[0]?.headers, null, '成功那一趟的 headers 该是 null')
     })
     console.log(`⑦ 读数：失败那一趟 status=${bad[0]?.status} headers=${JSON.stringify(bad[0]?.headers)}；成功那一趟两栏都是 null`)
+  })
+})
+
+// ── ⑧ W6 · turns 贯通：state 里的尾巴真的流到发出去的字节 ──────────────────────
+
+test('⑧ 第二步的请求带上第一步的往返：RuntimeRequest.turns 有它，发出去的字节里有 tool_use/tool_result 一开一合', async () => {
+  await withRoot(async (root, log) => {
+    const executor = recordingExecutor((call) => ({ ok: true, output: `${call.name} 的回执` }))
+    /** 抓到的那些 RuntimeRequest（第二步那一份是主角）。 */
+    const seenReq: { turns?: readonly Turn[] }[] = []
+    let at = 0
+    const reply = scriptedModel([[{ t: 'delta', text: '数完了。' }, { t: 'usage', usage: USAGE }, { t: 'stop', reason: 'end-turn' }]])
+    const call: CallModel = (request, signal) => {
+      at += 1
+      seenReq.push({ ...(request.turns === undefined ? {} : { turns: request.turns }) })
+      if (at > 1) return reply(request, signal)
+      const stream = callModel(
+        request.target,
+        {
+          model: request.model,
+          zones: { A: request.prefix.zoneA, B: request.prefix.zoneB, C: request.prefix.zoneC },
+          tools: request.tools,
+          ...(request.call === undefined ? {} : { call: request.call }),
+        },
+        fixtureTransport(FIXTURE, 1),
+      )
+      return {
+        events: stream.events,
+        ledger: () => {
+          const l = stream.ledger()
+          return { call: l.call, failure: l.failure }
+        },
+      }
+    }
+    const rt = createRuntime({ logOf: () => log, call, execute: executor, tools })
+    const r = await runSteps(rt, handleOf(fixtureState(0)), new AbortController().signal)
+    assert.equal(r.steps, 2)
+    assert.equal(r.last.outcome.kind, 'done')
+
+    // 一 · RuntimeRequest.turns：第一步**没有**（那时候还没有往返），第二步**有**——
+    //     而且那一条 Turn 里就是夹具那两条调用与执行器的回执（逐条对位）。
+    assert.equal(seenReq[0]?.turns, undefined, '第 0 步不该带 turns')
+    const walked = seenReq[1]?.turns ?? []
+    assert.equal(walked.length, 1, '第二步只该有第一步那一条 Turn')
+    assert.deepEqual(walked[0]?.calls.map((c) => c.name), ['bash', 'glob'], 'Turn 里那两条就是夹具里的')
+    assert.equal(walked[0]?.calls[0]?.arguments, '{"command":"ls -la","timeout_ms":10000}')
+    assert.deepEqual(walked[0]?.results.map((x) => x.output), ['bash 的回执', 'glob 的回执'])
+    assert.ok(walked[0]?.results.every((x) => !x.isError), '两条都是成功档')
+
+    // 二 · 真正发出去的字节：把第二步那份 RuntimeRequest 喂给 makeDumpCall（记录型传输，
+    //     不出网），断言 body 里有 tool_use 与 tool_result 一开一合、id 配对。
+    const bodies: string[] = []
+    const spy: Transport = {
+      async *post(_t, body, _sig) {
+        bodies.push(new TextDecoder().decode(body))
+        yield* fixtureTransport(FIXTURE, 1).post(_t, body, _sig)
+      },
+    }
+    const dump = makeDumpCall(join(root, 'dump-w6'), spy)
+    // 第二步会收到夹具的回放（tool-calls）——没有关系，这里只看**发出去的字节**。
+    await dump(
+      {
+        target: fixtureTarget(FIXTURE),
+        adapter: fixtureTarget(FIXTURE).wire,
+        prefix: assemble({ protocol: SUBAGENT_PROTOCOL, model: DECL.id, segments: sourcesFor(SUBAGENT_PROTOCOL, r.last.next, WHO) }),
+        tools,
+        promptCache: 'implicit',
+        model: fixtureTarget(FIXTURE).model,
+        turns: walked,
+      },
+      new AbortController().signal,
+    ).events[Symbol.asyncIterator]().next().catch(() => undefined)
+    const sent = bodies[0] ?? ''
+    assert.ok(sent.includes('"type":"tool_use"'), '发出的字节里要有 tool_use')
+    assert.ok(sent.includes('"type":"tool_result"'), '发出的字节里要有 tool_result')
+    const ids = [...sent.matchAll(/"id":"(toolu_[^"]+)"/g)].map((m) => m[1])
+    const paired = [...sent.matchAll(/"tool_use_id":"(toolu_[^"]+)"/g)].map((m) => m[1])
+    assert.equal(new Set(paired).size, paired.length, 'tool_use_id 不重复')
+    assert.ok(paired.every((id) => ids.includes(id)), '每一条 tool_result 都配得上对')
+    console.log(`⑧ 读数：第二步带 ${String(walked.length)} 条 Turn · 发出 ${String(Buffer.byteLength(sent, 'utf8'))} 字节 · ${String(paired.length)} 条配对`)
   })
 })

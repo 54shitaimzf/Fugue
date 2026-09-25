@@ -84,12 +84,14 @@ export function requestOf(
   model: string,
   tools: readonly ToolEntry[] | null,
   call: Fixture['call'],
+  turns?: readonly Turn[],
 ): ModelRequest {
   return {
     model,
     zones: { A: prefix.zoneA, B: prefix.zoneB, C: prefix.zoneC },
     ...(tools === null ? {} : { tools }),
     call,
+    ...(turns === undefined || turns.length === 0 ? {} : { turns }),
   }
 }
 

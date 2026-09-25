@@ -37,7 +37,7 @@ import type { WireAdapter } from '../model/wire/stream.ts'
 import { parseStream } from '../model/wire/stream.ts'
 import type { Prefix, Protocol } from '../assemble/contract.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
-import { sourcesFor } from '../assemble/sources.ts'
+import { sourcesFor, turnText } from '../assemble/sources.ts'
 import { promptCacheFor } from '../model/contract.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
@@ -97,6 +97,8 @@ export interface RuntimeRequest {
   readonly adapter: WireAdapter
   readonly prefix: Prefix
   readonly tools: readonly ToolEntry[]
+  /** 已经走过的那几步（发原生轮次用；第 0 步没有）。 */
+  readonly turns?: readonly Turn[]
   /** 提供方那边什么名字（`ModelRequest.model`）。 */
   readonly model: string
   readonly call?: { readonly temperature?: number; readonly maxTokens?: number }
@@ -192,6 +194,7 @@ export const wireCall: CallModel = (request, signal) => {
       model: request.model,
       zones: { A: request.prefix.zoneA, B: request.prefix.zoneB, C: request.prefix.zoneC },
       tools: request.tools,
+      ...(request.turns === undefined || request.turns.length === 0 ? {} : { turns: request.turns }),
       ...(request.call === undefined ? {} : { call: request.call }),
     },
     undefined,
@@ -240,9 +243,16 @@ export function recordingExecutor(
   }
 }
 
-/** 工具结果那一段文本：写进 C 区那个积累段（模型下一步看得到自己上一步干了什么）。 */
-function toolTurn(at: number, call: ToolCallRequest, r: ToolResult): string {
-  return `${r.ok ? '工具' : '工具（失败）'} ${call.name}（第 ${at + 1} 条）：\n${r.output}`
+/** 这一步那个 `Turn`：模型说了什么 + 调了哪几条 + 每条回了什么（**逐条对位**）。 */
+function turnOf(
+  said: string,
+  done: readonly { readonly id: string | null; readonly name: string; readonly arguments: string; readonly output: string; readonly isError: boolean }[],
+): Turn {
+  return {
+    ...(said === '' ? {} : { text: said }),
+    calls: done.map((d) => ({ id: d.id, name: d.name, arguments: d.arguments })),
+    results: done.map((d) => ({ id: d.id, output: d.output, isError: d.isError })),
+  }
 }
 
 /** 收尾原因 → 三档。**这一处就是"为什么停"的判据**（架构 § 14.2 的 `StepOutcome`）。 */
@@ -285,6 +295,9 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       tools,
       promptCache: promptCacheFor(h.adapter.name),
       model: h.wireModel,
+      // 走过的那几步：**有才带**。第 0 步与交接后的第一步都是“没有”——没有就发 C 区那条文本
+      // （两条路都不改 A/B 两区的字节，前缀那笔账不破）。
+      ...(h.state.turns === undefined || h.state.turns.length === 0 ? {} : { turns: h.state.turns }),
       ...(h.call === undefined ? {} : { call: h.call }),
     }
     // ── 5a. `prefix/assemble`：三区指纹（`B3` 的断言 ② 要的那三个数）
@@ -361,12 +374,12 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     }
 
     // ── 4. 执行那几条工具调用。**这一层不认识沙箱**：执行器是注入的。
-    const turns: string[] = []
     /** 这一趟里有没有工具叫停（停在门口那一档）。 */
     let halted = false
+    /** 这一步的往返：调了哪几条 · 每条回了什么（发原生轮次与渲染 C 区用的是同一份）。 */
+    const done: { readonly id: string | null; readonly name: string; readonly arguments: string; readonly output: string; readonly isError: boolean }[] =
+      []
     const said = call.text
-    if (said !== '') turns.push(`模型：${said}`)
-    let at = 0
     for (const one of calls) {
       let r: ToolResult
       try {
@@ -385,20 +398,24 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         }
       }
       if (r.halt === true) halted = true
-      turns.push(toolTurn(at, one, r))
-      at += 1
+      done.push({ id: one.id, name: one.name, arguments: one.arguments, output: r.output, isError: !r.ok })
     }
 
     // ── 6. 下一状态：C 区那个积累段**只追加**（架构 § 8.11 的验证性质）。
     // **有工具叫停就到这儿为止**（停在门口那一档）：它是"收敛"，与模型自己说完同一档。
     const outcome = halted ? { kind: 'done' as const, usage } : outcomeOf(call.stop, usage, said)
-    const next: AssembleState = {
-      ...h.state,
-      step: h.state.step + 1,
-      // `上一步结果` 与 `运行时上下文` 都是 C 区的段：前者是"刚过去那一步"，后者是那条只追加的尾巴。
-      lastStep: turns.length === 0 ? h.state.lastStep : turns.join('\n'),
-      ...(turns.length === 0 ? {} : { turns: [...(h.state.turns ?? []), ...turns] }),
-    }
+    // 这一步什么都没发生（没说话、也没调工具）——不追加一个空的 `Turn`：空的一步会让
+    // `上一步结果` 变成空串，而"这一步无事发生"与"上一步的结果丢了"是两件事。
+    const quiet = said === '' && done.length === 0
+    const next: AssembleState = quiet
+      ? { ...h.state, step: h.state.step + 1 }
+      : {
+          ...h.state,
+          step: h.state.step + 1,
+          // `上一步结果` 与 `运行时上下文` 都是 C 区的段：前者是"刚过去那一步"，后者是那条只追加的尾巴。
+          lastStep: turnText(turnOf(said, done)),
+          turns: [...(h.state.turns ?? []), turnOf(said, done)],
+        }
     return { outcome, next, seqs }
   }
 
