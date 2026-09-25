@@ -183,8 +183,15 @@ export async function runAgentOnce(ask: DriverAsk, opts: RealDriverOptions = {})
   // 栅栏要防的是"同一个 writer 的序号被两个进程领到"，两条路各开一次就会撞上它）。
   const log = ask.logOf()
   const view = await ask.openView()
-  return driveOnce(ask, opts, log, view)
+  const r = await driveOnce(ask, opts, log, view)
+  // **"为什么停"落进这一格自己的日志**（第 5 批 · 疑点 2）：`DriverResult.stopped` 原先只有
+  // `onResult` 那一个出口，而壳调用 `realDriver()` 时没接它——那句话于是出了这一层就没了，
+  // 命令面只剩"验收：通过 1"。落成一条事件之后，"这一格到底干完没有"在日志里查得到
+  // （**验收仍然是唯一的判据**，这一条是旁证）。
+  await log.append(writer, { t: 'agent/stop', agent, steps: r.steps, stopped: r.stopped, handoffs: r.handoffs.length })
+  return r
 }
+
 
 async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view: View): Promise<DriverResult> {
   const { agent, contract, base, truth, writer } = ask

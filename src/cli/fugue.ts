@@ -791,6 +791,13 @@ async function roundRun(
     }
   }
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
+  /**
+   * **每一格为什么停**（第 5 批 · 疑点 2）：`realDriver` 的 `onResult` 是这句话唯一的出口，
+   * 而壳原先没接——于是"这一步是走完的、还是被预算/步数/半截流掐掉的"出了驱动那一层就没了，
+   * 命令面只剩"验收：通过 1"。**这里不是新判据**：判据仍然是验收（`report.ok`）；收它是因为
+   * `stopped` 与"写了几条"合起来才说得清一轮到底干成了什么（第一次联网验证那两趟全靠它）。
+   */
+  const stops: AgentStop[] = []
   try {
     const stub: Stub = {
       run: async (agent, c, base, hint) => {
@@ -860,7 +867,15 @@ async function roundRun(
       // （ask 那一侧因此是完整的），而**干一格的那一个函数还是打桩**：一次真调用都没发，盘上落的
       // 是"（打桩）… 改了 …"，而命令面照旧报成功。整条链的取证（dump 一份都不落）就是这么露的。
       // `driverSupport` 那一栏照旧给（ask 要从它拿 `call` · `execute` · `decl` · `handle`）。
-      stub: live ? realDriver() : stubDriver(stub),
+      // **真驱动那一档接上 `onResult`**：`stopped` 与 `steps` 收进 `stops`，跑完一起报出去
+      // （打桩那一档没有这句话可说——它没有"停因"，`stubDriver` 也不产出读数）。
+      stub: live
+        ? realDriver({
+            onResult: (agent, r) => {
+              stops.push({ agent: String(agent), steps: r.steps, stopped: r.stopped })
+            },
+          })
+        : stubDriver(stub),
       ...(maxSteps === undefined ? {} : { maxSteps }),
       ...(handoff === undefined ? {} : { handoff }),
       // **判据只看 `--live`**：凭据那一步已经归 `driverSupport`（声明里那份表 + `authOf`），
@@ -963,6 +978,8 @@ async function roundRun(
         assertions: started.report.results,
         advanced: started.advanced === null ? null : { written: started.advanced.written, removed: started.advanced.removed, skipped: started.advanced.skipped },
         deniedAction,
+        // **每一格为什么停**（`--live` 才有；打桩那一档是空数组——那句话不在打桩那条路上）。
+        agents: stops,
         // **`--json` 与文字那一档给的是同一件事**：文字那一档 `--metrics` 印的是八元指标
         // （`lineOf`），所以这一档的 `metrics` 就是那八条；不给 `--metrics` 时是 `null`。
         // （原先这一栏放的是 `report.readings`——那是**打回**那三个数，与 `--report` 同源，
@@ -982,6 +999,8 @@ async function roundRun(
         emitLine('  推进：没有（验收没过——真实工作树一个字节都没动）')
       }
       if (deniedAction !== null) emitLine(`  被拒的动作：exit ${deniedAction.exit} · denied=${String(deniedAction.denied)}（${deniedAction.note}）`)
+      // **停因**：一行一格。它只在真驱动那一档有内容（打桩那一档 `stops` 是空的）。
+      for (const s of stops) emitLine(`  停因：${s.agent} ${s.steps} 步 · ${s.stopped}`)
       if (flags.has('report')) {
         emitLine('打回读数（从日志重算，不采集）：')
         for (const l of report.lines) emitLine(`  ${l}`)
@@ -1072,6 +1091,13 @@ function readAssertions(doc: ConfigDoc): AssertionSpec[] {
     }
     return { name: o.name, argv: o.argv as readonly string[], expect }
   })
+}
+
+/** 一格跑完的读数里"为什么停"那一栏（与日志 `agent/stop` 那一族同域：一个 agent 一条）。 */
+interface AgentStop {
+  readonly agent: string
+  readonly steps: number
+  readonly stopped: string
 }
 
 /** 这一轮几份契约一共占了多少条路径（读数的分母，与判决无关）。 */

@@ -214,6 +214,8 @@ test('链上的那一格：轮次跑完，真实工作树上就是合并后的�
   )
   const run = fugue(root, '--json', 'round', 'run', '写一份 a.ts')
   assert.equal(run.code, 0, run.stderr)
+  // **打桩那一档没有停因可报**：它没有"为什么停"这句话（`stubDriver` 不产出读数）。
+  assert.deepEqual((JSON.parse(run.stdout) as { agents?: unknown }).agents, [], '打桩那一档的 agents 该是空数组')
   const j = JSON.parse(run.stdout) as { advanced: { written: string[] } | null }
   assert.ok(j.advanced !== null)
   // 推进之后盘上就有那一份产物——**这是"链的末端真的落地了"那一条**。
@@ -341,7 +343,7 @@ test('--live 那一档接的是真驱动：日志里有一条带 401 的 llm/cal
   const fake = join(outside, 'fake.key')
   writeFileSync(fake, 'sk-not-a-real-key\n')
   const dump = join(outside, 'wire')
-  const r = fugue(root, 'round', 'run', '写一份 a.ts', '--live', '--credential', fake, '--dump-wire', dump)
+  const r = fugue(root, '--json', 'round', 'run', '写一份 a.ts', '--live', '--credential', fake, '--dump-wire', dump)
   // 一 · 打桩那一档退 0；接了真驱动又碰上一次 401 时，轮次**报成功但推进是空的**（那一步不算干完）。
   assert.equal(r.code, 0, `这一条不判退出码（打桩与 401 都是 0），实际 ${r.code}；stderr：${r.stderr.slice(0, 300)}`)
   // 二 · 证据：agent 日志里那一条 `llm/call`
@@ -360,9 +362,22 @@ test('--live 那一档接的是真驱动：日志里有一条带 401 的 llm/cal
   assert.equal(one.model, 'deepseek-chat/anthropic', '这一格该走默认模型那条声明')
   // 三 · 没静默地成功：盘上没有 a.ts（真驱动那一档没干完就不产出）。
   assert.equal(existsSync(join(root, 'a.ts')), false, '盘上出现了 a.ts——那说明这一趟不是真驱动那一条路')
+  // 四 · **每一格为什么停**（第 5 批 · 疑点 2）：`--json` 里那一栏原先不存在；而这一趟的停因
+  //     就在 `stopped` 里——"验收：通过 1"那种话读不出"它其实被 401 掐掉了"。
+  const j = JSON.parse(r.stdout) as { agents?: readonly { agent: string; steps: number; stopped: string }[] }
+  const stops = j.agents ?? []
+  assert.equal(stops.length, 1, `该报出一格，实际 ${stops.length} 格：${r.stdout.slice(0, 300)}`)
+  assert.match(stops[0]?.agent ?? '', /^agent\/r1\/1$/, `那一格的 agent 名：${String(stops[0]?.agent)}`)
+  assert.match(stops[0]?.stopped ?? '', /401|cut-stream|凭据|认证|Authorization/i, `停因该说清是被上游拒的：${String(stops[0]?.stopped)}`)
+  // 五 · **同一句话也落进了这一格自己的日志**（`agent/stop`）：日志是一等档的取证物，而这一栏
+  //     原先只能从驱动那一层的返回值里看到（`onResult` 那条路只有测试走）。
+  const stopEvents = events.filter((e) => e['t'] === 'agent/stop')
+  assert.equal(stopEvents.length, 1, `该恰有一条 agent/stop，实际 ${stopEvents.length} 条`)
+  assert.equal(stopEvents[0]?.['stopped'], stops[0]?.stopped, '日志里那句话与 --json 里那一栏该是同一句')
+  assert.equal(stopEvents[0]?.['steps'], 1, `那一条该记着走了一步：${String(stopEvents[0]?.['steps'])}`)
   console.log(
     `真驱动读数：llm/call ${calls.length} 条 · status ${String(one.status)} · 用量四个数全 null · ` +
-      `model ${String(one.model)} · 盘上没有 a.ts（打桩那一档会写它）`,
+      `model ${String(one.model)} · 停因「${String(stops[0]?.stopped).slice(0, 80)}」 · 盘上没有 a.ts（打桩那一档会写它）`,
   )
 })
 

@@ -63,6 +63,27 @@ export type LogEvent =
    */
   | { t: 'run/start'; agent: AgentId; step: StepId; action: string; argv0: string; argv?: readonly string[]; cwd?: string }
   | { t: 'run/end'; agent: AgentId; step: StepId; exit: number; ms: number; denied: boolean }
+  /**
+   * **这一格干完了 / 为什么停**（一个 agent 一条：这一格只干一次活）。
+   *
+   * 与 `round/state` 那一族的区别：那一条是**轮级**的（`Working → Verifying → …`），而"这一格
+   * 是被步数掐掉的、被预算拦下的、还是自己说完的"只有每一格自己知道。`stopped` 就是
+   * `DriverResult.stopped` 那句话原样（`收敛` · `步数到顶（n）` · `cut-stream：…` · 预算那句话）。
+   *
+   * **它是旁证，不是判据**：一轮成不成仍然看验收（`report.ok`）。收它是因为"验收通过"与
+   * "这一格到底干完没有"是两件事——第一次联网验证那两趟，正是这两件事差出来的。
+   */
+  | {
+      t: 'agent/stop'
+      agent: AgentId
+      /** 走了几步（每一次 `llm/call` 一步）。 */
+      steps: number
+      /** 停下来的那句话（`DriverResult.stopped` 原样）。 */
+      stopped: string
+      /** 交了几次接（`B6` 的停机纪律：先停再交接）。 */
+      handoffs: number
+    }
+
   | {
       t: 'run/confined'
       agent: AgentId
