@@ -20,7 +20,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import type { ModelEvent } from './contract.ts'
-import { checkEvents, modelDeclOf } from './contract.ts'
+import { PROVIDERS, checkEvents, modelDeclOf } from './contract.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { sourcesFor } from '../assemble/sources.ts'
@@ -263,15 +263,43 @@ test('④ 上游中途掐断 → 报错并记事件，不静默重试、不把�
 })
 
 // ── ⑤ 夹具档不取凭据 ──────────────────────────────────────────────────────────
-
-test('⑤ 夹具档不取凭据：`targetOf` 会去取，夹具档那一份不会（没设 key 也跑得通）', () => {
+//
+// **这一条要的是"取凭据那一步就在这条路上"**（`targetOf` 会去取，夹具档那一份不会）。它原先靠
+// "跑测试的机器上恰好没有那份凭据文件"来成立——第 5 批 · 疑点 4 之后声明里有**两条**路，那份
+// 文件在本机是有的（放好了的），于是"没设环境变量就抛"当场不成立。
+//
+// 所以这一条把**那两条路都堵掉**（环境变量删掉 · 声明里那个文件换成一个不存在的路径），
+// 跑完原样放回去：判据于是变成"这条路真的会去取，而取不到就拒"，与机器上放着什么无关。
+function withoutCredential<T>(run: () => T): T {
+  const p = PROVIDERS['deepseek'] as { auth: readonly { from: string; name?: string; path?: string }[] }
+  const keep = p.auth
   const before = process.env['DEEPSEEK_API_KEY']
   delete process.env['DEEPSEEK_API_KEY']
+  p.auth = [
+    { from: 'env', name: 'DEEPSEEK_API_KEY' },
+    { from: 'file', path: '/nonexistent/fugue-b3-credentials' },
+  ]
   try {
-    assert.throws(() => targetOf('deepseek-chat/anthropic'), /DEEPSEEK_API_KEY/)
+    return run()
   } finally {
+    p.auth = keep
     if (before !== undefined) process.env['DEEPSEEK_API_KEY'] = before
   }
+}
+
+test('⑤ 夹具档不取凭据：`targetOf` 会去取（两条路都没有就拒），夹具档那一份不会', () => {
+  withoutCredential(() => {
+    assert.throws(
+      () => targetOf('deepseek-chat/anthropic'),
+      (err: unknown) => {
+        // **两条路都要出现在那句话里**（只报一条会让人以为另一条不存在）。
+        assert.match((err as Error).message, /DEEPSEEK_API_KEY/, (err as Error).message)
+        assert.match((err as Error).message, /fugue-b3-credentials/, (err as Error).message)
+        return true
+      },
+      '取不到凭据时 `targetOf` 却没拒',
+    )
+  })
   const f = fixture('deepseek-chat-anthropic')
   const t = fixtureTarget(f)
   assert.deepEqual(t.headers, {})
@@ -304,26 +332,27 @@ test('⑤b targetAt：值从参数进来，不看环境变量；而没有值的�
     assert.equal(a.wire.name, 'anthropic-messages')
 
     // 二 · 负对照：不给值的那一档照旧当场拒（说明上面那一条不是"谁都放行"）。
-    let threw = false
-    try {
-      targetOf('deepseek-chat/anthropic')
-    } catch (err) {
-      threw = true
-      assert.match((err as Error).message, /DEEPSEEK_API_KEY/)
-    }
-    assert.equal(threw, true, '环境变量没设，targetOf 却没拒——那这一条负对照什么都没证明')
+    withoutCredential(() => {
+      let threw = false
+      try {
+        targetOf('deepseek-chat/anthropic')
+      } catch (err) {
+        threw = true
+        assert.match((err as Error).message, /DEEPSEEK_API_KEY/)
+      }
+      assert.equal(threw, true, '两条路都没有时 targetOf 却没拒——那这一条负对照什么都没证明')
+    })
 
     // 三 · 给的值要是空串就没有意义：空凭据发出去换来一个 401，那看起来像"模型不行"。
     assert.throws(() => targetAt('deepseek-chat/anthropic', ''), /不能是空/)
     console.log(
       `⑤b 读数：targetAt（给值）anthropic 头 [${Object.keys(a.headers).join(' · ')}] · openai 鉴权栏 authorization · ` +
-        '环境变量没设也拼得出来；targetOf（自己取）照旧拒',
+        '环境变量没设也拼得出来；targetOf（自己取，两条路都堵掉）照旧拒',
     )
   } finally {
     if (before !== undefined) process.env['DEEPSEEK_API_KEY'] = before
   }
 })
-
 // ── ⑦ `--dump-wire`：默认不落，而落的时候发出去的字节一模一样 ────────────────────
 
 test('⑦ dump-wire：不带它时一个文件都不写；带它时那一串请求体与夹具记的逐字节相同', async () => {

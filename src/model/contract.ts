@@ -85,16 +85,34 @@ export const WIRES: Readonly<Record<WireName, WireDecl>> = {
 export type AuthRef = { readonly from: 'env'; readonly name: string } | { readonly from: 'file'; readonly path: string }
 
 /**
- * 一个提供方：一个 host 加一处凭据的引用。
+ * 那个文件**在哪儿**只写一遍：它同时是声明的第二条与报错话里指的那条路。
+ *
+ * 为什么它有资格进这一份（一个路径也算"声明"）：这一档的凭据**住在工作区之外**是它唯一的形状
+ * 约束（PLAN § 5.8 的口径一）——写在这儿，`--root` 指向谁都改不了这个位置。
+ */
+export const CREDENTIAL_FILE = '/home/ubuntu/.fugue/credentials/deepseek.key'
+
+/**
+ * 一个提供方：一个 host 加**一份有序的凭据引用表**。
  *
  * **`host` 是不带路径的那一段**（`https://api.deepseek.com`）：端点由 `WIRES` 与它相乘得到，
  * 于是"同一个 host 上两条路"是一件事，不是两条各写一遍的常量。凭据挂在提供方上：同一个 key
  * 走两条路，这正是"同一模型两个协议可比"那条验证能落地的地方（PLAN § 5.8 的第一处读数）。
+ *
+ * **`auth` 为什么是一份表而不是一条引用**（第 5 批 · 疑点 4）：原先这里写的是一条（只认环境
+ * 变量），而"环境变量优先，其次那个文件"这句话在**三个地方各写了一遍**——这一份、壳的
+ * `credentialAt()`、探针自己那一段——坏掉两份是迟早的（实测：`--live --credential <文件>` 与
+ * 探针的 `--live` 各踩过一次，而症状是"读到了也没用，换一个地方又说读不到"）。
+ * 有序表让"从哪取"变成**一处声明**：`authOf()` 按表逐条试，试完才拒，而拒的话把每一条都
+ * 写出来（"环境变量没设"与"文件读不到"是两件事，只报一件会让人以为另一条路不存在）。
+ *
+ * **顺序是承重的**：环境变量在前——开发机上那个变量是有意设的（临时换 key），而文件是常驻的。
+ * 两条都没有时**不返回空串顶替**：空凭据换一个 401，那看起来像"模型不行"，其实是没配。
  */
 export interface ProviderDecl {
   readonly id: string
   readonly host: string
-  readonly auth: AuthRef
+  readonly auth: readonly AuthRef[]
 }
 
 /** 提供方的常量表。**第一条是缺省**（与 `MODEL_DECLS` 同一条口径）。 */
@@ -102,11 +120,14 @@ export const PROVIDERS: Readonly<Record<string, ProviderDecl>> = {
   deepseek: {
     id: 'deepseek',
     host: 'https://api.deepseek.com',
-    // 名字在这里，值在环境里——`authOf()` 是唯一取值处。
-    auth: { from: 'env', name: 'DEEPSEEK_API_KEY' },
+    // 两条路：**环境变量优先，其次工作区外那个文件**（顺序由这张表说，不散在调用点上）。
+    // 名字在这儿、路径也在这儿，值两处都不在——`authOf()` 是唯一取值处。
+    auth: [
+      { from: 'env', name: 'DEEPSEEK_API_KEY' },
+      { from: 'file', path: CREDENTIAL_FILE },
+    ],
   },
 }
-
 /**
  * 一个模型的声明。八个字段，每一个都有一条被读的理由：
  *
@@ -283,8 +304,8 @@ export function isModelRef(id: string): boolean {
 const ENV_NAME = /^[A-Z][A-Z0-9_]*$/
 
 /**
- * 一处凭据的引用合不合法。**只判形状，不判它指得到指不到**——指不到是 `authOf()` 的失败，
- * 那时才有人读得到那句话。
+ * 一处凭据的**形状**：一条引用合不合法。**只判形状，不判它指得到指不到**——指不到是 `authOf()`
+ * 的失败，那时才有人读得到那句话。
  *
  * 环境变量名那一条是有牙齿的：它把 `sk-…` 这样的**值**挡在门外（含小写字母 · 连字符之类的东西
  * 都进不来），因为"把凭据写进声明"是这一档唯一要防住的事。
@@ -298,36 +319,92 @@ export function isAuthRef(v: unknown): boolean {
 }
 
 /**
+ * **一份有序的引用表**合不合法：非空 · 每一条合形状 · 至少有一条环境变量。
+ *
+ * "至少一条环境变量"不是风格：这一档的默认放法是环境变量（架构 § 10.2），而一份只认文件的
+ * 声明会让"临时换一个 key"变成改文件——那条路是给"没有环境变量这一档"的场合留的。
+ */
+export function isAuthChain(v: unknown): boolean {
+  if (!Array.isArray(v) || v.length === 0) return false
+  if (!v.every(isAuthRef)) return false
+  return v.some((r) => (r as { from?: unknown }).from === 'env')
+}
+
+/** 一条引用的人读写法（`authOf()` 的报错话里用它，别的用处没有）。 */
+function authRefText(a: AuthRef): string {
+  return a.from === 'env' ? `环境变量 ${a.name}` : `文件 ${a.path}`
+}
+
+/**
  * 取一次凭据。**这一份里唯一读凭据的地方，而它只在真要出网时被调用。**
  *
- * 两档各自指路：环境变量没设时说清楚要设哪一个；文件读不到时说清楚它试过哪个路径。**不返回
- * 空串顶替**——空凭据发出去换来一个 401，那看起来像"模型不行"，而其实是没配。
+ * 按声明的顺序逐条试（环境变量 → 文件）。每条各自记着"为什么不行"，最后**一句里把每一条都写
+ * 出来**——只报最后那一条的话，人会以为前一条路不存在（"读不到文件"而其实是环境变量没设）。
+ * **不返回空串顶替**：空凭据发出去换来一个 401，那看起来像"模型不行"，而其实是没配。
+ *
+ * 一次都没有时给的就是那句话；**中途成功就当场返回**（后面的引用一个字节都不碰：顺序是承重的，
+ * 而"读第二个文件"这种事不该在第一个成功之后还发生）。
  */
 export function authOf(p: ProviderDecl): string {
-  const a = p.auth
-  if (a.from === 'env') {
-    const v = process.env[a.name]
-    if (v === undefined || v === '') {
-      throw new ModelDeclError(
-        `提供方 ${p.id} 的凭据不在：环境变量 ${a.name} 没有设。` +
-          `夹具档与装配一条断言都不需要它——只有真要出网的那一档要（PLAN § 5.8 的口径一）。`,
-      )
+  return authOfTable(p, p.auth)
+}
+
+/**
+ * 取一次凭据，**顺序照声明，只是"文件在哪"那一格换成 `--credential <路径>` 给的那一个**。
+ *
+ * 覆盖的是**那个文件的位置**，不是"要不要看环境变量"：环境变量那条路照旧最优先（顺序由声明
+ * 说），所以"临时换一份 key"不必改声明。
+ */
+export function authWith(p: ProviderDecl, override: string | null = null): string {
+  // **空串当场拒**：`--credential ''` 若照原样进头里，换来的是一个 401——那看起来像"模型不行"，
+  // 其实是没给值（`targetAt` 为空串也拒，两处同一条口径）。
+  if (override !== null && override === '') {
+    throw new ModelDeclError('凭据不能是空串：空凭据发出去换来一个 401，那看起来像"模型不行"，其实是没给值')
+  }
+  // `--credential <路径>` 给的是**那个文件**：顺序照声明（环境变量优先），只是文件那一格换成它。
+  // 覆盖的是"文件在哪"，不是"要不要看环境变量"——这一条让"临时换一份 key"不必改声明，而
+  // 环境变量那条路照旧最优先。
+  const table: readonly AuthRef[] =
+    override === null
+      ? p.auth
+      : p.auth.map((a) => (a.from === 'file' ? ({ from: 'file', path: override } as const) : a))
+  return authOfTable(p, table)
+}
+
+/**
+ * 取一次凭据，按一份**指定的**表。`authOf()` 与 `authWith()` 都走它——两份实现会让"环境变量
+ * 优先，其次那个文件"这句话变成两处（第 5 批 · 疑点 4 的由头正是这种重复）。
+ */
+function authOfTable(p: ProviderDecl, table: readonly AuthRef[]): string {
+  const tried: string[] = []
+  for (const a of table) {
+    if (a.from === 'env') {
+      const v = process.env[a.name]
+      if (v !== undefined && v !== '') return v
+      tried.push(`${authRefText(a)}：没有设`)
+      continue
+    }
+    let text: string
+    try {
+      text = readFileSync(a.path, 'utf8')
+    } catch (err) {
+      tried.push(`${authRefText(a)}：读不到（${(err as NodeJS.ErrnoException).code ?? '未知原因'}）`)
+      continue
+    }
+    const v = text.trim()
+    if (v === '') {
+      tried.push(`${authRefText(a)}：是空的`)
+      continue
     }
     return v
   }
-  let text: string
-  try {
-    text = readFileSync(a.path, 'utf8')
-  } catch (err) {
-    throw new ModelDeclError(
-      `提供方 ${p.id} 的凭据不在：读不到 ${a.path}（${(err as NodeJS.ErrnoException).code ?? '未知原因'}）。`,
-    )
-  }
-  const v = text.trim()
-  if (v === '') throw new ModelDeclError(`提供方 ${p.id} 的凭据文件是空的：${a.path}`)
-  return v
+  throw new ModelDeclError(
+    `提供方 ${p.id} 的凭据不在——试过的那 ${table.length} 条路都不行：\n` +
+      tried.map((t) => `  · ${t}`).join('\n') +
+      `\n  两条都是"工作区外的一个声明路径"：不给 --live 就是打桩那一档，它一条断言都不需要凭据` +
+      `（PLAN § 5.8 的口径一）。`,
+  )
 }
-
 /**
  * 载入时那一次核对：**两份表的键域同域**，加上那几条一眼看得出写错的声明。
  *
@@ -346,7 +423,7 @@ for (const name of Object.keys(PREFIX_MODELS)) {
   if (MODEL_DECLS[name] === undefined) mismatch.push(`${name} 在前缀那一侧有，却没有声明`)
 }
 for (const [id, p] of Object.entries(PROVIDERS)) {
-  if (!isAuthRef(p.auth)) mismatch.push(`提供方 ${id} 的凭据引用不合形状：${JSON.stringify(p.auth)}`)
+  if (!isAuthChain(p.auth)) mismatch.push(`提供方 ${id} 的凭据引用表不合形状（要非空 · 每条合形状 · 至少一条环境变量）：${JSON.stringify(p.auth)}`)
 }
 for (const [name, m] of Object.entries(MODEL_DECLS)) {
   if (!WIRE_NAMES.includes(m.wire)) mismatch.push(`${name} 的线协议没有这一条：${m.wire}`)

@@ -88,7 +88,7 @@ import { wireCall } from '../runtime/step.ts'
 import { makeDumpCall } from '../model/http.ts'
 import type { AgentHandle } from '../runtime/step.ts'
 import { targetAt } from '../model/http.ts'
-import { modelDeclOf } from '../model/contract.ts'
+import { authWith, modelDeclOf, providerOf } from '../model/contract.ts'
 import { wireHeader } from '../model/wire/headers.ts'
 import { implementedNames, publishedTools } from '../tools/execute.ts'
 import { CATALOG_STATES, TOOL_NAMES, catalog } from '../tools/catalog.ts'
@@ -753,7 +753,9 @@ async function roundRun(
 
   // **`--live`：接真驱动**（`B7.5`）。不给就是打桩那一档——它一条断言都不需要凭据。
   const live = flags.has('live')
-  const credentialPath = typeof flags.get('credential') === 'string' ? (flags.get('credential') as string) : CREDENTIAL_FILE
+  // **`--credential <路径>` 是一个覆盖**：不给就按提供方声明里那份表取（`driverSupport` 那一层）。
+  // 壳这一层不认识那个文件的默认位置——它只有一个出处（`CREDENTIAL_FILE`，声明里）。
+  const credentialOverride = typeof flags.get('credential') === 'string' ? (flags.get('credential') as string) : undefined
   // `--dump-wire <目录>`：**要它才落**（不给时 `dumpDir` 是 `undefined`，那一层不拼）。
   const dumpFlag = flags.get('dump-wire')
   if (dumpFlag === true) return usageFail('--dump-wire 要一个目录：--dump-wire /tmp/fugue-wire')
@@ -761,7 +763,6 @@ async function roundRun(
   // 落点那一条是**这一趟的入场条件**（不成立就不该开工），而凭据那一条只在真要出网时才要；
   // 原先它们挤在 deps 那个对象字面量里求值，于是"落在工作区里"会被"凭据不在"抢答（实测）。
   const dumpDir = typeof dumpFlag === 'string' ? dumpWireDir(root, resolve(dumpFlag)) : undefined
-  const credential = live ? credentialAt(credentialPath) : null
   // `--max-steps`：**花钱的那道上界**。取值要是一个正整数；不认的写法当场拒（不替它猜）。
   const stepsFlag = flags.get('max-steps')
   let maxSteps: number | undefined
@@ -859,11 +860,20 @@ async function roundRun(
       // （ask 那一侧因此是完整的），而**干一格的那一个函数还是打桩**：一次真调用都没发，盘上落的
       // 是"（打桩）… 改了 …"，而命令面照旧报成功。整条链的取证（dump 一份都不落）就是这么露的。
       // `driverSupport` 那一栏照旧给（ask 要从它拿 `call` · `execute` · `decl` · `handle`）。
-      stub: live && credential !== null ? realDriver() : stubDriver(stub),
+      stub: live ? realDriver() : stubDriver(stub),
       ...(maxSteps === undefined ? {} : { maxSteps }),
       ...(handoff === undefined ? {} : { handoff }),
-      ...(live && credential !== null
-        ? { driver: driverSupport({ root, doc, credential, ...(dumpDir === undefined ? {} : { dumpDir }) }) }
+      // **判据只看 `--live`**：凭据那一步已经归 `driverSupport`（声明里那份表 + `authOf`），
+      // 壳这一层不再自己读一次——它只带一个命令行覆盖。
+      ...(live
+        ? {
+            driver: driverSupport({
+              root,
+              doc,
+              ...(credentialOverride === undefined ? {} : { credential: credentialOverride }),
+              ...(dumpDir === undefined ? {} : { dumpDir }),
+            }),
+          }
         : {}),
       specsOf,
       retriesLeft,
@@ -1480,38 +1490,19 @@ async function agentCoord(
  * 它是一条**路径**，不是值：值由 harness 进程在真要出网那一刻读一次，不落进事件、不进夹具、
  * 不进沙箱环境（PLAN § 5.8 的口径一）。`ProviderDecl.auth` 那一栏是声明；这一份是壳。
  */
-const CREDENTIAL_FILE = '/home/ubuntu/.fugue/credentials/deepseek.key'
-
 /** 公布给模型的那一份目录：**目录 ∩ 实现表**（`B5` 的纪律：只公布能兑现的）。 */
 function publishedCatalog(): ReturnType<typeof catalog> {
   return publishedTools(implementedNames(TOOL_NAMES), catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number]))
 }
 
 /**
- * 凭据的值：**环境变量优先，其次那个文件**。
+ * 真驱动那一档要的那几样（`DriverSupport`）。**打桩那一档一个都不读**——所以这一份只在
+ * `--live` 下拼，凭据那一步也就只在真要出网时才走（PLAN § 5.8 的口径一）。
  *
- * 两条都是"工作区外的一个声明路径"（`ProviderDecl.auth` 的两种取法），而这里只是**把来源收窄
- * 到一处**：值取来交给 `wireHeader`，别处一个字节都不碰它。读不到时报的话要把两条路都写出来
- * ——只说"读不到文件"会让人以为环境变量那条路不存在。
- */
-function credentialAt(path: string): string {
-  const fromEnv = process.env.DEEPSEEK_API_KEY
-  if (fromEnv !== undefined && fromEnv !== '') return fromEnv
-  let text: string
-  try {
-    text = readFileSync(path, 'utf8')
-  } catch (err) {
-    throw new SourceError(
-      `凭据不在：环境变量 DEEPSEEK_API_KEY 没有设，也读不到 ${path}（${(err as NodeJS.ErrnoException).code ?? '未知原因'}）。\n` +
-        `  放一份进去：mkdir -p ${dirname(path)} && printf '%s' '<key>' > ${path}\n` +
-        '  或者不接驱动：不给 --live 就是打桩那一档（PLAN § 5.8 的口径一：它一条断言都不需要凭据）。',
-    )
-  }
-  const v = text.trim()
-  if (v === '') throw new SourceError(`凭据文件是空的：${path}`)
-  return v
-}
-
+ * **凭据这一栏是一个命令行覆盖，不是一个来源**（第 5 批 · 疑点 4）：不给 `--credential` 时它
+ * 是 `undefined`，那时按**提供方声明里那份有序的表**取（`authOf()`——唯一取值处：环境变量优先，
+ * 其次 `CREDENTIAL_FILE`）。壳这一层原先自己读一遍文件，于是"从哪取"这句话在两个地方各写了一遍，
+ * 而两处漂移的表现是"文件里那份读到了也没用"（实测）。
 /**
  * 真驱动那一档要的那几样（`DriverSupport`）。**打桩那一档一个都不读**——所以这一份只在
  * `--live` 下拼，凭据那一步也就只在真要出网时才走（PLAN § 5.8 的口径一）。
@@ -1530,7 +1521,8 @@ function credentialAt(path: string): string {
 export function driverSupport(o: {
   readonly root: string
   readonly doc: ConfigDoc
-  readonly credential: string
+  /** `--credential <路径>`：**那个文件在哪**（不给就走声明里那一格）。顺序照声明。 */
+  readonly credential?: string
   /** `--dump-wire` 那一档的落点（**已经在工作区之外**——守卫在 `dumpWireDir`）。不给就不落。 */
   readonly dumpDir?: string
 }): DriverSupport {
@@ -1538,10 +1530,10 @@ export function driverSupport(o: {
   const tools = publishedCatalog()
   const states = new Map<string, AssembleState>()
   const handles = new Map<string, AgentHandle>()
-  // **凭据已经在 `o.credential` 里**（壳那一档从环境变量或那个文件取来），所以这里走
-  // `targetAt`——走 `targetOf` 的话它会**按提供方的声明再取一次**，而那段声明只认环境变量：
-  // `--credential <文件>` 这条路于是走不通（实测）。
-  const target = targetAt(decl.id, o.credential)
+  // **覆盖给了就用覆盖**（`targetAt`：值从参数进来，不再取一次）；**不给就按声明取**。
+  // 声明那一份是**有序的表**：环境变量优先，其次 `CREDENTIAL_FILE`——这两条的实现只有一处
+  // （`authOf()`），所以"文件里那份读到了也没用"这一类漂移在结构上不存在。
+  const target = targetAt(decl.id, authWith(providerOf(decl.provider), o.credential ?? null))
 
   /**
    * 这个 agent 的第一步那一份状态：**契约值就是它的任务**（B 区那几段照契约填）。

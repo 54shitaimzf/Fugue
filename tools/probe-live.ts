@@ -21,7 +21,7 @@
 // 而显式断点那条线（anthropic）今天**我们一个断点都没声明**——两次调用量的是"上游自己认不认"。
 import { readFileSync } from 'node:fs'
 import type { Prefix } from '../src/assemble/contract.ts'
-import { MODEL_DECLS, MODEL_IDS, WIRES, authOf, providerOf } from '../src/model/contract.ts'
+import { MODEL_DECLS, MODEL_IDS, WIRES, authWith, providerOf } from '../src/model/contract.ts'
 import type { ModelEvent, Usage } from '../src/model/contract.ts'
 import { callModel } from '../src/model/http.ts'
 import type { Target } from '../src/model/http.ts'
@@ -45,8 +45,11 @@ line('一 · 凭据：读得到吗（值不印）')
 const provider = providerOf('deepseek')
 let credential: string | null = null
 try {
-  credential = credAt >= 0 && credPath !== undefined ? readFileSync(credPath, 'utf8').trim() : authOf(provider)
-  say(`读到了：${credential.length} 个字符（来源：${credAt >= 0 ? credPath : JSON.stringify(provider.auth)}）`)
+  // **取值只有一处**（`authWith`）：不给 `--credential` 时按声明里那份有序的表走——环境变量
+  // 优先，其次 `CREDENTIAL_FILE`。探针原先自己读那个文件，于是"放在文件里那份"这一档在探针
+  // 里读不到（它只认环境变量），同一个工作区里两条路给出两个答案。
+  credential = authWith(provider, credPath ?? null)
+  say(`读到了：${credential.length} 个字符（来源：${credPath ?? '按声明里那份表取（环境变量优先，其次那个文件）'}）`)
 } catch (err) {
   say(`读不到：${(err as Error).message.split('\n')[0]}`)
 }
@@ -54,7 +57,7 @@ try {
 if (!live) {
   line('')
   say('没给 --live：**一个字节都没出网**。要真发：node tools/probe-live.ts --live')
-  say('凭据从工作区外来：环境变量 DEEPSEEK_API_KEY，或 --credential <工作区之外的路径>')
+  say('凭据从工作区外来：' + provider.auth.map((a) => (a.from === 'env' ? `环境变量 ${a.name}` : `文件 ${a.path}`)).join(' → ') + '；或用 --credential <工作区之外的路径> 换一份')
   process.exit(0)
 }
 if (credential === null) {

@@ -21,10 +21,11 @@
 // 下面四条是 B1 的**调用的边界**（冻结接口点：两个线协议 · 循环 · 夹具 · 录制全押在那几个形状上）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import join from 'node:path'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DEFAULT_CALL, DEFAULT_MODEL, MODEL_DECLS, MODEL_IDS, ModelDeclError, PREFIX_MODELS, PREFIX_MODEL_IDS, PROVIDERS, STOP_REASONS, USAGE_COUNTS, USAGE_FIELDS, WIRES, WIRE_NAMES, authOf, checkEvents, isAuthRef, isModelRef, modelDeclOf, prefixDeclOf, providerOf, requestJson, stopped, toolCallsIn, triggerAt, usageCount } from './contract.ts'
+import { CREDENTIAL_FILE, DEFAULT_CALL, DEFAULT_MODEL, MODEL_DECLS, MODEL_IDS, ModelDeclError, PREFIX_MODELS, PREFIX_MODEL_IDS, PROVIDERS, authWith, isAuthChain, STOP_REASONS, USAGE_COUNTS, USAGE_FIELDS, WIRES, WIRE_NAMES, authOf, checkEvents, isAuthRef, isModelRef, modelDeclOf, prefixDeclOf, providerOf, requestJson, stopped, toolCallsIn, triggerAt, usageCount } from './contract.ts'
 import type { ModelCall, ModelDecl, ModelEvent, ModelRequest, StopReason, ToolCall, Usage } from './contract.ts'
 import { HANDOFF_MARGIN, ZONE_A_BUDGET, checkContract, seedLimitOf } from '../contract/types.ts'
 import type { ImplementContract } from '../contract/types.ts'
@@ -141,10 +142,13 @@ test('③ 凭据是一个引用：只收环境变量的名字或工作区外的�
   for (const [id, p] of Object.entries(PROVIDERS)) {
     assert.equal(p.id, id)
     assert.ok(p.host.startsWith('https://'), `${id} 的 host 要是 https`)
-    assert.ok(isAuthRef(p.auth), `${id} 的凭据引用不合形状：${JSON.stringify(p.auth)}`)
+    assert.ok(isAuthChain(p.auth), `${id} 的凭据引用表不合形状：${JSON.stringify(p.auth)}`)
   }
-  // 今天那一档：环境变量的**名字**。
-  assert.deepEqual(PROVIDERS.deepseek?.auth, { from: 'env', name: 'DEEPSEEK_API_KEY' })
+  // 今天那一档：**两条有序的路**——环境变量的**名字**在前，工作区外那个**路径**在后。
+  assert.deepEqual(PROVIDERS.deepseek?.auth, [
+    { from: 'env', name: 'DEEPSEEK_API_KEY' },
+    { from: 'file', path: CREDENTIAL_FILE },
+  ])
 
   // 形状那一档有牙齿：一串像凭据的**值**进不来（含小写字母或连字符就不是环境变量名）。
   assert.deepEqual(
@@ -164,10 +168,25 @@ test('③ 凭据是一个引用：只收环境变量的名字或工作区外的�
     [true, false, false, false, false, true, false, false, false, false, false],
   )
 
+  // **一份表**：非空 · 每条合形状 · 至少一条环境变量（"临时换一个 key"那条路要留着）。
+  assert.deepEqual(
+    [
+      isAuthChain([{ from: 'env', name: 'K' }]),
+      isAuthChain([{ from: 'env', name: 'K' }, { from: 'file', path: '/p' }]),
+      isAuthChain([{ from: 'file', path: '/p' }]),
+      isAuthChain([]),
+      isAuthChain([{ from: 'env', name: 'sk-live-x' }]),
+      isAuthChain([{ from: 'env', name: 'K' }, 'DEEPSEEK_API_KEY']),
+      isAuthChain({ from: 'env', name: 'K' }),
+      isAuthChain(undefined),
+    ],
+    [true, true, false, false, false, false, false, false],
+  )
+
   // 声明是一份常量表：全表逐字节里没有一处能装下一个凭据的值——只装得下引用。
   const decls = JSON.stringify({ MODEL_DECLS, PROVIDERS })
   for (const m of Object.values(MODEL_DECLS)) {
-    assert.ok(isAuthRef(PROVIDERS[m.provider]?.auth), `${m.id} 的提供方的凭据引用`)
+    assert.ok(isAuthChain(PROVIDERS[m.provider]?.auth), `${m.id} 的提供方的凭据引用表`)
   }
   assert.ok(!/\bsk-[A-Za-z0-9]/.test(decls), '声明里出现了一串像凭据的值')
 })
@@ -176,14 +195,36 @@ test('④ 凭据只在出网那一步取：不在会话环境里时，装配与�
   const p = PROVIDERS.deepseek as (typeof PROVIDERS)[string]
   const had = Object.prototype.hasOwnProperty.call(process.env, 'DEEPSEEK_API_KEY')
 
-  // 这一条量的是两件事：`authOf` 真的读环境（有就取得到），以及**没设时它拒得清楚**。
-  const probe = { ...p, auth: { from: 'env' as const, name: 'FUGUE_B0_根本没有这个变量' } }
+  // **表里一条都取不到时，那句话把每一条都写出来**（只报最后一条会让人以为前一条路不存在）。
+  const probe = { ...p, auth: [{ from: 'env' as const, name: 'FUGUE_B0_根本没有这个变量' }] }
   assert.throws(() => authOf(probe), (err: unknown) => {
     assert.ok(err instanceof ModelDeclError)
     assert.ok(err.message.includes('FUGUE_B0_根本没有这个变量'), err.message)
     return true
   })
-  assert.throws(() => authOf({ ...p, auth: { from: 'file', path: '/nonexistent/b0-credentials' } }), ModelDeclError)
+  assert.throws(() => authOf({ ...p, auth: [{ from: 'file', path: '/nonexistent/b0-credentials' }] }), ModelDeclError)
+  // 两条路都没有时：**两条的名字都在同一句话里**（这条量的是"按表逐条试"这件事真的发生了）。
+  const both = { ...p, auth: [{ from: 'env' as const, name: 'FUGUE_B0_根本没有这个变量' }, { from: 'file' as const, path: '/nonexistent/b0-credentials' }] }
+  assert.throws(() => authOf(both), (err: unknown) => {
+    assert.ok(err instanceof ModelDeclError)
+    assert.ok(err.message.includes('FUGUE_B0_根本没有这个变量'), err.message)
+    assert.ok(err.message.includes('/nonexistent/b0-credentials'), err.message)
+    assert.match(err.message, /那 2 条路都不行/, err.message)
+    return true
+  })
+  // 顺序是承重的：**第一条能取到时，第二条一个字节都不碰**（那个文件根本不存在，也不该被读）。
+  const firstWins = {
+    ...p,
+    auth: [{ from: 'env' as const, name: 'FUGUE_B0_有这个变量' }, { from: 'file' as const, path: '/nonexistent/b0-credentials' }],
+  }
+  const keep = process.env['FUGUE_B0_有这个变量']
+  process.env['FUGUE_B0_有这个变量'] = 'sk-from-env-first'
+  try {
+    assert.equal(authOf(firstWins), 'sk-from-env-first', '第一条取到了就该返回它')
+  } finally {
+    if (keep === undefined) delete process.env['FUGUE_B0_有这个变量']
+    else process.env['FUGUE_B0_有这个变量'] = keep
+  }
 
   // 装配这一路：一个字节都不取决于凭据在不在。
   const st = emptyState()
@@ -202,7 +243,6 @@ test('④ 凭据只在出网那一步取：不在会话环境里时，装配与�
   assert.ok(HERE.endsWith('src/model/') || HERE.endsWith('src\\model\\'), HERE)
   assert.ok(REPO.length > 0)
 })
-
 test('⑤ 估账与余量：contextLimit 接进 seedLimitOf，超限报"超了多少"，不裁剪照发', () => {
   // 三个数（上限 · Zone A · 交接余量）在两条路上是同一套算术。
   assert.equal(seedLimitOf({}), 200_000 - ZONE_A_BUDGET - HANDOFF_MARGIN)
@@ -585,3 +625,45 @@ test('④ 凭据的值不出现在请求体里（签名里没有那个位置）�
       `用量缺席时 ${JSON.stringify(calls[0]?.usage)}（不是四个 0）`,
   )
 }
+
+// ── 凭据那两条路的判据 ────────────────────────────────────────────────────────
+//
+// 由头（第 5 批 · 疑点 4）：`authOf()`（按声明逐条试）与壳的 `credentialAt()`（自己读文件）原先
+// 是**两处实现**，而 `--credential <文件>` 走的是后一处、拼目标时又调前一处——于是"文件里那份
+// 读到了也没用"（实测）。现在壳那一层只把 `--credential` 当**覆盖**交给 `authWith()`，而覆盖
+// 换的只是"那个文件在哪"（环境变量那条路照旧最优先）。这两条断言落在**唯一那一处**上。
+test('③b 凭据：覆盖只换"文件在哪"，声明那份表按顺序试（值不印）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fugue-auth-'))
+  const at = join(dir, 'fake.key')
+  const value = 'sk-from-a-temp-file-0123456789'
+  writeFileSync(at, value + '\n')
+
+  const p = { id: 'probe', host: 'https://example.invalid', auth: [{ from: 'file' as const, path: '/nonexistent/never-here' }] }
+  // 一 · 覆盖把"文件在哪"换成给的那一个（`.trim()` 那一层照旧：文件里那个换行不算）。
+  assert.equal(authWith(p, at), value, '覆盖没有生效')
+  // 二 · 不给覆盖时按声明走：那一条读不到 → 拒，且话里带着那个路径。
+  assert.throws(
+    () => authWith(p, null),
+    (err: unknown) => err instanceof ModelDeclError && err.message.includes('/nonexistent/never-here'),
+    '声明里那个路径该出现在拒的话里',
+  )
+  // 三 · **顺序是承重的**：环境变量在表里排第一时，第二条那个"读不到"根本不该被走到
+  //     （判据是它成功了——若真去读那个文件，这一条会抛）。
+  const envName = 'FUGUE_AUTH_ORDER_PROBE'
+  const keep = process.env[envName]
+  process.env[envName] = 'sk-from-env'
+  try {
+    const chain = {
+      id: 'probe',
+      host: 'https://example.invalid',
+      auth: [{ from: 'env' as const, name: envName }, { from: 'file' as const, path: '/nonexistent/never-here' }],
+    }
+    assert.equal(authWith(chain, null), 'sk-from-env', '第一条取到了就该返回它')
+    // 四 · 覆盖只换文件那一格：**环境变量那条路照旧最优先**。
+    assert.equal(authWith(chain, at), 'sk-from-env', '覆盖把环境变量那条路挤掉了')
+  } finally {
+    if (keep === undefined) delete process.env[envName]
+    else process.env[envName] = keep
+  }
+  console.log(`凭据读数：覆盖取到 ${value.length} 个字符（值不印）· 覆盖只换文件那一格 · 环境变量最优先`)
+})
