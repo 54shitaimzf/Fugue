@@ -168,6 +168,11 @@ export const fetchTransport: Transport = {
     if (!res.ok) {
       // 上游回的是人读的错：**带上原文的前一截**，否则"400"这三个数字什么都说明不了。
       const said = await res.text().catch(() => '')
+      // **这一截也交出去**（`yield`，随后照旧抛）：它不进任何一次解析（上面已经非 2xx 了），
+      // 但 `teeBytes` 会把它攒进原始字节里——`--dump-wire` 的 `response.sse` 于是连"上游说凭据
+      // 不对"这句原话都在。原先抛之前一个字节都不 yield，那一趟的 dump 里响应是空的：
+      // 排障的人最想看的那一句恰好是唯一没落下来的那一句。
+      if (said !== '') yield new TextEncoder().encode(said)
       // 而排障要的是**那几个能拿去报单的值**（请求号 · 限流 · 状态码）：它们只在这一层拿得到，
       // 往上走就只剩一句话了。挂在错误上，`step` 那一层读它，填进已有的 `llm/call`。
       throw new HttpError(
@@ -238,7 +243,17 @@ function sha256Hex(b: Uint8Array): string {
   return createHash('sha256').update(b).digest('hex')
 }
 
-export function makeDumpCall(inner: CallModel, dir: string, transport: Transport = fetchTransport): CallModel {
+/**
+ * 包一层：`--dump-wire` 那一档的 `CallModel`。
+ *
+ * **它原先收一个 `inner: CallModel` 再包在外面，那个参数已经拿掉了**：这一层要落的盘需要完整的
+ * 那笔账（`raw` · `opened` · `closed`），而 `wireCall` 那一道出口只交 `{ call, failure }` 两栏
+ * ——包在它外面时 `raw` 读出来是 `undefined`，落盘当场报 "data argument must be ... Received
+ * undefined"。所以它自己起 `callModel`，**与产品那条路走同一个请求体、同一个适配器**，差别只在
+ * 传输那一层被包了一下（`spying`）。收一个用不上的参数比不收更坏：那会让"包在谁外面"看起来
+ * 还是可选的。
+ */
+export function makeDumpCall(dir: string, transport: Transport = fetchTransport): CallModel {
   let n = 0
   return (request, signal) => {
     /** 这一趟发出去的那一份请求体（`callModel` 拼的那一个对象，不是重拼的）。 */
@@ -250,6 +265,9 @@ export function makeDumpCall(inner: CallModel, dir: string, transport: Transport
         yield* transport.post(t, body, sig)
       },
     }
+    // **这一层的流是它自己起的那一条**（不是包在 `inner` 外面）：落盘要的是完整的那笔账
+    // ——`raw` · `opened` · `closed` 都在 `callModel` 的 `ModelStream` 上，而 `wireCall` 那一道
+    // 出口只交 `{ call, failure }` 两栏（它按 `CallModel` 的形状交账）。包在它外面就落不了盘。
     const stream = callModel(
       request.target,
       {
@@ -262,9 +280,89 @@ export function makeDumpCall(inner: CallModel, dir: string, transport: Transport
       signal,
     )
     const events: ModelEvent[] = []
-    let done = false
+    let flushed = false
     n += 1
     const mine = n
+
+    /**
+     * **把这一趟发出去与收回来的字节落盘。**幂等（落过一次就不再落），而且**成功与失败都走它**。
+     *
+     * 为什么不是"`ledger()` 被读的时候才落"：那样这一份取证物的存亡就挂在**调用方记不记得读账**
+     * 上，而失败那一档恰恰不读——`step()` 的 `catch` 只记 `failure` 与上游那几个事实，`ledger()`
+     * 一个字都不碰。于是"凭据不对"那一趟 `--dump-wire` 里**一个文件都没有**：最需要取证的那一次
+     * 恰好什么都不留（实测：401 那一趟的 dump 目录是空的）。
+     */
+    const flush = (): void => {
+      if (flushed) return
+      flushed = true
+      const l = stream.ledger()
+      const at = join(dir, `call-${String(mine).padStart(4, '0')}`)
+      mkdirSync(at, { recursive: true })
+      const body = sent[0] ?? new Uint8Array()
+      writeFileSync(join(at, 'request.json'), body)
+      writeFileSync(join(at, 'response.sse'), l.raw)
+      // **这一栏是给 `sha256sum -c` 用的**（上面的 README 就是这么写的），所以落的必须是
+      // **标准 sha256**——而 `hashOf()` 是产品内部那把 16 个字符的短指纹（`meta.json` 里那两栏
+      // 用它，与日志对得上）。实测：原先这里落的是短指纹，于是照着 README 敲
+      // `sha256sum -c request.sha256` 一律报"对不上"——**一份取证物自己说自己被改过**。
+      writeFileSync(join(at, 'request.sha256'), `${sha256Hex(body)}  request.json\n`)
+      writeFileSync(join(at, 'response.sha256'), `${sha256Hex(l.raw)}  response.sse\n`)
+      writeFileSync(
+        join(at, 'meta.json'),
+        JSON.stringify(
+          {
+            call: mine,
+            target: {
+              providerId: request.target.providerId,
+              host: request.target.host,
+              path: request.target.path,
+              model: request.target.model,
+              from: request.target.from,
+              wire: request.target.wire.name,
+            },
+            model: request.model,
+            requestBytes: body.length,
+            requestHash: hashOf(body),
+            responseBytes: l.raw.length,
+            responseHash: hashOf(l.raw),
+            zoneAHash: hashOf(request.prefix.zoneA),
+            zoneBHash: hashOf(request.prefix.zoneB),
+            zoneCHash: hashOf(request.prefix.zoneC),
+            tools: request.tools?.length ?? 0,
+            events: events.length,
+            opened: l.opened,
+            closed: l.closed,
+            stop: l.call?.stop ?? null,
+            failure: l.failure,
+            // **这一份是走完了还是断在半路**：`failure` 那一栏原先只说"为什么断"，读的人分不清
+            // "这一趟根本没跑起来"（请求就没发出去）与"跑到第 7 条断了"。这一栏把三档分开。
+            outcome: l.call !== null ? 'done' : l.failure !== null ? 'failed' : 'partial',
+          },
+          null,
+          2,
+        ) + '\n',
+      )
+      writeFileSync(
+        join(at, 'README'),
+        [
+          '这一份是一次调用发出去与收回来的原始字节。取值顺序：',
+          '',
+          '1. `sha256sum -c request.sha256` —— 发出去的那一串与当时那一串是不是同一份。',
+          '2. `meta.json` 的三条 `zone*Hash` 与同一步的 `prefix/assemble` 对：日志说"装配出来',
+          '   是什么"，这一份说"发出去的是什么"。**两者不是同一串**时才要往下查。',
+          '3. `meta.json` 的 `outcome` 与 `failure`：`done` 是走完的那一趟，`failed` 是断在半路',
+          '   （`response.sse` 里是断之前收到的字节），`partial` 是既没走完也没留下原因（少见）。',
+          '4. `response.sse` 是上游的原始字节：录一份夹具就是照它写的（`src/model/session.ts`）。',
+          '',
+          '**失败那一路也落**：这条命令的用处一半在"为什么没成"，所以 401/400 那一趟同样有',
+          '`request.json` 与 `response.sse`（后者就是上游那句原话）。',
+          '',
+          '**它不在工作区里**（落进 `<realRoot>` 会被下一轮的 fork 当成漂移）。看完就删。',
+          '',
+        ].join('\n'),
+      )
+    }
+
     const iter = (async function* (): AsyncGenerator<ModelEvent> {
       try {
         for await (const e of stream.events) {
@@ -272,73 +370,17 @@ export function makeDumpCall(inner: CallModel, dir: string, transport: Transport
           yield e
         }
       } finally {
-        done = true
+        // **迭代停下来就把这一趟落下来**（正常走完、抛出、或消费方提前走开都到这）：这一份
+        // 取证物不该依赖"调用方记得读账"——失败那一档的调用方恰好不读。
+        flush()
       }
     })()
+
     return {
       events: iter,
       ledger: () => {
-        const l = stream.ledger()
-        if (done) {
-          const at = join(dir, `call-${String(mine).padStart(4, '0')}`)
-          mkdirSync(at, { recursive: true })
-          const body = sent[0] ?? new Uint8Array()
-          writeFileSync(join(at, 'request.json'), body)
-          writeFileSync(join(at, 'response.sse'), l.raw)
-          // **这一栏是给 `sha256sum -c` 用的**（上面的 README 就是这么写的），所以落的必须是
-          // **标准 sha256**——而 `hashOf()` 是产品内部那把 16 个字符的短指纹（`meta.json` 里那两栏
-          // 用它，与日志对得上）。实测：原先这里落的是短指纹，于是照着 README 敲
-          // `sha256sum -c request.sha256` 一律报"对不上"——**一份取证物自己说自己被改过**。
-          writeFileSync(join(at, 'request.sha256'), `${sha256Hex(body)}  request.json\n`)
-          writeFileSync(join(at, 'response.sha256'), `${sha256Hex(l.raw)}  response.sse\n`)
-          writeFileSync(
-            join(at, 'meta.json'),
-            JSON.stringify(
-              {
-                call: mine,
-                target: {
-                  providerId: request.target.providerId,
-                  host: request.target.host,
-                  path: request.target.path,
-                  model: request.target.model,
-                  from: request.target.from,
-                  wire: request.target.wire.name,
-                },
-                model: request.model,
-                requestBytes: body.length,
-                requestHash: hashOf(body),
-                responseBytes: l.raw.length,
-                responseHash: hashOf(l.raw),
-                zoneAHash: hashOf(request.prefix.zoneA),
-                zoneBHash: hashOf(request.prefix.zoneB),
-                zoneCHash: hashOf(request.prefix.zoneC),
-                tools: request.tools?.length ?? 0,
-                events: events.length,
-                opened: l.opened,
-                closed: l.closed,
-                stop: l.call?.stop ?? null,
-                failure: l.failure,
-              },
-              null,
-              2,
-            ) + '\n',
-          )
-          writeFileSync(
-            join(at, 'README'),
-            [
-              '这一份是一次调用发出去与收回来的原始字节。取值顺序：',
-              '',
-              '1. `sha256sum -c request.sha256` —— 发出去的那一串与当时那一串是不是同一份。',
-              '2. `meta.json` 的三条 `zone*Hash` 与同一步的 `prefix/assemble` 对：日志说"装配出来',
-              '   是什么"，这一份说"发出去的是什么"。**两者不是同一串**时才要往下查。',
-              '3. `response.sse` 是上游的原始字节：录一份夹具就是照它写的（`src/model/session.ts`）。',
-              '',
-              '**它不在工作区里**（落进 `<realRoot>` 会被下一轮的 fork 当成漂移）。看完就删。',
-              '',
-            ].join('\n'),
-          )
-        }
-        return l
+        flush()
+        return stream.ledger()
       },
     }
   }

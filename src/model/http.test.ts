@@ -29,7 +29,6 @@ import { fixtureState } from './fixture-state.ts'
 import { CATALOG_STATES, catalog, catalogHash } from '../tools/catalog.ts'
 import type { Target, Transport } from './http.ts'
 import { callModel, fetchTransport, makeDumpCall, targetAt, targetOf, wireFactsOf } from './http.ts'
-import { wireCall } from '../runtime/step.ts'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -339,7 +338,7 @@ test('⑦ dump-wire：不带它时一个文件都不写；带它时那一串请�
 
   // 二 · 带 dump 的那一趟：**事件与基准逐条相同**
   const dir = tmpDir('fugue-wire-')
-  const dumping = makeDumpCall(wireCall, dir, fixtureTransport(f, 1))
+  const dumping = makeDumpCall(dir, fixtureTransport(f, 1))
   const reply = dumping(
     { target: t, adapter: { name: 'anthropic-messages' }, prefix, tools, model: t.model, call: f.call } as never,
     new AbortController().signal,
@@ -401,7 +400,7 @@ test('⑦b dump 的 *.sha256 是标准 sha256：sha256sum -c 对得上（短指�
   const t = fixtureTarget(f)
   const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
   const prefix = prefixOf(0)
-  const dumping = makeDumpCall(wireCall, dir, fixtureTransport(f, 1))
+  const dumping = makeDumpCall(dir, fixtureTransport(f, 1))
   const stream = dumping({ target: t, model: t.model, prefix, tools, call: f.call } as never, new AbortController().signal)
   for await (const e of stream.events) void e
   stream.ledger()
@@ -449,6 +448,74 @@ test('⑧ 非 2xx：状态码与白名单响应头读得出来，响应体照旧
     assert.equal('set-cookie' in said, false, '白名单之外的响应头也留下了')
     assert.match(String((caught as Error).message), /rate limited/, '响应体的前一截没带出来')
     console.log(`⑧ 读数：${JSON.stringify(said)}`)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
+// ── ⑦c **失败那一路也要落盘**（这一份取证物不该挂在"调用方记不记得读账"上）────────────
+//
+// 由头（线上实测）：`--live --credential <文件>` 那一趟打的是 401，而 `--dump-wire` 目录**是空的**
+// ——落盘原先只在 `ledger()` 被读的时候发生，而 `step()` 的失败那一档不读账（它的 `catch` 只记
+// `failure` 与上游那几个事实）。于是"为什么没成"这个最需要取证的问题，恰好是唯一没有取证物的。
+test('⑦c 上游回 401：事件那边抛，而 dump 里 request.json / response.sse / failure 三样都在', async () => {
+  const f = fixture('deepseek-chat-anthropic')
+  const t = { ...fixtureTarget(f), host: 'https://example.invalid', path: '/anthropic/v1/messages' }
+  const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
+  const prefix = prefixOf(0)
+  const dir = tmpDir('fugue-dump-fail-')
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response('{"error":{"message":"Authentication Fails, Your api key is invalid"}}', {
+      status: 401,
+      statusText: 'Unauthorized',
+      headers: { 'x-request-id': 'req-401-xyz' },
+    })) as typeof fetch
+  try {
+    const dumping = makeDumpCall(dir)
+    const reply = dumping(
+      { target: t, adapter: { name: 'anthropic-messages' }, prefix, tools, model: t.model, call: f.call } as never,
+      new AbortController().signal,
+    )
+    // **一次 `ledger()` 都不读**——失败那一档的调用方就是这么做的（`step()` 的 `catch`）。
+    let caught: unknown = null
+    try {
+      for await (const _ of reply.events) void _
+    } catch (err) {
+      caught = err
+    }
+    assert.ok(caught !== null, '401 那一趟居然没抛')
+
+    const at = join(dir, 'call-0001')
+    // 一 · 三件取证物都在（原先一件都没有：目录都不存在）。
+    for (const name of ['request.json', 'response.sse', 'meta.json', 'request.sha256', 'response.sha256', 'README']) {
+      assert.ok(existsSync(join(at, name)), `401 那一趟的 ${name} 没落下来`)
+    }
+    // 二 · 请求体是**真发出去的那一串**（夹具记的那一份），不是空文件。
+    const sent = readFileSync(join(at, 'request.json'))
+    assert.equal(hashOf(sent), f.bodyHash, `dump 下来的请求体不是发出去的那一串：${hashOf(sent)}`)
+    // 三 · `response.sse` 里就是**上游那句原话**（这一截原先在抛之前被丢掉）。
+    const back = readFileSync(join(at, 'response.sse'), 'utf8')
+    assert.match(back, /api key is invalid/, `response.sse 里没有上游那句话：${JSON.stringify(back)}`)
+    // 四 · `meta.json` 说得清"这一趟断了、为什么断"，而三区指纹照旧与装配的对得上。
+    const meta = JSON.parse(readFileSync(join(at, 'meta.json'), 'utf8')) as Record<string, unknown>
+    assert.equal(meta['outcome'], 'failed', `outcome 那一栏是 ${String(meta['outcome'])}`)
+    assert.match(String(meta['failure']), /401/, 'failure 那一栏没写清为什么断')
+    assert.equal(meta['stop'], null, '断在半路的那一趟不该有收尾原因')
+    assert.equal(meta['zoneAHash'], hashOf(prefix.zoneA))
+    assert.equal(meta['zoneBHash'], hashOf(prefix.zoneB))
+    assert.equal(meta['zoneCHash'], hashOf(prefix.zoneC))
+    assert.equal(meta['requestBytes'], sent.length)
+    assert.equal(meta['responseBytes'], Buffer.byteLength(back, 'utf8'))
+    // 五 · 那一份目录照旧 `sha256sum -c` 对得上（失败那一路的标准不能比成功那一路低）。
+    const shaOf = (name: string): string => readFileSync(join(at, name), 'utf8').trim().split(/\s+/)[0] ?? ''
+    const real = (name: string): string => createHash('sha256').update(readFileSync(join(at, name))).digest('hex')
+    assert.equal(shaOf('request.sha256'), real('request.json'))
+    assert.equal(shaOf('response.sha256'), real('response.sse'))
+    console.log(
+      `⑦c 读数：401 那一趟落盘 6 个文件 · request.json ${sent.length} 字节 · response.sse ${Buffer.byteLength(back, 'utf8')} 字节` +
+        `（上游原话在里面）· outcome=${String(meta['outcome'])}`,
+    )
   } finally {
     globalThis.fetch = realFetch
   }

@@ -1593,7 +1593,11 @@ export function driverSupport(o: {
     decl,
     // **要它才包这一层**：不给 `--dump-wire` 时交出去的就是 `wireCall` 本身——多一层包装也许多
     // 一次调用开销，而"用户不用 debug 就不为它付成本"这条要落到结构上，不是靠自觉。
-    call: o.dumpDir === undefined ? wireCall : makeDumpCall(wireCall, o.dumpDir),
+    // **这一档的签名是 `(目录)`**：`makeDumpCall` 自己起 `callModel`（它要的是完整的那笔账——
+    // `raw` · `opened` · `closed` 都在 `ModelStream` 上，而 `wireCall` 那一道出口只交两栏）。
+    // 传 `wireCall` 进去的话第一个参数会落成"目录"，而那是函数——真正的失败长这样：
+    // `TypeError: The "path" argument must be of type string. Received function wireCall`。
+    call: o.dumpDir === undefined ? wireCall : makeDumpCall(o.dumpDir),
     tools,
   }
 }
