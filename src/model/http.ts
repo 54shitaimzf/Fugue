@@ -16,8 +16,57 @@ import { checkEvents } from './contract.ts'
 import { hashOf } from '../assemble/assemble.ts'
 import type { WireAdapter } from './wire/stream.ts'
 import { concatBytes, parseStream } from './wire/stream.ts'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { wireNamed } from './wire/registry.ts'
 import { wireHeader } from './wire/headers.ts'
+
+/**
+ * 上游那几句"能拿去报单"的原话（状态码 · 请求号 · 限流那几条）。
+ *
+ * **它是一个可选的一栏，不是新的一族事件**：`HttpError` 与 `HarnessError` 各带一栏，而
+ * `llm/call` 那一条照它填 `status` 与 `headers`。成功那一路这两栏是 `null`——**默认档一个
+ * 字节都不多**。
+ *
+ * 它住这一份（`B3` 的传输）而不是 `runtime`：产生它的是这一层，消费它的是 `runtime` 的日志，
+ * 方向只有一条。反过来放会让 `http` 去 import `step`，而 `step` 已经 import 了 `http`。
+ */
+export interface WireFacts {
+  readonly [name: string]: string | number | undefined
+}
+
+/** 一个错误对象上挂着的那些事实（**按形状读**，不按类读：转挂一次之后类名会变，那一栏不会）。 */
+export function wireFactsOf(err: unknown): Readonly<Record<string, string | number>> | null {
+  const f = (err as { facts?: Record<string, string | number> } | null)?.facts
+  return f === undefined ? null : f
+}
+
+/**
+ * 响应头上那几条**能拿去报单**的（其余一概不留）。
+ *
+ * 为什么是白名单而不是整份头：头里有 `set-cookie` 一类不该进日志的东西，而"排障要哪几个"是
+ * 一个**短名单**——短名单写下来，才不会因为某天多了一个头就把日志长胖。要加就加在这张表里。
+ */
+export const KEPT_HEADERS: readonly string[] = [
+  'x-request-id',
+  'request-id',
+  'retry-after',
+  'x-ratelimit-limit',
+  'x-ratelimit-remaining',
+  'x-ratelimit-reset',
+]
+
+/** 一张响应头 → 那一栏（没命中白名单的丢掉；一条都没有时给 `null`）。 */
+export function keptHeaders(h: Headers | Readonly<Record<string, string>>): Record<string, string> | null {
+  const get = (name: string): string | null =>
+    typeof (h as Headers).get === 'function' ? (h as Headers).get(name) : ((h as Record<string, string>)[name] ?? null)
+  const out: Record<string, string> = {}
+  for (const name of KEPT_HEADERS) {
+    const v = get(name)
+    if (v !== null && v !== '') out[name] = v
+  }
+  return Object.keys(out).length === 0 ? null : out
+}
 
 /** 一个已经定下来的目标：谁（提供方）· 走哪条线 · 那边叫它什么 · 这一条路的头。 */
 export interface Target {
@@ -77,9 +126,12 @@ export function teeBytes(inner: Transport, sink: Uint8Array[]): Transport {
 /** 上游不高兴：状态码不在 2xx。**它不是 `WireError`**——那条线协议的字节还没开始解析。 */
 export class HttpError extends Error {
   readonly status: number
-  constructor(status: number, message: string) {
+  /** 上游那几句原话（可选）。**读它的是 `step` 那一层**（填进已有的 `llm/call`）。 */
+  readonly facts?: WireFacts
+  constructor(status: number, message: string, facts?: WireFacts) {
     super(message)
     this.status = status
+    if (facts !== undefined) this.facts = facts
   }
 }
 
@@ -98,10 +150,19 @@ export const fetchTransport: Transport = {
     if (!res.ok) {
       // 上游回的是人读的错：**带上原文的前一截**，否则"400"这三个数字什么都说明不了。
       const said = await res.text().catch(() => '')
-      throw new HttpError(res.status, `${t.host}${t.path} 回了 ${res.status} ${res.statusText}：${said.slice(0, 400)}`)
+      // 而排障要的是**那几个能拿去报单的值**（请求号 · 限流 · 状态码）：它们只在这一层拿得到，
+      // 往上走就只剩一句话了。挂在错误上，`step` 那一层读它，填进已有的 `llm/call`。
+      throw new HttpError(
+        res.status,
+        `${t.host}${t.path} 回了 ${res.status} ${res.statusText}：${said.slice(0, 400)}`,
+        { status: res.status, ...(keptHeaders(res.headers) ?? {}) },
+      )
     }
     if (res.body === null) {
-      throw new HttpError(res.status, `${t.host}${t.path} 回了空 body：流式请求要的是一条 SSE 流`)
+      throw new HttpError(res.status, `${t.host}${t.path} 回了空 body：流式请求要的是一条 SSE 流`, {
+        status: res.status,
+        ...(keptHeaders(res.headers) ?? {}),
+      })
     }
     for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) yield chunk
   },
@@ -129,6 +190,131 @@ export interface ModelStream {
   events: AsyncIterable<ModelEvent>
   /** 迭代完了（或抛了）之后才有值；**还在跑的时候问它是错的**。 */
   ledger(): CallLedger
+}
+
+/**
+ * **把发出去与收回来的字节原样落盘**（`--dump-wire <目录>`）。**默认不落**——不给目录时这一层
+ * 根本不存在（它是包在 `wireCall` 外面的一层，不是产品路径上的一段）。
+ *
+ * 为什么要有它：`prefix-hit-rate` 为 0 的时候，日志只能告诉你"没命中"，**证不了"我们发的字节
+ * 与装配出来的字节是同一串"**——那是本地用夹具量过的性质（`wire.test.ts` 的 ②b/②c 与
+ * `probe-prefix` 第七节），而真档里没有对应的取证物。这个目录就是那份取证物。
+ *
+ * **它不改发出去的字节**：请求体照旧由 `callModel` 拼一次，这一层只是把**同一个 `Uint8Array`**
+ * 写一份到盘上——所以"带 dump 与不带 dump 的请求逐字节相同"是结构上成立的，而 `http.test.ts`
+ * 有一条断言盯着它。
+ *
+ * 一次调用一个子目录（`call-0001/` … 按发生次序编号）：
+ *
+ *   `request.json`   发出去的请求体
+ *   `response.sse`   收回来的原始字节（上游怎么切块就怎么攒）
+ *   `meta.json`      目标 · 三区指纹 · 指纹与字节数 · 事件条数 · 失败那句话
+ *   `*.sha256`       两条 `sha256`，**给人用 `sha256sum -c` 对账**
+ *   `README`         这一份取来干什么、怎么与日志对
+ *
+ * **落哪儿由调用方定，而它必须在工作区之外**：这一层只管写；"不许落进 `<realRoot>`"那条由
+ * CLI 拦（落进去会被下一轮的 `fork` 当成漂移——PLAN § 5.8.a 那条现场更正）。
+ */
+export function makeDumpCall(inner: CallModel, dir: string, transport: Transport = fetchTransport): CallModel {
+  let n = 0
+  return (request, signal) => {
+    /** 这一趟发出去的那一份请求体（`callModel` 拼的那一个对象，不是重拼的）。 */
+    const sent: Uint8Array[] = []
+    // 拦在**传输**那一层：`callModel` 拿到的是一份包过的传输，回来的字节既往下走、也落盘。
+    const spying: Transport = {
+      async *post(t, body, sig) {
+        sent.push(body)
+        yield* transport.post(t, body, sig)
+      },
+    }
+    const stream = callModel(
+      request.target,
+      {
+        model: request.model,
+        zones: { A: request.prefix.zoneA, B: request.prefix.zoneB, C: request.prefix.zoneC },
+        tools: request.tools,
+        ...(request.call === undefined ? {} : { call: request.call }),
+      },
+      spying,
+      signal,
+    )
+    const events: ModelEvent[] = []
+    let done = false
+    n += 1
+    const mine = n
+    const iter = (async function* (): AsyncGenerator<ModelEvent> {
+      try {
+        for await (const e of stream.events) {
+          events.push(e)
+          yield e
+        }
+      } finally {
+        done = true
+      }
+    })()
+    return {
+      events: iter,
+      ledger: () => {
+        const l = stream.ledger()
+        if (done) {
+          const at = join(dir, `call-${String(mine).padStart(4, '0')}`)
+          mkdirSync(at, { recursive: true })
+          const body = sent[0] ?? new Uint8Array()
+          writeFileSync(join(at, 'request.json'), body)
+          writeFileSync(join(at, 'response.sse'), l.raw)
+          writeFileSync(join(at, 'request.sha256'), `${hashOf(body)}  request.json\n`)
+          writeFileSync(join(at, 'response.sha256'), `${hashOf(l.raw)}  response.sse\n`)
+          writeFileSync(
+            join(at, 'meta.json'),
+            JSON.stringify(
+              {
+                call: mine,
+                target: {
+                  providerId: request.target.providerId,
+                  host: request.target.host,
+                  path: request.target.path,
+                  model: request.target.model,
+                  from: request.target.from,
+                  wire: request.target.wire.name,
+                },
+                model: request.model,
+                requestBytes: body.length,
+                requestHash: hashOf(body),
+                responseBytes: l.raw.length,
+                responseHash: hashOf(l.raw),
+                zoneAHash: hashOf(request.prefix.zoneA),
+                zoneBHash: hashOf(request.prefix.zoneB),
+                zoneCHash: hashOf(request.prefix.zoneC),
+                tools: request.tools?.length ?? 0,
+                events: events.length,
+                opened: l.opened,
+                closed: l.closed,
+                stop: l.call?.stop ?? null,
+                failure: l.failure,
+              },
+              null,
+              2,
+            ) + '\n',
+          )
+          writeFileSync(
+            join(at, 'README'),
+            [
+              '这一份是一次调用发出去与收回来的原始字节。取值顺序：',
+              '',
+              '1. `sha256sum -c request.sha256` —— 发出去的那一串与当时那一串是不是同一份。',
+              '2. `meta.json` 的三条 `zone*Hash` 与同一步的 `prefix/assemble` 对：日志说"装配出来',
+              '   是什么"，这一份说"发出去的是什么"。**两者不是同一串**时才要往下查。',
+              '3. `response.sse` 是上游的原始字节：录一份夹具就是照它写的（`src/model/session.ts`）。',
+              '',
+              '**它不在工作区里**（落进 `<realRoot>` 会被下一轮的 fork 当成漂移）。看完就删。',
+              '',
+            ].join('\n'),
+          )
+        }
+        return l
+      },
+    }
+  }
 }
 
 /**
@@ -168,6 +354,14 @@ export function callModel(
       call = checkEvents(seen)
     } catch (err) {
       failure = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+      // 事实**转挂到一个普通错误上**（`wireFactsOf` 按形状读，转挂之后照样读得到）：抛出去的那
+      // 一个对象 `step` 接得住，于是"为什么失败"不只是 stderr 上的一句话。
+      const said = wireFactsOf(err)
+      if (said !== null) {
+        const wrapped = new Error(failure)
+        ;(wrapped as { facts?: Readonly<Record<string, string | number>> }).facts = said
+        throw wrapped
+      }
       throw err
     } finally {
       done = true

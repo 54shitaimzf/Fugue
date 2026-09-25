@@ -7,7 +7,7 @@
 // `deps.stub is not a function`，而 294 条单测全绿），所以"能不能跑"要有一条自己的断言。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
@@ -37,6 +37,14 @@ function fugueStdin(root: string, input: string, ...args: string[]): Run {
     maxBuffer: 1 << 26,
   })
   return { code: r.status ?? 1, stdout: r.stdout, stderr: r.stderr }
+}
+
+/** 一份在视图**之外**的源文件：`write --from` 读的是宿主路径，不是视图路径。 */
+function srcOf(): string {
+  const dir = tmpDir('fugue-chain-src-')
+  const at = join(dir, 'bottom.txt')
+  writeFileSync(at, '底。\n')
+  return at
 }
 
 function tmpRoot(): string {
@@ -221,4 +229,92 @@ test('命令行那一头的负对照：驱动不在的那一档当场报出来�
   const usage = fugue(root, 'assemble')
   assert.equal(usage.code, 2, `用法错该退 2，实际 ${usage.code}`)
   console.log(`负对照读数：不认识的协议名 → ${bad.code} · 缺参数 → ${usage.code}`)
+})
+
+test('零成本：给 --dump-wire 而这一档不接真驱动时，落盘那一层根本不存在（日志逐条相同）', () => {
+  // **这一条是"用户不用 debug 就不为它付成本"的判据。** 两趟完整的打桩轮次（各在自己的 root 里，
+  // 所以分支名不冲突）：一趟不给 `--dump-wire`，一趟给。两趟的 `round run --json` 除开各自的
+  // 路径之外逐字段相同，而那个 dump 目录里**一个文件都没有**——因为那一层只在 `--live` 下拼。
+  const setup = (root: string): void => {
+    assert.equal(fugue(root, 'write', 'README.md', '--from', srcOf()).code, 0)
+    assert.equal(fugue(root, 'commit', '-m', '底').code, 0)
+    assert.equal(fugue(root, 'config', 'set', 'actions.ok', JSON.stringify({ argv: ['/bin/sh', '-c', 'true'], outputs: [] })).code, 0)
+    assert.equal(
+      fugue(root, 'config', 'set', 'round.assertions', JSON.stringify([{ name: '总是过', action: 'ok', argv: ['/bin/sh', '-c', 'true'] }])).code,
+      0,
+    )
+    assert.equal(
+      fugue(
+        root,
+        'config',
+        'set',
+        'round.split',
+        JSON.stringify([
+          { goal: '写一份 a.ts', ownedPaths: ['a.ts'], deliverables: [{ path: 'a.ts', form: '一份文件' }], assertions: [{ name: '总是过', action: 'ok' }] },
+        ]),
+      ).code,
+      0,
+    )
+  }
+  const bare = tmpRoot()
+  const withDump = tmpRoot()
+  setup(bare)
+  setup(withDump)
+  const dir = tmpDir('fugue-wire-cli-')
+
+  const a = fugue(bare, '--json', 'round', 'run', '写一份 a.ts', '--report', '--metrics')
+  assert.equal(a.code, 0, a.stderr)
+  const b = fugue(withDump, '--json', 'round', 'run', '写一份 a.ts', '--report', '--metrics', '--dump-wire', dir)
+  assert.equal(b.code, 0, b.stderr)
+
+  // 两趟的读数逐字段相同（`base` 是各自那个底，所以它是唯一该不同的那一栏）。
+  const ja = JSON.parse(a.stdout) as Record<string, unknown>
+  const jb = JSON.parse(b.stdout) as Record<string, unknown>
+  for (const k of Object.keys(ja)) {
+    if (k === 'base') continue
+    assert.deepEqual(jb[k], ja[k], `加了 --dump-wire 之后 \`${k}\` 变了`)
+  }
+  assert.deepEqual(readdirSync(dir), [], `那一层不该被拼出来，却落了：${readdirSync(dir).join(' ')}`)
+  assert.equal((jb['metrics'] as unknown[]).length, 8, '八元指标该照旧八条')
+  console.log(
+    `零成本读数：两趟 round run 的读数逐字段相同（除 base）· dump 目录 ${readdirSync(dir).length} 个文件 · ` +
+      `指标 ${(jb['metrics'] as unknown[]).length} 条 · 日志 ${(jb['metrics'] as { metric: string }[]).length ? '有' : '无'}读数`,
+  )
+})
+
+test('--dump-wire 的守卫：落在工作区里当场拒（并给出两条路）', () => {
+  const root = tmpRoot()
+  const outside = tmpDir('fugue-chain-src-')
+  const src = join(outside, 'bottom.txt')
+  writeFileSync(src, '底。\n')
+  assert.equal(fugue(root, 'write', 'README.md', '--from', src).code, 0)
+  assert.equal(fugue(root, 'commit', '-m', '底').code, 0)
+  // 拆分草案要先在配置里（**落点那一条守卫排在凭据之前**，所以这一趟要走到守卫那一行）。
+  assert.equal(fugue(root, 'config', 'set', 'actions.ok', JSON.stringify({ argv: ['/bin/sh', '-c', 'true'], outputs: [] })).code, 0)
+  assert.equal(
+    fugue(root, 'config', 'set', 'round.assertions', JSON.stringify([{ name: '总是过', action: 'ok', argv: ['/bin/sh', '-c', 'true'] }])).code,
+    0,
+  )
+  assert.equal(
+    fugue(
+      root,
+      'config',
+      'set',
+      'round.split',
+      JSON.stringify([
+        { goal: '写一份 a.ts', ownedPaths: ['a.ts'], deliverables: [{ path: 'a.ts', form: '一份文件' }], assertions: [{ name: '总是过', action: 'ok' }] },
+      ]),
+    ).code,
+    0,
+  )
+  // 落在 <root> 里面 → 拒，并指出两条路（物化的底就是真实工作树，落进去会被当成漂移）。
+  const bad = fugue(root, 'round', 'run', '写一份 a.ts', '--live', '--dump-wire', join(root, 'wire'))
+  assert.equal(bad.code, 1, `该退 1，实际 ${bad.code}`)
+  assert.match(bad.stderr, /不许落在工作区里/)
+  assert.match(bad.stderr, /换个工作区之外的目录/)
+  // 而工作区之外的那一份走到"凭据读不到"那一档（**没有真出网**）。
+  const ok = fugue(root, 'round', 'run', '写一份 a.ts', '--live', '--dump-wire', join(outside, 'wire'))
+  assert.equal(ok.code, 1, `该退 1（凭据不在），实际 ${ok.code}`)
+  assert.match(ok.stderr, /凭据不在/)
+  console.log(`守卫读数：工作区里 → "${bad.stderr.split('\n')[0]}" · 工作区外 → "${ok.stderr.split('\n')[0].slice(0, 60)}"`)
 })

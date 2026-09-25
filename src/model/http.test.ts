@@ -12,6 +12,8 @@
 //   ③ 同一份夹具回放两次，请求体逐字节相同；连回放两次得到同一串事件
 //   ④ 上游**中途掐断** → 报错并记事件，**不静默重试**、不把半个响应当完整
 //   ⑤ 夹具档不取凭据（`B0` 的断言 ④ 在这一层上的落点）
+//   ⑦ `--dump-wire` 那一层：**带它跑与不带它跑，发出去的字节逐字节相同**（默认档一个字节都不多）
+//   ⑧ 上游非 2xx：请求号与限流那几条**留在错误上**（白名单之外的不留）
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
@@ -26,9 +28,13 @@ import type { AgentCoord } from '../assemble/sources.ts'
 import { fixtureState } from './fixture-state.ts'
 import { CATALOG_STATES, catalog, catalogHash } from '../tools/catalog.ts'
 import type { Target, Transport } from './http.ts'
-import { callModel, fetchTransport, targetOf } from './http.ts'
+import { callModel, fetchTransport, makeDumpCall, targetOf, wireFactsOf } from './http.ts'
+import { wireCall } from '../runtime/step.ts'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpDir } from '../../test/helpers/tmp.ts'
 import type { Fixture } from './session.ts'
-import { canonicalOf, fixtureTarget, readFixture, recordOf, replayOf, requestFrom, requestOf } from './session.ts'
+import { canonicalOf, fixtureTarget, fixtureTransport, readFixture, recordOf, replayOf, requestFrom, requestOf } from './session.ts'
 
 const FIXTURES = fileURLToPath(new URL('./fixtures/', import.meta.url))
 const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: ['deliver/agent-1/'] }
@@ -270,4 +276,99 @@ test('⑤ 夹具档不取凭据：`targetOf` 会去取，夹具档那一份不�
   const t = fixtureTarget(f)
   assert.deepEqual(t.headers, {})
   assert.equal(hashOf(t.wire.bytes(requestFrom(f))), f.bodyHash)
+})
+
+// ── ⑦ `--dump-wire`：默认不落，而落的时候发出去的字节一模一样 ────────────────────
+
+test('⑦ dump-wire：不带它时一个文件都不写；带它时那一串请求体与夹具记的逐字节相同', async () => {
+  const f = fixture('deepseek-chat-anthropic')
+  const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
+  const prefix = prefixOf(0)
+  const t = fixtureTarget(f)
+  const req = { model: t.model, zones: { A: prefix.zoneA, B: prefix.zoneB, C: prefix.zoneC }, tools, call: f.call }
+
+  // 一 · 不带 dump 的那一趟（基准）
+  const bareEvents = await drain(callModel(t, req, fixtureTransport(f, 1)).events)
+
+  // 二 · 带 dump 的那一趟：**事件与基准逐条相同**
+  const dir = tmpDir('fugue-wire-')
+  const dumping = makeDumpCall(wireCall, dir, fixtureTransport(f, 1))
+  const reply = dumping(
+    { target: t, adapter: { name: 'anthropic-messages' }, prefix, tools, model: t.model, call: f.call } as never,
+    new AbortController().signal,
+  )
+  const dumped = await drain(reply.events)
+  reply.ledger()
+  assert.deepEqual(dumped, bareEvents, '带 dump 那一趟的事件与不带那一趟不同')
+
+  // 三 · 落下来的东西：六件，而 `request.json` 就是夹具记的那一串字节
+  const at = join(dir, 'call-0001')
+  for (const name of ['request.json', 'response.sse', 'meta.json', 'request.sha256', 'response.sha256', 'README']) {
+    assert.ok(existsSync(join(at, name)), `${name} 没落下来`)
+  }
+  const sent = readFileSync(join(at, 'request.json'))
+  assert.equal(hashOf(sent), f.bodyHash, `dump 下来的请求体不是夹具记的那一串：${hashOf(sent)} vs ${f.bodyHash}`)
+  assert.equal(sent.length, f.bytes)
+  const meta = JSON.parse(readFileSync(join(at, 'meta.json'), 'utf8')) as {
+    requestHash: string
+    zoneAHash: string
+    zoneBHash: string
+    zoneCHash: string
+    events: number
+    stop: string | null
+  }
+  assert.equal(meta.requestHash, f.bodyHash)
+  assert.equal(meta.zoneAHash, hashOf(prefix.zoneA), 'meta 里的 A 区指纹与装配的不是同一个')
+  assert.equal(meta.zoneBHash, hashOf(prefix.zoneB))
+  assert.equal(meta.zoneCHash, hashOf(prefix.zoneC))
+  assert.equal(meta.events, dumped.length)
+  assert.equal(meta.stop, 'tool-calls')
+  assert.equal(
+    readFileSync(join(at, 'response.sha256'), 'utf8').trim().split(/\s+/)[0],
+    hashOf(readFileSync(join(at, 'response.sse'))),
+  )
+
+  // 四 · **目录没给这一层就不存在**：再跑一趟不带 dump 的，那个目录里一个新文件都没有。
+  const before = readdirSync(at).sort().join(' ')
+  const again = await drain(callModel(t, req, fixtureTransport(f, 1)).events)
+  assert.deepEqual(again, bareEvents)
+  assert.equal(readdirSync(at).sort().join(' '), before, '不带 dump 的那一趟往 dump 目录里写了东西')
+  console.log(
+    `⑦ 读数：请求体 ${sent.length} 字节（${hashOf(sent)}）· 事件 ${dumped.length} 条 · 落盘 6 个文件 · ` +
+      `不带 dump 那一趟 0 个新文件`,
+  )
+})
+
+// ── ⑧ 上游非 2xx：原话留在错误上（白名单之外的不留）─────────────────────────────
+
+test('⑧ 非 2xx：状态码与白名单响应头读得出来，响应体照旧带上前一截', async () => {
+  const t = { ...fixtureTarget(fixture('deepseek-chat-anthropic')), host: 'https://example.invalid', path: '/v1/messages' }
+  const r = { model: 'deepseek-chat', zones: { A: new Uint8Array(), B: new Uint8Array(), C: new Uint8Array() }, call: {} }
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response('{"error":{"message":"rate limited"}}', {
+      status: 429,
+      statusText: 'Too Many Requests',
+      headers: { 'x-request-id': 'req-abc-123', 'retry-after': '7', 'set-cookie': 'nope=1' },
+    })) as typeof fetch
+  try {
+    // 没有那几样时读出来是 `null`——**不编一个**。
+    assert.equal(wireFactsOf({ facts: undefined }), null)
+    let caught: unknown = null
+    try {
+      for await (const _ of callModel(t, r as never).events) void _
+    } catch (err) {
+      caught = err
+    }
+    const said = wireFactsOf(caught)
+    assert.ok(said !== null, '上游的原话没留在错误上')
+    assert.equal(said['status'], 429)
+    assert.equal(said['x-request-id'], 'req-abc-123')
+    assert.equal(said['retry-after'], '7')
+    assert.equal('set-cookie' in said, false, '白名单之外的响应头也留下了')
+    assert.match(String((caught as Error).message), /rate limited/, '响应体的前一截没带出来')
+    console.log(`⑧ 读数：${JSON.stringify(said)}`)
+  } finally {
+    globalThis.fetch = realFetch
+  }
 })

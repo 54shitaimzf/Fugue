@@ -85,6 +85,7 @@ import { RoundRunError, materializeCommit, runRound } from '../round/execute.ts'
 import type { DriverSupport, Stub } from '../round/execute.ts'
 import { realDriver, stubDriver } from '../round/driver.ts'
 import { wireCall } from '../runtime/step.ts'
+import { makeDumpCall } from '../model/http.ts'
 import type { AgentHandle } from '../runtime/step.ts'
 import { targetOf } from '../model/http.ts'
 import { modelDeclOf } from '../model/contract.ts'
@@ -200,6 +201,11 @@ const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [a
                              --report     印打回那三个数（从日志重算，不采集）
                              --metrics    印八元指标（**每个指标的分子与分母一起印**，从日志重算）
                              --materialize 起头时把 N 棵树也铺出来（缺省不铺）
+                             --dump-wire <目录>  **把每一次调用发出去与收回来的字节原样落盘**
+                             （call-0001/request.json · response.sse · meta.json · 两条
+                             sha256）。默认不落——不给这个开关时那一层根本不存在，一个字节
+                             都不写、请求体也一个字节不变。**目录必须在工作区之外**：落进
+                             <root> 会被下一轮的 fork 当成漂移（§ 8.14）。看完就删。
                              --soft-merge-gate 合并前那一档预检的严宽拉平到 Planning 那一档
                              （缺省是报出即拒——合并不可逆）；真冲突仍由折叠当场报出，不静默
                              --poke <路径>  **在折叠之后、物化之前手改一条路径**（模拟轮次中
@@ -250,6 +256,9 @@ interface Parsed {
 const VALUED: ReadonlySet<string> = new Set([
   'root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro', 'step', 'mode', 'against',
   'split', 'fail', 'retry', 'poke', 'poke-exact',
+  // `--dump-wire <目录>`：**它取一个值**。不列在这里的话 `--dump-wire /tmp/x` 里的 `/tmp/x`
+  // 会被当成位置参数，而开关本身成了 `true`——于是要么误报用法错，要么把目录名当成轮次目标。
+  'dump-wire', 'credential',
 ])
 
 function parseArgv(argv: readonly string[]): Parsed {
@@ -737,6 +746,14 @@ async function roundRun(
   // **`--live`：接真驱动**（`B7.5`）。不给就是打桩那一档——它一条断言都不需要凭据。
   const live = flags.has('live')
   const credentialPath = typeof flags.get('credential') === 'string' ? (flags.get('credential') as string) : CREDENTIAL_FILE
+  // `--dump-wire <目录>`：**要它才落**（不给时 `dumpDir` 是 `undefined`，那一层不拼）。
+  const dumpFlag = flags.get('dump-wire')
+  if (dumpFlag === true) return usageFail('--dump-wire 要一个目录：--dump-wire /tmp/fugue-wire')
+  // **两处守卫都在这里先过**：落点（`--dump-wire` 不许在工作区里）与凭据。顺序是有意的——
+  // 落点那一条是**这一趟的入场条件**（不成立就不该开工），而凭据那一条只在真要出网时才要；
+  // 原先它们挤在 deps 那个对象字面量里求值，于是"落在工作区里"会被"凭据不在"抢答（实测）。
+  const dumpDir = typeof dumpFlag === 'string' ? dumpWireDir(root, resolve(dumpFlag)) : undefined
+  const credential = live ? credentialAt(credentialPath) : null
   // **一个 agent 一个日志口、由调用方持有**（`hold.ts` 那道栅栏：同一个 writer 开第二个口就是
   // "已经有写者"）。这一份记着开过的口，轮次跑完一起关（`closeAgentLogs`）。
   const agentLogs = new Map<AgentId, LogHandle>()
@@ -819,7 +836,9 @@ async function roundRun(
       // 一层（S7 定下的那个形状不动），真驱动那一档走 `realDriver` + `DriverSupport`。凭据那一
       // 步只在这一档走（不打 `--live` 的话 `driverSupport` 一次都不被调）。
       stub: stubDriver(stub),
-      ...(live ? { driver: driverSupport({ root, doc, credential: credentialAt(credentialPath) }) } : {}),
+      ...(live && credential !== null
+        ? { driver: driverSupport({ root, doc, credential, ...(dumpDir === undefined ? {} : { dumpDir }) }) }
+        : {}),
       specsOf,
       retriesLeft,
       softMergeGate,
@@ -1478,7 +1497,13 @@ function credentialAt(path: string): string {
  * 一个目标，出网那一刻用的就是它。头的名字按**这一条线协议**给（`wireHeader`）——两条线各一套
  * 头，那一栏的差别不是这里的分岔。
  */
-function driverSupport(o: { readonly root: string; readonly doc: ConfigDoc; readonly credential: string }): DriverSupport {
+function driverSupport(o: {
+  readonly root: string
+  readonly doc: ConfigDoc
+  readonly credential: string
+  /** `--dump-wire` 那一档的落点（**已经在工作区之外**——守卫在 `dumpWireDir`）。不给就不落。 */
+  readonly dumpDir?: string
+}): DriverSupport {
   const decl = modelDeclOf(DEFAULT_MODEL)
   const tools = publishedCatalog()
   const states = new Map<string, AssembleState>()
@@ -1533,9 +1558,33 @@ function driverSupport(o: { readonly root: string; readonly doc: ConfigDoc; read
     state: (a, c) => stateFor(String(a), c),
     handle: (a, c) => handleFor(String(a), c),
     decl,
-    call: wireCall,
+    // **要它才包这一层**：不给 `--dump-wire` 时交出去的就是 `wireCall` 本身——多一层包装也许多
+    // 一次调用开销，而"用户不用 debug 就不为它付成本"这条要落到结构上，不是靠自觉。
+    call: o.dumpDir === undefined ? wireCall : makeDumpCall(wireCall, o.dumpDir),
     tools,
   }
+}
+
+/**
+ * `--dump-wire` 那个目录的守卫：**必须在工作区之外**。
+ *
+ * 为什么不是"随便落"：物化的底是**真实工作树**（§ 8.4），落进 `<root>` 里的字节会被下一轮的
+ * `fork` 当成漂移（`A10` 那三方比法的第一条线），于是一趟排障会把轮次本身弄脏——而那时候人正
+ * 在查别的问题。所以这一条按"失败要指路"给两条出路（约定 § 四 · 架构 § 24 纪律 5）。
+ */
+function dumpWireDir(root: string, dir: string): string {
+  const inRoot = relative(resolve(root), dir)
+  const inside = inRoot === '' || (!inRoot.startsWith('..') && !isAbsolute(inRoot))
+  if (inside) {
+    throw new RoundRunError(
+      '--dump-wire',
+      `不许落在工作区里：${dir}\n` +
+        `  这一份落在 <root>（${resolve(root)}）里面，而物化的底就是真实工作树——` +
+        `下一轮的 fork 会把它当成漂移。\n` +
+        `  两条路：换个工作区之外的目录（例如 /tmp/fugue-wire），或者这一趟不给 --dump-wire。`,
+    )
+  }
+  return dir
 }
 
 /**
@@ -1901,6 +1950,11 @@ async function runCmd(
       step,
       action: name,
       argv0: binding.argv[0],
+      // **完整 argv 与 cwd**：这一栏是绕行率的数据源（`METRIC_HOW` 里那张模式表按 `argv` 判），
+      // 而工具面那一侧（`B5`）已经这么填了。两处填的记录的东西一致（都是"真要 spawn 的那一条
+      // 命令行"），读数才有同一把尺——差别只在这边是 `binding.argv`，那边是 `["/bin/sh","-c",…]`。
+      argv: policy.degraded ? degradedArgv(binding.argv, { roots, policy }) : binding.argv,
+      cwd: roots.merged,
     })
     // 这一条事件记的是**上面那一份策略值**（要求），不是包出来的那条命令行自己算的：两处读同一份，
     // `fugue policy` 印的与它逐字相等（PLAN § 5.5 的 Y2 断言 ①）。
