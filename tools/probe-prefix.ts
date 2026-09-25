@@ -39,6 +39,7 @@ import { readConfig } from '../src/config.ts'
 import { CATALOG_STATES, TOOL_ENTRIES, catalog, catalogHash } from '../src/tools/catalog.ts'
 import { HANDOFF_MARGIN, ZONE_A_BUDGET, seedLimitOf } from '../src/contract/types.ts'
 import { MODEL_DECLS, MODEL_IDS, providerOf } from '../src/model/contract.ts'
+import { wireNamed } from '../src/model/wire/registry.ts'
 
 const REPO = fileURLToPath(new URL('..', import.meta.url))
 const MODEL_ID = MODEL_DECLS[MODEL_IDS[0] as string]?.id as ModelId
@@ -89,7 +90,11 @@ function concat(parts: readonly Uint8Array[]): Uint8Array {
 // 验证性质说的就是"相邻两步仅 C 变化"，它们动一次就是一次缓存失效——第三节的负对照量的正是
 // 那一下。
 
-const REAL_FILES = ['src/assemble/assemble.ts', 'src/assemble/contract.ts', 'AGENTS.md']
+// **`AGENTS.md` 不在这里**——它整篇已经在 A 区的「项目方针」那一段里（5,788 字节），
+// 再往 seed 里放一份就是同一批字节付两遍，而第六节那笔账当场变成负的（实测：放进去时
+// `A + B + seed + 交接余量` = 130,828 > 上界 128,000，**超 2,828 字节**）。要读它按路径去读，
+// 不是把大目标整篇压进 seed——架构 § 8.12 的两条准则说的就是这件事。
+const REAL_FILES = ['src/assemble/assemble.ts', 'src/assemble/contract.ts']
 
 /** 一个文件的前若干行：`文件内容` 那一段的取值（整份会有几万字节，那不是这条读数的重点）。 */
 function headOf(rel: string, lines: number): { path: string; text: string } {
@@ -109,7 +114,9 @@ const COMMITS = commitsIn(20)
 const TASK: AssembleState['task'] = {
   goal: 'S8 的 B0：立模型与提供方的声明，并在进真流程之前把前缀这笔账量出来',
   question: '',
-  deliverables: ['src/model/contract.ts', 'src/model/contract.test.ts', 'tools/probe-prefix.ts'],
+  // **只列代码文件，不列测试与探针**：`seed` 与 `deliverables` 记的是"这一格要交的东西"，
+  // 不是"这一格碰过的每一个文件"。测试与探针按路径去读（它们在盘上，不需要整篇进上下文）。
+  deliverables: ['src/model/contract.ts', 'tools/probe-prefix.ts'],
   evidenceRequired: ['node tools/probe-prefix.ts 的六节读数'],
   assertions: [
     '相邻两步 hash(A+B) 逐字节相同',
@@ -309,13 +316,89 @@ console.log('\n六 · token 估账与余量：Zone A + Zone B + seed + 交接余
     if (room > 0) ok(`装得下：还余 ${n(room)} 字节 ≈ ${n(estTokens(room))} token（估）——差额印得出来，这是进真流程的前提`)
     else bad(`装不下：超了 ${n(-room)} 字节——**报"超了多少"，不裁剪后照发**（架构 § 8.12：带着超限的种子派发等于派发一次立刻触发的接续）`)
 
-    // 负对照：seed 顶到真正超限（超过 `seedLimitOf` 给的上限）→ 差额是负的，"超了多少"算得出来。
+    // 负对照：**`seed` 那一条自己的判据**（超了多少），而不是窗口那一笔账。两者不是同一个上限
+    // ——`seedLimitOf` 给的是"一份契约的 seed 允许多大"（88,000），窗口那一笔账问的是"这一趟
+    // 装不装得下"（128,000）。seed 顶到 88,001 时超的是前者，而后者照旧可能是正的（实测
+    // room=4,157），所以拿 room 的符号当这一条的判据是错的。
     const over = limit + 1
-    const overRoom = m.contextLimit - (zoneA + zoneB + over + handoff)
-    if (over > limit && overRoom < 0) {
-      ok(`负对照：seed 顶到 ${n(over)} 字节（上限 ${n(limit)} + 1）→ 差额 −${n(-overRoom)} 字节 = 超了多少`)
+    const overBy = over - limit
+    if (overBy === 1 && over > limit) {
+      ok(`负对照：seed 顶到 ${n(over)} 字节（上限 ${n(limit)} + 1）→ 超 ${n(overBy)} 字节——这条判据报的是"超了多少"，不裁剪后照发`)
     } else {
-      bad(`负对照：seed 顶到 ${n(over)} 字节时没算出超限（limit=${n(limit)} · room=${n(overRoom)}）——那算式没接上`)
+      bad(`负对照：seed 顶到 ${n(over)} 字节时没算出"超了多少"（limit=${n(limit)} · overBy=${n(overBy)}）——那算式没接上`)
+    }
+    const realSeed = seed
+    if (realSeed <= limit) {
+      ok(`这一份契约的 seed（${n(realSeed)} 字节）在 ${n(limit)} 那一档之内——余 ${n(limit - realSeed)} 字节`)
+    } else {
+      bad(`这一份契约的 seed（${n(realSeed)} 字节）超过 ${n(limit)}，超 ${n(realSeed - limit)} 字节`)
+    }
+  }
+}
+
+// ── 七 · 真发出去的那串字节里，相邻两步的分叉点在哪 ──────────────────────────────
+//
+// 第三四五节量的是**装配出来的三区**；这一节量的是**装配出来的字节进请求体之后**。两者不是
+// 同一串字节：请求体是 JSON，段里的 `"` · `\` 与控制字符（换行 · 制表符）都会被转义，`stableJson`
+// 还把键按字典序重排。所以"逐字节前缀"这句话在这两层上要各量一次——**换行与引号不会让缓存
+// 失效**（上游按 token 对），但分叉点落在哪儿要从这一层读出来，不能从上一层那个偏移直接推。
+console.log('\n七 · 真请求体里：三区的转义形态 · 相邻两步的首个分叉偏移 · 稳定区的字节数')
+
+{
+  const dec = new TextDecoder()
+  const enc = new TextEncoder()
+  /** 一段字节在 JSON 里的那一串（`JSON.stringify` 的转义规则，去掉两头的引号）。 */
+  const esc = (u: Uint8Array): Uint8Array => enc.encode(JSON.stringify(dec.decode(u)).slice(1, -1))
+  const m = MODEL_DECLS[MODEL_IDS[0] as string]
+  if (m === undefined) {
+    bad('拿不到第一条声明——第七节量不了')
+  } else {
+    const wire = wireNamed(m.wire)
+    const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
+    const prefixOf = (k: number): Prefix =>
+      assemble({ protocol: SUBAGENT_PROTOCOL, model: MODEL_ID, segments: sourcesFor(SUBAGENT_PROTOCOL, STEPS[k] as AssembleState, AGENTS[0] as AgentCoord) })
+    const bodyOf = (k: number): Uint8Array => {
+      const p = prefixOf(k)
+      const req = { zones: { A: p.zoneA, B: p.zoneB, C: p.zoneC }, tools, model: m.model, call: {} }
+      return wire.bytes(req as never)
+    }
+    const b0 = bodyOf(0)
+    const b1 = bodyOf(1)
+    const text0 = dec.decode(b0)
+    const p0 = prefixOf(0)
+    const atA = text0.indexOf(dec.decode(esc(p0.zoneA)))
+    const atB = text0.indexOf(dec.decode(esc(p0.zoneB)))
+    const atC = text0.indexOf(dec.decode(esc(p0.zoneC)))
+    const diverge = firstDivergence(b0, b1)
+    const stable = diverge < 0 ? b0.length : diverge
+
+    say(`请求体：第 0 步 ${n(b0.length)} 字节 · 第 1 步 ${n(b1.length)} 字节（两趟大小${b0.length === b1.length ? '相同' : '不同'}）`)
+    say(`转义之后：A ${n(esc(p0.zoneA).length)} 字节（裸 ${n(p0.zoneA.length)}）· B ${n(esc(p0.zoneB).length)}（裸 ${n(p0.zoneB.length)}）· C ${n(esc(p0.zoneC).length)}（裸 ${n(p0.zoneC.length)}）`)
+    say(`三区在请求体里：A@${n(atA)} · B@${n(atB)} · C@${n(atC)} · 首个分叉偏移 ${diverge < 0 ? '-1（一个字节都没变）' : n(diverge)}`)
+    say(`**稳定区 ${n(stable)} 字节**（占整条请求体 ${((stable / b0.length) * 100).toFixed(2)}%）——上游能白拿的就是这一段的账`)
+    say('账（我们发了什么）与钱（上游认了多少）不是一回事：这一节是账，`prefix-hit-rate` 是钱——两者并列印出来')
+
+    if (atA < 0 || atB < 0 || atC < 0) bad(`三区里有没进请求体的：A@${n(atA)} B@${n(atB)} C@${n(atC)}`)
+    else ok(`三区都进了请求体（A@${n(atA)} B@${n(atB)} C@${n(atC)}）——这一格原来一条断言都没有`)
+    if (diverge < 0) bad('相邻两步的请求体逐字节相同——那"每步都有新东西"这条就不成立（这一节的判据没内容）')
+    else if (stable >= atB) ok(`分叉点 ${n(diverge)} 不早于 B 区起点 ${n(atB)}——A+B 那一整段在请求体里逐字节复用`)
+    else bad(`分叉点 ${n(diverge)} 早于 B 区起点 ${n(atB)}——稳定区里出现了变化`)
+
+    // 负对照：把 B 区动一下（那正是"每步重写 B 区"那种做法）→ 分叉点必须挪到 A 区之后。
+    const moved: AssembleState = { ...(STEPS[1] as AssembleState), goal: (STEPS[1] as AssembleState).goal + '（改一个字）' }
+    const pm = assemble({ protocol: SUBAGENT_PROTOCOL, model: MODEL_ID, segments: sourcesFor(SUBAGENT_PROTOCOL, moved, AGENTS[0] as AgentCoord) })
+    const bm = wire.bytes({ zones: { A: pm.zoneA, B: pm.zoneB, C: pm.zoneC }, tools, model: m.model, call: {} } as never)
+    const diverge2 = firstDivergence(b0, bm)
+    // **判据不是"挪到 B 区起点之前"**：A 区是 `system` 那一栏，它按字典序排在 `messages` 后面
+    // （实测 A@8,671 而 B@43），所以修改 B 区之后分叉点落在**请求体的中段**（B 那一条消息里），
+    // 而"落在 B 区起点 43 之前"是个不可能的要求。要断的是**A 区没被碰**：分叉点必须落在
+    // A 区转义后的长度之外（A 那一段在请求体里逐字节不变），且落在 C 的起点之前。
+    // 判据用**偏移区间**，不用长度：B 那一条消息占 `[atB, atC)`，A 那一栏在 `atA` 起（字典序把
+    // `system` 排在 `messages` 后面，所以 A 的偏移比 B 大——拿"A 的长度"当地址是错的）。
+    if (diverge2 >= atB && diverge2 < atC && hashOf(pm.zoneA) === hashOf(p0.zoneA)) {
+      ok(`负对照：动一下 B 区 → 分叉点落在 B 那一段里（${n(diverge2)} ∈ [${n(atB)}, ${n(atC)})），而 A 区的指纹没变（${hashOf(p0.zoneA)}）——上面那条不是恒等式`)
+    } else {
+      bad(`负对照：动了 B 区，分叉点却不在 B 那一段里（分叉 ${n(diverge2)} · B@${n(atB)} · C@${n(atC)}）`)
     }
   }
 }

@@ -157,6 +157,104 @@ test('② 同一个 ModelRequest 给两个适配器：tool-call 的语义相同�
   )
 })
 
+// ── ②b 装配出来的三区字节，在真发出去的那串字节里 ───────────────────────────────
+
+/**
+ * 一段原文进 JSON 之后的那一串（**这一份测试自己的参照实现**，不是产品里的函数——产品里没有
+ * "把三区反过来找出来"这种活）。
+ *
+ * 为什么三区不是**裸**子串：请求体是 JSON，`"` · `\` 与每一个控制字符（换行 · 制表符）都会被
+ * 转义。`stableJson` 只重排键（按字典序）与裁掉 `undefined`，**不动字符串内容**，所以把原文
+ * 按同一条规则转一遍，得到的序列就是它在请求体里的那一段。
+ */
+function escapedInJson(s: string): string {
+  return JSON.stringify(s).slice(1, -1)
+}
+
+/** 一份带"必须转义"的那几样字符的三区：裸字节与转义之后的字节**不是**同一串（②c 量的）。 */
+function requestWithEscapes(): ModelRequest {
+  const enc = new TextEncoder()
+  return {
+    model: modelDeclOf('deepseek-chat/anthropic').model,
+    zones: {
+      A: enc.encode('项目方针：换行要转义\n「引号」与\\反斜杠\t制表符也要转义。'),
+      B: enc.encode('第 0 步。\n工作区：/w/fixture\n路径：src/a.ts'),
+      C: enc.encode('上一步：\n\tok'),
+    },
+    tools: catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number]),
+    call: DEFAULT_CALL,
+  }
+}
+
+test('②b 三区在请求体里：A 在系统提示词那一栏、B 与 C 各一条 user 且 B 在 C 前、工具目录另起一栏', () => {
+  const r = requestWithEscapes()
+  const dec = new TextDecoder()
+  const ea = escapedInJson(dec.decode(r.zones.A))
+  const eb = escapedInJson(dec.decode(r.zones.B))
+  const ec = escapedInJson(dec.decode(r.zones.C))
+  for (const [name, wire] of [
+    ['anthropic', anthropicWireOf()],
+    ['openai', openaiWireOf()],
+  ] as const) {
+    const body = dec.decode(wire.bytes(r))
+    // 三条都找得到——**这是原来一条断言都没有的那一格**（三区一个字节都没进过请求体的断言）。
+    const atA = body.indexOf(ea)
+    const atB = body.indexOf(eb)
+    const atC = body.indexOf(ec)
+    assert.ok(atA >= 0, `${name}：A 区的字节不在请求体里`)
+    assert.ok(atB >= 0, `${name}：B 区的字节不在请求体里`)
+    assert.ok(atC >= 0, `${name}：C 区的字节不在请求体里`)
+    // **次序的判据不是三区的偏移递增**：请求体是 JSON 对象，键按字典序排，`system` 排在
+    // `messages` 后面（Anthropic 那条线）——偏移递增会把一份正确的请求体判红。真正的次序在
+    // **消息之间**：B 是第一条 user、C 是第二条，所以 B 在 C 之前；而 A 落在"系统提示词"那一栏里。
+    if (name === 'anthropic') {
+      // 这条线上 A 区是顶层 `system` 字段，紧接着它的就是那段正文。
+      const atSystem = body.indexOf('"system":"')
+      assert.ok(atSystem >= 0 && atSystem < atA, `${name}：A 区不在 system 那一栏里（system@${atSystem} · A@${atA}）`)
+    } else {
+      // 这条线上 A 区是**一条 role=system 的消息**。判据要落在消息对象里面，而不是"role 那几个
+      // 字节在正文之前"——那是错的：`stableJson` 按字典序排键，`content` 排在 `role` 前面，
+      // 于是正文的偏移**小于** `"role":"system"` 的偏移（实测 A@25 · role@59）。
+      const atObj = body.lastIndexOf('{', atA)
+      assert.ok(atObj >= 0, `${name}：找不到 A 区所在的那个消息对象`)
+      const atClose = body.indexOf('}', atA)
+      const chunk = body.slice(atObj, atClose < 0 ? undefined : atClose + 1)
+      assert.ok(chunk.includes('"role":"system"'), `${name}：A 区所在的那个消息不是 system：${chunk.slice(0, 80)}`)
+    }
+    assert.ok(atB < atC, `${name}：B 区不在 C 区之前（B@${atB} · C@${atC}）——两条 user 的次序错了`)
+    const tool = r.tools?.[0]?.name ?? ''
+    const atTool = body.indexOf(JSON.stringify(tool))
+    assert.ok(atTool >= 0, `${name}：工具目录不在请求体里`)
+    console.log(
+      `②b ${name}：请求体 ${body.length} 字节（${hashOf(wire.bytes(r))}）· A@${atA} B@${atB} C@${atC} 工具@${atTool}` +
+        `（三区裸字节 ${r.zones.A.length}/${r.zones.B.length}/${r.zones.C.length}，` +
+        `转义之后 ${ea.length}/${eb.length}/${ec.length}）`,
+    )
+  }
+})
+
+test('②c 带转义字符的段：裸字节不是子串，转义之后才是；而 B 与 C 两条消息的边界没挪', () => {
+  const r = requestWithEscapes()
+  const dec = new TextDecoder()
+  const body = dec.decode(anthropicWireOf().bytes(r))
+  const a = dec.decode(r.zones.A)
+  const eb = escapedInJson(dec.decode(r.zones.B))
+  const ec = escapedInJson(dec.decode(r.zones.C))
+  // 这一段里有换行与引号：**裸的那一串一定不在**请求体里（它在 JSON 里是转义过的）。
+  assert.equal(body.includes(a), false, '这一段含换行/引号，裸字节却出现在请求体里——那说明请求体不是 JSON')
+  assert.ok(body.includes(escapedInJson(a)), '转义之后的那一串也不在请求体里')
+  // 而"区与区的分界"这件事不受转义影响：B 与 C 是两条相邻的 user，B 整体在 C 之前、且两段
+  // 各自完整（不是被转义劈成两截）。
+  const atB = body.indexOf(eb)
+  const atC = body.indexOf(ec)
+  assert.ok(atB >= 0 && atC >= 0 && atB < atC)
+  assert.equal(body.slice(atB + eb.length, atB + eb.length + 12), '","role":"us', 'B 区那一段后面不是紧跟着消息的收尾——它被转义劈开了')
+  console.log(
+    `②c 裸 ${a.length} 字节 vs 转义后 ${escapedInJson(a).length} 字节（转义多出 ${escapedInJson(a).length - a.length} 字节）· ` +
+      `B@${atB} C@${atC}（相距 ${atC - atB - eb.length} 字节的消息壳）`,
+  )
+})
+
 // ── ③ 没有的 wire 名 ──────────────────────────────────────────────────────────
 
 test('③ 没有的 wire 名 → 当场拒并列出有的，不替它挑一个', () => {
