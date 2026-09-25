@@ -25,7 +25,7 @@ import { emptyState } from '../assemble/sources.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
-import type { DenyAsk, RunAsk, ToolHost } from '../tools/execute.ts'
+import type { DenyAsk, RunAsk, TodoItem, ToolHost } from '../tools/execute.ts'
 import type { ToolCallRequest } from '../runtime/step.ts'
 import type { AgentHandle } from '../runtime/step.ts'
 import { announce, createToolExecutor, dispatch } from './dispatch.ts'
@@ -48,6 +48,8 @@ interface FakeHost extends ToolHost {
   readonly denies: DenyAsk[]
   readonly writes: { path: string; text: string }[]
   readonly files: Map<string, string>
+  /** 每一次 `todo_write` 给的那一整份（覆盖式的：后一份替掉前一份，两条都留着看得到）。 */
+  readonly todos: TodoItem[][]
 }
 
 function fakeHost(paths: readonly string[] = []): FakeHost {
@@ -55,11 +57,13 @@ function fakeHost(paths: readonly string[] = []): FakeHost {
   const denies: DenyAsk[] = []
   const writes: { path: string; text: string }[] = []
   const files = new Map<string, string>()
+  const todos: TodoItem[][] = []
   return {
     files,
     runs,
     denies,
     writes,
+    todos,
     readBytes: (rel) => {
       const text = files.get(rel)
       return Promise.resolve(text === undefined ? null : { bytes: new Uint8Array(Buffer.from(text, 'utf8')), mode: 0o100644 })
@@ -81,6 +85,10 @@ function fakeHost(paths: readonly string[] = []): FakeHost {
     runAction: (ask) => {
       runs.push({ command: `action:${ask.action}`, cwd: ask.cwd, timeoutMs: null })
       return Promise.resolve({ exit: 0, ms: 1, denied: false, stdout: '', stderr: '' })
+    },
+    setTodos: (list) => {
+      todos.push([...list])
+      return Promise.resolve({ count: list.length })
     },
     deny: (d) => {
       denies.push(d)
@@ -210,12 +218,12 @@ test('① 公布给模型的每一条都有实现，而没实现的一条都不�
   const published = announce(CATALOG, TOOL_NAMES)
   const names = published.map((e) => e.name)
 
-  // 目录里 15 条，公布的是其中 9 条：视图五 · 执行二 · 真源一 · 还有一条是 `run_action`。
-  assert.equal(names.length, 9, `公布的有 ${names.length} 条：${names.join(' ')}`)
+  // 目录里 12 条，公布的是其中 10 条：视图六 · 执行二 · 真源一 · `log` 层一。
+  assert.equal(names.length, 10, `公布的有 ${names.length} 条：${names.join(' ')}`)
   assert.deepEqual(
     [...names].sort(),
-    ['bash', 'checkpoint', 'edit', 'glob', 'grep', 'read', 'read_image', 'run_action', 'write'],
-    '公布的那一份就是实现表里那九条',
+    ['bash', 'checkpoint', 'edit', 'glob', 'grep', 'read', 'read_image', 'run_action', 'todo_write', 'write'],
+    '公布的那一份就是实现表里那十条',
   )
 
   // 这一条是那句话本身：**公布 ⊆ 实现**（拿"一次调用能不能跑"那一处问每一格）。
@@ -225,7 +233,7 @@ test('① 公布给模型的每一条都有实现，而没实现的一条都不�
   }
 
   // 没接上的那七条：一条都不在公布名单里（而不是公布了再回一句"没接上"）。
-  for (const missing of ['subagent', 'list_agents', 'send_message', 'todo_write', 'ask_user_question', 'exit_plan_mode']) {
+  for (const missing of ['ask_user_question', 'exit_plan_mode']) {
     assert.ok(!names.includes(missing), `${missing} 今天没有实现，却在公布名单里`)
   }
 })
@@ -241,7 +249,7 @@ test('① 负对照：往公布名单里塞一条没实现的 → 那一条被�
     !published.some((e) => e.name === 'subagent'),
     '没实现的那一条被公布了——"公布了却跑不起来"这条错路就构造得出来',
   )
-  assert.equal(published.length, 9, '筛掉一条之后还是那九条')
+  assert.equal(published.length, 10, '筛掉一条之后还是那十条')
 })
 
 // ── ② 四条推论从表里读出来 ────────────────────────────────────────────────────

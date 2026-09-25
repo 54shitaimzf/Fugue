@@ -27,7 +27,7 @@ export interface ToolContext {
 }
 
 /**
- * 工具能碰的那几样东西。**九条，就是这九条工具全部要的。**
+ * 工具能碰的那几样东西。**十条，就是工具这一侧全部要碰的那几样。**
  *
  * `deny` 是"你自己拒了"那道口：路径围栏（`M3` 的 `resolveVirtual`）与能力表都不在这一层，
  * 所以拒的话由实现那一侧给整句，这一层只把它原样变成一次失败的结果。**拒的话里指得出名字
@@ -57,6 +57,14 @@ export interface ToolHost {
   run(req: RunAsk): Promise<RunReply>
   checkpoint(msg: string): Promise<{ readonly commit: string }>
   runAction(req: ActionAsk): Promise<RunReply>
+  /**
+   * 记一份待办，**整体覆盖**上一次那一份（`todo_write` 那一条的落点）。
+   *
+   * 它落一条 `holder/todos`。待办是**跨步**的上下文：落视图会污染工作树（验收要逐字节一致），
+   * 落内存则重启即失（架构 § 9.7 的 `turns`）——住日志是唯一既跨步又重建得出的落点。而进 C 区
+   * 靠的是这一步的回执文本，两件事分开：模型看得见的是回执，重放得出的是事件。
+   */
+  setTodos(todos: readonly TodoItem[]): Promise<{ readonly count: number }>
   /**
    * 自己拒了一次（路径在视图外 · 视图层只读 …）。**整句由拒的那一方给**，这一条口子只负责
    * "把这次拒记下来"：落一条 `bound/deny`（`path` · `space` · `rule` 就是那条事件的三个字段），
@@ -114,6 +122,15 @@ export interface RunReply {
   readonly denied: boolean
   readonly stdout: string
   readonly stderr: string
+}
+
+/** 待办的一行。形状与目录里 `todo_write` 那一条的参数面逐字相同（不另抄一份）。 */
+export interface TodoItem {
+  /** 这件事要做什么。 */
+  readonly content: string
+  readonly status: 'pending' | 'in_progress' | 'completed'
+  /** 正在做它时的说法。 */
+  readonly activeForm?: string
 }
 
 /** 一个具名动作（架构 § 8.9 里唯一有声明集的那一格：执行类经声明集回写）。 */
@@ -308,6 +325,37 @@ const runActionFace: ToolFn = async (args, host, ctx) => {
   return { ok: res.exit === 0, output: body === '' ? head : `${head}\n${body}` }
 }
 
+// ── `log` 层那一个：只落日志，不碰视图 · 不起进程 ──────────────────────────────
+
+/** 一行待办渲染成什么（回执进 C 区：模型下一步看得见自己写到哪一条了）。 */
+function todoLine(t: TodoItem): string {
+  return `- [${t.status === 'completed' ? 'x' : t.status === 'in_progress' ? '~' : ' '}] ${t.content}`
+}
+
+const todoWriteFace: ToolFn = async (args, host) => {
+  const raw = arg(args, 'todos')
+  if (raw === undefined || raw === null) return missing('todo_write', 'todos')
+  if (!Array.isArray(raw)) return no('todo_write 的 todos 得是一个数组——这一次给的不是一个数组。')
+  const todos: TodoItem[] = []
+  for (const one of raw) {
+    if (one === null || typeof one !== 'object' || Array.isArray(one)) return no('待办里有一条不是一个对象。')
+    const row = one as Record<string, unknown>
+    const content = typeof row['content'] === 'string' ? (row['content'] as string) : null
+    const status = row['status']
+    if (content === null) return no('待办里有一条没给 content——每一条都要说清"这件事要做什么"。')
+    if (status !== 'pending' && status !== 'in_progress' && status !== 'completed') {
+      return no(`待办里有一条 status 不是那三种（pending · in_progress · completed）：${String(status)}`)
+    }
+    todos.push({
+      content,
+      status,
+      ...(typeof row['activeForm'] === 'string' ? { activeForm: row['activeForm'] as string } : {}),
+    })
+  }
+  const r = await host.setTodos(todos)
+  return ok(`记下了 ${r.count} 条待办（整体覆盖上一次那一份）：\n${todos.map(todoLine).join('\n')}`)
+}
+
 // ── 真源层那一个 ───────────────────────────────────────────────────────────────
 
 const checkpointFace: ToolFn = async (args, host) => {
@@ -353,11 +401,12 @@ function globToRe(pattern: string): RegExp {
 /**
  * 实现表。**它是"哪几条接上了"的唯一出处。**
  *
- * 今天接上九条（视图类六条 · 执行类两条 · 真源层一条），**没接上的六条各有各的下家**：
- * 待办与两个交互工具等一次真人会话 · 委派那三条等 `S9` 的 fork/merge。**它们不出现在公布
- * 名单里**（`publishedTools`），而不是公布了再回一句"没接上"。
+ * 今天接上十条（视图类六条 · 执行类两条 · 真源层一条 · `log` 层一条），**没接上的两条各有各的
+ * 下家**：两个交互工具等一次真人会话。**它们不出现在公布名单里**（`publishedTools`），而不是
+ * 公布了再回一句"没接上"。
  */
 export const IMPLEMENTED: Readonly<Record<string, ToolFn>> = {
+  todo_write: todoWriteFace,
   read: readFace,
   write: writeFace,
   edit: editFace,

@@ -452,3 +452,39 @@ test('⑥ 目录里 required 的键，实现读的名字与它逐字相等（不
   }
   console.log(`⑥ 读数 · 逐条实现读的必填键：${asked.join(' · ')}`)
 })
+
+// ── ⑦ 待办：覆盖 · 重建 · 工作树不动 ──────────────────────────────────────────
+//
+// `todo_write` 是 `log` 层那一条：只落日志，不碰视图、不起进程。三条性质各盯一样——
+// 覆盖（后一份替掉前一份）· 重建（重放得出最后那一份）· 不污染（工作树一个文件都不多）。
+test('⑦ 待办：后一份整体覆盖前一份 · 重放得出同一份 · 真实工作树一个文件都没多', async () => {
+  const b = await bench()
+  try {
+    const before = worktreeOf(b.root)
+    const first = await face(
+      'todo_write',
+      { todos: [{ content: '读一遍', status: 'in_progress' }, { content: '写一遍', status: 'pending' }] },
+      b.host,
+    )
+    assert.equal(first.ok, true, first.output)
+    assert.match(first.output, /记下了 2 条待办/)
+
+    const second = await face('todo_write', { todos: [{ content: '写一遍', status: 'completed' }] }, b.host)
+    assert.match(second.output, /记下了 1 条待办/)
+    assert.equal(second.output.includes('读一遍'), false, '后一份整体覆盖前一份——前一份那一条不该还在回执里')
+
+    // 落的是两条 `holder/todos`，而重放时这一格手里那份是最后一条。
+    const rows: LogEvent[] = []
+    for await (const e of b.log.readByWriter(AGENT as WriterId)) rows.push(e)
+    const todos = rows.filter((e) => e.t === 'holder/todos')
+    assert.equal(todos.length, 2, `holder/todos 有 ${todos.length} 条`)
+    const last = todos[1] as Extract<LogEvent, { t: 'holder/todos' }>
+    assert.deepEqual(JSON.parse(last.body).todos, [{ content: '写一遍', status: 'completed' }], '重放得出的是最后那一份')
+    assert.equal(last.digest.length, 16, 'digest 与 round/intent 同一个口径（16 字符）')
+
+    // 待办不是工作树里的东西：写它会污染验收（验收要逐字节一致）。
+    assert.deepEqual(worktreeOf(b.root), before, `工作树多了东西：${worktreeOf(b.root).join(' ')}`)
+  } finally {
+    await b.close()
+  }
+})

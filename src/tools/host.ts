@@ -21,9 +21,10 @@ import { snapshotOf } from '../view/snapshot.ts'
 import type { View } from '../view/contract.ts'
 import { checkpoint } from '../checkpoint.ts'
 import type { RunReply } from './execute.ts'
-import type { ActionAsk, DenyAsk, EditRaw, RunAsk, ToolHost, ToolListing } from './execute.ts'
+import type { ActionAsk, DenyAsk, EditRaw, RunAsk, TodoItem, ToolHost, ToolListing } from './execute.ts'
 import { refuse } from './execute.ts'
 import { shellArgv } from '../capability/dispatch.ts'
+import { digestOf } from '../runtime/restart.ts'
 
 /** 走多远就停。**两条都是必须的**：软链穿过去就绕开了路径围栏（§ 8.4 的 `through-symlink`），
  * 而不封顶的深树能把一步走成挂死。 */
@@ -261,6 +262,14 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
         expectedOld: parts.expectedOld,
       })
       return { commit: String(r.commit) }
+    },
+
+    async setTodos(list: readonly TodoItem[]) {
+      // 与 `deny` 同一条规矩：**没有日志口就不记**（夹具档与单测里那几份宿主），有口就一定记。
+      if (parts === undefined) return { count: list.length }
+      const body = JSON.stringify({ todos: list })
+      await parts.log.append(parts.writer, { t: 'holder/todos', agent: view.id, digest: digestOf(body), body })
+      return { count: list.length }
     },
 
     deny,

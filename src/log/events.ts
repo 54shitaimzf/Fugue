@@ -109,6 +109,15 @@ export type LogEvent =
   | { t: 'round/state'; round: RoundId; from: RoundState; to: RoundState }
   | { t: 'round/intent'; round: RoundId; digest: string; body: string }
   | { t: 'holder/distill'; agent: AgentId; digest: string; body: string }
+  /**
+   * 待办清单（`todo_write` 那一条的落点）。**它是覆盖式的**：后一份整体替掉前一份，重放时
+   * 这一格手里那份就是最后一条。
+   *
+   * 为什么住日志里：待办是**跨步**的上下文。落视图会污染工作树（验收要逐字节一致），落内存
+   * 则重启即失（架构 § 9.7 的 `turns`）——它是唯一既跨步又重建得出的落点。形状与
+   * `round/intent` · `holder/distill` 同一路（`digest` + 正文）。
+   */
+  | { t: 'holder/todos'; agent: AgentId; digest: string; body: string }
   | {
       t: 'contract/issue'
       round: RoundId
