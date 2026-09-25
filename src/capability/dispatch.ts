@@ -17,6 +17,7 @@ import type { Denied as FenceDenied } from '../roots/contract.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { DenyAsk, FaceResult, ToolContext, ToolHost } from '../tools/execute.ts'
 import { faceOf, noFace, parseArgs, publishedTools } from '../tools/execute.ts'
+import { HOLDER_PROTOCOL } from '../assemble/protocol.ts'
 import type { AgentHandle, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
 
 /**
@@ -72,7 +73,7 @@ const PATH_ARGS: Readonly<Record<string, readonly string[]>> = {
   run_action: ['cwd'],
 }
 
-const says = (r: FaceResult): ToolResult => ({ ok: r.ok, output: r.output })
+const says = (r: FaceResult): ToolResult => ({ ok: r.ok, output: r.output, ...(r.halt === true ? { halt: true } : {}) })
 
 /**
  * 派发一次工具调用。**它是第 4 步唯一的实现。**
@@ -104,7 +105,7 @@ export async function dispatch(req: ToolCallRequest, h: AgentHandle, deps: Dispa
   }
 
   const cwd = h.cwd ?? ''
-  const ctx: ToolContext = { agent: h.agent, step: h.state.step, cwd }
+  const ctx: ToolContext = { agent: h.agent, step: h.state.step, cwd, holder: h.protocol === HOLDER_PROTOCOL }
   const args: Record<string, unknown> = { ...parsed.value }
   const applied: string[] = []
 

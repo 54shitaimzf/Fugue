@@ -110,13 +110,14 @@ function worktreeOf(root: string): string[] {
 const asText = (b: Uint8Array): string => Buffer.from(b).toString('utf8')
 
 /** 走一条工具：直接问实现表那一段（与 `dispatch` 走的是同一处），不经过事件与日志。 */
-async function face(name: string, args: unknown, host: ToolHost, cwd = '') {
+/** `holder`：这一格是不是持轮者（有几条工具只有它调才有意义）。缺省是子 agent 那一格。 */
+async function face(name: string, args: unknown, host: ToolHost, cwd = '', holder = false) {
   const fn = faceOf(name)
   assert.ok(fn !== null, `${name} 没有实现`)
   // **参数要解过再给**：`dispatch` 那一层就是这么给的（`parseArgs` 那一步在派发里）。
   const parsed = parseArgs(JSON.stringify(args))
   assert.equal(parsed.ok, true, `${name} 的参数没有解出来：${parsed.ok ? '' : parsed.why}`)
-  return fn((parsed as { ok: true; value: Record<string, unknown> }).value, host, { agent: AGENT, step: 0, cwd })
+  return fn((parsed as { ok: true; value: Record<string, unknown> }).value, host, { agent: AGENT, step: 0, cwd, holder })
 }
 
 // ── ① 参数那一层 ─────────────────────────────────────────────────────────────
@@ -440,7 +441,7 @@ test('⑥ 目录里 required 的键，实现读的名字与它逐字相等（不
     const fn = faceOf(e.name)
     if (fn === null) continue // 没接上实现的那几条不在这一条范围内（W1 之后为 0）
     const need = (e.parameters as unknown as { readonly required?: readonly string[] }).required ?? []
-    const got = await fn({}, host, { agent: AGENT, step: 0, cwd: '' })
+    const got = await fn({}, host, { agent: AGENT, step: 0, cwd: '', holder: false })
     if (need.length === 0) {
       assert.equal(got.output.includes('少了必填参数'), false, `${e.name} 目录里没有必填键，实现却报了缺：${got.output}`)
       continue
@@ -483,6 +484,43 @@ test('⑦ 待办：后一份整体覆盖前一份 · 重放得出同一份 · �
     assert.equal(last.digest.length, 16, 'digest 与 round/intent 同一个口径（16 字符）')
 
     // 待办不是工作树里的东西：写它会污染验收（验收要逐字节一致）。
+    assert.deepEqual(worktreeOf(b.root), before, `工作树多了东西：${worktreeOf(b.root).join(' ')}`)
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ⑧ exit_plan_mode：持轮者落事件并停在门口；子 agent 落不了、也停不下来 ──────
+//
+// 三条各盯一样：角色（子 agent 调它得到一句指得出出路的话，不是静默成功）· 落点（持轮者调它
+// 落一条 `holder/plan`，而契约一个都不发）· 停（这一格到这儿为止，运行时读成一次 `done`）。
+test('⑧ exit_plan_mode：持轮者落 holder/plan 并停在门口；子 agent 调它不落事件、也不停', async () => {
+  const b = await bench()
+  try {
+    const before = worktreeOf(b.root)
+
+    // 子 agent：不是错误，是角色不对——回一句指得出出路的话，不落事件、也不叫停。
+    const asSub = await face('exit_plan_mode', { plan: '我要先拆三格' }, b.host, '', false)
+    assert.equal(asSub.ok, false, asSub.output)
+    assert.match(asSub.output, /这不是你这一格的事/)
+    assert.equal(asSub.halt, undefined, '子 agent 那一趟不叫停——它还得接着干活')
+
+    // 持轮者：落事件 + 停在门口。
+    const asHolder = await face('exit_plan_mode', { plan: '先拆三格，再各跑一条断言' }, b.host, '', true)
+    assert.equal(asHolder.ok, true, asHolder.output)
+    assert.equal(asHolder.halt, true, '停在门口：这一格到这儿为止')
+    assert.match(asHolder.output, /门由人开/)
+
+    const rows: LogEvent[] = []
+    for await (const e of b.log.readByWriter(AGENT as WriterId)) rows.push(e)
+    const plans = rows.filter((e) => e.t === 'holder/plan')
+    assert.equal(plans.length, 1, `holder/plan 有 ${plans.length} 条——子 agent 那一趟不该落`)
+    const one = plans[0] as Extract<LogEvent, { t: 'holder/plan' }>
+    assert.deepEqual(JSON.parse(one.body), { plan: '先拆三格，再各跑一条断言' }, '重放得出持轮者交的那一份')
+    assert.equal(one.digest.length, 16, 'digest 与 round/intent 同一个口径（16 字符）')
+
+    // 门没开：一个契约都没发（发契约是 round go 那一档的事）。
+    assert.equal(rows.some((e) => e.t === 'contract/issue'), false, '停在门口的时候不许发契约')
     assert.deepEqual(worktreeOf(b.root), before, `工作树多了东西：${worktreeOf(b.root).join(' ')}`)
   } finally {
     await b.close()

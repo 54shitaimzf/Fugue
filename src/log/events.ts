@@ -118,6 +118,14 @@ export type LogEvent =
    * `round/intent` · `holder/distill` 同一路（`digest` + 正文）。
    */
   | { t: 'holder/todos'; agent: AgentId; digest: string; body: string }
+  /**
+   * 持轮者说"预备态做完了"（`exit_plan_mode` 那一条的落点）。**门仍由人开**：这一条只落事件，
+   * 契约一个都不发——发契约是 `round go` 那一档的事（架构 § 15.1.a）。
+   *
+   * 形状与 `holder/todos` · `round/intent` 同一路（`digest` + 正文）。**只有持轮者落它**：
+   * 子 agent 那一份是契约，不是计划，所以它调这一条只得到一句"这不是你这一格的事"。
+   */
+  | { t: 'holder/plan'; agent: AgentId; digest: string; body: string }
   | {
       t: 'contract/issue'
       round: RoundId

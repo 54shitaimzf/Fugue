@@ -21,7 +21,7 @@ import { snapshotOf } from '../view/snapshot.ts'
 import type { View } from '../view/contract.ts'
 import { checkpoint } from '../checkpoint.ts'
 import type { RunReply } from './execute.ts'
-import type { ActionAsk, DenyAsk, EditRaw, RunAsk, TodoItem, ToolHost, ToolListing } from './execute.ts'
+import type { ActionAsk, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, ToolHost, ToolListing } from './execute.ts'
 import { refuse } from './execute.ts'
 import { shellArgv } from '../capability/dispatch.ts'
 import { digestOf } from '../runtime/restart.ts'
@@ -262,6 +262,13 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
         expectedOld: parts.expectedOld,
       })
       return { commit: String(r.commit) }
+    },
+
+    async declarePlan(ask: PlanAsk) {
+      // 与 `deny` · `setTodos` 同一条规矩：没有日志口就不记，有口就一定记。
+      if (parts === undefined) return
+      const body = JSON.stringify(ask)
+      await parts.log.append(parts.writer, { t: 'holder/plan', agent: view.id, digest: digestOf(body), body })
     },
 
     async setTodos(list: readonly TodoItem[]) {

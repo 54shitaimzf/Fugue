@@ -22,12 +22,20 @@ import type { ToolEntry } from './catalog.ts'
 export interface ToolContext {
   readonly agent: string
   readonly step: number
+  /**
+   * 这一格是不是**持轮者**（`HOLDER_PROTOCOL` 那一格）。
+   *
+   * 派发那一层按协议判定（身份比较，不比字符串），工具面只读这个布尔：有几条工具只有持轮者
+   * 调才有意义（`exit_plan_mode` · `ask_user_question`），而子 agent 调它们要得到一句指得出
+   * 出路的回绝，不是静默成功。
+   */
+  readonly holder: boolean
   /** 视图内的相对路径，工具收的那种路径都相对它（`bash` 的 `cwd` 也是）。 */
   readonly cwd: string
 }
 
 /**
- * 工具能碰的那几样东西。**十条，就是工具这一侧全部要碰的那几样。**
+ * 工具能碰的那几样东西。**十一条，就是工具这一侧全部要碰的那几样。**
  *
  * `deny` 是"你自己拒了"那道口：路径围栏（`M3` 的 `resolveVirtual`）与能力表都不在这一层，
  * 所以拒的话由实现那一侧给整句，这一层只把它原样变成一次失败的结果。**拒的话里指得出名字
@@ -65,6 +73,13 @@ export interface ToolHost {
    * 靠的是这一步的回执文本，两件事分开：模型看得见的是回执，重放得出的是事件。
    */
   setTodos(todos: readonly TodoItem[]): Promise<{ readonly count: number }>
+  /**
+   * 持轮者说"预备态做完了"（`exit_plan_mode` 那一条的落点）。**落事件，不发契约**——门由人开。
+   *
+   * 它只是"把这一刻定下来"：落一条 `holder/plan`（`digest` + 正文），重放得出持轮者交了什么。
+   * 派不派契约是 `round go` 那一档的事，不在这里。
+   */
+  declarePlan(ask: PlanAsk): Promise<void>
   /**
    * 自己拒了一次（路径在视图外 · 视图层只读 …）。**整句由拒的那一方给**，这一条口子只负责
    * "把这次拒记下来"：落一条 `bound/deny`（`path` · `space` · `rule` 就是那条事件的三个字段），
@@ -124,6 +139,12 @@ export interface RunReply {
   readonly stderr: string
 }
 
+/** 一份计划（`exit_plan_mode` 给的那两栏）。`plan` 是正文，`path` 是它写在哪个文件里（可缺）。 */
+export interface PlanAsk {
+  readonly plan: string
+  readonly path?: string
+}
+
 /** 待办的一行。形状与目录里 `todo_write` 那一条的参数面逐字相同（不另抄一份）。 */
 export interface TodoItem {
   /** 这件事要做什么。 */
@@ -151,6 +172,14 @@ export type ToolFn = (args: Readonly<Record<string, unknown>>, host: ToolHost, c
 export interface FaceResult {
   readonly ok: boolean
   readonly output: string
+  /**
+   * **这一格到这儿为止**（架构 § 15.1.a 的"停在门口"）。
+   *
+   * 它不是错误，也不是"没话说"：模型交了卷，而门由人开——所以这一步之后不再接着跑。运行时
+   * 把它读成一次 `done`（与模型自己说完同一档），**不与工具名绑在一起**：哪一条工具能叫停，
+   * 由它自己说，不由运行时按名字分岔。
+   */
+  readonly halt?: boolean
 }
 
 const ok = (output: string): FaceResult => ({ ok: true, output })
@@ -356,6 +385,23 @@ const todoWriteFace: ToolFn = async (args, host) => {
   return ok(`记下了 ${r.count} 条待办（整体覆盖上一次那一份）：\n${todos.map(todoLine).join('\n')}`)
 }
 
+const exitPlanModeFace: ToolFn = async (args, host, ctx) => {
+  const plan = text(args, 'plan')
+  if (plan === null) return missing('exit_plan_mode', 'plan')
+  const file = text(args, 'planFilePath')
+  // 子 agent 调它：**不是错误，是角色不对**。它手里是一份契约，不是一份计划——所以回一句
+  // 指得出出路的话（架构 § 8.4 纪律 2），不落事件、也不停。
+  if (!ctx.holder) {
+    return no('这不是你这一格的事：你拿到的是一份契约，照它做完这一步就行——计划是持轮者在预备态里的事。')
+  }
+  await host.declarePlan({ plan, ...(file === null ? {} : { path: file }) })
+  return {
+    ok: true,
+    halt: true,
+    output: '预备态到这儿为止：计划已经落进日志，**门由人开**——等你放行（`round go`）之后照它发契约。',
+  }
+}
+
 // ── 真源层那一个 ───────────────────────────────────────────────────────────────
 
 const checkpointFace: ToolFn = async (args, host) => {
@@ -401,12 +447,13 @@ function globToRe(pattern: string): RegExp {
 /**
  * 实现表。**它是"哪几条接上了"的唯一出处。**
  *
- * 今天接上十条（视图类六条 · 执行类两条 · 真源层一条 · `log` 层一条），**没接上的两条各有各的
- * 下家**：两个交互工具等一次真人会话。**它们不出现在公布名单里**（`publishedTools`），而不是
- * 公布了再回一句"没接上"。
+ * 今天接上十一条（视图类六条 · 执行类两条 · 真源层一条 · `log` 层两条），**没接上的一条有它的
+ * 下家**：`ask_user_question` 等一次真人会话。**它不出现在公布名单里**（`publishedTools`），
+ * 而不是公布了再回一句"没接上"。
  */
 export const IMPLEMENTED: Readonly<Record<string, ToolFn>> = {
   todo_write: todoWriteFace,
+  exit_plan_mode: exitPlanModeFace,
   read: readFace,
   write: writeFace,
   edit: editFace,

@@ -77,6 +77,13 @@ export type ToolCallRequest = ModelCall['toolCalls'][number]
 export interface ToolResult {
   readonly ok: boolean
   readonly output: string
+  /**
+   * **这一格到这儿为止**（`exit_plan_mode` 那一类交卷的工具给）。
+   *
+   * 运行时把它读成一次 `done`：与模型自己说完同一档，而**它是机械地停在这里**——不是"没话说"
+   * 也不是失败。判据还是那条：停因要能说得清是"收敛"。
+   */
+  readonly halt?: boolean
 }
 
 /** 怎么执行一次工具调用。**这一层不认识沙箱**：策略 · 围栏 · 视图都在实现那一侧（`B5`）。 */
@@ -355,6 +362,8 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
 
     // ── 4. 执行那几条工具调用。**这一层不认识沙箱**：执行器是注入的。
     const turns: string[] = []
+    /** 这一趟里有没有工具叫停（停在门口那一档）。 */
+    let halted = false
     const said = call.text
     if (said !== '') turns.push(`模型：${said}`)
     let at = 0
@@ -375,12 +384,14 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
           seqs,
         }
       }
+      if (r.halt === true) halted = true
       turns.push(toolTurn(at, one, r))
       at += 1
     }
 
     // ── 6. 下一状态：C 区那个积累段**只追加**（架构 § 8.11 的验证性质）。
-    const outcome = outcomeOf(call.stop, usage, said)
+    // **有工具叫停就到这儿为止**（停在门口那一档）：它是"收敛"，与模型自己说完同一档。
+    const outcome = halted ? { kind: 'done' as const, usage } : outcomeOf(call.stop, usage, said)
     const next: AssembleState = {
       ...h.state,
       step: h.state.step + 1,
