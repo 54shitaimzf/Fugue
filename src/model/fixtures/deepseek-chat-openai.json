@@ -226,72 +226,6 @@
       }
     },
     {
-      "name": "subagent",
-      "description": "把一个自足的任务派给另一个 agent，它在自己的上下文里做完再把结果交回来。",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "description": {
-            "type": "string",
-            "description": "三五个词的任务名，给人看"
-          },
-          "prompt": {
-            "type": "string",
-            "description": "完整的任务说明——它看不到这里的对话"
-          },
-          "run_in_background": {
-            "type": "boolean",
-            "description": "派出去就返回，不等结果（缺省等）"
-          }
-        },
-        "required": [
-          "description",
-          "prompt"
-        ],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "list_agents",
-      "description": "列出自己派出去的那些 agent：它们的 id 与状态。派出去之后要动手（追问、打断、收结果）先在这里拿 id；**回话会自己送到**，不用一直查。",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "scope": {
-            "type": "string",
-            "enum": [
-              "children",
-              "descendants"
-            ],
-            "description": "只看直接子 agent，还是整棵树"
-          }
-        },
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "send_message",
-      "description": "给一个已经派出去的 agent 发一条消息：它在忙就插到最近的一步，闲下来就让它接着做。",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "agent_id": {
-            "type": "string",
-            "description": "目标 agent 的 id"
-          },
-          "message": {
-            "type": "string",
-            "description": "要说的话"
-          }
-        },
-        "required": [
-          "agent_id",
-          "message"
-        ],
-        "additionalProperties": false
-      }
-    },
-    {
       "name": "ask_user_question",
       "description": "问人一个问题，给出可选的答案。**只在答案归人时用它**：查得到的（代码在哪、现在怎么做的）先自己查，能自己定的按\"最干净、最可扩展\"定下来。一次可以问几个，每个给几个选项、各带一句代价说明。",
       "parameters": {
@@ -414,8 +348,8 @@
     }
   ],
   "call": {},
-  "bodyHash": "7aab452f9605b5c2",
-  "bytes": 9803,
+  "bodyHash": "9fdd9d7d8afa21ff",
+  "bytes": 8361,
   "response": "data: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"先看一眼工作树。\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_fixture_01\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"command\\\":\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"ls -la\\\",\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"timeout_ms\\\":\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"10000}\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_fixture_02\",\"type\":\"function\",\"function\":{\"name\":\"glob\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"function\":{\"arguments\":\"{\\\"pattern\\\":\\\"**/*.\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"function\":{\"arguments\":\"ts\\\"}\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-chat\",\"choices\":[],\"usage\":{\"prompt_tokens\":24088,\"completion_tokens\":64,\"prompt_tokens_details\":{\"cached_tokens\":24000},\"prompt_cache_hit_tokens\":24000,\"prompt_cache_miss_tokens\":88}}\n\ndata: [DONE]\n\n",
   "record": {
     "usage": {

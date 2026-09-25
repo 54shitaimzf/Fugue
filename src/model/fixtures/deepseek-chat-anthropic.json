@@ -226,72 +226,6 @@
       }
     },
     {
-      "name": "subagent",
-      "description": "把一个自足的任务派给另一个 agent，它在自己的上下文里做完再把结果交回来。",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "description": {
-            "type": "string",
-            "description": "三五个词的任务名，给人看"
-          },
-          "prompt": {
-            "type": "string",
-            "description": "完整的任务说明——它看不到这里的对话"
-          },
-          "run_in_background": {
-            "type": "boolean",
-            "description": "派出去就返回，不等结果（缺省等）"
-          }
-        },
-        "required": [
-          "description",
-          "prompt"
-        ],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "list_agents",
-      "description": "列出自己派出去的那些 agent：它们的 id 与状态。派出去之后要动手（追问、打断、收结果）先在这里拿 id；**回话会自己送到**，不用一直查。",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "scope": {
-            "type": "string",
-            "enum": [
-              "children",
-              "descendants"
-            ],
-            "description": "只看直接子 agent，还是整棵树"
-          }
-        },
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "send_message",
-      "description": "给一个已经派出去的 agent 发一条消息：它在忙就插到最近的一步，闲下来就让它接着做。",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "agent_id": {
-            "type": "string",
-            "description": "目标 agent 的 id"
-          },
-          "message": {
-            "type": "string",
-            "description": "要说的话"
-          }
-        },
-        "required": [
-          "agent_id",
-          "message"
-        ],
-        "additionalProperties": false
-      }
-    },
-    {
       "name": "ask_user_question",
       "description": "问人一个问题，给出可选的答案。**只在答案归人时用它**：查得到的（代码在哪、现在怎么做的）先自己查，能自己定的按\"最干净、最可扩展\"定下来。一次可以问几个，每个给几个选项、各带一句代价说明。",
       "parameters": {
@@ -414,8 +348,8 @@
     }
   ],
   "call": {},
-  "bodyHash": "30372250b5de0944",
-  "bytes": 9367,
+  "bodyHash": "a495f86c476a93d0",
+  "bytes": 8012,
   "response": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture_01\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"deepseek-chat\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":88,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":24000,\"output_tokens\":1}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: ping\ndata: {\"type\":\"ping\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"先看一眼工作树。\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_fixture_01\",\"name\":\"bash\",\"input\":{}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"ls -la\\\",\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"timeout_ms\\\":\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"10000}\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_fixture_02\",\"name\":\"glob\",\"input\":{}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"pattern\\\":\\\"**/*.\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"ts\\\"}\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":2}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":64}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
   "record": {
     "usage": {

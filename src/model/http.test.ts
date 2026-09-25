@@ -167,7 +167,7 @@ test('② 一次调用落一条 llm/call：模型 · 步 · 工具调用条数 �
   assert.equal(
     catalogHash(tools),
     catalogHash(catalog(CATALOG_STATES[1] as (typeof CATALOG_STATES)[number])),
-    '工具目录跨状态变了——那 15 条 schema 就不是 A 区级的稳定物',
+    '工具目录跨状态变了——那 12 条 schema 就不是 A 区级的稳定物',
   )
 
   // 那一次的账 → `llm/call` 的载荷（形状在 `src/log/events.ts` 里）。
@@ -194,7 +194,7 @@ test('② 一次调用落一条 llm/call：模型 · 步 · 工具调用条数 �
   }
   assert.equal(event.usage.cacheReadTokens, 24000)
   assert.equal(event.usage.outputTokens, 64)
-  assert.equal(event.toolCount, 15)
+  assert.equal(event.toolCount, 12)
   assert.equal(event.invocations, 2, '这一趟响应里拼出来两条工具调用')
   assert.equal(event.stop, 'tool-calls')
   assert.equal(event.rawStop, 'tool_use')

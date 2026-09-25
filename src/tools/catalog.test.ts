@@ -58,7 +58,7 @@ test('② 状态切换前后整份目录的哈希不变（第三种状态也含�
 
 test('③ 目录与能力表双向对账（§ 8.10 的唯一定义处 · § 8.9 的全函数）', () => {
   const names = catalogNames(TOOL_ENTRIES)
-  assert.equal(names.length, 15, `目录里 ${names.length} 条`)
+  assert.equal(names.length, 12, `目录里 ${names.length} 条`)
   assert.deepEqual(checkInvariant(CAPABILITY_TABLE, names), [], '能力表对这份目录有话说')
 
   // 目录 → 表：每一个名字都查得出推论，一个都不许走「未声明即拒」那条路。

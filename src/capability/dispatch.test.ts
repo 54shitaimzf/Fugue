@@ -246,7 +246,7 @@ test('① 负对照：往公布名单里塞一条没实现的 → 那一条被�
 
 // ── ② 四条推论从表里读出来 ────────────────────────────────────────────────────
 
-test('② 十五格各自的层推出四个开关：一层都不靠工具名分岔', () => {
+test('② 十二格各自的层推出四个开关：一层都不靠工具名分岔', () => {
   const expected: Readonly<Record<string, readonly [string, boolean, boolean, boolean, boolean]>> = {
     // 工具: [层, materialize, fence, confine, writeBack]
     read: ['view', false, true, false, false],
@@ -258,9 +258,6 @@ test('② 十五格各自的层推出四个开关：一层都不靠工具名分�
     bash: ['execute', true, true, true, false],
     run_action: ['execute', true, true, true, true],
     checkpoint: ['truth', false, false, false, false],
-    subagent: ['orchestrate', false, false, false, false],
-    list_agents: ['orchestrate', false, false, false, false],
-    send_message: ['orchestrate', false, false, false, false],
     todo_write: ['log', false, false, false, false],
     ask_user_question: ['log', false, false, false, false],
     exit_plan_mode: ['log', false, false, false, false],

@@ -37,7 +37,7 @@ export interface ToolEntry {
 const PATH = { type: 'string', description: '视图内的相对路径' } as const
 
 /**
- * 那十五个工具，逐个写它的参数面。**顺序不承重**：承重的是名字的域——能力表（§ 8.9）以这套
+ * 那十二个工具，逐个写它的参数面。**顺序不承重**：承重的是名字的域——能力表（§ 8.9）以这套
  * 名字为键，那一份载入时的核对比的就是集合（`checkInvariant`）。仓库里这份列的顺序、能力表
  * 那份的顺序、§ 8.10 那张表按类别分行的顺序，三处都不同；而进字节流的是这一列扁平条目的先
  * 后，所以它只被 § 8.10 硬纪律 2 管（跨状态逐字节稳定），不被"哪一处跟哪一处同序"管。
@@ -158,42 +158,6 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
         },
       },
       required: ['todos'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'subagent',
-    description: '把一个自足的任务派给另一个 agent，它在自己的上下文里做完再把结果交回来。',
-    parameters: {
-      type: 'object',
-      properties: {
-        description: { type: 'string', description: '三五个词的任务名，给人看' },
-        prompt: { type: 'string', description: '完整的任务说明——它看不到这里的对话' },
-        run_in_background: { type: 'boolean', description: '派出去就返回，不等结果（缺省等）' },
-      },
-      required: ['description', 'prompt'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'list_agents',
-    description: '列出自己派出去的那些 agent：它们的 id 与状态。派出去之后要动手（追问、打断、收结果）先在这里拿 id；**回话会自己送到**，不用一直查。',
-    parameters: {
-      type: 'object',
-      properties: { scope: { type: 'string', enum: ['children', 'descendants'], description: '只看直接子 agent，还是整棵树' } },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'send_message',
-    description: '给一个已经派出去的 agent 发一条消息：它在忙就插到最近的一步，闲下来就让它接着做。',
-    parameters: {
-      type: 'object',
-      properties: {
-        agent_id: { type: 'string', description: '目标 agent 的 id' },
-        message: { type: 'string', description: '要说的话' },
-      },
-      required: ['agent_id', 'message'],
       additionalProperties: false,
     },
   },

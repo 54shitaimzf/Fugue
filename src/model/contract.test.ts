@@ -556,7 +556,7 @@ test('③ 同一份状态装配两次的请求体逐字节相同；工具 schema
   // 而它进的是请求里那个 `tools` 字段，**不在三区里**（架构 § 8.11 表外那一项）。
   const schemaHash = hashOf(new TextEncoder().encode(JSON.stringify(one.tools)))
   assert.notEqual(schemaHash, hashOf(one.zones.A), '工具 schema 混进 A 区了')
-  // 请求里那 15 条就是目录那 15 条（逐字段相同；`catalog()` 每次给一份新数组，引用不同是设计如此）。
+  // 请求里那 12 条就是目录那 12 条（逐字段相同；`catalog()` 每次给一份新数组，引用不同是设计如此）。
   assert.deepEqual(one.tools, TOOL_ENTRIES)
   assert.equal(one.tools?.length, TOOL_ENTRIES.length)
 

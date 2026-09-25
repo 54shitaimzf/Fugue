@@ -17,10 +17,10 @@
 // 「这个工具落在哪层状态」。两者不要合：合了以后，加一个工具就要同时动路径空间。
 
 /** 一层状态：架构 § 8.9 那五行，逐字。 */
-export type Layer = 'view' | 'execute' | 'truth' | 'orchestrate' | 'log'
+export type Layer = 'view' | 'execute' | 'truth' | 'log'
 
 /**
- * 一个工具名：架构 § 8.10 那张目录逐字，十五个。**这是它的唯一定义处。**
+ * 一个工具名：架构 § 8.10 那张目录逐字，十二个。**这是它的唯一定义处。**
  *
  * 名字按类别分组（文件 · 执行 · 发现 · 待办 · 委派 · 交互 · 计划 · 本架构新增），顺序不承重：
  * 前缀里的位置是提供方的事（架构 § 8.11：工具目录有位置，只是位置不由我们排）。
@@ -30,7 +30,6 @@ export const TOOL_NAMES: readonly string[] = [
   'bash',
   'glob', 'grep',
   'todo_write',
-  'subagent', 'list_agents', 'send_message',
   'ask_user_question',
   'exit_plan_mode',
   'checkpoint', 'run_action',
@@ -99,7 +98,6 @@ const LAYER_TABLE: Readonly<Record<Layer, readonly string[]>> = {
   view: ['read', 'write', 'edit', 'read_image', 'glob', 'grep'],
   execute: ['bash', 'run_action'],
   truth: ['checkpoint'],
-  orchestrate: ['subagent', 'list_agents', 'send_message'],
   log: ['todo_write', 'ask_user_question', 'exit_plan_mode'],
 }
 
@@ -109,7 +107,7 @@ const WITH_DECL: readonly string[] = ['run_action']
 /**
  * 能力表：工具名 → 层 · 身份 · 声明集。**它就是架构 § 8.9 那张表本身。**
  *
- * 它从 `LAYER_TABLE` 长出来而不是手写十五行：手写一份的话，「哪个工具落在哪一层」就有两处可改，
+ * 它从 `LAYER_TABLE` 长出来而不是手写十二行：手写一份的话，「哪个工具落在哪一层」就有两处可改，
  * 而两处不一致只会表现成某个调用点少了一条推论——没有报错。这样只有一处。
  */
 export const CAPABILITY_TABLE: Readonly<Record<string, CapabilityRow>> = Object.fromEntries(

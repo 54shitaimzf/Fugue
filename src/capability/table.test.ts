@@ -23,7 +23,7 @@ import type { Capability, CapabilityRow, Layer } from './table.ts'
 import { CAPABILITY_TABLE, checkInvariant, lookup, namesOn } from './table.ts'
 
 /** 架构 § 8.9 那五行，逐字。 */
-const LAYERS: readonly Layer[] = ['view', 'execute', 'truth', 'orchestrate', 'log']
+const LAYERS: readonly Layer[] = ['view', 'execute', 'truth', 'log']
 
 /** 那份名字表：Z0 的协议值里那一栏就是它（`Protocol.toolCatalog`），不在这里抄第二遍。 */
 const { TOOL_NAMES } = await import('../assemble/protocol.ts')
@@ -55,10 +55,10 @@ test('① 每个工具在表里恰好一行 · 每行落在一层上 · 能力�
   assert.deepEqual(sorted(tools), sorted(TOOL_NAMES), '表与工具目录不是同一份名单')
   assert.deepEqual(checkInvariant(CAPABILITY_TABLE, TOOL_NAMES), [], '载入时的核对对这份表有话说')
 
-  // 每行落在五层中的某一层：五层各至少一格，且没有第六层。
+  // 每行落在四层中的某一层：四层各至少一格，且没有第五层。
   const byLayer = new Map<Layer, string[]>(LAYERS.map((l) => [l, namesOn(l)]))
   const covered = new Set([...byLayer.values()].flat())
-  assert.deepEqual(sorted([...covered]), sorted(TOOL_NAMES), '有工具不落在五层中的任何一层')
+  assert.deepEqual(sorted([...covered]), sorted(TOOL_NAMES), '有工具不落在四层中的任何一层')
   for (const layer of LAYERS) {
     assert.ok((byLayer.get(layer) ?? []).length > 0, `这一层一个工具都没有：${layer}`)
   }
@@ -80,7 +80,7 @@ test('② 未声明的工具名 → 拒，拒的话里带着那个名字与名�
     // 拒的话要指得出名字从哪来（架构 § 8.4 纪律 2 的同一条纪律）。
     assert.match(got.message, /§ 8\.10/)
   }
-  // 正对照：表里那十五个一个都不拒，且拒的那一支不会漏进它们。
+  // 正对照：表里那十二个一个都不拒，且拒的那一支不会漏进它们。
   for (const name of TOOL_NAMES) assert.ok(!isDenied(lookup(name)), `表里的工具被拒了：${name}`)
 })
 
@@ -109,7 +109,6 @@ test('③ 四条推论逐条与层相符（§ 8.9 那张推论表）', () => {
   assert.ok(cap('bash').materialize && cap('bash').confine, '执行类要先物化、要关进沙箱')
   assert.ok(cap('read').fence && !cap('read').confine, '视图类过围栏，但不关沙箱——它不 spawn')
   assert.ok(!cap('checkpoint').materialize, '真源那一格不先物化——它写的是真源，不是工作区')
-  assert.ok(!cap('subagent').confine, '编排那一格不关沙箱——子进程有它自己的那一趟')
 })
 
 test('④ 声明集只挂在执行层：同在执行层，`bash` 与 `run_action` 的回写不同', () => {

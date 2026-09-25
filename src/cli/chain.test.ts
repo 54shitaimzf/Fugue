@@ -90,7 +90,7 @@ test('S8 这一条链从命令行走一遍：write → commit → assemble → c
   }
   assert.equal(a.protocol, 'subagent')
   assert.equal(a.segments, 11, '子 agent 那份声明是十一段')
-  assert.equal(a.toolCatalog, 15, '工具目录十五条')
+  assert.equal(a.toolCatalog, 12, '工具目录十二条')
   for (const z of ['A', 'B', 'C'] as const) {
     assert.ok(a.zones[z].bytes > 0, `${z} 区是空的——装配没接上段源`)
     assert.match(a.zones[z].hash, /^[0-9a-f]{16}$/, `${z} 区的指纹不是 16 位十六进制`)
