@@ -84,8 +84,8 @@ import { RoundStartError, startRound } from '../round/start.ts'
 import { RoundRunError, materializeCommit, runRound } from '../round/execute.ts'
 import type { DriverSupport, Stub } from '../round/execute.ts'
 import { realDriver, stubDriver } from '../round/driver.ts'
-import { DEFAULT_MAX_STEPS, wireCall } from '../runtime/step.ts'
-import { makeDumpCall } from '../model/http.ts'
+import { DEFAULT_MAX_STEPS, wireCallOver } from '../runtime/step.ts'
+import { makeDumpCall, wireInTransport } from '../model/http.ts'
 import type { AgentHandle } from '../runtime/step.ts'
 import { targetAt } from '../model/http.ts'
 import { authWith, modelDeclOf, providerOf } from '../model/contract.ts'
@@ -282,6 +282,9 @@ const VALUED: ReadonlySet<string> = new Set([
   'max-steps',
   // `--interval <毫秒>`（`watch --follow` 的轮询间隔）：同一条纪律。
   'interval',
+  // `--wire-in <目录>`：**回放档**（PLAN § 5.12 序 1）。它也取一个值，同一条纪律；而它是**内部档**
+  // ——不进用法说明：它要的是"录下来的那一趟"，只有取证与走查用得上。
+  'wire-in',
 ])
 
 function parseArgv(argv: readonly string[]): Parsed {
@@ -855,6 +858,25 @@ async function roundRun(
   // 落点那一条是**这一趟的入场条件**（不成立就不该开工），而凭据那一条只在真要出网时才要；
   // 原先它们挤在 deps 那个对象字面量里求值，于是"落在工作区里"会被"凭据不在"抢答（实测）。
   const dumpDir = typeof dumpFlag === 'string' ? dumpWireDir(root, resolve(dumpFlag)) : undefined
+  // `--wire-in <目录>`：**回放档**（架构 § 10.5 的录制夹具 · PLAN § 5.12 序 1）。目录的形状就是
+  // `--dump-wire` 落的那个。它**不出网、不读凭据**，而它必须走**真驱动**（打桩那一档一次调用都
+  // 不发，回放就无从谈起）——所以它与 `--live` 是同一档驱动的两种传输：
+  //   · `--live`   → 真网络；
+  //   · `--wire-in` → 读夹具（`wireInTransport`，按 `requestHash` 核）。
+  // 两个一起给是**自相矛盾**的（一个要出网、一个不许出网），当场拒；要"回放一遍、同时重录一份"
+  // 就把 `--wire-in <旧目录>` 与 `--dump-wire <新目录>` 一起给（落下来的是**这一趟真的发出去的
+  // 那一串**，回放档的请求是现算的）。
+  const wireInFlag = flags.get('wire-in')
+  if (wireInFlag === true) return usageFail('--wire-in 要一个目录：--wire-in <--dump-wire 落过的那个目录>')
+  const wireIn = typeof wireInFlag === 'string' ? resolve(wireInFlag) : undefined
+  if (wireIn !== undefined && live) {
+    return usageFail(
+      '--wire-in 与 --live 是两档，一次只给一个：前者不出网（喂回去的是录下来的响应），后者要出网。' +
+        '要一边回放一边重录一份，就给 --wire-in <旧目录> --dump-wire <新目录>。',
+    )
+  }
+  // **这一趟走不走真驱动**：真网络那一档（`--live`）与回放那一档（`--wire-in`）都走它。
+  const real = live || wireIn !== undefined
   // `--max-steps`：**花钱的那道上界**。取值要是一个正整数；不认的写法当场拒（不替它猜）。
   const stepsFlag = flags.get('max-steps')
   let maxSteps: number | undefined
@@ -961,7 +983,8 @@ async function roundRun(
       // `driverSupport` 那一栏照旧给（ask 要从它拿 `call` · `execute` · `decl` · `handle`）。
       // **真驱动那一档接上 `onResult`**：`stopped` 与 `steps` 收进 `stops`，跑完一起报出去
       // （打桩那一档没有这句话可说——它没有"停因"，`stubDriver` 也不产出读数）。
-      stub: live
+      // **回放档也走它**（`real`）：那一档与真档的差别只在传输那一层，不在驱动这一层。
+      stub: real
         ? realDriver({
             onResult: (agent, r) => {
               stops.push({ agent: String(agent), steps: r.steps, stopped: r.stopped })
@@ -970,13 +993,15 @@ async function roundRun(
         : stubDriver(stub),
       ...(maxSteps === undefined ? {} : { maxSteps }),
       ...(handoff === undefined ? {} : { handoff }),
-      // **判据只看 `--live`**：凭据那一步已经归 `driverSupport`（声明里那份表 + `authOf`），
-      // 壳这一层不再自己读一次——它只带一个命令行覆盖。
-      ...(live
+      // **判据是"这一趟走不走真驱动"**（`--live` 或 `--wire-in`）：凭据那一步已经归
+      // `driverSupport`（声明里那份表 + `authOf`；**回放档不取凭据**），壳这一层不再自己读一次
+      // ——它只带一个命令行覆盖。
+      ...(real
         ? {
             driver: driverSupport({
               root,
               doc,
+              ...(wireIn === undefined ? {} : { wireIn }),
               ...(maxSteps === undefined ? {} : { maxSteps }),
               ...(credentialOverride === undefined ? {} : { credential: credentialOverride }),
               ...(dumpDir === undefined ? {} : { dumpDir }),
@@ -1664,6 +1689,14 @@ export function driverSupport(o: {
   /** `--dump-wire` 那一档的落点（**已经在工作区之外**——守卫在 `dumpWireDir`）。不给就不落。 */
   readonly dumpDir?: string
   /**
+   * `--wire-in <目录>`：**回放档**（PLAN § 5.12 序 1）。
+   *
+   * 给了它就同时换掉两件事：**目标**（不取凭据——它一个字节都不出网）与**传输**（读那份目录，
+   * 不碰 `fetch`）。`--dump-wire` 与它叠加时落的是这一趟真的发出去的那一串（请求是现算的），
+   * 于是"重录一份夹具"就是 `--wire-in <旧> --dump-wire <新>`。
+   */
+  readonly wireIn?: string
+  /**
    * 这一格最多走几步（`--max-steps`）。**它是「我的任务」里那句话的那个数**，所以要在拼状态
    * 的时候就写进去——那一份状态同时喂给两处装配（`step` 里那一次与驱动算预算用的 `prefixOf`
    * 那一次），两处读到的字节因此是同一串。
@@ -1679,7 +1712,17 @@ export function driverSupport(o: {
   // **覆盖给了就用覆盖**（`targetAt`：值从参数进来，不再取一次）；**不给就按声明取**。
   // 声明那一份是**有序的表**：环境变量优先，其次 `CREDENTIAL_FILE`——这两条的实现只有一处
   // （`authOf()`），所以"文件里那份读到了也没用"这一类漂移在结构上不存在。
-  const target = targetAt(decl.id, authWith(providerOf(decl.provider), o.credential ?? null))
+  // **回放那一档不取凭据**：它一个字节都不出网（架构 § 10.5），而取凭据那一步在没有 key 时会
+  // 当场拒——那与这一档无关（夹具档要凭据这件事本身就是"把两件事混成一件"）。占位串只进这一份
+  // 目标的头里，而头不进请求体、也不进任何一份夹具。`--credential` 照旧优先（走查要换一份声明
+  // 之外的 key 时给的就是它）。
+  const credential =
+    o.wireIn === undefined
+      ? authWith(providerOf(decl.provider), o.credential ?? null)
+      : (o.credential ?? '回放档：不出网，不取凭据')
+  const target = targetAt(decl.id, credential)
+  /** 回放档的那条传输（不给就是"没有"，`callModel` 走真网络）。 */
+  const pump = o.wireIn === undefined ? undefined : wireInTransport(o.wireIn)
 
   /**
    * 这个 agent 的第一步那一份状态：**契约值就是它的任务**（B 区那几段照契约填）。
@@ -1739,7 +1782,11 @@ export function driverSupport(o: {
     // `raw` · `opened` · `closed` 都在 `ModelStream` 上，而 `wireCall` 那一道出口只交两栏）。
     // 传 `wireCall` 进去的话第一个参数会落成"目录"，而那是函数——真正的失败长这样：
     // `TypeError: The "path" argument must be of type string. Received function wireCall`。
-    call: o.dumpDir === undefined ? wireCall : makeDumpCall(o.dumpDir),
+    //
+    // **传输那一层的一个 `if`**：回放档给它 `wireInTransport(目录)`，其余两档给 `undefined`
+    // （`callModel` 的缺省就是真网络）。三种用法因此是同一条代码路径：
+    //   `wireCallOver(pump)` · `makeDumpCall(dir, pump)`——`pump` 给不给，决定字节从哪儿来。
+    call: o.dumpDir === undefined ? wireCallOver(pump) : makeDumpCall(o.dumpDir, pump),
     tools,
   }
 }

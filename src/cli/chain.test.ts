@@ -7,11 +7,13 @@
 // `deps.stub is not a function`，而 294 条单测全绿），所以"能不能跑"要有一条自己的断言。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { tmpDir } from '../../test/helpers/tmp.ts'
+import { clearMaterialization, removeTree } from '../materialize/mount.ts'
+import { matParts } from '../roots/paths.ts'
 
 const CLI = fileURLToPath(new URL('./fugue.ts', import.meta.url))
 
@@ -418,4 +420,189 @@ test('--dump-wire 的守卫：落在工作区里当场拒（并给出两条路�
   assert.equal(ok.code, 1, `该退 1（凭据不在），实际 ${ok.code}`)
   assert.match(ok.stderr, /凭据不在/)
   console.log(`守卫读数：工作区里 → "${bad.stderr.split('\n')[0]}" · 工作区外 → "${ok.stderr.split('\n')[0].slice(0, 60)}"`)
+})
+
+// ── 序 1 · 回放档（`--wire-in`）：录下来的那一趟喂回去 ────────────────────────────
+//
+// 由头（架构 § 10.5 的录制夹具 · PLAN § 5.8 的口径一"验收不押在网络上"）：整条链的验收原先只能
+// 在真档上量一次（花钱 · 依赖网），而 `--dump-wire` 已经把"发出去与收回来"的字节留在了盘上。
+// 回放那一档把那一趟**喂回去**——同一条链于是在套件里跑得出来，而**一次 `fetch` 都没有**：
+// 传输换成了读目录（`wireInTransport`），按录下来的请求字节核。
+//
+// 夹具是**真响应**（`src/cli/__fixture__/wire-in/`·录的那一趟：`写一份 notes.md` · 一格 ·
+// `--max-steps 4` · 三份调用 · 停因**收敛**）。`scenario.json` 是录制那个工作区的全部输入——
+// 回放要照着搭同一个工作区，工作区不同则前缀不同，而前缀不同就会当场拒（这正是它该有的牙）。
+const WIRE_IN_DIR = fileURLToPath(new URL('./__fixture__/wire-in/', import.meta.url))
+
+interface WireScenario {
+  goal: string
+  maxSteps: number
+  assertions: unknown[]
+  split: unknown[]
+  base: { path: string; text: string }[]
+  expected: Record<string, string>
+}
+
+function scenarioOf(): WireScenario {
+  return JSON.parse(readFileSync(join(WIRE_IN_DIR, 'scenario.json'), 'utf8')) as WireScenario
+}
+
+/** 夹具里那几份调用的目录名（`call-0001` …），按发生次序。 */
+const WIRE_CALLS = readdirSync(join(WIRE_IN_DIR, 'wire')).sort()
+
+/**
+ * 收尾：**用产品那一份**（`clearMaterialization` · `removeTree`），不自己 `rmSync`。
+ *
+ * 由头（W8 起就立在那儿，`mount.ts` 的注释与 `driver.test.ts` 的 `close()` 都记着）：真驱动
+ * 那一档的 `bash` 会把物化树挂起来（overlayfs），卸载之后内核在 `tmp/work/` 里留一个
+ * `root:root 000` 的 `work/work`——`fs.rmSync` 会先 `readdir` 每个目录，于是在它上面吃
+ * `EACCES`（实测：这一条测试第一版就是这么红的，而且**测试红在收尾上**）。`removeTree` 先
+ * `rmdir` 再往下走，绕过这一处。**回放那一档照旧挂树**（它跑的是真驱动，只是传输换了）。
+ */
+function wireCleanup(root: string): void {
+  const p = matParts(root as never, 'agent/r1/1' as never)
+  clearMaterialization(p.merged, [p.upper, p.merged, p.temp])
+  removeTree(root as never)
+}
+
+/**
+ * 照录制那一趟搭一份工作区：底那几份文件 + 一个提交 + 那三条配置。
+ *
+ * **别的键一条都不设**：`系统状态` 那一段照 `EXPOSED` 那几栏投影，多设一条 A 区的字节就变了，
+ * 而 A 区一变回放当场拒（那是对的——夹具绑的就是录制那一版的字节）。
+ */
+function wireRoot(s: WireScenario): string {
+  const root = tmpRoot()
+  for (const f of s.base) {
+    mkdirSync(dirname(join(root, f.path)), { recursive: true })
+    writeFileSync(join(root, f.path), f.text)
+  }
+  const git = (...args: string[]): void => {
+    const r = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+    assert.equal(r.status, 0, `git ${args.join(' ')} 退了 ${String(r.status)}：${r.stderr}`)
+  }
+  git('symbolic-ref', 'HEAD', 'refs/heads/main')
+  git('config', 'user.email', 'fugue@localhost')
+  git('config', 'user.name', 'fugue')
+  git('add', '-A')
+  git('commit', '-qm', '底')
+  assert.equal(fugue(root, 'config', 'set', 'round.id', 'r1').code, 0)
+  assert.equal(fugue(root, 'config', 'set', 'round.assertions', JSON.stringify(s.assertions)).code, 0)
+  assert.equal(fugue(root, 'config', 'set', 'round.split', JSON.stringify(s.split)).code, 0)
+  return root
+}
+
+test('序 1 · `--wire-in` 把真响应喂回去：验收照过 · 产物逐字节相同 · 每一条调用逐条对上（不出网 · 不读凭据）', () => {
+  const s = scenarioOf()
+  const root = wireRoot(s)
+  const dump = tmpDir('fugue-wire-in-out-')
+  // **环境里没有凭据**（`fugue()` 只留 `PATH` 与 `HOME`），也没有 `--credential`：这一档不取凭据。
+  const run = fugue(
+    root,
+    '--json',
+    'round',
+    'run',
+    s.goal,
+    '--wire-in',
+    join(WIRE_IN_DIR, 'wire'),
+    '--max-steps',
+    String(s.maxSteps),
+    '--report',
+    '--metrics',
+    '--dump-wire',
+    dump,
+  )
+  assert.equal(run.code, 0, `回放那一趟退了 ${run.code}：${run.stderr}`)
+  const j = JSON.parse(run.stdout) as {
+    verify: { pass: number; fail: number; unrunnable: number; ok: boolean }
+    advanced: { written: string[]; removed: string[]; skipped: string[] } | null
+    agents: { agent: string; steps: number; stopped: string }[]
+    metrics: unknown[]
+  }
+  // 验收照过（录的那一趟是 2 条断言），而且真的推进了。
+  assert.equal(j.verify.ok, true, `验收没过：${JSON.stringify(j.verify)}`)
+  assert.equal(j.verify.pass, s.assertions.length, `通过 ${j.verify.pass} 条，录的那一趟是 ${s.assertions.length} 条`)
+  assert.equal(j.verify.fail, 0)
+  assert.ok(j.advanced !== null, '验收过了却没推进')
+
+  // 产物：**逐字节等于录下来的那一趟**（`expected` 那一栏就是录制时盘上那一份）。
+  for (const [path, text] of Object.entries(s.expected)) {
+    assert.equal(readFileSync(join(root, path), 'utf8'), text, `${path} 与录下来的那一趟不同`)
+  }
+
+  // 每一条调用逐条对上：**这一趟真的发出去的请求**与录下来的那一份逐字节相同（`requestHash`），
+  // **喂回去的响应**也与录下来的那一份相同（`responseHash`）。
+  const again = readdirSync(dump).sort()
+  assert.deepEqual(again, WIRE_CALLS, `回放重录的份数与夹具不同：${again.join(' ')} vs ${WIRE_CALLS.join(' ')}`)
+  for (const c of WIRE_CALLS) {
+    const mine = JSON.parse(readFileSync(join(dump, c, 'meta.json'), 'utf8')) as Record<string, unknown>
+    const kept = JSON.parse(readFileSync(join(WIRE_IN_DIR, 'wire', c, 'meta.json'), 'utf8')) as Record<string, unknown>
+    assert.equal(mine['requestHash'], kept['requestHash'], `${c}：这一趟发出去的请求与录下来的不是同一份`)
+    assert.equal(mine['requestBytes'], kept['requestBytes'], `${c}：请求字节数不同`)
+    assert.equal(mine['responseHash'], kept['responseHash'], `${c}：喂回去的响应与录下来的不是同一份`)
+    assert.equal(mine['stop'], kept['stop'], `${c}：停因不同`)
+  }
+
+  // 停因：**收敛**（`end-turn`）——不是"步数到顶"。这一条同时是 § 5.12 序 12 那三句收工口径的读数。
+  const one = j.agents[0]
+  assert.ok(one !== undefined, `这一趟没落停因：${JSON.stringify(j.agents)}`)
+  assert.equal(one.stopped, '收敛', `停因是「${one.stopped}」（录的那一趟是 3 步收敛）`)
+  wireCleanup(root)
+  console.log(
+    `序 1 读数：回放 ${WIRE_CALLS.length} 条调用 · 逐条 requestHash/responseHash 相同 · 验收 ${j.verify.pass}/${j.verify.fail} · ` +
+      `停因「${one.stopped}」· 产物 ${Object.keys(s.expected).join(' ')} 逐字节相同 · 一次 fetch 都没有`,
+  )
+})
+
+test('序 1 负对照：夹具里第一份 `request.json` 改一个字节 → 当场拒（这一份不是那一次请求）', () => {
+  const s = scenarioOf()
+  const bad = tmpDir('fugue-wire-in-bad-')
+  cpSync(join(WIRE_IN_DIR, 'wire'), join(bad, 'wire'), { recursive: true })
+  const at = join(bad, 'wire', WIRE_CALLS[0] as string, 'request.json')
+  const bytes = readFileSync(at)
+  // 改**一个字节**（不是整份换掉）：`meta.json` 里那 16 个字符与它对不上。
+  bytes[0] = bytes[0] === 0x7b ? 0x5b : 0x7b
+  writeFileSync(at, bytes)
+
+  const root = wireRoot(s)
+  const dump = tmpDir('fugue-wire-in-bad-out-')
+  const run = fugue(
+    root,
+    '--json',
+    'round',
+    'run',
+    s.goal,
+    '--wire-in',
+    join(bad, 'wire'),
+    '--max-steps',
+    String(s.maxSteps),
+    '--dump-wire',
+    dump,
+  )
+  const j = JSON.parse(run.stdout) as {
+    verify: { pass: number; fail: number; ok: boolean }
+    agents: { agent: string; steps: number; stopped: string }[]
+  }
+  // 一 · **当场拒**：那句话落在这一格的停因上（`cut-stream：回放档：… 被改过`）。
+  const one = j.agents[0]
+  assert.ok(one !== undefined, `这一趟没落停因：${JSON.stringify(j.agents)}`)
+  assert.match(one.stopped, /回放档：.*被改过/, `停因里没有拒的那句话：「${one.stopped}」`)
+  assert.match(one.stopped, /这一份取证物被改过|不是那一次请求/, `拒的话没指得出路：「${one.stopped}」`)
+  assert.equal(one.steps, 1, `拒在第 1 次调用上，而这一格走了 ${one.steps} 步`)
+  // 二 · **拒在发出去之前**：夹具里后面那几份一次都没被读（这一趟只有第 1 次调用落了取证物）。
+  //     那一份照旧落下来（`--dump-wire` 的纪律：**失败那一路也落**），而它是 `failed` 档。
+  assert.deepEqual(readdirSync(dump), [WIRE_CALLS[0]], `落下来的份数不对：${readdirSync(dump).join(' ')}`)
+  const bad1 = JSON.parse(readFileSync(join(dump, WIRE_CALLS[0] as string, 'meta.json'), 'utf8')) as Record<string, unknown>
+  assert.equal(bad1['outcome'], 'failed', `那一份的 outcome 是 ${String(bad1['outcome'])}`)
+  assert.match(String(bad1['failure']), /回放档：/, `那一份的 failure 没写清为什么：${String(bad1['failure'])}`)
+  assert.equal(existsSync(join(root, 'notes.md')), false, '那一趟被拒了，盘上却落了产物')
+  // 三 · **验收因此不过**，而退出码由验收定（`round run` 的口径：验收是唯一的判据）。
+  assert.equal(j.verify.ok, false, `被拒了验收却是过的：${JSON.stringify(j.verify)}`)
+  assert.equal(j.verify.pass, 0)
+  assert.notEqual(run.code, 0, '验收没过，退出码却是 0')
+  wireCleanup(root)
+  console.log(
+    `序 1 负对照读数：${String(WIRE_CALLS[0])}/request.json 改一个字节 → 退 ${run.code} · 验收 ${j.verify.pass} · ` +
+      `这一格走了 ${one.steps} 步就停 · 落下来的那一份是 ${String(bad1['outcome'])} 档`,
+  )
 })

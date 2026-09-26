@@ -30,7 +30,7 @@ import type { Log } from '../log/events.ts'
 import type { AgentId, BranchId, ContractId, LogSeq, StepId, WriterId } from '../terms.ts'
 import type { ModelCall, ModelEvent, StopReason, Usage } from '../model/contract.ts'
 import { checkEvents } from '../model/contract.ts'
-import type { Target } from '../model/http.ts'
+import type { Target, Transport } from '../model/http.ts'
 import type { WireFacts } from '../model/http.ts'
 import { callModel, wireFactsOf } from '../model/http.ts'
 import type { WireAdapter } from '../model/wire/stream.ts'
@@ -195,30 +195,36 @@ export interface Runtime {
  * 产品实现：走 `B3` 那条路（**唯一碰网的那一处**）。它把"这一次调用"翻译成 `ModelRequest`
  * （三区按区带 · 工具 · 调用配置），再交给 `callModel`。
  *
- * **夹具档与真网络档在这份代码里没有分岔**：分岔在 `Target` 里（`from: 'decl' | 'fixture'`），
- * 而那是调用方拼的。
+ * **真网络档 · 回放档 · 夹具档在这份代码里没有分岔**：分岔全在**传输**那一层（`Transport`），
+ * 而传输是调用方给的——真网络（缺省 `fetchTransport`）· 读一份录下来的目录（`wireInTransport`）·
+ * 测试里那条夹具传输。这一层一个 `if` 都没有。
  */
-export const wireCall: CallModel = (request, signal) => {
-  const stream = callModel(
-    request.target,
-    {
-      model: request.model,
-      zones: { A: request.prefix.zoneA, B: request.prefix.zoneB, C: request.prefix.zoneC },
-      tools: request.tools,
-      ...(request.turns === undefined || request.turns.length === 0 ? {} : { turns: request.turns }),
-      ...(request.call === undefined ? {} : { call: request.call }),
-    },
-    undefined,
-    signal,
-  )
-  return {
-    events: stream.events,
-    ledger: () => {
-      const l = stream.ledger()
-      return { call: l.call, failure: l.failure }
-    },
+export function wireCallOver(transport?: Transport): CallModel {
+  return (request, signal) => {
+    const stream = callModel(
+      request.target,
+      {
+        model: request.model,
+        zones: { A: request.prefix.zoneA, B: request.prefix.zoneB, C: request.prefix.zoneC },
+        tools: request.tools,
+        ...(request.turns === undefined || request.turns.length === 0 ? {} : { turns: request.turns }),
+        ...(request.call === undefined ? {} : { call: request.call }),
+      },
+      transport,
+      signal,
+    )
+    return {
+      events: stream.events,
+      ledger: () => {
+        const l = stream.ledger()
+        return { call: l.call, failure: l.failure }
+      },
+    }
   }
 }
+
+/** 产品那一档：走真网络（`callModel` 的缺省传输）。 */
+export const wireCall: CallModel = wireCallOver()
 
 /**
  * 一个假模型：一串脚本化的响应，按**第几次被调**取第几条（用完了就一直用最后一条）。

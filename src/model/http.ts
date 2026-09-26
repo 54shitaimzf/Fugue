@@ -16,7 +16,7 @@ import { checkEvents } from './contract.ts'
 import { hashOf } from '../assemble/assemble.ts'
 import type { WireAdapter } from './wire/stream.ts'
 import { concatBytes, parseStream } from './wire/stream.ts'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { wireNamed } from './wire/registry.ts'
@@ -189,6 +189,89 @@ export const fetchTransport: Transport = {
     }
     for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) yield chunk
   },
+}
+
+/**
+ * **回放档**：按 `requestHash` 核一遍，然后把录下来的响应喂回去（架构 § 10.5 的录制夹具 ·
+ * PLAN § 5.8 的口径一"验收不押在网络上"）。
+ *
+ * 目录的形状就是 `--dump-wire` 落的那个形状（`call-0001/` … 按发生次序编号），所以"录一份、
+ * 回放一份"是同一种物件的两种用法。每一次 `post` 做三件事：
+ *
+ *   一 · 取第 n 个子目录的 `meta.json`（缺了就是"夹具里没有这一份"——**报出来，不静默停下**）；
+ *   二 · **核**：这一趟真正发出去的字节的短指纹（`hashOf`，与日志、与 `prefix/assemble` 同一把尺）
+ *        与录下来的 `requestHash` 不等 → 当场拒。**过期不重修**：前缀或契约的字节一变，旧夹具
+ *        就该红着，而不是被修得像新的（要新的就真跑一趟重录）。
+ *   三 · 喂回去：`response.sse` 的原始字节，**按 SSE 的事件边界切块**。切法与当时上游不必逐块
+ *        相同（`Transport` 收的就是字节块），但按事件切更接近一条真实的流。
+ *
+ * **它不碰网、也不读凭据**：这一层上面已经没有别的东西了——`callModel` 拿到的是"一段回来的
+ * 字节"，而它不认识这段字节从哪儿来。
+ */
+export class WireInError extends Error {}
+
+/** `response.sse` → 按事件边界切块（一个空行是一件事的收尾）；末尾没空行的那一段也交出去。 */
+function sseChunks(raw: Uint8Array): Uint8Array[] {
+  const out: Uint8Array[] = []
+  let at = 0
+  for (let i = 0; i + 1 < raw.length; i++) {
+    if (raw[i] === 0x0a && raw[i + 1] === 0x0a) {
+      out.push(raw.subarray(at, i + 2))
+      at = i + 2
+      i += 1
+    }
+  }
+  if (at < raw.length) out.push(raw.subarray(at))
+  return out.length === 0 ? [raw] : out
+}
+
+export function wireInTransport(dir: string): Transport {
+  let n = 0
+  return {
+    post(_t: Target, body: Uint8Array): AsyncGenerator<Uint8Array> {
+      n += 1
+      const mine = n
+      return (async function* (): AsyncGenerator<Uint8Array> {
+        const at = join(dir, `call-${String(mine).padStart(4, '0')}`)
+        let meta: { requestHash?: unknown; responseHash?: unknown }
+        try {
+          meta = JSON.parse(readFileSync(join(at, 'meta.json'), 'utf8')) as { requestHash?: unknown }
+        } catch {
+          throw new WireInError(
+            `回放档：${at}/meta.json 读不到——这一趟是第 ${mine} 次调用，而夹具里没有这一份。` +
+              `夹具的形状就是 --dump-wire 落的那个形状（call-0001/ …）。`,
+          )
+        }
+        const got = hashOf(body)
+        // **这一份取证物自己得先自洽**：`request.json` 的字节与 `meta.json` 那一栏是同一把尺。
+        // 改过其中一个字节的夹具走的是这一支——它连自己都对不上，不该拿去回放。
+        const were = hashOf(readFileSync(join(at, 'request.json')))
+        if (meta.requestHash !== were) {
+          throw new WireInError(
+            `回放档：${at} 这一份取证物被改过——request.json 的指纹是 ${were}，` +
+              `meta.json 记的是 ${String(meta.requestHash)}。`,
+          )
+        }
+        // **核的就是它**：这一趟真正发出去的字节，与录下来的那一份请求逐字节相同。
+        if (were !== got) {
+          throw new WireInError(
+            `回放档：这一份不是那一次请求——${at}/request.json 记的是 ${were}，` +
+              `这一趟真正发出去的是 ${got}（${body.length} 字节）。` +
+              `夹具绑的是录制那一版的请求字节：前缀或契约一变它就过期，**过期不重修**（重录要真跑一趟）。`,
+          )
+        }
+        const raw = readFileSync(join(at, 'response.sse'))
+        // 录下来的响应字节与 `meta.json` 那一栏对不上：**这是一份被改过的取证物**，不是一次回放。
+        if (meta.responseHash !== undefined && meta.responseHash !== hashOf(raw)) {
+          throw new WireInError(
+            `回放档：${at}/response.sse 与它自己的 meta.json 对不上` +
+              `（记的是 ${String(meta.responseHash)}，盘上是 ${hashOf(raw)}）——这一份取证物被改过。`,
+          )
+        }
+        for (const chunk of sseChunks(raw)) yield chunk
+      })()
+    },
+  }
 }
 
 /** 一次调用的账：给日志用（`llm/call` 那一条的载荷照它填）。 */
