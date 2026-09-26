@@ -34,15 +34,37 @@ const BRANCH = 'refs/heads/agent-1' as BranchId
 const CONTRACT = 'c-1' as ContractId
 
 /**
- * 一份撑到触发点的状态（B 区的 `files` 那一段跟着长）。
+ * 一份撑起来的状态（B 区的 `files` 那一段跟着长）。
  *
- * `target` 是"想要的字节数"：三区里只有 B 区跟着它长，所以撑爆那一档（超过 `contextLimit`）
- * 要传一个比上限大一倍的值——`DECL.contextLimit` 是 12.8 万字节。
+ * `target` 是"想要的字节数"：三区里只有 B 区跟着它长。**这个数是猜的起点，不是判据**——
+ * 要"账落在某个数之上"一律走 `stateWithUsed`，那里量的是那把尺的读数。
  */
 function bigState(target = 90_000): AssembleState {
   const line = 'const x = 1 // 一行代码，用来把这棵树撑起来\n'
   const per = Buffer.byteLength(line, 'utf8')
   return { ...fixtureState(7), files: [{ path: 'src/big.ts', text: line.repeat(Math.ceil(target / per)) }] }
+}
+
+/** 工具目录与 `seed` 那两段：**账里递的是正文**（怎么量归 `planBudget`，调用方不换算）。 */
+const TOOLS = '工具目录：read_file · write_file · run_command'
+const SEED = '把这一格的活干完，并把读数交回来。'
+
+/** 交接提示词那一段正文：ASCII 每四个字节一个 token（这把尺自己的系数），于是"约 n 个 token"。 */
+const handoffOf = (tokens: number): string => 'x'.repeat(tokens * 4)
+
+/**
+ * 一份"账落在 `target` 之上"的状态。**尺寸只认那把尺的读数**：先按字节猜一个起点，量一次、
+ * 按比例补足——换口径时这里跟着走，不用改任何一条断言。
+ */
+function stateWithUsed(target: number, decl: typeof DECL = DECL): AssembleState {
+  let bytes = target
+  for (let i = 0; i < 16; i++) {
+    const state = bigState(bytes)
+    const used = planBudget({ decl, prefix: prefixOf(state), tools: TOOLS, seed: SEED, handoff: '' }).used
+    if (used >= target) return state
+    bytes = Math.ceil(bytes * (target / used) * 1.05)
+  }
+  throw new Error(`撑不到 ${target}：那把尺量出来的读数一直在它下面`)
 }
 
 async function withLog<T>(fn: (log: ReturnType<typeof openLog>, root: string) => Promise<T>): Promise<T> {
@@ -70,9 +92,9 @@ const prefixOf = (state: AssembleState, coord: AgentCoord = WHO) =>
 
 test('① 到了触发点：agent/handoff 在日志里 · 正文非空 · 新 AgentId 同一条分支 · 轮级状态没变', async () => {
   await withLog(async (log, root) => {
-    const state = bigState()
+    const state = stateWithUsed(DECL.budget.trigger + 4_000)
     const prefix = prefixOf(state)
-    const plan = planBudget({ decl: DECL, prefix, tools: 6_637, seed: 1_200, handoff: 2_000 })
+    const plan = planBudget({ decl: DECL, prefix, tools: TOOLS, seed: SEED, handoff: handoffOf(2_000) })
     assert.equal(plan.kind, 'restart', `这一份状态该判交接：${plan.why}`)
 
     const successor = successorNameOf(AGENT, 1)
@@ -123,8 +145,8 @@ test('① 到了触发点：agent/handoff 在日志里 · 正文非空 · 新 Ag
 
 test('② 交接提示词落在 Zone B：A 区逐字节不变 · B 区里出现那一段 · 分叉点落在 A 与 A+B 之间', async () => {
   await withLog(async (log, root) => {
-    const state = bigState()
-    const plan = planBudget({ decl: DECL, prefix: prefixOf(state), tools: 6_637, seed: 1_200, handoff: 2_000 })
+    const state = stateWithUsed(DECL.budget.trigger + 4_000)
+    const plan = planBudget({ decl: DECL, prefix: prefixOf(state), tools: TOOLS, seed: SEED, handoff: handoffOf(2_000) })
     const out = await handoffAt({
       log,
       writer: AGENT as WriterId,
@@ -174,13 +196,13 @@ test('② 交接提示词落在 Zone B：A 区逐字节不变 · B 区里出现�
 
 test('③ 地板：预算退化成"用完就停"时仍能收尾——明确报出为什么停', async () => {
   await withLog(async (log, root) => {
-    const state = bigState()
+    const state = stateWithUsed(DECL.contextLimit)
     const plan = planBudget({
       decl: DECL,
       prefix: prefixOf(state),
-      tools: 6_637,
-      seed: 1_200,
-      handoff: DECL.budget.handoffMargin * 8,
+      tools: TOOLS,
+      seed: SEED,
+      handoff: handoffOf(DECL.budget.handoffMargin * 8),
     })
     assert.equal(plan.kind, 'stop', `这一份该判停：${plan.why}`)
     // **不留白**：为什么停那句话说得出量（用了多少 · 差多少 · 触发点在哪）。
@@ -202,26 +224,25 @@ test('③ 地板：预算退化成"用完就停"时仍能收尾——明确报�
 
 test('④ 负对照：触发点设在等于上限 → 那一档判出来的是"停"，不是"交接"', () => {
   const broken = { ...DECL, budget: { trigger: DECL.contextLimit, handoffMargin: 16_000 } }
-  const state = bigState()
+  const state = stateWithUsed(DECL.budget.trigger + 4_000)
   // 正常那一份预算：同一份状态判出来的是**交接**。
-  const good = planBudget({ decl: DECL, prefix: prefixOf(state), tools: 6_637, seed: 1_200, handoff: 2_000 })
+  const good = planBudget({ decl: DECL, prefix: prefixOf(state), tools: TOOLS, seed: SEED, handoff: handoffOf(2_000) })
   assert.equal(good.kind, 'restart', `正常预算下：${good.kind}——${good.why}`)
 
   // 坏预算：**同一份状态连触发点都到不了**（触发点贴在上限上，就再也没有"到了触发点"这一步）。
-  const stuck = planBudget({ decl: broken, prefix: prefixOf(state), tools: 6_637, seed: 1_200, handoff: 2_000 })
+  const stuck = planBudget({ decl: broken, prefix: prefixOf(state), tools: TOOLS, seed: SEED, handoff: handoffOf(2_000) })
   assert.equal(stuck.kind, 'continue', `坏预算判出来的：${stuck.kind}——${stuck.why}`)
   assert.equal(stuck.trigger, stuck.limit)
   assert.notEqual(stuck.kind, good.kind, '两档的差别只有那一个数，判决却相反')
 
   // 再撑一点：撑爆那一档是 `stop`，而"该交接"这一步再也走不到。
-  // **撑爆要按上限那一侧的量来撑**：`contextLimit` 是 12.8 万字节，所以这一份状态得比它大一倍
-  // 才真的过线（`bigState` 收的是"想要的字节数"，而三区里只有 B 区跟着它长）。
+  // **撑爆按那把尺的读数撑**——字节数与 token 数不是一回事，所以这里不写死乘几倍。
   const over = planBudget({
     decl: broken,
-    prefix: prefixOf(bigState(DECL.contextLimit * 2)),
-    tools: 6_637,
-    seed: 1_200,
-    handoff: 2_000,
+    prefix: prefixOf(stateWithUsed(DECL.contextLimit, broken)),
+    tools: TOOLS,
+    seed: SEED,
+    handoff: handoffOf(2_000),
   })
   assert.equal(over.kind, 'stop', `坏预算撑爆那一档：${over.why}`)
   assert.ok(over.used > over.limit, `用量 ${over.used} 该过上限 ${over.limit}`)

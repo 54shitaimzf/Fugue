@@ -1309,7 +1309,7 @@ async function roundPlan(
         goal,
         round,
         ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
-        toolBytes: Buffer.byteLength(JSON.stringify(tools), 'utf8'),
+        tools: JSON.stringify(tools),
       },
     })
 

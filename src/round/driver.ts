@@ -483,12 +483,15 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
   // **起手那一下也交一次**：这一格干完之后视图里那一份就是产出，而"提交"这件事在循环外面
   // （循环只管说话与调工具）。**顺序与架构 § 9.3 那三步一致**：视图先有内容，再走 `checkpoint()`。
   for (;;) {
+    // **这里不给工具目录那一段**（`tools: ''`）：循环这一层不认识目录，给了它等于把公布面绑进
+    // 运行时。派发前那一份占用（`occupancyOf`）把目录算了进去，于是那一个是完整的一笔、这一个
+    // 差了目录那一段。判"该不该交接"用的是这一笔，所以它偏松的一侧。
     const budget = planBudget({
       decl: ask.decl,
       prefix: prefixOf(handle),
-      tools: 0,
-      seed: Buffer.byteLength(goalOf(contract), 'utf8'),
-      handoff: 0,
+      tools: '',
+      seed: goalOf(contract),
+      handoff: '',
     })
     if (budget.kind === 'stop') {
       stopped = budget.why

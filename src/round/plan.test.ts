@@ -236,7 +236,7 @@ async function plan(
       goal: '把解析器拆出来',
       round: ROUND,
       maxSteps: 8,
-      toolBytes: Buffer.byteLength(JSON.stringify(CATALOG), 'utf8'),
+      tools: JSON.stringify(CATALOG),
     },
   })
 }
@@ -343,20 +343,32 @@ test('④ 每一格的预估占用印得出来；ownedPaths 铺到整棵树那�
     console.log(`④ 读数：第 1 节 used ${one.used} · 触发点 ${one.trigger} · 差额 ${one.headroom} · 甜点=${one.sweet}`)
 
     // **负对照**：把 `ownedPaths` 铺到整棵树——「文件内容」那一段随之涨到越界。
-    const tree = Array.from({ length: 2500 }, (_, i) => `src/module-${String(i).padStart(4, '0')}/file-${i}.ts` as RelPath)
+    // **铺多少条由那把尺定**：先量一小片，按它撑到"甜点区间"之外（尺对这一段的读数是线性的），
+    // 于是换口径时这里跟着走，不用改断言。
     const { sub } = holderOf(b)
-    const rows = occupancyOf([section({ ownedPaths: tree }) as unknown as DraftSection], {
-      decl: DECL,
-      base: sub,
-      goal: '把树铺开',
-      round: ROUND,
-      maxSteps: 8,
-      toolBytes: Buffer.byteLength(JSON.stringify(CATALOG), 'utf8'),
-    })
-    const big = rows[0]
+    const pathsOf = (n: number): RelPath[] =>
+      Array.from({ length: n }, (_, i) => `src/module-${String(i).padStart(4, '0')}/file-${i}.ts` as RelPath)
+    const rowsOf = (n: number) =>
+      occupancyOf([section({ ownedPaths: pathsOf(n) }) as unknown as DraftSection], {
+        decl: DECL,
+        base: sub,
+        goal: '把树铺开',
+        round: ROUND,
+        maxSteps: 8,
+        tools: JSON.stringify(CATALOG),
+      })
+    // 按 1.5 倍往上撑，**撑破"甜点区间"就停手**（由尺判，不由条数判）——条数本身不是判据，
+    // 它是"这一份状态"的尺寸；账与上限的关系才是判据。
+    let n = 1_000
+    let big = rowsOf(n)[0]
     assert.ok(big !== undefined)
-    assert.equal(big.sweet, false, `铺到整棵树该越过触发点：${big.why}`)
-    console.log(`④ 读数（负对照）：${tree.length} 条路径 → used ${big.used} · 触发点 ${big.trigger} · 甜点=${big.sweet}`)
+    for (let i = 0; i < 8 && big.sweet; i++) {
+      n = Math.ceil(n * 1.5)
+      big = rowsOf(n)[0]
+      assert.ok(big !== undefined)
+    }
+    assert.equal(big.sweet, false, `铺到 ${n} 条该越过触发点：${big.why}`)
+    console.log(`④ 读数（负对照）：${n} 条路径 → used ${big.used} · 触发点 ${big.trigger} · 甜点=${big.sweet}`)
   } finally {
     await b.log.close()
     await b.truth.close()

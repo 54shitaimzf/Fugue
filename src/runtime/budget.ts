@@ -14,19 +14,20 @@ import type { Prefix } from '../assemble/contract.ts'
 import type { ModelDecl } from '../model/contract.ts'
 
 /**
- * 一份估账用哪把尺。**今天是一把按字节的粗尺**，而它凭什么够用写在下面。
+ * 一份估账用哪把尺。**尺只有这一把，账上每一个数都从它过。**
  *
  * 真正的 token 数只有提供方的分词器答得准，而那是要出网才知道的东西——`B0` 的闸要求这笔账
- * **离线**算出来。所以这里的尺是保守的：
- *
- *   · **非 ASCII 的字符一个算一个 token**（中文一个字常常就是一个 token，日文/emoji 有时更多，
- *     所以这一档偏保守）；
- *   · ASCII 每 4 个字节算一个 token（英文与代码的常见比值，取整时向上）；
- *   · 再加一个固定的信封（`ENVELOPE`，两侧的角色标记与分隔那几十个字节）。
+ * **离线**算出来，于是这里是一把保守的粗尺：**非 ASCII 每两个字节算一个 token**（一个三字节的
+ * 汉字因此约 1.5 个，而真实分词通常更少）· **ASCII 每四个字节算一个**（英文与代码的常见比值，
+ * 取整时向上）· 再加一个固定的信封（`ENVELOPE`，两侧的角色标记与分隔那几十个字节）。
  *
  * **它是估账，不是读数**：读数在 `llm/call` 的 `usage` 那四个数里（真调用之后才有）。这笔账
- * 的用处只有一个——**在真调用之前判断"这一步发不发得出去"**。口径漂了不会报错，所以这一份
- * 的量法写在这里，而它与真读数的对照归 `B7` 的基线那一档。
+ * 的用处只有一个——**在真调用之前判断"这一步发不发得出去"**。
+ *
+ * 按字节数记账是比它更粗的一侧：1 token ≥ 1 字节在两种脚本下都成立（中文一字三字节而约一个
+ * token，英文一个 token 约四个字节），所以字节数一定不小于 token 数，那个上界不会被真实分词
+ * 顶穿——代价是中文那一段被算贵一倍。这一把尺离真读数更近，代价换成了"准头要校准"，那件事
+ * 归 `B7` 的基线那一档；**在核准之前它给的仍然是估账。**
  */
 export const ENVELOPE_TOKENS = 8
 
@@ -49,7 +50,7 @@ export interface BudgetPlan {
   readonly trigger: number
   /** 交接余量：留给"交接提示词 + 下一次调用的头"那一块。 */
   readonly handoffMargin: number
-  /** 这一步的上下文用了多少（三区 + 工具目录 + seed + 上一句回执，见 `BudgetAsk`）。 */
+  /** 这一步的上下文用了多少（三区 + 工具目录 + `seed`，**按那把尺估出来的 token**）。 */
   readonly used: number
   /** 还剩多少（`limit - used`，可以是负的）。 */
   readonly headroom: number
@@ -69,20 +70,42 @@ export interface BudgetAsk {
   readonly decl: ModelDecl
   /** 这一步要发出去的那份前缀。 */
   readonly prefix: Prefix
-  /** 工具目录那一段的字节（架构 § 8.11 表外那一项：它有位置、位置不由我们排）。 */
-  readonly tools: number
-  /** `seed`：那一轮派下来的活（架构 § 8.12）。 */
-  readonly seed: number
   /**
-   * 交接提示词（这一步还没交接时给 `''`）。
+   * 工具目录那一段的**正文**（架构 § 8.11 表外那一项：它有位置，位置不由我们排）。
+   *
+   * **递进来的是正文，不是量好的数**：怎么量归 `planBudget` 那一处——调用方各自换算的话，
+   * 三区 · 工具目录 · `seed` 就是三套口径混进同一个和里。
+   */
+  readonly tools: string
+  /** `seed` 的**正文**：那一轮派下来的活（架构 § 8.12）。 */
+  readonly seed: string
+  /**
+   * 交接提示词的**正文**（这一步还没交接时给 `''`，那时它一点账都不占）。
    *
    * **它进这一笔账**：到了触发点的那一步要写的正是它，而"写不写得下"就是 `stop` 与 `restart`
-   * 的分界。给 0 的话判决只答得出"到了触发点"，答不出"还写不写得下"。
+   * 的分界。给空串的话判决只答得出"到了触发点"，答不出"还写不写得下"。
    */
-  readonly handoff: number
+  readonly handoff: string
 }
 
-const bytesOf = (p: Prefix): number => p.zoneA.length + p.zoneB.length + p.zoneC.length
+/** 一段文本的字节：**进尺的那一份**（UTF-8，与装配器写出来的字节同一个量法）。 */
+const bytesOfText = (text: string): Uint8Array => new TextEncoder().encode(text)
+
+/** 一段文本的估账。与 `planBudget` 同一把尺——**要单独印某一小段的时候也走这里**。 */
+export function estimateTokensOfText(text: string): number {
+  return estimateTokens(bytesOfText(text))
+}
+
+/** 几段字节接成一段。**尺一次只量一段**——信封因此只算一次，不会被每个加数各加一遍。 */
+function concat(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0))
+  let at = 0
+  for (const p of parts) {
+    out.set(p, at)
+    at += p.length
+  }
+  return out
+}
 
 /**
  * 算这一步的账。
@@ -92,15 +115,26 @@ const bytesOf = (p: Prefix): number => p.zoneA.length + p.zoneB.length + p.zoneC
  *
  * `used` 里那一块 `handoff` 的算法：判决要回答"到了触发点这一步，交接提示词还塞不塞得进
  * 下一次调用"。所以它是 `这一步 + 交接 + 余量`：**那三样一起不超过上限**才算 `restart`。
+ * 交接那一段取的是**增量**——同一段字节再量一次、减掉先前那一次，多出来的就是它。
  */
 export function planBudget(ask: BudgetAsk): BudgetPlan {
   // 上限那一栏在一等字段上（`contextLimit`），触发点与余量在 `budget` 那一格里——**三处名字**
   // 各有各的出处，这一份只读，不自己算比例。
   const limit = ask.decl.contextLimit
   const budget = ask.decl.budget
-  const used = bytesOf(ask.prefix) + ask.tools + ask.seed
+  // **这一笔账只量一次**：前缀三区 + 工具目录 + `seed` 接成一段交给尺，于是那三个加数不可能各按
+  // 各的口径记。三个数（上限 · 触发点 · 余量）与 `used` 因此落在同一个口径上。
+  const head = concat([
+    ask.prefix.zoneA,
+    ask.prefix.zoneB,
+    ask.prefix.zoneC,
+    bytesOfText(ask.tools),
+    bytesOfText(ask.seed),
+  ])
+  const used = estimateTokens(head)
   const headroom = limit - used
-  const withHandoff = used + ask.handoff + budget.handoffMargin
+  const handoff = estimateTokens(concat([head, bytesOfText(ask.handoff)])) - used
+  const withHandoff = used + handoff + budget.handoffMargin
 
   if (used < budget.trigger) {
     return {
@@ -134,7 +168,7 @@ export function planBudget(ask: BudgetAsk): BudgetPlan {
     used,
     headroom,
     kind: 'restart',
-    why: `用了 ${used}，过了触发点 ${budget.trigger}；交接提示词 ${ask.handoff} 加余量 ${budget.handoffMargin} 塞得下（还剩 ${limit - withHandoff}）。`,
+    why: `用了 ${used}，过了触发点 ${budget.trigger}；交接提示词 ${handoff} 加余量 ${budget.handoffMargin} 塞得下（还剩 ${limit - withHandoff}）。`,
   }
 }
 

@@ -31,14 +31,13 @@ import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { emptyState, sourcesFor } from '../assemble/sources.ts'
 import { assemble } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
-import { planBudget } from '../runtime/budget.ts'
+import { estimateTokensOfText, planBudget } from '../runtime/budget.ts'
 import { digestOf } from '../runtime/restart.ts'
 import { baseFor } from '../view/lower.ts'
 import type { Cause, RoundState, StepContext } from './machine.ts'
 import { step } from './machine.ts'
 import type { Draft, DraftKind, DraftSection } from '../contract/draft.ts'
 import { DraftError, draftOf, draftPathOf } from '../contract/draft.ts'
-import { utf8Bytes } from '../contract/build.ts'
 
 /** 这一层自己的失败：底钉不住 · 视图打不开。**草案不成立不是它**——那是一件读数（`problems`）。 */
 export class PlanError extends Error {}
@@ -107,9 +106,9 @@ export interface OccupancyRow {
   readonly at: number
   readonly kind: DraftKind
   readonly goal: string
-  /** `seed` 的字节数。 */
+  /** `seed` 那一段自己的估账（token，与 `used` 同一个口径）。 */
   readonly seed: number
-  /** 三区 + 工具目录 + `seed`（**按字节算的那把上界尺**：1 token ≥ 1 字节，与 `seed` 两条准则同一个口径）。 */
+  /** 三区 + 工具目录 + `seed`（**按那把尺估出来的 token**：与上限 · 触发点 · 余量同一个口径）。 */
   readonly used: number
   /** `contextLimit − used`，可以是负的。 */
   readonly headroom: number
@@ -128,8 +127,8 @@ export interface OccupancyContext {
   readonly goal: string
   readonly round: RoundId
   readonly maxSteps?: number
-  /** 工具目录那一段的字节（公布给模型的那一份序列化之后——架构 § 8.11 表外那一项）。 */
-  readonly toolBytes: number
+  /** 工具目录那一段的**正文**（公布给模型的那一份序列化之后——架构 § 8.11 表外那一项）。 */
+  readonly tools: string
 }
 
 /** 一趟之后手上有什么。**`held` 只由键域定**（"这一站唯一的门是键域完整性"，PLAN § 5.10）。 */
@@ -205,7 +204,7 @@ export function holderFace(inner: ToolExecutor, opts: HolderFaceOptions = {}): T
  *     跑到尾不用交接，且交接余量也放得下**。`B7` 的读数将来只用来收窄这条带，不改形状。
  *
  * 三区怎么来的：拿**子 agent 那一份协议**（`SUBAGENT_PROTOCOL`）与一节草案拼一次真装配
- * （`assemble` 是纯函数），`seed` 按 UTF-8 字节算。`base` 那一份状态由调用方给（项目方针 ·
+ * （`assemble` 是纯函数），`seed` 那一段交给同一把尺估——**"这一格装得下装不下"与上限 · 触发点 · 余量因此落在同一个口径上**。`base` 那一份状态由调用方给（项目方针 ·
  * 系统状态 · 代码树都是真的），这一份只按节覆盖"这一格自己的那几段"。
  *
  * **估账不是读数**：真读数在 `llm/call` 的 `usage` 里（派发之后才有）。这一份的用处只有一处
@@ -238,8 +237,9 @@ export function occupancyOf(sections: readonly DraftSection[], ctx: OccupancyCon
       model: ctx.decl.id,
       segments: sourcesFor(SUBAGENT_PROTOCOL, state, coord),
     })
-    const seed = utf8Bytes(s.seed)
-    const plan = planBudget({ decl: ctx.decl, prefix, tools: ctx.toolBytes, seed, handoff: 0 })
+    const plan = planBudget({ decl: ctx.decl, prefix, tools: ctx.tools, seed: s.seed, handoff: '' })
+    // 单独印的那一栏：同一把尺对 `seed` 那一段的读数。
+    const seed = estimateTokensOfText(s.seed)
     const sweet = plan.used + plan.handoffMargin <= plan.trigger
     return {
       at: i + 1,

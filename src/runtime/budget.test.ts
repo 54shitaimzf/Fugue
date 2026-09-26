@@ -3,7 +3,8 @@
 // 跑法：cd ~/fugue && node --test src/runtime/budget.test.ts
 //
 //   ① 三个数印得出来，且它们的关系可核对（触发点在 (0, 上限) 之间 · 余量小于触发点）
-//   ② 估账那把尺：同一份字节估两次是同一个数，非 ASCII 更贵，超限时报"超了多少"
+//   ② 估账那把尺：同一份字节估两次是同一个数，非 ASCII 更贵；**账与尺是同一个口径**（账 ==
+//      尺对同一份文本的读数，同样字数下中文多出来的账是英文的四倍以上），超限时报"超了多少"
 //   ③ 三档分得开：没到触发点 `continue` · 到了且交接写不下 `stop` · 到了且塞得下 `restart`
 //   ④ **负对照**：把触发点设在等于上限 → ① 的核对当场报出来，连"重试超界"都判不出来
 import assert from 'node:assert/strict'
@@ -23,6 +24,10 @@ import type { BudgetAsk } from './budget.ts'
 const DECL = modelDeclOf('deepseek-chat/anthropic')
 const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: [] }
 
+/** 工具目录与 `seed` 那两段：**账里递的是正文**（怎么量归 `planBudget`，调用方不换算）。 */
+const TOOLS = '工具目录：read_file · write_file · run_command'
+const SEED = '把这一格的活干完，并把读数交回来。'
+
 function prefixOf(state: AssembleState, coord: AgentCoord = WHO, decl: ModelDecl = DECL): Prefix {
   return assemble({ protocol: SUBAGENT_PROTOCOL, model: decl.id, segments: sourcesFor(SUBAGENT_PROTOCOL, state, coord) })
 }
@@ -35,12 +40,47 @@ function bigState(target: number): AssembleState {
   return { ...fixtureState(7), files: [{ path: 'src/big.ts', text: line.repeat(n) }] }
 }
 
+/** 一份"只有那一段文本"的状态：跟着长的只有 B 区里那一段文件内容。 */
+function textState(text: string): AssembleState {
+  return { ...fixtureState(7), files: [{ path: 'src/x.ts', text }] }
+}
+
+/**
+ * 一份"账落在 `target` 之上"的状态。**尺寸只认那把尺的读数**：先按字节猜一个起点，量一次、
+ * 按比例补足——换口径时这里跟着走，不用改任何一条断言。
+ */
+function stateWithUsed(target: number, decl: typeof DECL = DECL): AssembleState {
+  let bytes = target
+  for (let i = 0; i < 16; i++) {
+    const state = bigState(bytes)
+    const used = planBudget({ decl, prefix: prefixOf(state), tools: TOOLS, seed: SEED, handoff: '' }).used
+    if (used >= target) return state
+    bytes = Math.ceil(bytes * (target / used) * 1.05)
+  }
+  throw new Error(`撑不到 ${target}：那把尺量出来的读数一直在它下面`)
+}
+
+/** 交接提示词那一段正文：ASCII 每四个字节一个 token（这把尺自己的系数），于是"约 n 个 token"。 */
+const handoffOf = (tokens: number): string => 'x'.repeat(tokens * 4)
+
+/** 账上那几段接成的一段字节——**与 `planBudget` 里那一次量法是同一个形状**（用来核对"账 == 尺"）。 */
+const bytesOfAsk = (ask: BudgetAsk): Uint8Array =>
+  new Uint8Array(
+    Buffer.concat([
+      Buffer.from(ask.prefix.zoneA),
+      Buffer.from(ask.prefix.zoneB),
+      Buffer.from(ask.prefix.zoneC),
+      Buffer.from(ask.tools, 'utf8'),
+      Buffer.from(ask.seed, 'utf8'),
+    ]),
+  )
+
 const askOf = (prefix: Prefix, over: Partial<BudgetAsk> = {}): BudgetAsk => ({
   decl: DECL,
   prefix,
-  tools: 6_637,
-  seed: 1_200,
-  handoff: 0,
+  tools: TOOLS,
+  seed: SEED,
+  handoff: '',
   ...over,
 })
 
@@ -65,7 +105,7 @@ test('① 三个数印得出来，且关系可核对（触发点在 (0, 上限) 
 
 // ── ② 估账那把尺 ─────────────────────────────────────────────────────────────
 
-test('② 估账：同一份字节估两次同一个数 · 非 ASCII 更贵 · 超限时报出超了多少', () => {
+test('② 那把尺与那笔账是同一个口径 · 同样字数下中文更贵 · 超限时报出超了多少', () => {
   const ascii = new Uint8Array(Buffer.from('a'.repeat(400), 'utf8'))
   const cjk = new Uint8Array(Buffer.from('字'.repeat(400), 'utf8'))
   assert.equal(estimateTokens(ascii), estimateTokens(ascii), '同一份字节两次同一个数')
@@ -73,13 +113,27 @@ test('② 估账：同一份字节估两次同一个数 · 非 ASCII 更贵 · �
   assert.equal(estimateTokens(cjk), Math.ceil(1200 / 2) + ENVELOPE_TOKENS, `400 个汉字（1200 字节）：${estimateTokens(cjk)}`)
   assert.ok(estimateTokens(cjk) > estimateTokens(ascii), '同样的"字符数"下非 ASCII 更贵')
 
+  // **账就是那把尺量出来的**：三区 + 工具目录 + `seed` 接成一段，两条路各量一次，逐数相同。
+  const ask = askOf(prefixOf(fixtureState(7)))
+  const plan = planBudget(ask)
+  assert.equal(plan.used, estimateTokens(bytesOfAsk(ask)), `账该是尺对同一份文本的读数：${plan.used}`)
+
+  // **负对照（口径）**：同样字数下，中文那一段多出来的账是英文的四倍以上——按字节记账时这个比
+  // 是 3（一个汉字三字节），过不了这条，于是"口径是 token 还是字节"在这里分得开。
+  const n = 4_000
+  const base = planBudget(askOf(prefixOf(fixtureState(7)))).used
+  const grow = (text: string): number => planBudget(askOf(prefixOf(textState(text)))).used - base
+  const cjkGrow = grow('字'.repeat(n))
+  const asciiGrow = grow('a'.repeat(n))
+  assert.ok(cjkGrow > asciiGrow * 4, `同样 ${n} 个字：中文多 ${cjkGrow} · 英文多 ${asciiGrow}——中文该多出四倍以上`)
+
   // 一份撑到超限的状态：判 `stop`，而话里要说出**超了多少**（架构 § 8.12 那一条）。
-  const huge = bigState(DECL.contextLimit * 2)
-  const plan = planBudget(askOf(prefixOf(huge), { handoff: 4_000 }))
-  assert.equal(plan.kind, 'stop', `撑爆了该停：${plan.why}`)
-  assert.match(plan.why, /还差 \d+ 写不下/, `停的话里要说清差多少：${plan.why}`)
-  assert.ok(plan.headroom < 0, `还剩多少是负的：${plan.headroom}`)
-  console.log(`② 读数：ASCII 400 字节 → ${estimateTokens(ascii)} token · 汉字 400 个 → ${estimateTokens(cjk)} token · 超限那一档：${plan.why}`)
+  const huge = stateWithUsed(DECL.contextLimit + 20_000)
+  const stop = planBudget(askOf(prefixOf(huge), { handoff: handoffOf(4_000) }))
+  assert.equal(stop.kind, 'stop', `撑爆了该停：${stop.why}`)
+  assert.match(stop.why, /还差 \d+ 写不下/, `停的话里要说清差多少：${stop.why}`)
+  assert.ok(stop.headroom < 0, `还剩多少是负的：${stop.headroom}`)
+  console.log(`② 读数：ASCII 400 字节 → ${estimateTokens(ascii)} token · 汉字 400 个 → ${estimateTokens(cjk)} token · 同样 ${n} 字：中文多 ${cjkGrow} · 英文多 ${asciiGrow} · 超限那一档：${stop.why}`)
 })
 
 // ── ③ 三档分得开 ─────────────────────────────────────────────────────────────
@@ -90,15 +144,15 @@ test('③ 三档分得开：没到触发点 · 到了且写不下 · 到了且�
   assert.equal(small.kind, 'continue')
 
   // (b) 到了触发点，而交接塞得下 → `restart`。
-  const near = bigState(DECL.budget.trigger - 6_637 - 1_200)
-  const mid = planBudget(askOf(prefixOf(near), { handoff: 2_000 }))
+  const near = stateWithUsed(DECL.budget.trigger)
+  const mid = planBudget(askOf(prefixOf(near), { handoff: handoffOf(2_000) }))
   assert.equal(mid.kind, 'restart', `到了触发点该交接：${mid.why}`)
   assert.ok(mid.used >= mid.trigger, `用过了触发点：${mid.used} ≥ ${mid.trigger}`)
   assert.ok(mid.used + 2_000 + mid.handoffMargin <= mid.limit, '交接加余量塞得下')
 
   // (c) 到了触发点，而**交接已经写不下** → `stop`（地板那一档：明确报出为什么停）。
-  const tooBig = bigState(DECL.budget.trigger - 1)
-  const stop = planBudget(askOf(prefixOf(tooBig), { handoff: DECL.budget.handoffMargin * 4 }))
+  const tooBig = stateWithUsed(DECL.budget.trigger + 14_000)
+  const stop = planBudget(askOf(prefixOf(tooBig), { handoff: handoffOf(DECL.budget.handoffMargin * 4) }))
   assert.equal(stop.kind, 'stop', `交接待写不下该停：${stop.why}`)
   console.log(`③ 读数：continue used=${small.used} · restart used=${mid.used} · stop used=${stop.used}`)
 })
@@ -119,14 +173,13 @@ test('④ 负对照：触发点设在等于上限 → 关系核对当场报出�
   // 一份"过了正常触发点、又还在正常上限之内"的状态（用量 `U` 落在
   // `[trigger, limit - margin)` 这一段里）：正常预算下判"交接"，坏预算下**连触发都到不了**
   // ——它一直在 `continue` 里转，直到某一步直接撑爆（那一步是 `stop`，而交接已经写不下了）。
-  const U = DECL.budget.trigger + 14_000 // = 110000：落在 [96000, 112000) 里
-  const mid = bigState(U - 6_637 - 1_200)
-  const good = planBudget({ decl: DECL, prefix: prefixOf(mid), tools: 6_637, seed: 1_200, handoff: 0 })
+  const mid = stateWithUsed(DECL.budget.trigger + 4_000) // 用量落在 [96000, 112000) 里
+  const good = planBudget(askOf(prefixOf(mid)))
   assert.equal(good.kind, 'restart', `正常预算下：${good.kind}——${good.why}`)
-  const plan = planBudget({ decl: broken, prefix: prefixOf(mid), tools: 6_637, seed: 1_200, handoff: 0 })
+  const plan = planBudget(askOf(prefixOf(mid), { decl: broken }))
   assert.equal(plan.kind, 'continue', `坏预算下判出来的：${plan.kind}——${plan.why}`)
   // 再撑一点就撑爆：那一档是 `stop`，而"该交接"这一步再也走不到。
-  const over = planBudget({ decl: broken, prefix: prefixOf(bigState(DECL.contextLimit)), tools: 6_637, seed: 1_200, handoff: 0 })
+  const over = planBudget(askOf(prefixOf(stateWithUsed(DECL.contextLimit, broken)), { decl: broken }))
   assert.equal(over.kind, 'stop', `坏预算撑爆那一档：${over.why}`)
   assert.match(over.why, /交接还差 \d+ 写不下/)
 })
