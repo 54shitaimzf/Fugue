@@ -1,6 +1,7 @@
 // W8 的断言：格内一致性——回写 · 删除 · 声明集是边界 · 双向同步（PLAN § 5.15 的 W8 行 · 架构 § 8.7）。
 // 跑法：cd ~/fugue && node --test src/tools/w8.test.ts
 //
+//   ① **同格内 `write` 之后 `bash cat` 当场见到同一份字节**：回执里就是那一份（逐字节）
 //   ③ **删除回写**：声明集内的文件与目录里的文件用 `bash rm` 删掉之后，收尾提交里**没有它们**
 //      （两个源：base 里在 · 视图里动过）
 //   ⑤ **声明集是边界**：集外的写进不了视图、进不了提交，只落 `mat/reclaim`
@@ -8,6 +9,9 @@
 //      `mat/sync` 该是 `from === to`（不重复落）
 //   ⑧ **双向同步 · `bash` 后写的赢**：`write p` → `bash` 改 p → 收尾提交里是 `bash` 那一版
 //   ⑨ **双向同步 · `write` 后写的赢**：`bash` 改 p → `write p` → 收尾提交里是 `write` 那一版
+//   ⑩ **`ensure` 前那次 `collect` 不是兜底变正常通道**：正常链路上它是空的（一条 spurious 的
+//      `mat/reclaim` 都没有）。**另一半（人为造一条漏 collect 的路径做负对照）今天没有那道缝**
+//      ——理由写在 ⑩ 那一条测试上面的那段注释里，不在这里重复
 //
 // 板子与 `round/driver.test.ts` 同一套（真 git 仓库 · 真日志 · 真视图 · 真 fork）；模型是脚本化的，不联网。
 import assert from 'node:assert/strict'
@@ -369,6 +373,80 @@ test('⑨ `bash` 改过之后 `write` 同一份：收尾提交里是 `write` 那
     assert.equal(commit.length, 40, `真工作树该被推进，而那个提交号是：${commit}`)
     // 收尾提交里是 `write` 那一版——时间上最后的那个写者赢，而 `bash` 那一版被它盖掉。
     assert.equal(await commitBytes(b, commit, 'notes/keep.md'), 'view 版\n', '最后写的那一版就是提交里的那一版')
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ① `bash cat` 当场见到 `write` 的字节（回执逐字节）· ⑩ 的读法说明 ─────────────────────
+
+test('① 同格内 `write` 之后 `bash cat`：回执里就是那一份字节（逐字节）', async () => {
+  const b = await bench()
+  try {
+    const bytes = '（模型写的）这一行就是要看到的那一份\n'
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      oneCall('write', { path: 'notes/keep.md', content: bytes }),
+      oneCall('bash', { command: '/bin/cat notes/keep.md' }),
+      DONE,
+    ]
+    // 一次跑到底：`write` 进视图 → `execCwd()` 把它铺到物化树 → `bash` 在新进程里读同一棵树。
+    // 判据落在**回执**上（模型真看见的那串字节），不落在"我们说它铺过去了"。
+    const run = await runRound({ ...depsOf(b, scriptedModel(scripts), ['a.ts', 'notes']), checkDrift: false })
+    assert.equal(run.report.ok, true, `验收该过：${JSON.stringify(run.report)}`)
+
+    const rows = await eventsOf(b.root)
+    const ends = rows.filter((e) => e.t === 'run/end') as Extract<LogEvent, { t: 'run/end' }>[]
+    assert.equal(ends.length, 1, `这一格只起过一次进程，实际 ${ends.length} 条 run/end`)
+    assert.equal(ends[0]!.exit, 0, '`cat` 该读成（读不到才是非零：`No such file or directory`）')
+    assert.equal(ends[0]!.denied, false, '这一趟不是被拒的')
+    // **回执本身**：`view/write` 落的是模型写的那一份，而 `bash` 改过视图没有——这一格里
+    // `bash` 只读。两次写事件都是那一份字节（模型那一次 + collect 那一次）。
+    const writes = rows.filter((e) => e.t === 'view/write') as Extract<LogEvent, { t: 'view/write' }>[]
+    assert.ok(writes.length >= 1, '这一份字节该经视图那条路落下来')
+    assert.deepEqual([...new Set(writes.map((e) => e.path))], ['notes/keep.md'], '落的路径就是那一条')
+    // 收尾提交里也是它（没有别的写者改过它）。
+    const commit = run.advanced !== null ? String(run.advanced.commit) : ''
+    assert.equal(commit.length, 40, `真工作树该被推进，而那个提交号是：${commit}`)
+    assert.equal(await commitBytes(b, commit, 'notes/keep.md'), bytes, '提交里就是那一份字节')
+  } finally {
+    await b.close()
+  }
+})
+
+/**
+ * **⑩ 只兑现了一半，另一半如实记在这里**（不是"没做"，是"今天的缝够不着"）。
+ *
+ * 兑现的那一半：`ensure` 前那次 `collect` 在正常链路上恒为空——它由 `execCwd()` → `syncTo()`
+ * 那一趟跑，而 `afterRun()` 每次执行完都收过一遍，所以那一次没有东西可收。读数就是"正常链路上
+ * 一条 spurious 的 `mat/reclaim` 都没有"（③ 与 ⑥ 两条测试里各自量得到）。
+ *
+ * 够不着的那一半：要人为造一条"执行后漏 collect"的路径（负对照），得让某一条执行路径**跳过**
+ * `afterRun()` 第三步的 `collect`。今天没有那道缝：
+ *   · 从外面写 `upper` 不行——`overlayfs` 那一档的写侧只有挂载着的进程能看到，宿主这一侧写
+ *     进去的字节随后被挂载/卸载吃掉（实测：写完之后 `readdirSync(upper)` 里没有它，而
+ *     `undeclared()` 枚举 `upper` 得到的是空集）；
+ *   · 写 `merged`（挂载点）也不行——同上，`ensure` 一挂一卸就没了；
+ *   · 给产品加一个测试专用的开关（"跳过第三步的 collect"）不行——那是在产品面上多一道只有测试
+ *     会用的缝，与"任何单元都不许让地板变低"同一类问题。
+ * 所以这一条负对照要等一个真能造出那条路径的接缝（或者等整链测试那一档从外面注入一次执行）。
+ */
+test('⑩ 正常链路上 `ensure` 前那次 `collect` 是空的（一条 spurious 的 `mat/reclaim` 都没有）', async () => {
+  const b = await bench()
+  try {
+    // 两条命令都只读：既不改视图（⑥ 量过），也不落 `mat/reclaim`（这一条量它）。
+    // 若那一次 collect 会"顺手报一条"，两趟之后这里就会多出两条。
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      oneCall('bash', { command: '/bin/cat README.md' }),
+      oneCall('bash', { command: '/bin/cat a.ts' }),
+      DONE,
+    ]
+    const run = await runRound({ ...depsOf(b, scriptedModel(scripts)), checkDrift: false })
+    assert.equal(run.report.ok, true, `验收该过：${JSON.stringify(run.report)}`)
+    const rows = await eventsOf(b.root)
+    const reclaims = rows.filter((e) => e.t === 'mat/reclaim')
+    assert.equal(reclaims.length, 0, `正常链路上不该有 mat/reclaim，实际 ${reclaims.length} 条`)
+    // 而两条命令都真跑到了（不是"一条都没起进程"被当成"没东西要收"）。
+    assert.equal(rows.filter((e) => e.t === 'run/start').length, 2, '两条 bash 各起过一次')
   } finally {
     await b.close()
   }
