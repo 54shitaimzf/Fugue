@@ -72,7 +72,7 @@ import { readSnapshot, saveSnapshot, snapshotOf } from '../view/snapshot.ts'
 import { assemble, firstDivergence, hashOf } from '../assemble/assemble.ts'
 import type { Prefix, SegmentId, SegmentValue } from '../assemble/contract.ts'
 import { DEFAULT_MODEL } from '../assemble/models.ts'
-import { PROTOCOLS, protocolFor, protocolNamed } from '../assemble/protocol.ts'
+import { HOLDER_PROTOCOL, PROTOCOLS, protocolFor, protocolNamed } from '../assemble/protocol.ts'
 import { checkConstraints, formatViolation } from '../assemble/constraints.ts'
 import { emptyState, HOLDER, SourceError, sourcesFor } from '../assemble/sources.ts'
 import type { AssembleState } from '../assemble/sources.ts'
@@ -80,7 +80,12 @@ import type { AgentCoord } from '../assemble/sources.ts'
 import { stateWithState } from '../assemble/sources-state.ts'
 import { loadView } from '../view/view.ts'
 import type { SplitAssignment } from '../contract/build.ts'
+import { createToolHost } from '../tools/host.ts'
+import { createToolExecutor } from '../capability/dispatch.ts'
+import { refHeadOf } from '../round/head.ts'
 import { RoundStartError, startRound } from '../round/start.ts'
+import { PlanError, planRound, pinnedBase } from '../round/plan.ts'
+import { draftPathOf } from '../contract/draft.ts'
 import { RoundRunError, materializeCommit, runRound } from '../round/execute.ts'
 import type { DriverSupport, Stub } from '../round/execute.ts'
 import { realDriver, stubDriver } from '../round/driver.ts'
@@ -196,6 +201,17 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              **物化缺省不做**（架构 § 14.1 的 deferMaterialize：走按需物化）。
                              给 --materialize 就把 N 棵树也铺出来——那一步落的是 mat/fork 事件，
                              每条分支一份，落在**那个 agent 自己的日志**里。
+  round plan <目标> [--live|--wire-in <目录>] [--judge] [--max-steps <n>]
+                             **预备态那一趟**：持轮者自己读 · 自己设计 · 自己拆，停在门口等人批。
+                             一个契约都不发 · 一条分支都不起 · 真实工作树一个字节不动；草案写在视图
+                             里（.fugue/plan/<轮次>.md），正文进日志（holder/distill）——盘上不落
+                             第三处。**收工三档一个判据**：模型说完了（exit_plan_mode）· Harness
+                             判它结束了（end-turn · 步数到顶）· 人喊停（--judge：这一趟不跑模型，
+                             拿手里那一份直接判）。判的是键域完整与否：完整就停在门口，不完整就
+                             退回并报出缺哪一节哪个键。每一格的预估占用（三区 + 工具目录 + seed
+                             与上限的差额）一并印出来——规模由模型定，架构只把数说出来。
+                             --live / --wire-in / --max-steps / --credential / --dump-wire 与
+                             round run 同义；放行是 round go（还没落地）。
   round run <目标> [--live] [--report] [--metrics] [--fail <n>] [--deny <n>] [--retry <n>] [--materialize]
                              跑一个完整的轮次（架构 § 20 S7 的可用性那一句）：
                              起头（钉底 · 造契约 · Planning 预检 · 发契约 · 起分支）→ 每个 agent
@@ -677,6 +693,67 @@ async function branchCmd(
 }
 
 /**
+ * 那几个"怎么出网"的开关收成一份：`--live` · `--wire-in` · `--dump-wire` · `--credential` ·
+ * `--max-steps`。
+ *
+ * **一处**：`round plan` 与 `round run`（加上 `round go`）都要它们，而两处各写一遍的症状是
+ * "一个命令上能用的写法在另一个上不能"——这一站已经撞过一次同类：`--dump-wire` 的落点守卫
+ * 原先与凭据那一条挤在同一个对象字面量里求值，"落在工作区里"被"凭据不在"抢答（实测）。
+ *
+ * **两处守卫的顺序是有意的**：落点那一条是这一趟的入场条件（不成立就不该开工），而凭据那一条
+ * 只在真要出网时才要——所以凭据那一步留在调用点（`--judge` 与回放档都不该取凭据）。
+ *
+ * 用法错（旗子少一个值 · 互斥的两档一起给）**抛 `UsageError`**：`run()` 那一层把它收成退出码
+ * 2 与用法说明；落点在工件区里那一条是 `RoundRunError`（"这一趟做不成"），照旧往外抛。
+ */
+function wireFlagsOf(root: string, flags: Map<string, string | true>): WireFlags {
+  const live = flags.has('live')
+  // **`--credential <路径>` 是一个覆盖**：不给就按提供方声明里那份表取（`authOf` 那一处）。
+  const credential = typeof flags.get('credential') === 'string' ? (flags.get('credential') as string) : undefined
+  // `--dump-wire <目录>`：**要它才落**（不给时那一层根本不存在，一个字节都不写）。
+  const dumpFlag = flags.get('dump-wire')
+  if (dumpFlag === true) throw new UsageError('--dump-wire 要一个目录：--dump-wire /tmp/fugue-wire')
+  const dumpDir = typeof dumpFlag === 'string' ? dumpWireDir(root, resolve(dumpFlag)) : undefined
+  // `--wire-in <目录>`：**回放档**（架构 § 10.5 的录制夹具 · PLAN § 5.12 序 1）。它不出网、不读
+  // 凭据，而它必须走真驱动（打桩那一档一次调用都不发，回放就无从谈起）。
+  const wireInFlag = flags.get('wire-in')
+  if (wireInFlag === true) throw new UsageError('--wire-in 要一个目录：--wire-in <--dump-wire 落过的那个目录>')
+  const wireIn = typeof wireInFlag === 'string' ? resolve(wireInFlag) : undefined
+  if (wireIn !== undefined && live) {
+    throw new UsageError(
+      '--wire-in 与 --live 是两档，一次只给一个：前者不出网（喂回去的是录下来的响应），后者要出网。' +
+        '要一边回放一边重录一份，就给 --wire-in <旧目录> --dump-wire <新目录>。',
+    )
+  }
+  // `--max-steps`：**花钱的那道上界**。取值要是一个正整数；不认的写法当场拒（不替它猜）。
+  const stepsFlag = flags.get('max-steps')
+  let maxSteps: number | undefined
+  if (typeof stepsFlag === 'string') {
+    const n = Number(stepsFlag)
+    if (!Number.isInteger(n) || n < 1) throw new UsageError(`--max-steps 要一个正整数，拿到 ${JSON.stringify(stepsFlag)}`)
+    maxSteps = n
+  } else if (stepsFlag === true) {
+    throw new UsageError('--max-steps 要一个数：--max-steps 8')
+  }
+  return {
+    live,
+    ...(wireIn === undefined ? {} : { wireIn }),
+    ...(dumpDir === undefined ? {} : { dumpDir }),
+    ...(credential === undefined ? {} : { credential }),
+    ...(maxSteps === undefined ? {} : { maxSteps }),
+  }
+}
+
+/** `wireFlagsOf` 的产出：三条传输档 · 一个覆盖 · 一道上界。**缺的那几栏就是"没要求"。** */
+interface WireFlags {
+  readonly live: boolean
+  readonly wireIn?: string
+  readonly dumpDir?: string
+  readonly credential?: string
+  readonly maxSteps?: number
+}
+
+/**
  * `fugue round new <目标>`：开一个轮次（架构 § 8.13 的三步转移 · § 8.14 的 C7 前半 · § 8.12 的
  * 第一次预检 · PLAN § 5.7 的 A4 行）。
  *
@@ -696,7 +773,7 @@ async function roundCmd(
 ): Promise<number> {
   const verb = args[0]
   if (verb !== 'new') {
-    return usageFail(`round 的子命令是 new 与 run：拿到的是 ${verb === undefined ? '（空）' : verb}`)
+    return usageFail(`round 的子命令是 new · run · plan：拿到的是 ${verb === undefined ? '（空）' : verb}`)
   }
   const goal = args[1]
   if (goal === undefined || goal === '') return usageFail('round new 需要 <目标>：轮级意图的那一句')
@@ -852,47 +929,16 @@ async function roundRun(
       ? (flags.get('poke-exact') as string).split(',').map((x) => x.trim()).filter((x) => x !== '')
       : []
 
-  // **`--live`：接真驱动**（`B7.5`）。不给就是打桩那一档——它一条断言都不需要凭据。
-  const live = flags.has('live')
-  // **`--credential <路径>` 是一个覆盖**：不给就按提供方声明里那份表取（`driverSupport` 那一层）。
-  // 壳这一层不认识那个文件的默认位置——它只有一个出处（`CREDENTIAL_FILE`，声明里）。
-  const credentialOverride = typeof flags.get('credential') === 'string' ? (flags.get('credential') as string) : undefined
-  // `--dump-wire <目录>`：**要它才落**（不给时 `dumpDir` 是 `undefined`，那一层不拼）。
-  const dumpFlag = flags.get('dump-wire')
-  if (dumpFlag === true) return usageFail('--dump-wire 要一个目录：--dump-wire /tmp/fugue-wire')
-  // **两处守卫都在这里先过**：落点（`--dump-wire` 不许在工作区里）与凭据。顺序是有意的——
-  // 落点那一条是**这一趟的入场条件**（不成立就不该开工），而凭据那一条只在真要出网时才要；
-  // 原先它们挤在 deps 那个对象字面量里求值，于是"落在工作区里"会被"凭据不在"抢答（实测）。
-  const dumpDir = typeof dumpFlag === 'string' ? dumpWireDir(root, resolve(dumpFlag)) : undefined
-  // `--wire-in <目录>`：**回放档**（架构 § 10.5 的录制夹具 · PLAN § 5.12 序 1）。目录的形状就是
-  // `--dump-wire` 落的那个。它**不出网、不读凭据**，而它必须走**真驱动**（打桩那一档一次调用都
-  // 不发，回放就无从谈起）——所以它与 `--live` 是同一档驱动的两种传输：
-  //   · `--live`   → 真网络；
-  //   · `--wire-in` → 读夹具（`wireInTransport`，按 `requestHash` 核）。
-  // 两个一起给是**自相矛盾**的（一个要出网、一个不许出网），当场拒；要"回放一遍、同时重录一份"
-  // 就把 `--wire-in <旧目录>` 与 `--dump-wire <新目录>` 一起给（落下来的是**这一趟真的发出去的
-  // 那一串**，回放档的请求是现算的）。
-  const wireInFlag = flags.get('wire-in')
-  if (wireInFlag === true) return usageFail('--wire-in 要一个目录：--wire-in <--dump-wire 落过的那个目录>')
-  const wireIn = typeof wireInFlag === 'string' ? resolve(wireInFlag) : undefined
-  if (wireIn !== undefined && live) {
-    return usageFail(
-      '--wire-in 与 --live 是两档，一次只给一个：前者不出网（喂回去的是录下来的响应），后者要出网。' +
-        '要一边回放一边重录一份，就给 --wire-in <旧目录> --dump-wire <新目录>。',
-    )
-  }
+  // 那几面开关收在一处（`wireFlagsOf`）：`--live` · `--wire-in` · `--dump-wire` · `--credential`
+  // · `--max-steps`。凭据那一步在下面按档取——**回放档与 `--judge` 都不该取凭据**。
+  const wire = wireFlagsOf(root, flags)
   // **这一趟走不走真驱动**：真网络那一档（`--live`）与回放那一档（`--wire-in`）都走它。
+  const live = wire.live
+  const wireIn = wire.wireIn
+  const dumpDir = wire.dumpDir
+  const credentialOverride = wire.credential
+  const maxSteps = wire.maxSteps
   const real = live || wireIn !== undefined
-  // `--max-steps`：**花钱的那道上界**。取值要是一个正整数；不认的写法当场拒（不替它猜）。
-  const stepsFlag = flags.get('max-steps')
-  let maxSteps: number | undefined
-  if (typeof stepsFlag === 'string') {
-    const n = Number(stepsFlag)
-    if (!Number.isInteger(n) || n < 1) return usageFail(`--max-steps 要一个正整数，拿到 ${JSON.stringify(stepsFlag)}`)
-    maxSteps = n
-  } else if (stepsFlag === true) {
-    return usageFail('--max-steps 要一个数：--max-steps 8')
-  }
   const handoff = flags.has('no-handoff') ? false : undefined
   // **一个 agent 一个日志口、由调用方持有**（`hold.ts` 那道栅栏：同一个 writer 开第二个口就是
   // "已经有写者"）。这一份记着开过的口，轮次跑完一起关（`closeAgentLogs`）。
@@ -1154,6 +1200,206 @@ async function roundRun(
     await closeAgentLogs()
     await ctx.close()
   }
+}
+
+/**
+ * `fugue round plan <目标>`：**预备态那一趟**——持轮者自己读 · 自己设计 · 自己拆，**停在门口**等人批。
+ * 出处：架构 § 15.1.a（落地 · 四步里的"拆" · "预备态的出口是一道默认为停的门" · 出口三档）·
+ * PLAN § 5.10 的 `C1` 行。
+ *
+ * 这一层只做三件事：把持轮者那一格接起来（视图 · 工具面 · 怎么调模型）· 把读数排成两列 ·
+ * 决定退出码。**判据不在这里**：键域那一条住 `src/contract/draft.ts`，"三档出口"住
+ * `src/round/plan.ts`。它**一个契约都不发 · 一条分支都不起 · 一片物化都不铺**——那三样归
+ * `round go`（架构 § 15.1.a："落地不是不可逆的一刻，派发才是"）。
+ *
+ * **一张视图两处用**：持轮者写草案的那一份与这里读草案的那一份是**同一个对象**。两处各开一份
+ * 的症状是"草案不在视图里"，而那时错的是接线，不是模型。
+ *
+ * `--judge` 是人喊停那一档：**不请模型跑**，拿视图里那一份直接判。三条路收完都进同一个判，
+ * 所以"模型知不知道该收工"这件事不押在模型身上；它同时是这一站的地板——模型换了 · 协议换了 ·
+ * `exit_plan_mode` 哪天不叫这个名字了，人喊停那一下照样把门打开（PLAN § 5.10）。
+ */
+async function roundPlan(
+  root: string,
+  flags: Map<string, string | true>,
+  args: string[],
+  json: boolean,
+): Promise<number> {
+  const goal = args[0]
+  if (goal === undefined || goal === '') return usageFail('round plan 需要 <目标>：轮级意图的那一句')
+  const judge = flags.has('judge')
+  const wire = wireFlagsOf(root, flags)
+  if (judge && (wire.live || wire.wireIn !== undefined)) {
+    return usageFail('--judge 不跑模型：它与 --live / --wire-in 不能一起给（那两档要发真调用，而这一档一步都不走）')
+  }
+
+  let doc: ConfigDoc
+  try {
+    doc = await readConfig(root)
+  } catch (err) {
+    if (err instanceof ConfigError) return fail(err.message)
+    throw err
+  }
+  const rawRound = getConfig(doc, 'round.id')
+  const round = typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1'
+  const draftPath = draftPathOf(round)
+
+  const ctx = await openCtx(root, flags, { sync: 'each', write: true })
+  try {
+    // **钉住底**（读一次，然后传下去）：视图铺在它上面，日志里 `round/state` 那条链也以它为准。
+    const base = await pinnedBase(ctx.truth)
+    const view = await loadView(ctx.log, 'round' as WriterId, { lower: lowerAt(ctx.truth, base) })
+    const roots = ctx.roots
+    const head = await refHeadOf(ctx.log, 'round' as WriterId, base)
+    // **持轮者那一格的工具面**：与子 agent 同一个宿主、同一份公布目录（不给持轮者加工具，
+    // 架构 § 15.4）。差别只落在作用域上——`src/round/plan.ts` 的 `holderFace` 拦下物化与提交
+    // 那三条，`execRoot` 这一栏**不给**（预备态不物化，所以没有可执行的树）。
+    const host = createToolHost(view, roots, {
+      actions: { writer: 'round' as WriterId, log: ctx.log, truth: ctx.truth, head },
+    })
+    const execute = createToolExecutor({
+      logOf: () => ctx.log,
+      host,
+      fenceOf: (raw, cwd) => {
+        const got = roots.resolveVirtual(raw, cwd as RelPath)
+        return got.ok ? { ok: true as const, value: got.value } : { ok: false as const, error: got.error }
+      },
+    })
+
+    const decl = modelDeclOf(DEFAULT_MODEL.id)
+    // **凝聚理解**（架构 § 15.1.a 的 B 区那一段）：最后一条 `holder/distill` 的正文。
+    // `recent`（压缩前最近几次原文）今天**没有生产者**——会话记录那一格归 T12，所以它是空的。
+    const { distill } = await lastDistillOf(ctx.log)
+    const baseState = stateWithState(emptyState(), doc, root)
+    const state: AssembleState = { ...baseState, goal, distill, recent: '' }
+    const handle: AgentHandle = {
+      agent: 'round' as AgentId,
+      // **持轮者那一格没有 agent 这一栏**（架构 § 8.11：它手里是全部契约，不是一份）。
+      coord: null,
+      branch: 'refs/heads/main' as BranchId,
+      contract: '' as ContractId,
+      protocol: HOLDER_PROTOCOL,
+      model: decl.id,
+      wireModel: decl.model,
+      target: targetAt(decl.id, credentialFor(decl, wire, judge)),
+      adapter: { name: decl.wire },
+      state,
+    }
+    const pump = wire.wireIn === undefined ? undefined : wireInTransport(wire.wireIn)
+    const call = wire.dumpDir === undefined ? wireCallOver(pump) : makeDumpCall(wire.dumpDir, pump)
+    const tools = publishedCatalog()
+
+    const r = await planRound({
+      base,
+      view,
+      log: ctx.log,
+      round,
+      goal,
+      handle,
+      decl,
+      call,
+      execute,
+      tools,
+      ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
+      ...(judge ? { judgeOnly: true } : {}),
+      occupancy: {
+        decl,
+        base: baseState,
+        goal,
+        round,
+        ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
+        toolBytes: Buffer.byteLength(JSON.stringify(tools), 'utf8'),
+      },
+    })
+
+    if (json) {
+      emitJson({
+        round: r.round,
+        base: r.base,
+        draftPath,
+        exit: r.exit,
+        steps: r.steps,
+        stopped: r.stopped,
+        held: r.held,
+        problems: [...r.problems],
+        draftText: r.draftText,
+        sections: (r.draft?.sections ?? []).map((s) => ({ kind: s.kind, goal: s.kind === 'implement' ? s.goal : s.question })),
+        occupancy: [...r.occupancy],
+      })
+    } else {
+      emitLine(`${r.round}\t${r.held ? '停在门口' : '退回'}\t${r.steps} 步\t${r.exit}`)
+      emitLine(`  收工：${r.exit}（${r.stopped}）`)
+      emitLine(
+        `  草案：${draftPath}\t${r.draftText === null ? '没有写出来' : `${r.draftText.length} 字符 · 正文进日志 holder/distill`}`,
+      )
+      if (r.draft !== null) {
+        emitLine(`  要开 ${r.draft.sections.length} 个任务：`)
+        for (const [i, s0] of r.draft.sections.entries()) {
+          emitLine(`    第 ${i + 1} 节\t${s0.kind}\t${s0.kind === 'implement' ? s0.goal : s0.question}`)
+          if (s0.kind === 'implement') {
+            emitLine(`      写入面：${s0.ownedPaths.join(' · ') || '（空）'}`)
+            if (s0.deliverables.length > 0) emitLine(`      交付物：${s0.deliverables.map((d) => `${d.path}（${d.form}）`).join(' · ')}`)
+            emitLine(`      验收：${s0.assertions.map((a) => `${a.name}（${a.action}）`).join(' · ') || '（一条都没有）'}`)
+          } else {
+            emitLine(`      要交的证据：${s0.evidenceRequired.map((e) => e.note).join(' · ') || '（没有）'}`)
+          }
+        }
+        emitLine('  每一格的预估占用（三区 + 工具目录 + seed；估账，不是读数）：')
+        for (const row of r.occupancy) {
+          emitLine(
+            `    第 ${row.at} 节\tused ${row.used}\t触发点 ${row.trigger}\t与上限的差额 ${row.headroom}\t甜点=${row.sweet ? '是' : '否'}` +
+              (row.sweet ? '' : `\t${row.why}`),
+          )
+        }
+        if (r.draft.prose !== '') {
+          emitLine('  为什么这么拆（模型写的）：')
+          for (const line of r.draft.prose.split('\n')) emitLine(`    ${line}`)
+        }
+      }
+      if (!r.held) {
+        process.stderr.write('草案退回了（键域不完整——构造器不猜、不补）：\n')
+        for (const one of r.problems) process.stderr.write(`  ${one}\n`)
+        process.stderr.write('改完再跑一遍：' + `fugue --root ${root} round plan ${JSON.stringify(goal)}\n`)
+      } else {
+        process.stderr.write(
+          '门停在这里等人批：一个契约都没发 · 一条分支都没起 · 真实工作树一个字节没动。' +
+            `放行是 \`fugue round go\`（C4 那一格），今天还没有那条命令。\n`,
+        )
+      }
+    }
+    // **退回那一档是退出码 1**（不是用法错：这一趟真的跑了，只是草案不成立）。
+    return r.held ? 0 : 1
+  } catch (err) {
+    if (err instanceof PlanError) return fail(err.message)
+    if (err instanceof ConfigError) return fail(err.message)
+    throw err
+  } finally {
+    await ctx.close()
+  }
+}
+
+/**
+ * 凭据：**三种档各取各的**，一处。`--judge` 与回放档都不取凭据——它们一个字节都不出网
+ * （架构 § 10.5），而取凭据那一步在没有 key 时会当场拒：那与这两档无关。
+ */
+function credentialFor(decl: ReturnType<typeof modelDeclOf>, wire: WireFlags, judge: boolean): string {
+  if (judge) return '--judge：不跑模型，不取凭据'
+  if (wire.wireIn !== undefined) return wire.credential ?? '回放档：不出网，不取凭据'
+  return authWith(providerOf(decl.provider), wire.credential ?? null)
+}
+
+/**
+ * 最后一条 `holder/distill` 的正文（架构 § 15.1.a 的 B 区："凝聚理解"）。
+ *
+ * **它是重启之后接得上话茬的那一段**：持轮者这一趟看到的自己那份理解，就是上一趟写下来的。
+ * 一条都没有就是空串（第一次开这一轮——没有前话可接）。
+ */
+async function lastDistillOf(log: { readByWriter(w: WriterId, from?: number): AsyncIterable<LogEvent> }): Promise<{ distill: string }> {
+  let distill = ''
+  for await (const e of log.readByWriter('round' as WriterId)) {
+    if (e.t === 'holder/distill') distill = e.body
+  }
+  return { distill }
 }
 
 /**
@@ -2548,6 +2794,7 @@ async function run(argv: readonly string[]): Promise<number> {
   if (cmd === 'round') {
     const sub = positional[1]
     if (sub === 'run') return await roundRun(root, flags, positional.slice(2), json)
+    if (sub === 'plan') return await roundPlan(root, flags, positional.slice(2), json)
     return await roundCmd(root, flags, positional.slice(1), json)
   }
 
