@@ -129,11 +129,22 @@ export function refuse(rule: string, message: string, path: string, space: 'virt
   return { rule, message, path, space }
 }
 
-/** 一次改名/改权限的原文（`view/edit.ts` 那一族的一个最小子集：只收这一层用得上的三种）。 */
-export type EditRaw =
-  | { readonly kind: 'replace'; readonly find: string; readonly replace: string }
-  | { readonly kind: 'rename'; readonly to: string }
-  | { readonly kind: 'chmod'; readonly mode: number }
+/**
+ * 一次替换的原文。**形状就是公布面**——`catalog.ts` 里 `edit` 的 `path` · `old_string` ·
+ * `new_string` · `replace_all`，一个不多、一个不少。
+ *
+ * 为什么把这一条写在类型上：它原先是"改名 / 改权限 / 替换一段"三选一（`to` · `mode` ·
+ * `find`+`replace`），而目录公布的是另一套名字。**绑定面比公布面宽**的那一次漂移在 W11 重跑
+ * 那一趟上烧掉了整整一格：模型按公布面给 `old_string`/`new_string`，这一层只认 `find`/`replace`，
+ * 当场被拒，它随后乱了四步直到上界。**公布面是进前缀的那一份，所以它是契约。**
+ */
+export type EditRaw = {
+  readonly kind: 'replace'
+  readonly find: string
+  readonly replace: string
+  /** 公布的 `replace_all`（可选键）：为真 → 每一处都换；缺省 → 出现不止一处时先拒（猜是哪一处是静默的错误）。 */
+  readonly all: boolean
+}
 
 /** 列目录给回的一行。`kind` 是"这一行是文件还是目录"——`glob` 按它决定走不走下去。 */
 export interface ToolListing {
@@ -233,6 +244,11 @@ function num(args: Readonly<Record<string, unknown>>, name: string): number | nu
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
+/** 一个布尔开关：**只有 `true` 算给了**（其余一律当没给——缺省那一档是有意选的）。 */
+function flag(args: Readonly<Record<string, unknown>>, name: string): boolean {
+  return arg(args, name) === true
+}
+
 /**
  * 一次调用给的参数原样文本 → 一个对象。**解不开就是一次失败的结果，不是抛。**
  *
@@ -293,21 +309,18 @@ const writeFace: ToolFn = async (args, host) => {
 }
 
 const editFace: ToolFn = async (args, host) => {
+  // **按目录公布的那几个名字读**（`old_string` · `new_string` · `replace_all`）——多一个都不读。
+  // 名字对不上就是公布面与绑定面不一致，而模型只会按公布的那份给（实测烧掉过一格）。
   const path = text(args, 'path')
   if (path === null) return missing('edit', 'path')
-  const to = text(args, 'to')
-  const find = text(args, 'find')
-  const replace = text(args, 'replace')
-  const mode = num(args, 'mode')
-  let raw: EditRaw
-  if (to !== null) raw = { kind: 'rename', to }
-  else if (mode !== null) raw = { kind: 'chmod', mode }
-  else if (find !== null && replace !== null) raw = { kind: 'replace', find, replace }
-  else return no('edit 要三选一：给 to（改名）· 给 mode（改权限）· 给 find 与 replace（替换一段）。')
+  const find = text(args, 'old_string')
+  if (find === null) return missing('edit', 'old_string')
+  const replace = text(args, 'new_string')
+  if (replace === null) return missing('edit', 'new_string')
+  const raw: EditRaw = { kind: 'replace', find, replace, all: flag(args, 'replace_all') }
   const got = await host.edit(path, raw)
   if (!got.changed) return ok(`${path} 没有变化（归一之后与现值相同），视图还是 rev ${got.rev}。`)
-  const what = raw.kind === 'rename' ? `改名成 ${raw.to}` : raw.kind === 'chmod' ? `改权限成 ${raw.mode.toString(8)}` : '替换了一段'
-  return ok(`${path} ${what}。`)
+  return ok(`${path} 替换了${raw.all ? '每一处' : '一段'}。`)
 }
 
 const readImageFace: ToolFn = async (args, host) => {

@@ -444,17 +444,89 @@ test('⑥ 目录里 required 的键，实现读的名字与它逐字相等（不
     const fn = faceOf(e.name)
     if (fn === null) continue // 没接上实现的那几条不在这一条范围内（W1 之后为 0）
     const need = (e.parameters as unknown as { readonly required?: readonly string[] }).required ?? []
-    const got = await fn({}, host, { agent: AGENT, step: 0, cwd: '', holder: false })
     if (need.length === 0) {
+      const got = await fn({}, host, { agent: AGENT, step: 0, cwd: '', holder: false })
       assert.equal(got.output.includes('少了必填参数'), false, `${e.name} 目录里没有必填键，实现却报了缺：${got.output}`)
       continue
     }
-    const m = /少了必填参数 (\S+?)——/.exec(got.output)
-    assert.ok(m !== null, `${e.name} 什么都不给时报的不是"少了必填参数"：${got.output}`)
-    assert.ok(need.includes(m[1]!), `${e.name} 实现读的是 ${m[1]}，而目录的 required 是 ${need.join(' · ')}`)
-    asked.push(`${e.name}:${m[1]}`)
+    // **逐个问下去，不是只问第一个。** 原先只看第一次报出来的那个名字，于是"第一个键对得上、
+    // 后面那几个键是另一套名字"这种漂移一路绿——实测就漏掉了 `edit`（required 是 path ·
+    // old_string · new_string，而实现读的是 find · replace），那一趟真档白烧了一格。
+    // 每一趟只给**前面已经报缺的那些**键：给完最后一个就会真的去碰宿主，而那件事由上面那个
+    // 会喊的 Proxy 管——这一条只量"问名字"这一段。
+    const given: Record<string, unknown> = {}
+    const got: string[] = []
+    for (let i = 0; i < need.length; i++) {
+      const r = await fn(given, host, { agent: AGENT, step: 0, cwd: '', holder: false })
+      const m = /少了必填参数 (\S+?)——/.exec(r.output)
+      assert.ok(
+        m !== null,
+        `${e.name} 给了 ${Object.keys(given).join(' · ') || '(空)'} 之后，实现报的不是"少了必填参数"：${r.output}`,
+      )
+      got.push(m[1]!)
+      given[m[1]!] = 'x'
+    }
+    assert.deepEqual(
+      [...new Set(got)].sort(),
+      [...new Set(need)].sort(),
+      `${e.name} 实现读的必填键是 ${got.join(' · ')}，而目录的 required 是 ${need.join(' · ')}`,
+    )
+    asked.push(`${e.name}:${got.join(',')}`)
   }
   console.log(`⑥ 读数 · 逐条实现读的必填键：${asked.join(' · ')}`)
+})
+
+// ── ⑥b `edit`：按公布面按下去真的改到文件 ────────────────────────────────────
+//
+// ⑥ 量的是"名字对得上"，这一条量的是"按公布的名字按下去，文件真的变了"——外加一条负对照：
+// **目录里没有的名字不算替换**（绑定面比公布面宽的那一次漂移就是这么来的）。
+test('⑥b edit：按公布面（old_string/new_string/replace_all）改得到文件；目录外的名字一个都不认', async () => {
+  const b = await bench()
+  try {
+    const wrote = await face('write', { path: 'src/a.ts', content: 'export const a = 1\nexport const b = 2\n' }, b.host)
+    assert.equal(wrote.ok, true, wrote.output)
+    const now = async (): Promise<string> => asText((await b.view.read('src/a.ts' as RelPath))!)
+    // **两种形状都当拒**：工具面自己拒是 `{ok:false}`，而宿主那一层今天会**抛**（`host.edit`
+    // 的"没找到 / 不止一处"两支）——`step.ts` 把抛收成 `tool-threw`（那一格当场停）。这一条
+    // 只量"按公布面按下去会发生什么"，抛与不抛的差别记在疑点里，不在这里盖章。
+    const tryEdit = async (args: unknown): Promise<{ readonly ok: boolean; readonly output: string }> => {
+      try {
+        const r = await face('edit', args, b.host)
+        return { ok: r.ok, output: r.output }
+      } catch (err) {
+        return { ok: false, output: (err as Error).message }
+      }
+    }
+
+    // ① 一处替换：只用公布的三个键。
+    const one = await tryEdit({ path: 'src/a.ts', old_string: 'a = 1', new_string: 'a = 42' })
+    assert.equal(one.ok, true, one.output)
+    assert.equal(await now(), 'export const a = 42\nexport const b = 2\n')
+
+    // ② 两处出现、没给 replace_all → 拒，而拒的话指得出 replace_all（不是只报"出现了不止一次"）。
+    const two = await tryEdit({ path: 'src/a.ts', old_string: 'export const', new_string: 'const' })
+    assert.equal(two.ok, false)
+    assert.match(two.output, /replace_all/)
+    assert.equal(await now(), 'export const a = 42\nexport const b = 2\n', '被拒的那一次不许动文件')
+
+    // ③ 给了 replace_all → 每一处都换掉。
+    const all = await tryEdit({
+      path: 'src/a.ts',
+      old_string: 'export const',
+      new_string: 'const',
+      replace_all: true,
+    })
+    assert.equal(all.ok, true, all.output)
+    assert.equal(await now(), 'const a = 42\nconst b = 2\n')
+
+    // ④ 负对照：目录里没有 `find`/`replace`（也没有 `to`/`mode`）——按旧名字给，缺的是公布的键。
+    const legacy = await tryEdit({ path: 'src/a.ts', find: 'const a', replace: 'let a' })
+    assert.equal(legacy.ok, false)
+    assert.match(legacy.output, /少了必填参数 old_string/)
+    assert.equal(await now(), 'const a = 42\nconst b = 2\n', '按未公布的名字给，一个字节都不许变')
+  } finally {
+    await b.close()
+  }
 })
 
 // ── ⑦ 待办：覆盖 · 重建 · 工作树不动 ──────────────────────────────────────────

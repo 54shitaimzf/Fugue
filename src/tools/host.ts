@@ -463,29 +463,25 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     writeBytes: writeBytesOf,
 
     async edit(rel, raw: EditRaw) {
-      const path = rel as RelPath
-      if (raw.kind === 'rename') {
-        const r = await change({ kind: 'rename', from: path, to: raw.to as RelPath })
-        return { rev: r.rev, changed: r.changed }
-      }
-      if (raw.kind === 'chmod') {
-        const r = await change({ kind: 'chmod', path, mode: raw.mode })
-        return { rev: r.rev, changed: r.changed }
-      }
       // **替换按"整串恰好出现一次"判。** 0 次与 2 次都拒（拒的话说清是哪种），因为"猜他想改
-      // 哪一处"是静默的错误。架构 § 8.10 只给了 `edit` 这个工具名，没定匹配语义——所以这里取
-      // 最保守的那一格，并把这一条写进疑点。
+      // 哪一处"是静默的错误；公布的 `replace_all` 为真时 2 次就是"每一处都换掉"。架构 § 8.10
+      // 只给了 `edit` 这个工具名，没定匹配语义——所以缺省取最保守的那一格。
+      //
+      // **改名与改权限不在这里**：目录（公布面）从没有过 `to`/`mode`，而公布面 = 绑定面。
+      // 那两件事的入口在视图那一层与命令行（`fugue rename` / `fugue chmod`），不经过模型。
       const got = await readBytesOf(rel)
       if (got === null) throw new Error(`视图里没有这个文件：${rel}`)
       const before = Buffer.from(got.bytes).toString('utf8')
       const at = before.indexOf(raw.find)
       if (at === -1) {
-        throw new Error(`没有找到要被替换的那段文本（${raw.find.length} 个字符）——用 write 写一整份，或者把 find 写成原样的那一段。`)
+        throw new Error(`没有找到要被替换的那段文本（${raw.find.length} 个字符）——用 write 写一整份，或者把 old_string 写成原样的那一段。`)
       }
-      if (before.indexOf(raw.find, at + raw.find.length) !== -1) {
-        throw new Error(`那段文本在 ${rel} 里出现了不止一次——edit 一次只改一处，请把 find 写到只匹配那一处。`)
+      if (!raw.all && before.indexOf(raw.find, at + raw.find.length) !== -1) {
+        throw new Error(`那段文本在 ${rel} 里出现了不止一次——edit 一次只改一处：把 old_string 写到只匹配那一处，或者给 replace_all。`)
       }
-      const after = before.slice(0, at) + raw.replace + before.slice(at + raw.find.length)
+      const after = raw.all
+        ? before.split(raw.find).join(raw.replace)
+        : before.slice(0, at) + raw.replace + before.slice(at + raw.find.length)
       const r = await writeBytesOf(rel, new Uint8Array(Buffer.from(after, 'utf8')))
       return { rev: r.rev, changed: true }
     },
