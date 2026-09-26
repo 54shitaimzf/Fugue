@@ -30,6 +30,8 @@ import { mkdirSync } from 'node:fs'
 import type { Policy } from '../boundary/policy.ts'
 import { confine, degradedArgv } from '../boundary/confine.ts'
 import { declaredSetOf } from '../contract/types.ts'
+import { refHeadOf } from './head.ts'
+import type { RefHead } from './head.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { TreeEntry } from '../entries.ts'
 import type { AgentId, CommitId, ContractId, LogSeq, RefName, RelPath, WriterId } from '../terms.ts'
@@ -126,14 +128,27 @@ export function noDriver(agent: AgentId, c: ContractId): HarnessError {
  *
  * **它与 `fugue commit` 是同一个操作**（同一份 `checkpoint()` · 同一条 `ckpt/commit`），所以
  * "模型侧的检查点"与"人侧的提交"在日志里长得一样——这正是 § 9.6 那句话要的形状。
+ *
+ * **期望不写死**：`head` 是这一格的 ref 缓存（`round/head.ts`），parent 与 CAS 期望都从它读。
+ * 收尾这一次提交接在**模型自己的 `checkpoint` 之后**，所以这一栏必须是那一刻的头，
+ * 不是轮次开始时的 `base`（PLAN § 5.16）。缓存里没有（一个 agent 一个格，`head` 由这一格建）
+ * 就先从日志重建一次——`commitView` 是这一格最后一个同步点，它不该靠"前面有人调过"。
  */
 export async function commitView(i: {
   readonly view: View
   readonly log: Log
   readonly truth: Truth
   readonly writer: WriterId
-  readonly expectedOld: CommitId | null
+  readonly head: RefHead
   readonly msg: string
+  /**
+   * **提交之前要不要从日志重建那个头**。缺省 `true`——这是唯一正确的值。
+   *
+   * `false` 只给「把期望钉死」这条负对照用（§ 5.16 判据 5）：它把这一刻的头冻住，于是
+   * 「期望与 ref 的实际值不一致」这件事可以直接造出来。产品路径上没有人传 `false`：
+   * 那一栏不是策略开关，是「缓存要不要向权威对齐」——对齐是这一格的正常状态。
+   */
+  readonly refresh?: boolean
   /**
    * 提交落在哪一条 ref 上。**由调用点给**（不是从 writer 推的）：`fugue commit`（人侧）提交到
    * 主线，夹具要把底落到某一条 agent 分支上——"这一份产出属于哪一支"是调用点知道的事。
@@ -141,6 +156,10 @@ export async function commitView(i: {
   readonly ref: RefName
 }): Promise<{ readonly commit: CommitId; readonly seq: LogSeq; readonly entries: number }> {
   const entries: TreeEntry[] = await snapshotOf(i.view)
+  // **从日志重建一次**（判据 4 的兑现点：缓存只是缓存，重放是权威）。这一步是幂等的：
+  // 日志没动时它与缓存里的值逐字节相同，而日志动了（比如模型在两步之间提交过）它就把
+  // 缓存拉回权威那一侧——所以"收尾接在模型的最后一次 checkpoint 之后"是结构，不是巧合。
+  if (i.refresh !== false) await i.head.refresh()
   const r = await checkpoint({
     log: i.log,
     truth: i.truth,
@@ -148,10 +167,22 @@ export async function commitView(i: {
     entries,
     rev: i.view.rev,
     msg: i.msg,
-    expectedOld: i.expectedOld,
+    expectedOld: i.head.value,
     ref: i.ref,
   })
+  i.head.commit(r.commit, r.seq)
   return { commit: r.commit, seq: r.seq, entries: r.entries }
+}
+
+/**
+ * **这一格的 ref 头**（`round/head.ts` 那份缓存），导出它是为了让它能被指着看。
+ *
+ * `driveOnce` 自己用的是同一个调用（起跑时一次）——这一处只是把那一次单独交出来。
+ * 为什么要交出来：判据 4 是「**缓存只是缓存**」——那份缓存可以任意作废、从日志重建一次，
+ * 后续行为逐字节相同。它的兑现要能看到`refresh()` 前后（见 PLAN § 5.16 判据 4）。
+ */
+export function openRefHead(log: LogReader, writer: WriterId, from: CommitId | null = null): Promise<RefHead> {
+  return refHeadOf(log, writer, from)
 }
 
 /** 契约那一句人读的话（提交信息与交接都用它）。 */
@@ -331,6 +362,19 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
    * 而不是构造这一份时的空值。
    */
   let strategyNow: ForkStrategy | null = null
+
+  /**
+   * **这一格 ref 的头**（PLAN § 5.16 冻结点：起跑重放，格内只缓存）。
+   *
+   * 与物化那一半（`execRoot` 里宿主自己重放的 `matState`）同一个形状：这一格的日志里最后一条
+   * `ckpt/commit` 就是它，一条都没有就是 `null`（新仓库）。工具面的 `checkpoint` 与收尾的
+   * `commitView` **读的是同一份**——所以「不与第二个账本并存」这句话在这一层就是这一个变量。
+   *
+   * **`base` 那一栏不许省**：这一格的视图铺在 `base` 上，而 `base` 在日志里没有 `ckpt/commit`
+   * （台子的底由 git 落 · `fugue branch` 也能把 ref 挪到别处）。日志重放只往上加这一格自己
+   * 推的那几次——起错头的症状是每一次提交都撞 CAS（施工当场撞到过，见 `head.ts` 那一段）。
+   */
+  const head: RefHead = await refHeadOf(log, writer, base)
   /**
    * 这一格**已经落下去的清单**（`ensure` 每次同步后交出来的那份）。回收拿它当减数：
    * `upper` 里那几条是我们自己落的，不是子进程写的。**不新开账**：它就是那一次 `ensure` 的回执。
@@ -338,7 +382,7 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
   let manifestNow: readonly RelPath[] = []
 
   const host = createToolHost(view, roots, {
-    actions: { writer, log, truth, expectedOld: base },
+    actions: { writer, log, truth, head },
     commandFor,
     ownedPaths,
     reclaim: createReclaim({
@@ -476,7 +520,7 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     log,
     truth,
     writer,
-    expectedOld: base,
+    head,
     msg: `（${agent}）${goalOf(contract)}`,
     ref: refFor(writer),
   })

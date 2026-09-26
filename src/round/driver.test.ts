@@ -8,7 +8,7 @@
 //   ③ 交接那一趟接得上：触发点到了落 `agent/handoff`，后继接着干完
 //   ④ 驱动不在时**明确报出来**（不是静默地交一个空提交）
 import assert from 'node:assert/strict'
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -24,7 +24,7 @@ import { matParts } from '../roots/paths.ts'
 import type { Enforcement, PolicyLayer, PolicyMode } from '../terms.ts'
 import { clearMaterialization, removeTree } from '../materialize/mount.ts'
 import { applyEdit } from '../view/edit.ts'
-import type { Log } from '../log/events.ts'
+import type { Log, LogReader } from '../log/events.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { emptyState } from '../assemble/sources.ts'
 import { fixtureState } from '../model/fixture-state.ts'
@@ -40,7 +40,9 @@ import type { Contract } from '../contract/types.ts'
 import { runRound } from './execute.ts'
 import { entriesOf } from '../merge/accept.ts'
 import type { RoundRun, RoundRunDeps, Stub } from './execute.ts'
-import { commitView, noDriver, realDriver, stubDriver } from './driver.ts'
+import { commitView, noDriver, openRefHead, realDriver, stubDriver } from './driver.ts'
+import { refHeadOf } from './head.ts'
+import { RefConflictError } from '../truth/truth.ts'
 
 const AGENT = 'agent-1' as AgentId
 const DECL = modelDeclOf('deepseek-chat/anthropic')
@@ -555,6 +557,227 @@ test('③ 触发点到了落 agent/handoff，后继接着干完（同一条分�
     assert.match(String(h.successor), /^agent-1-\d+$/, `后继的名字：${h.successor}`)
     // **轮级状态那一栏没被动过**：这条事件里没有轮次号，也没有 `round/state` 跟着它。
     console.log(`③ 读数：交接 ${r.handoffs.length} 次 · 后继 ${String(h.successor)} · 停下来的话「${r.stopped}」`)
+  } finally {
+    await b.close()
+  }
+})
+
+// W9 那一段（§ 5.16 的判据）——重来一遍，逐条对得上，不再零敲碎打。
+//
+// **病**：`driver.ts` 给 CAS 的期望写死成 `base`（收尾 `commitView` 也一样），而 `checkpoint`
+// 是模型的合法动作——它每调一次，这一格的 ref 就往前走一格。于是撞错两条：格内第二次
+// `checkpoint` 当场 `tool-threw`，收尾那次 `commitView` 直接把 `RefConflictError` 穿出
+// `runRound`（它不是 `HarnessError`）——**这一格连 `agent/stop` 都落不下来**，已经干完的活全作废。
+//
+// **修法**：期望跟着 ref 走（`round/head.ts` 那份格内缓存），头从这一格自己的日志重放。
+
+/** 三条脚本：写一份交付物 → `checkpoint` → `checkpoint` → 说完。 */
+const CKPT_SCRIPTS: readonly (readonly ModelEvent[])[] = [
+  SCRIPTS[0] as readonly ModelEvent[],
+  [
+    ...callOne(0, 'k1', 'checkpoint', { message: '第一格' }),
+    { t: 'usage', usage: USAGE },
+    { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+  ],
+  [
+    ...callOne(0, 'k2', 'checkpoint', { message: '第二格' }),
+    { t: 'usage', usage: USAGE },
+    { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+  ],
+  SCRIPTS[1] as readonly ModelEvent[],
+]
+
+/** 两条脚本：写一份交付物 → 说完。**格内一次 `checkpoint` 都不调**（判据 3 那一档）。 */
+const CKPT_NEVER: readonly (readonly ModelEvent[])[] = [
+  SCRIPTS[0] as readonly ModelEvent[],
+  SCRIPTS[1] as readonly ModelEvent[],
+]
+
+/** 这一格落下的 `ckpt/commit`（按日志顺序）。 */
+async function commitsOf(root: string): Promise<{ commit: string; msg: string }[]> {
+  const out: { commit: string; msg: string }[] = []
+  for (const e of await eventsOf(root)) {
+    if (e.t === 'ckpt/commit' && e.agent === AGENT) out.push({ commit: e.commit, msg: e.msg })
+  }
+  return out
+}
+
+/** 一个提交的父提交（问台子的 git）。 */
+function parentsOf(root: string, commit: string): string[] {
+  const r = spawnSync('git', ['rev-list', '--parents', '-n', '1', commit], { cwd: root, encoding: 'utf8' })
+  return (r.stdout ?? '').trim().split(/\s+/).slice(1)
+}
+
+/**
+ * 这一格那一趟：**产出由脚本里的 `write` 铺**（与 ① 那一条逐字节同一条路——
+ * `write` → `B5` 的工具面 → `view/write`），脚本只管说话与调工具。
+ *
+ * 为什么不用 `deliver` 那道口：它拿不到这一格的口——`deliver` 的闭包里只有台子那个 `round`
+ * 的口，用它写 agent 的日志会当场撞 `hold.ts` 那道栅栏（"一次命令只写一个 writer"，
+ * 施工当场撞到过）。脚本自己会写，这一档本来也不需要它。
+ */
+function ckptRun(b: Bench, scripts: readonly (readonly ModelEvent[])[]): RoundRunDeps {
+  return depsOf(b, realDriver({}), supportOf(b, scriptedModel(scripts)))
+}
+
+test('W9 ① 格内调一次 `checkpoint` 后照常跑完：ref 上 base → c1 → c2 成链（c2 的 parent 逐字是 c1）', async () => {
+  const b = await bench()
+  try {
+    // 三条脚本：写 → 提交一次 → 说完。所以这一格该落**两条** `ckpt/commit`（模型那一次 + 收尾那次）。
+    const one: readonly (readonly ModelEvent[])[] = [
+      SCRIPTS[0] as readonly ModelEvent[],
+      CKPT_SCRIPTS[1] as readonly ModelEvent[],
+      SCRIPTS[1] as readonly ModelEvent[],
+    ]
+    const run = await runRound(ckptRun(b, one))
+    assertLanded(run, 'W9 ①')
+
+    const commits = await commitsOf(b.root)
+    // **一条都不能少**：模型那一次与收尾那一次各一条，顺序与发生顺序一致。
+    assert.equal(commits.length, 2, `这一格该落两条 ckpt/commit，实际 ${commits.length} 条：${JSON.stringify(commits)}`)
+    assert.equal(commits[0]!.msg, '第一格', '前一条是模型给的那句说明')
+    assert.match(commits[1]!.msg, /agent-1/, '后一条是收尾提交（说明是这一格的契约目标）')
+
+    // **成链**：c1 接在底上，c2 接在 c1 上——逐字比，不是"看着差不多"。
+    assert.deepEqual(parentsOf(b.root, commits[0]!.commit), [b.base], 'c1 的父该是这一格的底')
+    assert.deepEqual(parentsOf(b.root, commits[1]!.commit), [commits[0]!.commit], 'c2 的父逐字是 c1')
+
+    // ref 的当前头就是 c2（合并拿到的就是它）。
+    const head = (spawnSync('git', ['rev-parse', 'refs/heads/agent-1'], { cwd: b.root, encoding: 'utf8' }).stdout ?? '').trim()
+    assert.equal(head, commits[1]!.commit, 'ref 指在 c2 上')
+    console.log(`W9 ① 读数：base ${b.base.slice(0, 8)} → c1 ${commits[0]!.commit.slice(0, 8)} → c2 ${commits[1]!.commit.slice(0, 8)}`)
+  } finally {
+    await b.close()
+  }
+})
+
+test('W9 ② 格内连调两次 `checkpoint`：第二次照常成功，两个提交号逐字不同（c1 → c2 → c3 成链）', async () => {
+  const b = await bench()
+  try {
+    const run = await runRound(ckptRun(b, CKPT_SCRIPTS))
+    assertLanded(run, 'W9 ②')
+
+    const commits = await commitsOf(b.root)
+    assert.equal(commits.length, 3, `两条模型提交 + 一次收尾，实际 ${commits.length} 条`)
+    assert.deepEqual(commits.map((c) => c.msg).slice(0, 2), ['第一格', '第二格'], '前两条的说明按顺序')
+
+    // **两个提交号逐字不同**，而且三条连成一条链（这才是"相撞"那一条断言的对立面）。
+    const ids = commits.map((c) => c.commit)
+    assert.equal(new Set(ids).size, 3, `三条提交号该互不相同：${ids.map((i) => i.slice(0, 8)).join(' · ')}`)
+    assert.deepEqual(parentsOf(b.root, ids[0]!), [b.base], 'c1 接在底上')
+    assert.deepEqual(parentsOf(b.root, ids[1]!), [ids[0]!], 'c2 接在 c1 上')
+    assert.deepEqual(parentsOf(b.root, ids[2]!), [ids[1]!], 'c3 接在 c2 上')
+    console.log(`W9 ② 读数：${ids.map((i) => i.slice(0, 8)).join(' → ')}（第二次没有撞 CAS）`)
+  } finally {
+    await b.close()
+  }
+})
+
+test('W9 ③ 格内一次都没调：收尾提交的父就是底（回归——没踩到就不许跑偏）', async () => {
+  const b = await bench()
+  try {
+    const run = await runRound(ckptRun(b, CKPT_NEVER))
+    assertLanded(run, 'W9 ③')
+
+    const commits = await commitsOf(b.root)
+    assert.equal(commits.length, 1, `这一格该只有收尾那一条，实际 ${commits.length} 条`)
+    assert.deepEqual(parentsOf(b.root, commits[0]!.commit), [b.base], '没踩到 `checkpoint` 时，父就是这一格的底')
+
+    // **头从日志重放、而且接得上这一格的底**——这一句量在最里面那一层：重放一次、再重建一次，
+    // 两次都得给出同一份头（「起错头就每次 CAS 都撞」那个坑的守卫：重放认的是日志）。
+    const head = await refHeadOf(b.log, AGENT as WriterId, b.base)
+    assert.equal(head.value, commits[0]!.commit, '重放出来的头就是日志里最后那条 ckpt/commit')
+    assert.equal((await head.refresh()).value, commits[0]!.commit, '重建一次还是它（缓存可以随便作废）')
+    assert.deepEqual(parentsOf(b.root, head.value!), [b.base], '而且那份头接得上这一格的底')
+    console.log('W9 ③ 读数：无 checkpoint 的一格只有收尾一条提交，父是底（重放 = 那一条）')
+  } finally {
+    await b.close()
+  }
+})
+
+test('W9 ④ 缓存只是缓存：任意作废、从日志重建，重建之后行为逐字节相同（重放是权威）', async () => {
+  const b = await bench()
+  try {
+    const run = await runRound(ckptRun(b, CKPT_SCRIPTS))
+    assertLanded(run, 'W9 ④')
+    const commits = await commitsOf(b.root)
+    assert.equal(commits.length, 3, `台子这一趟该落 3 条，实际 ${commits.length} 条`)
+
+    // 拿这一格的日志另开一份缓存（就是 `driveOnce` 起跑时那一次的那个函数）。
+    const head = await openRefHead(b.log, AGENT as WriterId, b.base)
+    assert.equal(head.value, commits[2]!.commit, '重放出来的头就是最后那一条 ckpt/commit')
+    assert.equal((await head.refresh()).value, commits[2]!.commit, '**重建之后逐字节相同**（缓存可以随便作废）')
+
+    // **负对照：重放是权威。** 让这份"日志"第一次读就什么都读不到（缓存刚建出来那一瞬间的样子）
+    // ——缓存若把自己当成独立账本，重建就会给出一个旧头；而它给的是底，与日志同源。
+    let reads = 0
+    const flaky: LogReader = {
+      readByWriter: (w, from) => {
+        reads += 1
+        if (reads === 1) return (async function* () {})()
+        return b.log.readByWriter(w, from)
+      },
+    }
+    const h2 = await refHeadOf(flaky, AGENT as WriterId, b.base)
+    assert.equal(h2.value, b.base, '日志读不到东西时重放给出这一格的底——缓存里那个头没有变成第二个源')
+    assert.equal((await h2.refresh()).value, commits[2]!.commit, '日志回来之后重建，头又是最后那条提交')
+    console.log(`W9 ④ 读数：重放与重建都给 c3 ${commits[2]!.commit.slice(0, 8)} · 负对照（空读）给出底 ${b.base.slice(0, 8)}`)
+  } finally {
+    await b.close()
+  }
+})
+
+test('W9 ⑤ 负对照：把期望钉死（不跟着 ref 走）→ 收尾提交当场撞 CAS', async () => {
+  const b = await bench()
+  try {
+    // **这一条钉的是"期望必须跟着 ref 走"**：造一份"ref 已经往前走了、而这一格的日志里没有那条
+    // `ckpt/commit`"的处境——正好是 W9 那个病（旧代码把期望写死成 `base`，而 `checkpoint` 已经
+    // 让 ref 往前走过）。`refresh: false` 把这一刻的头冻住，于是 CAS 拿底去比 ref 的实际值，必输。
+    const made = spawnSync('git', ['commit', '--allow-empty', '-qm', '日志之外的推进'], { cwd: b.root, env: GIT_ENV, encoding: 'utf8' })
+    assert.equal(made.status, 0, made.stderr)
+    const stash = (spawnSync('git', ['rev-parse', 'HEAD'], { cwd: b.root, encoding: 'utf8' }).stdout ?? '').trim()
+    assert.notEqual(stash, b.base, '台子这一下必须真的多出一个提交')
+
+    // 这一格自己的日志口（与台子那几条同一个开法；跑完由 `b.keep` 一起关）。
+    const agentLog = openLog(b.root, { write: AGENT as WriterId, sync: 'each' })
+    b.keep(agentLog)
+    await b.truth.advance(`refs/heads/${AGENT}` as never, stash, b.base)
+    const view = await loadView(agentLog, AGENT as WriterId, { lower: lowerAt(b.truth, b.base) })
+    // 视图里要有一份真内容（否则交的是空提交——那件事另有它自己的判据）。
+    await applyEdit(
+      { view, truth: b.truth, log: agentLog, writer: AGENT as WriterId },
+      { kind: 'add', path: 'a.ts' as RelPath, bytes: new TextEncoder().encode('（产出）\n'), mode: 0o100644 },
+    )
+
+    // ① **钉死**：头停在底上（`refresh: false`），而 ref 早就是 `stash` 了 → CAS 必输。
+    const frozen = await refHeadOf(agentLog, AGENT as WriterId, b.base)
+    let froze: unknown = null
+    try {
+      await commitView({
+        view,
+        log: agentLog,
+        truth: b.truth,
+        writer: AGENT as WriterId,
+        head: frozen,
+        msg: '钉死的那一次',
+        ref: `refs/heads/${AGENT}` as never,
+        refresh: false,
+      })
+    } catch (e) {
+      froze = e
+    }
+    assert.ok(
+      froze instanceof RefConflictError,
+      `钉死期望时该撞 CAS，实际：${froze instanceof Error ? `${froze.name}: ${froze.message}` : String(froze)}`,
+    )
+
+    // ② **跟着 ref 走**（缺省那一档）：把 ref 挪回底、再提交一次——刷新之后头对上，提交成功，
+    // 而且它接在 ref 当时那个值上（这就是"成链"的全部）。
+    await b.truth.advance(`refs/heads/${AGENT}` as never, b.base, stash)
+    const r = await commitView({ view, log: agentLog, truth: b.truth, writer: AGENT as WriterId, head: frozen, msg: '跟着 ref 走的那一次', ref: `refs/heads/${AGENT}` as never })
+    assert.notEqual(String(r.commit), String(stash), '提交必须是一个新提交')
+    assert.deepEqual(parentsOf(b.root, String(r.commit)), [b.base], '那一份的父是底（它接在 ref 当时的值上）')
+    console.log('W9 ⑤ 读数：钉死期望 → 撞 CAS · 跟着 ref 走 → 提交成功且接在 ref 当时的头上')
   } finally {
     await b.close()
   }

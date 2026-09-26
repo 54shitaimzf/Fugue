@@ -37,6 +37,7 @@ import { createToolExecutor } from '../capability/dispatch.ts'
 import { faceOf, parseArgs } from './execute.ts'
 import type { ToolHost } from './execute.ts'
 import { createToolHost } from './host.ts'
+import { refHeadOf } from '../round/head.ts'
 
 const AGENT = 'agent-1' as AgentId
 const CATALOG = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
@@ -78,7 +79,8 @@ async function bench(): Promise<Bench> {
   const view = await loadView(log, AGENT as WriterId, { lower: lowerAt(truth, null) })
   const roots = createRoots(root as never)
   const host = createToolHost(view, roots, {
-    actions: { writer: AGENT as WriterId, log, truth, expectedOld: null },
+    // **这一格的 ref 头从日志重放**（新仓库：底是 `null`，日志里也一条 `ckpt/commit` 都没有）。
+    actions: { writer: AGENT as WriterId, log, truth, head: await refHeadOf(log, AGENT as WriterId, null) },
   })
   return {
     root,

@@ -32,6 +32,7 @@ import { ensure } from '../materialize/ensure.ts'
 import type { EnsureResult } from '../materialize/ensure.ts'
 import { matState } from '../materialize/manifest.ts'
 import type { MatState } from '../materialize/manifest.ts'
+import type { RefHead } from '../round/head.ts'
 import { isMounted, unmountOverlay } from '../materialize/mount.ts'
 import { matParts } from '../roots/paths.ts'
 import { lowerAt } from '../view/lower.ts'
@@ -49,8 +50,15 @@ export interface HostActions {
   readonly writer: WriterId
   readonly log: Log
   readonly truth: Truth
-  /** 这一次提交铺在哪个提交上（`View.base`）——它同时是 parent 与 CAS 的期望。 */
-  readonly expectedOld: CommitId | null
+  /**
+   * **这一格的 ref 此刻在哪儿**（`round/head.ts` 的 `RefHead`）。
+   *
+   * 它同时是这次提交的 parent 与 CAS 的期望（`checkpoint.ts` 的 `expectedOld` 那一栏）。
+   * **以前这里是写死的 `View.base`**：模型一格之内调两次 `checkpoint`，第二次就撞 CAS
+   * （PLAN § 5.16）——所以它换成这一格的缓存，而缓存的来源是这一格自己的日志重放。
+   * 提交成功之后由这一份自己同步（`head.commit`），与收尾的 `commitView` 读的是同一份。
+   */
+  readonly head: RefHead
 }
 
 export interface HostOptions {
@@ -458,8 +466,12 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
         entries,
         rev: view.rev,
         msg,
-        expectedOld: parts.expectedOld,
+        expectedOld: parts.head.value,
       })
+      // **成功之后同步缓存**：这一步之后这一格的 ref 就是这个提交——下一次 `checkpoint`
+      // 与收尾的 `commitView` 都按它当 parent 与 CAS 期望（PLAN § 5.16 那条链）。
+      // 只有 `checkpoint()` 成功返回才走到这里；撞 CAS 的那一条在里面抛，缓存不动。
+      parts.head.commit(r.commit, r.seq)
       return { commit: String(r.commit) }
     },
 

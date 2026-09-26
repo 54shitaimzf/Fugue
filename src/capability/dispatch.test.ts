@@ -223,6 +223,7 @@ async function realHostOf(log: Log, root: string): Promise<ToolHost> {
   })
   if (made.status !== 0) throw new Error(`git init 没成：${made.stderr}`)
   const { createToolHost } = await import('../tools/host.ts')
+  const { refHeadOf } = await import('../round/head.ts')
   const { openTruth } = await import('../truth/truth.ts')
   const { loadView } = await import('../view/view.ts')
   const { lowerAt } = await import('../view/lower.ts')
@@ -230,7 +231,7 @@ async function realHostOf(log: Log, root: string): Promise<ToolHost> {
   const truth = openTruth(root)
   const view = await loadView(log, AGENT as WriterId, { lower: lowerAt(truth, null) })
   return createToolHost(view, createRoots(root as never), {
-    actions: { writer: AGENT as WriterId, log, truth, expectedOld: null },
+    actions: { writer: AGENT as WriterId, log, truth, head: await refHeadOf(log, AGENT as WriterId, null) },
   })
 }
 
