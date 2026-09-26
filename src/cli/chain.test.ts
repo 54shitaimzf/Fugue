@@ -726,3 +726,79 @@ test('C4 · round go：不放行一个契约都不发 · 放行逐条发 · 同�
       `第二轮同一批号 ${m[1]} 照样停在门口`,
   )
 })
+
+// ── 序 15 · 打回缺省回一次：不给 `--retry` 走 1（回边）· `--retry 0` 才"一遍都不重来" ──────────
+//
+// 出处：架构 § 8.13（「重试上界的缺省是 1」）· 计划 § 5.12 的序 15。两条路都让验收不过
+// （`--fail` 把那条断言换成 `exit 1`），差别只有 `--retry`。
+//
+// **读数落在 `round/state` 那一条链上**（就是 `probe/round.ts` 数打回次数的那一处）：
+// `Verifying → Working` 是回边那一笔，`Verifying → Aborted` 是超界那一笔。判的是"哪一条 · 几条"。
+// 今天这一条命令**不真的重跑失败的那几支**（重跑要重新派发，归 A4 起头那一段），所以"第二遍才
+// `Aborted`"这一半量在状态机那一处（`machine.test.ts` 的 `RETRY_DEFAULT` 那三条）。
+test('序 15 · 打回：不给 --retry 回一次（Verifying → Working）· --retry 0 直接 Aborted', () => {
+  const stateEdges = (root: string): string[] =>
+    logEvents(root)
+      .filter((e) => e['t'] === 'round/state')
+      .map((e) => `${String(e['from'])} → ${String(e['to'])}`)
+
+  const setup = (root: string): void => {
+    assert.equal(fugue(root, 'write', 'README.md', '--from', srcOf()).code, 0)
+    assert.equal(fugue(root, 'commit', '-m', '底').code, 0)
+    assert.equal(fugue(root, 'config', 'set', 'actions.ok', JSON.stringify({ argv: ['/bin/sh', '-c', 'true'], outputs: [] })).code, 0)
+    assert.equal(
+      fugue(root, 'config', 'set', 'round.assertions', JSON.stringify([{ name: '总是过', action: 'ok', argv: ['/bin/sh', '-c', 'true'] }])).code,
+      0,
+    )
+    assert.equal(
+      fugue(
+        root,
+        'config',
+        'set',
+        'round.split',
+        JSON.stringify([
+          { goal: '写一份 a.ts', ownedPaths: ['a.ts'], deliverables: [{ path: 'a.ts', form: '一份文件' }], assertions: [{ name: '总是过', action: 'ok' }] },
+        ]),
+      ).code,
+      0,
+    )
+  }
+
+  // 一 · 不给 `--retry`：验收不过 → **回边一笔**，没有超界那一笔。
+  const bare = tmpRoot()
+  setup(bare)
+  const a = fugue(bare, '--json', 'round', 'run', '写一份 a.ts', '--fail', '总是过')
+  assert.equal(a.code, 1, `验收没过该退 1，实际 ${a.code}：${a.stderr.slice(0, 200)}`)
+  const ja = JSON.parse(a.stdout) as { state: string; verify: { ok: boolean; fail: number } }
+  assert.equal(ja.verify.ok, false, `这一条要的是一趟不过的验收：${JSON.stringify(ja.verify)}`)
+  assert.equal(ja.verify.fail, 1)
+  const edgesBare = stateEdges(bare)
+  assert.equal(
+    edgesBare.filter((e) => e === 'Verifying → Working').length,
+    1,
+    `缺省那一档该恰好走一次回边，实际：${edgesBare.join(' · ')}`,
+  )
+  assert.equal(edgesBare.filter((e) => e.endsWith('Aborted')).length, 0, `缺省那一档不该中止：${edgesBare.join(' · ')}`)
+  assert.equal(ja.state, 'Working', `那一趟的终点该是 Working（等着再干一遍），实际 ${ja.state}`)
+
+  // 二 · `--retry 0`：一次都不回，直接 `Aborted`。
+  const zero = tmpRoot()
+  setup(zero)
+  const b = fugue(zero, '--json', 'round', 'run', '写一份 a.ts', '--fail', '总是过', '--retry', '0')
+  assert.equal(b.code, 1, `验收没过该退 1，实际 ${b.code}：${b.stderr.slice(0, 200)}`)
+  const jb = JSON.parse(b.stdout) as { state: string; verify: { ok: boolean } }
+  assert.equal(jb.verify.ok, false)
+  const edgesZero = stateEdges(zero)
+  assert.equal(
+    edgesZero.filter((e) => e === 'Verifying → Aborted').length,
+    1,
+    `--retry 0 该直接中止，实际：${edgesZero.join(' · ')}`,
+  )
+  assert.equal(edgesZero.filter((e) => e === 'Verifying → Working').length, 0, `--retry 0 却走了回边：${edgesZero.join(' · ')}`)
+  assert.equal(jb.state, 'Aborted', `--retry 0 那一趟的终点该是 Aborted，实际 ${jb.state}`)
+
+  console.log(
+    `序 15 读数：不给 --retry → ${edgesBare.join(' · ')}（终点 ${ja.state}）· ` +
+      `--retry 0 → ${edgesZero.join(' · ')}（终点 ${jb.state}）`,
+  )
+})

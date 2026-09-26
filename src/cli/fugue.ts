@@ -93,6 +93,7 @@ import { draftPathOf } from '../contract/draft.ts'
 import { RoundRunError, materializeCommit, runRound } from '../round/execute.ts'
 import type { DriverSupport, Stub } from '../round/execute.ts'
 import { realDriver, stubDriver } from '../round/driver.ts'
+import { RETRY_DEFAULT } from '../round/machine.ts'
 import { wireCallOver } from '../runtime/step.ts'
 import { makeDumpCall, wireInTransport } from '../model/http.ts'
 import type { AgentHandle } from '../runtime/step.ts'
@@ -242,7 +243,7 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              ——它不进打回计数，单独成一栏（架构 § 8.12 末段）。
                              --fail <n>   让第 n 个 agent 交一个"必然失败"的提交（走查要撞红）
                              --deny <n>   第 n 个 agent 的格子里多跑一条必然被拒的动作
-                             --retry <n>  Verifying → Working 那条回边允许走几次（缺省 0）
+                             --retry <n>  Verifying → Working 那条回边允许走几次（缺省 1：没通过自动回一次；0 = 一遍都不重来）
                              --report     印打回那三个数（从日志重算，不采集）
                              --metrics    印八元指标（**每个指标的分子与分母一起印**，从日志重算）
                              --materialize 起头时把 N 棵树也铺出来（缺省不铺）
@@ -942,7 +943,7 @@ async function roundRun(
   // `--fail <断言名>`：把配置里**那一条**断言换成必然失败的一条。撞不上就什么都不做——这一档是
   // "走查要撞红"，不是"让这一趟注定失败"。
   const failTarget = typeof flags.get('fail') === 'string' ? (flags.get('fail') as string) : undefined
-  const retriesLeft = numberOf(flags.get('retry')) ?? 0
+  const retriesLeft = numberOf(flags.get('retry'), 0) ?? RETRY_DEFAULT
   const deny = flags.has('deny')
   // 合并前那一档预检的严宽：**缺省报出即拒**（不可逆点，A2 的 `mergeGate`）。
   // `--soft-merge-gate` 把它拉平到 `Planning` 那一档（报出、照发）——真冲突由折叠当场报出，
@@ -1678,11 +1679,17 @@ function writeSetPaths(contracts: readonly Contract[]): string[] {
   return [...all]
 }
 
-/** 那几面 `--fail`/`--deny`/`--retry` 的开关：不给就是 `undefined`（"没要求"），给了要是个正整数。 */
-function numberOf(v: string | true | undefined): number | undefined {
+/**
+ * 那几面 `--fail`/`--deny`/`--retry` 的开关：不给就是 `undefined`（"没要求"），给了要是个整数且
+ * 不小于 `min`（缺省 1）。
+ *
+ * `min` 存在只为一件事：`--retry` 的 **0 是一个有意义的取值**（"一遍都不重来"，架构 § 8.13），
+ * 所以"没给"与"给了 0"要分得开——前者落到缺省，后者就是 0。
+ */
+function numberOf(v: string | true | undefined, min = 1): number | undefined {
   if (v === undefined || v === true) return undefined
   const n = Number(v)
-  return Number.isInteger(n) && n > 0 ? n : undefined
+  return Number.isInteger(n) && n >= min ? n : undefined
 }
 
 /** 把一个提交铺到一个临时目录里——`--deny` 那一档要在真盘上试一次写入。 */

@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import type { AgentId, RoundState } from '../terms.ts'
 import type { Branches, Cause, Edge, StepContext } from './machine.ts'
-import { EDGES, STATES, RoundStateError, abortEdges, allStopped, causesFrom, running, sayOf, step, trail, verdictCause } from './machine.ts'
+import { EDGES, RETRY_DEFAULT, STATES, RoundStateError, abortEdges, allStopped, causesFrom, running, sayOf, step, trail, verdictCause } from './machine.ts'
 
 const A = (n: number): AgentId => `r1/${n}` as AgentId
 
@@ -204,6 +204,11 @@ test('守卫与两个上界：意图没建立不走，打回超界才 Aborted', 
   assert.equal(verdictCause(true, 0), 'verdict-pass', '余量用完了但这次过了——照样进 Committed')
   assert.equal(step('Verifying', verdictCause(false, 0)), 'Aborted')
   assert.equal(step('Verifying', verdictCause(false, 1), { retryLeft: true }), 'Working')
+  // **缺省那一个数是 1**（架构 § 8.13）：第一遍没过回 `Working`，余量花完的第二遍才 `Aborted`。
+  // 这一条量的是那个常量本身——命令行那一头怎么用它，在 `cli/chain.test.ts` 里量。
+  assert.equal(RETRY_DEFAULT, 1)
+  assert.equal(step('Verifying', verdictCause(false, RETRY_DEFAULT), { retryLeft: true }), 'Working')
+  assert.equal(step('Verifying', verdictCause(false, RETRY_DEFAULT - 1)), 'Aborted')
   assert.equal(step('Verifying', verdictCause(true, 0)), 'Committed')
   // 守卫真的在拦：说没余量就不走那一条。
   assert.throws(() => step('Verifying', 'verdict-fail', { retryLeft: false }), /还有重试余量/)

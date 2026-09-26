@@ -35,7 +35,7 @@ import type { AdvanceResult, AssertionRunSpec, VerifyReport } from '../merge/acc
 import { refFor } from '../identity.ts'
 import { startRound } from './start.ts'
 import type { RoundStart, RoundStartDeps } from './start.ts'
-import { step } from './machine.ts'
+import { RETRY_DEFAULT, step } from './machine.ts'
 import type { Cause, RoundState } from './machine.ts'
 import { baseFor, lowerAt } from '../view/lower.ts'
 import { loadView } from '../view/view.ts'
@@ -150,7 +150,8 @@ export interface RoundRunDeps extends Omit<RoundStartDeps, 'log'> {
   readonly checkDrift?: boolean
   /**
    * `Verifying → Working` 那条回边还允许走几次（架构 § 8.13 图上那两条分叉：没通过 ∧ 未超界 → 回
-   * `Working` · 没通过 ∧ 超界 → `Aborted`）。**缺省 0**：没通过就 `Aborted`。
+   * `Working` · 没通过 ∧ 超界 → `Aborted`）。**不给就走 `RETRY_DEFAULT`（1）**：没通过回一次，
+   * 第二遍还不过才判这一轮失败。
    *
    * 这一条命令今天**不真的重跑失败的那几支**（重跑要重新派发，归 A4 起头那一段），所以它判的是
    * "这一次没通过之后该往哪条边走"——走回边的次数就是打回读数的第二个数。
@@ -411,9 +412,9 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
     })
 
     // 状态机那两步（A3）：**通过 → Committed；没过 → 回 Working 或 Aborted**。判决来自 `machine.ts`。
-    // **回边还是超界**：`retriesLeft` 由调用方给（`--retry <n>`），缺省 0 —— 也就是"没通过就
-    // `Aborted`"。这一档进 `round/state`，A8 的第二个数数的就是这条回边。
-    const retriesLeft = deps.retriesLeft ?? 0
+    // **回边还是超界**：`retriesLeft` 由调用方给（`--retry <n>`），不给就是 `RETRY_DEFAULT`（1）
+    // ——"没通过就回一次"。这一档进 `round/state`，A8 的第二个数数的就是这条回边。
+    const retriesLeft = deps.retriesLeft ?? RETRY_DEFAULT
     let state: RoundState = 'Verifying'
     if (accepted.report.ok) {
       state = step(state, 'verdict-pass')
