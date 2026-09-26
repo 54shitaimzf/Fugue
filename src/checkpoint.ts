@@ -32,6 +32,11 @@ export interface CheckpointRequest {
    * 本来就是 CAS 要守的东西，在这里重读等于把窗口收窄成"看起来没问题"。
    */
   expectedOld: CommitId | null
+  /**
+   * 提交落在哪一条 ref 上。**缺省 `refFor(writer)`**：主线那个写者落在 `refs/heads/main`，
+   * 一个 agent 落在它自己那条分支上。调用点要指定别的去处时给这一栏。
+   */
+  ref?: RefName
 }
 
 export interface CheckpointResult {
@@ -45,7 +50,7 @@ export interface CheckpointResult {
 }
 
 export async function checkpoint(req: CheckpointRequest): Promise<CheckpointResult> {
-  const ref = refFor(req.writer)
+  const ref = req.ref ?? refFor(req.writer)
   const tree = await req.truth.putTree(req.entries)
   const parent = req.expectedOld
   const parents = parent === null ? [] : [parent]

@@ -17,6 +17,7 @@ import type { Denied as FenceDenied } from '../roots/contract.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { DenyAsk, FaceResult, ToolContext, ToolHost } from '../tools/execute.ts'
 import { faceOf, noFace, parseArgs, publishedTools } from '../tools/execute.ts'
+import { shellArgv } from '../tools/argv.ts'
 import { HOLDER_PROTOCOL } from '../assemble/protocol.ts'
 import type { AgentHandle, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
 
@@ -82,7 +83,51 @@ const says = (r: FaceResult): ToolResult => ({ ok: r.ok, output: r.output, ...(r
  * → **再解参数**（解不开就是一次失败的结果，不进围栏）→ **再过围栏**（拒了落 `bound/deny`，
  * 一次进程都不起）→ **再跑**。
  */
-export async function dispatch(req: ToolCallRequest, h: AgentHandle, deps: DispatchDeps): Promise<Dispatched> {
+/**
+ * 过一道路径围栏，并把**归一后的值写回参数**（W8 冻结点第 2 句）。
+ *
+ * 它单独抽出来是因为两个调用点要读同一份：`createToolExecutor` 先调它（`run/start` 那条事件
+ * 就在那一层写，而它读的就是这里写回去的那份），`dispatch` 自己调它是为了直接调 `dispatch`
+ * 的那些地方（命令面与单测）。两处各写一遍就是两处各错一次。
+ */
+async function fenceArgs(
+  name: string,
+  args: Record<string, unknown>,
+  cwd: string,
+  deps: DispatchDeps,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }> {
+  const fence = deps.fenceOf
+  if (fence === undefined) {
+    return {
+      ok: false,
+      message: `${name} 要过路径围栏（架构 § 8.9 第二条推论），而这一档没有接上围栏——没有围栏就不发这一步。`,
+    }
+  }
+  for (const key of PATH_ARGS[name] ?? []) {
+    const raw = args[key]
+    if (typeof raw !== 'string') continue
+    const got = fence(raw, cwd)
+    if (!got.ok) {
+      await deps.host.deny(fenceDenied(got.error))
+      return { ok: false, message: got.error.message }
+    }
+    if (key === 'path' || key === 'to' || key === 'cwd') args[key] = got.value
+  }
+  return { ok: true }
+}
+
+export async function dispatch(
+  req: ToolCallRequest,
+  h: AgentHandle,
+  deps: DispatchDeps,
+  /** **围栏已经过过了**（`createToolExecutor` 那条路：事件要读归一后的值，所以它先过）。 */
+  fenced = false,
+  /**
+   * **已经过过围栏的那一份参数**（归一后的）。给了它就用它——否则下面
+   * 从 `req.arguments` 另解一遍，而那一份里的 `cwd` 还是原始的，“执行侧收到归一后的”这句话就落不了地。
+   */
+  given?: Readonly<Record<string, unknown>>,
+): Promise<Dispatched> {
   const look = deps.lookupOf ?? lookup
   const c = look(req.name)
   if ('denied' in c) {
@@ -106,7 +151,7 @@ export async function dispatch(req: ToolCallRequest, h: AgentHandle, deps: Dispa
 
   const cwd = h.cwd ?? ''
   const ctx: ToolContext = { agent: h.agent, step: h.state.step, cwd, holder: h.protocol === HOLDER_PROTOCOL }
-  const args: Record<string, unknown> = { ...parsed.value }
+  const args: Record<string, unknown> = { ...(given ?? parsed.value) }
   const applied: string[] = []
 
   // **后两条先记上**：它们由这一格定，与这一趟顺不顺无关（`confine` 在 `host.run` 里面——
@@ -135,31 +180,14 @@ export async function dispatch(req: ToolCallRequest, h: AgentHandle, deps: Dispa
   }
 
   // 第二条推论：视图层与执行层都要过路径围栏——**围栏是从能力表那一栏推出来的**。
+  // 已经过过的那一条路（`fenced`）只把这一步记上：它真的跑过了，只是跑在上一层。
   if (c.fence) {
-    const fence = deps.fenceOf
-    if (fence === undefined) {
-      return {
-        result: {
-          ok: false,
-          output: `${req.name} 要过路径围栏（架构 § 8.9 第二条推论），而这一档没有接上围栏——没有围栏就不发这一步。`,
-        },
-        capability: c,
-        applied,
-        denied: true,
-      }
-    }
-    for (const name of PATH_ARGS[req.name] ?? []) {
-      const raw = args[name]
-      if (typeof raw !== 'string') continue
-      const got = fence(raw, cwd)
+    if (!fenced) {
+      const got = await fenceArgs(req.name, args, cwd, deps)
       if (!got.ok) {
-        await deps.host.deny(fenceDenied(got.error))
-        // **这一条也算"跑过"**：围栏真的拦了一次，那正是它跑过的凭据（`applied` 记的是这一趟
-        // 读过哪几条推论，不是"哪几条顺利走完"）。
         applied.push('fence')
-        return { result: { ok: false, output: got.error.message }, capability: c, applied, denied: true }
+        return { result: { ok: false, output: got.message }, capability: c, applied, denied: true }
       }
-      if (name === 'path' || name === 'to') args[name] = got.value
     }
     applied.push('fence')
   }
@@ -194,19 +222,55 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
       const running = !('denied' in c) && c.layer === 'execute'
       const parsed = running ? parseArgs(call.arguments) : null
       const asked = parsed !== null && parsed.ok ? parsed.value : {}
-      const command = typeof asked['command'] === 'string' ? asked['command'] : null
-      const action = typeof asked['action'] === 'string' ? asked['action'] : null
-      const line = command ?? action ?? call.name
-      const argv = running ? shellArgv(line) : []
       const cwd = typeof asked['cwd'] === 'string' ? asked['cwd'] : (h.cwd ?? '')
 
+      // **执行面先兑现**（W8）：这一格第一次要跑子进程时 fork 一棵、把视图铺过去——`bash` 与
+      // `read` 因此是同一个视野。它抛（物化铺不起来）时**照落那一对事件**：`run/start` 是
+      // "这一步要起进程"的凭据，而这一趟确实要起、只是没起起来——与围栏拦住那一趟同一个形状
+      // （`denied: true`、`exit: 1`），不静默吞掉。
+      let execNote: string | null = null
+      if (running) {
+        try {
+          await deps.host.execCwd()
+        } catch (err) {
+          execNote = (err as Error).message
+        }
+      }
+
+      // **先过围栏、再落 `run/start`**：那条事件读的就是归一后的 `cwd`（与执行侧同一把尺）。
+      // 这里过一次之后，`dispatch` 那边就不再过了（`fenced = true`）——一次调用一道围栏。
+      let fenceNote: string | null = null
+      let fencedArgs: Record<string, unknown> = asked
+      // **这一趟到底过没过围栏**（过了没拦住也算过）：下面那一对事件的口径读它，不读
+      // `fenceNote === null`。两件事不一样——`fenceNote === null` 说的是"没被拒"，而
+      // 表里 `fence: false` 那一格是"这一格压根不过围栏"。
+      // 它同时是"**那一份归一后的参数能不能用**"那一栏：视图层那些格子（`c.layer !== 'execute'`）
+      // 上面这一支整个不走，`fencedArgs` 停在空壳上——把它当"已过围栏的那一份"递给 `dispatch`，
+      // 参数就当场丢了（实测：模型写 `a.ts`，摊到工具面变成"少了必填参数 path"）。
+      let fenced = false
+      if (running && !('denied' in c) && c.fence && parsed !== null && parsed.ok) {
+        fenced = true
+        fencedArgs = { ...parsed.value }
+        // **fence 的 `cwd` 用格子的那个**（`h.cwd`：它已经是一条规整的 `RelPath`）。
+        // 不能把上面算出来的 `cwd` 再送进去：那一份已经是参数里的原文，
+        // 而它会被当成 `cwd` 又拼一次（`./src/../note` 变成 `note/note`）。
+        const got = await fenceArgs(call.name, fencedArgs, h.cwd ?? '', deps)
+        if (!got.ok) fenceNote = got.message
+      }
+      // **事件与执行侧读同一份**（W8 冻结点第 2 句：归一值写回参数，两处都从参数里读）。
+      const runCwd = typeof fencedArgs['cwd'] === 'string' ? (fencedArgs['cwd'] as string) : cwd
+      const command = typeof fencedArgs['command'] === 'string' ? (fencedArgs['command'] as string) : null
+      const action = typeof fencedArgs['action'] === 'string' ? (fencedArgs['action'] as string) : null
+      const line = command ?? action ?? call.name
+      const argv = running ? shellArgv(line) : []
       const log = deps.logOf(h.agent)
       const t0 = Date.now()
-      // **先落 `run/start`**：它是"这一步要起一个进程"的凭据。围栏拦下的一次调用同样走到这里
-      // ——这不是噪声：`run/end` 的 `exit` 与 `denied` 就是"起过没有 · 是被拒还是自己退非零"，
-      // 读日志的人按这一对分组（断言 ④ 反过来说的那句话："被拦住的那一趟不许有子进程真的跑起来"
-      // 的证据在 `host.run` 那一道口上，不在这一对事件上）。
-      if (running) {
+      // **先落 `run/start`**：它是"这一步要起一个进程"的凭据。**只有围栏拦下的那一趟不落**
+      // （`fenced && fenceNote !== null`）：它一次进程都没起，而 `run/start` 是"这一步要起一个
+      // 进程"的凭据——落了它，日志里就多出一趟没发生过的执行；拒的那一趟在 `bound/deny` 里
+      // （与断言 ④ 同一句话）。**表里 `fence: false` 那一格照样落**：它是"这一格不过围栏"，
+      // 不是"被围栏拦下"，两者混起来看就再也分不清"没拦"和"拦住了"（⑤ 负对照读的就是这个差）。
+      if (running && !(fenced && fenceNote !== null)) {
         await log.append(h.agent as WriterId, {
           t: 'run/start',
           agent: h.agent,
@@ -214,13 +278,28 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
           action: call.name,
           argv0: argv[0] ?? call.name,
           argv,
-          cwd,
+          cwd: runCwd,
         })
       }
 
-      const out = await dispatch(call, h, deps)
+      const out =
+        fenceNote !== null
+          ? {
+              result: { ok: false, output: fenceNote },
+              capability: c,
+              applied: ['materialize', 'fence'],
+              denied: true,
+            }
+          : execNote === null
+          ? await dispatch(call, h, deps, true, fenced ? fencedArgs : undefined)
+          : {
+              result: { ok: false, output: `${call.name} 要先物化（架构 § 8.9 第一条推论），而这一趟没铺起来：${execNote}` },
+              capability: c,
+              applied: ['materialize'],
+              denied: true,
+            }
 
-      if (running) {
+      if (running && !(fenced && fenceNote !== null)) {
         await log.append(h.agent as WriterId, {
           t: 'run/end',
           agent: h.agent,
@@ -235,17 +314,6 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
       return out.result
     },
   }
-}
-
-/**
- * 一行命令 → 要 spawn 的那串参数。**这一版是"交给 shell"**：`/bin/sh -c <line>`。
- *
- * 为什么不自己切词：切词的第一步就是一套 shell 语法（引号 · 展开 · 管道 · 重定向），而"我们
- * 自己实现半个 shell"是更坏的选择。**真正的边界在沙箱那一层**（`M7` 包命令行），不在这一层
- * 切词；这与架构 § 8.10 里 `bash` 的收法一致——它收的就是一行命令。
- */
-export function shellArgv(line: string): string[] {
-  return ['/bin/sh', '-c', line]
 }
 
 /**

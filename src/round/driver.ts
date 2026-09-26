@@ -10,18 +10,30 @@
 // （或者让模型自己写进去），再走 `M2` 的 `view/write` 与 § 9.6 的 `checkpoint()`**。所以真驱动
 // 那一趟的日志里有 `view/*` 与 `ckpt/commit`，而当驱动是"模型"时还有每一步的 `llm/call` ——
 // **三个一线指标的源就在那一串事件里**（`B7` 的读数）。
-import type { Log, LogReader, LogSeq } from '../log/events.ts'
+import type { Log, LogReader } from '../log/events.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { View } from '../view/contract.ts'
 import { loadView } from '../view/view.ts'
 import { lowerFor } from '../view/lower.ts'
 import { createToolHost } from '../tools/host.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
+import { shellArgv } from '../tools/argv.ts'
 import { createRoots } from '../roots/roots.ts'
 import type { Roots } from '../roots/contract.ts'
+import type { ForkStrategy } from '../terms.ts'
+import { fork } from '../materialize/fork.ts'
+import { createReclaim } from '../execute/reclaim.ts'
+import { readConfig } from '../config.ts'
+import { probeLayers, resolvePolicy } from '../boundary/policy.ts'
+import { cacheLayoutOf } from '../boundary/confine.ts'
+import { mkdirSync } from 'node:fs'
+import type { Policy } from '../boundary/policy.ts'
+import { confine, degradedArgv } from '../boundary/confine.ts'
+import { declaredSetOf } from '../contract/types.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { TreeEntry } from '../entries.ts'
-import type { AgentId, CommitId, ContractId, RelPath, WriterId } from '../terms.ts'
+import type { AgentId, CommitId, ContractId, LogSeq, RefName, RelPath, WriterId } from '../terms.ts'
+import type { RunAsk } from '../tools/execute.ts'
 import type { Contract } from '../contract/types.ts'
 import { checkpoint } from '../checkpoint.ts'
 import { snapshotOf } from '../view/snapshot.ts'
@@ -33,6 +45,7 @@ import { assemble } from '../assemble/assemble.ts'
 import { sourcesFor } from '../assemble/sources.ts'
 import type { Prefix } from '../assemble/contract.ts'
 import { handoffAt, successorOf } from '../runtime/restart.ts'
+import { refFor } from '../identity.ts'
 import type { ModelDecl } from '../model/contract.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 
@@ -121,6 +134,11 @@ export async function commitView(i: {
   readonly writer: WriterId
   readonly expectedOld: CommitId | null
   readonly msg: string
+  /**
+   * 提交落在哪一条 ref 上。**由调用点给**（不是从 writer 推的）：`fugue commit`（人侧）提交到
+   * 主线，夹具要把底落到某一条 agent 分支上——"这一份产出属于哪一支"是调用点知道的事。
+   */
+  readonly ref: RefName
 }): Promise<{ readonly commit: CommitId; readonly seq: LogSeq; readonly entries: number }> {
   const entries: TreeEntry[] = await snapshotOf(i.view)
   const r = await checkpoint({
@@ -131,6 +149,7 @@ export async function commitView(i: {
     rev: i.view.rev,
     msg: i.msg,
     expectedOld: i.expectedOld,
+    ref: i.ref,
   })
   return { commit: r.commit, seq: r.seq, entries: r.entries }
 }
@@ -199,8 +218,180 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
   const maxSteps = ask.maxSteps ?? 64
   // **这一格的工具面**：围栏用这一格的根（`roots`），写走这一格的视图。
   const roots = ask.roots ?? createRoots(process.cwd())
+  const me = agent as unknown as AgentId
+  const ownedPaths = declaredSetOf(contract)
+
+  /**
+   * **这一格的沙箱策略**：一件事实，一次探。
+   *
+   * 这一格的两件事（W8 的冻结点第 2 · 3 句）：
+   *   · **档取 `workspace-write`**：树挂成**可写**（`--bind`），产出直接落在树自己那一侧
+   *     ——`overlayfs` 档是 `upper`，另两档就是 `merged`。**不绑声明目录**：`--bind` 的挂载点
+   *     必须在树里先存在，而"声明一条产出**文件**"（`a.ts`）是最常见的形状，bwrap 在只读树上
+   *     建不出它（实测 `Can't mkdir /work/a.ts: Read-only file system`）。可写面仍然由声明集
+   *     封住：**回写只收声明集内的差异**，而集外的改动由 `undeclared()` 如实报出来。
+   *   · **`binding` 不给**（`undefined`）：这一格没有"动作绑定"这件事，只有一棵可写的树。
+   *     `resolvePolicy` 从 `binding` 读的只是"哪些目录要挂进树里"（`declaredDirs`），而这一档
+   *     不挂任何声明目录——给了它，声明里那条**产出文件**（`a.ts`）会被读成一条挂载点，于是
+   *     第二层（`landlock`）每跑一条命令都落一句"这一条不在，没给它开口子：…/merged/a.ts"
+   *     （本地实测：那一句进了模型的 C 区，`grep` 的读数因此变成一句假报错）。
+   *     产出面仍然由契约给（`declaredSetOf` → `ownedPaths`），回写那一支读的是它。
+   */
+  let policy: Policy | null = null
+  const policyNow = async (): Promise<Policy> => {
+    if (policy === null) {
+      const probed = probeLayers(roots)
+      policy = resolvePolicy({
+        roots,
+        agent: me,
+        doc: await readConfig(roots.realRoot),
+        // **档是 `workspace-write`：回写这条反向通道要的就是树可写。**
+        // 架构 § 8.9 那条反向通道的形状是“产出经声明集回写视图”——子进程先得**写得进去**，回写才有东西可回；
+        // `read-only` 那一档把整棵树按只读挂进 `/work`，于是 `bash rm` 与 `bash >` 当场撞
+        // `Read-only file system`（本地实测读到的就是这一句）——删除那一支根本走不到。`confine()` 的
+        // `writable` 读的就是 `policy.mode`，所以这一栏同时决定了树那一条用 `--bind` 还是 `--ro-bind`。
+        // 边界照旧封着：声明集内的差异才回写（`ownedPaths`），集外的改动由 `undeclared()`
+        // 如实报出一条 `mat/reclaim`（声明集外的写**进不了提交**）。
+        mode: 'workspace-write',
+        probed,
+      })
+    }
+    return policy
+  }
+
+
+  /**
+   * **围栏重新在场**（W8 § 5.15.b 步骤二）：模型从此够不到真实工作区——`bwrap` 包命令行、
+   * `--chdir` 指物化根、真实工作区不进挂载。
+   *
+   * 挂载层不在 PATH 时**不静默退成裸跑**（那正是"工作区是只读的"这句话靠模型听话的那一类
+   * 病）：抛一句指路的话，`host.run` 把它降成一次被拒的结果——模型拿到的是实话，地板那一档
+   * 说的是变慢，不是跑不起来。
+   */
+  async function commandFor(ask: RunAsk): Promise<{ readonly argv: readonly string[]; readonly cwd: string }> {
+    // 先把执行面立起来（fork + 铺视图）：`bash` 的命令行要按这一格包，而回写那一支要的
+    // 那两份机制事实也从这一步来。
+    await host.execCwd()
+    // **缓存那两处先建出来**（架构 § 8.6 第 2 步）：`HOME` 与 `XDG_CACHE_HOME` 是这一档要
+    // 挂进沙箱的落点，而 `--bind` 的源必须先存在（实测 `Can't find source path`）。
+    const cache = cacheLayoutOf(roots, me)
+    mkdirSync(cache.home, { recursive: true })
+    mkdirSync(cache.xdgCache, { recursive: true })
+    const p = await policyNow()
+    // **两档各有各的包法**（与 `fugue run` 那条路逐字同一条纪律）：
+    //   · 挂载层在场：`confine` 包成 `bwrap`——“看得见什么”由它管，真实工作区不进挂载；
+    //   · 挂载层不在场：`degradedArgv` 退到第二层（Landlock）——“写得动什么”由内核管；
+    //   · 两层都不在：交给命令自己（它退非零），并落一条 `bound/deny`——工作区那句话今天没有
+    //     强制点，读者要看得见这件事（架构 § 15.7 的“如实报告，绝不夸大”）。
+    const line = shellArgv(ask.command)
+    const cwdRel = (ask.cwd === '' ? '' : ask.cwd) as RelPath
+    if (p.layers.includes('bwrap')) {
+      return {
+        // **cwd 由宿主拼**（`execWorkdir` = 执行根 + 归一后的 cwd），不从这里给：这里给的绝对
+        // 落点是**沙箱里**那个坐标（`/work/<cwd>`），宿主拿它去 `spawn` 会撞上一棵不存在的树。
+        cwd: '',
+        argv: confine({
+          roots,
+          agent: me,
+          argv: line,
+          cwd: cwdRel,
+          // 不绑声明目录（见上面那一栏）：树整个挂成可写，产出落在树自己那一侧。
+          declared: [],
+          env: {},
+          policy: p,
+        }).argv,
+      }
+    }
+    if (p.layers.includes('landlock')) {
+      // 第二层那一档：子进程就在宿主上跑，`spawn` 的 cwd 由宿主拼（与挂载档同一个形状）。
+      return { cwd: '', argv: degradedArgv(line, { roots, policy: p }).argv }
+    }
+    if (parts !== undefined) {
+      await parts.log.append(parts.writer, {
+        t: 'bound/deny',
+        agent: me,
+        path: ask.command,
+        space: 'physical',
+        rule: 'confine:none',
+      })
+    }
+    throw new Error(
+      `这一趟跑不了子进程：两层的围栏都不在场（${p.enforcement}），而执行类工具要跑在物化树里。` +
+        '装回 bwrap 或让第二层（Landlock）可用再跑；在那之前这一步只能靠 read / write / edit / glob / grep。',
+    )
+  }
+
+  /**
+   * 这一格物化到哪一档、挂没挂。**回写那一支要它们**（`landingOf` 看档 · `undeclared` 看有
+   * 没有 `upper` 可枚举），而两样都由 `fork` / `ensure` 定、记在 `mat/*` 事件里——所以问一次
+   * 执行面（`host.execCwd()`），它每次回答时顺手把它们记在这儿。
+   *
+   * 它们在这一份里是**闭包里的两个格**，不是第二处状态：值是 `fork` 当时的返回值，而
+   * `createReclaim` 那两个栏是 getter——回收在 `collect` 那一刻读到的是**那一刻的事实**，
+   * 而不是构造这一份时的空值。
+   */
+  let strategyNow: ForkStrategy | null = null
+  /**
+   * 这一格**已经落下去的清单**（`ensure` 每次同步后交出来的那份）。回收拿它当减数：
+   * `upper` 里那几条是我们自己落的，不是子进程写的。**不新开账**：它就是那一次 `ensure` 的回执。
+   */
+  let manifestNow: readonly RelPath[] = []
+
   const host = createToolHost(view, roots, {
     actions: { writer, log, truth, expectedOld: base },
+    commandFor,
+    ownedPaths,
+    reclaim: createReclaim({
+      roots,
+      // **落到哪一档由 `fork` 定**：回收只在 `collect` 那一刻读它，所以给一个 getter——
+      // `createReclaim` 在那一刻才取值，"先 fork 再回收"这条次序因此成立。
+      get strategy() {
+        return strategyNow
+      },
+      // **清单取当刻那份**（`onSync` 每次同步后更新它）：回收在 `collect` 那一刻才读它。
+      get manifest() {
+        return manifestNow
+      },
+      // **落点看机制，不看档**：这一格**不绑声明目录**（见 `commandFor` 那一栏的理由），所以
+      // 子进程写的字节落在**树自己那一侧**——`overlayfs` 档是 `upper`，另两档就是 `merged`；
+      // `landingOf` 看 `strategy` 选那一处。这一栏因此是常量，但它照旧明写：换回"绑定那一侧"
+      // 只改这一处。
+      landing: 'tree' as const,
+      // **树是敞开的**：`workspace-write` 那一档把整棵树挂成可写，集外的改动**内核不拒**——
+      // 所以 `undeclared()` 必须查（它靠枚举 `upper` 兑现，而这一格跑的是 `overlayfs`）。
+      treeOpen: true,
+      // **哪一棵底绑在这里**（`base` = 这一格的 `mat/fork.base`）：视图铺在它上面，物化也是
+      // 从它铺出来的，所以"底里有没有这条路径"问的就是它。M6 只拿这两条读，不读日志。
+      statAt: (path) => truth.statAt(base, path),
+      listAt: (dir) => truth.listAt(base, dir),
+      // **删除那一支的源一**：视图在这一条声明路径下动过哪些（`view.state().upper` 里的活路径与墓碑），
+      // 以及其中哪几条此刻已经是墓碑（那一条删除已经在视图里了，不重复报）。
+      // 两栏都现算：回写会推视图的 rev，一次算完的答案下一趟就旧了。
+      isDeclared: (rel) => {
+        const out: RelPath[] = []
+        for (const e of view.state().upper) {
+          if (e.path !== rel && !e.path.startsWith(rel + '/')) continue
+          out.push(e.path)
+        }
+        return out.sort()
+      },
+      isTombstone: (p) => view.state().upper.some((e) => e.kind === 'tombstone' && e.path === p),
+    }),
+    execRoot: {
+      log,
+      writer,
+      truth,
+      base,
+      // **`fork` 交回它选的那一档**（`parts` 与 `fork` 自己算的是同一组坐标，所以这里不用它）。
+      forkOf: async (parts) => fork({ roots, log, root: roots.realRoot }, me, base),
+      // 每一次问执行面都顺手把两份机制事实记下来（回写要用）。
+      onState: (r) => {
+        strategyNow = r.strategy
+      },
+      onSync: (m) => {
+        manifestNow = m
+      },
+    },
   })
   const execute =
     ask.execute ??
@@ -287,6 +478,7 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     writer,
     expectedOld: base,
     msg: `（${agent}）${goalOf(contract)}`,
+    ref: refFor(writer),
   })
   commits.push(committed.seq)
   return { commit: committed.commit, steps, commits, handoffs, stopped }

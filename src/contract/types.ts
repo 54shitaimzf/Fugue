@@ -100,6 +100,25 @@ export interface ResolveContract extends ContractBase {
 
 export type Contract = ImplementContract | InvestigateContract | ResolveContract
 
+/**
+ * 这一份契约的**写入面**：它经手的那几条路径。出处：架构 § 8.12 那张表的"写入集"一栏——
+ * 三种契约各有各的来源，而**每一个都是集合**（`investigate` 的产物落在按位置定名的专属目录里，
+ * 那个目录就是它的写入面）。
+ *
+ * W8 起它是**执行类工具回写视图的声明集**（架构 § 8.9：产出经声明集回写）：`bash` / `run_action`
+ * 改了物化树里哪几条，在这一条函数给的面上读回来。为什么用它而不是新开一个配置面：
+ * 架构 § 8.12 的 C1 断言⑦ 说的本来就是同一句话（动作的产出必须落在 `ownedPaths` 内）——
+ * 两处指同一个集合，D7 的"冲突来源可枚举"因此保住。
+ *
+ * **`actionOutputs` 不在里面**：它是 `ownedPaths` 的子集（`checkContract` 那条跨字段关系），
+ * 取上界就够；把它并进来只会让"声明的面"有两个来源。
+ */
+export function declaredSetOf(c: Contract): readonly RelPath[] {
+  if (c.kind === 'implement') return c.ownedPaths
+  if (c.kind === 'resolve') return c.conflictPaths
+  return c.evidenceRequired.map((e) => e.artifact)
+}
+
 /** 持轮者说要哪些证据，构造器说放哪：目录名是契约在集合中位置的纯函数。 */
 export interface Evidence {
   readonly artifact: RelPath

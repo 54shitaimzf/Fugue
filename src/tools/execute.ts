@@ -15,6 +15,7 @@
 // "公布的工具每一条都有实现"，而这句话只有在"实现表"是一份**读得出来的名单**时才量得到。
 // 写成"调用时才 `throw`"就量不到了——那时缺口只在真被调到时才现形。
 import type { Capability, Denied } from '../capability/table.ts'
+import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
 // 因为下面那条签名指着它——**形状住能力表，这一层不复制第二份**。
@@ -62,6 +63,18 @@ export interface ToolHost {
    */
   walk(): Promise<readonly string[]>
   readonly edit: (rel: string, raw: EditRaw) => Promise<{ readonly rev: number; readonly changed: boolean }>
+  /**
+   * **执行面在哪儿**：这一格的物化根（绝对路径，一格一个）。`bash` / `run_action` 跑在那儿。
+   *
+   * W8 起格内的环境归一成两样：**视图是读面，物化根是执行面**，`ensure` 让两者同步。为什么
+   * 这个口在这一层：执行侧的相对路径映射收在 `host.run` 一处（`workdirOf`），而"物化根在哪"
+   * 只有宿主知道——工具那一层不需要知道，也不该知道。
+   *
+   * **它是唯一一处"要花钱的兑现"**：第一次被问到时这一格才 fork（纯 `write`/`read` 的格不付
+   * 这份钱），之后每次把视图的 delta 落过去（rev 没变就是 `noop`）。它与 `checkpoint` 同一条
+   * 道理住在这个接口上：工具面那一层不认识物化，只认识"这一格在哪跑"。
+   */
+  execCwd(): Promise<{ readonly root: string; readonly strategy: ForkStrategy | null }>
   run(req: RunAsk): Promise<RunReply>
   checkpoint(msg: string): Promise<{ readonly commit: string }>
   runAction(req: ActionAsk): Promise<RunReply>
@@ -349,7 +362,11 @@ const bashFace: ToolFn = async (args, host, ctx) => {
   const command = text(args, 'command')
   if (command === null) return missing('bash', 'command')
   const timeoutMs = num(args, 'timeout_ms')
-  const res = await host.run({ command, cwd: ctx.cwd, timeoutMs })
+  // **`cwd` 读参数，不读上下文**（W8 冻结点第 2 句）：围栏把归一后的值**写回 `args.cwd`**，
+  // 而 `ctx` 是进来时就定下的原始值；读上下文的后果是“执行侧收到原始路径、而 `run/start`
+  // 收到归一后的”——两处读数不同一把尺。
+  const cwd = typeof args['cwd'] === 'string' ? (args['cwd'] as string) : ctx.cwd
+  const res = await host.run({ command, cwd, timeoutMs })
   const head = `退出码 ${res.exit}（${res.ms} 毫秒）${res.denied ? ' · 被沙箱拒过' : ''}`
   const body = [res.stdout === '' ? '' : `stdout:\n${res.stdout}`, res.stderr === '' ? '' : `stderr:\n${res.stderr}`]
     .filter((s) => s !== '')
@@ -368,7 +385,9 @@ const runActionFace: ToolFn = async (args, host, ctx) => {
   if (action === null) return missing('run_action', 'action')
   const rest: Record<string, unknown> = { ...args }
   delete rest['action']
-  const res = await host.runAction({ action, args: rest, cwd: ctx.cwd })
+  // 与 `bash` 同一条：读围栏写回的那一份（见上面）。
+  const cwd = typeof args['cwd'] === 'string' ? (args['cwd'] as string) : ctx.cwd
+  const res = await host.runAction({ action, args: rest, cwd })
   const head = `动作 ${action} 退出码 ${res.exit}（${res.ms} 毫秒）`
   const body = [res.stdout, res.stderr].filter((s) => s !== '').join('\n')
   return { ok: res.exit === 0, output: body === '' ? head : `${head}\n${body}` }
@@ -524,7 +543,9 @@ export const IMPLEMENTED: Readonly<Record<string, ToolFn>> = {
   read_image: readImageFace,
   glob: globFace,
   grep: grepFace,
-  bash: bashFace,
+  bash: async (args, host, ctx) => {
+    return bashFace(args, host, ctx)
+  },
   run_action: runActionFace,
   checkpoint: checkpointFace,
 }

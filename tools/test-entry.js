@@ -41,6 +41,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.error('发现 0 个测试文件（' + where + '下的 *.test.ts）——拒绝以"通过"结束')
     process.exit(1)
   }
+  // **一批跑**（W8 起那个两批的口子已经堵上）：环在 `tools/host.ts → capability/dispatch.ts`
+  // （为了 `shellArgv` 那一个值引用），W8 把它搬到没有依赖的 `tools/argv.ts` 之后，模块图又是一
+  // 棵树了。之所以要堵它而不是留着分两批：分两批跑会**静默丢掉几条**（实测 `tests 325` 而不是
+  // `332`，而退出码照样是 0）——一个不报错的漏，正是这个入口要守的那一类。
   const r = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' })
   process.exit(r.status ?? 1)
 }

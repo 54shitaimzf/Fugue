@@ -88,7 +88,12 @@ export function resolveVirtual(
   raw: string,
   cwd: RelPath,
 ): Result<RelPath, Denied> {
-  const parsed = resolveRaw(raw, cwd)
+  // **`cwd` 先按同一个解析器过一遍**：它可能是模型给的那一串原文（`bash` 的参数里就是），
+  // 而这一层是"一串输入 → 视图里一个位置"的唯一入口——`./a` 与 `b/../c` 在这里被消掉，
+  // 而不是在下面每一处各消一次。空串与 `.` 都读成根（与 `resolveRaw` 同一条规矩）。
+  const base = resolveRaw(cwd, '')
+  if (!base.ok) return { ok: false, error: deny(base.kind, cwd, cwd, base.detail) }
+  const parsed = resolveRaw(raw, base.rel)
   if (!parsed.ok) return { ok: false, error: deny(parsed.kind, raw, raw, parsed.detail) }
   const rel = parsed.rel
   const segs = rel === '' ? [] : rel.split('/')

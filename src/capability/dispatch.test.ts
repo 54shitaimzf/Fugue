@@ -9,7 +9,8 @@
 //   ④ 越界的 `bash` **在起进程之前就被挡住**：一次 `run` 都没有 · 视图一个字节没变 ·
 //      日志里有且只有一条 `bound/deny`，拒的话里带着指路
 //   ⑤ **一次工具调用 = 一对 `run/start` · `run/end`**（完整的 `argv` · 同一个 step · 分开的 ms），
-//      而视图层与真源层那些工具**不落**这两条
+//      而视图层与真源层那些工具**不落**这两条；**围栏拦下的那一趟也不落**（它一次进程都没起），
+//      负对照读的就是"不过围栏"与"被围栏拦下"这两件事的差
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -86,6 +87,10 @@ function fakeHost(paths: readonly string[] = []): FakeHost {
     edit: () => Promise.resolve({ rev: 1, changed: true }),
     list: () => Promise.resolve([]),
     walk: () => Promise.resolve([...paths]),
+    // 假宿主**不认物化**：给一个空的执行根。`bash` 那一格起进程之前会问它一句（W8 起的接线），
+    // 于是"执行面在哪儿"这件事在假宿主上也被走过一次——给不出来就该在那一步现形，不是静默跑在
+    // 一棵别的树上。
+    execCwd: () => Promise.resolve({ root: '', strategy: null }),
     run: (ask) => {
       runs.push(ask)
       return Promise.resolve({ exit: 0, ms: 1, denied: false, stdout: 'ok\n', stderr: '' })
@@ -357,6 +362,7 @@ test('④ 越界的 bash：一次 run 都没有 · 视图一个字节没变 · �
     assert.match(out.result.output, /工作区内请用 read/)
 
     const rows = await eventsOf(root)
+    console.log('EVENTS ' + JSON.stringify(rows.map((e) => [e.t, e.cwd ?? null])))
     const denies = rows.filter((e) => e.t === 'bound/deny')
     assert.equal(denies.length, 1, '日志里有且只有一条 bound/deny')
     const d = denies[0]!
@@ -366,6 +372,44 @@ test('④ 越界的 bash：一次 run 都没有 · 视图一个字节没变 · �
     assert.match(d.rule, /^fence:escape/, `由头那一栏是：${d.rule}`)
     // **没有 run/start**：起进程之前就被挡住了（那一条日志就是"没起过"的凭据）。
     assert.equal(rows.filter((e) => e.t === 'run/start').length, 0, '被挡住的一步不该有 run/start')
+  })
+})
+
+// ── ④b `cwd` 的三支（W8 冻结点第 2 句：执行侧与事件都只收归一后的那一份）────────
+
+test('④b `cwd` 三支：空串是根 · 相对归一后写回 `args.cwd` · 绝对在围栏这关拒', async () => {
+  await withLog(async (log, root) => {
+    const host = fakeHost()
+    const fence = await fenceAt(root)
+    const executor = createToolExecutor({ logOf: () => log, host, fenceOf: fence, ensureOf: () => Promise.resolve() })
+    const h = handleOf(stateOf(0, ''))
+
+    // 一 · 相对那一支：`./src/../note` → `note`，而**执行侧收到的就是归一后的那一份**
+    // （`host.run` 的 `ask.cwd`），不是原始输入——两处读数同一把尺。
+    const rel = await executor.execute(call('bash', { command: 'true', cwd: './src/../note' }), h)
+    assert.equal(rel.ok, true, rel.output)
+    assert.equal(host.runs.length, 1, '相对那一支要真的起一次')
+    assert.equal(host.runs[0]!.cwd, 'note', `执行侧收到的 cwd 该是归一后的 RelPath：${JSON.stringify(host.runs[0]!.cwd)}`)
+
+    // 二 · 绝对那一支：拒，而且**一次 run 都没有**（拒在起进程之前）。
+    const abs = await executor.execute(call('bash', { command: 'true', cwd: '/etc' }), h)
+    assert.equal(abs.ok, false, '绝对 cwd 是一次失败的结果')
+    assert.equal(host.runs.length, 1, '被拒的那一趟一次 run 都不该有')
+    assert.equal(host.denies.length, 1, '宿主那一道拒口收到一次')
+    assert.match(host.denies[0]!.rule, /^fence:absolute/, `由头那一栏是：${host.denies[0]!.rule}`)
+
+    // 三 · 空串那一支：空串是根，而**不是**被解成 `.` 或别的东西。
+    const root0 = await executor.execute(call('bash', { command: 'true', cwd: '' }), h)
+    assert.equal(root0.ok, true, root0.output)
+    assert.equal(host.runs[1]!.cwd, '', `空串该原样交出去（根）：${JSON.stringify(host.runs[1]!.cwd)}`)
+
+    // **两处读数同一把尺**：`run/start` 那条事件里的 `cwd` 就是上面那两个归一值。
+    // 读它要走写手柄自己（`withLog` 那个句柄）——另开一个只读句柄在写手柄还握着的时候读不全
+    // （实测：那样读到的只有最后那一条）。
+    await log.close()
+    const starts = []
+    for await (const e of openLog(root).readByWriter(AGENT as WriterId)) if (e.t === 'run/start') starts.push(e.cwd)
+    assert.deepEqual(starts, ['note', ''], `两条 run/start 的 cwd 都是归一后的那一份：${JSON.stringify(starts)}`)
   })
 })
 
@@ -441,19 +485,24 @@ test('⑤ 负对照：把围栏那一栏关掉之后，越界那一次就真的�
       lookupOf: open,
     })
     // 两条都跑真命令（`true` 立刻返回）：这一份宿主没有 `commandFor`，走的就是产品路径。
-    await strict.execute(call('bash', { command: 'true', cwd: '../../escape' }), h)
-    await loose.execute(call('bash', { command: 'true', cwd: '../../escape' }), h)
-    // **一对事件两次调用各一对**（`run/start` 是"要起进程"的凭据，被拒的那一趟也走这里），
-    // 而**真的起了进程的只有一次**——判据是假宿主的 `runs`。
+    const rs = await strict.execute(call('bash', { command: 'true', cwd: '../../escape' }), h)
+    const rl = await loose.execute(call('bash', { command: 'true', cwd: '../../escape' }), h)
+    assert.equal(rs.ok, false, `紧的那一侧该被拒：${rs.output}`)
+    assert.equal(rl.ok, true, `松的那一侧该跑完：${rl.output}`)
+    // **一对事件只有松的那一次落**：围栏拦下的那一趟一次进程都没起，凭据在 `bound/deny` 里，
+    // 不在这一对上（与断言 ④ 同一句话——被挡住的一步不该有 `run/start`）。表里 `fence: false`
+    // 那一格是"这一格不过围栏"，不是"被围栏拦下"，所以它照样落这一对。
     const rows = await eventsOf(root)
     const ends = rows.filter((e) => e.t === 'run/end')
-    assert.equal(ends.length, 2, `两次调用各一对：${ends.length}`)
-    assert.deepEqual(
-      ends.map((e) => e.denied),
-      [true, false],
-      '第一对被拒 · 第二对跑完——拦住第一次的正是表里那一栏',
-    )
+    const starts = rows.filter((e) => e.t === 'run/start')
+    assert.equal(starts.length, 1, `只有真的起了进程的那一次落 run/start：${starts.length}`)
+    assert.equal(ends.length, 1, `run/end 跟着 run/start 一起：${ends.length}`)
+    assert.deepEqual(ends.map((e) => e.denied), [false], '那一对是跑完的那一趟（被拒的那一趟没有这一对）')
+    // **真的起了进程的只有一次**——判据是假宿主的 `runs`；差异就出在表里那一栏。
     assert.equal(strictHost.runs.length, 0, '紧的那一侧一次进程都没起')
     assert.equal(looseHost.runs.length, 1, '松的那一侧真的起了一次——差异就在表里那一栏')
+    // 而"紧的那一趟被拦住了"这件事有它自己的凭据：宿主那一道拒口收到一次。
+    assert.equal(strictHost.denies.length, 1, '紧的那一侧落了一次拒（`bound/deny` 那条路的入口）')
+    assert.equal(looseHost.denies.length, 0, '松的那一侧没有人拦它')
   })
 })

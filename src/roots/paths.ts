@@ -138,3 +138,20 @@ export const MAT_PARTS = {
   temp: 'tmp',
   cache: 'cache',
 } as const
+
+/**
+ * 物化那三样落点的拼法：**只写一遍**。
+ *
+ * `Roots` 的四个方法是它唯一的消费者，而有一处要的**不是 `Roots`、是坐标本身**：执行面
+ * （`tools/host.ts` 那个执行根缓存）要凑出 `fork` 收的那一份形状，而它不该为此认识 `Roots`
+ * 的四个方法——拼法在这里抽成纯函数，两边读同一处。`cache` 不在这里：它是 `M5` 的，`fork`
+ * 不碰它（架构 § 8.6）。
+ */
+export function matParts(realRoot: AbsPath, a: AgentId): { upper: AbsPath; merged: AbsPath; temp: AbsPath } {
+  const at = matRoot(realRoot, a)
+  return {
+    upper: toPhysical(at, MAT_PARTS.scratch),
+    merged: toPhysical(at, MAT_PARTS.merged),
+    temp: toPhysical(at, MAT_PARTS.temp),
+  }
+}

@@ -20,6 +20,9 @@ import { openTruth } from '../truth/truth.ts'
 import { loadView } from '../view/view.ts'
 import { lowerAt } from '../view/lower.ts'
 import { createRoots } from '../roots/roots.ts'
+import { matParts } from '../roots/paths.ts'
+import type { Enforcement, PolicyLayer, PolicyMode } from '../terms.ts'
+import { clearMaterialization, removeTree } from '../materialize/mount.ts'
 import { applyEdit } from '../view/edit.ts'
 import type { Log } from '../log/events.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
@@ -35,6 +38,7 @@ import type { MergedRow } from '../probe/metrics.ts'
 import type { AgentId, BranchId, CommitId, ContractId, RelPath, WriterId } from '../terms.ts'
 import type { Contract } from '../contract/types.ts'
 import { runRound } from './execute.ts'
+import { entriesOf } from '../merge/accept.ts'
 import type { RoundRun, RoundRunDeps, Stub } from './execute.ts'
 import { commitView, noDriver, realDriver, stubDriver } from './driver.ts'
 
@@ -112,6 +116,8 @@ interface Bench {
   readonly log: LogHandle
   readonly truth: ReturnType<typeof openTruth>
   readonly base: CommitId
+  /** 底那一棵树的对象号：打桩那一份要拿它当"盘上本来有的那些"（见 `stubOf`）。 */
+  readonly tree: string
   /** 这一份台子开过的所有日志口（跑完一起关）。 */
   readonly keep: (l: LogHandle) => void
   readonly close: () => Promise<void>
@@ -123,37 +129,55 @@ interface Bench {
  * 底是走**产品那条路**落的：`view/write` → `checkpoint()`（`fugue commit` 与模型侧那个
  * `checkpoint` 是同一个操作，§ 9.6）。
  */
-async function bench(): Promise<Bench> {
+async function bench(readme = '底\n', ref = 'refs/heads/agent-1'): Promise<Bench> {
   const root = mkdtempSync(join(tmpdir(), 'fugue-b75-'))
   const init = spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' })
   assert.equal(init.status, 0, init.stderr)
   const truth = openTruth(root)
+  // **一个日志一个写者**：这一份台子用 `round` 那个口（它也是主线那一支的写者）。
   const log = openLog(root, { write: 'round' as WriterId, sync: 'each' })
-  const view = await loadView(log, 'round' as WriterId, { lower: lowerAt(truth, null) })
-  await applyEdit(
-    { view, truth, log, writer: 'round' as WriterId },
-    { kind: 'add', path: 'README.md' as RelPath, bytes: new TextEncoder().encode('底\n'), mode: 0o100644 },
-  )
-  const base = await commitView({
-    view,
-    log,
-    truth,
-    writer: 'round' as WriterId,
-    expectedOld: null,
-    msg: '底',
-  })
+  // **底那个提交用 git 自己落**：物化的底**就是工作树**（架构 § 8.4），所以"底"与"盘上"必须
+  // 是同一份内容——不齐时的症状是静默的（物化树里空着，命令面照旧报成功）。走 git 落，两边
+  // 天然逐字节同一份；`ref` 那一栏说的是这一份底**挂在哪一支上**（缺省挂在 `agent-1` 上，这样
+  // 这一格的提交接在底后面；挂在主线上的话这一格的提交会变成一条无父的根提交）。
+  writeFileSync(join(root, 'README.md'), readme)
+  const staged = spawnSync('git', ['add', '-A'], { cwd: root, env: GIT_ENV, encoding: 'utf8' })
+  assert.equal(staged.status, 0, staged.stderr)
+  const made = spawnSync('git', ['commit', '-qm', '底'], { cwd: root, env: GIT_ENV, encoding: 'utf8' })
+  assert.equal(made.status, 0, made.stderr)
+  const base = (spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout ?? '').trim() as CommitId
+  assert.equal(base.length, 40, `读不出底那个提交：${base}`)
+  const tree = (spawnSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: root, encoding: 'utf8' }).stdout ?? '').trim()
+  await truth.advance(ref as never, base, null)
+  // 主线那一条 ref 也指同一个底：轮次开始读的是它（架构 § 8.14 的 C7）。
+  await truth.advance('refs/heads/main' as never, base, null)
+  // **视图那一侧**：这一份台子不往视图里写底（底由 git 落），而这一格的真驱动的视图是
+  // `round/execute.ts` 按 agent 自己开的（`openAgentView`），与这一份无关。
   const extra: LogHandle[] = []
   return {
     root,
     log,
     truth,
-    base: base.commit,
+    base,
+    tree,
     keep: (l) => extra.push(l),
     close: async () => {
+      // **用产品那一份收尾**（`clearMaterialization` · `removeTree`），不自己 `rmSync`：
+      // W8 起这一格的 `bash` 真的把物化树挂起来了（overlayfs），而卸载之后内核在
+      // `tmp/work/` 里留了一个 `root:root 000` 的 `work/work`——`fs.rmSync` 会先 `readdir`
+      // 每个目录，于是在它上面吃 `EACCES`；`removeTree` 先 `rmdir` 再往下走，正好绕过这一处。
+      // 这条纪律在 `mount.ts` 的注释里写着（"这个顺序不能由调用点各自记着"），所以这里调它。
       await log.close()
       for (const l of extra) await l.close().catch(() => undefined)
       await truth.close()
-      rmSync(root, { recursive: true, force: true })
+      clearMaterialization(
+        matParts(root as never, AGENT).merged,
+        (["agent-1", "agent-2", "agent-3"] as AgentId[]).flatMap((a) => {
+          const p = matParts(root as never, a)
+          return [p.upper, p.merged, p.temp]
+        }),
+      )
+      removeTree(root as never)
     },
   }
 }
@@ -287,11 +311,21 @@ function askOf(b: Bench, call: CallModel | undefined, over: Record<string, unkno
 }
 
 /** 交一个提交（打桩那一档：直接算一棵树）。 */
+/**
+ * 打桩那一份：**产出落在"底那棵树之上"**。
+ *
+ * 它多带一栏 `b.tree`（底那棵树）是有理由的：一个提交的树是一棵**完整的**树，不是"这一格新
+ * 写的那几条"。原先只放自己那一条，盘上恰好也空着才成立；W8 起台子的底真的落在盘上（§ 8.4：
+ * 物化的底就是工作树），于是"盘上有 README、目标树里没有"会当场被漂移检拦下——**拦得对**。
+ */
 function stubOf(b: Bench): Stub {
   return {
     run: async (agent, c, base) => {
       const id = await b.truth.putBlob(new TextEncoder().encode(`（打桩）${c.id}\n`))
-      const tree = await b.truth.putTree([{ name: `stub-${c.id}.txt`, mode: 0o100644, id }])
+      // **树的形状照 git 自己那一份来**（`entriesOf` 逐层列，与 `putTree` 收的同一组形状），
+      // 再加自己那一条——一个提交的树是一棵完整的树，不是"这一格新写的那几条"。
+      const all = await entriesOf(b.truth, base)
+      const tree = await b.truth.putTree([...all, { name: `stub-${c.id}.txt`, mode: 0o100644, id }])
       return b.truth.commit(tree, [base], `（打桩）${agent}`)
     },
   }
@@ -456,15 +490,16 @@ test('② 假模型驱动整轮 → 一次真提交，而真工作树一个字�
     assert.ok(show.stdout.includes('a.ts'), `提交里该有 a.ts：${show.stdout}`)
 
     const rows = await eventsOf(b.root)
-    // **两条各是各的**：台子那个底（`writer: round`）一条，驱动这一趟（视图那一刻那一份）一条。
+    // **驱动这一趟恰好一条**：底那一份现在是 git 落的（不走 `checkpoint`），所以日志里只有
+    // 这一格自己交的那一条。
     const ckpts = rows.filter((e) => e.t === 'ckpt/commit')
-    assert.equal(ckpts.length, 2, `底一条 + 驱动一条，实际 ${ckpts.length} 条`)
+    assert.equal(ckpts.length, 1, `驱动一条，实际 ${ckpts.length} 条`)
     assert.equal(ckpts.filter((e) => e.t === 'ckpt/commit' && e.agent === AGENT).length, 1, '驱动那一趟恰好一条')
     assert.ok(rows.filter((e) => e.t === 'view/write').length >= 1, '产出走的是视图那条路（`view/write`）')
     // **判据分两半**：驱动那一趟（跑到提交为止）是真工作树一个字节不动；而整轮末尾那一步
     // `advance` 的活就是"把盘上推到目标树"（架构 § 8.14 的 `Committed ──advanced──> Rebuilding`），
     // 它写盘是对的。两件事混成一条断言就会在正确的行为上报红。
-    assert.deepEqual(before, [], '台子起手时真工作树是空的（底是直接落进对象库的）')
+    assert.deepEqual(before, ['README.md'], '台子起手时真工作树上只有底里那一份（§ 8.4：底就是工作树）')
     assert.deepEqual(
       worktreeOf(b.root),
       ['README.md', 'a.ts'],
@@ -551,13 +586,12 @@ test('④ 驱动不在：当场报出来，不交空提交', async () => {
       '缺驱动时该报出来，且短分类是 no-driver',
     )
     const rows = await eventsOf(b.root)
-    // **台子那个底本身就是一条 `ckpt/commit`**（`writer: round`）——要量的是"这一格一条都没交"：
-    // 没有 agent 名下的提交，也没有空提交挂在轮次那条分支上。
+    // **这一格一条都没交**：没有 agent 名下的提交，也没有空提交挂在轮次那条分支上。
+    // （底那一份现在是 git 落的、不走 `checkpoint`，所以日志里连它也没有——这一条比原先更紧。）
     const ckpts = rows.filter((e) => e.t === 'ckpt/commit')
-    assert.equal(ckpts.length, 1, `只有台子那个底那一条，实际 ${ckpts.length} 条`)
-    assert.equal(ckpts[0]?.agent, 'round', '那一条是底（持轮者落的），不是这一格交的')
+    assert.equal(ckpts.length, 0, `这一格一条都不该交，实际 ${ckpts.length} 条`)
     assert.equal(ckpts.filter((e) => e.agent === AGENT).length, 0, `**${AGENT} 一条都没交**（不交空提交）`)
-    console.log('④ 读数：no-driver 当场抛出 · 台子那个底 1 条 ckpt/commit · 这一格 0 条')
+    console.log('④ 读数：no-driver 当场抛出 · 这一格 0 条 ckpt/commit（底由台子的 git 落）')
   } finally {
     await b.close()
   }
@@ -598,8 +632,15 @@ test('①c `maxSteps` 是真上界，而且它真的传到了驱动那一层（`
 // ── ①d 执行类工具落在哪棵树上 ──────────────────────────────────────────────────
 
 /**
- * ①d **`bash` 落在这一格的根上**：这一格的根是 `roots.realRoot`（台子那个临时工作区），
- * **不是发出这条命令的那个进程的目录**（跑测试时是 `~/fugue`）。
+ * ①d **`bash` 落在这一格的执行面上**：W8 起它是**物化根**（`.fugue/mat/<agent>/merged`）——
+ * 既不是发出这条命令的那个进程的目录（跑测试时是 `~/fugue`），也不是真实工作区（`realRoot`）。
+ *
+ * **W8 起这一格的档是恒定的 `workspace-write`，而这一档不加挂载层**（`resolvePolicy`：
+ * 挂载层只在 `read-only` 档用）——所以今天真驱动那一趟走的是第二层（`landlock`），子进程就在
+ * 宿主上跑、`spawn` 的 `cwd` 是物化根那个绝对路径。**按档取的写法照旧留着**：档是环境给的
+ * （内核有没有 Landlock · 有没有 `bwrap`），换一台机器读数就换一个坐标，而"落在物化根上"
+ * 这句话在档与档之间是同一个事实。挂载层在场那一档报的是 `/work`（架构 § 8.8 的
+ * `Policy.coords`）。
  *
  * 这条断言为什么值一条测试：cwd 落错**不报错**，它只是让模型在一棵别的树上干活——第一次联网
  * 验证量到的就是这个（`--root /tmp/…` 从 `~/fugue` 里发出去，模型那一条 `find .` 把产品仓库
@@ -607,25 +648,24 @@ test('①c `maxSteps` 是真上界，而且它真的传到了驱动那一层（`
  *
  * 三半各量一件事，而**三半都只读**——不在这一格的根里落任何字节：落了会被这一轮末尾的漂移检
  * 拦下（"盘上那一份既不是底、也不是这次合并算出来的"），而那是它对的行为。所以那一份要读的字节
- * 不另放，用**这一轮自己刚落的日志**（`.fugue/log/round.jsonl`）：它在根里、也只有这个根里才有。
+ * 不另放：用**台子那个底里的一份文件**（`README.md`）——那一条测试自己写进去的记号。`.fugue/`
+ * 是派生区、**不进物化树**（架构 § 9.1），所以拿日志当"根里的东西"是错的，这一条第一版踩过。
  *
- *   一 · 子进程的 cwd 就是这一格的根（`pwd` 那一句）；
- *   二 · **相对路径落在根里，而且读得到这个根里的东西**：那一句从 `./.fugue/log/round.jsonl` 里
- *        取出 `writer` 那一栏——台子那个底与这一格的每一步都在这里，而产品仓库的同一路径不是它；
+ *   一 · 子进程的 cwd 就是这一格的执行面（`pwd` 那一句；沙箱里报 `/work`，退化档报物化根）；
+ *   二 · **相对路径落在执行面上，而且读得到这个根里的东西**：那一句在 `README.md` 里
+ *        `grep -c` 一条只属于这一次跑的记号——产品仓库的同一路径里没有它；
  *   三 · 工具结果进的是**模型真看见的那串字节**（下一步的 C 区是那份前缀的一段）。
  */
-test('①d `bash` 落在这一格的根上（不是进程自己的目录）', async () => {
-  const b = await bench()
+test('①d `bash` 落在这一格的物化根上（不是进程自己的目录，也不是真实工作区）', async () => {
+  // **靶子那串字节在台子那一步就写进底**（工作树与提交一起）：测试体里再改盘会被漂移检当场拦下
+  // （"盘上那一份既不是底、也不是这次合并算出来的"）——那正是它该做的。
+  const b = await bench('fugue-driver-base-marker\n')
+  // **W8 起执行面是物化根**（`host.execCwd()`）：同一格之内 `write` 进视图、`bash` 跑在那一棵
+  // 由 `ensure` 同步过去的树上——两句话因此不会打架（§ 5.15.a 的那对事实）。
+  const merged = matParts(b.root as never, AGENT).merged
   try {
-    // **要读的那一串字节**：写进这一格的日志（`msg` 那一栏）。它在根里、也只有这个根里才有，
-    // 而它不进任何一棵树——所以这一趟照旧是只读的（漂移检不会因为它报红）。
-    await b.log.append('round' as WriterId, {
-      t: 'ckpt/commit',
-      agent: 'round' as AgentId,
-      commit: b.base,
-      rev: 1,
-      msg: 'root-ok-in-round-log',
-    })
+    // **要读的那一串字节**就是台子写进底里的那一条记号（`README.md`）。
+    const marker = 'fugue-driver-base-marker'
     const cmd = (args: Record<string, unknown>): readonly ModelEvent[] => [
       ...callOne(0, 'c1', 'bash', args),
       { t: 'usage', usage: USAGE },
@@ -634,7 +674,7 @@ test('①d `bash` 落在这一格的根上（不是进程自己的目录）', as
     // 前两条是工具调用；之后一直用最后一条（脚本用完了就用最后一条——`scriptedModel` 的口径）。
     const scripts: readonly (readonly ModelEvent[])[] = [
       cmd({ command: 'pwd' }),
-      cmd({ command: "grep -c root-ok-in-round-log .fugue/log/round.jsonl; /bin/pwd" }),
+      cmd({ command: `grep -c ${marker} README.md; /bin/pwd` }),
       [
         { t: 'delta', text: '看过了。' },
         { t: 'usage', usage: USAGE },
@@ -653,6 +693,7 @@ test('①d `bash` 落在这一格的根上（不是进程自己的目录）', as
     const run = await runRound(depsOf(b, realDriver({}), supportOf(b, call)))
     assertLanded(run, '①d cwd 那一趟')
 
+
     const zoneC = (n: number): string => new TextDecoder().decode(asked[n]?.prefix.zoneC ?? new Uint8Array())
     const first = zoneC(1)
     const second = zoneC(2)
@@ -662,23 +703,43 @@ test('①d `bash` 落在这一格的根上（不是进程自己的目录）', as
         `  第二次的 C 区尾：${JSON.stringify(second.slice(-260))}`,
     )
 
-    // 一 · 子进程报出来的目录就是这一格的根（落成进程目录时这一条红）。
+    // **这一格的执行面在哪一门里**：只看"读数是不是执行面"会漏掉一种退化——`bash` 若没被围栏
+    // 包住，它仍会在 `spawn` 的那个 cwd（物化根）里跑，报出来的照样是执行面。所以两门各钉一条：
+    // **沙箱里报的是它自己那门坐标 `/work`（`Policy.coords`）**，退化档在宿主上跑、报物化根那个
+    // 绝对路径。任一门下都不许出现真实工作区那个绝对路径（下面第三条断言钉它）。
+    // **今天走到的是后面那一门**（`workspace-write` 不加挂载层），这里按读数取——档由环境定，
+    // 不写死在哪一门上。
+    const sandboxed = first.includes('\n/work\n')
+    const where = sandboxed ? '/work' : merged
+    console.log(`①d 执行面：${where}（这一门${sandboxed ? '是沙箱' : '在宿主上'}）`)
+
+    // 一 · 子进程报出来的目录就是执行面（按档取坐标：沙箱里是 `/work`，退化档是物化根）。
     assert.ok(
-      first.includes(`\n${b.root}\n`),
-      `\`pwd\` 的读数该是这一格的根 ${b.root}——那一步的 C 区里没有它。\n` +
-        `  进程自己的目录是 ${process.cwd()}（它不该出现在模型看见的世界里）\n` +
-        `  C 区尾部：${first.slice(-300)}`,
+      first.includes(`\n${where}\n`),
+      `\`pwd\` 的读数该是执行面 ${where}——` +
+        `那一步的 C 区里没有它。\n  C 区尾部：${first.slice(-300)}`,
     )
-    // 二 · **相对路径落在根里，而且读到的就是这个根里的东西**：那一串只有这一格的日志里才有
-    //     （`grep -c` 给的是命中行数 1），而产品仓库的同一个路径里没有它。
+    // 一并钉住"真实工作区不是执行面"：模型看见的世界里没有它（`merged` 的字符串里当然带根那个
+    // 前缀，所以先把执行面那一串替掉，再看剩下的是不是提到真实工作区）。
+    const stripped = first.split(merged).join('（执行面）')
+    assert.ok(
+      !stripped.includes(b.root),
+      `真实工作区 ${b.root} 不该出现在模型看见的世界里——C 区尾部：${first.slice(-300)}`,
+    )
+    // 二 · **相对路径落在执行面上，而且读到的就是这个根里的东西**：命中一行（那串记号只在
+    //     这一格的根里有），而且**不是一句报错**。
     assert.ok(
       second.includes('\n1\n'),
-      `那一句该在这一格的日志里命中 1 行——C 区里没有那个读数。\n  C 区尾部：${second.slice(-400)}`,
+      `那一句该在这个根里命中 1 行——C 区尾部：${second.slice(-400)}`,
+    )
+    assert.ok(
+      !second.includes('No such file'),
+      `那一句该读得到（相对路径落在执行面上）：C 区尾部：${second.slice(-400)}`,
     )
     // 三 · 同一次调用的收尾也报同一个落点（两半互为旁证：读到的东西对了，站的地方也对了）。
     assert.ok(
-      second.includes(`\n${b.root}\n`),
-      `那一句的 cwd 该是 ${b.root}——C 区尾部：${second.slice(-400)}`,
+      second.includes(`\n${where}\n`),
+      `那一句的 cwd 该是 ${where}——C 区尾部：${second.slice(-400)}`,
     )
 
     const starts = (await eventsOf(b.root)).filter((e) => e.t === 'run/start')

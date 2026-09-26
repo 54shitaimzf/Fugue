@@ -179,7 +179,34 @@ export function clearMaterialization(merged: AbsPath, parts: readonly AbsPath[])
  *
  * 软链只删它自己，不跟进去（跟进去删的是别人家的树）。
  */
+/**
+ * 删一棵树。**两步：先自己删，删不动再请 `sudo -n`。**
+ *
+ * `rmdir` 先试、`readdir` 才往下走：这一句不是优化，是 `overlayfs` 那一门留下的一个事实——
+ * 内核自己在 `work/` 里建的 `work/work` 是 `root:root 000`，谁都读不了它；而那个目录是**空的**，
+ * `rmdir` 一步就完。实测：`rm -rf` 删得掉、`fs.rmSync` 删不掉，差别就在这一步的顺序。
+ *
+ * **而 `rmdir` 也不一定够。** `sudo` 那一档里挂载是请 root 做的，于是那些残渣属于 root
+ * 而上层目录不可写：实测 `work/work` 是 `uid 0` 而 `work` 是 `uid 1000`，于是 `rmdirSync` 报 `EPERM` 而
+ * `readdirSync` 报 `EACCES`——**同一格里第二次 `bash` 当场卡在 `mountOverlayReady` 上**（本地
+ * 实测读到的就是这一条）。所以这里多一步：自己删不动就把同一条命令交给 `sudo -n`
+ * ——**与挂载那一条同一门**（`mountArgv` 也是这样），而 `-n` 保证不会吊在那里等人敲。
+ *
+ * 软链只删它自己，不跟进去（跟进去删的是别人家的树）。
+ */
 export function removeTree(p: AbsPath): void {
+  try {
+    removeTreeDirect(p)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    // 只在**权限不够**时才请人：其他的失败是别的毛病，请 root 也治不了。
+    if (code !== 'EACCES' && code !== 'EPERM') throw err
+    const r = run(['sudo', '-n', 'rm', '-rf', p])
+    if (r.status !== 0) throw err
+  }
+}
+
+function removeTreeDirect(p: AbsPath): void {
   let st
   try {
     st = lstatSync(p, { throwIfNoEntry: false })
