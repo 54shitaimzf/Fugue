@@ -1257,7 +1257,7 @@ async function roundRun(
  * 由这一趟定）· **怎么调模型**（真网络 / 回放 / 落盘三档只看传输那一层）。
  *
  * 它还读一次**这一轮的会话记录**（`.fugue/session/<轮次>.jsonl`，架构 § 9.10）——那一段投影是
- * 持轮者 B 区的「压缩前最近几次原文」，生产者是 `fugue say`（架构 § 8.11）。
+ * 持轮者 B 区的「凝聚前最近几次原文」，生产者是 `fugue say`（架构 § 8.11）。
  */
 async function holderWiringOf(o: {
   readonly root: string
@@ -1299,7 +1299,7 @@ async function holderWiringOf(o: {
   })
   const decl = modelDeclOf(DEFAULT_MODEL.id)
   const baseState = stateWithState(emptyState(), o.doc, o.root)
-  // 「压缩前最近几次原文」：**会话记录那一段投影**（最近 3 条）。记录不在就是空串——第一次说话
+  // 「凝聚前最近几次原文」：**会话记录那一段投影**（最近 3 条）。记录不在就是空串——第一次说话
   // 之前这一场对话还没有一条。
   const sessionBytes = await view.read(sessionPathOf(o.round))
   const recent = recentOf(sessionBytes === null ? '' : new TextDecoder().decode(sessionBytes))

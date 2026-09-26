@@ -80,7 +80,7 @@ test('① 十二个段一个不少、一个不多 · 键域 == 这份协议的�
   assert.equal(Object.keys(holder).length, 12, '持轮者那份是十二段')
   // 两份合起来铺满十二段；差的正是持轮者独占的两段。
   const extra = [...HOLDER_PROTOCOL.segmentOrder].filter((id) => !SUBAGENT_PROTOCOL.segmentOrder.includes(id))
-  assert.deepEqual(extra, ['凝聚理解', '压缩前最近几次原文'], '持轮者多出来的应当是那两段')
+  assert.deepEqual(extra, ['凝聚理解', '凝聚前最近几次原文'], '持轮者多出来的应当是那两段')
 
   // 每一段都渲染得出，四种渲染器各至少一条。
   const kinds = new Set<string>()

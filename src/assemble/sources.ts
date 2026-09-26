@@ -16,7 +16,7 @@
 //
 // **不是源的几样**：宿主绝对路径 · 主机名 · Signal 原文（架构 § 8.11 的约束 2 · 3 · 4）——
 // 这一份一个字段都不给它们留位置，所以它们进不了前缀。真正接上运行时的那些源（凝聚理解 ·
-// 压缩前最近几次原文 · 运行时上下文 · 上一步结果）今天由调用方给值，S7 · S8 才有人产它们。
+// 凝聚前最近几次原文 · 运行时上下文 · 上一步结果）今天由调用方给值，S7 · S8 才有人产它们。
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Protocol, SegmentId, SegmentValue } from './contract.ts'
@@ -245,7 +245,7 @@ interface SourceRule {
 /**
  * 十二个段的源，一处。**键就是段的身份**（架构 § 8.11 的十二段）。
  *
- * 持轮者独占的两段（凝聚理解 · 压缩前最近几次原文）在这里也有源——它们的值今天由调用方给；
+ * 持轮者独占的两段（凝聚理解 · 凝聚前最近几次原文）在这里也有源——它们的值今天由调用方给；
  * 「谁排进段的序」是协议的事，不是这一份的事。
  */
 const SOURCES: Readonly<Record<SegmentId, SourceRule>> = {
@@ -264,7 +264,7 @@ const SOURCES: Readonly<Record<SegmentId, SourceRule>> = {
   交接提示词: { value: (s) => s.handoff },
   我的任务: { value: (s, who) => taskText(s.task, who === null ? [] : who.outputPaths, s.maxSteps) },
   凝聚理解: { value: (s) => s.distill },
-  压缩前最近几次原文: { value: (s) => s.recent },
+  凝聚前最近几次原文: { value: (s) => s.recent },
   // 运行时上下文是**积累段**：一句话加一串只追加的尾巴。空串与空尾巴都不产出分隔符。
   运行时上下文: {
     value: (s) => {
