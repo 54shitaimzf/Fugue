@@ -85,7 +85,8 @@ import { createToolHost } from '../tools/host.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
 import { refHeadOf } from '../round/head.ts'
 import { RoundStartError, startRound } from '../round/start.ts'
-import { approvalsOf, dispatchRound, loggedOf } from '../round/dispatch.ts'
+import { approvalsOf, dispatchRound } from '../round/dispatch.ts'
+import { lastOf, roundFactsOf } from '../round/versions.ts'
 import { fingerprintOf } from '../contract/gate.ts'
 import { PlanError, planRound, pinnedBase } from '../round/plan.ts'
 import { RECENT_COUNT, SayError, recentOf, sayRound, sessionPathOf } from '../round/say.ts'
@@ -1387,8 +1388,8 @@ async function roundPlan(
       wire,
       judge,
       goal,
-      // **凝聚理解**（架构 § 15.1.a 的 B 区那一段）：最后一条 `holder/distill` 的正文。
-      distill: (await lastDistillOf(ctx.log, round)).distill,
+      // **凝聚理解**（架构 § 15.1.a 的 B 区那一段）：链尾那一版的正文（`round/versions.ts`）。
+      distill: lastOf(await roundFactsOf(ctx.log, round))?.body ?? '',
     })
     const { base, view, execute, decl, call, tools, baseState } = w
     // 这一趟的句柄：**C 区第一条是空的**（这一趟没有人的话——那是 `fugue say` 那一格），
@@ -1557,8 +1558,9 @@ async function sayCommand(
   const round = (typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1') as RoundId
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   try {
-    const logged = await loggedOf(ctx.log, round)
-    const { distill } = await lastDistillOf(ctx.log, round)
+    // **一次读**（`round/versions.ts`）：意图那一句与这一轮当下的那一版草案是同一份读数里的两样。
+    const facts = await roundFactsOf(ctx.log, round)
+    const distill = lastOf(facts)?.body ?? ''
     const w = await holderWiringOf({
       root,
       ctx,
@@ -1568,7 +1570,7 @@ async function sayCommand(
       // 说话那一趟**没有 `--judge`**：人的话必须真的到持轮者手里，一步都不能省（那一档是"人喊停、
       // 不请模型跑"，与"人说话"是两件事）。
       judge: false,
-      goal: logged.goal,
+      goal: facts.goal,
       distill,
     })
     const makeHandle = (over: { readonly runtime: string; readonly recent: string }): AgentHandle =>
@@ -1581,7 +1583,7 @@ async function sayCommand(
       truth: ctx.truth,
       writer: ctx.writer,
       head: w.head,
-      goal: logged.goal,
+      goal: facts.goal,
       distill,
       makeHandle,
       call: w.call,
@@ -1792,23 +1794,6 @@ function credentialFor(decl: ReturnType<typeof modelDeclOf>, wire: WireFlags, ju
   if (judge) return '--judge：不跑模型，不取凭据'
   if (wire.wireIn !== undefined) return wire.credential ?? '回放档：不出网，不取凭据'
   return authWith(providerOf(decl.provider), wire.credential ?? null)
-}
-
-/**
- * 这一轮最后一条 `holder/distill` 的正文（按轮次号选：同一份日志里住着好几轮；架构 § 15.1.a 的 B 区："凝聚理解"）。
- *
- * **它是重启之后接得上话茬的那一段**：持轮者这一趟看到的自己那份理解，就是上一趟写下来的。
- * 一条都没有就是空串（第一次开这一轮——没有前话可接）。
- */
-async function lastDistillOf(
-  log: { readByWriter(w: WriterId, from?: number): AsyncIterable<LogEvent> },
-  round: RoundId,
-): Promise<{ distill: string }> {
-  let distill = ''
-  for await (const e of log.readByWriter('round' as WriterId)) {
-    if (e.t === 'holder/distill' && e.round === round) distill = e.body
-  }
-  return { distill }
 }
 
 /**

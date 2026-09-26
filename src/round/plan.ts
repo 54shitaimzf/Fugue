@@ -18,9 +18,9 @@
 //
 // **这一份一个契约都不发 · 一条分支都不起 · 一片物化都不铺。** 那三样归 `round go`（架构
 // § 15.1.a："落地不是不可逆的一刻，派发才是"）。于是"这一趟跑完了"与"这一轮派发了"是两件事。
-import type { CommitId, RelPath, RoundId, WriterId } from '../terms.ts'
+import type { CommitId, RelPath, RoundId } from '../terms.ts'
 import type { AgentId } from '../terms.ts'
-import type { Log, LogSeq } from '../log/events.ts'
+import type { Log, LogReader, LogSeq } from '../log/events.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { View } from '../view/contract.ts'
 import type { AgentHandle, CallModel, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
@@ -46,6 +46,7 @@ import type { SeedReading } from './seed.ts'
 import { seedRulerOf } from './seed.ts'
 // **处境重放只有一处**：放行那一趟（`round go`）与这一趟读的是同一条链。
 import { roundStateOf } from './dispatch.ts'
+import { lastOf, roundFactsOf } from './versions.ts'
 
 /** 这一层自己的失败：底钉不住 · 视图打不开。**草案不成立不是它**——那是门的一份读数（`gate.problems`）。 */
 export class PlanError extends Error {}
@@ -397,15 +398,11 @@ export async function holderPass(deps: {
  * 它给「新那一版记着从哪一版改出来的」用（事件那一栏的 `against`）。按轮次选：同一份日志
  * 里住着好几轮，按「最后一条」选会把上一轮的尾当成本轮的上一版。
  *
- * **读一次全量、取最后一条**——今天这一条路是这么读的（`roundStateOf` 同一条口径）。
- * 要按轮分文件读是版本取回那一格的事（C5.a），不是这一格。
+ * **版本取回那一格（C5.a）落在这一处**：那条链只有一个读口（`round/versions.ts`），这一份是它的
+ * 一个投影——把链尾那一版的指纹取出来，不再自己读一遍全量。
  */
-export async function lastDistillDigestOf(log: Log, round: RoundId): Promise<string | null> {
-  let last: string | null = null
-  for await (const e of log.readByWriter('round' as WriterId)) {
-    if (e.t === 'holder/distill' && e.round === round) last = e.digest
-  }
-  return last
+export async function lastDistillDigestOf(log: LogReader, round: RoundId): Promise<string | null> {
+  return lastOf(await roundFactsOf(log, round))?.digest ?? null
 }
 
 export async function planRound(deps: PlanDeps): Promise<PlanResult> {

@@ -19,7 +19,7 @@
 // **再跑一次不重复触发。** 放行只在 `Planning` 那一处走：这一批发过之后处境已经不在门口，
 // 第二次 `round go` 当场拒，**一个字节都不落**——不是静默成功，也不是发第二条契约。
 import type { AgentId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../terms.ts'
-import type { Log } from '../log/events.ts'
+import type { Log, LogReader } from '../log/events.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { Truth } from '../truth/contract.ts'
 import { refFor } from '../identity.ts'
@@ -37,6 +37,7 @@ import type { Cause, RoundState, StepContext } from './machine.ts'
 import { step } from './machine.ts'
 import type { SeedReading } from './seed.ts'
 import { seedRulerAt } from './seed.ts'
+import { lastOf, roundFactsOf } from './versions.ts'
 
 /** 这一层自己的失败：判不成器 · 这一轮不在门口 · 分支不是空的 · 物化没地方落。**说出是哪一步。** */
 export class RoundStartError extends Error {}
@@ -176,12 +177,9 @@ function writeSetOfContract(c: Contract): readonly RelPath[] {
  * 一条都没有就是 `Idle`（这一轮还没落地）。链本身由 `machine.ts` 那 12 条边保着，所以这里
  * 不需要再判"走得对不对"：**落下来的每一条都是当时判过的**（架构 § 9.4 的重放口径）。
  */
-export async function roundStateOf(log: Log, round: RoundId): Promise<RoundState> {
-  let state: RoundState = 'Idle'
-  for await (const e of log.readByWriter('round')) {
-    if (e.t === 'round/state' && e.round === round) state = e.to
-  }
-  return state
+export async function roundStateOf(log: LogReader, round: RoundId): Promise<RoundState> {
+  // **读口只有一处**（`round/versions.ts`）：这一份与 `loggedOf` 是同一份读数的两个投影。
+  return (await roundFactsOf(log, round)).state
 }
 
 /** 日志里那几笔放行，按发生次序。**读数**：给人看"这一批与哪一批同形"——它不作数。 */
@@ -207,19 +205,10 @@ export interface LoggedRecord {
  * **按轮次号选，不按"最后一条"选**：同一份日志里住着好几轮，第二轮起草之后回头放行第一轮时，
  * "最后一条 `holder/distill`"给的是错的草案。
  */
-export async function loggedOf(log: Log, round: RoundId): Promise<LoggedRecord> {
-  let base: CommitId | null = null
-  let goal = ''
-  let draft: string | null = null
-  for await (const e of log.readByWriter('round')) {
-    if (e.t === 'round/intent' && e.round === round) {
-      base = e.base
-      const body = JSON.parse(e.body) as { goal?: unknown }
-      goal = typeof body.goal === 'string' ? body.goal : ''
-    }
-    if (e.t === 'holder/distill' && e.round === round) draft = e.body
-  }
-  return { base, goal, draft }
+export async function loggedOf(log: LogReader, round: RoundId): Promise<LoggedRecord> {
+  // 同一条读：钉住的底 · 意图那一句 · 那一份草案一次出来（`round/versions.ts`）。
+  const f = await roundFactsOf(log, round)
+  return { base: f.base, goal: f.goal, draft: lastOf(f)?.body ?? null }
 }
 
 /** 放行那一趟要的几样。**草案 · 底 · 意图都从日志里读**，其余由调用方注入。 */
