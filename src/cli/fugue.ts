@@ -196,12 +196,13 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              **物化缺省不做**（架构 § 14.1 的 deferMaterialize：走按需物化）。
                              给 --materialize 就把 N 棵树也铺出来——那一步落的是 mat/fork 事件，
                              每条分支一份，落在**那个 agent 自己的日志**里。
-  round run <目标> [--report] [--metrics] [--fail <n>] [--deny <n>] [--retry <n>] [--materialize]
+  round run <目标> [--live] [--report] [--metrics] [--fail <n>] [--deny <n>] [--retry <n>] [--materialize]
                              跑一个完整的轮次（架构 § 20 S7 的可用性那一句）：
                              起头（钉底 · 造契约 · Planning 预检 · 发契约 · 起分支）→ 每个 agent
-                             干一格（**模型这一侧今天是打桩的**，PLAN § 5.7 的"不在这一站里的"
-                             第一行）→ 合并前兜底预检（报出即拒）→ 漂移检 → 逐路折叠（撞上冲突
-                             就物化冲突树、交给解决者、重折）→ 验收（跑在**物化出来的那棵树上**）
+                             干一格（**缺省是打桩那一档**：--live 走真网络 · --wire-in 走录下来
+                             的响应，两档同一个驱动、同一份判据）→ 合并前兜底预检（报出即拒）→
+                             漂移检 → 逐路折叠（撞上冲突就物化冲突树、交给解决者、重折）→
+                             验收（跑在**物化出来的那棵树上**）
                              → 通过才定格 + 推进（没过则真实工作树一个字节不动）。
                              断言从工作区配置里读：round.assertions 那一栏
                                fugue config set round.assertions '[{"name":"测试全过","argv":["/bin/sh","-c","true"]}]'
@@ -214,6 +215,10 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              --report     印打回那三个数（从日志重算，不采集）
                              --metrics    印八元指标（**每个指标的分子与分母一起印**，从日志重算）
                              --materialize 起头时把 N 棵树也铺出来（缺省不铺）
+                             --live        接真驱动：每一步发一次真调用（要凭据），不再是打桩那一档。
+                             整条链与打桩那一档是同一条，判据也只有一个（验收）——差的是"模型那一侧"
+                             由谁答。凭据按提供方声明里那份表取；--credential <路径> 是命令行覆盖。
+                             缺省不出网、不花钱；要喂**录下来的响应**是 --wire-in <目录>（内部档）。
                              --max-steps <n>  **这一格最多走几步**（缺省 ${DEFAULT_MAX_STEPS}）。--live 下每一步
                              是一次真调用，所以这是"这一趟最多花多少"在命令面上的那道闸；
                              第一次联网把它压到个位数。
@@ -691,7 +696,7 @@ async function roundCmd(
 ): Promise<number> {
   const verb = args[0]
   if (verb !== 'new') {
-    return usageFail(`round 的子命令只有 new（这一站）：拿到的是 ${verb === undefined ? '（空）' : verb}`)
+    return usageFail(`round 的子命令是 new 与 run：拿到的是 ${verb === undefined ? '（空）' : verb}`)
   }
   const goal = args[1]
   if (goal === undefined || goal === '') return usageFail('round new 需要 <目标>：轮级意图的那一句')
@@ -789,9 +794,10 @@ async function roundCmd(
  * 轮次本身的顺序住在 `src/round/execute.ts`，验收住 `src/merge/accept.ts`，折叠住
  * `src/merge/merge.ts`——这一层不认识状态机、不认识契约的形状、不认识冲突。
  *
- * **模型那一侧今天是打桩的**（PLAN § 5.7 的"不在这一站里的"第一行）。打桩的形状是：每个 agent
- * 在它自己的底上造一棵树、落一个提交——一份契约一个提交。`--fail n` 让第 n 个交一棵"必然不满足
- * 断言"的树（走查要撞红那一次），`--deny n` 让第 n 个的格子里多跑一条必然被拒的动作。
+ * **模型那一侧缺省是打桩那一档**（`--live` 真网络 · `--wire-in` 回放，两档走 `realDriver`）。
+ * 打桩的形状是：每个 agent 在它自己的底上造一棵树、落一个提交——一份契约一个提交。
+ * `--fail n` 让第 n 个交一棵"必然不满足断言"的树（走查要撞红那一次），`--deny n` 让第 n 个的
+ * 格子里多跑一条必然被拒的动作。
  */
 async function roundRun(
   root: string,
