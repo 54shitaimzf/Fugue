@@ -1,4 +1,4 @@
-// 工具面：**工具名 → 会跑的那一段**。出处：架构 § 8.10（那十五个工具的目录）· § 8.9（能力表
+// 工具面：**工具名 → 会跑的那一段**。出处：架构 § 8.10（那份工具目录）· § 8.9（能力表
 // 以工具名为键）· § 14.2 第 4 步（`calls.map(dispatch)`）。
 //
 // **它是目录与实现之间的那一半。** `catalog.ts` 说"公布给模型的是哪几条"，这一份说"哪几条
@@ -15,6 +15,7 @@
 // "公布的工具每一条都有实现"，而这句话只有在"实现表"是一份**读得出来的名单**时才量得到。
 // 写成"调用时才 `throw`"就量不到了——那时缺口只在真被调到时才现形。
 import type { Capability, Denied } from '../capability/table.ts'
+import { lineCount } from './receipt.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -254,7 +255,7 @@ export function parseArgs(raw: string): { readonly ok: true; readonly value: Rec
   return { ok: true, value: value as Record<string, unknown> }
 }
 
-/** 少一个必填参数时那句统一的话（十五个工具里凡是必填的都走它，文案不各写一份）。 */
+/** 少一个必填参数时那句统一的话（目录里凡是必填的都走它，文案不各写一份）。 */
 function missing(tool: string, name: string): FaceResult {
   return no(`${tool} 少了必填参数 ${name}——模型这一次给的对象里没有它。`)
 }
@@ -273,7 +274,9 @@ const readFace: ToolFn = async (args, host) => {
   const got = await host.readBytes(path)
   if (got === null) return no(`视图里没有 ${path}（读不到就是没有——这一层不区分"不存在"与"读不了"）。`)
   const body = utf8Of(got.bytes)
-  const lines = body === '' ? 0 : body.split('\n').length
+  // **行数走 `receipt.ts` 那一处**：这一行里的「L 行」与截断标记里的「共 L 行」必须是同一个数
+  // ——两处各算一次，两个数就迟早不一样（施工当场撞到过：头里 401 行、标记里 400 行）。
+  const lines = lineCount(body)
   return ok(
     `${path}（${got.bytes.byteLength} 字节 · ${lines} 行 · mode ${got.mode.toString(8)}）\n${body}`,
   )
@@ -367,7 +370,9 @@ const bashFace: ToolFn = async (args, host, ctx) => {
   // 收到归一后的”——两处读数不同一把尺。
   const cwd = typeof args['cwd'] === 'string' ? (args['cwd'] as string) : ctx.cwd
   const res = await host.run({ command, cwd, timeoutMs })
-  const head = `退出码 ${res.exit}（${res.ms} 毫秒）${res.denied ? ' · 被沙箱拒过' : ''}`
+  // **回执里不带毫秒**（PLAN § 5.17 处二）：它是环境噪声，与 W6 拿掉的修订号同一类——
+  // 模型不需要知道这一步花了多久，而它进 C 区之后就永远留在后面每一步的视野里。
+  const head = `退出码 ${res.exit}${res.denied ? ' · 被沙箱拒过' : ''}`
   const body = [res.stdout === '' ? '' : `stdout:\n${res.stdout}`, res.stderr === '' ? '' : `stderr:\n${res.stderr}`]
     .filter((s) => s !== '')
     .join('\n')
@@ -388,7 +393,8 @@ const runActionFace: ToolFn = async (args, host, ctx) => {
   // 与 `bash` 同一条：读围栏写回的那一份（见上面）。
   const cwd = typeof args['cwd'] === 'string' ? (args['cwd'] as string) : ctx.cwd
   const res = await host.runAction({ action, args: rest, cwd })
-  const head = `动作 ${action} 退出码 ${res.exit}（${res.ms} 毫秒）`
+  // 与 `bash` 同一条：回执里不带毫秒。
+  const head = `动作 ${action} 退出码 ${res.exit}`
   const body = [res.stdout, res.stderr].filter((s) => s !== '').join('\n')
   return { ok: res.exit === 0, output: body === '' ? head : `${head}\n${body}` }
 }
@@ -464,7 +470,12 @@ const askUserQuestionFace: ToolFn = async (args, host, ctx) => {
   return {
     ok: true,
     halt: true,
-    output: `问了 ${asks.length} 个问题，落进日志，**停在这儿等人答**（门由人开）。答了之后照答案接着跑。`,
+    // **回执只说实话**（PLAN § 5.17 处三）：今天真实的路是「问题落进日志、这一轮到此为止，
+    // 人读日志之后开新轮」。「人答了接着跑」那条通道（C 站）今天不存在——门今天不存在，
+    // 就不许指门；C 站落地时这一句再改回「门由人开」。
+    output:
+      `问了 ${asks.length} 个问题，落进日志了。**这一轮到此为止**——` +
+      '人读过日志之后开新的一轮（`fugue round run`），照答案接着做。',
   }
 }
 
@@ -481,7 +492,10 @@ const exitPlanModeFace: ToolFn = async (args, host, ctx) => {
   return {
     ok: true,
     halt: true,
-    output: '预备态到这儿为止：计划已经落进日志，**门由人开**——等你放行（`round go`）之后照它发契约。',
+    // 与 `ask_user_question` 同一条：`round go` 这条命令今天不存在，就不许指它。
+    output:
+      '预备态到这儿为止：计划已经落进日志了。**这一轮到此为止**——' +
+      '人读过日志之后开新的一轮（`fugue round run`），照它发契约、往下走。',
   }
 }
 

@@ -20,7 +20,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Protocol, SegmentId, SegmentValue } from './contract.ts'
-import { TOOL_ENTRIES } from '../tools/catalog.ts'
 
 /**
  * 一个 agent 的坐标。**它不是段，是段的源要的那把钥匙。**
@@ -159,11 +158,6 @@ function emptyFor(id: SegmentId, protocol: Protocol): SegmentValue {
     default:
       return ''
   }
-}
-
-/** 工具目录那一段：名字 · 描述 · 参数面，与 `M9` 的目录同一份（Z3）。 */
-function toolCatalogValue(): SegmentValue {
-  return TOOL_ENTRIES.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))
 }
 
 /** 我的任务那一段的文本：契约的几项，末尾按序追加产物路径。 */

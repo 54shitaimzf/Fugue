@@ -71,10 +71,16 @@ export function handoffOf(i: {
   }
 }
 
-/** 交接提示词的正文（**它就是进 Zone B 的那一段文本**）。 */
+/**
+ * 交接提示词的正文（**它就是进 Zone B 的那一段文本**）。
+ *
+ * **只说交接这件事实，一个系统坐标都不带**（PLAN § 5.17 处五）：分支名 · 步数 · `coord.id`
+ * 都是架构内部的坐标，模型不需要看（架构 § 8.11 约束 3）。身份由 B 区的目标与契约自己说，
+ * 不用交接句报户口；`agent/handoff` 事件里的字段照记——**账是账、视野是视野**。
+ */
 export function promptOf(h: Handoff): string {
   const lines = [
-    `【交接】从 ${h.from} 手里接过这一格（同一条分支 ${h.branch}，交到第 ${h.step} 步）。`,
+    `【交接】从 ${h.from} 手里接过这一格。`,
     `目标：${h.goal}`,
     `为什么交接：${h.why}`,
     '已经发生了什么：',
@@ -132,16 +138,14 @@ export async function recordHandoff(
  * 返回的那个 `turns` 里那一条"你接手了"是**给模型看的第一句**（它与前任收到的第一句同一个
  * 位置），不是回执——回执是工具跑完之后才有的东西。
  */
-export function successorOf(
-  state: AssembleState,
-  prompt: string,
-  coord: AgentCoord,
-): AssembleState {
+export function successorOf(state: AssembleState, prompt: string): AssembleState {
   return {
     ...state,
     step: 0,
     handoff: prompt,
-    turns: [{ text: `【接手】${coord.id} 从这一步开始。上面"交接"那一段是前任留下的。`, calls: [], results: [] }],
+    // **接手那一句也不带 `coord.id`**（PLAN § 5.17 处五）：它是给模型看的第一句，而
+    // "我是谁"这件事由 B 区的目标与契约说，不由这一句报户口。
+    turns: [{ text: '【接手】从这一步开始。上面"交接"那一段是前任留下的。', calls: [], results: [] }],
     lastStep: '',
   }
 }
@@ -185,7 +189,7 @@ export async function handoffAt(i: {
     contract: i.contract,
     prompt,
   })
-  return { handoff, prompt, seq, next: successorOf(i.state, prompt, i.coord) }
+  return { handoff, prompt, seq, next: successorOf(i.state, prompt) }
 }
 
 /** 后继的名字：`<前任>-2` · `<前任>-3`……**同一个分支上的一个新 `AgentId`**。 */

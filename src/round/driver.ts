@@ -506,7 +506,7 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       })
       handoffs.push(out.prompt)
       handedOff = true
-      handle = { ...handle, state: successorOf(handle.state, out.prompt, handle.coord) }
+      handle = { ...handle, state: successorOf(handle.state, out.prompt) }
     }
     if (steps >= maxSteps) {
       stopped = `步数到顶（${maxSteps}）`

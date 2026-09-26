@@ -10,6 +10,7 @@
 // 一次越界的 `bash` **在起进程之前就被围栏挡住**，而围栏是从能力表那一栏推出来的——把 `bash`
 // 那一格从执行层挪到真源层，那一条当场变红。
 import type { Capability, Denied } from './table.ts'
+import { capReceipt } from '../tools/receipt.ts'
 import { lookup } from './table.ts'
 import type { Log } from '../log/events.ts'
 import type { AgentId, StepId, WriterId } from '../terms.ts'
@@ -311,7 +312,11 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
           denied: out.denied,
         })
       }
-      return out.result
+      // **回执的上界**（PLAN § 5.17 处一）：截在**回执那一层**，一次调用只有一个出口——
+      // 视图层的读 · `grep` 的命中 · `bash` 的 stdout/stderr 都从这儿出去（`read_image`
+      // 那条取字节的路不受影响：它的回执本来就只有一行尺寸）。
+      // 上限与切法是架构的常量（`MAX_RECEIPT_BYTES` 那三个数），不给模型选。
+      return { ...out.result, output: capReceipt(out.result.output) }
     },
   }
 }

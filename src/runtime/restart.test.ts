@@ -227,8 +227,8 @@ test('④ 负对照：触发点设在等于上限 → 那一档判出来的是"�
   assert.ok(over.used > over.limit, `用量 ${over.used} 该过上限 ${over.limit}`)
 
   // `successorOf` 是个纯函数：同一份输入两次同一个值（不是"跑一次看看"）。
-  const a = successorOf(emptyState(), 'x\n', WHO)
-  const b = successorOf(emptyState(), 'x\n', WHO)
+  const a = successorOf(emptyState(), 'x\n')
+  const b = successorOf(emptyState(), 'x\n')
   assert.deepEqual(a, b)
   assert.equal(promptOf({ ...handoffSample(), why: 'w' }).includes('接着干什么：'), true)
 })

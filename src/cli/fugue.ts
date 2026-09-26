@@ -101,7 +101,7 @@ import { tmpdir } from 'node:os'
 import { computeAll, reportOf } from '../probe/round.ts'
 import { computeAllMetrics, lineOf } from '../probe/metrics.ts'
 
-const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
+export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 
 命令
   log [--agent <id>]         按 (seq, writer) 全序列出日志事件
