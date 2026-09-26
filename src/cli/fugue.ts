@@ -100,11 +100,17 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { computeAll, reportOf } from '../probe/round.ts'
 import { computeAllMetrics, lineOf } from '../probe/metrics.ts'
+import { linesOf, snapshot } from '../probe/status.ts'
 
 export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 
 命令
   log [--agent <id>]         按 (seq, writer) 全序列出日志事件
+  status --once              把**这一刻的处境**印出来：轮次状态（从 round/state 链重放，用的是
+                             状态机那一份图）· 每一格走到哪儿（调用 · 步数 · 工具调用 · 动作 ·
+                             拒与被挡 · 停因）· 用量与条数（从日志重算，不采集）。**纯读**：
+                             不开账本、不取锁、不新增事件——所以它落在哪一趟之后都不会让那一趟
+                             取的基线作废（PLAN § 5.18）。今天只有 --once 这一档
   read <path>                读一个路径；默认吐原始字节
   list [dir]                 列一个目录
   stat <path>                一个路径的形状
@@ -506,6 +512,38 @@ function emit(pos: LogPos, e: LogEvent, json: boolean): void {
   const keys = Object.keys(payload)
   const brief = keys.map((k) => `${k}=${JSON.stringify(payload[k])}`).join(' ')
   process.stdout.write(`${pos.writer}\t${pos.seq}\t${t}\t${brief}\n`)
+}
+
+/**
+ * `status --once`：**把账重放一次，给人看这一刻的处境**（PLAN § 5.18 的第 12 格）。
+ *
+ * 纯读两头都占了：开日志口**不带 `write`**（不取锁、不追加）、不建视图、不碰真源。`--once` 是
+ * 今天唯一的一档——跟随是另一条命令（`watch --follow`），两条各自只说一件事，不在这里合流。
+ */
+async function statusCmd(
+  root: string,
+  flags: Map<string, string | true>,
+  json: boolean,
+): Promise<number> {
+  const bad = [...flags.keys()].filter((k) => k !== 'root' && k !== 'json' && k !== 'once' && k !== 'help')
+  if (bad.length > 0) {
+    return usageFail(
+      `status 不认这几个开关：${bad.map((k) => '--' + k).join(' · ')}——` +
+        '今天只有 --once（一次快照）；跟随是另一条命令：watch --follow',
+    )
+  }
+  const log = openLog(root)
+  try {
+    const s = await snapshot(log)
+    if (json) {
+      emitJson(s)
+      return 0
+    }
+    for (const line of linesOf(s)) emitLine(line)
+    return 0
+  } finally {
+    await log.close()
+  }
 }
 
 async function commit(ctx: Ctx, msg: string, json: boolean): Promise<number> {
@@ -2360,6 +2398,10 @@ async function run(argv: readonly string[]): Promise<number> {
     }
     return 0
   }
+
+  // 观察命令（`status` · `watch`）是**纯读**：不建视图、不开账本、不取锁——所以它们排在建视图
+  // 那一组之前。读面与写面在命令面上分开之后，"看一眼会不会改日志"这个问题就答完了（§ 5.18）。
+  if (cmd === 'status') return await statusCmd(root, flags, json)
 
   if (cmd === 'replay') return await replay(root, flags, json)
 
