@@ -14,7 +14,7 @@ import type { AgentId, BranchId, CommitId, ContractId, RelPath } from '../terms.
 import type { Contract } from './types.ts'
 import { EVIDENCE_PREFIX, checkContract } from './types.ts'
 import { covers, evidenceIsReserved, intersect, mergeGate, planningGate, precheck, writeSetOf } from './precheck.ts'
-import { build, utf8Bytes } from './build.ts'
+import { build, seedTokensOf } from './build.ts'
 
 const A = (n: number): AgentId => `r1/${n}` as AgentId
 const B = (n: number): BranchId => `agent/r1/${n}` as BranchId
@@ -185,7 +185,7 @@ test('③ 同一个函数两处同答；调查型的产物目录不与任何契�
   assert.deepEqual(evidenceIsReserved([squat]).length, 1)
   assert.match(evidenceIsReserved([squat])[0], /留给调查型的位置/)
   assert.ok(
-    checkContract(squat, { seedBytes: () => 0 }).some((m) => m.includes('ownedPaths') && m.includes(EVIDENCE_PREFIX)),
+    checkContract(squat, { seedTokens: () => 0 }).some((m) => m.includes('ownedPaths') && m.includes(EVIDENCE_PREFIX)),
     'ownedPaths 那一格没拒这一条',
   )
   assert.deepEqual(evidenceIsReserved([implement(4, ['src/a'])]), [])
@@ -193,7 +193,7 @@ test('③ 同一个函数两处同答；调查型的产物目录不与任何契�
   assert.equal(precheck([squat, investigate(1)]).intersections.length, 1)
   // 构造器造出来的那一批里，没有一份占住那个前缀（`build` 走的是同一格检查）。
   assert.deepEqual(evidenceIsReserved(built.contracts), [])
-  assert.deepEqual(checkContract(built.contracts[1], { seedBytes: utf8Bytes }), [])
+  assert.deepEqual(checkContract(built.contracts[1], { seedTokens: seedTokensOf }), [])
 })
 
 test('写入集的三种来源各自指得出：谁给的、什么来源', () => {

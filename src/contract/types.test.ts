@@ -25,9 +25,9 @@ import {
   unownedFields,
 } from './types.ts'
 
-/** `seed` 的字节数：UTF-8 的字节，与那份前缀预算同一个口径。 */
-function bytesOf(paths: readonly string[]): number {
-  return paths.reduce((n, p) => n + Buffer.byteLength(p, 'utf8'), 0)
+/** 测试自己的一份量法：这一份量的是"给不给得出那个数"，不是产品那把尺（那一条归 `build.ts`）。 */
+function tokensOf(paths: readonly string[]): number {
+  return paths.reduce((n, p) => n + p.length, 0)
 }
 
 const IMPLEMENT: ImplementContract = {
@@ -65,9 +65,9 @@ const RESOLVE: ResolveContract = {
   assertions: [{ action: 'test', name: '单元测试全过' }],
 }
 
-/** 那一跑递进去的上下文：种子字节数给得出来，于是"超限"那一条判得了。 */
-const CTX = { seedBytes: bytesOf }
-const CTX_BIG = { seedBytes: () => 10_000_000 }
+/** 那一跑递进去的上下文：种子的量给得出来，于是"超限"那一条判得了。 */
+const CTX = { seedTokens: tokensOf }
+const CTX_BIG = { seedTokens: () => 10_000_000 }
 
 /** 三份好契约：一份一个变体。 */
 const GOOD: readonly Contract[] = [IMPLEMENT, INVESTIGATE, RESOLVE]
@@ -249,10 +249,10 @@ test('清单里那三条第三级的关系：actionOutputs ⊆ ownedPaths · see
   // `seed` 那一条：不判就说出来，超限就报出两个数。**超限要拒绝派发，不裁剪后照发。**
   assert.ok(
     checkContract(IMPLEMENT, {}).some((m) => m.includes('seed') && m.includes('没判超限')),
-    '没给 seedBytes 时该说出"没判"，而不是默认放行',
+    '没给 seedTokens 时该说出"没判"，而不是默认放行',
   )
   const over = checkContract(IMPLEMENT, CTX_BIG)
   assert.equal(over.length, 1, `该恰好报一条：${over.join(' / ')}`)
-  assert.match(over[0], /10000000 字节超过上限/)
+  assert.match(over[0], /10000000 token 超过上限/)
   assert.equal(seedLimitOf({}), 200_000 - 24_000 - 16_000)
 })

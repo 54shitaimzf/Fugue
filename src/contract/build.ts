@@ -20,6 +20,7 @@
 //   三 · **`actionOutputs ⊆ ownedPaths`**：不作判断，只核。不成立就当场退回（架构 § 8.12：那个
 //        动作本来会在执行中途被拒，而它本该在派发前就报错）。
 import { identSegments } from '../identity.ts'
+import { estimateTokensOfText } from '../runtime/budget.ts'
 import { isSegment } from '../roots/paths.ts'
 import type { ActionName, BranchId, CommitId, ContractId, RelPath, RoundId } from '../terms.ts'
 import type { Assertion, Contract, Evidence, ImplementContract, InvestigateContract, ResolveContract } from './types.ts'
@@ -89,8 +90,8 @@ export interface ConflictReport {
  *   `base` 是**轮次开始时钉住的那个提交**（架构 § 8.14 的 C7 前半）——它由调用方一次读定，
  *   构造器不自己去读 HEAD：一份契约里的底与四条分支的底要**是同一个提交**（架构 § 4），
  *   而"同一个"只有"一次读定再传下来"保证得了。
- *   `seedBytes` 走调用方：种子是路径的指针，字节数取决于从哪一棵树取（视图 · 工作区），
- *   构造器不认识树。
+ *   `seedTokens` 走调用方：种子是路径的指针，**量它取决于从哪一棵树取**（视图 · 工作区），
+ *   而构造器不认识树。
  */
 export interface BuildDeps {
   readonly round: RoundId
@@ -105,8 +106,8 @@ export interface BuildDeps {
   readonly seedOf: (n: number) => readonly RelPath[]
   /** 动作绑定声明的产出：`动作名 → 产出路径`。**必须落在那份契约的 `ownedPaths` 内。** */
   readonly actionOutputsOf?: (n: number) => Readonly<Record<ActionName, readonly RelPath[]>>
-  /** 种子字节数怎么算。不给就用 UTF-8 的字节——与那份前缀预算同一个口径。 */
-  readonly seedBytes?: (paths: readonly RelPath[]) => number
+  /** 一份种子的量怎么算（token）。不给就量指针清单（`seedTokensOf`）。 */
+  readonly seedTokens?: (paths: readonly RelPath[]) => number
   readonly seedLimit?: number
 }
 
@@ -116,18 +117,19 @@ export interface Built {
   /** 这一批里各变体各几份。**空数组也是合法的一批**（那一轮不派这类活）。 */
   readonly counts: Readonly<Record<Contract['kind'], number>>
   readonly seedLimit: number
-  /** 逐份的种子字节数，给"超限拒绝派发"那句话里的两个数用。 */
-  readonly seedBytes: readonly number[]
+  /** 逐份的种子量（token 估账），给"超限拒绝派发"那句话里的两个数用。 */
+  readonly seedTokens: readonly number[]
 }
 
 /**
- * 种子的字节数：UTF-8 的字节。它按"1 token ≥ 1 字节"折算**上界**——这是保守的一侧：真实
- * 分词在这两种脚本下都远大于 1 字节/token，所以按字节卡住的上界一定不会把超限的种子放过去。
+ * 一份种子的量：**指针清单按那把尺估**（一条路径一行）——上限 88,000 是一个 token 数
+ * （模型上限 − Zone A 预算 − 交接余量），量它的这一头因此也必须是 token，两头的口径才是同一个。
+ *
+ * **它量的是清单，不是内容**：内容有多少要读了树才知道，而构造器不认识树。所以调用方可以递
+ * 一份自己的量法（`BuildDeps.seedTokens`）；缺省这一份量的是清单本身。
  */
-export function utf8Bytes(paths: readonly RelPath[]): number {
-  let n = 0
-  for (const p of paths) n += Buffer.byteLength(p, 'utf8')
-  return n
+export function seedTokensOf(paths: readonly RelPath[]): number {
+  return estimateTokensOfText(paths.join('\n'))
 }
 
 function need(what: string, v: unknown): void {
@@ -139,12 +141,12 @@ function idOf(round: RoundId, kind: Contract['kind'], n: number): ContractId {
   return `${round}.${kind}.${n}`
 }
 
-/** `seed` 超限：**拒绝派发，不是裁剪后照发**（架构 § 8.12）。话里带两个数。 */
-function assertSeedFits(seed: readonly RelPath[], limit: number, bytes: (p: readonly RelPath[]) => number): number {
-  const n = bytes(seed)
+/** `seed` 超限：**拒绝派发，不是裁剪后照发**（架构 § 8.12）。话里带两个数——都是 token。 */
+function assertSeedFits(seed: readonly RelPath[], limit: number, tokens: (p: readonly RelPath[]) => number): number {
+  const n = tokens(seed)
   if (n > limit) {
     throw new BuildError(
-      `种子超限：${n} 字节 > 上限 ${limit} 字节（模型上限 − Zone A − 交接余量）——` +
+      `种子超限：${n} token > 上限 ${limit} token（模型上限 − Zone A − 交接余量）——` +
         `超限要拒绝派发，不是裁剪后照发（架构 § 8.12）`,
     )
   }
@@ -152,7 +154,7 @@ function assertSeedFits(seed: readonly RelPath[], limit: number, bytes: (p: read
 }
 
 /** 逐字段调用各持有者的检查，报出来就退回。**不落地。** */
-function validate(contracts: readonly Contract[], ctx: { seedBytes: (p: readonly RelPath[]) => number; seedLimit: number }): void {
+function validate(contracts: readonly Contract[], ctx: { seedTokens: (p: readonly RelPath[]) => number; seedLimit: number }): void {
   const problems: string[] = []
   for (const c of contracts) {
     for (const m of checkContract(c, ctx)) problems.push(`${c.id}：${m}`)
@@ -188,9 +190,9 @@ export function build(intent: Intent, deps: BuildDeps): Built {
   need('钉住的底', deps.base)
 
   const limit = deps.seedLimit ?? seedLimitOf({ seedLimit: deps.seedLimit })
-  const bytes = deps.seedBytes ?? utf8Bytes
+  const tokens = deps.seedTokens ?? seedTokensOf
   const out: Contract[] = []
-  const seeds: number[] = []
+  const seedTokens: number[] = []
 
   /** 第 `n` 个身份（从 0 起）。**给不出就拒**，构造器不替分配器猜。 */
   const idAt = (n: number): Identity => {
@@ -206,7 +208,7 @@ export function build(intent: Intent, deps: BuildDeps): Built {
     need('调查的问题', intent.question)
     const id = idAt(idx)
     const seed = [...deps.seedOf(idx)]
-    seeds.push(assertSeedFits(seed, limit, bytes))
+    seedTokens.push(assertSeedFits(seed, limit, tokens))
     const evidence = evidenceFor(id.agent, intent)
     out.push({
       kind: 'investigate',
@@ -236,7 +238,7 @@ export function build(intent: Intent, deps: BuildDeps): Built {
     }
     const id = idAt(idx)
     const seed = [...deps.seedOf(idx)]
-    seeds.push(assertSeedFits(seed, limit, bytes))
+    seedTokens.push(assertSeedFits(seed, limit, tokens))
     out.push({
       kind: 'implement',
       id: idOf(deps.round, 'implement', i + 1),
@@ -278,11 +280,11 @@ export function build(intent: Intent, deps: BuildDeps): Built {
 
   const bad = variantFieldsMatch(VARIANT_FIELDS, out)
   if (bad.length > 0) throw new BuildError(`造出来的契约与三个变体的字段表对不上：\n  ${bad.join('\n  ')}`)
-  validate(out, { seedBytes: bytes, seedLimit: limit })
+  validate(out, { seedTokens: tokens, seedLimit: limit })
 
   const counts: Record<Contract['kind'], number> = { implement: 0, investigate: 0, resolve: 0 }
   for (const c of out) counts[c.kind]++
-  return { contracts: out, counts, seedLimit: limit, seedBytes: seeds }
+  return { contracts: out, counts, seedLimit: limit, seedTokens }
 }
 
 /** 动作绑定的产出拷一份：契约是不可变值，交给调用方的那一份不该与调用方手里那份共用一个对象。 */

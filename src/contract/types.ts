@@ -475,12 +475,16 @@ export interface ContractContext {
    * 不给就走 `DEFAULT_MODEL_LIMIT`——那是这一份的缺省，不是任何一个模型的声明。
    */
   readonly modelLimit?: number
-  readonly seedBytes?: (paths: readonly RelPath[]) => number
-  /** 字节数的算法：UTF-8 的字节。`Buffer` 在宿主上，`TextEncoder` 在两处都在。 */
-  readonly limitNote?: string
+  /**
+   * 一份种子的量（token）。**由调用方给**：种子是路径的指针，量它取决于从哪一棵树取，而这一份
+   * 不认识树。不给就报"没判超限"——与缺 `modelLimit` 时那一档同一条纪律（fail-closed）。
+   */
+  readonly seedTokens?: (paths: readonly RelPath[]) => number
 }
 
-/** `seed` 那一条：总字节 ≤ 模型上限 − Zone A − 交接余量（架构 § 8.12 的两条准则共用一个上界）。 */
+/** `seed` 那一条：总量 ≤ 模型上限 − Zone A − 交接余量（架构 § 8.12 的两条准则共用一个上界）。
+ * **四个数都是 token**（模型上限 · Zone A 预算 · 交接余量 · 那份种子的量），所以量种子的是
+ * `seedTokens`，不是字节数。 */
 export function seedLimitOf(ctx: ContractContext): number {
   if (ctx.seedLimit !== undefined) return ctx.seedLimit
   return (ctx.modelLimit ?? DEFAULT_MODEL_LIMIT) - ZONE_A_BUDGET - HANDOFF_MARGIN
@@ -526,14 +530,14 @@ export function checkContract(c: Contract, ctx: ContractContext = {}): ContractI
     for (const one of actionOutputsOutside(c.ownedPaths, c.actionOutputs)) issues.push(`actionOutputs：${one}`)
   }
   if (c.kind === 'implement' || c.kind === 'investigate') {
-    const bytes = ctx.seedBytes?.(c.seed)
-    if (bytes === undefined) {
+    const tokens = ctx.seedTokens?.(c.seed)
+    if (tokens === undefined) {
       // 不判就说出来。**默认放行会让"超限拒绝派发"这句话无处落地。**
-      issues.push(`seed：没判超限——这一跑没给 seedBytes（缺省上限 ${seedLimitOf(ctx)} 字节）`)
+      issues.push(`seed：没判超限——这一跑没给 seedTokens（缺省上限 ${seedLimitOf(ctx)} token）`)
     } else {
       const limit = seedLimitOf(ctx)
-      if (bytes > limit) {
-        issues.push(`seed：${bytes} 字节超过上限 ${limit} 字节——超 ${bytes - limit} 字节，超限要拒绝派发，不裁剪后照发`)
+      if (tokens > limit) {
+        issues.push(`seed：${tokens} token 超过上限 ${limit} token——超 ${tokens - limit} token，超限要拒绝派发，不裁剪后照发`)
       }
     }
   }

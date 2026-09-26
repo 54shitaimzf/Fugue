@@ -831,7 +831,7 @@ async function roundCmd(
         contracts: started.built.contracts,
         owners: started.owners,
         seedLimit: started.built.seedLimit,
-        seedBytes: started.built.seedBytes,
+        seedTokens: started.built.seedTokens,
         intersections: started.precheck.lines,
         materialized: materialize,
         branches: started.forks.map((f) => ({ agent: f.agent, base: f.base, strategy: f.strategy, merged: f.merged })),

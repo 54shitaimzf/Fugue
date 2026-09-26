@@ -44,8 +44,8 @@ const FIRST = MODEL_DECLS[MODEL_IDS[0] as string] as ModelDecl
 const SECOND = MODEL_DECLS[MODEL_IDS[1] as string] as ModelDecl
 
 /** 一次 `checkContract` 的原始输出（`[]` = 没问题）。 */
-function issuesOf(c: ImplementContract, bytes: number, modelLimit?: number): string[] {
-  const ctx = modelLimit === undefined ? { seedBytes: () => bytes } : { seedBytes: () => bytes, modelLimit }
+function issuesOf(c: ImplementContract, tokens: number, modelLimit?: number): string[] {
+  const ctx = modelLimit === undefined ? { seedTokens: () => tokens } : { seedTokens: () => tokens, modelLimit }
   return checkContract(c, ctx)
 }
 
@@ -253,11 +253,11 @@ test('⑤ 估账与余量：contextLimit 接进 seedLimitOf，超限报"超了�
 
   const c = contractWithSeed(['README.md'])
   const limit = seedLimitOf({ modelLimit: 128_000 })
-  assert.deepEqual(issuesOf(c, limit - 1, 128_000), [], '差一个字节没超，不该报')
+  assert.deepEqual(issuesOf(c, limit - 1, 128_000), [], '差一个 token 没超，不该报')
   const over = issuesOf(c, limit + 1, 128_000)
-  assert.equal(over.length, 1, `超一个字节要报一条，拿到 ${JSON.stringify(over)}`)
+  assert.equal(over.length, 1, `超一个 token 要报一条，拿到 ${JSON.stringify(over)}`)
   const said = over[0] as string
-  assert.ok(said.includes(String(limit + 1)) && said.includes(String(limit)), `那句话要同时带字节数与上限：${said}`)
+  assert.ok(said.includes(String(limit + 1)) && said.includes(String(limit)), `那句话要同时带用量与上限：${said}`)
   assert.ok(said.includes('超限要拒绝派发，不裁剪后照发'), said)
 
   // 一份真契约走一遍：`checkContract` 收得到那条读数（不是只测了 `seedLimitOf` 一个数）。
@@ -265,7 +265,7 @@ test('⑤ 估账与余量：contextLimit 接进 seedLimitOf，超限报"超了�
   assert.deepEqual(issuesOf(real, 40_000, 128_000), [], '装得下就不该报')
   assert.equal(issuesOf(real, 200_000, 128_000).length, 1, '装不下要报一条')
   const saidOver = issuesOf(real, 200_000, 128_000)[0] as string
-  assert.ok(saidOver.includes('超 112000 字节'), `超出来的那一段要印出来（200000 − 88000）：${saidOver}`)
+  assert.ok(saidOver.includes('超 112000 token'), `超出来的那一段要印出来（200000 − 88000）：${saidOver}`)
   assert.ok(saidOver.includes('112000') && saidOver.includes('88000'), saidOver)
   assert.ok(saidOver.includes('不裁剪后照发'), saidOver)
 })

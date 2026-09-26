@@ -66,7 +66,7 @@ export interface RoundStartDeps {
   readonly branchOf: (agent: AgentId) => BranchId
   readonly seedOf: (agent: AgentId) => readonly RelPath[]
   readonly actionOutputsOf?: (agent: AgentId) => Readonly<Record<string, readonly RelPath[]>>
-  readonly seedBytes?: (paths: readonly RelPath[]) => number
+  readonly seedTokens?: (paths: readonly RelPath[]) => number
   readonly seedLimit?: number
   /**
    * 第 `n` 个 agent 的日志口。**`mat/fork` 落在那个 agent 自己的日志里**，所以物化那一步要它。
@@ -133,7 +133,7 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
       if (a === undefined || deps.actionOutputsOf === undefined) return {}
       return deps.actionOutputsOf(a)
     },
-    ...(deps.seedBytes === undefined ? {} : { seedBytes: deps.seedBytes }),
+    ...(deps.seedTokens === undefined ? {} : { seedTokens: deps.seedTokens }),
     ...(deps.seedLimit === undefined ? {} : { seedLimit: deps.seedLimit }),
   }
   const built = build(deps.intent, buildDeps)

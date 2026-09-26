@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { BranchId, CommitId, RelPath, RoundId } from '../terms.ts'
 import type { Intent, SplitAssignment } from './build.ts'
-import { BuildError, SEED_BUDGET, build, evidenceFor, utf8Bytes } from './build.ts'
+import { BuildError, SEED_BUDGET, build, evidenceFor, seedTokensOf } from './build.ts'
 import { actionOutputsOutside, checkContract, seedLimitOf } from './types.ts'
 import type { Assertion, Contract } from './types.ts'
 
@@ -124,7 +124,7 @@ test('① 一份意图造出三份契约，id 三份互异且不跨轮复用', (
 test('② actionOutputs 里一条不在 ownedPaths 内 → 构造失败并指出是哪一条', () => {
   const built = build(INTENT, deps())
   assert.deepEqual(built.counts, { implement: 2, investigate: 1, resolve: 0 })
-  assert.deepEqual(checkContract(pick(built.contracts, 'implement'), { seedBytes: utf8Bytes }), [])
+  assert.deepEqual(checkContract(pick(built.contracts, 'implement'), { seedTokens: seedTokensOf }), [])
   // 声明得对的那一份：产出落在写入集里，清单一声不响。
   const declared = build(
     INTENT,
@@ -133,7 +133,7 @@ test('② actionOutputs 里一条不在 ownedPaths 内 → 构造失败并指出
       actionOutputsOf: () => ({ test: ['src/parse'] }),
     }),
   )
-  assert.deepEqual(checkContract(pick(declared.contracts, 'implement'), { seedBytes: utf8Bytes }), [])
+  assert.deepEqual(checkContract(pick(declared.contracts, 'implement'), { seedTokens: seedTokensOf }), [])
 
   // 越界的那一条：动作 `build` 的产出 `dist` 不在 `src/parse*` 里。
   assert.throws(
@@ -189,31 +189,37 @@ test('③ seed 超限 → 拒绝派发，不裁剪后照发', () => {
   // 上限：模型上限 − Zone A − 交接余量。
   assert.equal(seedLimitOf({}), SEED_BUDGET.model - SEED_BUDGET.zoneA - SEED_BUDGET.handoff)
 
+  const seed = ['src/parse.ts', 'src/callers/x.ts'] as readonly RelPath[]
   const small = build(INTENT, deps())
   assert.deepEqual(
-    small.seedBytes,
-    [utf8Bytes(['src/parse.ts', 'src/callers/x.ts']), utf8Bytes(['src/parse.ts', 'src/callers/x.ts']), utf8Bytes(['src/parse.ts', 'src/callers/x.ts'])],
+    small.seedTokens,
+    [seedTokensOf(seed), seedTokensOf(seed), seedTokensOf(seed)],
     '三份契约各算一次：调查型 · 两份实现型',
   )
   assert.equal(small.seedLimit, seedLimitOf({}))
 
-  // 超限：一个 200 000 字节的种子（模型上限那个量级）。
-  const fat = ['x'.repeat(200_000)] as readonly RelPath[]
+  // 超限：一份 20 万 token 量级的种子（模型上限那个量级）。**量它的是尺**：ASCII 每四个字节
+  // 一个 token，所以摊到清单上就是八十万字符。
+  const fat = ['x'.repeat(4 * 200_000)] as readonly RelPath[]
   assert.throws(
     () => build(INTENT, deps({ seedOf: () => fat })),
     (err: unknown) => {
       assert.ok(err instanceof BuildError)
-      assert.match((err as Error).message, /200000 字节 > 上限 160000 字节/)
+      assert.match(
+        (err as Error).message,
+        new RegExp(`${seedTokensOf(fat)} token > 上限 ${seedLimitOf({})} token`),
+      )
       assert.match((err as Error).message, /拒绝派发/)
       return true
     },
   )
 
   // 恰好到上限：不拒。**判据是"大于"而不是"大于等于"**——一个字都不许裁，但也不许多拒一个。
-  const exact = build(INTENT, deps({ seedOf: () => fat, seedLimit: 200_000 }))
-  assert.equal(exact.seedLimit, 200_000)
-  assert.deepEqual(exact.seedBytes, [200_000, 200_000, 200_000])
-  assert.throws(() => build(INTENT, deps({ seedOf: () => fat, seedLimit: 199_999 })), BuildError)
+  const just = seedTokensOf(fat)
+  const exact = build(INTENT, deps({ seedOf: () => fat, seedLimit: just }))
+  assert.equal(exact.seedLimit, just)
+  assert.deepEqual(exact.seedTokens, [just, just, just])
+  assert.throws(() => build(INTENT, deps({ seedOf: () => fat, seedLimit: just - 1 })), BuildError)
 
   // **整批退回**：超限发生在第二份草案上时，第一份也不落地——半批契约派出去，那一轮的分母就残了。
   let served = 0
