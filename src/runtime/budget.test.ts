@@ -7,6 +7,8 @@
 //      尺对同一份文本的读数，同样字数下中文多出来的账是英文的四倍以上），超限时报"超了多少"
 //   ③ 三档分得开：没到触发点 `continue` · 到了且交接写不下 `stop` · 到了且塞得下 `restart`
 //   ④ **负对照**：把触发点设在等于上限 → ① 的核对当场报出来，连"重试超界"都判不出来
+//   ⑤ **修正**：账按真读数的比修（没有读数就一步不修）；真数 = 这一趟输入的总量（三个数相加），
+//      全缺就是"没读数"，不拿 0 顶
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { modelDeclOf, triggerAt } from '../model/contract.ts'
@@ -19,6 +21,7 @@ import { emptyState } from '../assemble/sources.ts'
 import { fixtureState } from '../model/fixture-state.ts'
 import type { Prefix } from '../assemble/contract.ts'
 import { ENVELOPE_TOKENS, checkBudget, estimateTokens, planBudget } from './budget.ts'
+import { calibrate, ratioOf, truthOf } from './calib.ts'
 import type { BudgetAsk } from './budget.ts'
 
 const DECL = modelDeclOf('deepseek-chat/anthropic')
@@ -182,4 +185,35 @@ test('④ 负对照：触发点设在等于上限 → 关系核对当场报出�
   const over = planBudget(askOf(prefixOf(stateWithUsed(DECL.contextLimit, broken)), { decl: broken }))
   assert.equal(over.kind, 'stop', `坏预算撑爆那一档：${over.why}`)
   assert.match(over.why, /交接还差 \d+ 写不下/)
+})
+
+// ── ⑤ 真读数修正 ───────────────────────────────────────────────────────────────
+
+test('⑤ 修正：账按真读数的比修，缺省一步不修 · 真数是这一趟输入的总量', () => {
+  const ask = askOf(prefixOf(fixtureState(7)))
+  const plain = planBudget(ask)
+  assert.equal(plain.raw, plain.used, '没有修正时账就是那把尺的原始读数')
+
+  // **修正改的是账，不是尺**：`raw` 留着，下一次算比值用的是它（不然修正会自己乘自己）。
+  const fixed = planBudget({ ...ask, calib: { ratio: 2, samples: 3 } })
+  assert.equal(fixed.raw, plain.raw, '尺的原始读数不因修正而变')
+  assert.equal(fixed.used, Math.ceil(plain.raw * 2), `修过之后的账：${fixed.used}`)
+  assert.equal(fixed.kind, 'continue')
+  assert.match(fixed.why, /按 3 份真读数修 ×2\.00/, fixed.why)
+
+  // 真读数那一头：**三个数相加**（未命中 + 命中缓存 + 写进缓存），全缺就是"没读数"。
+  const NONE = { inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null, rawStop: null, model: null }
+  assert.equal(truthOf(null), null)
+  assert.equal(truthOf(NONE), null, '全缺是"没读数"，不拿 0 顶')
+  const heard = truthOf({ ...NONE, inputTokens: 88, cacheReadTokens: 24_000, cacheWriteTokens: 0 })
+  assert.equal(heard, 24_088, `真数该是三个数之和：${heard}`)
+  assert.equal(ratioOf(heard, plain.raw), 24_088 / plain.raw, '比值 = 真 ÷ 估')
+  assert.equal(ratioOf(null, plain.raw), null, '没读数就量不出比值')
+  assert.equal(ratioOf(100, 0), null, '估账为 0 也量不出来')
+
+  // 修正取**最近八份的中位数**：一条离谱的不该把后面每一步都带歪。
+  assert.deepEqual(calibrate([]), { ratio: 1, samples: 0 })
+  assert.deepEqual(calibrate([2, 2, 9]), { ratio: 2, samples: 3 })
+  assert.equal(calibrate(Array.from({ length: 12 }, () => 3)).samples, 8, '只留最近八份')
+  console.log(`⑤ 读数：尺 ${plain.raw} · 修 ×2 → ${fixed.used} · 真数（88 + 24000 + 0）= ${heard} · 中位数修正 ${JSON.stringify(calibrate([2, 2, 9]))}`)
 })

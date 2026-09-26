@@ -87,6 +87,18 @@ const SCRIPTS: readonly (readonly ModelEvent[])[] = [
   ],
 ]
 
+/**
+ * 那份 tiny 声明（上限 800 · 触发点 150）配的用量：**与它的前缀同一个量级**。
+ *
+ * 上面那份 24,088 是给真声明（上限 12.8 万）用的；套在 tiny 上，真读数那一笔修正会把它自己
+ * 撑爆（实测 ×82.49：交接一次之后一步都不走）。**真读数与估账同量级**是这里的取值纪律——
+ * 脚本里的用量是造的，它得造得像。
+ */
+const TINY_USAGE = { inputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 64, rawStop: null, model: null }
+const TINY_SCRIPTS: readonly (readonly ModelEvent[])[] = SCRIPTS.map((step) =>
+  step.map((e) => (e.t === 'usage' ? { t: 'usage', usage: TINY_USAGE } : e)),
+)
+
 /** 这一轮收口的那句判据。**`Committed` 不是终点**：定格之后真实工作树被推进，状态机再走一步
  * 到 `Rebuilding`（`round/machine.ts` 那条 `Committed ──advanced──> Rebuilding`），
  * 而 `execute.ts` 把最后那一步的状态原样交回来。所以"通过了"要看 `report.ok` 与 `advanced`。 */
@@ -542,7 +554,7 @@ test('③ 触发点到了落 agent/handoff，后继接着干完（同一条分�
       depsOf(
         b,
         async (ask) => driver({ ...ask, decl: tiny, maxSteps: 8 } as never),
-        { ...supportOf(b, scriptedModel(SCRIPTS)), decl: tiny } as RoundRunDeps['driver'],
+        { ...supportOf(b, scriptedModel(TINY_SCRIPTS)), decl: tiny } as RoundRunDeps['driver'],
       ),
     )
     assertLanded(run, '③ 交接那一趟')
@@ -907,6 +919,78 @@ test('①c2 不给上界就不设：71 步的脚本走完 71 步；给了 64 就
   } finally {
     await b2.close()
   }
+})
+
+// ── ①c3 真读数修正下一步的账（以 api 返回为最高标准）──────────────────────────
+
+/**
+ * 用户那条决策：**不能全量采取估计，通过 api 修正**。断言的形状：同一串脚本、同一份声明，
+ * 两条路只差"模型报没报用量"——
+ *   · 用量四个数全 null（提供方没报）→ **一步都不修**，六步走完，停因「收敛」；
+ *   · 报了一份把账放大三倍的用量 → 第二步起账跟着真读数走，撞上限停下，而停的那句话里说得出
+ *     「按 N 份真读数修」。
+ * 两条路的步数与停因都不同，所以它不是"脚本短所以只走了一条"那种瞎绿。
+ */
+test('①c3 真读数修正下一步的账：报了用量就跟着它走，没报就一步不修', async () => {
+  const tiny = { ...DECL, contextLimit: 900, budget: { trigger: 250, handoffMargin: 10 } }
+  interface Usageish {
+    inputTokens: number | null
+    cacheReadTokens: number | null
+    cacheWriteTokens: number | null
+    outputTokens: number | null
+    rawStop: string | null
+    model: string | null
+  }
+  const NONE: Usageish = { inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null, rawStop: null, model: null }
+  /** 那份 tiny 前缀的原始估账是 292（③ 的注释里那个数），900 是它三倍上下。 */
+  const BIG: Usageish = { ...NONE, inputTokens: 900 }
+  const withUsage = (usage: Usageish): readonly (readonly ModelEvent[])[] => {
+    const swap = (step: readonly ModelEvent[]): ModelEvent[] =>
+      step.map((e) => (e.t === 'usage' ? { t: 'usage', usage } : e))
+    const mid = (i: number): ModelEvent[] =>
+      swap([
+        ...callOne(0, `r${i}`, 'read', { path: 'a.ts' }),
+        { t: 'usage', usage: USAGE },
+        { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+      ])
+    return [
+      swap(SCRIPTS[0] as readonly ModelEvent[]),
+      ...Array.from({ length: 4 }, (_x, i) => mid(i + 2)),
+      swap(SCRIPTS[1] as readonly ModelEvent[]),
+    ]
+  }
+  const stoppedOf = async (root: string): Promise<string> =>
+    (await eventsOf(root)).find((e) => e.t === 'agent/stop')?.stopped ?? '（没落）'
+  const runOf = async (usage: Usageish): Promise<{ calls: number; stopped: string }> => {
+    const b = await bench()
+    try {
+      const driver = realDriver({})
+      await runRound(
+        depsOf(
+          b,
+          async (ask) => driver({ ...ask, decl: tiny, maxSteps: 8 } as never),
+          { ...supportOf(b, scriptedModel(withUsage(usage))), decl: tiny } as RoundRunDeps['driver'],
+        ),
+      )
+      return {
+        calls: (await eventsOf(b.root)).filter((e) => e.t === 'llm/call').length,
+        stopped: await stoppedOf(b.root),
+      }
+    } finally {
+      await b.close()
+    }
+  }
+
+  const silent = await runOf(NONE)
+  assert.equal(silent.calls, 6, `没读数那一趟该走完 6 步，实际 ${silent.calls} 条 llm/call`)
+  assert.equal(silent.stopped, '收敛', `没读数那一趟的停因该是「收敛」，实际「${silent.stopped}」`)
+  console.log(`①c3 读数：用量全 null → ${silent.calls} 条 llm/call（停因「${silent.stopped}」）`)
+
+  const heard = await runOf(BIG)
+  assert.ok(heard.calls < silent.calls, `报了用量那一趟该更早停：${heard.calls} < ${silent.calls}`)
+  assert.match(heard.stopped, /按 1 份真读数修/, `停的那句话该说清账是按真读数修的：「${heard.stopped}」`)
+  assert.match(heard.stopped, /不裁剪后照发/, heard.stopped)
+  console.log(`①c3 读数：用量报 900 → ${heard.calls} 条 llm/call（停因「${heard.stopped}」）`)
 })
 
 // ── ①d 执行类工具落在哪棵树上 ──────────────────────────────────────────────────

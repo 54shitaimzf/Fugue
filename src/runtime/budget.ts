@@ -11,6 +11,8 @@
 // 由 `contract.ts` 的 `triggerAt()` 与声明一起给。这一份不自己算 0.75，也不自己定余量——
 // 它只读。
 import type { Prefix } from '../assemble/contract.ts'
+import { UNCALIBRATED } from './calib.ts'
+import type { Calibration } from './calib.ts'
 import type { ModelDecl } from '../model/contract.ts'
 
 /**
@@ -50,8 +52,16 @@ export interface BudgetPlan {
   readonly trigger: number
   /** 交接余量：留给"交接提示词 + 下一次调用的头"那一块。 */
   readonly handoffMargin: number
-  /** 这一步的上下文用了多少（三区 + 工具目录 + `seed`，**按那把尺估出来的 token**）。 */
+  /**
+   * 这一步的上下文用了多少（三区 + 工具目录 + `seed`，**按那把尺估出来的 token**，过了修正）。
+   */
   readonly used: number
+  /**
+   * 那把尺的**原始读数**：修正只改 `used`，不改它。
+   *
+   * 它是"下一次算那个比值"的底（真读数 ÷ 它），所以它必须留在账上——不然修正会自己乘自己。
+   */
+  readonly raw: number
   /** 还剩多少（`limit - used`，可以是负的）。 */
   readonly headroom: number
   /**
@@ -79,6 +89,13 @@ export interface BudgetAsk {
   readonly tools: string
   /** `seed` 的**正文**：那一轮派下来的活（架构 § 8.12）。 */
   readonly seed: string
+  /**
+   * 一份修正：这一趟之前量到的"真 ÷ 估"。不给就是那把尺的原始读数（`UNCALIBRATED`）。
+   *
+   * **它改的是账，不是尺**：真读数来自 `llm/call` 的 `usage`，比值由 `src/runtime/calib.ts`
+   * 一处算（最近八份的中位数）。没有读数时账一个字都不动。
+   */
+  readonly calib?: Calibration
   /**
    * 交接提示词的**正文**（这一步还没交接时给 `''`，那时它一点账都不占）。
    *
@@ -131,10 +148,14 @@ export function planBudget(ask: BudgetAsk): BudgetPlan {
     bytesOfText(ask.tools),
     bytesOfText(ask.seed),
   ])
-  const used = estimateTokens(head)
+  const raw = estimateTokens(head)
+  const calib = ask.calib ?? UNCALIBRATED
+  // **修正的是一个比值**（真 ÷ 估）：账上的每一个加数都过它，尺的原始读数留在 `raw` 里。
+  const used = Math.ceil(raw * calib.ratio)
   const headroom = limit - used
-  const handoff = estimateTokens(concat([head, bytesOfText(ask.handoff)])) - used
+  const handoff = Math.round((estimateTokens(concat([head, bytesOfText(ask.handoff)])) - raw) * calib.ratio)
   const withHandoff = used + handoff + budget.handoffMargin
+  const note = calib.samples === 0 ? '' : `（按 ${calib.samples} 份真读数修 ×${calib.ratio.toFixed(2)}）`
 
   if (used < budget.trigger) {
     return {
@@ -142,9 +163,10 @@ export function planBudget(ask: BudgetAsk): BudgetPlan {
       trigger: budget.trigger,
       handoffMargin: budget.handoffMargin,
       used,
+      raw,
       headroom,
       kind: 'continue',
-      why: `用了 ${used}，还没到触发点 ${budget.trigger}（差 ${budget.trigger - used}）。`,
+      why: `用了 ${used}${note}，还没到触发点 ${budget.trigger}（差 ${budget.trigger - used}）。`,
     }
   }
   if (withHandoff > limit) {
@@ -153,11 +175,12 @@ export function planBudget(ask: BudgetAsk): BudgetPlan {
       trigger: budget.trigger,
       handoffMargin: budget.handoffMargin,
       used,
+      raw,
       headroom,
       kind: 'stop',
       // **地板那一档**：不静默、不裁剪后照发（架构 § 8.12 那一条）。超了多少也要说出来。
       why:
-        `用了 ${used}（触发点 ${budget.trigger}），而交接还差 ${withHandoff - limit} 写不下` +
+        `用了 ${used}${note}（触发点 ${budget.trigger}），而交接还差 ${withHandoff - limit} 写不下` +
         `——交接余量 ${budget.handoffMargin} 也不够。到这里就停，不裁剪后照发。`,
     }
   }
@@ -166,9 +189,10 @@ export function planBudget(ask: BudgetAsk): BudgetPlan {
     trigger: budget.trigger,
     handoffMargin: budget.handoffMargin,
     used,
+    raw,
     headroom,
     kind: 'restart',
-    why: `用了 ${used}，过了触发点 ${budget.trigger}；交接提示词 ${handoff} 加余量 ${budget.handoffMargin} 塞得下（还剩 ${limit - withHandoff}）。`,
+    why: `用了 ${used}${note}，过了触发点 ${budget.trigger}；交接提示词 ${handoff} 加余量 ${budget.handoffMargin} 塞得下（还剩 ${limit - withHandoff}）。`,
   }
 }
 

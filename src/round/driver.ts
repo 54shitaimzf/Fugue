@@ -43,6 +43,7 @@ import type { Stub } from './execute.ts'
 import { HarnessError, createRuntime } from '../runtime/step.ts'
 import type { AgentHandle, CallModel, StepResult, ToolExecutor } from '../runtime/step.ts'
 import { planBudget } from '../runtime/budget.ts'
+import { calibrate, ratioOf, truthOf } from '../runtime/calib.ts'
 import { assemble } from '../assemble/assemble.ts'
 import { sourcesFor } from '../assemble/sources.ts'
 import type { Prefix } from '../assemble/contract.ts'
@@ -476,6 +477,8 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
 
   const commits: LogSeq[] = []
   const handoffs: string[] = []
+  /** 这一格已经量到的那些比值（真 ÷ 估；每次调用最多加一份）。 */
+  const ratios: number[] = []
   let handle: AgentHandle = { ...ask.handle, agent, state: ask.state }
   let steps = 0
   let handedOff = false
@@ -485,13 +488,15 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
   for (;;) {
     // **这里不给工具目录那一段**（`tools: ''`）：循环这一层不认识目录，给了它等于把公布面绑进
     // 运行时。派发前那一份占用（`occupancyOf`）把目录算了进去，于是那一个是完整的一笔、这一个
-    // 差了目录那一段。判"该不该交接"用的是这一笔，所以它偏松的一侧。
+    // 差了目录那一段。判"该不该交接"用的是这一笔，所以它偏松的一侧——而真读数会把这段差补回来
+    // （用量里带着工具 schema，比值吸收的就是它）。
     const budget = planBudget({
       decl: ask.decl,
       prefix: prefixOf(handle),
       tools: '',
       seed: goalOf(contract),
       handoff: '',
+      calib: calibrate(ratios),
     })
     if (budget.kind === 'stop') {
       stopped = budget.why
@@ -504,6 +509,10 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       stopped = `${r.outcome.error.why}：${r.outcome.error.message}`
       break
     }
+    // **真读数修正下一次判**（架构 § 8.15 的 `usage` 是唯一权威）：这一趟的用量与刚才那一笔估账
+    // 比一次。真读数在调用之后才有，所以它改的是下一步，不是当步；没有读数就不修。
+    const ratio = ratioOf(truthOf(r.outcome.usage), budget.raw)
+    if (ratio !== null) ratios.push(ratio)
     handle = { ...handle, state: r.next }
     if (r.outcome.kind === 'done') break
     // **交一次就够**（缺省只交一次）：触发点是一个数，而"这一格该不该换人"不是每一步都重新判的
