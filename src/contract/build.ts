@@ -107,6 +107,12 @@ export interface BuildDeps {
   /** 一份种子的量怎么算（token）。不给就量指针清单（`seedTokensOf`）。 */
   readonly seedTokens?: (paths: readonly RelPath[]) => number
   readonly seedLimit?: number
+  /**
+   * **声明的模型上限**（`ModelDecl.contextLimit`）。`seed` 那一条的算式要它——`contract/` 不认识
+   * 模型目录（那是 `model/contract.ts` 那一层的事），所以由调用方取一次给它。不给就走
+   * `DEFAULT_MODEL_LIMIT`：那一个是这一份的缺省，不是任何一个模型的声明。
+   */
+  readonly modelLimit?: number
 }
 
 /** 一次构造的产出：那几份值，加一句"逐字段核对过"。 */
@@ -163,7 +169,10 @@ function assertSeedFits(seed: readonly RelPath[], limit: number, tokens: (p: rea
 }
 
 /** 逐字段调用各持有者的检查，报出来就退回。**不落地。** */
-function validate(contracts: readonly Contract[], ctx: { seedTokens: (p: readonly RelPath[]) => number; seedLimit: number }): void {
+function validate(
+  contracts: readonly Contract[],
+  ctx: { seedTokens: (p: readonly RelPath[]) => number; seedLimit: number; modelLimit?: number },
+): void {
   const problems: string[] = []
   for (const c of contracts) {
     for (const m of checkContract(c, ctx)) problems.push(`${c.id}：${m}`)
@@ -198,7 +207,12 @@ export function build(intent: Intent, deps: BuildDeps): Built {
   need('轮次号', deps.round)
   need('钉住的底', deps.base)
 
-  const limit = deps.seedLimit ?? seedLimitOf({ seedLimit: deps.seedLimit })
+  // **上限只有一处算式**（`seedLimitOf`）：明写的 `seedLimit` 最优先（只可收窄），否则按**声明的**
+  // 模型上限算——不是 `DEFAULT_MODEL_LIMIT`（那一个是这一份的缺省，而这里手上有一份真声明）。
+  const limit = seedLimitOf({
+    ...(deps.modelLimit === undefined ? {} : { modelLimit: deps.modelLimit }),
+    ...(deps.seedLimit === undefined ? {} : { seedLimit: deps.seedLimit }),
+  })
   const tokens = deps.seedTokens ?? seedTokensOf
   const out: Contract[] = []
   const seedTokens: number[] = []
@@ -289,7 +303,11 @@ export function build(intent: Intent, deps: BuildDeps): Built {
 
   const bad = variantFieldsMatch(VARIANT_FIELDS, out)
   if (bad.length > 0) throw new BuildError(`造出来的契约与三个变体的字段表对不上：\n  ${bad.join('\n  ')}`)
-  validate(out, { seedTokens: tokens, seedLimit: limit })
+  validate(out, {
+    seedTokens: tokens,
+    seedLimit: limit,
+    ...(deps.modelLimit === undefined ? {} : { modelLimit: deps.modelLimit }),
+  })
 
   const counts: Record<Contract['kind'], number> = { implement: 0, investigate: 0, resolve: 0 }
   for (const c of out) counts[c.kind]++

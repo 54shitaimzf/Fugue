@@ -254,6 +254,26 @@ test('③ seed 超限 → 拒绝派发，不裁剪后照发', () => {
   assert.ok(got instanceof BuildError, '超限那一档没有抛出来')
 })
 
+test('③b 声明的上限接进 seed 那一条：8 000 的声明算出地板 0，当场报超限', async () => {
+  const seed = ['src/parse.ts'] as readonly RelPath[]
+  // 走的是**同一条算式**（`seedLimitOf`）：8 000 − Zone A 640 − 交接余量 16 000 < 0 → 地板 0。
+  const tiny = await gateOf(
+    { from: 'split', intent: INTENT, split: SPLIT, seeds: [seed, seed, seed] },
+    { ...gateDeps(), modelLimit: 8_000 },
+  )
+  assert.equal(tiny.held, false, '8 000 那一档该当场拒')
+  assert.equal(tiny.built, null)
+  assert.match(tiny.problems.join('\n'), /上限 0 token/, `报出来的上限不是那条算式给的：${tiny.problems.join(' / ')}`)
+  // **负对照**：同一批，声明换成 1 000 000 那一档 → 停在门口，上限就是那条算式的结果。
+  const oneM = await gateOf(
+    { from: 'split', intent: INTENT, split: SPLIT, seeds: [seed, seed, seed] },
+    { ...gateDeps(), modelLimit: 1_000_000 },
+  )
+  assert.equal(oneM.held, true, `1 000 000 那一档该停在门口：${oneM.problems.join(' / ')}`)
+  assert.equal(oneM.built?.seedLimit, 904_000)
+  console.log(`③b 读数：8 000 的声明 → 上限 0（${tiny.problems[0]}）· 1 000 000 的声明 → 上限 ${oneM.built?.seedLimit}`)
+})
+
 test('构造器不猜、不补：草案缺键就退回，且退回的话指得出是哪一份', () => {
   // 零条断言：拒。
   assert.throws(() => build(INTENT, deps({ split: [{ goal: 'g', ownedPaths: ['src/a'], assertions: [] }] })), /没有断言/)

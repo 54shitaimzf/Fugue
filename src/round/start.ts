@@ -101,7 +101,14 @@ export interface RoundStartDeps {
   readonly seedTokens?: (paths: readonly RelPath[]) => number
   readonly seedLimit?: number
   /**
-   * 第 `n` 个 agent 的日志口。**`mat/fork` 落在那个 agent 自己的日志里**，所以物化那一步要它。
+   * **声明的模型上限**（`ModelDecl.contextLimit`）。`seed` 那一条的算式要它——它是"模型上限 −
+   * Zone A − 交接余量"的第一个数，而这一份不认识模型目录：命令面那一层取一次递下来（`round new` ·
+   * `round run` · `round go` 三处递的是同一个数）。
+   */
+  readonly modelLimit?: number
+  /**
+   * 第 `n` 个 agent 的日志口。
+**`mat/fork` 落在那个 agent 自己的日志里**，所以物化那一步要它。
    * 不给就是“这一轮不物化”（`materialize` 也就无从谈起）。
    */
   readonly logForAgent?: (a: AgentId) => Log
@@ -162,6 +169,7 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
       ...(deps.actionOutputsOf === undefined ? {} : { actionOutputsOf: deps.actionOutputsOf }),
       ...(ruler === null ? { seedTokens: deps.seedTokens } : { seedRuler: ruler }),
       ...(deps.seedLimit === undefined ? {} : { seedLimit: deps.seedLimit }),
+      ...(deps.modelLimit === undefined ? {} : { modelLimit: deps.modelLimit }),
     },
   )
   if (!gate.held || gate.built === null || gate.precheck === null) {

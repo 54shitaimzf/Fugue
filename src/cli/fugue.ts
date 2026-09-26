@@ -853,6 +853,8 @@ async function roundCmd(
       seeds: [] as readonly RelPath[],
       // 物化那一档：每一条分支一个口，那个 agent 自己的日志。
       logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
+      // **声明的上限接进 `seed` 那一条**：这一档没有种子（`seeds: []`），但读数那一行印的就是它。
+      modelLimit: modelLimitOf(),
       materialize,
     })
     if (json) {
@@ -1070,6 +1072,8 @@ async function roundRun(
       seeds: [] as readonly RelPath[],
       logForAgent: agentLogOf,
       materialize: flags.has('materialize'),
+      // **声明的上限接进 `seed` 那一条**：与 `round new` / `round go` 递的是同一个数。
+      modelLimit: modelLimitOf(),
       // **两条路在 `runRound` 眼里没有区别**（同一个 `AgentDriver`）：打桩那一档把 `Stub` 包
       // 一层（S7 定下的那个形状不动），真驱动那一档走 `realDriver` + `DriverSupport`。凭据那一
       // 步只在这一档走（不打 `--live` 的话 `driverSupport` 一次都不被调）。
@@ -1717,6 +1721,8 @@ async function roundGo(root: string, flags: Map<string, string | true>, args: st
       // **与判那一趟同一个分配器**（`round plan` 那一趟用的是同一个 `identFor`）。
       identityFor: (n: number) => identFor(round, n),
       actions: actionsTableOf(doc),
+      // **声明的上限接进 `seed` 那一条**：判那一趟（`round plan`）读的是同一份声明。
+      modelLimit: modelLimitOf(),
       materialize,
       logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
     })
@@ -2361,6 +2367,17 @@ function publishedCatalog(): ReturnType<typeof catalog> {
  * 一个目标，出网那一刻用的就是它。头的名字按**这一条线协议**给（`wireHeader`）——两条线各一套
  * 头，那一栏的差别不是这里的分岔。
  */
+/**
+ * 声明里那一份**模型上限**（`ModelDecl.contextLimit`）。
+ *
+ * **`seed` 那一条的算式要它**：`contract/` 不认识模型目录，所以由命令面这一层取一次递下去。
+ * 三处（`round new` · `round run` · `round go`）递的是同一个数——三处各自读一次声明的话，
+ * "发给模型的那个上限"与"判种子的那个上限"会静默分家。
+ */
+function modelLimitOf(): number {
+  return modelDeclOf(DEFAULT_MODEL.id).contextLimit
+}
+
 export function driverSupport(o: {
   readonly root: string
   readonly doc: ConfigDoc

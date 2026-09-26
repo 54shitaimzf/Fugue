@@ -88,6 +88,11 @@ export interface GateDeps {
   /** 已经量好的一份量法（测试与"从别的树取"那一档从这个口进来）。 */
   readonly seedTokens?: (paths: readonly RelPath[]) => number
   readonly seedLimit?: number
+  /**
+   * **声明的模型上限**（`ModelDecl.contextLimit`）。`seed` 那一条的算式按它算——不给就走这一份的
+   * 缺省（`DEFAULT_MODEL_LIMIT`），那不是一个真声明里的数。
+   */
+  readonly modelLimit?: number
 }
 
 /** 一次判的答案。**`held` 为真时 `built` 就是门后面那一批契约值**——一个字节都没发。 */
@@ -265,6 +270,7 @@ export async function gateOf(input: GateInput, deps: GateDeps): Promise<GateVerd
         ...(actionOutputsOf === undefined ? {} : { actionOutputsOf }),
         seedTokens: tokens,
         ...(deps.seedLimit === undefined ? {} : { seedLimit: deps.seedLimit }),
+        ...(deps.modelLimit === undefined ? {} : { modelLimit: deps.modelLimit }),
       })
     } catch (err) {
       if (!(err instanceof BuildError)) throw err

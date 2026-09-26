@@ -205,6 +205,26 @@ test('⑤ 超限拒绝派发：闸是按内容量的那一份判的，不是按�
   }
 })
 
+test('⑥ 声明的上限接进 seed 那一条：8 000 的声明把种子顶穿（不是缺省的 904 000）', async () => {
+  const b = await bench()
+  try {
+    await assert.rejects(
+      () => startRound(startDeps(b, SEED, { modelLimit: 8_000 })),
+      (err: Error) => {
+        assert.match(err.message, /种子超限：\d+ token > 上限 0 token/, `报的不是地板 0 那一档：${err.message}`)
+        return true
+      },
+      '声明给到 8 000，而 seed 那条算式照旧走缺省那一档',
+    )
+    // **负对照**：不递那一栏 → 缺省那一档（1 000 000 − 80 000 − 16 000 = 904 000）照旧派得出去。
+    const started = await startRound(startDeps(b, SEED))
+    assert.equal(started.built.seedLimit, 904_000)
+    console.log(`⑥ 读数：8 000 的声明 → 上限 0（种子当场顶穿）· 不递那一栏 → 上限 ${started.built.seedLimit}`)
+  } finally {
+    await b.close()
+  }
+})
+
 test('④ 清单里混一条不在底上的：它只算自己那一行，而 missing 点名了它', async () => {
   const b = await bench()
   try {

@@ -236,6 +236,8 @@ export interface DispatchDeps {
   /** 绑好的动作表（配置里 `actions.<名字>`）：持轮者给的断言只能从这里选，不猜、不补。 */
   readonly actions?: Readonly<Record<string, readonly RelPath[]>>
   readonly seedLimit?: number
+  /** **声明的模型上限**（`ModelDecl.contextLimit`）：`seed` 那条算式按它算，不按这一份的缺省。 */
+  readonly modelLimit?: number
   readonly logForAgent?: (a: AgentId) => Log
   readonly materialize?: boolean
   readonly forkOpt?: typeof DEFAULT_MATERIALIZE
@@ -293,6 +295,7 @@ export async function dispatchRound(deps: DispatchDeps): Promise<Dispatched> {
       ...(deps.actions === undefined ? {} : { actions: deps.actions }),
       seedRuler: ruler as SeedMeasurer,
       ...(deps.seedLimit === undefined ? {} : { seedLimit: deps.seedLimit }),
+      ...(deps.modelLimit === undefined ? {} : { modelLimit: deps.modelLimit }),
     },
   )
   if (!gate.held || gate.built === null || gate.precheck === null) {

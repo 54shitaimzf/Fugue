@@ -200,7 +200,7 @@ async function wiringOf(
 async function plan(
   b: Bench,
   sections: readonly Record<string, unknown>[],
-  opts: { readonly declare?: boolean; readonly judge?: boolean; readonly path?: RelPath } = {},
+  opts: { readonly declare?: boolean; readonly judge?: boolean; readonly path?: RelPath; readonly decl?: ModelDecl } = {},
 ): Promise<PlanResult> {
   const { handle, sub } = holderOf(b)
   // **一份视图，两处用**（写它的那一份与判它那一份是同一个对象）：调用点那一侧按 `base` 记着。
@@ -210,6 +210,7 @@ async function plan(
     return view
   }
   const { execute } = await wiringOf(b, await viewOf(b.base))
+  const decl = opts.decl ?? DECL
   const text = draftText(sections)
   const path = opts.path ?? draftPathOf(ROUND)
   const write: ModelEvent[] = [...callOne(0, 'c1', 'write', { path, content: text }), { t: 'usage', usage: USAGE }, { t: 'stop', reason: 'tool-calls', raw: 'tool_use' }]
@@ -228,7 +229,7 @@ async function plan(
     round: ROUND,
     goal: '把解析器拆出来',
     handle,
-    decl: DECL,
+    decl,
     call: scriptedModel([write, end]),
     execute,
     tools: CATALOG,
@@ -239,7 +240,7 @@ async function plan(
     actions: { ok: [] as readonly RelPath[] },
     ...(opts.judge === true ? { judgeOnly: true } : {}),
     occupancy: {
-      decl: DECL,
+      decl,
       base: sub,
       goal: '把解析器拆出来',
       round: ROUND,
@@ -497,6 +498,27 @@ test('⑧ 版本链：每一版记着它从哪一版改出来的（第一版没�
       `⑧ 读数：三版 · 第 1 版无 against · 第 2 版 ← ${String(distills[1]?.against)} · ` +
         `第 3 版 ← ${String(distills[2]?.against)}（第 3 版与第 2 版指纹相同）`,
     )
+  } finally {
+    await b.log.close()
+    await b.truth.close()
+  }
+})
+
+test('⑨ 声明的上限接进 seed 那一条：一份 8 000 的声明把种子上限压到地板 0', async () => {
+  const b = await bench()
+  try {
+    const seed = ['src/later.ts'] as readonly RelPath[]
+    // 声明里是 8 000：8 000 − Zone A 640 − 交接余量 16 000 < 0 → 地板 0，而种子非空 → 当场拒。
+    const tiny = { ...DECL, contextLimit: 8_000, budget: { trigger: 2_800, handoffMargin: 1_000 } }
+    const bad = await plan(b, [section({ seed })], { declare: true, decl: tiny })
+    assert.equal(bad.held, false, '8 000 那一档该当场拒')
+    assert.equal(bad.gate.built, null)
+    assert.match(bad.gate.problems.join('\n'), /上限 0 token/, `报出来的上限不是那条算式给的：${bad.gate.problems.join(' / ')}`)
+    // **负对照**：同一份草案 · 换回真那一份声明（1 000 000）→ 停在门口，上限就是那条算式的结果。
+    const ok = await plan(b, [section({ seed })], { declare: true })
+    assert.equal(ok.held, true, `1 000 000 那一档该停在门口：${ok.gate.problems.join(' / ')}`)
+    assert.equal(ok.gate.built?.seedLimit, 904_000)
+    console.log(`⑨ 读数：8 000 的声明 → 上限 0（${bad.gate.problems[0]}）· 1 000 000 的声明 → 上限 ${ok.gate.built?.seedLimit}`)
   } finally {
     await b.log.close()
     await b.truth.close()

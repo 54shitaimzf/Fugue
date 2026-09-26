@@ -487,6 +487,9 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
       identityFor: deps.identityFor,
       actions: deps.actions,
       seedRuler: ruler,
+      // **声明那一份上限接进 `seed` 那一条**（`PlanDeps.decl` 原先只喂占用估账）：上界是
+      // "模型上限 − Zone A − 交接余量"，而"模型上限"这一栏只有调用方手上那份声明里有。
+      modelLimit: deps.decl.contextLimit,
     },
   )
 
