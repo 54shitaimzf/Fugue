@@ -505,6 +505,11 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     // ——反复交接会把同一格切成三四段，而每一段都要重读一遍 Zone A + Zone B。
     if (!handedOff && budget.kind === 'restart' && ask.handoff !== false) {
       // 交接：写一条 `agent/handoff`，把状态交给后继（同一分支上换一个 `AgentId`）。
+      // 交接只有子 agent 那一格会走（持轮者那一格没有契约、也没有交接），所以坐标一定在——
+      // 但类型上是 `| null`，这里当场说清"缺了它就没法给后继拼产物路径"（架构 § 8.11 的 B 区）。
+      if (handle.coord === null) {
+        throw new HarnessError('no-coord', '这一格没有坐标：交接要拿它给后继拼产物路径（架构 § 8.11）')
+      }
       const successor = `${agent}-${steps + 1}`
       const out = await handoffAt({
         log,

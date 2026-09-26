@@ -55,7 +55,16 @@ import type { ModelId } from './contract.ts'
  */
 export interface AgentHandle {
   readonly agent: AgentId
-  readonly coord: AgentCoord
+  /**
+   * 这一格的坐标（产物路径那一栏来自它）。**持轮者那一格是 `null`**（架构 § 8.11：它手里是
+   * 全部契约，不是一份），于是「我的任务」那一段的产物路径没有来源——而持轮者那一份协议里
+   * 本来就没有那一段（`sourcesFor` 的 `who` 那一栏同一个意思）。
+   *
+   * 它是 `| null` 而不是"给一个空坐标"：空坐标是一条**假**的坐标（它说这个 agent 没有产物
+   * 路径），而"没有 agent 这一栏"与"这个 agent 的产物路径是空的"是两件事——差别只在将来
+   * 有人往持轮者那份协议里加一段读坐标的段时才会现形，而那时它是一个静默的错误。
+   */
+  readonly coord: AgentCoord | null
   readonly branch: BranchId
   readonly contract: ContractId
   readonly protocol: Protocol
