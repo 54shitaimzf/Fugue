@@ -7,7 +7,8 @@
 //      不尝试修复。先卸后删是硬顺序（见 `mount.ts`）。
 //   2. **要一份平台事实，选一档**（`capability.ts`）。点名的档不可用 → 拒绝；没点名就退档。
 //   3. **底就位**：`overlayfs` 档什么都不铺，把真实工作树挂进来（§ 8.4：不复制、不搬运，
-//      于是 fork 的代价与仓库规模无关）；另两档把底真的铺一份（`lay.ts`）。
+//      于是 fork 的代价与仓库规模无关）——**挂上之后把那两条工作区自己的本子遮掉**（见
+//      `maskWorkspaceState`）；另两档把底真的铺一份（`lay.ts`），那两档由 `skip` 直接不铺。
 //   4. **落 `mat/fork`**。`paths` 恒为空——**清单记的是变化，不是铺设**（§ 8.5）：
 //      底是真实工作树，`fork` 什么都没"铺"过，本 agent 的改动由 `mat/sync` 逐次带上。
 //
@@ -39,7 +40,7 @@ import type { MaterializeOptions } from './contract.ts'
 import { WORKSPACE_STATE } from './diffstat.ts'
 import { LayError, layTree } from './lay.ts'
 import type { LayResult } from './lay.ts'
-import { clearMaterialization, mountOverlayReady } from './mount.ts'
+import { clearMaterialization, makeWhiteout, mountOverlayReady } from './mount.ts'
 import type { MountMode, OverlaySpec } from './mount.ts'
 
 /** 这一档现在不成立。**不是异常，是一次有由头的拒绝**——由头原样带给调用点。 */
@@ -107,7 +108,7 @@ export async function fork(
   let p = wipe(roots, agent)
   let laid: LayResult | null
   try {
-    laid = applyOnce(chosen.choice, roots, p, opt)
+    laid = applyOnce(chosen.choice, roots, p, opt, facts)
   } catch (err) {
     const fresh = await ensureFacts(deps.root, roots.realRoot, scratch, true)
     const again = chooseStrategy(fresh, opt)
@@ -119,7 +120,7 @@ export async function fork(
     facts = fresh
     chosen = again
     p = wipe(roots, agent)
-    laid = applyOnce(chosen.choice, roots, p, opt)
+    laid = applyOnce(chosen.choice, roots, p, opt, facts)
   }
 
   const ms = Math.round(performance.now() - started)
@@ -151,11 +152,13 @@ function applyOnce(
   roots: Roots,
   p: { upper: AbsPath; merged: AbsPath; temp: AbsPath },
   opt: MaterializeOptions,
+  facts: PlatformFacts,
 ): LayResult | null {
   if (choice.strategy === 'overlayfs') {
     if (choice.mount === null) throw new Error('内部不一致：overlayfs 档没有报出挂载门路')
     const spec: OverlaySpec = { lower: roots.realRoot, upper: p.upper, work: join(p.temp, 'work'), merged: p.merged }
     mountOverlayReady(spec, choice.mount)
+    maskWorkspaceState(roots.realRoot, p.upper, facts.whiteout)
     return null
   }
   try {
@@ -169,5 +172,31 @@ function applyOnce(
       throw new LayError(err.path, `${err.message.split('：').slice(1).join('：')}（底：${roots.realRoot}）`)
     }
     throw err
+  }
+}
+
+/**
+ * **合并视图那一侧**：`WORKSPACE_STATE`（`.git` · `.fugue`）那两条名字在三档上都要取不到。
+ *
+ * 铺树那两档走 `layTree` 的 `skip`（顶层不铺那两条）；`overlayfs` 档的底是把真实工作树**整个
+ * 挂进来**（§ 8.4：不复制、不搬运），没有"铺"这一步——所以要在挂上之后给那两条名字各造一条
+ * **whiteout**（字符设备 0:0）。它就是 overlayfs 眼里的"这儿没有"，与 `land.ts` 落删除走的是
+ * 同一条门路；`capability.ts` 的 `whiteout` 那一档已经在探它（造不出来的机器上 overlayfs 这一档
+ * 本来就不成立：删除落不了地），所以这里不问"造不造得出"，只问底下有没有那两条。
+ *
+ * **只遮底下真有的那两条。** 底里没有的，造一条 whiteout 是往 `upper` 里多留一条墓碑——而
+ * `upper` 是"这一格改了什么"的落地根（`verify.ts` 与 `reclaim.ts` 都在枚举它）。口径与
+ * `skip` 一致：跳的是"工作区自己的本子这两条名字"，不是"盘上有没有"。
+ *
+ * **代价如实记**（PLAN § 5.12 序 11）：格内 `git` 从此取不到仓库——它今天读到的是真实工作树那
+ * 一份。要给模型一份 git 是另一件事（借一份只读的、或者格内自己 `git init`），不归这一格。
+ */
+function maskWorkspaceState(realRoot: AbsPath, upper: AbsPath, mode: MountMode | null): void {
+  // 选档那一处已经把"造不造得出 whiteout"问过了（`capability.ts`：造不动就没有 overlayfs 这一
+  // 档）。走到这儿还是 `null`，说明档与事实对不上——那是程序错，不是环境问题。
+  if (mode === null) throw new Error('内部不一致：overlayfs 档没有报出造 whiteout 的门路')
+  for (const name of WORKSPACE_STATE) {
+    if (!existsSync(join(realRoot, name))) continue
+    makeWhiteout(join(upper, name), mode)
   }
 }

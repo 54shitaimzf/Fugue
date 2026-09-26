@@ -10,7 +10,8 @@
 // 源，比的是一个摘要——所以它不是自己跟自己比。
 //
 // **比的是"base 的路径空间"**（§ 8.5 的差异集口径）：物化树里那些 base 不认识的路径
-// （`.git` · `.fugue`，overlayfs 档里它们天然可见）不进比较。判据是路径集合相等 + 逐条
+// （`.git` · `.fugue`）不进比较，而且它们**三档都取不到**（overlayfs 档的底是整个挂进来的，
+// 那两条由 `fork` 在挂上之后遮掉，见 `maskWorkspaceState`）。判据是路径集合相等 + 逐条
 // (mode, 内容哈希) 相等。
 //
 // **`unshare -Ur` 那一条断言是有意的**（④）：一个"userns 里没有 overlay、sudo 也不通"的
@@ -20,7 +21,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync, appendFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync, appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, test } from 'node:test'
@@ -274,6 +275,12 @@ test('③ hardlink-ro 档：只链声明过的只读子树，穿透与不穿透�
     // 没声明的：独立的一份。
     assert.notEqual(statSync(join(res.merged, 'src/a.ts')).ino, statSync(join(f.dir, 'src/a.ts')).ino)
 
+    // **`WORKSPACE_STATE` 那两条这一档也取不到**（铺树那两档由 `layTree` 的 `skip` 直接不铺）。
+    // 三档各一句：② 是 copy · 这里是 hardlink-ro · ⑤ 是 overlayfs。
+    for (const s of WORKSPACE_STATE) {
+      assert.equal(existsSync(join(res.merged, s)), false, `hardlink-ro 档里 ${s} 不该可见`)
+    }
+
     // 负对照一 · 穿透是真的：就地写链上那条，底里那条跟着变（§ 8.5 硬链接纪律的原文）。
     const before = statSync(join(f.dir, 'vendor/lib.txt')).size
     appendFileSync(join(res.merged, 'vendor/lib.txt'), '污染\n')
@@ -362,6 +369,17 @@ test('⑤ overlayfs 档：挂上、哈希相等、挂载与落地互斥、重挂
     assert.equal(isMounted(res.merged), true)
     assert.equal(digest(await fromTree(res.merged)), digest(await fromCommit(f.dir, f.commit)))
 
+    // **`WORKSPACE_STATE` 在 overlayfs 档上也取不到**（序 11 收口的那一条）。这一档的底是把真实
+    // 工作树**整个挂进来**，没有"铺"这一步，所以 `layTree` 的 `skip` 管不到它——那两条名字要在
+    // 挂上之后造一条 whiteout 遮掉（`maskWorkspaceState`）。今天只有 copy 那一档（②）有这两句。
+    for (const s of WORKSPACE_STATE) {
+      assert.equal(existsSync(join(f.dir, s)), true, `底下真有 ${s}——不然下面那条量不到东西`)
+      assert.equal(existsSync(join(res.merged, s)), false, `overlayfs 档里 ${s} 不该可见`)
+      // 遮它的那一条就在 `upper` 里：字符设备 0:0，overlayfs 眼里的"这儿没有"。
+      const wo = lstatSync(join(roots.scratchRoot(AGENT), s))
+      assert.equal(wo.isCharacterDevice() && wo.rdev === 0, true, `${s} 在 upper 里该是一条 whiteout`)
+    }
+
     // 断言③：挂载与落地互斥。
     //
     // **口径按实测收窄了一格**（V2 的读数，内核 6.18）：挂载态从外部写 `upper` 之后，
@@ -394,6 +412,16 @@ test('⑤ overlayfs 档：挂上、哈希相等、挂载与落地互斥、重挂
     assert.equal(stale, 0, `卸载重挂后该 ${tweaked.length} 个都看得见新内容`)
     for (const n of added) assert.equal(existsSync(join(res.merged, n)), true, `${n} 重挂后要可见`)
     assert.equal(digest(await fromTree(res.merged)) === digest(await fromCommit(f.dir, f.commit)), false, '改过之后当然不再等于 base 的树')
+
+    // **负对照：把那条遮挡拿掉 → 底下那两条又透上来。** 拿掉的不是"某一句判据"，是那一条
+    // whiteout 自己：`upper` 里删掉它、卸挂再挂上（挂载态下 dcache 的行为见上面那段读数）。
+    // 这一条量与不量是两回事——它证明上面那句"取不到"来自这条遮挡，不是底里本来就没有。
+    for (const s of WORKSPACE_STATE) unlinkSync(join(upper, s))
+    unmountOverlay(res.merged)
+    mountOverlay(spec(), res.mount ?? 'direct')
+    for (const s of WORKSPACE_STATE) {
+      assert.equal(existsSync(join(res.merged, s)), true, `遮挡拿掉之后 ${s} 该又看得见（负对照）`)
+    }
   } finally {
     clearMaterialization(roots.mergedRoot(AGENT), [roots.scratchRoot(AGENT), roots.mergedRoot(AGENT), roots.tempRoot(AGENT)])
     await log.close()

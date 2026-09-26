@@ -38,6 +38,7 @@ import { lstatSync, readFileSync, readlinkSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { normMode } from '../delta.ts'
 import type { Delta } from '../delta.ts'
+import { WORKSPACE_STATE } from '../materialize/diffstat.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { DirEntry, EntryMeta } from '../entries.ts'
 import type { AbsPath, AgentId, CommitId, ForkStrategy, RelPath } from '../terms.ts'
@@ -428,6 +429,10 @@ function leavesUnder(root: string): RelPath[] {
   const out: RelPath[] = []
   const walkUpper = (dir: string, prefix: RelPath): void => {
     for (const name of readdirSync(dir).sort()) {
+      // **`WORKSPACE_STATE` 那两条不算"未声明却被改动"**：它们在上层里是 `fork` 有意遮出来的
+      // 那两条 whiteout（序 11 收口的一处，见 `fork.ts` 的 `maskWorkspaceState`），不是子进程
+      // 的改动。与 `scanTree` 的 `skip` 同一把尺子——两侧都跳顶层那两条名字。
+      if (prefix === '' && WORKSPACE_STATE.includes(name)) continue
       const abs = join(dir, name)
       const rel = prefix === '' ? name : `${prefix}/${name}`
       const st = lstatSync(abs)

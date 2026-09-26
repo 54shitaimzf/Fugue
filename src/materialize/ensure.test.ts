@@ -200,6 +200,9 @@ function upperLeaves(upper: string): { files: RelPath[]; whiteouts: RelPath[] } 
   const walk = (rel: RelPath): void => {
     const abs = rel === '' ? upper : join(upper, rel)
     for (const name of readdirSync(abs)) {
+      // **`WORKSPACE_STATE` 那两条不算**：它们在上层里是 `fork` 有意遮出来的那两条 whiteout
+      // （序 11），不是这一趟落下去的变化——与 `scanTree` 的 `skip` 同一把尺子。
+      if (rel === '' && WORKSPACE_STATE.includes(name)) continue
       const child = rel === '' ? name : `${rel}/${name}`
       const st = lstatSync(join(upper, child))
       if (st.isDirectory()) walk(child)

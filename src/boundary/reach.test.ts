@@ -32,6 +32,7 @@ import {
   runEscapeTable,
   type EscapeFixture,
 } from './escape.ts'
+import { WORKSPACE_STATE } from '../materialize/diffstat.ts'
 import { resolvePolicy } from './policy.ts'
 import type { ReachSpec } from './reach.ts'
 
@@ -186,11 +187,18 @@ after(() => {
   }
 })
 
-/** `upper` 里落下的**文件**（目录不算：声明目录的挂载点是预建的，它本来就该在）。 */
+/**
+ * `upper` 里落下的**文件**（目录不算：声明目录的挂载点是预建的，它本来就该在）。
+ *
+ * **`WORKSPACE_STATE` 那两条顶层名字也不算**：它们是 `fork` 有意遮出来的那两条 whiteout
+ * （序 11 收口的一处，见 `fork.ts` 的 `maskWorkspaceState`），不是这一趟子进程写下的东西——
+ * 与 `scanTree` 的 `skip` 同一把尺子。
+ */
 function filesUnder(dir: string): string[] {
   const out: string[] = []
   const walk = (d: string): void => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (d === dir && WORKSPACE_STATE.includes(e.name)) continue
       const p = join(d, e.name)
       if (e.isDirectory()) walk(p)
       else out.push(p.slice(dir.length + 1))
@@ -258,11 +266,17 @@ test('Y3 ① · 六条泄漏用例全部翻成"拒"，且 `ls /` 只剩清单那
     '`ls /` 只剩清单那几条',
   )
 
-  // 掩码那两块的读数：树里那一支在子进程眼里**空且只读**（`--tmpfs` + `--remount-ro`）。
+  // 掩码那一块的读数：树里那一支在子进程眼里**取不到**。两种情形各是一句话：
+  //   · 底下真有那一支（老铺法 · 别处造的树）→ `--tmpfs` + `--remount-ro`：空且只读（EROFS）；
+  //   · 底下没有（`fork` 把 `WORKSPACE_STATE` 从合并视图里遮掉了）→ 连挂载点都没有，`confine`
+  //     也就不挖它（这一档的读数因此是 ENOENT）。
+  // 这一趟量到的是第二种，前提单独钉一句——不然"取不到"分不清是遮住了、还是本来就没有。
   const mask = m.fx.policy.reach.mask.map((x) => join(m.fx.policy.coords.tree, x))
+  assert.equal(existsSync(join(m.root, '.fugue')), true, '真实工作树里那一支在（不然下面量的是空气）')
+  assert.equal(existsSync(join(m.fx.roots.mergedRoot(AGENT), '.fugue')), false, '合并视图里那一支不在')
   const probe = runConfined(m, m.fx.policy.reach, ['sh', '-c', `ls -a ${mask[0]}; echo x > ${mask[0]}/x`])
-  assert.equal(lastLine(probe.stderr), `sh: 1: cannot create ${mask[0]}/x: Read-only file system`)
-  assert.equal(probe.stdout.trim(), '.\n..', `${mask[0]} 在子进程眼里是空的`)
+  assert.equal(lastLine(probe.stderr), `sh: 1: cannot create ${mask[0]}/x: Directory nonexistent`)
+  assert.equal(probe.stdout.trim(), '', `${mask[0]} 在子进程眼里没有东西`)
 })
 
 test('Y3 ② · 正对照：真构建 + 真测试在沙箱里照跑得出，产物落声明目录、`upper` 里 0 个文件', () => {

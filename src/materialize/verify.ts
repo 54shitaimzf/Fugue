@@ -39,7 +39,7 @@ import type { Log } from '../log/events.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { AbsPath, AgentId, CommitId, ForkStrategy, RelPath, ViewRev } from '../terms.ts'
 import { diskEntry, hashOfState, portEntry, sameEntry } from './land.ts'
-import { scanTree } from './diffstat.ts'
+import { WORKSPACE_STATE, scanTree } from './diffstat.ts'
 import type { EntryState, ViewReads } from './land.ts'
 import { manifestMap, manifestPayload, matState } from './manifest.ts'
 import type { MatState } from './manifest.ts'
@@ -117,7 +117,10 @@ const sideOf = (m: ReadonlyMap<RelPath, string>): Side => manifestPayload(m)
  * 一条遍历、一条哈希：这三样在物化这一组里只该有一个定义。
  */
 function landRootLeaves(upper: AbsPath): Map<RelPath, string> {
-  return new Map(scanTree(upper).leaves.map((l) => [l.path, l.hash]))
+  // **`WORKSPACE_STATE` 那两条不进落地集**：它们在上层里那两条 whiteout 不是"这一格改了什么"，
+  // 是 `fork` 有意遮的（overlayfs 档挂上之后造的那两条，见 `fork.ts` 的 `maskWorkspaceState`）。
+  // 与差异集那一侧同一把尺子：真实工作树那一侧跳它们，落地根这一侧也跳。
+  return new Map(scanTree(upper, { skip: WORKSPACE_STATE }).leaves.map((l) => [l.path, l.hash]))
 }
 
 export async function verifyMat(deps: VerifyDeps, agent: AgentId): Promise<VerifyResult> {

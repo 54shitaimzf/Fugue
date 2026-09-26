@@ -38,6 +38,7 @@
 // `--hostname` 会被 bwrap 拒：`Specifying --hostname requires --unshare-uts`）；`--unshare-all`
 // 也没开——它顺手带走 IPC 与 UTS，比这一站要的多。这两条读数记在提交信息的疑点清单里。
 import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Roots } from '../roots/contract.ts'
 import type { AbsPath, AgentId, RelPath } from '../terms.ts'
@@ -172,7 +173,14 @@ export function confine(i: ConfineInput): ConfinedArgv {
   argv.push(writable ? '--bind' : '--ro-bind', merged, c.tree)
   // 树里挖掉那几块：**空且只读**。只 `--tmpfs` 的话那里写得进去，而"树只读"这句话就多出一个
   // 例外（实测：加上 `--remount-ro` 之后写它是 `Read-only file system`，宿主上一丝痕迹没有）。
+  //
+  // **树里没有那一条就不挖。** `--tmpfs` 要在那棵只读的树上自己建挂载点，建不出来就是
+  // `bwrap: Can't mkdir /work/.fugue: Read-only file system`（2026-09-26 实测）。这一条从此
+  // 是常态：`fork` 把 `WORKSPACE_STATE` 从**三档的合并视图**里遮掉了（`fork.ts` 的
+  // `maskWorkspaceState`），`.fugue` 在 `merged` 里本来就不在——挖的是"底下真有那一支"的情况。
+  // 挖与不挖两种情形下，`@work/.fugue/...` 那几条一律读不到东西（不在了 · 或者空且只读）。
   for (const m of reach.mask) {
+    if (!existsSync(join(merged, m))) continue
     const at = join(c.tree, m)
     argv.push('--tmpfs', at, '--remount-ro', at)
   }
