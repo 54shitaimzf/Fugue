@@ -10,13 +10,22 @@
 //   ② 用量缺项**不拿 0 顶**：没量到的进 `missing`，它与"量到 0"分得开
 //   ③ `denies` 与 `probe/round.ts` 数出来的 `denied` 同值（同一句话的第二处写法，钉住）
 //   ④ 同一串事件折两次 → 同一份快照（可复核性那条验证性质）
+//   ⑤ `readNew` 两趟不重不漏，**其中一条落在晚出现的 writer 上**——它就是全局 `fromSeq` 会漏掉的
+//      那一档（负对照：`readMerged(3)` 拿不到它）
+//   ⑥ `follow` 到点就停（信号拨一下），而且**两条读面都是纯读**：走一遍之后日志目录逐字节不变
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { LogEvent } from '../log/events.ts'
+import { openLog } from '../log/log.ts'
 import type { AgentId, RoundId } from '../terms.ts'
 import { computeMerged } from './round.ts'
-import { causeOf, linesOf, routeOf, statusOf } from './status.ts'
+import { causeOf, linesOf, routeOf, snapshot, statusOf } from './status.ts'
 import type { StatusRow } from './status.ts'
+import { follow, readNew } from './watch.ts'
 
 let seq = 0
 /** 一条 `round` 那一份上的事件（纯函数那几条用不着真日志）。 */
@@ -176,4 +185,91 @@ test('④ 同一串事件折两次 → 同一份快照', () => {
   assert.match(text, /状态 Rebuilding/)
   assert.match(text, /停：1 步 · 收敛/)
   assert.match(text, /cacheRead 1920/)
+})
+
+test('⑤ readNew 两趟不重不漏，晚出现的 writer 那一档在', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'status-'))
+  try {
+    const log = openLog(dir, { sync: 'each' })
+    const round = 'round' as never
+    await log.append(round, { t: 'round/intent', round: 'r1' as RoundId, digest: 'd', body: '{}' })
+    await log.append(round, { t: 'round/state', round: 'r1' as RoundId, from: 'Idle', to: 'Planning' })
+    await log.append(round, { t: 'round/state', round: 'r1' as RoundId, from: 'Planning', to: 'Delegated' })
+    // 第一趟：账上已有的三条。
+    const p1 = await readNew(log, {})
+    assert.equal(p1.rows.length, 3)
+    assert.deepEqual(p1.cursors, { round: 3 })
+    // 第二趟之前：**新开一个 writer**（第二个 agent 的日志口就是这么开的），它的第一条是 `seq = 1`。
+    await log.append('agent-2' as never, {
+      t: 'agent/stop',
+      agent: 'agent/r1/2' as AgentId,
+      steps: 2,
+      stopped: '收敛',
+      handoffs: 0,
+    })
+    await log.append(round, { t: 'round/state', round: 'r1' as RoundId, from: 'Delegated', to: 'Working' })
+    const p2 = await readNew(log, p1.cursors)
+    assert.equal(p2.rows.length, 2, '晚出现的 writer 那一条 + 老 writer 的那一条')
+    assert.deepEqual(
+      p2.rows.map((r) => `${r.pos.writer}/${r.pos.seq}`).sort(),
+      ['agent-2/1', 'round/4'],
+    )
+    assert.deepEqual(p2.cursors, { round: 4, 'agent-2': 1 })
+    // 第三趟：没有新的，一条都不给（游标不退回）。
+    const p3 = await readNew(log, p2.cursors)
+    assert.equal(p3.rows.length, 0)
+    assert.deepEqual(p3.cursors, p2.cursors)
+    // **负对照**：全局 `fromSeq` 那一条（`readMerged(3)`）拿不到 `agent-2/1`——它就是这一档会漏的
+    // 那一条。跟随的游标因此是**每 writer 一个**，不是全局一个。
+    const viaFromSeq: string[] = []
+    for await (const { pos } of log.readMerged(3)) viaFromSeq.push(`${pos.writer}/${pos.seq}`)
+    assert.deepEqual(viaFromSeq, ['round/4'], '全局 fromSeq 会把晚出现的 writer 整段漏掉')
+    await log.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('⑥ follow 到点就停；两条读面都是纯读（日志逐字节不变）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'status-'))
+  try {
+    const log = openLog(dir, { sync: 'each' })
+    const round = 'round' as never
+    for (const [from, to] of FULL.slice(0, 3)) {
+      await log.append(round, { t: 'round/state', round: 'r1' as RoundId, from: from as never, to: to as never })
+    }
+    await log.close()
+
+    /** 日志目录的指纹：文件名 + 字节（**读面走一遍之后必须一模一样**）。 */
+    const fingerprint = (): string => {
+      const h = createHash('sha256')
+      const walk = (d: string, prefix: string): void => {
+        for (const name of readdirSync(d).sort()) {
+          const p = join(d, name)
+          if (statSync(p).isDirectory()) walk(p, prefix + name + '/')
+          else h.update(prefix + name + '\0').update(readFileSync(p))
+        }
+      }
+      walk(join(dir, '.fugue'), '')
+      return h.digest('hex')
+    }
+    const before = fingerprint()
+
+    const ac = new AbortController()
+    const got: string[] = []
+    for await (const r of follow(openLog(dir), { intervalMs: 5, signal: ac.signal })) {
+      got.push(`${r.pos.writer}/${r.pos.seq}`)
+      if (got.length === 3) ac.abort()
+    }
+    assert.deepEqual(got, ['round/1', 'round/2', 'round/3'])
+
+    // 纯读两份一起看：`snapshot` 走一遍也不留痕迹。
+    const s = await snapshot(openLog(dir))
+    assert.equal(s.events, 3)
+    assert.equal(s.rounds[0]?.state, 'Working')
+
+    assert.equal(fingerprint(), before, '读面不许写日志（一个字节都不许）')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

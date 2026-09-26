@@ -101,6 +101,8 @@ import { tmpdir } from 'node:os'
 import { computeAll, reportOf } from '../probe/round.ts'
 import { computeAllMetrics, lineOf } from '../probe/metrics.ts'
 import { linesOf, snapshot } from '../probe/status.ts'
+import type { StatusRow } from '../probe/status.ts'
+import { follow, readNew } from '../probe/watch.ts'
 
 export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 
@@ -110,7 +112,12 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              状态机那一份图）· 每一格走到哪儿（调用 · 步数 · 工具调用 · 动作 ·
                              拒与被挡 · 停因）· 用量与条数（从日志重算，不采集）。**纯读**：
                              不开账本、不取锁、不新增事件——所以它落在哪一趟之后都不会让那一趟
-                             取的基线作废（PLAN § 5.18）。今天只有 --once 这一档
+                             取的基线作废（PLAN § 5.18）。今天只有 --once 这一档：跟随是下面那一条
+  watch [--follow]           顺着 NDJSON 账读：不给 --follow 就把账上有的念一遍就停，给了就一直
+                             跟着（--interval <毫秒>，缺省 200；Ctrl-C 停，退出码 0）。**每个
+                             writer 一个游标**——晚出现的那个 agent 的日志口第一条就是 seq=1，
+                             "从 N 接着读"会把它整段永久漏掉。次序是**到达序**（实时），
+                             一趟之内仍是 (seq, writer) 的全序
   read <path>                读一个路径；默认吐原始字节
   list [dir]                 列一个目录
   stat <path>                一个路径的形状
@@ -273,6 +280,8 @@ const VALUED: ReadonlySet<string> = new Set([
   'dump-wire', 'credential',
   // `--max-steps <n>`：同一条纪律——它取一个值，不列在这里那个数会被当成位置参数。
   'max-steps',
+  // `--interval <毫秒>`（`watch --follow` 的轮询间隔）：同一条纪律。
+  'interval',
 ])
 
 function parseArgv(argv: readonly string[]): Parsed {
@@ -542,6 +551,51 @@ async function statusCmd(
     for (const line of linesOf(s)) emitLine(line)
     return 0
   } finally {
+    await log.close()
+  }
+}
+
+/**
+ * `watch`：**顺着 NDJSON 账读**（PLAN § 5.18 的第 13 格）。
+ *
+ * 两档只有一件事不同：不给 `--follow` 就把账上有的念一遍就停；给了就一直跟着，直到人按 Ctrl-C
+ * （`SIGINT` → 拨信号 → 生成器收尾 → **退出码 0**：人喊停不是失败）。
+ */
+async function watchCmd(
+  root: string,
+  flags: Map<string, string | true>,
+  json: boolean,
+): Promise<number> {
+  const intervalRaw = flags.get('interval')
+  let intervalMs = 200
+  if (typeof intervalRaw === 'string') {
+    const n = Number(intervalRaw)
+    if (!Number.isInteger(n) || n < 1) {
+      return usageFail(`--interval 要一个正整数（毫秒），拿到 ${JSON.stringify(intervalRaw)}`)
+    }
+    intervalMs = n
+  } else if (intervalRaw === true) {
+    return usageFail('--interval 要一个数：--interval 200')
+  }
+  const only = flags.get('agent')
+  const log = openLog(root)
+  const ac = new AbortController()
+  const onSig = (): void => ac.abort()
+  process.on('SIGINT', onSig)
+  const print = (row: StatusRow): void => {
+    if (typeof only === 'string' && row.pos.writer !== only) return
+    emit(row.pos, row.e, json)
+  }
+  try {
+    if (!flags.has('follow')) {
+      const p = await readNew(log, {})
+      for (const row of p.rows) print(row)
+      return 0
+    }
+    for await (const row of follow(log, { intervalMs, signal: ac.signal })) print(row)
+    return 0
+  } finally {
+    process.removeListener('SIGINT', onSig)
     await log.close()
   }
 }
@@ -2402,6 +2456,7 @@ async function run(argv: readonly string[]): Promise<number> {
   // 观察命令（`status` · `watch`）是**纯读**：不建视图、不开账本、不取锁——所以它们排在建视图
   // 那一组之前。读面与写面在命令面上分开之后，"看一眼会不会改日志"这个问题就答完了（§ 5.18）。
   if (cmd === 'status') return await statusCmd(root, flags, json)
+  if (cmd === 'watch') return await watchCmd(root, flags, json)
 
   if (cmd === 'replay') return await replay(root, flags, json)
 
