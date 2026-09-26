@@ -282,7 +282,10 @@ console.log('\n五 · 工具 schema 哈希在状态切换前后不变（架构 �
 
   // 它不在 A 区里：`toolCatalog` 是随请求走的那份 schema，位置由提供方定（架构 § 8.11 的头注）。
   eq('段序里的段数（工具目录不在其中）', SUBAGENT_PROTOCOL.segmentOrder.length, 11)
-  eq('协议值里工具目录的条数', SUBAGENT_PROTOCOL.toolCatalog.length, 15)
+  // **定型之后是 12 条**（§ 5.13 的 W1：撤三条嵌套委派那一族 · 接三条 log 层工具，15 → 12）。
+  // 这一栏原先写的是 15——目录定型了而探针没跟着走，于是每次跑都 FAIL 1 处（实测：W11 那一趟
+  // 出网前量前缀时撞上）。探针是量尺，量尺自己读数不齐的时候，被量的那几处也就不可信了。
+  eq('协议值里工具目录的条数（定型之后 12 条）', SUBAGENT_PROTOCOL.toolCatalog.length, 12)
   // 负对照：给一份目录补一个字段 → 指纹当场变。
   const grown = catalog(state0).map((t, i) => (i === 0 ? { ...t, extra: 1 } : t))
   if (catalogHash(grown as never) !== hashes[0]) ok('负对照：给目录补一个字段 → 指纹变了')

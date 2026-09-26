@@ -1,0 +1,107 @@
+{
+  "goal": "把记账模块补完：yuan 按分格式化 · 加一个 avg · 删掉过时的旧文件",
+  "maxSteps": 6,
+  "assertions": [
+    {
+      "name": "总是过",
+      "action": "ok",
+      "argv": [
+        "/bin/sh",
+        "-c",
+        "true"
+      ]
+    },
+    {
+      "name": "format 用 toFixed(2)",
+      "action": "ok",
+      "argv": [
+        "/bin/sh",
+        "-c",
+        "grep -q \"toFixed(2)\" src/format.ts"
+      ]
+    },
+    {
+      "name": "total 里有 avg",
+      "action": "ok",
+      "argv": [
+        "/bin/sh",
+        "-c",
+        "grep -q \"export function avg\" src/total.ts"
+      ]
+    },
+    {
+      "name": "过时的旧文件已删",
+      "action": "ok",
+      "argv": [
+        "/bin/sh",
+        "-c",
+        "test ! -e legacy/old-format.js"
+      ]
+    }
+  ],
+  "split": [
+    {
+      "goal": "把 src/format.ts 里的 yuan 改成按分格式化：返回 (cents / 100).toFixed(2)。另外删掉过时的 legacy/old-format.js（它是上一版的实现，已经没有调用点）。",
+      "ownedPaths": [
+        "src/format.ts",
+        "legacy/old-format.js"
+      ],
+      "deliverables": [
+        {
+          "path": "src/format.ts",
+          "form": "一份文件"
+        }
+      ],
+      "assertions": [
+        {
+          "name": "format 用 toFixed(2)",
+          "action": "ok"
+        },
+        {
+          "name": "过时的旧文件已删",
+          "action": "ok"
+        }
+      ]
+    },
+    {
+      "goal": "在 src/total.ts 里加一个 export function avg(xs: number[]): number：返回算术平均，空数组返回 0。不要动别的文件。",
+      "ownedPaths": [
+        "src/total.ts"
+      ],
+      "deliverables": [
+        {
+          "path": "src/total.ts",
+          "form": "一份文件"
+        }
+      ],
+      "assertions": [
+        {
+          "name": "total 里有 avg",
+          "action": "ok"
+        }
+      ]
+    }
+  ],
+  "base": [
+    {
+      "path": "AGENTS.md",
+      "text": "# penny 记账模块（项目方针）\n\n这是一个很小的 TypeScript 记账库，只有两个模块与三条纪律。\n\n## 纪律\n\n- 金额一律以**分**为单位在内部流转；只有给人看的时候才换算成元。\n- 格式化的唯一出口是 `src/format.ts` 的 `yuan`——别的模块不许各写一份 `toFixed`。\n- **不留死代码**：确认 `src/` 里没有调用点的旧实现要当场删掉，不要「留着做对照」——对照看提交历史。\n\n## 目录\n\n- `src/format.ts` —— 给人看的那些字符串\n- `src/total.ts` —— 求和那一类纯函数\n- `legacy/` —— 上一版的实现，**正在清理**：确认没有调用点就删\n"
+    },
+    {
+      "path": "src/format.ts",
+      "text": "// 金额的呈现：**唯一出口**（AGENTS.md 的纪律二）。\n//\n// TODO：今天是把分直接当元印出去了（历史上留下的 bug），要改成「分 / 100，保留两位」。\nexport function yuan(cents: number): string {\n  return String(cents)\n}\n\nexport function fen(yuanText: string): number {\n  return Math.round(Number(yuanText) * 100)\n}\n"
+    },
+    {
+      "path": "src/total.ts",
+      "text": "// 求和那一类纯函数。\n\nexport function total(xs: readonly number[]): number {\n  let sum = 0\n  for (const x of xs) sum += x\n  return sum\n}\n\nexport function max(xs: readonly number[]): number {\n  return xs.reduce((a, b) => (b > a ? b : a), Number.NEGATIVE_INFINITY)\n}\n"
+    },
+    {
+      "path": "legacy/old-format.js",
+      "text": "// 上一版的实现：它把分当元印，与 src/format.ts 的 TODO 是同一件事。\n// 已经没有调用点（grep 过 src/）——按 AGENTS.md 的纪律三，这一份该删掉。\nmodule.exports = { yuan: (cents) => String(cents) }\n"
+    },
+    {
+      "path": "README.md",
+      "text": "# penny\n\n金额在内部一律是**分**。给人看的时候走 `src/format.ts`。\n"
+    }
+  ]
+}
