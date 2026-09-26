@@ -40,6 +40,7 @@ import { CATALOG_STATES, TOOL_ENTRIES, catalog, catalogHash } from '../src/tools
 import { HANDOFF_MARGIN, ZONE_A_BUDGET, seedLimitOf } from '../src/contract/types.ts'
 import { MODEL_DECLS, MODEL_IDS, providerOf } from '../src/model/contract.ts'
 import { estimateTokens, estimateTokensOfText, planBudget } from '../src/runtime/budget.ts'
+import { seedRulerOf } from '../src/round/seed.ts'
 import { wireNamed } from '../src/model/wire/registry.ts'
 
 const REPO = fileURLToPath(new URL('..', import.meta.url))
@@ -299,14 +300,17 @@ console.log('\n六 · 窗口那一笔账：三区 + 工具目录 + seed 与 cont
   } else {
     // **同一把尺、同一本账**：这一节不自己换算——三区 + 工具目录 + `seed` 交给产品那一处
     // （`planBudget`），于是探针印的数与真流程判的数一定同源。
-    const seedText = TASK.deliverables.map((p) => readFileSync(join(REPO, p), 'utf8')).join('')
-    const seed = Buffer.byteLength(seedText, 'utf8')
+    // `seed` 那一路走**产品那一处量法**（`round/seed.ts`：指针清单 + 在这棵树上取到的内容，
+    // 过同一把尺）——探针自己按字节量的话，它印的数会与真流程判的那个数不是同一个口径。
+    const ruler = seedRulerOf((p) => Promise.resolve(readFileSync(join(REPO, p))))
+    await ruler.load(TASK.deliverables)
+    const seed = ruler.tokensOf(TASK.deliverables)
     const state0 = CATALOG_STATES[0] as (typeof CATALOG_STATES)[number]
     const plan = planBudget({
       decl: m,
       prefix: first,
       tools: JSON.stringify(catalog(state0)),
-      seed: seedText,
+      seed: ruler.textOf(TASK.deliverables),
       handoff: '',
     })
     const limit = seedLimitOf({ modelLimit: m.contextLimit })
@@ -315,13 +319,13 @@ console.log('\n六 · 窗口那一笔账：三区 + 工具目录 + seed 与 cont
 
     say(
       `上界 ${n(plan.limit)} · Zone A ${n(zoneA)} 字节 · Zone B ${n(zoneB)} 字节 · C ${n(first.zoneC.length)} 字节 · ` +
-        `seed ${n(seed)} 字节（${TASK.deliverables.length} 份交付物的当下字节）· 交接余量 ${n(plan.handoffMargin)}`,
+        `seed ${n(seed)} token（${TASK.deliverables.length} 份交付物的当下内容，取到 ${ruler.reading.loaded} 份）· 交接余量 ${n(plan.handoffMargin)}`,
     )
     say(`已经占住 ${n(plan.used)} token（估）：三区 + 工具目录 + seed · 占比 ${((plan.used / plan.limit) * 100).toFixed(1)}% · 还剩 ${n(plan.headroom)}`)
     say(`触发点 ${n(plan.trigger)}（上限的四分之三）——这一档判出来的是 \`${plan.kind}\`：${plan.why}`)
     say(
-      `seed 那一条的判据（架构 § 8.12）：上限 ${n(limit)} 字节 = 模型上限 ${n(m.contextLimit)} − Zone A 预算 ${n(ZONE_A_BUDGET)} − 交接余量 ${n(HANDOFF_MARGIN)}` +
-        `（Zone A 那一项用**预算**，不是当下的 ${n(zoneA)}；那一条是按字节取的**上界**，与窗口这一笔账不是同一本）`,
+      `seed 那一条的判据（架构 § 8.12）：上限 ${n(limit)} token = 模型上限 ${n(m.contextLimit)} − Zone A 预算 ${n(ZONE_A_BUDGET)} − 交接余量 ${n(HANDOFF_MARGIN)}` +
+        `（Zone A 那一项用**预算**，不是当下的 ${n(zoneA)} 字节；那一条是**按内容量取的**上界，与窗口这一笔账不是同一本）`,
     )
     say('窗口那一笔账是**估账，不是读数**：尺在 `src/runtime/budget.ts`（`estimateTokens`），与 `planBudget` 同一处；真实计量在 `llm/call` 的 `usage` 四个数里，尺的校准归 `B7`')
 
@@ -332,19 +336,19 @@ console.log('\n六 · 窗口那一笔账：三区 + 工具目录 + seed 与 cont
     else bad(`装不下：超了 ${n(-plan.headroom)} token——**报"超了多少"，不裁剪后照发**（架构 § 8.12：带着超限的种子派发等于派发一次立刻触发的接续）`)
 
     // 负对照：**`seed` 那一条自己的判据**（超了多少），而不是窗口那一笔账。两者不是同一个上限
-    // ——`seedLimitOf` 给的是"一份契约的 seed 允许多大"（88,000 字节），窗口那一笔账问的是
-    // "这一趟装不装得下"（128,000 token）：seed 顶到 88,001 时超的是前者，后者照旧可能是正的。
+    // ——`seedLimitOf` 给的是"一份契约的 seed 允许多大"（模型上限减出来的那个 token 数），窗口那一笔
+    // 账问的是"这一趟装不装得下"（`contextLimit`）：seed 顶过多一个 token 时超的是前者，后者照旧可能是正的。
     const over = limit + 1
     const overBy = over - limit
     if (overBy === 1 && over > limit) {
-      ok(`负对照：seed 顶到 ${n(over)} 字节（上限 ${n(limit)} + 1）→ 超 ${n(overBy)} 字节——这条判据报的是"超了多少"，不裁剪后照发`)
+      ok(`负对照：seed 顶到 ${n(over)} token（上限 ${n(limit)} + 1）→ 超 ${n(overBy)} token——这条判据报的是"超了多少"，不裁剪后照发`)
     } else {
-      bad(`负对照：seed 顶到 ${n(over)} 字节时没算出"超了多少"（limit=${n(limit)} · overBy=${n(overBy)}）——那算式没接上`)
+      bad(`负对照：seed 顶到 ${n(over)} token 时没算出"超了多少"（limit=${n(limit)} · overBy=${n(overBy)}）——那算式没接上`)
     }
     if (seed <= limit) {
-      ok(`这一份契约的 seed（${n(seed)} 字节）在 ${n(limit)} 那一档之内——余 ${n(limit - seed)} 字节`)
+      ok(`这一份契约的 seed（${n(seed)} token）在 ${n(limit)} 那一档之内——余 ${n(limit - seed)} token`)
     } else {
-      bad(`这一份契约的 seed（${n(seed)} 字节）超过 ${n(limit)}，超 ${n(seed - limit)} 字节`)
+      bad(`这一份契约的 seed（${n(seed)} token）超过 ${n(limit)}，超 ${n(seed - limit)} token`)
     }
   }
 }

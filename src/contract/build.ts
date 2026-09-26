@@ -122,14 +122,25 @@ export interface Built {
 }
 
 /**
- * 一份种子的量：**指针清单按那把尺估**（一条路径一行）——上限 88,000 是一个 token 数
- * （模型上限 − Zone A 预算 − 交接余量），量它的这一头因此也必须是 token，两头的口径才是同一个。
+ * 一份种子的**指针那一侧**的正文：一条路径一行。
  *
- * **它量的是清单，不是内容**：内容有多少要读了树才知道，而构造器不认识树。所以调用方可以递
- * 一份自己的量法（`BuildDeps.seedTokens`）；缺省这一份量的是清单本身。
+ * **进提示词的与进尺的是同一份**：`round/seed.ts` 在它后面接上「这些指针在某一棵树上取到的
+ * 内容」，量的是接起来的那一段（架构 § 8.12：指针进契约，内容组装时才取）。
+ */
+export function seedTextOf(paths: readonly RelPath[]): string {
+  return paths.join('\n')
+}
+
+/**
+ * 缺省那一档的量法：**只量指针那一侧**（一条路径一行）——那一个上限是「模型上限 − Zone A
+ * 预算 − 交接余量」，逐声明不同，量它的这一头因此也必须是 token，两头的口径才是同一个。
+ *
+ * **内容有多少要读了某一棵树才知道，而构造器不认识树**：所以派发与预备态都在 `round/seed.ts`
+ * 里递一份已经取过内容的量法（`BuildDeps.seedTokens`），这一份给的是退化档——树上一份内容都
+ * 读不出来的时候账落在它上面，账不会因为树读不到而消失。
  */
 export function seedTokensOf(paths: readonly RelPath[]): number {
-  return estimateTokensOfText(paths.join('\n'))
+  return estimateTokensOfText(seedTextOf(paths))
 }
 
 function need(what: string, v: unknown): void {

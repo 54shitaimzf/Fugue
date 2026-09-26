@@ -38,6 +38,9 @@ import type { Cause, RoundState, StepContext } from './machine.ts'
 import { step } from './machine.ts'
 import type { Draft, DraftKind, DraftSection } from '../contract/draft.ts'
 import { DraftError, draftOf, draftPathOf } from '../contract/draft.ts'
+import { seedTextOf } from '../contract/build.ts'
+import type { SeedReading } from './seed.ts'
+import { seedRulerOf } from './seed.ts'
 
 /** 这一层自己的失败：底钉不住 · 视图打不开。**草案不成立不是它**——那是一件读数（`problems`）。 */
 export class PlanError extends Error {}
@@ -129,6 +132,14 @@ export interface OccupancyContext {
   readonly maxSteps?: number
   /** 工具目录那一段的**正文**（公布给模型的那一份序列化之后——架构 § 8.11 表外那一项）。 */
   readonly tools: string
+  /**
+   * 一份种子的**正文**：指针清单 + 在这棵树上取到的内容。
+   *
+   * **不给就只量指针那一侧**（`seedTextOf`）。预备态那一趟递的是在**持轮者这份视图**上取过内容
+   * 的量法（`round/seed.ts`）：视图铺在同一个底上，而"这一格装得下装不下"量的是真的取得到的那
+   * 份内容——只量清单的话，那个上界（模型上限 − Zone A − 交接余量）对着几行清单永远不响。
+   */
+  readonly seedText?: (paths: readonly RelPath[]) => string
 }
 
 /** 一趟之后手上有什么。**`held` 只由键域定**（"这一站唯一的门是键域完整性"，PLAN § 5.10）。 */
@@ -145,6 +156,8 @@ export interface PlanResult {
   readonly draft: Draft | null
   /** 键域那一条报出来的每一处。**空数组 = 停在门口**。 */
   readonly problems: readonly string[]
+  /** 种子那一份的读数：取到几份内容 · 哪几条在这一棵树上没有（读数，不参与判断）。 */
+  readonly seedRead: SeedReading
   readonly occupancy: readonly OccupancyRow[]
   /** 停在门口（键域完整）。**它不派发**——派发是 `round go`（架构 § 15.1.a：门仍由人开）。 */
   readonly held: boolean
@@ -237,9 +250,10 @@ export function occupancyOf(sections: readonly DraftSection[], ctx: OccupancyCon
       model: ctx.decl.id,
       segments: sourcesFor(SUBAGENT_PROTOCOL, state, coord),
     })
-    const plan = planBudget({ decl: ctx.decl, prefix, tools: ctx.tools, seed: s.seed, handoff: '' })
-    // 单独印的那一栏：同一把尺对 `seed` 那一段的读数。
-    const seed = estimateTokensOfText(s.seed)
+    const seedText = (ctx.seedText ?? seedTextOf)(s.seed)
+    const plan = planBudget({ decl: ctx.decl, prefix, tools: ctx.tools, seed: seedText, handoff: '' })
+    // 单独印的那一栏：同一把尺对 `seed` 那一段的读数（与 `used` 里那一份是同一段正文）。
+    const seed = estimateTokensOfText(seedText)
     const sweet = plan.used + plan.handoffMargin <= plan.trigger
     return {
       at: i + 1,
@@ -380,7 +394,12 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
   }
 
   // 四 · 印每一格的预估占用。**印，不判**（规模归模型；甜点区间那条带归架构，而它只把差额说出来）。
-  const occupancy = draft === null ? [] : occupancyOf(draft.sections, deps.occupancy)
+  //
+  // `seed` 那一段的量法：在**持轮者这份视图**上取一次内容——它与派发那一趟是同一个量法 · 同一
+  // 把尺（`round/seed.ts`），所以门上印的差额与派发时判的那个数说的是同一件事。
+  const ruler = seedRulerOf((p) => deps.view.read(p))
+  if (draft !== null) await ruler.load(draft.seeds.flat())
+  const occupancy = draft === null ? [] : occupancyOf(draft.sections, { ...deps.occupancy, seedText: ruler.textOf })
 
   return {
     round,
@@ -391,6 +410,7 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
     draftText,
     draft,
     problems,
+    seedRead: ruler.reading,
     occupancy,
     held: problems.length === 0,
     seqs,

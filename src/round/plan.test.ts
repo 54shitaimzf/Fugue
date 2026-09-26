@@ -38,6 +38,8 @@ import { refHeadOf } from './head.ts'
 import { scanTree, WORKSPACE_STATE } from '../materialize/diffstat.ts'
 import { draftPathOf } from '../contract/draft.ts'
 import type { DraftSection } from '../contract/draft.ts'
+import { estimateTokensOfText } from '../runtime/budget.ts'
+import { seedTextOf, seedTokensOf } from '../contract/build.ts'
 import { holderFace, occupancyOf, planRound } from './plan.ts'
 import type { PlanResult } from './plan.ts'
 
@@ -300,7 +302,10 @@ test('② 出口三档落到同一个判据：读出来的草案逐字节相同'
       assert.equal(r.held, true, `${mode} 那一档该停在门口：${r.problems.join(' / ')}`)
       assert.equal(r.draftText, want, `${mode} 那一档读出来的草案与写下去的不是同一份`)
       assert.equal(r.steps, mode === 'judged' ? 0 : 2, `${mode} 那一档的步数不对：${r.steps}`)
-      console.log(`② 读数：${mode} → exit=${r.exit} · 步 ${r.steps} · 停在门口=${r.held} · 草案 ${r.draftText?.length} 字符`)
+      console.log(
+        `② 读数：${mode} → exit=${r.exit} · 步 ${r.steps} · 停在门口=${r.held} · ` +
+          `草案 ${r.draftText === null ? '（没写出来）' : `${estimateTokensOfText(r.draftText)} token`}`,
+      )
     } finally {
       await b.log.close()
       await b.truth.close()
@@ -416,6 +421,36 @@ test('⑥ 同一轮里再跑一趟：不造第二条 Idle → Planning，意图�
     assert.equal(lands.length, 1, `${lands.length} 条 Idle → Planning：第二趟把处境当成了 Idle`)
     assert.equal(evs.filter((e) => e.t === 'round/intent').length, 1, '意图写了两遍（纪律 2：写入一次，此后不得改写）')
     console.log(`⑥ 读数：两趟之后 Idle→Planning ${lands.length} 条 · round/intent ${evs.filter((e) => e.t === 'round/intent').length} 条`)
+  } finally {
+    await b.log.close()
+    await b.truth.close()
+  }
+})
+test('⑦ seed 那一段量的是内容：门上的差额与派发那一趟同一个量法', async () => {
+  const b = await bench()
+  try {
+    // 一条在底里（`src-parse.ts`）· 一条不在——**这一份量的是取得到的那一份内容**，而取不到的
+    // 那条只算它自己那一行（`round/seed.ts` 的退化档）。两半合起来说明这一栏不是清单长短。
+    const CONTENT = '// 底里的解析器\n'
+    const seedPaths: readonly RelPath[] = ['src-parse.ts', '这一条不在底上.ts']
+    const r = await plan(b, [section({ seed: seedPaths })], { declare: true })
+    assert.equal(r.held, true, `该停在门口：${r.problems.join(' / ')}`)
+    assert.equal(r.seedRead.from, 'tree')
+    assert.equal(r.seedRead.loaded, 1, `该在视图上取到 1 份内容：${JSON.stringify(r.seedRead)}`)
+    assert.deepEqual(r.seedRead.missing, ['这一条不在底上.ts'], '不在底上的那一条该被点名')
+    const row = r.occupancy[0]
+    assert.ok(row !== undefined)
+    const pointers = seedTokensOf(seedPaths)
+    assert.equal(
+      row.seed,
+      estimateTokensOfText([seedTextOf(seedPaths), CONTENT].join('\n')),
+      '那一栏不是那份正文过尺的读数',
+    )
+    assert.ok(row.seed > pointers, `seed 那一栏量的还是清单：${row.seed} 与只量清单的 ${pointers}`)
+    console.log(
+      `⑦ 读数：第 1 节 seed ${row.seed} token（只量清单是 ${pointers}）· 取到内容 1 份 · ` +
+        `不在这一棵树上 1 条 · used ${row.used}`,
+    )
   } finally {
     await b.log.close()
     await b.truth.close()

@@ -85,6 +85,7 @@ import { createToolExecutor } from '../capability/dispatch.ts'
 import { refHeadOf } from '../round/head.ts'
 import { RoundStartError, startRound } from '../round/start.ts'
 import { PlanError, planRound, pinnedBase } from '../round/plan.ts'
+import { estimateTokensOfText } from '../runtime/budget.ts'
 import { draftPathOf } from '../contract/draft.ts'
 import { RoundRunError, materializeCommit, runRound } from '../round/execute.ts'
 import type { DriverSupport, Stub } from '../round/execute.ts'
@@ -805,7 +806,7 @@ async function roundCmd(
   // 于是这一份里的每一处都从同一个名字出发：分支 ref · 物化根 `mat/<agent>/` · 日志
   // `log/<agent>.jsonl`（§ 9.2 那张布局表）。
   const agents: AgentId[] = split.map((_, i) => `agent/${round}/${i + 1}` as AgentId)
-  const branchOf = (a: AgentId): BranchId => `agent/${a}` as BranchId
+  const branchOf = (a: AgentId): BranchId => refFor(a) as BranchId
   const materialize = flags.has('materialize')
 
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
@@ -832,6 +833,7 @@ async function roundCmd(
         owners: started.owners,
         seedLimit: started.built.seedLimit,
         seedTokens: started.built.seedTokens,
+        seedRead: started.seedRead,
         intersections: started.precheck.lines,
         materialized: materialize,
         branches: started.forks.map((f) => ({ agent: f.agent, base: f.base, strategy: f.strategy, merged: f.merged })),
@@ -842,6 +844,15 @@ async function roundCmd(
       for (const c of started.built.contracts) {
         emitLine(`  ${c.id}\t${c.agent}\t${c.kind}\t${writeSetLine(c)}`)
       }
+      // **种子那一行不省**：量出来是 0 与"这一轮没有种子"在读数上分不开，而它们要改的地方
+      // 不是一处（前者是树，后者是草案）。
+      emitLine(
+        `  种子\t上限 ${started.built.seedLimit} token\t逐份 ${started.built.seedTokens.join(' · ') || '（没有）'}\t` +
+          (started.seedRead.from === 'tree'
+            ? `在钉住的底上取到 ${started.seedRead.loaded} 份内容`
+            : '量法是调用方给的（这一层没量）') +
+          (started.seedRead.missing.length === 0 ? '' : `\t这一棵树上没有：${started.seedRead.missing.join(' · ')}`),
+      )
       for (const f of started.forks) emitLine(`  ${f.agent}\tfork ${f.strategy}\t${f.merged}`)
       if (started.forks.length === 0) {
         process.stderr.write('物化没有铺（架构 § 14.1 的 deferMaterialize：走按需物化）；要现在铺就加 --materialize\n')
@@ -909,7 +920,7 @@ async function roundRun(
   const rawRound = getConfig(doc, 'round.id')
   const round = typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1'
   const agents: AgentId[] = split.map((_, i) => `agent/${round}/${i + 1}` as AgentId)
-  const branchOf = (a: AgentId): BranchId => `agent/${a}` as BranchId
+  const branchOf = (a: AgentId): BranchId => refFor(a) as BranchId
   // `--fail <断言名>`：把配置里**那一条**断言换成必然失败的一条。撞不上就什么都不做——这一档是
   // "走查要撞红"，不是"让这一趟注定失败"。
   const failTarget = typeof flags.get('fail') === 'string' ? (flags.get('fail') as string) : undefined
@@ -1325,13 +1336,16 @@ async function roundPlan(
         problems: [...r.problems],
         draftText: r.draftText,
         sections: (r.draft?.sections ?? []).map((s) => ({ kind: s.kind, goal: s.kind === 'implement' ? s.goal : s.question })),
+        seedRead: r.seedRead,
         occupancy: [...r.occupancy],
       })
     } else {
       emitLine(`${r.round}\t${r.held ? '停在门口' : '退回'}\t${r.steps} 步\t${r.exit}`)
       emitLine(`  收工：${r.exit}（${r.stopped}）`)
       emitLine(
-        `  草案：${draftPath}\t${r.draftText === null ? '没有写出来' : `${r.draftText.length} 字符 · 正文进日志 holder/distill`}`,
+        `  草案：${draftPath}\t${
+          r.draftText === null ? '没有写出来' : `${estimateTokensOfText(r.draftText)} token（那把尺的估账）· 正文进日志 holder/distill`
+        }`,
       )
       if (r.draft !== null) {
         emitLine(`  要开 ${r.draft.sections.length} 个任务：`)
@@ -1345,10 +1359,14 @@ async function roundPlan(
             emitLine(`      要交的证据：${s0.evidenceRequired.map((e) => e.note).join(' · ') || '（没有）'}`)
           }
         }
+        emitLine(
+          `  种子\t在持轮者那份视图上取到 ${r.seedRead.loaded} 份内容` +
+            (r.seedRead.missing.length === 0 ? '' : `\t这一棵树上没有：${r.seedRead.missing.join(' · ')}`),
+        )
         emitLine('  每一格的预估占用（三区 + 工具目录 + seed；估账，不是读数）：')
         for (const row of r.occupancy) {
           emitLine(
-            `    第 ${row.at} 节\tused ${row.used}\t触发点 ${row.trigger}\t与上限的差额 ${row.headroom}\t甜点=${row.sweet ? '是' : '否'}` +
+            `    第 ${row.at} 节\tseed ${row.seed}\tused ${row.used}\t触发点 ${row.trigger}\t与上限的差额 ${row.headroom}\t甜点=${row.sweet ? '是' : '否'}` +
               (row.sweet ? '' : `\t${row.why}`),
           )
         }

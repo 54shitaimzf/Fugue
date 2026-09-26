@@ -3,15 +3,17 @@
 // base"）· 架构 § 4（`fork` 定物化的底、`branch` 定视图的底，两者必须同一个提交）·
 // 架构 § 8.12 的写入集预检第一次调用（`Planning` 那一档）· PLAN § 5.7 的 A4 行。
 //
-// **这一份把四件事按顺序做完，一件事都不是新机制**（架构 § 14.1 那七步里的 1 · 2 · 4 · 6）：
+// **这一份把五件事按顺序做完，一件事都不是新机制**（架构 § 14.1 那七步里的 1 · 2 · 4 · 6）：
 //
 //   1. **钉住底**：`baseFor(truth, 'round')` 读一次 HEAD。**读一次，然后传下去**——契约里的底、
 //      N 条分支的底、N 次 `fork` 的底都是这同一个值。这就是 C7 前半那句话的落地：
 //      轮次开始时钉住 base，之后 HEAD 再动也不影响这一轮的判据（A7 的漂移检测读的正是它）。
-//   2. **构造契约**（A1）并在 `Planning` 那一档跑一次预检（A2 的第一个调用点）。
-//   3. **发契约**：N 条 `contract/issue`。契约**住日志里**（架构 § 8.12），所以事件带正文；
+//   2. **量一遍种子**（架构 § 8.12 的 `seed` 那两条准则）：在这一轮钉住的底上把每一份种子取
+//      一次内容，量成 token。契约里那一栏因此是**判过的**，不是一条谁也不看的清单。
+//   3. **构造契约**（A1）并在 `Planning` 那一档跑一次预检（A2 的第一个调用点）。
+//   4. **发契约**：N 条 `contract/issue`。契约**住日志里**（架构 § 8.12），所以事件带正文；
 //      这一条边就是"契约之于派发，正如视图之于日志"。
-//   4. **起分支**：N 条 `refs/heads/<agent>` 定在**同一个 base** 上。
+//   5. **起分支**：N 条 `refs/heads/<agent>` 定在**同一个 base** 上。
 //
 // **物化是可选的一步，而且缺省不做。** 架构 § 14.1 的 `SpawnOptions.deferMaterialize` 缺省 `true`
 // ——「走 D3（按需物化）」：这一轮开起来的时候，N 个 agent 一次都还没跑，铺 N 棵树是为还没发生的
@@ -44,6 +46,8 @@ import type { PrecheckResult } from '../contract/precheck.ts'
 import { planningGate } from '../contract/precheck.ts'
 import type { Cause, RoundState } from './machine.ts'
 import { step } from './machine.ts'
+import type { SeedReading } from './seed.ts'
+import { SEED_FROM_GIVEN, seedRulerAt } from './seed.ts'
 
 /** 这一层自己的失败：底钉不住 · 预检不放行 · 分支定不下来。**拒，并且说出是哪一步。** */
 export class RoundStartError extends Error {}
@@ -66,6 +70,12 @@ export interface RoundStartDeps {
   readonly branchOf: (agent: AgentId) => BranchId
   readonly seedOf: (agent: AgentId) => readonly RelPath[]
   readonly actionOutputsOf?: (agent: AgentId) => Readonly<Record<string, readonly RelPath[]>>
+  /**
+   * 一份种子的量法。**不给就按这一轮钉住的那个底取一次内容**（`seedRulerAt`）：种子是路径的
+   * 指针，而账量的是「这些指针取出多少」（架构 § 8.12）——只量清单那一侧的话，那个上界
+   * （模型上限 − Zone A − 交接余量）对着一条几行的清单永远不响。给了就用给的：测试与
+   * "从别的树取"那一档从这个口进来。
+   */
   readonly seedTokens?: (paths: readonly RelPath[]) => number
   readonly seedLimit?: number
   /**
@@ -88,6 +98,8 @@ export interface RoundStart {
   /** **钉住的那个底**——契约里的底、四条分支的底、四次 `fork` 的底都是它。 */
   readonly base: CommitId
   readonly built: Built
+  /** 种子那一份的读数：量法 · 取到几份内容 · 哪几条在这一棵树上没有（读数，不参与判断）。 */
+  readonly seedRead: SeedReading
   readonly owners: Readonly<Record<ContractId, AgentId>>
   /** `Planning` 那一档的预检结果（报出相交而照发；见 PLAN § 5.7 的口径一）。 */
   readonly precheck: PrecheckResult
@@ -113,7 +125,18 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
     )
   }
 
-  // 二 · 构造契约。`agent` 逐份不同，所以 `identityFor` 从 `agents` 里取。
+  // 二 · 量一遍种子，再构造契约。**顺序是承重的**：量法要一个已经装好的值（`build` 是纯函数），
+  // 而"装"这一步要这一轮钉住的底——所以它在构造之前，与钉底之后。
+  //
+  // **逐份的种子在这里取一次定下来**，构造器读的就是这一份：两处各调一次 `deps.seedOf` 的症状
+  // 是"量的那一批与发出去的那一批可以不是同一批"（`seedOf` 是调用方给的函数，没有纯的保证）。
+  const seeds = new Map<AgentId, readonly RelPath[]>()
+  for (const a of agents) seeds.set(a, deps.seedOf(a))
+  const ruler = deps.seedTokens === undefined ? seedRulerAt(truth, base) : null
+  if (ruler !== null) await ruler.load([...seeds.values()].flat())
+  const seedTokens = ruler === null ? deps.seedTokens : ruler.tokensOf
+
+  // 三 · 构造契约。`agent` 逐份不同，所以 `identityFor` 从 `agents` 里取。
   const buildDeps: BuildDeps = {
     round,
     base,
@@ -126,19 +149,21 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
     seedOf: (n: number) => {
       const a = agents[n]
       if (a === undefined) throw new RoundStartError(`种子要第 ${n + 1} 个 agent，而这一轮只有 ${agents.length} 个`)
-      return deps.seedOf(a)
+      const got = seeds.get(a)
+      if (got === undefined) throw new RoundStartError(`第 ${n + 1} 个 agent 的种子没量过：${a}`)
+      return got
     },
     actionOutputsOf: (n: number) => {
       const a = agents[n]
       if (a === undefined || deps.actionOutputsOf === undefined) return {}
       return deps.actionOutputsOf(a)
     },
-    ...(deps.seedTokens === undefined ? {} : { seedTokens: deps.seedTokens }),
+    ...(seedTokens === undefined ? {} : { seedTokens }),
     ...(deps.seedLimit === undefined ? {} : { seedLimit: deps.seedLimit }),
   }
   const built = build(deps.intent, buildDeps)
 
-  // 三 · 状态机那三步。每一步的判决都来自 `machine.ts`，这里只记转移与落事件。
+  // 四 · 状态机那三步。每一步的判决都来自 `machine.ts`，这里只记转移与落事件。
   const trail: { from: RoundState; on: Cause; to: RoundState }[] = []
   let state: RoundState = 'Idle'
   const move = async (on: Cause, ctx: Parameters<typeof step>[2] = {}): Promise<void> => {
@@ -154,7 +179,7 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
   await log.append('round', { t: 'round/intent', round, digest: digestOf(intentBody), body: intentBody })
   await move('land', { intent: true })
 
-  // 四 · 第一次写入集预检：`Planning` 那一档的**权威判定**（架构 § 8.12）。
+  // 五 · 第一次写入集预检：`Planning` 那一档的**权威判定**（架构 § 8.12）。
   const gate = planningGate(built.contracts)
   if (!gate.ok) {
     // 这一站的口径是"报出照发"，所以这里到不了。留着它是为了让"改主意的代价是一处"这句话成立：
@@ -163,7 +188,7 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
     throw new RoundStartError(`写入集预检不放行（${round}）：\n  ${gate.result.lines.join('\n  ')}`)
   }
 
-  // 五 · 发契约：一份一条。**契约住日志里**（架构 § 8.12）——事件带正文，重放读得出。
+  // 六 · 发契约：一份一条。**契约住日志里**（架构 § 8.12）——事件带正文，重放读得出。
   const owners: Record<ContractId, AgentId> = {}
   for (const c of built.contracts) {
     owners[c.id] = c.agent as AgentId
@@ -178,7 +203,7 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
   }
   await move('contracts-issued')
 
-  // 六 · 起分支：**N 条分支定在同一个 `base` 上**。用 git 直接指（§ 4：`fugue branch` 是一条
+  // 七 · 起分支：**N 条分支定在同一个 `base` 上**。用 git 直接指（§ 4：`fugue branch` 是一条
   // 方便的路，不是一个前提），CAS 的 `expectedOld` 是 `null`——"它必须还不存在"。
   // 已经指着同一个提交算成功（幂等的那一半），指着别处才拒。
   for (const a of agents) {
@@ -195,7 +220,7 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
   }
   await move('branches-started')
 
-  // 七 · 物化：**可选，缺省不做**（`deferMaterialize`，架构 § 14.1）。做了就 N 次 `fork`，
+  // 八 · 物化：**可选，缺省不做**（`deferMaterialize`，架构 § 14.1）。做了就 N 次 `fork`，
   // 逐次都用**同一个 base**，逐次落在那个 agent 自己的日志里。
   const forks: ForkResult[] = []
   if (deps.materialize === true) {
@@ -214,7 +239,16 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
     }
   }
 
-  return { round, base, built, owners, precheck: gate.result, forks, trail }
+  return {
+    round,
+    base,
+    built,
+    seedRead: ruler === null ? SEED_FROM_GIVEN : ruler.reading,
+    owners,
+    precheck: gate.result,
+    forks,
+    trail,
+  }
 }
 
 /**
