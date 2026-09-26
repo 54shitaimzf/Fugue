@@ -10,8 +10,8 @@
 //
 // **凭据只在 `targetOf` 里被取一次**，也就是说"取凭据"这件事只发生在**真要发一次请求**的
 // 时候——装配 · 重放 · 夹具档一条断言都不经过这里（PLAN § 5.8 的口径一）。
-import type { ModelCall, ModelEvent, ModelRequest } from './contract.ts'
-import { ModelDeclError, WIRES, authOf, modelDeclOf, providerOf } from './contract.ts'
+import type { ModelCall, ModelEvent, ModelRequest, Turn } from './contract.ts'
+import { ModelDeclError, WIRES, authOf, modelDeclOf, promptCacheFor, providerOf } from './contract.ts'
 import { checkEvents } from './contract.ts'
 import { hashOf } from '../assemble/assemble.ts'
 import type { WireAdapter } from './wire/stream.ts'
@@ -351,18 +351,7 @@ export function makeDumpCall(dir: string, transport: Transport = fetchTransport)
     // **这一层的流是它自己起的那一条**（不是包在 `inner` 外面）：落盘要的是完整的那笔账
     // ——`raw` · `opened` · `closed` 都在 `callModel` 的 `ModelStream` 上，而 `wireCall` 那一道
     // 出口只交 `{ call, failure }` 两栏（它按 `CallModel` 的形状交账）。包在它外面就落不了盘。
-    const stream = callModel(
-      request.target,
-      {
-        model: request.model,
-        zones: { A: request.prefix.zoneA, B: request.prefix.zoneB, C: request.prefix.zoneC },
-        tools: request.tools,
-        ...(request.turns === undefined || request.turns.length === 0 ? {} : { turns: request.turns }),
-        ...(request.call === undefined ? {} : { call: request.call }),
-      },
-      spying,
-      signal,
-    )
+    const stream = callModel(request.target, wireRequestOf(request), spying, signal)
     const events: ModelEvent[] = []
     let flushed = false
     n += 1
@@ -467,6 +456,37 @@ export function makeDumpCall(dir: string, transport: Transport = fetchTransport)
         return stream.ledger()
       },
     }
+  }
+}
+
+/**
+ * 一次调用 → 那一条线协议认的那份请求。**两个入口共用这一处**：`runtime/step.ts` 的
+ * `wireCallOver`（产品那一趟）与这一份的 `makeDumpCall`（取证那一趟）。
+ *
+ * 两处各拼一遍的症状是"发出去的"与"落盘的"不是同一份，而回放档正是拿落盘那一份去核发出去
+ * 那一份（`requestHash`）——差一个字段就是一次静默的"这一份不是那一次请求"。
+ *
+ * `promptCache` 从**线协议那一栏**取（`promptCacheFor`），不给调用方一个自己填的机会：那一栏
+ * 的取值处只有 `WIRES`。
+ */
+export function wireRequestOf(request: {
+  readonly adapter: { readonly name: string }
+  readonly prefix: { readonly zoneA: Uint8Array; readonly zoneB: Uint8Array; readonly zoneC: Uint8Array }
+  readonly model: string
+  readonly tools?: readonly { readonly name: string; readonly description: string; readonly parameters: unknown }[]
+  readonly turns?: readonly Turn[]
+  /** C 区那一段的**头**（人说的那一句）：有轮次时它照旧要发。见 `wireHeadOf`。 */
+  readonly cHead?: Uint8Array
+  readonly call?: { readonly temperature?: number; readonly maxTokens?: number }
+}): ModelRequest {
+  return {
+    model: request.model,
+    zones: { A: request.prefix.zoneA, B: request.prefix.zoneB, C: request.prefix.zoneC },
+    promptCache: promptCacheFor(request.adapter.name),
+    ...(request.tools === undefined ? {} : { tools: request.tools }),
+    ...(request.turns === undefined || request.turns.length === 0 ? {} : { turns: request.turns }),
+    ...(request.cHead === undefined ? {} : { cHead: request.cHead }),
+    ...(request.call === undefined ? {} : { call: request.call }),
   }
 }
 

@@ -32,11 +32,12 @@ import type { ModelCall, ModelEvent, StopReason, Usage } from '../model/contract
 import { checkEvents } from '../model/contract.ts'
 import type { Target, Transport } from '../model/http.ts'
 import type { WireFacts } from '../model/http.ts'
-import { callModel, wireFactsOf } from '../model/http.ts'
+import { callModel, wireFactsOf, wireRequestOf } from '../model/http.ts'
 import type { WireAdapter } from '../model/wire/stream.ts'
 import { parseStream } from '../model/wire/stream.ts'
 import type { Prefix, Protocol } from '../assemble/contract.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
+import { cZoneHeadOf } from '../assemble/sources.ts'
 import { sourcesFor, turnText } from '../assemble/sources.ts'
 import { promptCacheFor } from '../model/contract.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
@@ -108,6 +109,14 @@ export interface RuntimeRequest {
   readonly tools: readonly ToolEntry[]
   /** 已经走过的那几步（发原生轮次用；第 0 步没有）。 */
   readonly turns?: readonly Turn[]
+  /**
+   * **C 区那一段的头**（`AssembleState.runtime` 的字节）：只追加那条尾巴之前的字节。
+   *
+   * 它必须单独带过去：`turns` 一有值，适配器就把尾巴发成原生轮次，而**头照旧要发**——不然
+   * 人说的那一句从第 1 步起就再也读不到（架构 § 8.11：「那句话进的是这一趟的尾端（C 区第一
+   * 条）」）。空串就不带（那时 `zones.C` 与它逐字节相同）。
+   */
+  readonly cHead?: Uint8Array
   /** 提供方那边什么名字（`ModelRequest.model`）。 */
   readonly model: string
   readonly call?: { readonly temperature?: number; readonly maxTokens?: number }
@@ -213,18 +222,7 @@ export interface Runtime {
  */
 export function wireCallOver(transport?: Transport): CallModel {
   return (request, signal) => {
-    const stream = callModel(
-      request.target,
-      {
-        model: request.model,
-        zones: { A: request.prefix.zoneA, B: request.prefix.zoneB, C: request.prefix.zoneC },
-        tools: request.tools,
-        ...(request.turns === undefined || request.turns.length === 0 ? {} : { turns: request.turns }),
-        ...(request.call === undefined ? {} : { call: request.call }),
-      },
-      transport,
-      signal,
-    )
+    const stream = callModel(request.target, wireRequestOf(request), transport, signal)
     return {
       events: stream.events,
       ledger: () => {
@@ -327,6 +325,9 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       // 走过的那几步：**有才带**。第 0 步与交接后的第一步都是“没有”——没有就发 C 区那条文本
       // （两条路都不改 A/B 两区的字节，前缀那笔账不破）。
       ...(h.state.turns === undefined || h.state.turns.length === 0 ? {} : { turns: h.state.turns }),
+      // C 区那一段的**头**（人说的那一句 · 这一趟的开场）：**每一步都带**。组成规则的定义处是
+      // `assemble/sources.ts` 的 `cZoneHeadOf`——C 区那一段 = 头 + 只追加的尾巴，尾巴走 `turns`。
+      ...(cZoneHeadOf(h.state) === '' ? {} : { cHead: new TextEncoder().encode(cZoneHeadOf(h.state)) }),
       ...(h.call === undefined ? {} : { call: h.call }),
     }
     // ── 5a. `prefix/assemble`：三区指纹（`B3` 的断言 ② 要的那三个数）

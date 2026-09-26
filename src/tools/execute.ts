@@ -483,12 +483,13 @@ const askUserQuestionFace: ToolFn = async (args, host, ctx) => {
   return {
     ok: true,
     halt: true,
-    // **回执只说实话**（PLAN § 5.17 处三）：门真的存在了（`fugue round go`）——`round plan`
-    // 停在门口，放行那一下才发契约。而"人答了接着跑"那条通道今天仍然没有：答案要并进草案得再跑
-    // 一趟预备态（人读过日志之后），所以这一句指的两条命令都是真的存在的那两条。
+    // **回执只说实话**（PLAN § 5.17 处三）：两条路都真的存在了——门由人开（`fugue round go`），
+    // 而"答完接着走"是 `fugue say <一句话>`：那句话进这一趟的尾端（C 区第一条），立刻带着它再跑
+    // 一趟持轮者，答完就改这一版草案、重判、仍停在门口（架构 § 15.1.a 的"问与答"）。
     output:
       `问了 ${asks.length} 个问题，落进日志了。**这一轮停在门口**——` +
-      '人答过之后接着拆就再跑一趟预备态（`fugue round plan <目标>`），放行是 `fugue round go`。',
+      '人的答案用 `fugue say <一句话>` 接上去（那一趟带着这句话再跑一遍，改的是这份草案）；' +
+      '放行仍然是 `fugue round go`。',
   }
 }
 

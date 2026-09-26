@@ -17,15 +17,50 @@
 // **收尾为什么不在 `parse` 里发**：那一片只知道"又多了一个 index"，不知道后面还会不会来下一片。
 // 一条调用的三段（起点 · 分片 · 收尾）必须在**同一处**定下来（`checkEvents` 只认这个形状），
 // 所以"收尾"归 `finish`——它是"这条流到头了"那一刻的判决。
-import type { ModelEvent, StopReason, Usage } from '../contract.ts'
+import type { ModelEvent, StopReason, Turn, Usage } from '../contract.ts'
 import type { WireAdapter } from './stream.ts'
-import { WireError, bodyOf } from './stream.ts'
+import { WireError, bodyOf, wireHeadOf } from './stream.ts'
 
 interface ChatRequest {
   readonly model: string
   readonly zones: { readonly A: Uint8Array; readonly B: Uint8Array; readonly C: Uint8Array }
   readonly tools?: readonly { readonly name: string; readonly description: string; readonly parameters: unknown }[]
   readonly call?: { readonly temperature?: number; readonly maxTokens?: number }
+  /** 已经走过的那几步（给了就发原生轮次；这一条线原先不认它，尾巴只以文本发）。 */
+  readonly turns?: readonly Turn[]
+  /** C 区那一段的**头**（人说的那一句）：有轮次时它照旧要发。见 `wireHeadOf`。 */
+  readonly cHead?: Uint8Array
+}
+
+/**
+ * 一步 → 这一条线上那几条消息。**不变式与 Messages 那条线同一处**：一条 `tool_result` 的
+ * `tool_call_id` 必须对得上同一步里某个 `tool_calls[].id`——对不上就抛，不静默发出一个错的
+ * 请求体（这一条线上 `role: 'tool'` 那一对是**按 id 配的**，配错了上游只会报一句格式错）。
+ */
+function turnMessages(turn: Turn, at: number): Record<string, unknown>[] {
+  const calls = turn.calls.map((c, i) => ({
+    // 有些兼容实现不给 id（`contract.ts` 那条读数）——不给就自己编一个，而它必须与下面那条
+    // `role: 'tool'` 是同一个：**编也只编一处**。
+    id: c.id ?? `call_${at}_${i}`,
+    type: 'function',
+    function: { name: c.name, arguments: c.arguments === '' ? '{}' : c.arguments },
+  }))
+  const out: Record<string, unknown>[] = []
+  if ((turn.text !== undefined && turn.text !== '') || calls.length > 0) {
+    // 只伸手不说话的助理消息在这一条线上是 `content: ''` + `tool_calls`。
+    out.push({ role: 'assistant', content: turn.text ?? '', ...(calls.length === 0 ? {} : { tool_calls: calls }) })
+  }
+  turn.results.forEach((r, i) => {
+    const id = r.id ?? calls[i]?.id ?? `call_${at}_${i}`
+    if (!calls.some((c) => c.id === id)) {
+      throw new WireError(
+        `第 ${at} 步有一条结果的 tool_call_id 对不上这一步里任何一个 tool_calls：${id}` +
+          `（这一步调的是 ${calls.map((c) => String(c.id)).join(' · ') || '（一条都没有）'}）`,
+      )
+    }
+    out.push({ role: 'tool', tool_call_id: id, content: r.output })
+  })
+  return out
 }
 
 /**
@@ -100,10 +135,14 @@ export function wireOf(): WireAdapter {
       const messages: Record<string, unknown>[] = []
       const a = new TextDecoder().decode(req.zones.A)
       const b = new TextDecoder().decode(req.zones.B)
-      const c = new TextDecoder().decode(req.zones.C)
+      // **C 区那一段的头先发，原生轮次跟在它后面**（与 Messages 那条线同一处读法：`wireHeadOf`）。
+      const c = new TextDecoder().decode(wireHeadOf(req))
       if (a !== '') messages.push({ role: 'system', content: a })
       if (b !== '') messages.push({ role: 'user', content: b })
       if (c !== '') messages.push({ role: 'user', content: c })
+      if (req.turns !== undefined && req.turns.length > 0) {
+        for (const [at, turn] of req.turns.entries()) messages.push(...turnMessages(turn, at))
+      }
       return bodyOf({
         model: req.model,
         messages,

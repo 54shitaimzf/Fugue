@@ -194,7 +194,7 @@ export async function approvalsOf(log: Log): Promise<readonly { readonly round: 
 }
 
 /** 这一轮在日志里留下的那三样：钉住的底 · 轮级意图那一句 · 那一份草案的正文。 */
-interface Logged {
+export interface LoggedRecord {
   readonly base: CommitId | null
   readonly goal: string
   readonly draft: string | null
@@ -207,7 +207,7 @@ interface Logged {
  * **按轮次号选，不按"最后一条"选**：同一份日志里住着好几轮，第二轮起草之后回头放行第一轮时，
  * "最后一条 `holder/distill`"给的是错的草案。
  */
-async function loggedOf(log: Log, round: RoundId): Promise<Logged> {
+export async function loggedOf(log: Log, round: RoundId): Promise<LoggedRecord> {
   let base: CommitId | null = null
   let goal = ''
   let draft: string | null = null

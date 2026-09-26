@@ -19,7 +19,7 @@
 // 按错的原因往下走。
 import type { ModelEvent, StopReason, Usage } from '../contract.ts'
 import type { WireAdapter } from './stream.ts'
-import { WireError, bodyOf } from './stream.ts'
+import { WireError, bodyOf, wireHeadOf } from './stream.ts'
 
 /** 请求里那几样这一份要用到的：三区字节 · 提供方那边的模型名 · 工具目录 · 调用配置。 */
 interface MessagesRequest {
@@ -31,6 +31,8 @@ interface MessagesRequest {
   readonly promptCache?: 'explicit' | 'implicit'
   /** 已经走过的那几步（给了就发原生轮次，不给就照旧发 C 区那条文本）。 */
   readonly turns?: readonly Turn[]
+  /** C 区那一段的**头**（人说的那一句）：有轮次时它照旧要发。见 `wireHeadOf`。 */
+  readonly cHead?: Uint8Array
 }
 
 /**
@@ -152,13 +154,14 @@ export function wireOf(): WireAdapter {
       const messages: Record<string, unknown>[] = []
       const b = new TextDecoder().decode(req.zones.B)
       if (b !== '') messages.push({ role: 'user', content: userContent(b, req.promptCache === 'explicit') })
+      // **C 区那一段的头先发，原生轮次跟在它后面。** 头与尾巴是两件事：尾巴有 `turns` 时发成
+      // 轮次，而人说的那一句在头里——原先写成"有轮次就整段不发"，于是那句话从第 1 步起就没了
+      // （架构 § 8.11「那句话进的是这一趟的尾端（C 区第一条）」，读法在 `wireHeadOf`）。
+      const c = new TextDecoder().decode(wireHeadOf(req))
+      if (c !== '') messages.push({ role: 'user', content: c })
       if (req.turns !== undefined && req.turns.length > 0) {
         // **原生轮次**：模型看得见自己伸手的那一下（训练时就见过的那对形状）。
         for (const [at, turn] of req.turns.entries()) messages.push(...turnMessages(turn, at))
-      } else {
-        // 没有走过的步（第 0 步 · 夹具 · 这条线不认结构化那一面时）：照旧发 C 区那条文本。
-        const c = new TextDecoder().decode(req.zones.C)
-        if (c !== '') messages.push({ role: 'user', content: c })
       }
       return bodyOf({
         model: req.model,

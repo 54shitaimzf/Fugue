@@ -802,3 +802,139 @@ test('序 15 · 打回：不给 --retry 回一次（Verifying → Working）· -
       `--retry 0 → ${edgesZero.join(' · ')}（终点 ${jb.state}）`,
   )
 })
+
+/** `--dump-wire` 落下来的那一份是**发出去的字节**（线协议那一层），不是内部的 `ModelRequest`。 */
+function messagesOf(request: string): readonly { role: string; content: string }[] {
+  const body = JSON.parse(request) as { messages?: readonly { role: string; content: string }[] }
+  return body.messages ?? []
+}
+
+// ── C5 · 讨论态那一句话（`fugue say`）：从命令行走一遍 ─────────────────────────────
+//
+// 由头（B7.5 那一课：294 条单测全绿而命令是坏的）：这一条量的是**接口之间接上了没有**——人那
+// 一句话从命令行进来，**当场**记进这一轮的会话记录，并且**发出去的请求字节里就有它**。
+//
+// **不出网**：传输换成空回放目录（当场拒），而拒之前那一份请求已经落盘（`--dump-wire` 落的
+// 就是真发出去的那一份）——C5 的第一条断言（"每一步都读得到它"）于是在命令行这一头也量得到。
+// 「讨论不落地」量在 `round/state` 那一条链上：讨论态走完照旧是 `Idle`，一条都没有。
+test('C5 · `fugue say` 讨论态：那句话进记录 · 进请求字节 · 讨论不落地', () => {
+  const root = tmpRoot()
+  assert.equal(fugue(root, 'write', 'README.md', '--from', srcOf()).code, 0)
+  assert.equal(fugue(root, 'commit', '-m', '底').code, 0)
+  const outside = tmpDir('fugue-say-')
+  const empty = join(outside, '空夹具')
+  mkdirSync(empty, { recursive: true })
+  const dump = join(outside, 'wire')
+
+  // 空话当场拒（**用法错退 2**：这条命令行本身就不成立——那句话是这一趟的输入）。
+  // 日志里原先那几条是 `write` 与 `commit` 落的，所以这里量的是**这一趟一条都没增**。
+  const zero = logEvents(root).length
+  const blank = fugue(root, 'say', '   ')
+  assert.equal(blank.code, 2, `空话该退 2，实际 ${blank.code}：${blank.stderr.slice(0, 200)}`)
+  assert.match(blank.stderr, /say 需要 <一句话>/)
+  assert.equal(logEvents(root).length, zero, '空话那一趟往日志里写了东西')
+
+  const sentence = '第二节也要拆'
+  const r = fugue(root, 'say', sentence, '--wire-in', empty, '--dump-wire', dump)
+  assert.equal(r.code, 1, `这一趟没有凝聚理解该退 1，实际 ${r.code}：${r.stderr.slice(0, 300)}`)
+  assert.match(r.stdout, /讨论态/, `这一趟该报讨论态：${r.stdout.slice(0, 300)}`)
+  assert.match(r.stdout, /它进的是这一趟的尾端（C 区第一条）/, r.stdout.slice(0, 400))
+  assert.match(r.stdout, /凝聚：这一趟没落下新的那一段/, r.stdout.slice(0, 400))
+
+  // 一 · **记录**：那一句话当场进这一轮的会话记录（读回来是视图里那一份，真实工作树里没有它）。
+  const back = fugue(root, 'read', '.fugue/session/r1.jsonl')
+  assert.equal(back.code, 0, `会话记录读不回来：${back.stderr.slice(0, 200)}`)
+  assert.equal(back.stdout, `{"who":"人","text":"${sentence}"}\n`, `记录里那一条不对：${JSON.stringify(back.stdout)}`)
+  assert.equal(existsSync(join(root, '.fugue', 'session')), false, '会话记录落进了真实工作树')
+
+  // 二 · **发出去的字节**：`--dump-wire` 落下来的那一份请求里有它。
+  const request = readFileSync(join(dump, 'call-0001', 'request.json'), 'utf8')
+  assert.ok(request.includes(sentence), `落下来那一份请求里没有那句话：${request.slice(0, 300)}`)
+  // 而**那一句单独成一条消息**（C 区那一段的头就是它）：只判"字节里有那句话"钉不住这一处——
+  // 讨论态里 B 区那一段投影（最近几次原文）也带着那句话。负对照实测：把 `cZoneHeadOf` 抹空，
+  // 只判字节那一条照旧绿，加上这一条才红。
+  assert.ok(
+    messagesOf(request).some((m) => m.content === sentence),
+    `落下来那一份请求里没有"那一句单独成一条消息"（C 区那一段头）：${request.slice(0, 400)}`,
+  )
+
+  // 三 · **讨论不落地**：处境没动（一条 `round/state` 都没有），也没有凝聚理解。
+  const events = logEvents(root)
+  assert.equal(events.filter((e) => e['t'] === 'round/state').length, 0, '讨论那一趟落了 round/state')
+  assert.equal(events.filter((e) => e['t'] === 'holder/distill').length, 0, '一步就失败那一档却落了凝聚理解')
+  // 四 · **原话不进日志正文**（日志是一等档的取证物；原话走视图那条路）。
+  assert.equal(
+    readFileSync(join(root, '.fugue', 'log', 'round.jsonl'), 'utf8').includes(sentence),
+    false,
+    '那句话进了日志正文',
+  )
+  console.log(
+    `C5 讨论态读数：退 ${r.code} · 记录 1 条 · 落下来那一份请求里有那句话 · ` +
+      `round/state 0 条 · holder/distill 0 条 · 日志正文里 0 次`,
+  )
+})
+
+// ── C5 · 预备态那一句话（`fugue say`）：改的是那份草案 · 原话不另存 ─────────────────
+//
+// 两态的差别（架构 § 15.1.a）：讨论态的产物是**那场对话的凝聚**，预备态的产物是**那份草案
+// 文件**。所以这一条判的是"原话不另存"：预备态里**没有**会话记录这一份东西，而那句话照旧
+// 在发出去的请求字节里（C 区第一条）。
+test('C5 · `fugue say` 预备态：那句话进请求字节 · 原话不另存 · 处境照旧 Planning', () => {
+  const root = tmpRoot()
+  assert.equal(fugue(root, 'write', 'README.md', '--from', srcOf()).code, 0)
+  assert.equal(fugue(root, 'commit', '-m', '底').code, 0)
+  assert.equal(fugue(root, 'config', 'set', 'actions.ok', JSON.stringify({ argv: ['/bin/sh', '-c', 'true'], outputs: [] })).code, 0)
+  const outside = tmpDir('fugue-say-pre-')
+  const draftAt = join(outside, 'r1.md')
+  writeFileSync(draftAt, draftMd())
+  // **草案写进持轮者的视图**（人写那一档）：`round plan --judge` 拿视图里那一份直接判。
+  assert.equal(fugue(root, 'write', '.fugue/plan/r1.md', '--from', draftAt).code, 0)
+  const plan = fugue(root, 'round', 'plan', '写一份 a.ts', '--judge')
+  assert.equal(plan.code, 0, `round plan 退了 ${plan.code}：${plan.stderr.slice(0, 300)}`)
+  const before = logEvents(root)
+
+  const empty = join(outside, '空夹具')
+  mkdirSync(empty, { recursive: true })
+  const dump = join(outside, 'wire')
+  const sentence = '第二节也要拆，别只动第一节'
+  const r = fugue(root, 'say', sentence, '--wire-in', empty, '--dump-wire', dump)
+  // 半截流那一趟**没改出新的草案**，视图里那一份仍旧是 v1，于是门照旧停着——**退 0**（放行是
+  // `round go` 那一趟的事）。
+  assert.equal(r.code, 0, `门停着那一档该退 0，实际 ${r.code}：${r.stderr.slice(0, 300)}`)
+  assert.match(r.stdout, /预备态/, `这一趟该报预备态：${r.stdout.slice(0, 300)}`)
+  assert.match(r.stdout, /判：仍然停在门口/, r.stdout.slice(0, 400))
+  assert.match(r.stdout, /这一趟改的是它（原话不另存：工作区里找不到第二份）/, r.stdout.slice(0, 400))
+
+  // 一 · 那句话**在发出去的请求字节里**，而且是**单独成一条消息**的那一段头（C 区第一条：
+  // 这一步之后的每一步都读得到它）。预备态里 B 区那一段投影是空的，所以这一条也能钉住它。
+  const request = readFileSync(join(dump, 'call-0001', 'request.json'), 'utf8')
+  assert.ok(request.includes(sentence), '落下来那一份请求里没有那句话')
+  assert.ok(
+    messagesOf(request).some((m) => m.content === sentence),
+    `落下来那一份请求里没有"那一句单独成一条消息"（C 区那一段头）：${request.slice(0, 400)}`,
+  )
+
+  // 二 · **原话不另存**：预备态里没有会话记录这一份东西。
+  assert.equal(fugue(root, 'read', '.fugue/session/r1.jsonl').code, 1, '预备态里落了一份会话记录')
+
+  // 三 · 处境照旧：只走过那一条 `Idle → Planning`，一个契约都没发，也没有新的那一版。
+  const after = logEvents(root)
+  assert.deepEqual(
+    after.filter((e) => e['t'] === 'round/state').map((e) => `${String(e['from'])} → ${String(e['to'])}`),
+    ['Idle → Planning'],
+    '预备态那一趟动了处境',
+  )
+  assert.equal(after.filter((e) => e['t'] === 'contract/issue').length, 0, '门停着却发了契约')
+  // 「它改出了新的一版」的证据是**正文不同**，不是"日志里多了一条"：预备态每一趟都把草案正文
+  // 落进 `holder/distill`（C1 的口径 · 正文跟着事件进日志），所以半截流那一趟照旧落一条，
+  // 而它与上一条**指纹相同**。
+  const one = before.filter((e) => e['t'] === 'holder/distill')
+  const two = after.filter((e) => e['t'] === 'holder/distill')
+  assert.equal(one.length, 1, `判那一趟该落一条草案正文，实际 ${one.length} 条`)
+  assert.equal(new Set(two.map((e) => String(e['digest']))).size, 1, `这一趟改出了新的一版：${two.map((e) => String(e['digest'])).join(' · ')}`)
+  assert.equal(two.at(-1)?.['digest'], one[0]?.['digest'], '最后那一条草案的指纹变了')
+  console.log(
+    `C5 预备态读数：退 ${r.code} · 请求里有那句话 · 会话记录 0 份（原话不另存）· ` +
+      `round/state 1 条（Idle → Planning）· contract/issue 0 条 · holder/distill 指纹未变`,
+  )
+})

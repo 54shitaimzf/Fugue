@@ -102,6 +102,19 @@ export interface AssembleState {
   readonly lastStep: string
 }
 
+/**
+ * **C 区那一段的头**：只追加那条尾巴**之前**的那一半（架构 § 8.11：这一趟里那条自然增长的流，
+ * 头是「人说的那一句」，尾巴是模型自己的输出与工具结果）。
+ *
+ * 它是那一段组成规则的**唯一一处说法**：`运行时上下文` 那一条源按它拼全文（头 + 尾巴），而
+ * `runtime/step.ts` 按它把头发给适配器（`ModelRequest.cHead`）——适配器发原生轮次时尾巴换成
+ * 轮次，头照旧要发。两处各写一句 `state.runtime` 的话，将来给这一段加一种前缀时，发出去的那
+ * 一份不会跟着变，而**那不会报错**。
+ */
+export function cZoneHeadOf(s: AssembleState): string {
+  return s.runtime
+}
+
 /** 一份最小的输入：十二个段各有其空值，测试与走查从一个确定的形状出发。 */
 export function emptyState(): AssembleState {
   return {
@@ -256,8 +269,9 @@ const SOURCES: Readonly<Record<SegmentId, SourceRule>> = {
   运行时上下文: {
     value: (s) => {
       const turns = (s.turns ?? []).map(turnText)
-      if (turns.length === 0) return s.runtime
-      return s.runtime === '' ? turns.join('\n') : `${s.runtime}\n${turns.join('\n')}`
+      const head = cZoneHeadOf(s)
+      if (turns.length === 0) return head
+      return head === '' ? turns.join('\n') : `${head}\n${turns.join('\n')}`
     },
   },
   信号摘要: { value: (s) => [...s.signals] },

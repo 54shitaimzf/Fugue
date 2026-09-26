@@ -430,7 +430,7 @@ test('⑦b dump 的 *.sha256 是标准 sha256：sha256sum -c 对得上（短指�
   const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
   const prefix = prefixOf(0)
   const dumping = makeDumpCall(dir, fixtureTransport(f, 1))
-  const stream = dumping({ target: t, model: t.model, prefix, tools, call: f.call } as never, new AbortController().signal)
+  const stream = dumping({ target: t, adapter: { name: 'anthropic-messages' }, model: t.model, prefix, tools, call: f.call } as never, new AbortController().signal)
   for await (const e of stream.events) void e
   stream.ledger()
 

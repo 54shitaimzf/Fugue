@@ -18,10 +18,32 @@
 //
 // **`[DONE]` 是 OpenAI 兼容那一侧的结束标记，不是内容**：这一层跳过它，收尾由 `parse` 按
 // 它自己那条线的规矩发（`finish_reason` 那一条）。
-import type { ModelEvent } from '../contract.ts'
+import type { ModelEvent, Turn } from '../contract.ts'
 
 /** 适配器这一层的失败：上游给的东西与这条线协议的形状对不上。**话里带指路**（哪一条 · 为什么）。 */
 export class WireError extends Error {}
+
+/**
+ * **C 区那一段要发出去的那一半：它的头。**（架构 § 8.11：「那句话进的是这一趟的尾端（C 区第一条）」）
+ *
+ * 两条线协议共用这一个读法；`zones.C` 是那一段的全文（头 + 尾巴），而尾巴有两种发法：
+ *
+ *   · 有 `cHead`（运行时装配时会给）→ 发它，尾巴交给 `turns`（原生轮次）；
+ *   · 没有 `cHead` → **只有"没有轮次"这一档能退回 `zones.C`**（那时尾巴是空的，两者逐字节
+ *     相同）；有轮次又没有头，就是这一趟没有头可发（空）。
+ *
+ * **退回那一档是给夹具与别的调用方的**：它们构造请求时不给头，而它们的请求体一个字节都不许
+ * 变（`src/model/fixtures/*.json` 绑的就是那些字节）。
+ */
+export function wireHeadOf(r: {
+  readonly zones: { readonly C: Uint8Array }
+  readonly cHead?: Uint8Array
+  readonly turns?: readonly Turn[]
+}): Uint8Array {
+  if (r.cHead !== undefined) return r.cHead
+  const hasTurns = r.turns !== undefined && r.turns.length > 0
+  return hasTurns ? new Uint8Array(0) : r.zones.C
+}
 
 /** 一个适配器。`bytes` 与 `parse` 是纯函数；`state` 是**一条流一份**的可变状态（分片累加用）。 */
 export interface WireAdapter {

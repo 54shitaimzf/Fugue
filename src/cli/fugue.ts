@@ -63,7 +63,7 @@ import { VerifyRefused, verifyMat } from '../materialize/verify.ts'
 import type { Denied, Result, Roots } from '../roots/contract.ts'
 import { HostError, assertHost } from '../roots/host.ts'
 import { createRoots } from '../roots/roots.ts'
-import type { AgentId, BranchId, CommitId, ContractId, ForkStrategy, LogPos, PolicyMode, RelPath, StepId, ViewRev, WriterId } from '../terms.ts'
+import type { AgentId, BranchId, CommitId, ContractId, ForkStrategy, LogPos, PolicyMode, RelPath, RoundId, StepId, ViewRev, WriterId } from '../terms.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import type { View } from '../view/contract.ts'
@@ -85,9 +85,10 @@ import { createToolHost } from '../tools/host.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
 import { refHeadOf } from '../round/head.ts'
 import { RoundStartError, startRound } from '../round/start.ts'
-import { approvalsOf, dispatchRound } from '../round/dispatch.ts'
+import { approvalsOf, dispatchRound, loggedOf } from '../round/dispatch.ts'
 import { fingerprintOf } from '../contract/gate.ts'
 import { PlanError, planRound, pinnedBase } from '../round/plan.ts'
+import { RECENT_COUNT, SayError, recentOf, sayRound, sessionPathOf } from '../round/say.ts'
 import { estimateTokensOfText } from '../runtime/budget.ts'
 import { draftPathOf } from '../contract/draft.ts'
 import { RoundRunError, materializeCommit, runRound } from '../round/execute.ts'
@@ -96,12 +97,14 @@ import { realDriver, stubDriver } from '../round/driver.ts'
 import { RETRY_DEFAULT } from '../round/machine.ts'
 import { wireCallOver } from '../runtime/step.ts'
 import { makeDumpCall, wireInTransport } from '../model/http.ts'
-import type { AgentHandle } from '../runtime/step.ts'
+import type { AgentHandle, CallModel } from '../runtime/step.ts'
 import { targetAt } from '../model/http.ts'
 import { authWith, modelDeclOf, providerOf } from '../model/contract.ts'
+import type { ModelDecl } from '../model/contract.ts'
 import { wireHeader } from '../model/wire/headers.ts'
 import { implementedNames, publishedTools } from '../tools/execute.ts'
 import { CATALOG_STATES, TOOL_NAMES, catalog } from '../tools/catalog.ts'
+import type { ToolEntry } from '../tools/catalog.ts'
 import type { Contract } from '../contract/types.ts'
 import type { AssertionRunSpec } from '../merge/accept.ts'
 import { entriesOf } from '../merge/accept.ts'
@@ -269,6 +272,17 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              用户的手，用来量漂移那一档）；缺省什么都不做
                              --poke-exact <路径> 同上，但抄的是这一趟目标树里那条路径的
                              字节（量"两边逐字节相同 → 照合并"那一档）
+  say <一句话> [--live|--wire-in <目录>] [--max-steps <n>]
+                             **答完接着走**：那句话进这一趟的尾端（C 区第一条），并且立刻带着它
+                             跑一趟持轮者——**停下来的那一处没有"等"这种状态**（命令返回时那一趟
+                             已经跑完了）。两个状态的产物不同：**讨论态**（Idle）那句话落进会话
+                             记录（.fugue/session/<轮次>.jsonl），这一趟落下修正后的理解
+                             （holder/distill），而处境不动（讨论不落地）；**预备态**（Planning）
+                             那一趟改的是那份草案（.fugue/plan/<轮次>.md），改完重判，仍然停在
+                             门口——**原话不另存**，工作区里找不到第二份。进它视野的是这场对话
+                             的投影：凝聚理解 · 最近 3 条原文。
+                             --live / --wire-in / --max-steps / --credential / --dump-wire 与
+                             round run 同义（这一趟缺省就走真模型：持轮者那一格没有打桩档）。
   verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
                              里那几条，三者两两相等，并报 materialize-precision（§ 8.15 的比值）。
                              不等就退 1——**只报不修**（§ 8.5 的失败处理是删除重建）
@@ -1234,6 +1248,88 @@ async function roundRun(
 }
 
 /**
+ * 持轮者那一格的接线（**两处共用**：`round plan` 的预备态那一趟 · `fugue say` 的两个状态）。
+ *
+ * 四样东西一处给：**视图**（持轮者写它 · 调用方读它是同一个对象——两处各开一份的症状是"草案不在
+ * 视图里"）· **工具面**（与子 agent 同一个宿主、同一份公布目录：不给持轮者加工具，架构 § 15.4；
+ * 差别只落在作用域上——`src/round/plan.ts` 的 `holderFace` 拦下物化与提交那三条，`execRoot`
+ * 那一栏不给，预备态不物化所以没有可执行的树）· **句柄**（`handleFor`：B 区那两段与 C 区第一条
+ * 由这一趟定）· **怎么调模型**（真网络 / 回放 / 落盘三档只看传输那一层）。
+ *
+ * 它还读一次**这一轮的会话记录**（`.fugue/session/<轮次>.jsonl`，架构 § 9.10）——那一段投影是
+ * 持轮者 B 区的「压缩前最近几次原文」，生产者是 `fugue say`（架构 § 8.11）。
+ */
+async function holderWiringOf(o: {
+  readonly root: string
+  readonly ctx: Ctx
+  readonly doc: ConfigDoc
+  readonly round: RoundId
+  readonly wire: WireFlags
+  readonly judge: boolean
+  /** B 区那一段：轮级意图那一句。 */
+  readonly goal: string
+  /** B 区那一段：上一版凝聚理解（`holder/distill` 的最后一条）。 */
+  readonly distill: string
+}): Promise<{
+  readonly base: CommitId
+  readonly view: View
+  readonly head: CommitId
+  readonly execute: ToolExecutor
+  readonly decl: ModelDecl
+  readonly call: CallModel
+  readonly tools: readonly ToolEntry[]
+  readonly baseState: AssembleState
+  readonly recent: string
+  readonly handleFor: (over: { readonly runtime: string; readonly recent: string }) => AgentHandle
+}> {
+  // **钉住底**（读一次，然后传下去）：视图铺在它上面，日志里 `round/state` 那条链也以它为准。
+  const base = await pinnedBase(o.ctx.truth)
+  const view = await loadView(o.ctx.log, 'round' as WriterId, { lower: lowerAt(o.ctx.truth, base) })
+  const head = await refHeadOf(o.ctx.log, 'round' as WriterId, base)
+  const host = createToolHost(view, o.ctx.roots, {
+    actions: { writer: 'round' as WriterId, log: o.ctx.log, truth: o.ctx.truth, head },
+  })
+  const execute = createToolExecutor({
+    logOf: () => o.ctx.log,
+    host,
+    fenceOf: (raw, cwd) => {
+      const got = o.ctx.roots.resolveVirtual(raw, cwd as RelPath)
+      return got.ok ? { ok: true as const, value: got.value } : { ok: false as const, error: got.error }
+    },
+  })
+  const decl = modelDeclOf(DEFAULT_MODEL.id)
+  const baseState = stateWithState(emptyState(), o.doc, o.root)
+  // 「压缩前最近几次原文」：**会话记录那一段投影**（最近 3 条）。记录不在就是空串——第一次说话
+  // 之前这一场对话还没有一条。
+  const sessionBytes = await view.read(sessionPathOf(o.round))
+  const recent = recentOf(sessionBytes === null ? '' : new TextDecoder().decode(sessionBytes))
+  const handleFor = (over: { readonly runtime: string; readonly recent: string }): AgentHandle => ({
+    agent: 'round' as AgentId,
+    // **持轮者那一格没有 agent 这一栏**（架构 § 8.11：它手里是全部契约，不是一份）。
+    coord: null,
+    branch: 'refs/heads/main' as BranchId,
+    contract: '' as ContractId,
+    protocol: HOLDER_PROTOCOL,
+    model: decl.id,
+    wireModel: decl.model,
+    target: targetAt(decl.id, credentialFor(decl, o.wire, o.judge)),
+    adapter: { name: decl.wire },
+    // C 区那一段 = **头**（人说的那一句：`runtime`）+ 只追加的尾巴（走过的那几步）——见
+    // `assemble/sources.ts` 的 `cZoneHeadOf`。头是空的就不写这一栏（那时全文与尾巴逐字节相同）。
+    state: {
+      ...baseState,
+      goal: o.goal,
+      distill: o.distill,
+      recent: over.recent,
+      ...(over.runtime === '' ? {} : { runtime: over.runtime }),
+    },
+  })
+  const pump = o.wire.wireIn === undefined ? undefined : wireInTransport(o.wire.wireIn)
+  const call = o.wire.dumpDir === undefined ? wireCallOver(pump) : makeDumpCall(o.wire.dumpDir, pump)
+  return { base, view, head, execute, decl, call, tools: publishedCatalog(), baseState, recent, handleFor }
+}
+
+/**
  * `fugue round plan <目标>`：**预备态那一趟**——持轮者自己读 · 自己设计 · 自己拆，**停在门口**等人批。
  * 出处：架构 § 15.1.a（落地 · 四步里的"拆" · "预备态的出口是一道默认为停的门" · 出口三档）·
  * PLAN § 5.10 的 `C1` 行。
@@ -1277,48 +1373,23 @@ async function roundPlan(
 
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   try {
-    // **钉住底**（读一次，然后传下去）：视图铺在它上面，日志里 `round/state` 那条链也以它为准。
-    const base = await pinnedBase(ctx.truth)
-    const view = await loadView(ctx.log, 'round' as WriterId, { lower: lowerAt(ctx.truth, base) })
-    const roots = ctx.roots
-    const head = await refHeadOf(ctx.log, 'round' as WriterId, base)
-    // **持轮者那一格的工具面**：与子 agent 同一个宿主、同一份公布目录（不给持轮者加工具，
-    // 架构 § 15.4）。差别只落在作用域上——`src/round/plan.ts` 的 `holderFace` 拦下物化与提交
-    // 那三条，`execRoot` 这一栏**不给**（预备态不物化，所以没有可执行的树）。
-    const host = createToolHost(view, roots, {
-      actions: { writer: 'round' as WriterId, log: ctx.log, truth: ctx.truth, head },
+    // 持轮者那一格的接线（视图 · 工具面 · 句柄 · 怎么调模型）：一处，`fugue say` 的两个状态
+    // 走的是同一份（见 `holderWiringOf`）。
+    const w = await holderWiringOf({
+      root,
+      ctx,
+      doc,
+      round,
+      wire,
+      judge,
+      goal,
+      // **凝聚理解**（架构 § 15.1.a 的 B 区那一段）：最后一条 `holder/distill` 的正文。
+      distill: (await lastDistillOf(ctx.log, round)).distill,
     })
-    const execute = createToolExecutor({
-      logOf: () => ctx.log,
-      host,
-      fenceOf: (raw, cwd) => {
-        const got = roots.resolveVirtual(raw, cwd as RelPath)
-        return got.ok ? { ok: true as const, value: got.value } : { ok: false as const, error: got.error }
-      },
-    })
-
-    const decl = modelDeclOf(DEFAULT_MODEL.id)
-    // **凝聚理解**（架构 § 15.1.a 的 B 区那一段）：最后一条 `holder/distill` 的正文。
-    // `recent`（压缩前最近几次原文）今天**没有生产者**——会话记录那一格归 T12，所以它是空的。
-    const { distill } = await lastDistillOf(ctx.log, round)
-    const baseState = stateWithState(emptyState(), doc, root)
-    const state: AssembleState = { ...baseState, goal, distill, recent: '' }
-    const handle: AgentHandle = {
-      agent: 'round' as AgentId,
-      // **持轮者那一格没有 agent 这一栏**（架构 § 8.11：它手里是全部契约，不是一份）。
-      coord: null,
-      branch: 'refs/heads/main' as BranchId,
-      contract: '' as ContractId,
-      protocol: HOLDER_PROTOCOL,
-      model: decl.id,
-      wireModel: decl.model,
-      target: targetAt(decl.id, credentialFor(decl, wire, judge)),
-      adapter: { name: decl.wire },
-      state,
-    }
-    const pump = wire.wireIn === undefined ? undefined : wireInTransport(wire.wireIn)
-    const call = wire.dumpDir === undefined ? wireCallOver(pump) : makeDumpCall(wire.dumpDir, pump)
-    const tools = publishedCatalog()
+    const { base, view, execute, decl, call, tools, baseState } = w
+    // 这一趟的句柄：**C 区第一条是空的**（这一趟没有人的话——那是 `fugue say` 那一格），
+    // B 区那一段投影照 `holderWiringOf` 读出来的会话记录给。
+    const handle: AgentHandle = w.handleFor({ runtime: '', recent: w.recent })
 
     const r = await planRound({
       base,
@@ -1443,6 +1514,162 @@ async function roundPlan(
     // **退回那一档是退出码 1**（不是用法错：这一趟真的跑了，只是草案不成立）。
     return r.held ? 0 : 1
   } catch (err) {
+    if (err instanceof PlanError) return fail(err.message)
+    if (err instanceof ConfigError) return fail(err.message)
+    throw err
+  } finally {
+    await ctx.close()
+  }
+}
+
+/**
+ * `fugue say <一句话>`：**答完接着走**（架构 § 15.1.a 的"问与答" · PLAN § 5.10 的 `C5`）。
+ *
+ * 这一层只做三件事：把持轮者那一格接起来（与 `round plan` 同一份 `holderWiringOf`）· 把两个状态
+ * 各自的读数排成人读的两列 · 决定退出码。**分岔不在这里**：它在 `src/round/say.ts` 里按
+ * `round/state` 那条链重放出来的处境判（`Idle` = 讨论态 · `Planning` = 预备态）。
+ *
+ * **这一条没有"目标"这个参数**：预备态那一趟的「工作总目标」从日志里的 `round/intent` 读——
+ * 同一轮里第二趟起，命令行那一句与日志里的意图会静默分家（架构 § 15.1 纪律 2）。
+ */
+async function sayCommand(
+  root: string,
+  flags: Map<string, string | true>,
+  args: string[],
+  json: boolean,
+): Promise<number> {
+  // **一句话可以是几个词**：命令行按空白分词，`fugue say 把解析器 拆成两格` 到这里是三个参数。
+  const text = args.join(' ').trim()
+  if (text === '') return usageFail('say 需要 <一句话>：那句话是这一趟的输入（架构 § 15.1.a 的"问与答"）')
+  const wire = wireFlagsOf(root, flags)
+  let doc: ConfigDoc
+  try {
+    doc = await readConfig(root)
+  } catch (err) {
+    if (err instanceof ConfigError) return fail(err.message)
+    throw err
+  }
+  const rawRound = getConfig(doc, 'round.id')
+  const round = (typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1') as RoundId
+  const ctx = await openCtx(root, flags, { sync: 'each', write: true })
+  try {
+    const logged = await loggedOf(ctx.log, round)
+    const { distill } = await lastDistillOf(ctx.log, round)
+    const w = await holderWiringOf({
+      root,
+      ctx,
+      doc,
+      round,
+      wire,
+      // 说话那一趟**没有 `--judge`**：人的话必须真的到持轮者手里，一步都不能省（那一档是"人喊停、
+      // 不请模型跑"，与"人说话"是两件事）。
+      judge: false,
+      goal: logged.goal,
+      distill,
+    })
+    const makeHandle = (over: { readonly runtime: string; readonly recent: string }): AgentHandle =>
+      w.handleFor({ runtime: over.runtime, recent: over.recent })
+    const r = await sayRound({
+      round,
+      text,
+      view: w.view,
+      log: ctx.log,
+      truth: ctx.truth,
+      writer: ctx.writer,
+      head: w.head,
+      goal: logged.goal,
+      distill,
+      makeHandle,
+      call: w.call,
+      execute: w.execute,
+      tools: w.tools,
+      ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
+      // 预备态那一趟就是 `round plan` 那一趟（同一个判据 · 同一份身份分配器 · 同一段估账）——
+      // 差别只有一处：C 区第一条是人的那一句话。
+      plan: async (over) =>
+        await planRound({
+          base: w.base,
+          view: w.view,
+          log: ctx.log,
+          round,
+          goal: over.goal,
+          identityFor: (n: number) => identFor(round, n),
+          actions: actionsTableOf(doc),
+          handle: makeHandle({ runtime: over.runtime, recent: over.recent }),
+          decl: w.decl,
+          call: w.call,
+          execute: w.execute,
+          tools: w.tools,
+          ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
+          occupancy: {
+            decl: w.decl,
+            base: w.baseState,
+            goal: over.goal,
+            round,
+            ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
+            tools: JSON.stringify(w.tools),
+          },
+        }),
+    })
+    if (json) {
+      emitJson({
+        round: r.round,
+        where: r.where,
+        state: r.state,
+        text: r.text,
+        sessionPath: r.sessionPath,
+        records: r.records,
+        badLines: r.badLines,
+        recent: r.recent,
+        distill: r.distill,
+        notes: [...r.notes],
+        steps: r.steps,
+        exit: r.exit,
+        stopped: r.stopped,
+        held: r.plan === null ? null : r.plan.held,
+        draftPath: r.plan === null ? null : draftPathOf(round),
+        problems: r.plan === null ? [] : [...r.plan.gate.problems],
+        contracts: r.plan?.gate.built?.contracts.length ?? 0,
+        occupancy: r.plan === null ? [] : [...r.plan.occupancy],
+      })
+    } else {
+      emitLine(`${r.round}\t${r.where}\t${r.steps} 步\t${r.exit}`)
+      emitLine(`  收工：${r.exit}（${r.stopped}）`)
+      emitLine(`  那句话：${r.text}`)
+      emitLine('  它进的是这一趟的尾端（C 区第一条）：这一步之后的每一步都读得到它')
+      if (r.where === '讨论态') {
+        emitLine(`  对话：${r.sessionPath}\t${r.records} 条${r.badLines === 0 ? '' : `（读不出来 ${r.badLines} 行）`}`)
+        emitLine(`  进前缀的那一段：最近 ${RECENT_COUNT} 条原文（${estimateTokensOfText(r.recent)} token）`)
+        for (const line of r.recent.split('\n')) emitLine(`    ${line}`)
+        emitLine(
+          r.distill === null
+            ? '  凝聚：这一趟没落下新的那一段（它一句话都没说出来）'
+            : `  凝聚：修正后的理解 ${estimateTokensOfText(r.distill)} token → 一条 holder/distill（正文全文进日志）`,
+        )
+        emitLine(`  这一态的处境没动：${r.state}（讨论不落地——落地是 fugue round plan <目标>）`)
+      } else {
+        emitLine(`  草案：${draftPathOf(round)}\t这一趟改的是它（原话不另存：工作区里找不到第二份）`)
+        emitLine(
+          `  判：${r.plan?.held === true ? '仍然停在门口' : '退回'}\t契约造得出来 ` +
+            `${r.plan?.gate.built?.contracts.length ?? 0} 份 · 一份都没发`,
+        )
+      }
+      for (const note of r.notes) process.stderr.write(`${note}\n`)
+      if (r.where === '预备态') {
+        if (r.plan?.held === true) {
+          process.stderr.write('门停在这里等人批：放行是 `fugue round go`。\n')
+        } else {
+          process.stderr.write('草案退回了（构造器不猜、不补）：\n')
+          for (const one of r.plan?.gate.problems ?? []) process.stderr.write(`  ${one}\n`)
+        }
+      }
+    }
+    // 退出码：**讨论态没落下产物**（那句话没换来一段理解）与**预备态退回**都是 1——这一趟真的跑
+    // 了，只是没换来东西（不是用法错）。
+    if (r.where === '讨论态') return r.distill === null ? 1 : 0
+    return r.plan?.held === true ? 0 : 1
+  } catch (err) {
+    if (err instanceof SayError) return fail(err.message)
     if (err instanceof PlanError) return fail(err.message)
     if (err instanceof ConfigError) return fail(err.message)
     throw err
@@ -2994,6 +3221,10 @@ async function run(argv: readonly string[]): Promise<number> {
     if (sub === 'go') return await roundGo(root, flags, positional.slice(2), json)
     return await roundCmd(root, flags, positional.slice(1), json)
   }
+
+  // 说话那一趟与轮次那一组同一档：它要 log 与 truth 两个句柄（会话记录走 view/write 那条路），
+  // 还要跑一趟持轮者——所以它也自己开上下文。
+  if (cmd === 'say') return await sayCommand(root, flags, positional.slice(1), json)
 
   // 配置不建视图、不读日志：它是工作区的输入，不是它的状态（§ 15.3.a 末段）。
   if (cmd === 'config') return await config(root, positional.slice(1), json)

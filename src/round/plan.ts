@@ -304,6 +304,85 @@ function bodyOf(v: unknown): string {
 
 
 /**
+ * 持轮者那一趟跑完之后的读数。**两个状态共用这一个循环**（讨论态说一句话 · 预备态改草案再判）：
+ * 差别不在这一层——差别在产物与"这句话这一趟落哪儿"（架构 § 15.1.a 那张表）。
+ */
+export interface HolderPassResult {
+  readonly steps: number
+  readonly exit: HolderExit
+  /** 为什么停（`收敛` / `步数到顶（4）` / `cut-stream：…` / 人喊停那一句）。 */
+  readonly stopped: string
+  /**
+   * **它最后说的那一段话。** 讨论态拿它当"修正后的理解"（架构 § 15.1.a：人在讨论里说了一句话，
+   * 那一趟的产物就是修正后的理解）；预备态不用它——那里的产物是那份草案文件。
+   *
+   * 空串 = 这一趟没说什么（半截流 · 一步就失败 · 人喊停那一档）。
+   */
+  readonly said: string
+}
+
+/**
+ * 跑一趟持轮者。**三档出口在这里归一**（架构 § 15.1.a 那张表的三行）：`declared` 由
+ * `holderFace` 记下来的那一下定，其余都算 Harness 判的自然结束（步数到顶 · 半截流也是"这一格
+ * 停了"），而人喊停那一档一步都不跑。
+ *
+ * **它不认识草案、也不认识会话记录**：产物落在哪儿由调用方读，这一份只把"它跑到哪儿 · 为什么
+ * 停 · 最后说了什么"交出来。判据也不在这里（键域在 `contract/gate.ts`，那一趟归 `planRound`）。
+ */
+export async function holderPass(deps: {
+  readonly handle: AgentHandle
+  /** 轮级事件那一个口（`round`）：这一趟落的 `llm/call` · `tool/*` 都走它。 */
+  readonly log: Log
+  readonly call: CallModel
+  readonly execute: ToolExecutor
+  readonly tools?: readonly ToolEntry[]
+  readonly maxSteps?: number
+  /** 人喊停那一档：不请模型跑。 */
+  readonly judgeOnly?: boolean
+}): Promise<HolderPassResult> {
+  if (deps.judgeOnly === true) {
+    return { steps: 0, exit: 'judged', stopped: '人喊停：这一趟不请模型跑，拿手里那一份直接判', said: '' }
+  }
+  let declared = false
+  const face = holderFace(deps.execute, { onDeclare: () => (declared = true) })
+  const runtime = createRuntime({
+    logOf: () => deps.log,
+    call: deps.call,
+    execute: face,
+    ...(deps.tools === undefined ? {} : { tools: deps.tools }),
+    ...(deps.maxSteps === undefined ? {} : { maxSteps: deps.maxSteps }),
+  })
+  let handle: AgentHandle = deps.handle
+  let steps = 0
+  let stopped = '收敛'
+  let exit: HolderExit = 'natural'
+  let said = ''
+  for (;;) {
+    const r = await runtime.step(handle, new AbortController().signal)
+    steps += 1
+    // **最后说的那一段**：一步的产物在 `next.turns` 的末尾那一条里（`turnText` 那一面是它的
+    // 文本投影，这里直接读结构化那一面，不重述一遍）。
+    const last = (r.next.turns ?? []).at(-1)
+    if (last?.text !== undefined && last.text !== '') said = last.text
+    if (r.outcome.kind === 'failed') {
+      // **失败也要走到判那一步**：它是"这一格停了"的一种，`gate.problems` 会说出草案缺什么。
+      stopped = `${r.outcome.error.why}：${r.outcome.error.message}`
+      break
+    }
+    handle = { ...handle, state: r.next }
+    if (r.outcome.kind === 'done') {
+      exit = declared ? 'declared' : 'natural'
+      break
+    }
+    if (deps.maxSteps !== undefined && steps >= deps.maxSteps) {
+      stopped = `到了你给的上界（${deps.maxSteps} 步）`
+      break
+    }
+  }
+  return { steps, exit, stopped, said }
+}
+
+/**
  * 跑一趟预备态。**停在门口，不派发。**
  *
  * 返回里的 `gate` 就是那道门的判据：`gate.problems` 空数组 = 停在门口；非空 = 退回
@@ -341,45 +420,18 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
     )
   }
 
-  // 二 · 持轮者跑一趟。**三档出口在下面那个循环里归一**：`declared` 由 `holderFace` 记下来的那
-  // 一下定，其余都算 Harness 判的自然结束（步数到顶 · 半截流也是"这一格停了"）。
-  let declared = false
-  const face = holderFace(deps.execute, { onDeclare: () => (declared = true) })
-  const maxSteps = deps.maxSteps
-  let handle: AgentHandle = deps.handle
-  let steps = 0
-  let stopped = '收敛'
-  let exit: HolderExit = 'natural'
-  if (deps.judgeOnly === true) {
-    exit = 'judged'
-    stopped = '人喊停：这一趟不请模型跑，拿手里那一份直接判'
-  } else {
-    const runtime = createRuntime({
-      logOf: () => log,
-      call: deps.call,
-      execute: face,
-      ...(deps.tools === undefined ? {} : { tools: deps.tools }),
-      ...(maxSteps === undefined ? {} : { maxSteps }),
-    })
-    for (;;) {
-      const r = await runtime.step(handle, new AbortController().signal)
-      steps += 1
-      if (r.outcome.kind === 'failed') {
-        // **失败也要走到判那一步**：它是"这一格停了"的一种，`gate.problems` 会说出草案缺什么。
-        stopped = `${r.outcome.error.why}：${r.outcome.error.message}`
-        break
-      }
-      handle = { ...handle, state: r.next }
-      if (r.outcome.kind === 'done') {
-        exit = declared ? 'declared' : 'natural'
-        break
-      }
-      if (maxSteps !== undefined && steps >= maxSteps) {
-        stopped = `到了你给的上界（${maxSteps} 步）`
-        break
-      }
-    }
-  }
+  // 二 · 持轮者跑一趟。**三档出口在 `holderPass` 那一处归一**（声明 · 自然结束 · 人喊停）——
+  // 讨论态那一趟走的是同一个循环（`sayRound`），两个状态在这一层没有分岔。
+  const pass = await holderPass({
+    handle: deps.handle,
+    log,
+    call: deps.call,
+    execute: deps.execute,
+    ...(deps.tools === undefined ? {} : { tools: deps.tools }),
+    ...(deps.maxSteps === undefined ? {} : { maxSteps: deps.maxSteps }),
+    ...(deps.judgeOnly === true ? { judgeOnly: true } : {}),
+  })
+  const { steps, exit, stopped } = pass
 
   // 三 · 草案从视图里读回来，**接着就判**：键域 · 值域 · 跨字段 · 绑定 · 预检全在
   // `contract/gate.ts` 那一处。放行那一下（`round go`）走的是同一段判据——**门只认契约集合**，

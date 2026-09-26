@@ -393,10 +393,14 @@ function producedKeys(call: ModelCall): string[] {
 // ── ① 往返序列化，字段一个不多一个不少 ────────────────────────────────────────
 
 test('① 一个请求与一串事件能往返序列化，字段一个不多一个不少', () => {
-  // 请求那一栏：接口上的键 == 声明的那四个 == 从盘上读出来的那四个。
-  assert.deepEqual(interfaceKeys('ModelRequest'), ['call', 'model', 'promptCache', 'tools', 'turns', 'zones'])
-  // turns 与 tools/call 同一类：可选栏（第 0 步没有 · 另一条线不认结构化那一面时也没有）。
-  assert.deepEqual(interfaceKeys('ModelRequest').filter((k) => k !== 'tools' && k !== 'call' && k !== 'turns'), ['model', 'promptCache', 'zones'])
+  // 请求那一栏：接口上的键 == 声明的那几个 == 从盘上读出来的那几个。
+  assert.deepEqual(interfaceKeys('ModelRequest'), ['cHead', 'call', 'model', 'promptCache', 'tools', 'turns', 'zones'])
+  // `turns` · `tools` · `call` · `cHead` 是同一类：**可选栏**——第 0 步没有轮次，另一条线不认结构化
+  // 那一面，C 区那一段头是空的时不给（那时全文与尾巴逐字节相同）。四个不给时它们连键都不在。
+  assert.deepEqual(
+    interfaceKeys('ModelRequest').filter((k) => k !== 'tools' && k !== 'call' && k !== 'turns' && k !== 'cHead'),
+    ['model', 'promptCache', 'zones'],
+  )
   assert.deepEqual(interfaceKeys('Usage'), [...USAGE_FIELDS].sort(), '用量那一栏与 USAGE_FIELDS 对不上')
   assert.equal(USAGE_FIELDS.length, 6)
   // 架构 § 8.15 说的"用量的四个数"就是这四个——`USAGE_FIELDS` 多出来的两样是坐标，不是用量。
@@ -420,7 +424,12 @@ test('① 一个请求与一串事件能往返序列化，字段一个不多一�
   // 往返：逐字段比，不靠 `JSON.stringify` 的键序（那是写下来的顺序，不是保证）。
   const r = requestWith(1)
   const back = JSON.parse(JSON.stringify(r)) as ModelRequest
-  assert.deepEqual(interfaceKeys('ModelRequest'), Object.keys(back).sort(), '往返之后请求的键集变了')
+  // **接口上的键 == 这一份实际给的键 + 明说出来那几个没给的可选栏**：不给的连键都不在，所以
+  // 这里要把它们点出来——不然"少了 `cHead`"与"本来就没有 `cHead`"分不开。这一份是**子 agent**
+  // 那一趟的装配，而 C 区那一段头是运行时装配（持轮者手里那句人说的话）给的。
+  const missing = interfaceKeys('ModelRequest').filter((k) => !Object.keys(back).includes(k))
+  assert.deepEqual(missing, ['cHead'], `接口上有、这一份没给的栏：${missing.join(' · ')}`)
+  assert.deepEqual(Object.keys(back).sort(), ['call', 'model', 'promptCache', 'tools', 'turns', 'zones'], '往返之后请求的键集变了')
   assert.equal(back.model, r.model)
   assert.deepEqual(Object.keys(back.zones).sort(), ['A', 'B', 'C'])
   assert.deepEqual(back.tools?.length, r.tools?.length)
