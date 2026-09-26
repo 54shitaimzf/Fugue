@@ -27,7 +27,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CREDENTIAL_FILE, DEFAULT_CALL, DEFAULT_MODEL, MODEL_DECLS, MODEL_IDS, ModelDeclError, PREFIX_MODELS, PREFIX_MODEL_IDS, PROVIDERS, authWith, isAuthChain, STOP_REASONS, USAGE_COUNTS, USAGE_FIELDS, WIRES, WIRE_NAMES, authOf, checkEvents, isAuthRef, isModelRef, modelDeclOf, prefixDeclOf, providerOf, requestJson, stopped, toolCallsIn, triggerAt, usageCount } from './contract.ts'
 import type { ModelCall, ModelDecl, ModelEvent, ModelRequest, StopReason, ToolCall, Turn, Usage } from './contract.ts'
-import { DEFAULT_MODEL_LIMIT, HANDOFF_MARGIN, ZONE_A_BUDGET, checkContract, seedLimitOf } from '../contract/types.ts'
+import { DEFAULT_MODEL_LIMIT, HANDOFF_MARGIN, checkContract, seedLimitOf, zoneABudgetOf } from '../contract/types.ts'
 import type { ImplementContract } from '../contract/types.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
 import { MODELS, modelOf } from '../assemble/models.ts'
@@ -245,9 +245,9 @@ test('④ 凭据只在出网那一步取：不在会话环境里时，装配与�
 })
 test('⑤ 估账与余量：contextLimit 接进 seedLimitOf，超限报"超了多少"，不裁剪照发', () => {
   // 三个数（上限 · Zone A · 交接余量）在两条路上是同一套算术。
-  assert.equal(seedLimitOf({}), DEFAULT_MODEL_LIMIT - ZONE_A_BUDGET - HANDOFF_MARGIN)
-  assert.equal(seedLimitOf({ modelLimit: 128_000 }), 128_000 - ZONE_A_BUDGET - HANDOFF_MARGIN)
-  assert.equal(seedLimitOf({ modelLimit: 128_000 }), 88_000)
+  assert.equal(seedLimitOf({}), DEFAULT_MODEL_LIMIT - zoneABudgetOf(DEFAULT_MODEL_LIMIT) - HANDOFF_MARGIN)
+  assert.equal(seedLimitOf({ modelLimit: 128_000 }), 128_000 - zoneABudgetOf(128_000) - HANDOFF_MARGIN)
+  assert.equal(seedLimitOf({ modelLimit: 128_000 }), 101_760)
   // `seedLimit` 明写时仍然最优先（它是一条显式的窄化，架构 § 8.12 的"只可收窄"）。
   assert.equal(seedLimitOf({ modelLimit: 128_000, seedLimit: 1_000 }), 1_000)
 
@@ -265,8 +265,8 @@ test('⑤ 估账与余量：contextLimit 接进 seedLimitOf，超限报"超了�
   assert.deepEqual(issuesOf(real, 40_000, 128_000), [], '装得下就不该报')
   assert.equal(issuesOf(real, 200_000, 128_000).length, 1, '装不下要报一条')
   const saidOver = issuesOf(real, 200_000, 128_000)[0] as string
-  assert.ok(saidOver.includes('超 112000 token'), `超出来的那一段要印出来（200000 − 88000）：${saidOver}`)
-  assert.ok(saidOver.includes('112000') && saidOver.includes('88000'), saidOver)
+  assert.ok(saidOver.includes('超 98240 token'), `超出来的那一段要印出来（200000 − 101760）：${saidOver}`)
+  assert.ok(saidOver.includes('98240') && saidOver.includes('101760'), saidOver)
   assert.ok(saidOver.includes('不裁剪后照发'), saidOver)
 })
 

@@ -165,7 +165,7 @@ test('③ 派发那一趟接上了：不递量法时，契约里那份种子的�
     // 不写死一个数——那三个数各自会动，而这条关系不该动。
     assert.equal(
       started.built.seedLimit,
-      SEED_BUDGET.model - SEED_BUDGET.zoneA - SEED_BUDGET.handoff,
+      SEED_BUDGET.modelLimit - SEED_BUDGET.zoneA - SEED_BUDGET.handoffMargin,
       '上限不是那条式子给的',
     )
     console.log(

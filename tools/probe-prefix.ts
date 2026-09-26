@@ -37,8 +37,8 @@ import { emptyState, readPolicy, sourcesFor } from '../src/assemble/sources.ts'
 import { stateWithState } from '../src/assemble/sources-state.ts'
 import { readConfig } from '../src/config.ts'
 import { CATALOG_STATES, TOOL_ENTRIES, catalog, catalogHash } from '../src/tools/catalog.ts'
-import { HANDOFF_MARGIN, ZONE_A_BUDGET, seedLimitOf } from '../src/contract/types.ts'
-import { MODEL_DECLS, MODEL_IDS, providerOf } from '../src/model/contract.ts'
+import { HANDOFF_MARGIN, ZONE_A_PERCENT, seedLimitOf, zoneABudgetOf } from '../src/contract/types.ts'
+import { MODEL_DECLS, MODEL_IDS, TRIGGER_PERCENT, providerOf } from '../src/model/contract.ts'
 import { estimateTokens, estimateTokensOfText, planBudget } from '../src/runtime/budget.ts'
 import { seedRulerOf } from '../src/round/seed.ts'
 import { wireNamed } from '../src/model/wire/registry.ts'
@@ -322,9 +322,9 @@ console.log('\n六 · 窗口那一笔账：三区 + 工具目录 + seed 与 cont
         `seed ${n(seed)} token（${TASK.deliverables.length} 份交付物的当下内容，取到 ${ruler.reading.loaded} 份）· 交接余量 ${n(plan.handoffMargin)}`,
     )
     say(`已经占住 ${n(plan.used)} token（估）：三区 + 工具目录 + seed · 占比 ${((plan.used / plan.limit) * 100).toFixed(1)}% · 还剩 ${n(plan.headroom)}`)
-    say(`触发点 ${n(plan.trigger)}（上限的四分之三）——这一档判出来的是 \`${plan.kind}\`：${plan.why}`)
+    say(`触发点 ${n(plan.trigger)}（上限的 ${TRIGGER_PERCENT}%）——这一档判出来的是 \`${plan.kind}\`：${plan.why}`)
     say(
-      `seed 那一条的判据（架构 § 8.12）：上限 ${n(limit)} token = 模型上限 ${n(m.contextLimit)} − Zone A 预算 ${n(ZONE_A_BUDGET)} − 交接余量 ${n(HANDOFF_MARGIN)}` +
+      `seed 那一条的判据（架构 § 8.12）：上限 ${n(limit)} token = 模型上限 ${n(m.contextLimit)} − Zone A 预算 ${n(zoneABudgetOf(m.contextLimit))}（上限的 ${ZONE_A_PERCENT}%） − 交接余量 ${n(HANDOFF_MARGIN)}` +
         `（Zone A 那一项用**预算**，不是当下的 ${n(zoneA)} 字节；那一条是**按内容量取的**上界，与窗口这一笔账不是同一本）`,
     )
     say('窗口那一笔账是**估账，不是读数**：尺在 `src/runtime/budget.ts`（`estimateTokens`），与 `planBudget` 同一处；真实计量在 `llm/call` 的 `usage` 四个数里，尺的校准归 `B7`')

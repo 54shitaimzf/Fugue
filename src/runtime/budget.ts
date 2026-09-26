@@ -8,7 +8,7 @@
 // 账不对的时候，真调用的读数不可解释，而钱已经花了）。
 //
 // **三个数只有一处定义**：`ModelDecl.contextLimit` 是那一个上界，`trigger` 与 `handoffMargin`
-// 由 `contract.ts` 的 `triggerAt()` 与声明一起给。这一份不自己算 0.75，也不自己定余量——
+// 由 `contract.ts` 的 `triggerAt()` 与声明一起给。这一份不自己算那个比例，也不自己定余量——
 // 它只读。
 import type { Prefix } from '../assemble/contract.ts'
 import { UNCALIBRATED } from './calib.ts'

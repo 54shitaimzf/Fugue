@@ -25,13 +25,11 @@ import { isSegment } from '../roots/paths.ts'
 import type { ActionName, BranchId, CommitId, ContractId, RelPath, RoundId } from '../terms.ts'
 import type { Assertion, Contract, Evidence, ImplementContract, InvestigateContract, ResolveContract } from './types.ts'
 import {
-  DEFAULT_MODEL_LIMIT,
   EVIDENCE_PREFIX,
-  HANDOFF_MARGIN,
-  seedLimitOf,
   VARIANT_FIELDS,
-  ZONE_A_BUDGET,
   checkContract,
+  seedBudgetOf,
+  seedLimitOf,
 } from './types.ts'
 
 /** 这一层自己的失败：草案不成立 · 跨字段关系不成立 · 种子超限。**拒，并且指得出是哪一条。** */
@@ -346,9 +344,5 @@ export const KIND_OF: Readonly<Record<Contract['kind'], string>> = {
   resolve: '解决型：写入集 = 冲突路径集（`conflictPaths`），底是冲突报告给的那棵树',
 }
 
-/** 模型上限的缺省三件套，给报告印"上限是怎么算出来的"用。 */
-export const SEED_BUDGET = {
-  model: DEFAULT_MODEL_LIMIT,
-  zoneA: ZONE_A_BUDGET,
-  handoff: HANDOFF_MARGIN,
-} as const
+/** 缺省那一档（`DEFAULT_MODEL_LIMIT`）的那笔账，给报告印"上限是怎么算出来的"用。**与真判那一条同源。** */
+export const SEED_BUDGET = seedBudgetOf({})

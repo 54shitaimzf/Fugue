@@ -18,14 +18,15 @@ import {
   FIELD_RULES,
   HANDOFF_MARGIN,
   VARIANT_FIELDS,
-  ZONE_A_BUDGET,
   checkContract,
   contractFields,
   idShapeOf,
   passing,
   resultOf,
+  seedBudgetOf,
   seedLimitOf,
   unownedFields,
+  zoneABudgetOf,
 } from './types.ts'
 
 /** 测试自己的一份量法：这一份量的是"给不给得出那个数"，不是产品那把尺（那一条归 `build.ts`）。 */
@@ -257,5 +258,47 @@ test('清单里那三条第三级的关系：actionOutputs ⊆ ownedPaths · see
   const over = checkContract(IMPLEMENT, CTX_BIG)
   assert.equal(over.length, 1, `该恰好报一条：${over.join(' / ')}`)
   assert.match(over[0], /10000000 token 超过上限/)
-  assert.equal(seedLimitOf({}), DEFAULT_MODEL_LIMIT - ZONE_A_BUDGET - HANDOFF_MARGIN)
+  assert.equal(seedLimitOf({}), 904_000, '1 000 000 那一档：模型上限 − 固定段 80 000 − 交接余量 16 000')
+})
+
+// ⑤ 的那一条断言（计划 § 5.12 的序 14 · 架构 § 8.12）：**Zone A 那一项是一个比例，不是一个常数**，
+// 而那条式子有一块地板——算出来为负就取 0，并把这件事报出来。
+test('⑤ Zone A 按当前上限的 8% 算 · 算出来为负取地板 0 并报出来', () => {
+  // 1 000 000 那一档：固定段 80 000（8%）· 交接余量 16 000 → 种子上限 904 000。
+  assert.equal(zoneABudgetOf(DEFAULT_MODEL_LIMIT), 80_000)
+  assert.equal(seedLimitOf({}), 904_000)
+  assert.deepEqual(seedBudgetOf({}), {
+    modelLimit: DEFAULT_MODEL_LIMIT,
+    zoneA: 80_000,
+    handoffMargin: HANDOFF_MARGIN,
+    limit: 904_000,
+    shortfall: 0,
+  })
+
+  // 窗口换一档，那一段跟着走——**它按当前上限算，不按一个写死的数**。
+  assert.equal(zoneABudgetOf(128_000), 10_240)
+  assert.equal(seedLimitOf({ modelLimit: 128_000 }), 128_000 - 10_240 - HANDOFF_MARGIN)
+  assert.equal(seedLimitOf({ modelLimit: 128_000 }), 101_760)
+  // 比例落到整数上：8% 的 999 是 79.92 → 取整往大取 80（估账宁可多留一点）。
+  assert.equal(zoneABudgetOf(999), 80)
+  // 显式窄化仍然最优先（架构 § 8.12 的"只可收窄"）。
+  assert.equal(seedLimitOf({ modelLimit: 128_000, seedLimit: 1_000 }), 1_000)
+
+  // 地板：上限 8 000 连固定段 640 与交接余量 16 000 都盖不住 → 那条式子取 0，且这件事报得出来。
+  const tiny = seedBudgetOf({ modelLimit: 8_000 })
+  assert.equal(tiny.zoneA, 640)
+  assert.equal(tiny.limit, 0, `地板该是 0，拿到 ${tiny.limit}`)
+  assert.equal(tiny.shortfall, 8_640)
+  const floor = checkContract(IMPLEMENT, { modelLimit: 8_000, seedTokens: () => 0 })
+  assert.equal(floor.length, 1, `该恰好报一条：${floor.join(' / ')}`)
+  const said = floor[0] as string
+  assert.match(said, /自己配错了/)
+  assert.ok(said.includes('上限 8000 token') && said.includes('固定段 640 token'), said)
+  assert.ok(said.includes('8640 token') && said.includes('地板取 0'), said)
+
+  // **负对照**：把 Zone A 写回固定 24 000（就是把比例换回一个常数）→ 1 000 000 那一档算出
+  // 960 000，与 904 000 分得开——"它是一个比例"这句话因此不是恒真的。
+  const fixedZoneA = (limit: number): number => limit - 24_000 - HANDOFF_MARGIN
+  assert.equal(fixedZoneA(DEFAULT_MODEL_LIMIT), 960_000)
+  assert.notEqual(fixedZoneA(DEFAULT_MODEL_LIMIT), seedLimitOf({}))
 })

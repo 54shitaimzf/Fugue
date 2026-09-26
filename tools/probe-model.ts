@@ -17,7 +17,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MODEL_DECLS, MODEL_IDS, PREFIX_MODELS, PROVIDERS, WIRES, authOf, providerOf } from '../src/model/contract.ts'
+import { MODEL_DECLS, MODEL_IDS, PREFIX_MODELS, PROVIDERS, TRIGGER_PERCENT, WIRES, authOf, providerOf } from '../src/model/contract.ts'
 import { TOOL_ENTRIES, CATALOG_STATES, catalog, catalogHash } from '../src/tools/catalog.ts'
 
 const REPO = fileURLToPath(new URL('..', import.meta.url))
@@ -186,7 +186,7 @@ eq('PROVIDERS 的名字', Object.keys(PROVIDERS), ['deepseek'])
   eq('src/assemble/models.ts 是不是只有投影（没有自己的常量表）', /MODEL_DECLS|PREFIX_MODELS/.test(modelsSrc), true)
   say(`每条声明一份调用配置：${MODEL_IDS.map((n) => `${n}=${JSON.stringify(MODEL_DECLS[n]?.call)}`).join(' · ')}`)
   say(`上下文上限：${MODEL_IDS.map((n) => `${n}=${MODEL_DECLS[n]?.contextLimit}`).join(' · ')}`)
-  say(`预算触发点：${MODEL_IDS.map((n) => `${n}=${MODEL_DECLS[n]?.budget.trigger}`).join(' · ')}（上限的四分之三）`)
+  say(`预算触发点：${MODEL_IDS.map((n) => `${n}=${MODEL_DECLS[n]?.budget.trigger}`).join(' · ')}（上限的 ${TRIGGER_PERCENT}%）`)
 }
 eq('src/model/contract.ts 在盘上', existsSync(join(REPO, 'src/model/contract.ts')), true)
 

@@ -458,10 +458,23 @@ export const VERDICTS: Readonly<Record<string, string>> = {
 
 /** 模型的上下文上界，给 `seed` 那条判据当默认值（这一版的模型都在 1 000 000 那一档）。 */
 export const DEFAULT_MODEL_LIMIT = 1_000_000
-/** Zone A（前缀里的稳定那一段）的占地估计。 */
-export const ZONE_A_BUDGET = 24_000
+/**
+ * Zone A（固定段：项目方针 · 系统状态 · 工具目录 · 代码树）占**当前上限**的比例，单位是百分数。
+ *
+ * **它是一个比例，不是一个常数**（架构 § 8.12）：固定段的大小随工作区走，而写死一个数会在窗口
+ * 换一档的时候静默配错——上限从 1 000 000 换成 128 000，那个写死的数不会自己跟着变。
+ *
+ * 8 是**暂定值**：真读数（架构 § 23 U6）之后按固定段的实际占用量收窄。写成百分数而不是 `0.08`，
+ * 是为了这条式子在整数上算——`0.08 * 128_000` 在浮点下是 10240.000000000002。
+ */
+export const ZONE_A_PERCENT = 8
 /** 交接余量：自重启时要留出的那一片。 */
 export const HANDOFF_MARGIN = 16_000
+
+/** Zone A 那一段的占地估计：当前上限的 `ZONE_A_PERCENT`%。**取整往大取**——估账宁可多留一点。 */
+export function zoneABudgetOf(modelLimit: number): number {
+  return Math.ceil((modelLimit * ZONE_A_PERCENT) / 100)
+}
 
 /**
  * 审计一份契约要的那点上下文。**缺省是"不知道"**：种子那一格只在同时给了总量与预算时才判，
@@ -482,12 +495,44 @@ export interface ContractContext {
   readonly seedTokens?: (paths: readonly RelPath[]) => number
 }
 
-/** `seed` 那一条：总量 ≤ 模型上限 − Zone A − 交接余量（架构 § 8.12 的两条准则共用一个上界）。
- * **四个数都是 token**（模型上限 · Zone A 预算 · 交接余量 · 那份种子的量），所以量种子的是
- * `seedTokens`，不是字节数。 */
+/**
+ * `seed` 那一条的那笔账：**四个数都是 token**（模型上限 · Zone A · 交接余量 · 得出来的种子余量），
+ * 所以量种子的是 `seedTokens`，不是字节数（架构 § 8.12 的两条准则共用一个上界）。
+ *
+ * `shortfall > 0` 说的是"这份声明自己配错了"：上限连固定段与交接余量都盖不住（交接余量是常数、
+ * Zone A 是按比例算的，所以只有上限小到那一步才会这样）。**它不是"没有种子可用"**——静默给一个 0
+ * 的话，它与"种子恰好装满"在读数上长得一模一样，而那两句要区分开。
+ */
+export interface SeedBudget {
+  readonly modelLimit: number
+  readonly zoneA: number
+  readonly handoffMargin: number
+  /** 那条式子的结果：`modelLimit − zoneA − handoffMargin`，**负的取 0**（架构 § 8.12 的地板）。 */
+  readonly limit: number
+  /** 那条式子为负时的超出量（正数）；没越界就是 0。 */
+  readonly shortfall: number
+}
+
+/** `seed` 那一条：总量 ≤ 模型上限 − Zone A − 交接余量。`ctx.seedLimit` 明写时最优先（只可收窄）。 */
+export function seedBudgetOf(ctx: ContractContext): SeedBudget {
+  const modelLimit = ctx.modelLimit ?? DEFAULT_MODEL_LIMIT
+  const zoneA = zoneABudgetOf(modelLimit)
+  const raw = modelLimit - zoneA - HANDOFF_MARGIN
+  return {
+    modelLimit,
+    zoneA,
+    handoffMargin: HANDOFF_MARGIN,
+    limit: ctx.seedLimit ?? Math.max(0, raw),
+    shortfall: Math.max(0, -raw),
+  }
+}
+
+/**
+ * 上界的那个数。**与 `seedBudgetOf` 同一处减法**：要报"这个 0 是算出来的"就得读那一份记录，
+ * 而不是在这里再减一遍——两处减法迟早有一处漂，而漂的那一处不会报错。
+ */
 export function seedLimitOf(ctx: ContractContext): number {
-  if (ctx.seedLimit !== undefined) return ctx.seedLimit
-  return (ctx.modelLimit ?? DEFAULT_MODEL_LIMIT) - ZONE_A_BUDGET - HANDOFF_MARGIN
+  return seedBudgetOf(ctx).limit
 }
 
 /**
@@ -530,15 +575,21 @@ export function checkContract(c: Contract, ctx: ContractContext = {}): ContractI
     for (const one of actionOutputsOutside(c.ownedPaths, c.actionOutputs)) issues.push(`actionOutputs：${one}`)
   }
   if (c.kind === 'implement' || c.kind === 'investigate') {
+    const budget = seedBudgetOf(ctx)
+    // **地板那一档报出来**（架构 § 8.12）：那条式子算出来为负不是"没有种子可用"，是这份声明自己
+    // 配错了。不报的话，它与"种子恰好装满"在读数上长得一模一样。
+    if (budget.shortfall > 0) {
+      issues.push(
+        `seed：这一份声明自己配错了——上限 ${budget.modelLimit} token 连固定段 ${budget.zoneA} token 与交接余量 ` +
+          `${budget.handoffMargin} token 都盖不住（差 ${budget.shortfall} token），那条式子的地板取 0`,
+      )
+    }
     const tokens = ctx.seedTokens?.(c.seed)
     if (tokens === undefined) {
       // 不判就说出来。**默认放行会让"超限拒绝派发"这句话无处落地。**
-      issues.push(`seed：没判超限——这一跑没给 seedTokens（缺省上限 ${seedLimitOf(ctx)} token）`)
-    } else {
-      const limit = seedLimitOf(ctx)
-      if (tokens > limit) {
-        issues.push(`seed：${tokens} token 超过上限 ${limit} token——超 ${tokens - limit} token，超限要拒绝派发，不裁剪后照发`)
-      }
+      issues.push(`seed：没判超限——这一跑没给 seedTokens（缺省上限 ${budget.limit} token）`)
+    } else if (tokens > budget.limit) {
+      issues.push(`seed：${tokens} token 超过上限 ${budget.limit} token——超 ${tokens - budget.limit} token，超限要拒绝派发，不裁剪后照发`)
     }
   }
   return issues

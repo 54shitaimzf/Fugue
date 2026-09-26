@@ -194,7 +194,7 @@ test('② actionOutputs 里一条不在 ownedPaths 内 → 构造失败并指出
 
 test('③ seed 超限 → 拒绝派发，不裁剪后照发', () => {
   // 上限：模型上限 − Zone A − 交接余量。
-  assert.equal(seedLimitOf({}), SEED_BUDGET.model - SEED_BUDGET.zoneA - SEED_BUDGET.handoff)
+  assert.equal(seedLimitOf({}), SEED_BUDGET.modelLimit - SEED_BUDGET.zoneA - SEED_BUDGET.handoffMargin)
 
   const seed = ['src/parse.ts', 'src/callers/x.ts'] as readonly RelPath[]
   const small = build(INTENT, deps())
