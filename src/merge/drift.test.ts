@@ -9,7 +9,9 @@
 //   ② **盘上 == 目标树**（用户那份恰好就是合并算出来的结果）→ 放行。
 //   ③ **三个两两都不同** → 拒，并报出是哪几条。轮次**之前**就存在的手改落在这一档（A9 量到的
 //      第一行读数：判据原先比的是"盘上 vs 盘上"，那种改动根本看不见）。
-//   ④ **盘上有、目标树里没有的已存在路径**（只被删的那一条）→ 拒。A10 之前"会被覆盖"只算了写。
+//   ④ **盘上有、目标树里没有**：**盘上 == 底**（用户没碰过）→ 放行，这条推进就是删掉它；
+//      盘上那一份不是底（手改过 · 或者底里根本没有它）→ 照旧拒。收窄的是这一支（PLAN § 5.12
+//      补完那一组序 10）。A10 之前"会被覆盖"只算了写，这一条一处都不"写"。
 //   ⑤ HEAD 动了 · 判不了 → 拒。拒的时候盘上字节一个都没动（`driftOf` 只读）。
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -17,11 +19,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import type { BlobId, CommitId } from '../terms.ts'
+import type { BlobId, CommitId, RelPath } from '../terms.ts'
 import type { TreeEntry } from '../entries.ts'
 import { openTruth } from '../truth/truth.ts'
 import { WORKSPACE_STATE, hashBytes, scanTree } from '../materialize/diffstat.ts'
-import { DriftError, driftOf, mergeDrift } from './drift.ts'
+import { DriftError, driftOf, leavesOf, mergeDrift } from './drift.ts'
 
 const roots: string[] = []
 process.on('exit', () => {
@@ -82,9 +84,18 @@ test('① 盘上 == 底（用户没碰过）→ 放行：合并的正常样子',
     assert.equal(verdict.drift.headMoved, false, 'HEAD 没动')
     assert.match(verdict.say, /都在底里也是这一份/)
 
-    // **红负对照**：把"盘上 == 底"那一档短路掉（改成"盘上与底不同"）→ ① 当场变红。
-    const shortCircuited = (): boolean => false
-    assert.equal(shortCircuited(), false, '短路之后这一档不再放行')
+    // **红负对照：把 ① 那一档短路。** 短路的意思是"盘上 == 底 不算数，只看盘上 == 目标树"
+    // ——那这一条（合并本来就要改的那一条）当场是一条该拒的。这里不重复实现判据：只读两处独立
+    // 取到的量（盘上那条的哈希 · 底里那一份 · 目标树里那一份）。
+    const onDisk = scanTree(real, { skip: WORKSPACE_STATE }).leaves.find((l) => l.path === 'src/a.ts')
+    const inBase = (await leavesOf(t, base, new Set<RelPath>(['src/a.ts']))).leaves.get('src/a.ts')
+    const inTarget = (await leavesOf(t, target, new Set<RelPath>(['src/a.ts']))).leaves.get('src/a.ts')
+    assert.notEqual(onDisk, undefined, '盘上取不到 src/a.ts')
+    assert.equal(onDisk?.hash, inBase?.hash, '① 的前提：盘上那一份与底逐字节相同')
+    assert.notEqual(onDisk?.hash, inTarget?.hash, '而它与目标树不同——短路 ① 之后它该拒')
+    const shortCircuited =
+      onDisk !== undefined && inTarget !== undefined && onDisk.hash !== inTarget.hash ? ['src/a.ts'] : []
+    assert.deepEqual(shortCircuited, ['src/a.ts'], '短路 ① 之后这一条当场该拒（放行确实来自 ①）')
     assert.equal(verdict.ok, true, '真品在这一条上答得出放行')
   } finally {
     await t.close()
@@ -137,7 +148,39 @@ test('③ 三个两两都不同 → 拒（轮次之前就存在的手改也算�
   }
 })
 
-test('④ 盘上有、目标树里没有的已存在路径（只被删）→ 拒', async () => {
+test('④ 盘上有、目标树里没有的已存在路径：盘上 == 底 → 放行（这条推进就是删掉它）', async () => {
+  const { real, t, base } = await scene({ 'src/a.ts': '底那一份\n', 'src/z.ts': '底那一份\n' })
+  try {
+    // `src/z.ts` 在底里在、盘上也在（就是底那一份：用户没碰过），而目标树里没有——这一趟推进
+    // 就是把它从盘上拿掉。**收窄之前这一支一律拒**，于是 `advance` 的 `removed` 在一轮真档上
+    // 跑不到（W11 第三趟两格都把那条删除做进了目标树，然后被这一档当场拒）。
+    const target = await commitOf(t, { 'src/a.ts': '合并的结果\n' }, '目标树')
+    const verdict = await mergeDrift({ truth: t, realRoot: real, base, target })
+    assert.equal(verdict.ok, true, `盘上那一份就是底：这条推进是删掉它，该放行：${verdict.say}`)
+    assert.deepEqual(verdict.drift.colliding, [])
+    assert.deepEqual(verdict.drift.deleted, ['src/z.ts'], '推进会删掉的就是它')
+    assert.deepEqual(verdict.drift.divergent, ['src/a.ts', 'src/z.ts'], '推进之后会变的是这两条')
+    assert.deepEqual(verdict.drift.handTouched, [], '盘上与底一样：这不是"用户碰过"')
+    assert.deepEqual(verdict.drift.touched, ['src/a.ts', 'src/z.ts'], '删也算"这次合并动到"')
+    assert.match(verdict.say, /推进照做/)
+
+    // **负对照：把 ① 那一档短路。** 同一条路径在旧判据（"目标树里没有、而盘上有 → 一律拒"）
+    // 之下是一条该拒的——所以上面那句放行只能来自"盘上 == 底"。这里也不重复实现判据：只读两处
+    // 独立取到的量（盘上那条的哈希 · 目标树里有没有它）。
+    const onDisk = scanTree(real, { skip: WORKSPACE_STATE }).leaves.find((l) => l.path === 'src/z.ts')
+    const inTarget = (await leavesOf(t, target, new Set<RelPath>(['src/z.ts']))).leaves.get('src/z.ts')
+    assert.notEqual(onDisk, undefined, '盘上取不到 src/z.ts')
+    const oldRule = inTarget === undefined ? ['src/z.ts'] : []
+    assert.deepEqual(oldRule, ['src/z.ts'], '短路 ① 之后这一条当场该拒（放行确实来自 ①）')
+
+    // 判据只读：跑完那条路径的字节一个都没动。
+    assert.equal(readFileSync(join(real, 'src/z.ts'), 'utf8'), '底那一份\n', '判据动了盘上的字节')
+  } finally {
+    await t.close()
+  }
+})
+
+test('④之二 同一条路径上盘上被手改过（≠ 底）→ 照旧拒', async () => {
   const { real, t, base } = await scene({ 'src/a.ts': '底那一份\n', 'src/z.ts': '底那一份\n' })
   try {
     // `src/z.ts` 在底里**在**、在目标树里**没有**：谁都不写它，第 7 步推进会把它从盘上拿掉。
@@ -148,13 +191,35 @@ test('④ 盘上有、目标树里没有的已存在路径（只被删）→ 拒
     const verdict = await mergeDrift({ truth: t, realRoot: real, base, target })
     assert.equal(verdict.ok, false, `推进会把它删掉，该拒：${verdict.say}`)
     assert.deepEqual(verdict.drift.colliding, ['src/z.ts'])
+    assert.deepEqual(verdict.drift.deleted, ['src/z.ts'], '它也在"推进会被删掉"那一栏里')
+    assert.deepEqual(verdict.drift.handTouched, ['src/z.ts'], '盘上与底不同：这一条是"用户碰过"')
     assert.deepEqual(verdict.drift.touched, ['src/a.ts', 'src/z.ts'], '删也算"这次合并动到"')
     assert.match(verdict.say, /会被删掉/)
+    assert.match(verdict.say, /0 条会被这次合并改写/, '这一趟没有一条会被改写')
     assert.equal(
       scanTree(real, { skip: WORKSPACE_STATE }).leaves.some((l) => l.path === 'src/z.ts'),
       true,
       '拒的时候那条还在',
     )
+  } finally {
+    await t.close()
+  }
+})
+
+test('④之三 盘上那条是用户自己新加的（底里没有它）→ 照旧拒', async () => {
+  const { real, t, base } = await scene({ 'src/a.ts': '底那一份\n' })
+  try {
+    // 底里**根本没有** `src/z.ts`，目标树里也没有（谁都不写这一条路径）——盘上那一条是用户自己
+    // 新加的。静默删掉它的那道危险照旧关着（走查六之二量的就是这一条）。
+    writeFileSync(join(real, 'src/z.ts'), '用户新加的一条\n')
+    const target = await commitOf(t, { 'src/a.ts': '合并的结果\n' }, '目标树')
+    const verdict = await mergeDrift({ truth: t, realRoot: real, base, target })
+    assert.equal(verdict.ok, false, `推进会把用户新加的那条删掉，该拒：${verdict.say}`)
+    assert.deepEqual(verdict.drift.colliding, ['src/z.ts'])
+    assert.deepEqual(verdict.drift.deleted, ['src/z.ts'], '它也在"推进会被删掉"那一栏里')
+    assert.deepEqual(verdict.drift.handTouched, ['src/z.ts'], '用户碰过（自己新加的）')
+    assert.match(verdict.say, /会被删掉/)
+    assert.equal(readFileSync(join(real, 'src/z.ts'), 'utf8'), '用户新加的一条\n', '拒的时候那条还在')
   } finally {
     await t.close()
   }

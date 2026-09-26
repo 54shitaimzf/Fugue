@@ -11,16 +11,20 @@
 //        ——那是把"钉住"读成了"冻结"，等于要求用户先把合并结果写出来才准合并。
 //   三 · 三个两两都不同    → **拒**。盘上那份既不是底、也不是这次合并的结果：它就是会被覆盖掉
 //        的那一份，拒的话里报出是哪几条。
+//   四 · **目标树里没有、而盘上有** → **先按 二 判**：盘上 == 底（用户没碰过，这条推进就是把它
+//        删掉）→ 放行；盘上那一份不是底（用户自己新加的一条，或者改过底里那一份）→ 拒。少了
+//        "先按 二 判"这一句，"删掉一个用户没碰过的文件"这类合并会被一并拒掉，`advance` 的
+//        `removed` 在一轮真档上就永远跑不到。**收窄的一处见 PLAN § 5.12 补完那一组序 10。**
 //
 // A9 的走查量到三处落空的路（退出码 0、手改被静默退回底那一版），换到这三方比法上各自现出来：
 //
 //   · 轮次**之前**就存在的手改 → 盘上既不是底（用户改过）也不是目标树（合并算的是另一份）→ 拒。
 //     A10 之前判据比的是"盘上 vs 盘上"：那份基线取的是**轮次开始那一刻的工作树**，于是这种改动
 //     在基线与现在两处一模一样，差额是空的——看不见。
-//   · 一条**只被删**的路径（目标树里没有、而盘上有）→ 推进会把它从盘上拿掉。删除单独成一条
-//     判据（见 `colliding` 那一段）：**目标树里没有、盘上有**的，一律拒——不管它是这一趟新写上去
-//     的、还是底里本来就有的（`advance` 删的就是这些）。A10 之前"会被覆盖"只算了写，于是这一条
-//     一处都不"写"、两个集合没得相交，手改被静默退回底那一版。
+//   · 一条**只被删**的路径（目标树里没有、而盘上有）→ 推进会把它从盘上拿掉。**这一支先按 ①
+//     判**（收窄过的一处）：盘上 == 底 → 放行（用户没碰过，这条推进就是删掉它）；盘上那一份不是
+//     底 → 照旧拒。A10 之前"会被覆盖"只算了写，于是这一条一处都不"写"、两个集合没得相交，手改被
+//     静默退回底那一版；而收窄之前这一支一律拒，"删掉一个用户没碰过的文件"也一并被拒了。
 //   · "合并要写"是从各条分支的提交反推的（`writeSurfaceOf`）。底已经带着合并结果时它算出空集，
 //     于是"要写"那一栏空着，两个集合没得相交。现在判据的另一边是**目标树本身**，不是反推。
 //
@@ -112,9 +116,16 @@ export interface Drift {
   /** 盘上与**底**不同的那些路径。**判据的另一边**（"用户碰过这一条没有"）。 */
   readonly handTouched: readonly RelPath[]
   /**
-   * **该拒的那些**：盘上那一份既不是底、也不是目标树（两两都不同），外加"目标树里没有、而盘上
-   * 有"的那些（推进会把它删掉）。**空 = 放行。**
+   * 盘上有、而**目标树里没有**的那些（推进会把它从盘上拿掉）。**它是读数，不是判据的一半**：
+   * 同一条路径上判据看的是"盘上那一份是不是底"——是就放行（① 那一档），不是就拒。
+   * `mergeDrift` 拒的话里"会被改写"与"会被删掉"就是按它分的。
    */
+  readonly deleted: readonly RelPath[]
+  /**
+   * **该拒的那些**：盘上那一份既不是底、也不是目标树（两两都不同），外加"目标树里没有、而盘上
+   * 那一份**不是底**"的那些（推进会把它删掉，而那条上手里的改会丢）。**空 = 放行。**
+   */
+  readonly colliding: readonly RelPath[]
   readonly colliding: readonly RelPath[]
 }
 
@@ -154,6 +165,7 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
   let touched: RelPath[] = []
   const divergent: RelPath[] = []
   const handTouched: RelPath[] = []
+  const deleted: RelPath[] = []
   const colliding: RelPath[] = []
   if (deps.target !== undefined && deps.base !== null) {
     // 盘上那一份（**跳 `WORKSPACE_STATE`**：工作区自己的本子不是"用户改了什么"）。
@@ -174,9 +186,13 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
       const same = (x: { readonly mode: number; readonly hash: string } | undefined): boolean =>
         x !== undefined && x.hash === l.hash && x.mode === Number(l.mode)
       if (t === undefined) {
-        // 盘上有、目标树里没有 → 推进会把它从盘上拿掉，而盘上这一份是手写上去的（底里有没有它
-        // 都一样：`advance` 删的是"目标树里没有的那些"）。**判据不管它是不是这一趟新写的**。
+        // 盘上有、目标树里没有 → 推进会把它从盘上拿掉。**这一支先按 ① 判**（收窄的一处）：
+        // 盘上 == 底（用户没碰过，这条推进就是删掉它）→ 放行；盘上那一份不是底（用户自己新加的
+        // · 或者改过底里那一份）→ 手改，照旧拒。
         divergent.push(p)
+        deleted.push(p)
+        if (same(b)) continue
+        handTouched.push(p)
         colliding.push(p)
         continue
       }
@@ -191,8 +207,9 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
   touched = [...touched].sort()
   divergent.sort()
   handTouched.sort()
+  deleted.sort()
   colliding.sort()
-  return { head, headMoved, touched, divergent, handTouched, colliding }
+  return { head, headMoved, touched, divergent, handTouched, deleted, colliding }
 }
 
 /**
@@ -235,10 +252,11 @@ export interface DriftVerdict {
  *
  * 两条拒法各自说得出话：
  *   · HEAD 动了（或这个轮次没有底）→ 拒，不静默继续。**这一条不放开**。
- *   · 会被覆盖掉的那几条（三方两两都不同 · 推进会删掉的那些）→ 拒，并列出那几条。
+ *   · 会被覆盖掉的那几条（三方两两都不同 · 推进会删掉而盘上那一份不是底的）→ 拒，并列出那几条。
  *
  * **放行的那两档各是一个真实情形**：盘上等于目标树（用户那份恰好就是合并结果）· 盘上等于底
- * （用户没碰过，合并本来就该写它）。所以这一档不是"脏了就拒"，也不是"钉住 = 冻结"。
+ * （用户没碰过：合并本来就该写它，或者这条推进就是删掉它）。所以这一档不是"脏了就拒"，
+ * 也不是"钉住 = 冻结"。
  */
 export async function mergeDrift(deps: DriftDeps): Promise<DriftVerdict> {
   const drift = await driftOf(deps)
@@ -263,9 +281,12 @@ export async function mergeDrift(deps: DriftDeps): Promise<DriftVerdict> {
     }
   }
   if (drift.colliding.length > 0) {
-    const hand = new Set(drift.handTouched)
-    const rewritten = drift.colliding.filter((p) => hand.has(p))
-    const removed = drift.colliding.filter((p) => !hand.has(p))
+    // **按"目标树里有没有它"分**，不按"用户碰过没有"：这两类的后果不一样（改写的那条上手里的
+    // 改会被写回去一份新的；删掉的那条直接从盘上没了）。收窄之后 `handTouched` 把两类都算进来
+    // 了，那一刀分不动——所以分的是 `deleted`。
+    const gone = new Set(drift.deleted)
+    const rewritten = drift.colliding.filter((p) => !gone.has(p))
+    const removed = drift.colliding.filter((p) => gone.has(p))
     return {
       ok: false,
       drift,
@@ -284,6 +305,6 @@ export async function mergeDrift(deps: DriftDeps): Promise<DriftVerdict> {
       drift.divergent.length === 0
         ? `漂移检通过：盘上与目标树没有一处不同（这次合并动到 ${drift.touched.length} 条路径），HEAD 没动。`
         : `漂移检通过：这次合并动到 ${drift.touched.length} 条路径，盘上与目标树不同的 ${drift.divergent.length} 条` +
-          `都在底里也是这一份（用户没碰过），推进照写。`,
+          `都在底里也是这一份（用户没碰过），推进照做（该写的写、该删的删）。`,
   }
 }
