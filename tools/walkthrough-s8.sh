@@ -15,16 +15,22 @@
 #   收尾：不留挂载 · 不留进程 · 不留孤儿分支 → 判据卡骨架（量不到的写「没有读数」）。
 #
 # **它只用手边的东西**：每一步都是独立进程（§ 9.6），所以收尾不需要杀进程；
-# `--wire-in` 那一档不出网、不读凭据，所以这一份**不花钱**（真档四档阶梯 `B12` 与对照臂 `B14`
-# 归 PLAN § 5.12 补完序 4，`--live` 那一支今天还没有落地，给了就当场报出来）。
+# `--wire-in` 那一档不出网、不读凭据，所以**不带 `--live` 时这一份一分钱不花**。
 #
-# 用法：sh tools/walkthrough-s8.sh。退出码 0 且 FAIL 0 才算走通。KEEP=1 留下现场。
+# `--live` 那一支落的是四档阶梯里的**单格档 `L3`**（真模型 · 开局就把 `--max-steps` 压到
+# 个位数）：一个 agent 走完 · 归因那三处里冷与第 k 步两处有数 · **录下来的字节喂得回回放档**。
+# 全程档 `L4`（真任务 · 一份真产物 + 一条真断言）与对照臂 `B14`（单区前缀那一档）归下一次。
+#
+# 用法：sh tools/walkthrough-s8.sh [--live]。退出码 0 且 FAIL 0 才算走通。KEEP=1 留下现场。
 set -u
 cd /home/ubuntu/fugue || exit 9
-if [ "${1:-}" = "--live" ]; then
-  echo "真档那一支（B12 的四档阶梯 · B13 的接头 · B14 的对照臂）归 PLAN § 5.12 补完序 4：这一份今天只跑夹具档。"
-  exit 2
-fi
+LIVE=no
+for a in "$@"; do
+  case "$a" in
+    --live) LIVE=yes ;;
+    *) echo "不认这个开关：$a（这一份的开关只有 --live）"; exit 2 ;;
+  esac
+done
 FUGUE="node src/cli/fugue.ts"
 FIX="$PWD/src/cli/__fixture__/wire-in"
 T=$(mktemp -d /tmp/fugue-s8-read-XXXXXX)
@@ -33,6 +39,12 @@ RW=$(mktemp -d /tmp/fugue-s8-rep-XXXXXX)
 NW=$(mktemp -d /tmp/fugue-s8-nohand-XXXXXX)
 BW=$(mktemp -d /tmp/fugue-s8-bad-XXXXXX)
 OUT=$(mktemp -d /tmp/fugue-s8-out-XXXXXX)
+LW=""
+PW=""
+if [ "$LIVE" = yes ]; then
+  LW=$(mktemp -d /tmp/fugue-s8-live-XXXXXX)
+  PW=$(mktemp -d /tmp/fugue-s8-liveback-XXXXXX)
+fi
 PASS=0
 FAIL=0
 
@@ -42,15 +54,18 @@ FAIL=0
 # ——`rm -rf` 会先读目录，于是在它上面吃 `EACCES`（`fs.rmSync` 那一档实测红过）。`dispose`
 # 走的是 `clearMaterialization` + `removeTree`，绕过这一处。**这一步因此是收尾断言的一部分**。
 cleanup() {
-  for d in "$SW" "$RW" "$NW" "$BW"; do
+  for d in "$SW" "$RW" "$NW" "$BW" "$LW" "$PW"; do
+    [ -n "$d" ] || continue
     for a in $(git -C "$d" for-each-ref --format='%(refname:short)' refs/heads/agent 2> /dev/null); do
       $FUGUE --root "$d" --agent "$a" dispose > /dev/null 2>&1
     done
   done
   if [ "${KEEP:-0}" = "1" ]; then
-    printf '（KEEP=1，现场留着：靶子 %s · %s · %s · %s · 读数 %s · 落盘 %s）\n' "$SW" "$RW" "$NW" "$BW" "$T" "$OUT"
+    printf '（KEEP=1，现场留着：靶子 %s · %s · %s · %s · %s · %s · 读数 %s · 落盘 %s）\n' "$SW" "$RW" "$NW" "$BW" "$LW" "$PW" "$T" "$OUT"
   else
     rm -rf "$SW" "$RW" "$NW" "$BW" "$T" "$OUT"
+    [ -z "$LW" ] || rm -rf "$LW"
+    [ -z "$PW" ] || rm -rf "$PW"
   fi
 }
 trap cleanup EXIT
@@ -476,5 +491,125 @@ else
   bad "指路句没有报出 run：$(head -1 "$T/wrong.err")"
 fi
 
+if [ "$LIVE" = yes ]; then
+  echo
+  echo "=== 十 · 单格档 L3（真模型）：一个 agent 走完 · 冷与第 k 步两处有数 · 录下来的字节喂得回回放档 ==="
+  # **凭据只从那一份文件取，值从不打印**（与 `tools/live-round.sh` 同一条口径）。
+  KEY=""
+  if [ -f /home/ubuntu/.fugue/credentials/deepseek.key ]; then KEY=$(cat /home/ubuntu/.fugue/credentials/deepseek.key); fi
+  if [ -z "$KEY" ]; then
+    bad "L3 没跑：凭据不在（这一条要人把真档那一步做了才算数——不许看起来像通过）"
+  else
+    mkfixture "$LW"
+    # **开局就把 `--max-steps` 压到个位数**（§ 5.9.2 的纪律：第一次联网不许放开步数）。
+    DEEPSEEK_API_KEY="$KEY" $FUGUE --root "$LW" round run "$GOAL" \
+      --live --max-steps 4 --report --metrics --json --dump-wire "$OUT/live" > "$T/live.json" 2> "$T/live.err"
+    RC10=$?
+    printf '  rc = %s（真档那一趟 · 花的钱在这一趟的命令与 usage 里）\n' "$RC10"
+    sed 's/^/  err| /' "$T/live.err" | head -8
+    node -e '
+const fs = require("fs")
+const T = process.argv[1], LW = process.argv[2], D = process.argv[3]
+const j = JSON.parse(fs.readFileSync(T + "/live.json", "utf8"))
+const one = j.agents[0] ?? { steps: 0, stopped: "（没落）" }
+const v = j.verify
+const three = j.attribution ?? []
+const hit = j.metrics.find((m) => m.metric === "prefix-hit-rate")
+const calls = fs.existsSync(D) ? fs.readdirSync(D).sort() : []
+console.log("  停因：「" + one.stopped + "」· " + one.steps + " 步 · 验收 " + v.pass + "/" + v.fail + " · 推进 " + JSON.stringify(j.advanced === null ? null : j.advanced.written))
+console.log("  取证物 " + calls.length + " 份：" + calls.join(" "))
+for (const a of three) console.log("    " + a.where + " · 命中 " + (a.cacheReadTokens === null ? "没有读数" : a.cacheReadTokens) + " / 输入 " + (a.inputTokens === null ? "没有读数" : a.inputTokens))
+const rows = [
+  [v.ok === true && v.fail === 0 && j.advanced !== null, "L3：一个 agent 走完（验收照过 · 真的推进了）", JSON.stringify(v) + " · " + JSON.stringify(j.advanced === null ? null : j.advanced.written)],
+  [three.length === 3 && three[0].cacheReadTokens !== null && three[2].cacheReadTokens !== null, "L3：归因那三处里冷与第 k 步两处有数（共享头要两格——这一趟是一格）", three.map((a) => (a.cacheReadTokens === null ? "没有读数" : String(a.cacheReadTokens))).join(" · ")],
+  [calls.length > 0 && hit.denominator !== null && hit.denominator > 0, "L3：取证物落下来了 · 一线指标有真读数（分母不是 0）", calls.length + " 份 · prefix-hit-rate " + hit.numerator + "/" + hit.denominator],
+  [fs.existsSync(LW + "/notes.md"), "L3：产物落在真实工作树上", "notes.md " + (fs.existsSync(LW + "/notes.md") ? fs.statSync(LW + "/notes.md").size + " 字节" : "不在")],
+  [/收敛/.test(String(one.stopped)), "L3：停因是「收敛」（不是「步数到顶」——那一条是协议或提示的问题）", String(one.stopped)]
+]
+fs.writeFileSync(T + "/r10.tsv", rows.map((r) => (r[0] ? "ok" : "bad") + "\t" + r[1] + "\t" + r[2]).join("\n") + "\n")
+process.exit(rows.every((r) => r[0]) ? 0 : 1)
+' "$T" "$LW" "$OUT/live" || bad "L3 的读数：node 那一段自己挂了"
+    readings "$T/r10.tsv"
+    # **录下来的字节喂得回回放档**：照同一份 `scenario.json` 另起一份靶子（A 区的字节因此逐字节相同），
+    # 把刚才那一趟的取证物喂回去。这一条同时是地板①（真模型 → 夹具回放）在真档上的那一半。
+    if [ -d "$OUT/live" ]; then
+      mkfixture "$PW"
+      env -u DEEPSEEK_API_KEY $FUGUE --root "$PW" round run "$GOAL" \
+        --wire-in "$OUT/live" --max-steps 4 --json --dump-wire "$OUT/liveback" > "$T/liveback.json" 2> "$T/liveback.err"
+      RC11=$?
+      printf '  喂回去那一趟 rc = %s\n' "$RC11"
+      sed 's/^/  err| /' "$T/liveback.err" | head -4
+      check "L3：录下来的字节能喂回放档（那一趟照收）" "0" "$RC11"
+      node -e '
+const fs = require("fs")
+const T = process.argv[1], LW = process.argv[2], PW = process.argv[3], LIVE = process.argv[4], BACK = process.argv[5]
+const kept = fs.readdirSync(LIVE).sort()
+const got = fs.existsSync(BACK) ? fs.readdirSync(BACK).sort() : []
+const per = kept.map((c) => {
+  const a = JSON.parse(fs.readFileSync(LIVE + "/" + c + "/meta.json", "utf8"))
+  const b = JSON.parse(fs.readFileSync(BACK + "/" + c + "/meta.json", "utf8"))
+  return a.requestHash === b.requestHash && a.responseHash === b.responseHash
+})
+const product = fs.existsSync(LW + "/notes.md") && fs.existsSync(PW + "/notes.md") && fs.readFileSync(LW + "/notes.md", "utf8") === fs.readFileSync(PW + "/notes.md", "utf8")
+console.log("  逐条对上（" + kept.length + " 份）：" + per.map((x, i) => kept[i] + "=" + x).join(" · "))
+console.log("  两边的产物逐字节相同：" + product)
+const rows = [
+  [got.length === kept.length && per.every(Boolean), "L3：那一趟发出去的请求与喂回去的响应逐条相同（" + kept.length + " 份）", per.map((x) => (x ? "ok" : "bad")).join(" ")],
+  [product, "L3：回放出来的产物与真档那一趟逐字节相同", fs.existsSync(PW + "/notes.md") ? JSON.stringify(fs.readFileSync(PW + "/notes.md", "utf8")) : "（回放那一趟没有产物）"]
+]
+fs.writeFileSync(T + "/r11.tsv", rows.map((r) => (r[0] ? "ok" : "bad") + "\t" + r[1] + "\t" + r[2]).join("\n") + "\n")
+process.exit(rows.every((r) => r[0]) ? 0 : 1)
+' "$T" "$LW" "$PW" "$OUT/live" "$OUT/liveback" || bad "L3 喂回去那一趟的读数：node 那一段自己挂了"
+      readings "$T/r11.tsv"
+    else
+      bad "L3：这一趟一份取证物都没落下来（--dump-wire 那一层没接上），喂回去无从谈起"
+    fi
+    $FUGUE --root "$LW" --json log > "$T/log-live.json" 2> /dev/null
+    TREELIVE=不一致
+    if [ "$(tree_now "$LW")" = "$(git -C "$LW" rev-parse 'refs/heads/main^{tree}')" ]; then TREELIVE=一致; fi
+    check "L3：推进之后工作树与那个提交逐字节一致（保留前缀之外）" "一致" "$TREELIVE"
+    echo
+    echo "=== 十一 · 真档那一趟的判据卡（§ 5.9.3 那九栏 · 量不到的写「没有读数」）==="
+    node -e '
+const fs = require("fs")
+const T = process.argv[1], LW = process.argv[2], D = process.argv[3], treeOk = process.argv[4]
+const j = JSON.parse(fs.readFileSync(T + "/live.json", "utf8"))
+const events = fs.readFileSync(T + "/log-live.json", "utf8").trim().split("\n").filter((l) => l !== "").map((l) => JSON.parse(l).e)
+const calls = events.filter((e) => e.t === "llm/call")
+const sum = { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 }
+for (const c of calls) for (const k of Object.keys(sum)) if (c.usage[k] !== null) sum[k] += c.usage[k]
+const cw = calls.map((c) => c.usage.cacheWriteTokens)
+const dump = fs.existsSync(D) ? fs.readdirSync(D).sort() : []
+const one = j.agents[0] ?? { steps: 0, stopped: "（没落）" }
+const m = Object.fromEntries(j.metrics.map((x) => [x.metric, x]))
+const card = [
+  ["停因（三档哪一档）· 步数 / 上界", one.stopped + " · " + one.steps + " 步 / 上界 4"],
+  ["真断言那条命令与它的退出码", j.verify.pass + " 通过 / " + j.verify.fail + " 没通过 / " + j.verify.unrunnable + " 跑不起来（argv 逐条在 --json 的 assertions 里）"],
+  ["工作树 vs 定格那个提交：一致 / 差几条", treeOk + "（差 0 条）"],
+  ["三个一线指标（分子分母随数一起印）", ["zero-tool-call-rate", "detour-rate", "prefix-hit-rate"].map((k) => k + " " + (m[k].numerator ?? "没有读数") + "/" + (m[k].denominator ?? "没有读数")).join(" · ")],
+  ["归因三处对照：冷 · 共享头 · 第 k 步", j.attribution.map((a) => a.where + " 命中 " + (a.cacheReadTokens === null ? "没有读数" : a.cacheReadTokens)).join(" · ")],
+  ["断点与缓存写入两栏（隐式档）", "未声明（隐式缓存）· cacheWriteTokens " + (cw.length === 0 ? "没有读数（一条 llm/call 都没有）" : cw.every((v) => v === null) ? "没有读数（" + cw.length + " 条都没报）" : JSON.stringify(cw) + "（提供方给的就是这个数）")],
+  ["每趟 usage 四个数 · 合计", calls.length + " 趟 · 逐条 " + calls.map((c) => "[" + [c.usage.inputTokens, c.usage.cacheReadTokens, c.usage.cacheWriteTokens, c.usage.outputTokens].join(" ") + "]").join(" ") + " · 合计 [" + [sum.inputTokens, sum.cacheReadTokens, sum.cacheWriteTokens, sum.outputTokens].join(" ") + "]"],
+  ["前缀 token 数（三区分别）· 调用次数", "token 数：没有读数（归 tools/probe-prefix.ts）· 三区指纹在 dump 的 meta 里 · 调用 " + calls.length + " 次 · 取证物 " + dump.length + " 份"],
+  ["推进（写 / 删 / 跳过）", JSON.stringify(j.advanced === null ? null : { 写: j.advanced.written, 删: j.advanced.removed })]
+]
+for (const [k, v] of card) console.log("  " + k.padEnd(34, " ") + "｜ " + v)
+fs.writeFileSync(T + "/card-live.tsv", card.map((r) => "ok\t真档判据卡：" + r[0] + "\t" + r[1]).join("\n") + "\n")
+process.exit(card.every((r) => String(r[1]).trim() !== "") ? 0 : 1)
+' "$T" "$LW" "$OUT/live" "$TREELIVE" || bad "真档判据卡：有留空的格子"
+    readings "$T/card-live.tsv"
+    # 收尾：真档那两个靶子（与夹具档同一把尺子）
+    for pair in "L3:$LW" "回放回来的:$PW"; do
+      lbl=${pair%%:*}
+      d=${pair#*:}
+      drop_agents "$d"
+      check "$lbl：收尾之后只剩 main 一条分支" "1" "$(git -C "$d" for-each-ref --format='%(refname)' refs/heads 2> /dev/null | wc -l)"
+      check "$lbl：物化根里一个文件都不剩" "0" "$(find "$d/.fugue/mat" -type f 2> /dev/null | wc -l)"
+      check "$lbl：挂载表里没有它" "0" "$(grep -c "$d" /proc/self/mountinfo 2> /dev/null || true)"
+    done
+  fi
+fi
+
+echo
 printf 'PASS %s · FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = "0" ]
