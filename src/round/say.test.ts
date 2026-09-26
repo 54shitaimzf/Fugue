@@ -399,6 +399,9 @@ test('② 预备态：说一句 → 改的是那份草案 → 重判仍停在门
   assert.equal(distills[0]?.body, v1, '第 1 条该是最初那一版')
   assert.equal(distills[1]?.body, v2, '第 2 条该是这一趟改出来的那一版')
   assert.equal(r.distill, v2)
+  // **链**：第 2 条记着它从第 1 条改出来的（`against` = 上一版的正文指纹），第 1 条没有那一栏。
+  assert.equal('against' in (distills[0] as object), false, `第 1 版不该有 against：${JSON.stringify(distills[0])}`)
+  assert.equal(distills[1]?.against, distills[0]?.digest, '第 2 版该记着第 1 版的指纹')
 
   // 二 · **一个契约都没发**（重判仍停在门口），而处境照旧只走过那一条。
   assert.equal(ofType(await roundEvents(b), 'contract/issue').length, 0, '门停着却发了契约')

@@ -18,7 +18,7 @@
 //
 // **这一份一个契约都不发 · 一条分支都不起 · 一片物化都不铺。** 那三样归 `round go`（架构
 // § 15.1.a："落地不是不可逆的一刻，派发才是"）。于是"这一趟跑完了"与"这一轮派发了"是两件事。
-import type { CommitId, RelPath, RoundId } from '../terms.ts'
+import type { CommitId, RelPath, RoundId, WriterId } from '../terms.ts'
 import type { AgentId } from '../terms.ts'
 import type { Log, LogSeq } from '../log/events.ts'
 import type { Truth } from '../truth/contract.ts'
@@ -391,6 +391,23 @@ export async function holderPass(deps: {
  * 拆分没有事前判据（架构 § 8.12 自己写着"拆得太粗与拆得太细都没有事前判据"），所以规模与耦合
  * 只印出来、照发；那一问归 `round go` 那一次批。
  */
+/**
+ * 这一轮**最后一条** `holder/distill` 的指纹（一条都没有就是 `null`）。
+ *
+ * 它给「新那一版记着从哪一版改出来的」用（事件那一栏的 `against`）。按轮次选：同一份日志
+ * 里住着好几轮，按「最后一条」选会把上一轮的尾当成本轮的上一版。
+ *
+ * **读一次全量、取最后一条**——今天这一条路是这么读的（`roundStateOf` 同一条口径）。
+ * 要按轮分文件读是版本取回那一格的事（C5.a），不是这一格。
+ */
+export async function lastDistillDigestOf(log: Log, round: RoundId): Promise<string | null> {
+  let last: string | null = null
+  for await (const e of log.readByWriter('round' as WriterId)) {
+    if (e.t === 'holder/distill' && e.round === round) last = e.digest
+  }
+  return last
+}
+
 export async function planRound(deps: PlanDeps): Promise<PlanResult> {
   const { base, log, round, goal } = deps
   // **底由调用方钉住**（`pinnedBase`）。这一份不去读第二次 HEAD：视图已经铺在那个提交上了，
@@ -442,12 +459,17 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
   const bytes = await deps.view.read(draftPath)
   const draftText = bytes === null ? null : new TextDecoder().decode(bytes)
   if (draftText !== null) {
+    // **上一版是哪一版**：读日志里这一轮最后那一条（不是「上一趟跑了什么」——人直接改草案
+    // 那一档也走同一条链）。`judgeOnly` 那一档落的是同一份正文，于是 `digest` 相同而
+    // `against` 指回上一版：「又落了一遍同一版」在链上也看得见。
+    const against = await lastDistillDigestOf(log, round)
     seqs.push(
       await log.append('round', {
         t: 'holder/distill',
         round,
         agent: 'round' as AgentId,
         digest: digestOf(draftText),
+        ...(against === null ? {} : { against }),
         body: draftText,
       }),
     )

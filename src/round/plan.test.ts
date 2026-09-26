@@ -474,3 +474,31 @@ test('⑦ seed 那一段量的是内容：门上的差额与派发那一趟同�
     await b.truth.close()
   }
 })
+
+test('⑧ 版本链：每一版记着它从哪一版改出来的（第一版没有这一栏）', async () => {
+  const b = await bench()
+  try {
+    const v1 = [section()]
+    const v2 = [section(), section({ goal: '把调用方改到新模块上', ownedPaths: ['src/callers'] })]
+    assert.equal((await plan(b, v1, { declare: true })).held, true)
+    assert.equal((await plan(b, v2, { judge: true })).held, true)
+    // 第三趟：**正文与第二版逐字节相同**——照旧落一版，而 `against` 指着第二版。
+    assert.equal((await plan(b, v2, { judge: true })).held, true)
+    const distills = (await eventsOf(b)).filter(
+      (e): e is Extract<LogEvent, { t: 'holder/distill' }> => e.t === 'holder/distill',
+    )
+    assert.equal(distills.length, 3, `三趟该三条版本，实际 ${distills.length} 条`)
+    assert.equal('against' in (distills[0] as object), false, `第一版不该有 against：${JSON.stringify(distills[0])}`)
+    assert.equal(distills[1]?.against, distills[0]?.digest, '第二版该记着第一版的指纹')
+    assert.equal(distills[2]?.against, distills[1]?.digest, '第三版该记着第二版的指纹')
+    assert.notEqual(distills[1]?.digest, distills[0]?.digest, '两版正文不同，指纹该不同')
+    assert.equal(distills[2]?.digest, distills[1]?.digest, '第三版与第二版正文逐字节相同，指纹该相同')
+    console.log(
+      `⑧ 读数：三版 · 第 1 版无 against · 第 2 版 ← ${String(distills[1]?.against)} · ` +
+        `第 3 版 ← ${String(distills[2]?.against)}（第 3 版与第 2 版指纹相同）`,
+    )
+  } finally {
+    await b.log.close()
+    await b.truth.close()
+  }
+})

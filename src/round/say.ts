@@ -29,7 +29,7 @@ import { applyEdit } from '../view/edit.ts'
 import { overDistillLimit } from '../runtime/budget.ts'
 import { digestOf } from '../runtime/restart.ts'
 import { roundStateOf } from './dispatch.ts'
-import { holderPass } from './plan.ts'
+import { holderPass, lastDistillDigestOf } from './plan.ts'
 import type { HolderExit, PlanResult } from './plan.ts'
 import type { RoundState } from './machine.ts'
 
@@ -210,12 +210,16 @@ async function discuss(deps: SayDeps): Promise<SayResult> {
   if (said === '') {
     notes.push('这一趟没有落下新的凝聚理解：它一句话都没说出来（半截流 · 一步就失败那一类），所以 holder/distill 这一趟没落。')
   } else {
+    // **这一版从哪一版改出来的**：与预备态那一条是**同一条链**（同一轮里只有一条），于是
+    // 「讨论里改了一次理解」与「预备态里改了一次草案」在链上接得起来。
+    const against = await lastDistillDigestOf(deps.log, deps.round)
     seqs.push(
       await deps.log.append('round', {
         t: 'holder/distill',
         round: deps.round,
         agent: 'round' as AgentId,
         digest: digestOf(said),
+        ...(against === null ? {} : { against }),
         body: said,
       }),
     )

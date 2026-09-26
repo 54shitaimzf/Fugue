@@ -120,8 +120,13 @@ export type LogEvent =
    * 持轮者那一趟写完草案之后，**草案的原文**（视图里那一份，逐字节）。`round` 那一栏是必须的：
    * 同一份日志里住着好几轮的草案，重放时"这一轮的草案是哪一份"要选得出来——按"最后一条"选的话，
    * 第二轮起草之后回头去放行第一轮，拿到的就是错的草案。
+   *
+   * `against` 是**它从哪一版改出来的**（上一版正文的 `digest`）：一版一条，串成一条链。
+   * 第一版没有这一栏（没有上一版）。于是「改了一版」与「又落了一遍同一版」分得开——正文逐
+   * 字节相同则 `digest` 相同，而两次的 `against` 各指各的上一版。讨论态（那场对话的凝聚）
+   * 与预备态（那份草案）落的是**同一条链**：同一轮里只有一条。
    */
-  | { t: 'holder/distill'; round: RoundId; agent: AgentId; digest: string; body: string }
+  | { t: 'holder/distill'; round: RoundId; agent: AgentId; digest: string; against?: string; body: string }
   /**
    * 待办清单（`todo_write` 那一条的落点）。**它是覆盖式的**：后一份整体替掉前一份，重放时
    * 这一格手里那份就是最后一条。
