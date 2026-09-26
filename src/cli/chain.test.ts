@@ -905,6 +905,14 @@ test('C5 · `fugue say` 预备态：那句话进请求字节 · 原话不另存 
   assert.match(r.stdout, /判：仍然停在门口/, r.stdout.slice(0, 400))
   assert.match(r.stdout, /这一趟改的是它（原话不另存：工作区里找不到第二份）/, r.stdout.slice(0, 400))
 
+  // 四 · **人面印第几版与差异**（C5.b · PLAN § 5.12 那一行）：这一趟落的是与上一趟**逐字节相同**
+  // 的那一版——号是内容的号（重落同一版不涨号），落地次数照数（判那一趟第 1 次，这一趟第 2 次）。
+  assert.match(
+    r.stdout,
+    /版本：第 1 版（这一轮第 2 次落地）\t与上一趟逐字节相同/,
+    r.stdout.slice(0, 500),
+  )
+
   // 一 · 那句话**在发出去的请求字节里**，而且是**单独成一条消息**的那一段头（C 区第一条：
   // 这一步之后的每一步都读得到它）。预备态里 B 区那一段投影是空的，所以这一条也能钉住它。
   const request = readFileSync(join(dump, 'call-0001', 'request.json'), 'utf8')

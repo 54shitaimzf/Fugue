@@ -86,7 +86,8 @@ import { createToolExecutor } from '../capability/dispatch.ts'
 import { refHeadOf } from '../round/head.ts'
 import { RoundStartError, startRound } from '../round/start.ts'
 import { approvalsOf, dispatchRound } from '../round/dispatch.ts'
-import { lastOf, roundFactsOf } from '../round/versions.ts'
+import { lastOf, roundFactsOf, versionFaceOf } from '../round/versions.ts'
+import type { RoundFacts } from '../round/versions.ts'
 import { fingerprintOf } from '../contract/gate.ts'
 import { PlanError, planRound, pinnedBase } from '../round/plan.ts'
 import { RECENT_COUNT, SayError, recentOf, sayRound, sessionPathOf } from '../round/say.ts'
@@ -1464,6 +1465,10 @@ async function roundPlan(
           r.draftText === null ? '没有写出来' : `${estimateTokensOfText(r.draftText)} token（那把尺的估账）· 正文进日志 holder/distill`
         }`,
       )
+      // **人面那一栏**（C5.b）：这一版是第几版 · 与上一版差在哪几节。
+      if (r.draftText !== null) {
+        for (const line of versionLinesOf(await roundFactsOf(ctx.log, round), '预备态')) emitLine(line)
+      }
       if (draft !== null) {
         emitLine(`  要开 ${draft.sections.length} 个任务：`)
         for (const [k, s0] of draft.sections.entries()) {
@@ -1652,9 +1657,17 @@ async function sayCommand(
             ? '  凝聚：这一趟没落下新的那一段（它一句话都没说出来）'
             : `  凝聚：修正后的理解 ${estimateTokensOfText(r.distill)} token → 一条 holder/distill（正文全文进日志）`,
         )
+        // **人面那一栏**（C5.b）：这一版是第几版（讨论态落的是话，逐节差异那一栏不印）。
+        if (r.distill !== null) {
+          for (const line of versionLinesOf(await roundFactsOf(ctx.log, round), '讨论态')) emitLine(line)
+        }
         emitLine(`  这一态的处境没动：${r.state}（讨论不落地——落地是 fugue round plan <目标>）`)
       } else {
         emitLine(`  草案：${draftPathOf(round)}\t这一趟改的是它（原话不另存：工作区里找不到第二份）`)
+        // **人面那一栏**（C5.b）：这一版是第几版 · 与上一版差在哪几节。
+        if (r.plan?.draftText != null) {
+          for (const line of versionLinesOf(await roundFactsOf(ctx.log, round), '预备态')) emitLine(line)
+        }
         emitLine(
           `  判：${r.plan?.held === true ? '仍然停在门口' : '退回'}\t契约造得出来 ` +
             `${r.plan?.gate.built?.contracts.length ?? 0} 份 · 一份都没发`,
@@ -1794,6 +1807,23 @@ function credentialFor(decl: ReturnType<typeof modelDeclOf>, wire: WireFlags, ju
   if (judge) return '--judge：不跑模型，不取凭据'
   if (wire.wireIn !== undefined) return wire.credential ?? '回放档：不出网，不取凭据'
   return authWith(providerOf(decl.provider), wire.credential ?? null)
+}
+
+/**
+ * 人面那一栏：**这一版是第几版 · 与上一版差在哪几节**（PLAN § 5.12 的 C5.b）。
+ *
+ * 讨论态那一趟落的是**一段话**（凝聚理解）不是草案——那时只印第几版，逐节差异那一栏不印
+ * （`versionFaceOf` 的 `why` 说得出来原因）。
+ */
+function versionLinesOf(facts: RoundFacts, where: '讨论态' | '预备态'): string[] {
+  const v = lastOf(facts)
+  if (v === null) return []
+  const face = versionFaceOf(facts, v)
+  const head = `  版本：第 ${face.version} 版（这一轮第 ${face.landing} 次落地）`
+  if (face.same) return [`${head}\t与上一趟逐字节相同`]
+  if (face.why !== null) return where === '讨论态' ? [head] : [`${head}\t${face.why}`]
+  const vs = face.version === 1 ? '第一版' : `与第 ${face.version - 1} 版比`
+  return [`${head}\t${vs}：${face.lines.length} 处`, ...face.lines.map((l) => `    ${l}`)]
 }
 
 /**

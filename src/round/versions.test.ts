@@ -8,6 +8,8 @@
 //   ② **一次读**：`roundFactsOf` 只读一遍日志，而它一次给全那几样；`roundStateOf` 与 `loggedOf`
 //      是它的两个投影——读出来的与原先那两个读者逐字段相同（这才是"合成一次读"不是"换个地方读"）
 //   ③ **空账不抛**：这一轮一条都没有 → `Idle` · 没有底 · 空串 · 空链（读得出"还没有"，不是报错）
+//   ④ **逐节差异**（C5.b）：多了哪一节 · 少了哪一节 · 哪一节哪几栏变了；读不成草案就是 `null`
+//   ⑤ **人面读数**（C5.b）：第几版 · 第几次落地 · 与上一版差在哪几节（重落那一趟逐字节相同）
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -18,7 +20,7 @@ import type { AgentId, CommitId, RoundId, WriterId } from '../terms.ts'
 import type { LogReader } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import { loggedOf, roundStateOf } from './dispatch.ts'
-import { bodyOf, lastOf, roundFactsOf, versionIndexOf } from './versions.ts'
+import { bodyOf, lastOf, roundFactsOf, sectionDiffOf, versionFaceOf, versionIndexOf } from './versions.ts'
 
 const R = 'r1' as RoundId
 const R2 = 'r2' as RoundId
@@ -163,6 +165,89 @@ test('③ 空账不抛：这一轮一条都没有 → Idle · 没有底 · 空�
     assert.equal(versionIndexOf(f, 'x'), null)
     assert.equal(bodyOf(f, 'x'), null)
     console.log('③ 读数：空账 → Idle · base null · goal 空串 · 链 0 格（读得出"还没有"，不是报错）')
+  } finally {
+    await b.close()
+  }
+})
+
+/** 一节草案（与 `plan.test.ts` 的台子同一形状）：`kind` 加上契约字段表那几栏。 */
+function section(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: 'implement',
+    goal: '把解析器拆成独立模块',
+    ownedPaths: ['src/parse.ts'],
+    deliverables: [{ path: 'src/parse.ts', form: '模块' }],
+    assertions: [{ action: 'ok', name: '单元测试全过' }],
+    seed: [],
+    ...over,
+  }
+}
+
+/** 一份草案的正文：一段散文 + 逐节的 `json` 围栏块（`contract/draft.ts` 认的形状）。 */
+function draftText(sections: readonly Record<string, unknown>[], prose = '为什么这么拆：两格可以并行。'): string {
+  return `${prose}\n\n${sections.map((s, i) => `## 第 ${i + 1} 节\n\n\`\`\`json\n${JSON.stringify(s)}\n\`\`\``).join('\n\n')}\n`
+}
+
+test('④ 逐节差异：多了哪一节 · 少了哪一节 · 哪一节哪几栏变了（逐字节相同就是空的）', () => {
+  const v1 = draftText([section()])
+  const v2 = draftText([
+    section({ assertions: [{ action: 'ok', name: '单元测试全过' }, { action: 'ok', name: '类型检查过' }] }),
+    section({ goal: '把调用方改到新模块上', ownedPaths: ['src/callers'] }),
+  ])
+  assert.deepEqual(sectionDiffOf(v1, v1), [], '逐字节相同的两版 → 没有差异')
+  assert.deepEqual(sectionDiffOf(v1, v2), ['~ 第 1 节：assertions 变了', '+ 第 2 节：把调用方改到新模块上'])
+  assert.deepEqual(sectionDiffOf(v2, v1), ['~ 第 1 节：assertions 变了', '- 第 2 节：把调用方改到新模块上'])
+  assert.deepEqual(sectionDiffOf(null, v1), ['+ 第 1 节：把解析器拆成独立模块'], '第一版：逐节全是加的')
+  assert.deepEqual(sectionDiffOf(v1, draftText([section()], '换了个说法。')), ['~ 开头那段（为什么这么拆）变了'])
+  assert.equal(sectionDiffOf(v1, '这一趟说的是话，不是草案。'), null, '这一版读不成草案 → null（不猜）')
+  assert.equal(sectionDiffOf('上一版是话', v1), null, '上一版读不成草案 → null')
+  assert.equal(sectionDiffOf(v1, draftText([section({ kind: '调查型' })])), null, '坏草案 → null（当场抛被接住了）')
+  console.log('④ 读数：逐字节相同 → 0 行 · 改 1 栏 + 加 1 节 → 2 行 · 反过来 → 2 行 · 读不成草案 → null')
+})
+
+test('⑤ 人面读数：第几版 · 第几次落地 · 与上一版差在哪几节（重落那一趟逐字节相同）', async () => {
+  const b = await bench()
+  try {
+    const v1 = draftText([section()])
+    const v2 = draftText([section({ ownedPaths: ['src/parse.ts', 'src/parse'] })])
+    const d1 = digestOf(v1)
+    const d2 = digestOf(v2)
+    await b.log.append('round', { t: 'holder/distill', round: R, agent: HOLDER, digest: d1, body: v1 })
+    await b.log.append('round', { t: 'holder/distill', round: R, agent: HOLDER, digest: d2, against: d1, body: v2 })
+    await b.log.append('round', { t: 'holder/distill', round: R, agent: HOLDER, digest: d2, against: d2, body: v2 })
+    const f = await roundFactsOf(b.log, R)
+    const [first, second, third] = f.versions
+    assert.ok(first !== undefined && second !== undefined && third !== undefined)
+    const fa = versionFaceOf(f, first)
+    assert.equal(fa.version, 1)
+    assert.equal(fa.landing, 1)
+    assert.equal(fa.same, false)
+    assert.deepEqual(fa.lines, ['+ 第 1 节：把解析器拆成独立模块'], '第一版：逐节全是加的')
+    assert.equal(fa.why, null)
+    const fb = versionFaceOf(f, second)
+    assert.equal(fb.version, 2, '内容变了 → 第 2 版')
+    assert.equal(fb.landing, 2)
+    assert.equal(fb.same, false)
+    assert.deepEqual(fb.lines, ['~ 第 1 节：ownedPaths 变了'])
+    const fc = versionFaceOf(f, third)
+    assert.equal(fc.version, 2, '重落同一版不涨号')
+    assert.equal(fc.landing, 3)
+    assert.equal(fc.same, true, '与上一趟逐字节相同')
+    assert.deepEqual(fc.lines, [], '逐字节相同就没有差异可印')
+    // 讨论态那一档：一段话读不成草案 → 印得出"第几版"，而差异那一栏给的是原因。
+    await b.log.append('round', { t: 'holder/distill', round: R, agent: HOLDER, digest: digestOf('这是一段话。'), body: '这是一段话。' })
+    const f2 = await roundFactsOf(b.log, R)
+    const prose = f2.versions[3]
+    assert.ok(prose !== undefined)
+    const fd = versionFaceOf(f2, prose)
+    assert.equal(fd.version, 3, '链上第 3 个不同的内容 → 第 3 版（落地序号是 4，不是它）')
+    assert.equal(fd.landing, 4)
+    assert.deepEqual(fd.lines, [])
+    assert.match(String(fd.why), /不是一份草案/, `why 没说是哪一档：${String(fd.why)}`)
+    console.log(
+      `⑤ 读数：第 1 版/第 1 次落地 → 加 1 节 · 第 2 版/第 2 次落地 → 1 处 · ` +
+        `第 2 版/第 3 次落地 → 与上一趟逐字节相同 · 一段话那一版（第 4 次落地）→ why「${String(fd.why)}」`,
+    )
   } finally {
     await b.close()
   }
