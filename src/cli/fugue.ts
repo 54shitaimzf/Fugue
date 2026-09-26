@@ -85,6 +85,8 @@ import { createToolHost } from '../tools/host.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
 import { refHeadOf } from '../round/head.ts'
 import { RoundStartError, startRound } from '../round/start.ts'
+import { approvalsOf, dispatchRound } from '../round/dispatch.ts'
+import { fingerprintOf } from '../contract/gate.ts'
 import { PlanError, planRound, pinnedBase } from '../round/plan.ts'
 import { estimateTokensOfText } from '../runtime/budget.ts'
 import { draftPathOf } from '../contract/draft.ts'
@@ -213,7 +215,18 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              退回并报出缺哪一节哪个键。每一格的预估占用（三区 + 工具目录 + seed
                              与上限的差额）一并印出来——规模由模型定，架构只把数说出来。
                              --live / --wire-in / --max-steps / --credential / --dump-wire 与
-                             round run 同义；放行是 round go（还没落地）。
+                             round run 同义。
+  round go [--materialize]    **放行**：把门上那一批契约发出去（架构 § 15.1.a 四步里的"派"）。
+                              放行的是**日志里那一份草案**在**这一轮钉住的底**上重算出来的那一批
+                              （同一个身份分配器 · 同一段判据），所以人批的那一批与发出去的这一批
+                              是同一批。落一条 round/approve（批号 + 那几份契约）→ 逐条
+                              contract/issue → N 条 refs/heads/<agent> 定在同一个底上 →
+                              Planning → Delegated → Working。物化缺省不做（与 round new 同一条：
+                              给 --materialize 才铺 N 棵树）。
+                              再跑一次不重复触发：这一批已经发过了就当场拒 · **一个字节都不落**
+                              （不是静默成功，也不发第二条契约）。**新的一批一律重停**——下一个
+                              轮次拆出来的那一批哪怕与这一批同号（批号只是拆分的形状，见 round
+                              plan 印的那一行）也照样停在门口等人点头。
   round run <目标> [--live] [--report] [--metrics] [--fail <n>] [--deny <n>] [--retry <n>] [--materialize]
                              跑一个完整的轮次（架构 § 20 S7 的可用性那一句）：
                              起头（钉底 · 造契约 · Planning 预检 · 发契约 · 起分支）→ 每个 agent
@@ -776,7 +789,7 @@ async function roundCmd(
 ): Promise<number> {
   const verb = args[0]
   if (verb !== 'new') {
-    return usageFail(`round 的子命令是 new · run · plan：拿到的是 ${verb === undefined ? '（空）' : verb}`)
+    return usageFail(`round 的子命令是 new · plan · go · run：拿到的是 ${verb === undefined ? '（空）' : verb}`)
   }
   const goal = args[1]
   if (goal === undefined || goal === '') return usageFail('round new 需要 <目标>：轮级意图的那一句')
@@ -1286,7 +1299,7 @@ async function roundPlan(
     const decl = modelDeclOf(DEFAULT_MODEL.id)
     // **凝聚理解**（架构 § 15.1.a 的 B 区那一段）：最后一条 `holder/distill` 的正文。
     // `recent`（压缩前最近几次原文）今天**没有生产者**——会话记录那一格归 T12，所以它是空的。
-    const { distill } = await lastDistillOf(ctx.log)
+    const { distill } = await lastDistillOf(ctx.log, round)
     const baseState = stateWithState(emptyState(), doc, root)
     const state: AssembleState = { ...baseState, goal, distill, recent: '' }
     const handle: AgentHandle = {
@@ -1335,6 +1348,12 @@ async function roundPlan(
 
     const draft = r.gate.draft
     const built = r.gate.built
+    // **这一批的编号**（拆分的形状）：与 `round go` 落进 `round/approve` 的是同一个函数算的。
+    const fingerprint = built === null ? null : fingerprintOf(built)
+    // **同号不是凭证**（架构 § 15.1.a）：日志里放过的那几批里"与这一批同形"的那一个只是给人看的
+    // 读数——它换不来放行，新的一批照样停在门口。
+    const earlier = fingerprint === null ? [] : await approvalsOf(ctx.log)
+    const same = earlier.find((x) => x.fingerprint === fingerprint) ?? null
     if (json) {
       emitJson({
         round: r.round,
@@ -1355,6 +1374,8 @@ async function roundPlan(
         seedLimit: built?.seedLimit ?? null,
         seedTokens: built === null ? [] : [...built.seedTokens],
         intersections: r.gate.precheck?.lines ?? [],
+        fingerprint,
+        sameAs: same === null ? null : same.round,
         seedRead: r.seedRead,
         occupancy: [...r.occupancy],
       })
@@ -1389,6 +1410,10 @@ async function roundPlan(
         for (const c of built.contracts) emitLine(`    ${c.id}\t${c.agent}\t${c.kind}\t${writeSetLine(c)}`)
         emitLine(`  预检：${writeSetPaths(built.contracts).length} 条路径 · ${r.gate.precheck.intersections.length} 对相交`)
         for (const line of r.gate.precheck.lines) emitLine(`    ${line}（照发：这一站的口径是报出来、照发）`)
+        emitLine(`  批号：${fingerprint}（这一批的编号——拆分的形状，不含轮次与身份）`)
+        if (same !== null) {
+          emitLine(`    与你在 ${same.round} 放过的那一批同号：编号只是一个名字，不作放行的凭证——新的一批照样停在这里等人点头`)
+        }
       }
       if (draft !== null) {
         emitLine('  每一格的预估占用（三区 + 工具目录 + seed；估账，不是读数）：')
@@ -1410,7 +1435,7 @@ async function roundPlan(
       } else {
         process.stderr.write(
           '门停在这里等人批：一个契约都没发 · 一条分支都没起 · 真实工作树一个字节没动。' +
-            `放行是 \`fugue round go\`（C4 那一格），今天还没有那条命令。\n`,
+            `放行是 \`fugue round go\`。\n`,
         )
       }
     }
@@ -1419,6 +1444,106 @@ async function roundPlan(
   } catch (err) {
     if (err instanceof PlanError) return fail(err.message)
     if (err instanceof ConfigError) return fail(err.message)
+    throw err
+  } finally {
+    await ctx.close()
+  }
+}
+
+/**
+ * `fugue round go`：**放行**（架构 § 15.1.a 四步里的"派" · PLAN § 5.10 的 C4）。
+ *
+ * 这一层只做三件事：从配置里取轮次号与绑好的动作表 · 把日志里那一轮的那几样（钉住的底 · 那一份
+ * 草案）交给 `dispatchRound` · 把读数排成两列。判 · 发 · 起分支 · 物化全在 `src/round/` 里。
+ *
+ * **放行的是日志里那一份草案**，不是视图里当下那一份：门那一趟把草案的正文落进了
+ * `holder/distill`，重算的就是它——于是"人批的那一批"与"发出去的这一批"是同一个对象。
+ *
+ * **同号不作数。** 放行之前先读一遍日志里放过的那几批：有同号的就说出来（给人看"这一批与哪一批
+ * 同形"），而它**不是**"照上次放行"的依据——新的一批一律要人再点一次头（架构 § 15.1.a）。
+ */
+async function roundGo(root: string, flags: Map<string, string | true>, args: string[], json: boolean): Promise<number> {
+  if (args.length > 0) {
+    return usageFail(`round go 不带位置参数：拿到的是 ${args.join(' ')}（目标那一句在 round plan 那一趟给）`)
+  }
+  let doc: ConfigDoc
+  try {
+    doc = await readConfig(root)
+  } catch (err) {
+    if (err instanceof ConfigError) return fail(err.message)
+    throw err
+  }
+  const rawRound = getConfig(doc, 'round.id')
+  const round = typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1'
+  const materialize = flags.has('materialize')
+
+  const ctx = await openCtx(root, flags, { sync: 'each', write: true })
+  try {
+    // **先把放过的那几批读出来**：这一笔写进去之后它就与这一批混在一起了（`approvalsOf` 读全部）。
+    const earlier = await approvalsOf(ctx.log)
+    const r = await dispatchRound({
+      roots: ctx.roots,
+      truth: ctx.truth,
+      log: ctx.log,
+      round,
+      // **与判那一趟同一个分配器**（`round plan` 那一趟用的是同一个 `identFor`）。
+      identityFor: (n: number) => identFor(round, n),
+      actions: actionsTableOf(doc),
+      materialize,
+      logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
+    })
+    const same = earlier.find((x) => x.fingerprint === r.fingerprint) ?? null
+    if (json) {
+      emitJson({
+        round: r.round,
+        base: r.base,
+        fingerprint: r.fingerprint,
+        sameAs: same === null ? null : same.round,
+        contracts: r.built.contracts,
+        owners: r.owners,
+        seedLimit: r.built.seedLimit,
+        seedTokens: r.built.seedTokens,
+        seedRead: r.seedRead,
+        intersections: r.precheck.lines,
+        materialized: materialize,
+        branches: r.forks.map((f) => ({ agent: f.agent, base: f.base, strategy: f.strategy, merged: f.merged })),
+        trail: r.trail,
+      })
+    } else {
+      const owners = [...new Set(r.built.contracts.map((c) => c.agent))]
+      emitLine(`${r.round}\t${r.base}\t放行：${r.built.contracts.length} 份契约\t${owners.length} 条分支`)
+      for (const c of r.built.contracts) emitLine(`  ${c.id}\t${c.agent}\t${c.kind}\t${writeSetLine(c)}`)
+      emitLine(`  批号：${r.fingerprint}（这一批的编号——拆分的形状，不含轮次与身份）`)
+      if (same !== null) {
+        emitLine(`    与你在 ${same.round} 放过的那一批同号：编号只是一个名字，不作放行的凭证`)
+      }
+      // **种子那一行不省**：量出来是 0 与"这一轮没有种子"在读数上分不开（见 `round new` 那一档）。
+      emitLine(
+        `  种子\t上限 ${r.built.seedLimit} token\t逐份 ${r.built.seedTokens.join(' · ') || '（没有）'}\t` +
+          (r.seedRead.from === 'tree'
+            ? `在钉住的底上取到 ${r.seedRead.loaded} 份内容`
+            : '量法是调用方给的（这一层没量）') +
+          (r.seedRead.missing.length === 0 ? '' : `\t这一棵树上没有：${r.seedRead.missing.join(' · ')}`),
+      )
+      for (const f of r.forks) emitLine(`  ${f.agent}\tfork ${f.strategy}\t${f.merged}`)
+      if (r.forks.length === 0) {
+        process.stderr.write('物化没有铺（架构 § 14.1 的 deferMaterialize：走按需物化）；要现在铺就加 --materialize\n')
+      }
+      process.stderr.write(`写入集预检：${writeSetPaths(r.built.contracts).length} 条路径 · ${r.precheck.lines.length} 对相交`)
+      if (r.precheck.lines.length > 0) {
+        process.stderr.write('，照发：\n')
+        for (const l of r.precheck.lines) process.stderr.write(`  ${l}\n`)
+      } else {
+        process.stderr.write('\n')
+      }
+      // **发了就是发了**：契约逐条在日志里，分支定在同一个底上——这一轮的处境已经是 `Working`。
+      process.stderr.write(
+        `放行完了：${r.built.contracts.length} 份契约在日志里（contract/issue 逐条）· ${owners.length} 条分支定在 ${r.base}\n`,
+      )
+    }
+    return 0
+  } catch (err) {
+    if (err instanceof RoundStartError) return fail(err.message)
     throw err
   } finally {
     await ctx.close()
@@ -1436,15 +1561,18 @@ function credentialFor(decl: ReturnType<typeof modelDeclOf>, wire: WireFlags, ju
 }
 
 /**
- * 最后一条 `holder/distill` 的正文（架构 § 15.1.a 的 B 区："凝聚理解"）。
+ * 这一轮最后一条 `holder/distill` 的正文（按轮次号选：同一份日志里住着好几轮；架构 § 15.1.a 的 B 区："凝聚理解"）。
  *
  * **它是重启之后接得上话茬的那一段**：持轮者这一趟看到的自己那份理解，就是上一趟写下来的。
  * 一条都没有就是空串（第一次开这一轮——没有前话可接）。
  */
-async function lastDistillOf(log: { readByWriter(w: WriterId, from?: number): AsyncIterable<LogEvent> }): Promise<{ distill: string }> {
+async function lastDistillOf(
+  log: { readByWriter(w: WriterId, from?: number): AsyncIterable<LogEvent> },
+  round: RoundId,
+): Promise<{ distill: string }> {
   let distill = ''
   for await (const e of log.readByWriter('round' as WriterId)) {
-    if (e.t === 'holder/distill') distill = e.body
+    if (e.t === 'holder/distill' && e.round === round) distill = e.body
   }
   return { distill }
 }
@@ -2856,6 +2984,7 @@ async function run(argv: readonly string[]): Promise<number> {
     const sub = positional[1]
     if (sub === 'run') return await roundRun(root, flags, positional.slice(2), json)
     if (sub === 'plan') return await roundPlan(root, flags, positional.slice(2), json)
+    if (sub === 'go') return await roundGo(root, flags, positional.slice(2), json)
     return await roundCmd(root, flags, positional.slice(1), json)
   }
 

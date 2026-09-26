@@ -107,8 +107,21 @@ export type LogEvent =
       body: string
     }
   | { t: 'round/state'; round: RoundId; from: RoundState; to: RoundState }
-  | { t: 'round/intent'; round: RoundId; digest: string; body: string }
-  | { t: 'holder/distill'; agent: AgentId; digest: string; body: string }
+  /**
+   * 轮次开始的那一条：**这一轮钉住的底 + 轮级意图**（架构 § 8.14 的 C7 前半 · § 15.1 纪律 2）。
+   *
+   * 底为什么与意图住同一条：两者是**同一刻**定下来的（钉底之后紧跟着落这一条），而放行那一趟
+   * （`fugue round go`）要拿同一个底把同一份草案重算一遍——不记它，重算出来的就是另一批契约，
+   * "人批的是哪一批"没有一个对象可比。**钉住的底不是"当时 HEAD 的读数"**：HEAD 后来动了，
+   * 这一轮仍然在它上面（A7 的漂移检测读的正是这一件事）。
+   */
+  | { t: 'round/intent'; round: RoundId; base: CommitId; digest: string; body: string }
+  /**
+   * 持轮者那一趟写完草案之后，**草案的原文**（视图里那一份，逐字节）。`round` 那一栏是必须的：
+   * 同一份日志里住着好几轮的草案，重放时"这一轮的草案是哪一份"要选得出来——按"最后一条"选的话，
+   * 第二轮起草之后回头去放行第一轮，拿到的就是错的草案。
+   */
+  | { t: 'holder/distill'; round: RoundId; agent: AgentId; digest: string; body: string }
   /**
    * 待办清单（`todo_write` 那一条的落点）。**它是覆盖式的**：后一份整体替掉前一份，重放时
    * 这一格手里那份就是最后一条。
@@ -131,6 +144,17 @@ export type LogEvent =
    * 由人开——所以它落事件、叫停，与 `holder/plan` 共用那一个"停"（不引入"异步等待"这种持久态）。
    */
   | { t: 'holder/ask'; agent: AgentId; digest: string; body: string }
+  /**
+   * **人放行了这一批**（`fugue round go`）：紧接着的那几条 `contract/issue` 就是它的兑现。
+   *
+   * `fingerprint` 是这一批的**编号**（`fingerprintOf`：拆分的形状——每节的 kind · goal · 写入面 ·
+   * 交付物 · 断言 · seed，不含轮次与身份），`contracts` 是这一批发出去的那几份。
+   *
+   * **它不是一份新状态**：重放时轮次的处境仍然只看 `round/state` 那条链。**编号也不作数**
+   * （架构 § 15.1.a）：长得像不算放行过的凭证——新的一批一律重停，哪怕与上一批同一个编号。
+   * 它在这里的用处只有一个：读日志的人（与 TUI）一眼看得出"这一批与哪一批同形"。
+   */
+  | { t: 'round/approve'; round: RoundId; fingerprint: string; contracts: ContractId[] }
   | {
       t: 'contract/issue'
       round: RoundId

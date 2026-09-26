@@ -44,6 +44,8 @@ import type { GateVerdict } from '../contract/gate.ts'
 import { gateOf } from '../contract/gate.ts'
 import type { SeedReading } from './seed.ts'
 import { seedRulerOf } from './seed.ts'
+// **处境重放只有一处**：放行那一趟（`round go`）与这一趟读的是同一条链。
+import { roundStateOf } from './dispatch.ts'
 
 /** 这一层自己的失败：底钉不住 · 视图打不开。**草案不成立不是它**——那是门的一份读数（`gate.problems`）。 */
 export class PlanError extends Error {}
@@ -300,19 +302,6 @@ function bodyOf(v: unknown): string {
   return JSON.stringify(v)
 }
 
-/**
- * 这一轮的处境：把 `round/state` 那条链重放一次。**只认这一个轮次号**——同一份日志里住着好几轮。
- *
- * 一条都没有就是 `Idle`（这一轮还没落地）。链本身由 `machine.ts` 那 12 条边保着，所以这里
- * 不需要再判"走得对不对"：**落下来的每一条都是当时判过的**（架构 § 9.4 的重放口径）。
- */
-async function roundStateOf(log: Log, round: RoundId): Promise<RoundState> {
-  let state: RoundState = 'Idle'
-  for await (const e of log.readByWriter('round')) {
-    if (e.t === 'round/state' && e.round === round) state = e.to
-  }
-  return state
-}
 
 /**
  * 跑一趟预备态。**停在门口，不派发。**
@@ -343,7 +332,7 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
     // **拦级意图只写一次**（架构 § 15.1 纪律 2）。守卫是意图快照已建立（§ 8.13 的第一个关键点）：
     // 先落 `round/intent`、再走那一步——顺序反了那条守卫就该不成立。
     const intentBody = bodyOf({ goal })
-    seqs.push(await log.append('round', { t: 'round/intent', round, digest: digestOf(intentBody), body: intentBody }))
+    seqs.push(await log.append('round', { t: 'round/intent', round, base, digest: digestOf(intentBody), body: intentBody }))
     await move('land', { intent: true })
   } else if (state !== 'Planning') {
     throw new PlanError(
@@ -402,7 +391,13 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
   const draftText = bytes === null ? null : new TextDecoder().decode(bytes)
   if (draftText !== null) {
     seqs.push(
-      await log.append('round', { t: 'holder/distill', agent: 'round' as AgentId, digest: digestOf(draftText), body: draftText }),
+      await log.append('round', {
+        t: 'holder/distill',
+        round,
+        agent: 'round' as AgentId,
+        digest: digestOf(draftText),
+        body: draftText,
+      }),
     )
   }
 

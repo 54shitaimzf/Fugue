@@ -322,8 +322,8 @@ test('④ `exit_plan_mode` / `ask_user_question` 的回执里指的命令在命�
       ['exit_plan_mode', plan.output],
       ['ask_user_question', ask.output],
     ] as const) {
-      // 今天不存在的那条门（`round go`）不许出现在回执里。
-      assert.ok(!/round go/.test(out), `${name} 的回执指了一条不存在的命令（round go）：${out}`)
+      // **门由人开**（C4 落地）：回执要指得出放行那一条命令，而它真的存在。
+      assert.match(out, /fugue round go/, `${name} 的回执该指得出放行那条命令（round go）：${out}`)
       // 回执里提到的每一条 `fugue ...` 命令，都要在命令面那份用法里找得到（**不另抄一份名单**）。
       for (const m of out.matchAll(/`(fugue [^`]+)`/g)) {
         const words = m[1]!.split(/\s+/).slice(1)
@@ -351,8 +351,9 @@ test('⑤ 事件联合的判别名与计划 § 5.18 那张表逐条相符（`too
   }
   const got = spawnSync('node', [`${tools}/check-events.js`, 'src/log/events.ts', plan], { cwd: process.cwd(), encoding: 'utf8' })
   assert.equal(got.status, 0, `check-events.js 没通过：\n${got.stdout}\n${got.stderr}`)
-  assert.match(got.stdout, /代码里 27 条/, '代码那一侧该是 27 条')
-  assert.match(got.stdout, /计划里 27 条/, '计划那一侧该是 27 条')
+  // **28 条**：C4 那一格加了 `round/approve`（放行那一笔）——事件面到这里冻住（TUI 的读面）。
+  assert.match(got.stdout, /代码里 28 条/, '代码那一侧该是 28 条')
+  assert.match(got.stdout, /计划里 28 条/, '计划那一侧该是 28 条')
   assert.match(got.stdout, /每一条都在/, '两向都要相符')
   console.log(`⑤ 读数：${got.stdout.split('\n').filter((l) => l.includes('条') || l.includes('相符')).map((l) => l.trim()).join(' · ')}`)
 })

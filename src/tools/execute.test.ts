@@ -584,10 +584,10 @@ test('⑧ exit_plan_mode：持轮者落 holder/plan 并停在门口；子 agent 
     const asHolder = await face('exit_plan_mode', { plan: '先拆三格，再各跑一条断言' }, b.host, '', true)
     assert.equal(asHolder.ok, true, asHolder.output)
     assert.equal(asHolder.halt, true, '停在门口：这一格到这儿为止')
-    // **回执只说实话**（W10 处三）：今天不存在「人答了接着跑 / round go 放行」那条路，
-    // 所以它不指门——只说「这一轮到此为止，人读日志之后开新轮」。
-    assert.match(asHolder.output, /这一轮到此为止/)
-    assert.ok(!/round go/.test(asHolder.output), '那句不存在的门不许出现在回执里')
+    // **回执只说实话**（W10 处三 → C4 落地时那一句改回来）：门真的存在了（`fugue round go`）
+    // ——这一趟只把计划落进日志，发契约是放行那一下的事（架构 § 15.1.a）。
+    assert.match(asHolder.output, /这一轮停在门口/)
+    assert.match(asHolder.output, /fugue round go/, '门由人开这句话该指得出放行那条命令')
 
     const rows: LogEvent[] = []
     for await (const e of b.log.readByWriter(AGENT as WriterId)) rows.push(e)

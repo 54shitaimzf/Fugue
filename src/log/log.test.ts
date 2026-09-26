@@ -351,8 +351,12 @@ const SAMPLES: LogEvent[] = [
     body: '交接提示词',
   },
   { t: 'round/state', round: 'r1', from: 'Working', to: 'Collecting' },
-  { t: 'round/intent', round: 'r1', digest: 'd3', body: '意图原文' },
-  { t: 'holder/distill', agent: V, digest: 'd4', body: '凝聚理解' },
+  // 轮次开始那一条带着**钉住的那个底**（C7 前半）：放行那一趟要拿同一个底重算同一批契约。
+  { t: 'round/intent', round: 'r1', base: C('c0ffee'), digest: 'd3', body: '意图原文' },
+  // 草案带轮次号：同一份日志里住着好几轮，重放要选得出是哪一份。
+  { t: 'holder/distill', round: 'r1', agent: V, digest: 'd4', body: '凝聚理解' },
+  // 放行那一笔（`round go`）：批号 + 这一批发出去的那几份契约。
+  { t: 'round/approve', round: 'r1', fingerprint: '0f1e2d3c4b5a6978', contracts: ['ct1'] },
   { t: 'contract/issue', round: 'r1', contract: 'ct1', owner: V, paths: ['src/a.ts'] },
   { t: 'merge/attempt', round: 'r1', branches: [B('agent/r1/1')], conflicts: 1 },
   { t: 'merge/accept', round: 'r1', commit: C('c0ffee'), assertions: [] },

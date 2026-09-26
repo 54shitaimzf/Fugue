@@ -483,12 +483,12 @@ const askUserQuestionFace: ToolFn = async (args, host, ctx) => {
   return {
     ok: true,
     halt: true,
-    // **回执只说实话**（PLAN § 5.17 处三）：今天真实的路是「问题落进日志、这一轮到此为止，
-    // 人读日志之后开新轮」。「人答了接着跑」那条通道（C 站）今天不存在——门今天不存在，
-    // 就不许指门；C 站落地时这一句再改回「门由人开」。
+    // **回执只说实话**（PLAN § 5.17 处三）：门真的存在了（`fugue round go`）——`round plan`
+    // 停在门口，放行那一下才发契约。而"人答了接着跑"那条通道今天仍然没有：答案要并进草案得再跑
+    // 一趟预备态（人读过日志之后），所以这一句指的两条命令都是真的存在的那两条。
     output:
-      `问了 ${asks.length} 个问题，落进日志了。**这一轮到此为止**——` +
-      '人读过日志之后开新的一轮（`fugue round run`），照答案接着做。',
+      `问了 ${asks.length} 个问题，落进日志了。**这一轮停在门口**——` +
+      '人答过之后接着拆就再跑一趟预备态（`fugue round plan <目标>`），放行是 `fugue round go`。',
   }
 }
 
@@ -505,10 +505,11 @@ const exitPlanModeFace: ToolFn = async (args, host, ctx) => {
   return {
     ok: true,
     halt: true,
-    // 与 `ask_user_question` 同一条：`round go` 这条命令今天不存在，就不许指它。
+    // 与 `ask_user_question` 同一条：**门由人开**——`round plan` 停在门口，`fugue round go`
+    // 才是发契约的那一下（架构 § 15.1.a）。这一趟只把计划落进日志。
     output:
-      '预备态到这儿为止：计划已经落进日志了。**这一轮到此为止**——' +
-      '人读过日志之后开新的一轮（`fugue round run`），照它发契约、往下走。',
+      '预备态到这儿为止：计划已经落进日志了。**这一轮停在门口**——' +
+      '人过一遍之后 `fugue round go` 放行，契约才发出去、往下走。',
   }
 }
 

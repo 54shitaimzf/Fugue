@@ -27,6 +27,7 @@ import type { Draft, DraftSection } from './draft.ts'
 import { DraftError, draftOf } from './draft.ts'
 import type { PrecheckResult } from './precheck.ts'
 import { planningGate } from './precheck.ts'
+import type { Contract } from './types.ts'
 
 /**
  * 一份种子的量法：**先装后量**。`load` 是那一次取（异步的：内容从某一棵树上取回来），
@@ -140,6 +141,53 @@ function outputsOf(
     if (got.length > 0) out[a.action] = [...got]
   }
   return out
+}
+
+/**
+ * 一批契约的**编号**：拆分的形状过一遍。出处：架构 § 15.1.a（放行那一档要一个"这一批"的可核对
+ * 对象）· PLAN § 5.10 的 C4 行。
+ *
+ * **它是形状的编号，不是身份的编号。** `id` · `agent` · `branch` 与 `base` 都不进：前三个带着
+ * 轮次号（`r1.implement.1` 与 `r2.implement.1`），于是"同一份拆分换个轮次"永远比不出相等；底是
+ * 钉住的那个提交，与"这一批活长什么样"不是一回事。进去的是每节的 `kind` · `goal` · 写入面 ·
+ * 交付物 · 断言 · `seed`，**按构造次序**。
+ *
+ * **它不作数。** 编号相同不代表可以照上次放行（架构 § 15.1.a：新的一批一律停在门口等人点头）。
+ * 它是给人看的一个名字（`round/approve` 记它 · `approvalsOf` 读回来对照），所以**不需要抗碰撞**：
+ * 这里用 FNV-1a 64 位——这一份拿不到任何 IO，也就不引 `node:crypto`。
+ */
+export function fingerprintOf(built: Built): string {
+  return fnv1a64(built.contracts.map(shapeOf).join('\n'))
+}
+
+/** 一份契约里能进编号的那几栏，按本文的次序拼成一个字符串（分隔符 `\u0001`：路径里不会有它）。 */
+function shapeOf(c: Contract): string {
+  const parts: string[] = [c.kind, c.goal]
+  if (c.kind === 'implement') {
+    parts.push(...c.ownedPaths)
+    parts.push(...c.deliverables.map((d) => `${d.path}(${d.form})`))
+    parts.push(...c.assertions.map((a) => `${a.name}@${a.action}`))
+    parts.push(...c.seed)
+  } else if (c.kind === 'resolve') {
+    parts.push(...c.conflictPaths)
+    parts.push(...c.assertions.map((a) => `${a.name}@${a.action}`))
+  } else {
+    parts.push(c.question)
+    parts.push(...c.evidenceRequired.map((e) => `${e.note}@${e.artifact}`))
+    parts.push(...c.seed)
+  }
+  return parts.join('\u0001')
+}
+
+/** FNV-1a 64 位，十六位十六进制：**一个名字，不是一把锁**（不抗碰撞，也不需要抗）。 */
+function fnv1a64(text: string): string {
+  const bytes = new TextEncoder().encode(text)
+  let h = 0xcbf29ce484222325n
+  for (const b of bytes) {
+    h ^= BigInt(b)
+    h = (h * 0x100000001b3n) & 0xffffffffffffffffn
+  }
+  return h.toString(16).padStart(16, '0')
 }
 
 /**

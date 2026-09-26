@@ -469,9 +469,9 @@ readings "$T/card.tsv"
 echo
 echo "=== 九 · 用法说明与事实相符（S8 的可用性那一面）==="
 # 两条**写在那儿的话与事实不符**（PLAN § 5.12 卫生那一组）：`--live` 已可用，而用法说明仍说
-# "模型这一侧今天是打桩的"；`round` 的子命令已经有三个（`new` · `run` · `plan`），而指路句只报
-# `new`。它们不是口味问题：一句错的指路会让用户敲了 `round plan` 之后被告知"只有 new"。
-# **指路句跟着命令面走**：`round go` 落地时这一行也要跟着改（C4）。
+# "模型这一侧今天是打桩的"；`round` 的子命令已经有四个（`new` · `plan` · `go` · `run`），而指路句
+# 只报 `new`。它们不是口味问题：一句错的指路会让用户敲了 `round plan` 之后被告知"只有 new"。
+# **指路句跟着命令面走**：`round go` 落地时这一行已经跟着改了（C4）。
 $FUGUE --help > "$T/usage.txt" 2>&1
 if grep -q '模型这一侧今天是打桩的' "$T/usage.txt"; then
   bad "用法说明不再说「模型这一侧今天是打桩的」"
@@ -486,8 +486,8 @@ fi
 $FUGUE round 敲错 > "$T/wrong.out" 2> "$T/wrong.err"
 RC9=$?
 check "敲错子命令的退出码" "2" "$RC9"
-if grep -q 'new · run · plan' "$T/wrong.err"; then
-  ok "指路句把子命令都报得出来（new · run · plan）"
+if grep -q 'new · plan · go · run' "$T/wrong.err"; then
+  ok "指路句把子命令都报得出来（new · plan · go · run）"
 else
   bad "指路句没有报全：$(head -1 "$T/wrong.err")"
 fi

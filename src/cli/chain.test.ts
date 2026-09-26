@@ -606,3 +606,123 @@ test('序 1 负对照：夹具里第一份 `request.json` 改一个字节 → �
       `这一格走了 ${one.steps} 步就停 · 落下来的那一份是 ${String(bad1['outcome'])} 档`,
   )
 })
+
+// ── C4 · 放行（`round go`）：门停着时不发契约 · 放行逐条发 · 同号的新一批照样重停 ──────────
+//
+// 由头（架构 § 15.1.a 的"判 / 停 / 派"）：`round plan` 把草案判成一批契约值**停在门口**，一个字节
+// 都不发；`round go` 才逐条 `contract/issue`、起分支、把处境推到 `Working`。
+//
+// **口径**：放行只兑现**这一批**——下一个轮次拆出来的那一批哪怕与这一批同一个批号（编号算的是
+// 拆分的形状），也照样停在门口等人再点一次头。编号是给人看的一个名字，不是放行过的凭证。
+const DRAFT_SECTION = {
+  kind: 'implement',
+  goal: '写一份 a.ts',
+  ownedPaths: ['a.ts'],
+  deliverables: [{ path: 'a.ts', form: '一份文件' }],
+  assertions: [{ name: '总是过', action: 'ok' }],
+  seed: [],
+}
+
+/** 一份草案的正文：一个任务一节（标 `json` 的围栏块）——与持轮者写的是同一个形状。 */
+function draftMd(): string {
+  return ['## 一 · 写 a.ts', '', '```json', JSON.stringify(DRAFT_SECTION, null, 2), '```'].join('\n')
+}
+
+/** 轮级日志（`.fugue/log/round.jsonl`）里全部事件，按写入次序。 */
+function logEvents(root: string): Record<string, unknown>[] {
+  const at = join(root, '.fugue', 'log', 'round.jsonl')
+  if (!existsSync(at)) return []
+  return readFileSync(at, 'utf8')
+    .split('\n')
+    .filter((l) => l.trim() !== '')
+    .map((l) => JSON.parse(l) as Record<string, unknown>)
+}
+
+/** 盘上那几条分支（`for-each-ref`：分支头是 git 那一侧的事实，不是我们记的账）。 */
+function refsOf(root: string): string[] {
+  const r = spawnSync('git', ['for-each-ref', '--format=%(refname)'], { cwd: root, encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr)
+  return r.stdout.split('\n').filter((l) => l !== '').sort()
+}
+
+test('C4 · round go：不放行一个契约都不发 · 放行逐条发 · 同一个批号的新一批照样重停', () => {
+  const root = tmpRoot()
+  const outside = tmpDir('fugue-go-src-')
+  const bottom = join(outside, 'bottom.txt')
+  writeFileSync(bottom, '底。\n')
+  assert.equal(fugue(root, 'write', 'README.md', '--from', bottom).code, 0)
+  assert.equal(fugue(root, 'commit', '-m', '底').code, 0)
+  // 动作绑定：草案里那条断言要从这张表里选（门核这一条：没绑的名字当场退回）。
+  assert.equal(fugue(root, 'config', 'set', 'actions.ok', JSON.stringify({ argv: ['/bin/sh', '-c', 'true'], outputs: [] })).code, 0)
+  const draftAt = join(outside, 'r1.md')
+  writeFileSync(draftAt, draftMd())
+  // **草案写进持轮者的视图**（人写那一档）：`round plan --judge` 拿视图里那一份直接判，不跑模型。
+  const wrote = fugue(root, 'write', '.fugue/plan/r1.md', '--from', draftAt)
+  assert.equal(wrote.code, 0, `把草案写进视图那一趟退了 ${wrote.code}：${wrote.stderr}`)
+
+  // ── 判：停在门口 ────────────────────────────────────────────────────────────
+  const plan = fugue(root, '--json', 'round', 'plan', '写一份 a.ts', '--judge')
+  assert.equal(plan.code, 0, `round plan 退了 ${plan.code}：${plan.stderr}`)
+  const pj = JSON.parse(plan.stdout) as { held: boolean; contracts: unknown[]; fingerprint: string | null; sameAs: string | null }
+  assert.equal(pj.held, true, `草案该停在门口：${plan.stdout.slice(0, 300)}`)
+  assert.equal(pj.contracts.length, 1)
+  assert.match(pj.fingerprint ?? '', /^[0-9a-f]{16}$/, `判那一趟该给出这一批的编号：${plan.stdout.slice(0, 300)}`)
+  assert.equal(pj.sameAs, null, '第一次放行之前没有"同号的那一批"')
+
+  const stopped = logEvents(root)
+  assert.equal(stopped.some((e) => e['t'] === 'contract/issue'), false, '还没放行就发了契约')
+  assert.equal(stopped.some((e) => e['t'] === 'round/approve'), false, '还没放行就有放行那一笔')
+  assert.deepEqual(refsOf(root).filter((r) => r.includes('agent/')), [], '还没放行就起了分支')
+
+  // ── 放行 ────────────────────────────────────────────────────────────────────
+  const go = fugue(root, '--json', 'round', 'go')
+  assert.equal(go.code, 0, `round go 退了 ${go.code}：${go.stderr}`)
+  const gj = JSON.parse(go.stdout) as {
+    base: string
+    fingerprint: string
+    contracts: unknown[]
+    trail: { from: string; on: string; to: string }[]
+  }
+  assert.equal(gj.fingerprint, pj.fingerprint, '放行那一趟算出来的批号与判那一趟不同——那不是同一批')
+  assert.deepEqual(
+    gj.trail.map((t) => `${t.from} ──${t.on}──> ${t.to}`),
+    ['Planning ──contracts-issued──> Delegated', 'Delegated ──branches-started──> Working'],
+    '放行那一趟走过的边与图上对不上',
+  )
+  const after = logEvents(root)
+  assert.equal(after.filter((e) => e['t'] === 'contract/issue').length, gj.contracts.length, '契约没有逐条落')
+  assert.equal(after.filter((e) => e['t'] === 'round/approve').length, 1, '放行那一笔该恰好一条')
+  assert.equal(
+    after.filter((e) => e['t'] === 'round/state' && e['from'] === 'Planning' && e['to'] === 'Delegated').length,
+    1,
+    'Planning → Delegated 该恰好一条',
+  )
+  assert.deepEqual(refsOf(root).filter((r) => r.includes('agent/')), ['refs/heads/agent/r1/1'], '分支没起、或者起的不对')
+
+  // ── 再跑一次：不重复触发（当场拒 · 日志一条不增）────────────────────────────────
+  const again = fugue(root, 'round', 'go')
+  assert.equal(again.code, 1, `第二次放行该退 1，实际 ${again.code}`)
+  assert.match(again.stderr, /这一轮的处境是 Working/)
+  assert.match(again.stderr, /已经发过了/)
+  assert.equal(logEvents(root).length, after.length, '第二次放行落了事件')
+
+  // ── 第二轮：同一份草案 → 同一个批号 → **照样停在门口** ──────────────────────────
+  assert.equal(fugue(root, 'config', 'set', 'round.id', 'r2').code, 0)
+  const draft2At = join(outside, 'r2.md')
+  writeFileSync(draft2At, draftMd())
+  assert.equal(fugue(root, 'write', '.fugue/plan/r2.md', '--from', draft2At).code, 0)
+  const plan2 = fugue(root, 'round', 'plan', '写一份 a.ts', '--judge')
+  assert.equal(plan2.code, 0, `第二轮 round plan 退了 ${plan2.code}：${plan2.stderr}`)
+  const m = /批号：([0-9a-f]{16})/.exec(plan2.stdout)
+  assert.ok(m !== null, `判那一趟没印批号：${plan2.stdout.slice(0, 400)}`)
+  assert.equal(m[1], pj.fingerprint, '同一份草案该给同一个批号')
+  assert.match(plan2.stdout, /与你在 r1 放过的那一批同号/, '同号那一档该说出来（而它不作数）')
+  const round2 = logEvents(root).filter((e) => e['round'] === 'r2')
+  assert.equal(round2.filter((e) => e['t'] === 'contract/issue').length, 0, '同号就照上次放行了——那是要禁止的那一件事')
+  assert.equal(round2.filter((e) => e['t'] === 'round/approve').length, 0, '同号就有放行那一笔了')
+  console.log(
+    `C4 读数：判那一趟停着时 contract/issue 0 条 · 放行后 ${gj.contracts.length} 条 + round/approve 1 条 · ` +
+      `分支 ${refsOf(root).filter((r) => r.includes('agent/')).join(' ')} · 第二次放行退 ${again.code}（日志一条不增）· ` +
+      `第二轮同一批号 ${m[1]} 照样停在门口`,
+  )
+})
