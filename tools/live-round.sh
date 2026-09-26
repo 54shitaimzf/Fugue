@@ -106,6 +106,10 @@ DEEPSEEK_API_KEY="$KEY" node "$CLI" --root "$WS" round run "$GOAL" \
   $LIVEFLAG --max-steps "$MAXSTEPS" --report --metrics --dump-wire "$OUT/wire" > "$OUT/run.log" 2>&1
 RUNEXIT=$?
 
+# **先等一趟轮询再收跟随者**：跟随是"再看一眼"，而收尾那一条（`round/state` 的最后一次转移）
+# 写在那一轮返回之前的最后一刻——立刻杀就会漏掉它。实测：头两趟各差一条，差的都是这条
+# （`watch` 44 行对账上 45 条 · 48 对 49），第三趟 70 对 70 全中。
+sleep 1
 kill "$WATCH" 2>/dev/null
 wait "$WATCH" 2>/dev/null
 
