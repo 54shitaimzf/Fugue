@@ -99,7 +99,7 @@ import type { Assertion } from '../contract/types.ts'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { computeAll, reportOf } from '../probe/round.ts'
-import { computeAllMetrics, lineOf } from '../probe/metrics.ts'
+import { computeAllMetrics, computeAttribution, lineOf, lineOfAttribution } from '../probe/metrics.ts'
 import { linesOf, snapshot } from '../probe/status.ts'
 import type { StatusRow } from '../probe/status.ts'
 import { follow, readNew } from '../probe/watch.ts'
@@ -1080,7 +1080,10 @@ async function roundRun(
     // 打回那三个数：**从日志重算**（架构 § 8.15）。同一份日志算两次同值——所以 `--report` 印的
     // 就是刚才那一趟跑出来的那份日志。
     const readings = await computeAll(() => ctx.log.readMerged(), { round })
-    const report = reportOf({ round }, readings)
+    // **归因三处对照**（闸四的另一半 · PLAN § 5.12 序 3）：也是从日志重算——与上面那三个数、
+    // 与八元指标同一个源（同一份日志 · 同样不采集）。三行恒在，缺的写「没有读数」。
+    const attribution = await computeAttribution(() => ctx.log.readMerged())
+    const report = reportOf({ round }, readings, attribution.map(lineOfAttribution))
     // 八元指标（架构 § 8.15）：**与上面那三个数同一个来源**（同一份日志 · 同样重算）。
     // 那一趟的日志就是刚才跑出来的那一份——所以 `--metrics` 印的就是这一趟。
     const metrics = flags.has('metrics') ? await computeAllMetrics(() => ctx.log.readMerged(), { round }) : null
@@ -1108,6 +1111,7 @@ async function roundRun(
         // 而八元指标另挂在 `probe` 那一栏。两条路给的不是一件事，名字还都叫指标。）
         metrics: metrics === null ? null : [...metrics],
         report: report.readings,
+        attribution: [...attribution],
       })
     } else {
       emitLine(`${started.round}\t${started.base}\t${started.state}`)
@@ -1126,6 +1130,8 @@ async function roundRun(
       if (flags.has('report')) {
         emitLine('打回读数（从日志重算，不采集）：')
         for (const l of report.lines) emitLine(`  ${l}`)
+        emitLine('归因三处对照（闸四：命中落在哪一段；三行恒在，缺的写「没有读数」）：')
+        for (const l of report.attributionLines) emitLine(`  ${l}`)
       }
       if (metrics !== null) {
         emitLine('八元指标（从日志重算，不采集；分子与分母一起印）：')

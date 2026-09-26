@@ -326,3 +326,152 @@ export function lineOf(m: MetricValue): string {
   const d = m.detail === undefined ? '' : `　[${Object.entries(m.detail).map(([k, n]) => `${k}=${n}`).join(' ')}]`
   return `${m.metric}\t${v}\t分子 ${m.numerator ?? '—'} / 分母 ${m.denominator ?? '—'}${d}\t${m.how}`
 }
+
+// ── 归因三处对照（闸四 · PLAN § 5.9.1 与 § 5.9.3 判据卡那一栏）──────────────────────
+//
+// **归因不走"我们声明了什么"，走"命中落在哪一段"**（§ 5.9.1 闸四那两段）：闸四这一档是隐式缓存
+// （提供方自己按前缀命中、报 `prompt_cache_hit_tokens`），所以它验的是结果（钱认了多少），不是声明。
+// 三处够了：
+//
+//   一 · **冷**：第一个 agent 的第 0 步。**"第 0 步命中 ≈ 0"不靠"它是第一趟"来保证**——提供方的
+//        隐式缓存跨进程、跨趟（实测过 `call-0001` 就报了 1,280 命中）。要一处破坏对照：改 A 区
+//        一个字节再跑一趟，这一处应当掉下去；掉不下去，说明命中的不是前缀，那条读数就不能进账。
+//   二 · **共享头**：第二个 agent 的第 0 步——两格读的是同一段 A 区，该命中。
+//   三 · **同一 agent 第 k 步**：同一格的最后一次调用——命中**不该随步数增长**（前缀就那么长）。
+//
+// **三行恒在**：位置不存在（这一趟只有一格 · 这一格只走了一步 · 一条 `llm/call` 都没有）时，那一行
+// 给的是「没有读数」加一句为什么——**不拿 0 顶**（判据卡那两条纪律）。这一份只读 `llm/call`
+// （与 `prefix-hit-rate` 同一个源），不读别的状态，也**不假定任何一处"应该命中"**：日志说什么就报什么。
+
+/** 一处对照的读数。 */
+export interface AttributionReading {
+  /** 那一处怎么读（例：`agent/r1/1 第 0 步（冷）`）。 */
+  readonly where: string
+  /** 那一处是哪个 agent · 第几步；**位置不存在时是 `null`**（与"上游没报这个数"分得开）。 */
+  readonly agent: string | null
+  readonly step: number | null
+  /** 上游报回来的两个数（`cacheReadTokens` 是这一处要读的那一个）。 */
+  readonly inputTokens: number | null
+  readonly cacheReadTokens: number | null
+  /** 这一处的读数意味着什么；没有读数时写清为什么。 */
+  readonly note: string
+}
+
+/** 三处各自的判据（与数一起印出来）。 */
+export const ATTRIBUTION_HOW: readonly string[] = [
+  '冷 = 第一个 agent 的第 0 步。**"第 0 步命中 ≈ 0"不靠"它是第一趟"保证**（隐式缓存跨进程、跨趟）：破坏对照是改 A 区一个字节再跑一趟，这一处该掉下去。',
+  '共享头 = 第二个 agent 的第 0 步。两格读的是同一段 A 区，**该命中**。',
+  '第 k 步 = 同一格的最后一次调用。与它自己第 0 步比，命中**不该随步数增长**。',
+]
+
+/** 一次调用在哪一处。 */
+interface CallAt {
+  readonly agent: string
+  readonly step: number
+  readonly inputTokens: number | null
+  readonly cacheReadTokens: number | null
+}
+
+/**
+ * `llm/call` 按 agent 分组、按步号升序。
+ *
+ * **"第几个 agent"按名字末尾那个数排**，不按名字的字典序：`agent/r1/10` 的字典序在
+ * `agent/r1/2` 前面，而"第二个 agent"指的是 2 那一格。末尾不是数的（走查里那种 `agent-1-2`）
+ * 排在后面，再按名字比。
+ */
+function callsByAgent(rows: readonly MergedRow[]): Map<string, CallAt[]> {
+  const by = new Map<string, CallAt[]>()
+  for (const { e } of rows) {
+    if (e.t !== 'llm/call') continue
+    const n = Number(String(e.step).split('/').pop())
+    const list = by.get(e.agent) ?? []
+    list.push({
+      agent: e.agent,
+      step: Number.isInteger(n) ? n : list.length,
+      inputTokens: e.usage.inputTokens,
+      cacheReadTokens: e.usage.cacheReadTokens,
+    })
+    by.set(e.agent, list)
+  }
+  for (const list of by.values()) list.sort((a, b) => a.step - b.step)
+  return by
+}
+
+/** agent 名的次序：末尾那个数小的在前，不是数的排后面（再按名字比）。 */
+function agentOrder(a: string, b: string): number {
+  const tail = (x: string): number => {
+    const n = Number(x.split('/').pop())
+    return Number.isInteger(n) ? n : Number.MAX_SAFE_INTEGER
+  }
+  return tail(a) - tail(b) || (a < b ? -1 : a > b ? 1 : 0)
+}
+
+const show = (v: number | null): string => (v === null ? '没有读数' : String(v))
+
+/** 一处：有那一处就给读数，没有就给「没有读数」加一句为什么。 */
+function oneAt(
+  where: string,
+  at: CallAt | undefined,
+  note: (a: CallAt) => string,
+  missing: string,
+): AttributionReading {
+  if (at === undefined) {
+    return { where, agent: null, step: null, inputTokens: null, cacheReadTokens: null, note: missing }
+  }
+  return { where, agent: at.agent, step: at.step, inputTokens: at.inputTokens, cacheReadTokens: at.cacheReadTokens, note: note(at) }
+}
+
+/** 三处对照。**恒三行**，次序就是上面那三处（冷 · 共享头 · 第 k 步）。 */
+export function attributionOf(rows: readonly MergedRow[]): readonly AttributionReading[] {
+  const by = callsByAgent(rows)
+  const agents = [...by.keys()].sort(agentOrder)
+  const first = agents[0]
+  const second = agents[1]
+  const cold = first === undefined ? undefined : by.get(first)?.[0]
+  const shared = second === undefined ? undefined : by.get(second)?.[0]
+  const own = first === undefined ? [] : (by.get(first) ?? [])
+  const last = own.length > 1 ? own[own.length - 1] : undefined
+  const coldHit = cold?.cacheReadTokens ?? null
+  return [
+    oneAt(
+      `${first ?? '（没有 agent）'} 第 0 步（冷）`,
+      cold,
+      (a) =>
+        `命中 ${show(a.cacheReadTokens)}（输入 ${show(a.inputTokens)}）。**它不是天然为 0**：` +
+        '破坏对照是改 A 区一个字节再跑一趟，这一处该掉下去',
+      '没有读数：这一趟一条 `llm/call` 都没有（打桩那一档就是这一种）',
+    ),
+    oneAt(
+      `${second ?? '（没有第二个 agent）'} 第 0 步（共享头）`,
+      shared,
+      (a) =>
+        `命中 ${show(a.cacheReadTokens)}（输入 ${show(a.inputTokens)}）。与冷那一处比：${show(coldHit)} → ${show(a.cacheReadTokens)}` +
+        '——两格读的是同一段 A 区',
+      second === undefined
+        ? '没有读数：这一趟只有一格（共享头要两格才读得到）'
+        : '没有读数：第二个 agent 一条 `llm/call` 都没有',
+    ),
+    oneAt(
+      last === undefined ? `${first ?? '（没有 agent）'} 第 k 步` : `${last.agent} 第 ${last.step} 步（同一格第 k 步）`,
+      last,
+      (a) =>
+        `命中 ${show(a.cacheReadTokens)}（输入 ${show(a.inputTokens)}）· 它自己第 0 步是 ${show(coldHit)}` +
+        '——命中不随步数增长（前缀就那么长）',
+      '没有读数：这一格只走了一步（第 k 步与第 0 步是同一处）',
+    ),
+  ]
+}
+
+/** 三处对照一次读齐（与八元指标同一个形状：收一个"再来一遍"的函数）。 */
+export async function computeAttribution(
+  merged: () => AsyncIterable<MergedRow>,
+): Promise<readonly AttributionReading[]> {
+  const rows: MergedRow[] = []
+  for await (const r of merged()) rows.push(r)
+  return attributionOf(rows)
+}
+
+/** 一处印成一行（`--report` 那一栏）。 */
+export function lineOfAttribution(a: AttributionReading): string {
+  return `${a.where}\t命中 ${a.cacheReadTokens ?? '没有读数'} / 输入 ${a.inputTokens ?? '没有读数'}\t${a.note}`
+}

@@ -108,6 +108,11 @@ export interface RoundReport {
   readonly readings: readonly MetricReading[]
   /** 逐条印出来（`fugue round run --report` 的那一栏）。 */
   readonly lines: readonly string[]
+  /**
+   * 归因三处对照那三行（闸四 · § 5.9.3 判据卡那一栏）。**恒三行**——位置不存在的那一行
+   * 是「没有读数」，由 `probe/metrics.ts` 那一边排好版；这一份只负责带上它。
+   */
+  readonly attributionLines: readonly string[]
   /** 是否是"故意撞红"的那一趟：三个数逐个大于 0。**它是 A8 ② 那条断言的判据。** */
   readonly allPositive: boolean
 }
@@ -119,9 +124,13 @@ export interface RoundReport {
  * `allPositive` 是给走查用的一个读数：一趟**故意撞红**的轮次跑完，三个数该逐个大于 0。它不是
  * 判据（打回率高不是好事），是"这三个数真的在动"的证据。
  */
-export function reportOf(range: Range, readings: readonly MetricReading[]): RoundReport {
+export function reportOf(
+  range: Range,
+  readings: readonly MetricReading[],
+  attributionLines: readonly string[] = [],
+): RoundReport {
   const lines = readings.map((r) => `${r.metric}\t${r.count}\t${r.how}`)
-  return { range, readings, lines, allPositive: readings.every((r) => r.count > 0) }
+  return { range, readings, lines, attributionLines, allPositive: readings.every((r) => r.count > 0) }
 }
 
 /** 一个状态序列里 `Verifying → Working` 的条数——**纯函数那一半，给"同一份日志重算两次"那条断言用**。 */

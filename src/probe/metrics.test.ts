@@ -10,6 +10,8 @@
 //      · 负对照：把那一栏抹掉 → ③ 变红，而"零工具调用率"那一支跟着动（同一个分子）
 //   ④ 两套协议给出的**工具调用序列语义相同**：两份夹具解出来的调用逐字段相同
 //      · 负对照：把 A 区那一栏改一个字节 → 两份的 `prefix-versions` 就分开了
+//   ⑤ 归因三处对照（闸四）：冷 · 共享头 · 同一格第 k 步——**三行恒在**，位置不存在的那一行报
+//      「没有读数」；负对照：日志说没命中就报没命中（这一份不假定任何一处该命中）
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -19,8 +21,10 @@ import { readFixture, replayOf } from '../model/session.ts'
 import type { Fixture } from '../model/session.ts'
 import type { AgentId, RoundId } from '../terms.ts'
 import {
+  ATTRIBUTION_HOW,
   METRIC_HOW,
   METRIC_IDS,
+  attributionOf,
   compute,
   computeAllMetrics,
   lineOf,
@@ -226,4 +230,76 @@ test('④ 那一份真夹具的三区指纹（`B3` 录下来的那一份）在�
   assert.equal(OPENAI.wire, 'openai-chat')
   // 而请求体字节不同（那是"两条线各自翻译"）。
   assert.notEqual(ANTHROPIC.bodyHash, OPENAI.bodyHash)
+})
+
+// ── ⑤ 归因三处对照（闸四 · PLAN § 5.12 序 3）────────────────────────────────────
+//
+// 三处是**位置**（冷 · 共享头 · 同一格第 k 步），三行**恒在**：位置不存在的那一行是「没有读数」
+// 加一句为什么，不拿 0 顶。而这一份**只读 `llm/call` 说的数**——日志说没命中就报没命中。
+
+/** 一格的调用序列：`hits` 是每一步报回来的 `cacheReadTokens`（`null` = 上游没报这个数）。 */
+const callsOf = (who: string, hits: readonly (number | null)[], input = 100): MergedRow[] =>
+  hits.map((h, i) =>
+    row({
+      t: 'llm/call',
+      agent: who as AgentId,
+      step: String(i),
+      model: DECL.id,
+      wire: 'anthropic-messages',
+      toolCount: 9,
+      invocations: 1,
+      usage: { inputTokens: input, cacheReadTokens: h, cacheWriteTokens: 0, outputTokens: 8 },
+      rawStop: 'tool_use',
+      stop: 'tool-calls',
+    }),
+  )
+
+test('⑤ 三处对照：冷 · 共享头 · 第 k 步（两格两步那一趟）', () => {
+  seq = 0
+  // agent-1 三步（第一步冷 · 后面两步命中 24000）· agent-2 一步（共享头，命中 24000）。
+  const three = attributionOf([...callsOf('agent/r1/1', [0, 24000, 24000]), ...callsOf('agent/r1/2', [24000])])
+  assert.equal(three.length, 3, '三行恒在')
+  assert.equal(three[0].where, 'agent/r1/1 第 0 步（冷）')
+  assert.equal(three[0].cacheReadTokens, 0)
+  assert.equal(three[1].where, 'agent/r1/2 第 0 步（共享头）')
+  assert.equal(three[1].cacheReadTokens, 24000)
+  assert.equal(three[2].where, 'agent/r1/1 第 2 步（同一格第 k 步）')
+  assert.equal(three[2].cacheReadTokens, 24000)
+  // **第 k 步那一行是"与自己第 0 步比"**：它把两个数都写进 note 里（命中不随步数增长）。
+  assert.match(three[2].note, /第 0 步是 0/)
+  assert.match(three[1].note, /0 → 24000/)
+  // 三处的判据与数一起给得出（人读的一句话不是可选的）。
+  assert.equal(ATTRIBUTION_HOW.length, 3)
+  console.log(`⑤ 读数：${three.map((a) => a.where + ' 命中 ' + String(a.cacheReadTokens)).join(' · ')}`)
+})
+
+test('⑤ 一格那一趟（回放夹具就是这一种）：共享头那一行如实报「没有读数」', () => {
+  seq = 0
+  const one = attributionOf(callsOf('agent/r1/1', [0, 2048, 2176]))
+  assert.equal(one.length, 3, '三行照旧在——缺的那一行是「没有读数」，不是空行')
+  assert.equal(one[1].agent, null)
+  assert.equal(one[1].cacheReadTokens, null, '位置不存在给 null（与"量到 0"分得开）')
+  assert.match(one[1].note, /这一趟只有一格/)
+  assert.equal(one[2].where, 'agent/r1/1 第 2 步（同一格第 k 步）')
+  // 只走一步那一格：第 k 步与第 0 步是同一处 → 那一行也是「没有读数」。
+  seq = 0
+  const single = attributionOf(callsOf('agent/r1/1', [0]))
+  assert.equal(single[2].cacheReadTokens, null)
+  assert.match(single[2].note, /只走了一步/)
+  // 一条 `llm/call` 都没有（打桩那一档）：三行都在，头一行说得出为什么。
+  seq = 0
+  const none = attributionOf([])
+  assert.equal(none.length, 3)
+  assert.match(none[0].note, /一条 `llm\/call` 都没有/)
+  console.log(`⑤ 读数：一格那一趟 → "${one[1].note}" · 打桩那一档 → "${none[0].note}"`)
+})
+
+test('⑤ 负对照：日志说"共享头没命中"就报 0（这一份不假定任何一处该命中）', () => {
+  seq = 0
+  // 这一串就是"改 A 区一个字节之后再跑一趟"在日志上的样子：第二格第 0 步的命中掉到 0。
+  const broke = attributionOf([...callsOf('agent/r1/1', [0, 24000]), ...callsOf('agent/r1/2', [0])])
+  assert.equal(broke[1].cacheReadTokens, 0, '量到了 0 就报 0——不因为"共享头该命中"而报成命中')
+  assert.notEqual(broke[1].cacheReadTokens, null, '这是量到的 0，不是「没有读数」')
+  assert.match(broke[1].note, /0 → 0/, '与冷那一处的比较照样印出来（两个 0 也印）')
+  console.log(`⑤ 负对照读数：共享头第 0 步报 ${String(broke[1].cacheReadTokens)}（与冷 ${String(broke[0].cacheReadTokens)} 比）——读数跟着日志走`)
 })

@@ -9,7 +9,7 @@
 #   退化成平凡值的**如实报**）→
 #   指标重算与手工对账（这一段自己按判据重数一遍，与 `--report`/`--metrics` 逐个数对）→
 #   回放那一档（`--wire-in`：三份真响应喂回去 · 产物逐字节相同 · 三份调用逐条对上 ·
-#   停因「收敛」· 凭据那一步没走）→
+#   停因「收敛」· 凭据那一步没走 · 归因三处对照三行都在）→
 #   回放档的负对照（夹具里改一个字节 → 当场拒）→
 #   地板两档（真模型 → 夹具回放 · 接续 → 用完就停）→
 #   收尾：不留挂载 · 不留进程 · 不留孤儿分支 → 判据卡骨架（量不到的写「没有读数」）。
@@ -266,6 +266,8 @@ const got = fs.readdirSync(OUT).sort()
 const one = j.agents[0]
 console.log("  停因：「" + (one === undefined ? "（没落）" : one.stopped) + "」· 走了 " + (one === undefined ? "?" : one.steps) + " 步")
 console.log("  验收 " + j.verify.pass + "/" + j.verify.fail + " · 推进 " + JSON.stringify(j.advanced === null ? null : j.advanced.written))
+console.log("  归因三处对照（闸四：命中落在哪一段）：")
+for (const a of j.attribution) console.log("    " + a.where + " · 命中 " + (a.cacheReadTokens === null ? "没有读数" : a.cacheReadTokens) + " / 输入 " + (a.inputTokens === null ? "没有读数" : a.inputTokens))
 console.log("  usage 逐条（input · cacheRead · cacheWrite · output）：")
 let sum = { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 }
 let writeNull = 0
@@ -306,10 +308,11 @@ const rows2 = [
   [perCall.every(Boolean), "三份调用逐条：请求 · 响应 · 停因 · 三区对得上", perCall.map((x) => (x ? "ok" : "bad")).join(" ")],
   [calls.length === kept.length && calls.every((c) => c.usage.inputTokens !== null && c.usage.outputTokens !== null), "每一条调用都留着用量（input 与 output 不是「没有读数」）", calls.length + " 条"],
   [sameMetric, "指标重算与手工对账：一线三个指标的分子分母逐个相等", "zero-tool-call-rate " + hand["zero-tool-call-rate"].join("/") + " · prefix-hit-rate " + hand["prefix-hit-rate"].join("/")],
+  [Array.isArray(j.attribution) && j.attribution.length === 3 && j.attribution[0].cacheReadTokens !== null, "归因三处对照三行都在（冷那一处有读数：上游真报了这个数）", j.attribution.map((a) => a.where + " 命中 " + (a.cacheReadTokens === null ? "没有读数" : a.cacheReadTokens)).join(" · ")],
   [m["prefix-versions"].value === 1 && m["materialize-precision"].numerator > 0, "前缀只装配了一版（三区指纹跨三步不变）· 物化的分子不是 0（真驱动那一档按需铺了树）", "prefix-versions " + m["prefix-versions"].value + " · materialize-precision " + m["materialize-precision"].numerator + "/" + m["materialize-precision"].denominator + "（分母 0 → 值如实报 null）"]
 ]
 fs.writeFileSync(T + "/r4.tsv", rows2.map((r) => (r[0] ? "ok" : "bad") + "\t" + r[1] + "\t" + r[2]).join("\n") + "\n")
-fs.writeFileSync(T + "/rep-readings.json", JSON.stringify({ calls: calls.length, one, verify: j.verify, advanced: j.advanced, metrics: j.metrics, zon: zon.length, usage: sum, writeNull, cacheWrite: calls.map((c) => c.usage.cacheWriteTokens), invocations: calls.map((c) => c.invocations) }, null, 2) + "\n")
+fs.writeFileSync(T + "/rep-readings.json", JSON.stringify({ calls: calls.length, one, verify: j.verify, advanced: j.advanced, metrics: j.metrics, zon: zon.length, usage: sum, writeNull, cacheWrite: calls.map((c) => c.usage.cacheWriteTokens), invocations: calls.map((c) => c.invocations), attribution: j.attribution }, null, 2) + "\n")
 process.exit(rows2.every((r) => r[0]) ? 0 : 1)
 ' "$T" "$RW" "$FIX" "$OUT/wire" || bad "回放那一趟的读数：node 那一段自己挂了"
 readings "$T/r4.tsv"
@@ -435,7 +438,7 @@ const card = [
   ["真断言那条命令与它的退出码", "/bin/sh -c test -f notes.md → 0 · /bin/sh -c grep -q 数完了 notes.md → 0"],
   ["工作树 vs 定格那个提交：一致 / 差几条", treeOk + "（差 0 条）"],
   ["三个一线指标（分子分母随数一起印）", ["zero-tool-call-rate", "detour-rate", "prefix-hit-rate"].map((k) => k + " " + m[k].numerator + "/" + m[k].denominator).join(" · ")],
-  ["归因三处对照：冷 · 共享头 · 第 k 步", "没有读数（归 PLAN § 5.12 补完序 3）"],
+  ["归因三处对照：冷 · 共享头 · 第 k 步", r.attribution.map((a) => a.where + " 命中 " + (a.cacheReadTokens === null ? "没有读数" : a.cacheReadTokens)).join(" · ")],
   ["断点与缓存写入两栏（隐式档）", "未声明（隐式缓存）· cacheWriteTokens " + (r.cacheWrite.every((v) => v === null) ? "没有读数（三条都没报）" : JSON.stringify(r.cacheWrite) + "（提供方给的就是这个数，不是「没有读数」）")],
   ["每趟 usage 四个数 · 合计", "3 趟 · 合计 input " + r.usage.inputTokens + " · cacheRead " + r.usage.cacheReadTokens + " · cacheWrite " + (r.cacheWrite.every((v) => v === null) ? "没有读数" : r.cacheWrite.join("/")) + " · output " + r.usage.outputTokens],
   ["前缀 token 数（三区分别）· 调用次数", "token 数：没有读数（那一步要区内容，归 tools/probe-prefix.ts）· 三区指纹在 dump 的 meta 里 · 调用 " + r.calls + " 次"],
