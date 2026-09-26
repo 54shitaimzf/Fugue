@@ -169,15 +169,18 @@ export interface StepResult {
 }
 
 /**
- * 「这一格最多走几步」的缺省值：**一处定，三处读**——运行时那道兜底的上界（`RuntimeDeps.maxSteps`）
- * · 驱动那道花钱的上界（`DriverAsk.maxSteps`）· 写进「我的任务」发给模型的那个数
- * （`AssembleState.maxSteps`）。
+ * **「这一格最多走几步」没有缺省值——它是用户的决策，不是我们的兜底。**
  *
- * 为什么不是三个各自写一遍的 `64`：提示词上那个数与真正停下来的那个数一旦各自漂，"它以为还剩
- * 几步"这件事就没人量得到——而这一条正是 W11 那一轮真档照出来的（模型干完了活还接着探，直到
- * 步数到顶）。
+ * 一处定，三处读：运行时那道兜底的上界（`RuntimeDeps.maxSteps`）· 驱动那道花钱的上界
+ * （`DriverAsk.maxSteps`）· 写进「我的任务」发给模型的那个数（`AssembleState.maxSteps`）。
+ * 三处读的是**同一个缺少**：不给 `--max-steps` 就处处不设，于是"它以为还剩几步"与"真正停下来
+ * 的那个数"不会各自漂（W11 那一轮真档照出来的那一处）。
+ *
+ * 不设的代价说在明处：一个转圈的会话会一直花真钱。兜底的两样是**账**与**人**——每一步落一条
+ * `llm/call`（花了多少一条条看得见），停不停由人（人喊停那一档 · 终端的 Ctrl-C）。机器不替人
+ * 省这道决策：给一个"合理的缺省 64"看着体贴，实际是把"这一趟最多花多少"从命令面挪进了一个
+ * 没人看过的常量。
  */
-export const DEFAULT_MAX_STEPS = 64
 
 export interface RuntimeDeps {
   /**
@@ -189,7 +192,7 @@ export interface RuntimeDeps {
   readonly execute: ToolExecutor
   /** 工具目录（`M9.schema()`）。**缺省不带工具**——不带也可以，那时模型没有手。 */
   readonly tools?: readonly ToolEntry[]
-  /** 一步最多走几圈（预算那条线上界之外的兜底：防一个不收敛的循环）。**缺省 `DEFAULT_MAX_STEPS`。** */
+  /** 一步最多走几圈。**不给就是不设上界**——上界是用户的决策（`--max-steps`），不是我们的兜底。 */
   readonly maxSteps?: number
 }
 
@@ -299,7 +302,7 @@ function outcomeOf(stop: StopReason, usage: Usage | null, said: string): StepOut
 
 export function createRuntime(deps: RuntimeDeps): Runtime {
   const tools = deps.tools ?? []
-  const maxSteps = deps.maxSteps ?? DEFAULT_MAX_STEPS
+  const maxSteps = deps.maxSteps
 
   /** 兜底：驱动没给账、但事件都在手上——自己积一次（**与真模型同一个口径**）。 */
   function safeCall(events: readonly ModelEvent[]): ModelCall | null {
@@ -454,10 +457,10 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         const r = await step(cur, signal)
         steps += 1
         if (r.outcome.kind !== 'continue') return { last: r, steps }
-        if (steps >= maxSteps) {
+        if (maxSteps !== undefined && steps >= maxSteps) {
           return {
             last: {
-              outcome: { kind: 'failed', error: new HarnessError('step-limit', `走了 ${steps} 步还没收敛（上限 ${maxSteps}）`) },
+              outcome: { kind: 'failed', error: new HarnessError('step-limit', `到了你给的上界（${maxSteps} 步）——停在这里，不替你猜还能不能收敛`) },
               next: r.next,
               seqs: r.seqs,
             },

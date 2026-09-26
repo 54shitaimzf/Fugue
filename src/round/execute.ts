@@ -159,9 +159,9 @@ export interface RoundRunDeps extends Omit<RoundStartDeps, 'log'> {
   /**
    * **这一格最多走几步**（`driver.ts` 的 `driveOnce` 按它停）。
    *
-   * 它是**花钱的那道上界**：`--live` 下每一步是一次真调用。缺省是 `DEFAULT_MAX_STEPS`
-   * （`runtime/step.ts` 里那一个常量）——写进「我的任务」的那个数与这里停下来用的那个数同源，
-   * 而"第一次真跑最多花多少"这件事必须在命令面上能设——第一次联网验证就是按它压到个位数跑的。
+   * 它是**花钱的那道上界**：`--live` 下每一步是一次真调用。**不给就是不设**——上界由人给，
+   * 不由我们兜底（`runtime/step.ts` 那一段）；写进「我的任务」的那个数与这里停下来用的那个数
+   * 同源，而"第一次真跑最多花多少"这件事在命令面上能设——第一次联网验证就是按它压到个位数跑的。
    */
   readonly maxSteps?: number
   /**

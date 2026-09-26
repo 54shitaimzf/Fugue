@@ -854,6 +854,61 @@ test('①c `maxSteps` 是真上界，而且它真的传到了驱动那一层（`
   }
 })
 
+// ── ①c2 不设上界就是真的不设（上界是用户的决策，不是我们的兜底）──────────────
+
+/**
+ * **不给 `--max-steps` 就处处不设**：这一格一直走到它自己收工。原先那一版在这里有一个
+ * `DEFAULT_MAX_STEPS = 64` 的兜底——"这一趟最多花多少"被一个没人看过的常量定了；现在它由命令
+ * 面给（用户的决策），不给就一直走。
+ *
+ * 断言的形状：一串 **71 步**的脚本（第一步写 `a.ts`，中间 69 步读它，最后一步说完）。
+ *   · 不给上界 → **71 步**走完（不是 64）——这一条就是"那个缺省不在了"的可证伪读数；
+ *   · 给 64 → **恰好 64 步**停，而停因说出那是**你给的上界**。
+ * 少一半也过不了（71 ≠ 64），所以它不是"脚本短所以只走了一条"那种瞎绿。
+ */
+test('①c2 不给上界就不设：71 步的脚本走完 71 步；给了 64 就恰好停在 64', async () => {
+  const mid = (i: number): readonly ModelEvent[] => [
+    ...callOne(0, `c${i}`, 'read', { path: 'a.ts' }),
+    { t: 'usage', usage: USAGE },
+    { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+  ]
+  const LONG_SCRIPTS: readonly (readonly ModelEvent[])[] = [
+    SCRIPTS[0] as readonly ModelEvent[],
+    ...Array.from({ length: 69 }, (_unused, i) => mid(i + 2)),
+    SCRIPTS[1] as readonly ModelEvent[],
+  ]
+  /** 这一步之后停因那一句（驱动落的那条 `agent/stop`）。 */
+  const stoppedOf = async (root: string): Promise<string> =>
+    (await eventsOf(root)).find((e) => e.t === 'agent/stop')?.stopped ?? '（没落）'
+
+  const b = await bench()
+  try {
+    await runRound(depsOf(b, realDriver({}), supportOf(b, scriptedModel(LONG_SCRIPTS))))
+    const calls = (await eventsOf(b.root)).filter((e) => e.t === 'llm/call')
+    assert.equal(calls.length, 71, `不给上界该走完 71 步，实际 ${calls.length} 条 llm/call`)
+    const stopped = await stoppedOf(b.root)
+    assert.equal(stopped, '收敛', `不给上界那一趟的停因该是「收敛」，实际「${stopped}」`)
+    console.log(`①c2 读数：不给上界 → ${calls.length} 条 llm/call（停因「${stopped}」）`)
+  } finally {
+    await b.close()
+  }
+
+  const b2 = await bench()
+  try {
+    await runRound({
+      ...depsOf(b2, realDriver({}), supportOf(b2, scriptedModel(LONG_SCRIPTS))),
+      maxSteps: 64,
+    })
+    const calls2 = (await eventsOf(b2.root)).filter((e) => e.t === 'llm/call')
+    assert.equal(calls2.length, 64, `给了 64 该恰好停在第 64 步，实际 ${calls2.length} 条`)
+    const stopped2 = await stoppedOf(b2.root)
+    assert.ok(/到了你给的上界（64 步）/.test(stopped2), `停因该说出那是你给的上界，实际「${stopped2}」`)
+    console.log(`①c2 读数：给 64 → ${calls2.length} 条 llm/call（停因「${stopped2}」）`)
+  } finally {
+    await b2.close()
+  }
+})
+
 // ── ①d 执行类工具落在哪棵树上 ──────────────────────────────────────────────────
 
 /**

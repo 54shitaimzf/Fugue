@@ -8,8 +8,8 @@
 // 负对照——同一份状态换成持轮者那一份，那几行就不在了（差量是**那一段**，不是别的东西）。
 //
 // ①f 量的是这一段的另一半（W11 那一轮真档照出来的那三句收工口径）：`--max-steps` 真的写进
-// 「我的任务」，而"不给"那一档写的是 `DEFAULT_MAX_STEPS`——发给模型的那个数与驱动停下来用的
-// 那个数同源。
+// 「我的任务」，而**不给就是不设上界**——那一句不写，状态里也没有那一栏。发给模型的那个数与
+// 驱动停下来用的那个数同源：都来自命令面，不由我们兜底。
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { tmpDir } from '../../test/helpers/tmp.ts'
@@ -19,7 +19,6 @@ import { sourcesFor } from '../assemble/sources.ts'
 import { readConfig } from '../config.ts'
 import type { Contract } from '../contract/types.ts'
 import { driverSupport } from './fugue.ts'
-import { DEFAULT_MAX_STEPS } from '../runtime/step.ts'
 
 /**
  * 一个**假**的凭据：`driverSupport` 在拼目标那一栏时会读它（`targetOf` 是取值的地方）。
@@ -105,7 +104,7 @@ test('①e 负对照：同一份状态换持轮者那份协议，「我的任务
   )
 })
 
-test('①f `--max-steps` 真的写进「我的任务」：给 3 就是 3，不给就是 `DEFAULT_MAX_STEPS`', async () => {
+test('①f `--max-steps` 真的写进「我的任务」：给 3 就是 3，**不给就是不设上界**（那一句不写）', async () => {
   const root = tmpDir('fugue-driver-support-')
   const doc = await readConfig(root)
   const contract = contractOf()
@@ -117,12 +116,17 @@ test('①f `--max-steps` 真的写进「我的任务」：给 3 就是 3，不�
     assemble({ protocol: SUBAGENT_PROTOCOL, model: handle.model, segments: sourcesFor(SUBAGENT_PROTOCOL, st3, handle.coord) }).zoneB,
   )
   assert.ok(b3.includes('这一格最多 3 步。'), `「我的任务」里该写 3：${JSON.stringify(b3)}`)
-  // 不给：写的是那个常量。**这一条与驱动停下来的那个数是同一个常量**（`runtime/step.ts`）。
+  // 不给：**没有那一栏**，于是「我的任务」里也没有那一句。`step.test.ts` ⑨ 已经量过"没给预算
+  // 就不写那一句"，这里量的是**上游那一栏真的缺席**——两处一起才封住"缺省偷偷补一个数"这条路
+  // （原先这里补的正是 `DEFAULT_MAX_STEPS`）。
   const none = driverSupport({ root, doc, credential: '这一档不出网' })
-  assert.equal(
-    none.state('agent-1' as never, contract).maxSteps,
-    DEFAULT_MAX_STEPS,
-    '不给 `--max-steps` 时状态里该是 `DEFAULT_MAX_STEPS`',
+  const stNone = none.state('agent-1' as never, contract)
+  assert.equal(stNone.maxSteps, undefined, '不给 `--max-steps` 时状态里不该有那一栏')
+  const bNone = new TextDecoder().decode(
+    assemble({ protocol: SUBAGENT_PROTOCOL, model: handle.model, segments: sourcesFor(SUBAGENT_PROTOCOL, stNone, handle.coord) }).zoneB,
   )
-  console.log(`①f 读数：--max-steps 3 → 状态里 ${String(st3.maxSteps)} · 不给 → ${String(DEFAULT_MAX_STEPS)}（= 运行时那个常量）`)
+  assert.equal(bNone.includes('这一格最多'), false, `不给上界时「我的任务」里不该有那一句：${JSON.stringify(bNone)}`)
+  console.log(
+    `①f 读数：--max-steps 3 → 状态里 ${String(st3.maxSteps)} · 不给 → ${String(stNone.maxSteps)}（状态里那一栏缺席，前缀里那一句也不写）`,
+  )
 })

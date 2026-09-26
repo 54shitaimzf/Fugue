@@ -89,7 +89,7 @@ import { draftPathOf } from '../contract/draft.ts'
 import { RoundRunError, materializeCommit, runRound } from '../round/execute.ts'
 import type { DriverSupport, Stub } from '../round/execute.ts'
 import { realDriver, stubDriver } from '../round/driver.ts'
-import { DEFAULT_MAX_STEPS, wireCallOver } from '../runtime/step.ts'
+import { wireCallOver } from '../runtime/step.ts'
 import { makeDumpCall, wireInTransport } from '../model/http.ts'
 import type { AgentHandle } from '../runtime/step.ts'
 import { targetAt } from '../model/http.ts'
@@ -235,8 +235,9 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              整条链与打桩那一档是同一条，判据也只有一个（验收）——差的是"模型那一侧"
                              由谁答。凭据按提供方声明里那份表取；--credential <路径> 是命令行覆盖。
                              缺省不出网、不花钱；要喂**录下来的响应**是 --wire-in <目录>（内部档）。
-                             --max-steps <n>  **这一格最多走几步**（缺省 ${DEFAULT_MAX_STEPS}）。--live 下每一步
-                             是一次真调用，所以这是"这一趟最多花多少"在命令面上的那道闸；
+                             --max-steps <n>  **这一格最多走几步**。**不给就是不设上界**——上界是你的
+                             决策，不是我们的兜底：不设时这一格一直走到它自己收工或你喊停，而
+                             --live 下每一步都落一条 llm/call（花了多少一条条看得见）。
                              第一次联网把它压到个位数。
                              --no-handoff   到了预算触发点**不交接**（用完就停那一档）：
                              B6 的缺省是"先停"（写交接提示词 · 换一个 agent 接着干），
@@ -1959,7 +1960,8 @@ export function driverSupport(o: {
    * 的时候就写进去——那一份状态同时喂给两处装配（`step` 里那一次与驱动算预算用的 `prefixOf`
    * 那一次），两处读到的字节因此是同一串。
    *
-   * 不给就是 `DEFAULT_MAX_STEPS`：发给模型的那个数与驱动真正停下来的那个数**同一个常量**。
+   * **不给就是不设上界**：这一栏缺席，那句"这一格最多 N 步"就不写（`sources.ts` 那一处只在
+   * 有数时写），而驱动那一侧也真的不设——`undefined` 一路传到底，三处读的是同一个缺少。
    */
   readonly maxSteps?: number
 }): DriverSupport {
@@ -1996,7 +1998,7 @@ export function driverSupport(o: {
       ...base,
       // **预算那一句由这里进前缀**：它的读者是模型，所以它得在状态里——不能等到 `step()` 里现拼
       // （那样 `prefixOf` 与 `step` 两处装出来的字节会差这一段，而算预算的那一处读的正是 `prefixOf`）。
-      maxSteps: o.maxSteps ?? DEFAULT_MAX_STEPS,
+      ...(o.maxSteps === undefined ? {} : { maxSteps: o.maxSteps }),
       ...(c.kind === 'implement' ? { goal: c.goal, files: c.ownedPaths.map((path) => ({ path, text: '' })) } : {}),
       task: {
         goal: c.kind === 'implement' ? c.goal : c.kind === 'investigate' ? c.question : base.task.goal,

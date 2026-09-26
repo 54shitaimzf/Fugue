@@ -40,7 +40,7 @@ import type { Contract } from '../contract/types.ts'
 import { checkpoint } from '../checkpoint.ts'
 import { snapshotOf } from '../view/snapshot.ts'
 import type { Stub } from './execute.ts'
-import { DEFAULT_MAX_STEPS, HarnessError, createRuntime } from '../runtime/step.ts'
+import { HarnessError, createRuntime } from '../runtime/step.ts'
 import type { AgentHandle, CallModel, StepResult, ToolExecutor } from '../runtime/step.ts'
 import { planBudget } from '../runtime/budget.ts'
 import { assemble } from '../assemble/assemble.ts'
@@ -246,7 +246,9 @@ export async function runAgentOnce(ask: DriverAsk, opts: RealDriverOptions = {})
 async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view: View): Promise<DriverResult> {
   const { agent, contract, base, truth, writer } = ask
 
-  const maxSteps = ask.maxSteps ?? DEFAULT_MAX_STEPS
+  // **不给就是不设上界**（用户的决策，见 `runtime/step.ts` 那一段）：`undefined` 一路传下去，
+  // 循环里那条守卫因此不成立——这一格走到它自己收工，或人喊停。
+  const maxSteps = ask.maxSteps
   // **这一格的工具面**：围栏用这一格的根（`roots`），写走这一格的视图。
   const roots = ask.roots ?? createRoots(process.cwd())
   const me = agent as unknown as AgentId
@@ -528,8 +530,8 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       handedOff = true
       handle = { ...handle, state: successorOf(handle.state, out.prompt) }
     }
-    if (steps >= maxSteps) {
-      stopped = `步数到顶（${maxSteps}）`
+    if (maxSteps !== undefined && steps >= maxSteps) {
+      stopped = `到了你给的上界（${maxSteps} 步）`
       break
     }
   }

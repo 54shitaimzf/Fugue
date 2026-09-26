@@ -349,7 +349,7 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
         break
       }
       if (maxSteps !== undefined && steps >= maxSteps) {
-        stopped = `步数到顶（${maxSteps}）`
+        stopped = `到了你给的上界（${maxSteps} 步）`
         break
       }
     }
