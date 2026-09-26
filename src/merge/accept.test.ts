@@ -25,7 +25,13 @@ import { advance, commitThenAdvance, countsAsReject, entriesOf, verify } from '.
 const KEEP = process.env.KEEP === '1'
 const roots: string[] = []
 process.on('exit', () => {
-  if (KEEP && roots.length > 0) console.log(`（KEEP=1，现场留着：${roots.join(' · ')}）`)
+  // **默认收干净，`KEEP=1` 才留现场。** 两条路都要：留下来的那几个目录是给人看的，而
+  // "每跑一次 /tmp 里多四个 `a6-*`"不是——实测跑一趟整套会留下四个。
+  if (KEEP) {
+    if (roots.length > 0) console.log(`（KEEP=1，现场留着：${roots.join(' · ')}）`)
+    return
+  }
+  for (const r of roots) rmSync(r, { recursive: true, force: true })
 })
 
 /** 一份临时目录：`real/` 是真实工作树，`store/` 是对象库（**两处分开**，真源与工作树各是各的）。 */

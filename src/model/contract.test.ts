@@ -21,7 +21,7 @@
 // 下面四条是 B1 的**调用的边界**（冻结接口点：两个线协议 · 循环 · 夹具 · 录制全押在那几个形状上）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -678,5 +678,7 @@ test('③b 凭据：覆盖只换"文件在哪"，声明那份表按顺序试（�
     if (keep === undefined) delete process.env[envName]
     else process.env[envName] = keep
   }
+  // **自己搭的临时目录自己收**：这一条里的假凭据文件没有留着的价值（值不印，路径也不是现场）。
+  rmSync(dir, { recursive: true, force: true })
   console.log(`凭据读数：覆盖取到 ${value.length} 个字符（值不印）· 覆盖只换文件那一格 · 环境变量最优先`)
 })
