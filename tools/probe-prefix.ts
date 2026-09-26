@@ -16,7 +16,7 @@
 //   三 · 相邻两步：`hash(A+B)` 逐字节相同 + 复用比例 + 首个分叉偏移（负对照：动一下 B 区）
 //   四 · 跨 N=4 个 agent：`hash(zoneA)` 全等（负对照：往 A 区的源里掺一次宿主路径）
 //   五 · 工具 schema 哈希在状态切换前后不变（架构 § 8.10 的硬纪律 2）
-//   六 · token 估账与余量：`Zone A + Zone B + seed + 交接余量` 与 `contextLimit` 的差额；
+//   六 · 窗口那一笔账：三区 + 工具目录 + `seed` 与 `contextLimit` 的差额（**走产品那一处算**）；
 //        **超限时报"超了多少"，不裁剪后照发**
 //
 // **"每步新增多少字节"是按 `B7` 那条口径算的**：`1 − 新增字节 / 整条前缀`。它今天必然接近 1
@@ -39,6 +39,7 @@ import { readConfig } from '../src/config.ts'
 import { CATALOG_STATES, TOOL_ENTRIES, catalog, catalogHash } from '../src/tools/catalog.ts'
 import { HANDOFF_MARGIN, ZONE_A_BUDGET, seedLimitOf } from '../src/contract/types.ts'
 import { MODEL_DECLS, MODEL_IDS, providerOf } from '../src/model/contract.ts'
+import { estimateTokens, estimateTokensOfText, planBudget } from '../src/runtime/budget.ts'
 import { wireNamed } from '../src/model/wire/registry.ts'
 
 const REPO = fileURLToPath(new URL('..', import.meta.url))
@@ -65,11 +66,6 @@ function eq<T>(what: string, got: T, want: T): void {
 function n(x: number): string {
   return x.toLocaleString('en-US')
 }
-/** 每 4 字节一个 token 那类**粗系数**：只判量级与余量，不报成本（PLAN § 5.8 的疑点清单）。 */
-function estTokens(bytes: number): number {
-  return Math.round(bytes / 4)
-}
-
 function concat(parts: readonly Uint8Array[]): Uint8Array {
   const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0))
   let at = 0
@@ -171,7 +167,8 @@ const first = PREFIXES[0] as (typeof PREFIXES)[number]
 const reading = readPrefix(first)
 for (const z of ['A', 'B', 'C'] as Zone[]) {
   const r = z === 'A' ? reading.zoneA : z === 'B' ? reading.zoneB : reading.zoneC
-  say(`${z} 区：${String(r.bytes).padStart(8)} 字节 · ${r.hash} · ${n(estTokens(r.bytes))} token（估）`)
+  const zoneBytes = z === 'A' ? first.zoneA : z === 'B' ? first.zoneB : first.zoneC
+  say(`${z} 区：${String(r.bytes).padStart(8)} 字节 · ${r.hash} · ${n(estimateTokens(zoneBytes))} token（估 · 同一把尺）`)
 }
 say(`A+B：${String(reading.ab.bytes).padStart(8)} 字节 · ${reading.ab.hash}`)
 say(`整条前缀：${String(reading.whole.bytes).padStart(8)} 字节 · ${reading.whole.hash}`)
@@ -252,7 +249,7 @@ console.log('\n四 · 跨 N=4 个 agent：hash(zoneA) 全等（A 区不取决于
   const hashes = [...new Set(four.map((f) => hashOf(f.prefix.zoneA)))]
   eq('4 个 agent 的 hash(zoneA)（去重之后的个数）', hashes.length, 1)
   const one = four[0] as (typeof four)[number]
-  say(`那一个值：${hashes[0]}（${n(one.prefix.zoneA.length)} 字节 ≈ ${n(estTokens(one.prefix.zoneA.length))} token（估））`)
+  say(`那一个值：${hashes[0]}（${n(one.prefix.zoneA.length)} 字节 ≈ ${n(estimateTokens(one.prefix.zoneA))} token（估 · 同一把尺））`)
   const bHashes = four.map((f) => hashOf(f.prefix.zoneB))
   eq('4 个 agent 的 hash(zoneB) 各不相同（B 区里有 agent 自己的那一段）', [...new Set(bHashes)].length, 4)
   say(`B 区那 4 个值：${bHashes.join(' · ')}（坐标只差 id 与产物路径）`)
@@ -277,7 +274,7 @@ console.log('\n五 · 工具 schema 哈希在状态切换前后不变（架构 �
   const state0 = CATALOG_STATES[0] as (typeof CATALOG_STATES)[number]
   const hashes = CATALOG_STATES.map((s) => catalogHash(catalog(s)))
   eq('三种状态下工具目录的指纹（去重之后的个数）', [...new Set(hashes)].length, 1)
-  say(`工具 schema：${TOOL_ENTRIES.length} 条 · 指纹 ${hashes[0]} · ${n(Buffer.byteLength(JSON.stringify(catalog(state0)), 'utf8'))} 字节的 JSON（≈ ${n(estTokens(Buffer.byteLength(JSON.stringify(catalog(state0)), 'utf8')))} token 估）`)
+  say(`工具 schema：${TOOL_ENTRIES.length} 条 · 指纹 ${hashes[0]} · ${n(Buffer.byteLength(JSON.stringify(catalog(state0)), 'utf8'))} 字节的 JSON（≈ ${n(estimateTokensOfText(JSON.stringify(catalog(state0))))} token 估（同一把尺））`)
   say(`三种状态：${CATALOG_STATES.map((s) => `planMode=${s.planMode}/pendingTodos=${s.pendingTodos}`).join(' · ')}`)
 
   // 它不在 A 区里：`toolCatalog` 是随请求走的那份 schema，位置由提供方定（架构 § 8.11 的头注）。
@@ -292,37 +289,51 @@ console.log('\n五 · 工具 schema 哈希在状态切换前后不变（架构 �
   else bad('负对照：给目录补一个字段却没变——第五节那条不变是恒等式')
 }
 
-// ── 六 · token 估账与余量 ──────────────────────────────────────────────────────
-console.log('\n六 · token 估账与余量：Zone A + Zone B + seed + 交接余量 与 contextLimit 的差额')
+// ── 六 · 窗口那一笔账 ─────────────────────────────────────────────────────────
+console.log('\n六 · 窗口那一笔账：三区 + 工具目录 + seed 与 contextLimit 的差额（走产品那一处算）')
 
 {
   const m = MODEL_DECLS[MODEL_IDS[0] as string]
   if (m === undefined) {
     bad('拿不到第一条声明——第六节量不了')
   } else {
-    const seed = TASK.deliverables.reduce((a, p) => a + Buffer.byteLength(readFileSync(join(REPO, p), 'utf8'), 'utf8'), 0)
+    // **同一把尺、同一本账**：这一节不自己换算——三区 + 工具目录 + `seed` 交给产品那一处
+    // （`planBudget`），于是探针印的数与真流程判的数一定同源。
+    const seedText = TASK.deliverables.map((p) => readFileSync(join(REPO, p), 'utf8')).join('')
+    const seed = Buffer.byteLength(seedText, 'utf8')
+    const state0 = CATALOG_STATES[0] as (typeof CATALOG_STATES)[number]
+    const plan = planBudget({
+      decl: m,
+      prefix: first,
+      tools: JSON.stringify(catalog(state0)),
+      seed: seedText,
+      handoff: '',
+    })
     const limit = seedLimitOf({ modelLimit: m.contextLimit })
     const zoneA = first.zoneA.length
     const zoneB = first.zoneB.length
-    const handoff = m.budget.handoffMargin
-    const used = zoneA + zoneB + seed + handoff
-    const room = m.contextLimit - used
 
-    say(`上界 ${n(m.contextLimit)} · Zone A ${n(zoneA)} · Zone B ${n(zoneB)} · C ${n(first.zoneC.length)} · seed ${n(seed)}（${TASK.deliverables.length} 份交付物的当下字节）· 交接余量 ${n(handoff)}`)
-    say(`已经占住 ${n(used)} 字节 ≈ ${n(estTokens(used))} token（估）· 占比 ${((used / m.contextLimit) * 100).toFixed(1)}% · 余量 ${n(room)} 字节 ≈ ${n(estTokens(room))} token（估）`)
-    say(`预算触发点：${n(m.budget.trigger)}（上限的四分之三）——C 区今天 ${n(first.zoneC.length)} 字节，离它还远`)
-    say(`seed 那一条的判据（架构 § 8.12）：上限 ${n(limit)} 字节 = 模型上限 ${n(m.contextLimit)} − Zone A 预算 ${n(ZONE_A_BUDGET)} − 交接余量 ${n(HANDOFF_MARGIN)}（Zone A 那一项用**预算**，不是当下的 ${n(zoneA)}）`)
-    say('token 那一栏是**粗系数**（每 4 字节一个 token）：只判量级与余量，不报成本——真实计量等 B3 拿回用量的四个数（PLAN § 5.8 的疑点清单）')
+    say(
+      `上界 ${n(plan.limit)} · Zone A ${n(zoneA)} 字节 · Zone B ${n(zoneB)} 字节 · C ${n(first.zoneC.length)} 字节 · ` +
+        `seed ${n(seed)} 字节（${TASK.deliverables.length} 份交付物的当下字节）· 交接余量 ${n(plan.handoffMargin)}`,
+    )
+    say(`已经占住 ${n(plan.used)} token（估）：三区 + 工具目录 + seed · 占比 ${((plan.used / plan.limit) * 100).toFixed(1)}% · 还剩 ${n(plan.headroom)}`)
+    say(`触发点 ${n(plan.trigger)}（上限的四分之三）——这一档判出来的是 \`${plan.kind}\`：${plan.why}`)
+    say(
+      `seed 那一条的判据（架构 § 8.12）：上限 ${n(limit)} 字节 = 模型上限 ${n(m.contextLimit)} − Zone A 预算 ${n(ZONE_A_BUDGET)} − 交接余量 ${n(HANDOFF_MARGIN)}` +
+        `（Zone A 那一项用**预算**，不是当下的 ${n(zoneA)}；那一条是按字节取的**上界**，与窗口这一笔账不是同一本）`,
+    )
+    say('窗口那一笔账是**估账，不是读数**：尺在 `src/runtime/budget.ts`（`estimateTokens`），与 `planBudget` 同一处；真实计量在 `llm/call` 的 `usage` 四个数里，尺的校准归 `B7`')
 
-    eq('估账：用到的那四项之和 == Zone A + Zone B + seed + 交接余量', used, zoneA + zoneB + seed + handoff)
-    eq('差额（余量）== contextLimit − 用到的那四项', m.contextLimit - used, room)
-    if (room > 0) ok(`装得下：还余 ${n(room)} 字节 ≈ ${n(estTokens(room))} token（估）——差额印得出来，这是进真流程的前提`)
-    else bad(`装不下：超了 ${n(-room)} 字节——**报"超了多少"，不裁剪后照发**（架构 § 8.12：带着超限的种子派发等于派发一次立刻触发的接续）`)
+    eq('上限 == 声明里的 contextLimit', plan.limit, m.contextLimit)
+    eq('触发点 == `contract.ts` 那一个函数算的', plan.trigger, m.budget.trigger)
+    eq('used == limit − headroom', plan.used, plan.limit - plan.headroom)
+    if (plan.headroom > 0) ok(`装得下：还剩 ${n(plan.headroom)} token——差额印得出来，这是进真流程的前提`)
+    else bad(`装不下：超了 ${n(-plan.headroom)} token——**报"超了多少"，不裁剪后照发**（架构 § 8.12：带着超限的种子派发等于派发一次立刻触发的接续）`)
 
     // 负对照：**`seed` 那一条自己的判据**（超了多少），而不是窗口那一笔账。两者不是同一个上限
-    // ——`seedLimitOf` 给的是"一份契约的 seed 允许多大"（88,000），窗口那一笔账问的是"这一趟
-    // 装不装得下"（128,000）。seed 顶到 88,001 时超的是前者，而后者照旧可能是正的（实测
-    // room=4,157），所以拿 room 的符号当这一条的判据是错的。
+    // ——`seedLimitOf` 给的是"一份契约的 seed 允许多大"（88,000 字节），窗口那一笔账问的是
+    // "这一趟装不装得下"（128,000 token）：seed 顶到 88,001 时超的是前者，后者照旧可能是正的。
     const over = limit + 1
     const overBy = over - limit
     if (overBy === 1 && over > limit) {
@@ -330,11 +341,10 @@ console.log('\n六 · token 估账与余量：Zone A + Zone B + seed + 交接余
     } else {
       bad(`负对照：seed 顶到 ${n(over)} 字节时没算出"超了多少"（limit=${n(limit)} · overBy=${n(overBy)}）——那算式没接上`)
     }
-    const realSeed = seed
-    if (realSeed <= limit) {
-      ok(`这一份契约的 seed（${n(realSeed)} 字节）在 ${n(limit)} 那一档之内——余 ${n(limit - realSeed)} 字节`)
+    if (seed <= limit) {
+      ok(`这一份契约的 seed（${n(seed)} 字节）在 ${n(limit)} 那一档之内——余 ${n(limit - seed)} 字节`)
     } else {
-      bad(`这一份契约的 seed（${n(realSeed)} 字节）超过 ${n(limit)}，超 ${n(realSeed - limit)} 字节`)
+      bad(`这一份契约的 seed（${n(seed)} 字节）超过 ${n(limit)}，超 ${n(seed - limit)} 字节`)
     }
   }
 }
