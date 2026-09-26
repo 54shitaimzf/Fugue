@@ -159,6 +159,17 @@ export interface StepResult {
   readonly seqs: readonly LogSeq[]
 }
 
+/**
+ * 「这一格最多走几步」的缺省值：**一处定，三处读**——运行时那道兜底的上界（`RuntimeDeps.maxSteps`）
+ * · 驱动那道花钱的上界（`DriverAsk.maxSteps`）· 写进「我的任务」发给模型的那个数
+ * （`AssembleState.maxSteps`）。
+ *
+ * 为什么不是三个各自写一遍的 `64`：提示词上那个数与真正停下来的那个数一旦各自漂，"它以为还剩
+ * 几步"这件事就没人量得到——而这一条正是 W11 那一轮真档照出来的（模型干完了活还接着探，直到
+ * 步数到顶）。
+ */
+export const DEFAULT_MAX_STEPS = 64
+
 export interface RuntimeDeps {
   /**
    * 这个 agent 自己的日志口。**每落一条开一个口、落完就关**（一次命令一个 writer：
@@ -169,7 +180,7 @@ export interface RuntimeDeps {
   readonly execute: ToolExecutor
   /** 工具目录（`M9.schema()`）。**缺省不带工具**——不带也可以，那时模型没有手。 */
   readonly tools?: readonly ToolEntry[]
-  /** 一步最多走几圈（预算那条线上界之外的兜底：防一个不收敛的循环）。**缺省 64**。 */
+  /** 一步最多走几圈（预算那条线上界之外的兜底：防一个不收敛的循环）。**缺省 `DEFAULT_MAX_STEPS`。** */
   readonly maxSteps?: number
 }
 
@@ -273,7 +284,7 @@ function outcomeOf(stop: StopReason, usage: Usage | null, said: string): StepOut
 
 export function createRuntime(deps: RuntimeDeps): Runtime {
   const tools = deps.tools ?? []
-  const maxSteps = deps.maxSteps ?? 64
+  const maxSteps = deps.maxSteps ?? DEFAULT_MAX_STEPS
 
   /** 兜底：驱动没给账、但事件都在手上——自己积一次（**与真模型同一个口径**）。 */
   function safeCall(events: readonly ModelEvent[]): ModelCall | null {

@@ -523,11 +523,13 @@ test('② 假模型驱动整轮 → 一次真提交，而真工作树一个字�
 test('③ 触发点到了落 agent/handoff，后继接着干完（同一条分支 · 轮级状态不变）', async () => {
   const b = await bench()
   try {
-    // **把触发点压到很低**：一份"上限 200 · 触发点 150 · 余量 10"的声明——三区一算就过线。
-    // **上限要压到实际三区之下、但压在触发点之上一点点**（实到 629 字节：`B6` 那一条报的就是
-    // "用了 629（触发点 150），而交接还差 439 写不下"）。压到 200 的话 `planBudget` 直接给
-    // `stop`——那一趟连一步都不走，交接自然一次都没有。
-    const tiny = { ...DECL, contextLimit: 700, budget: { trigger: 150, handoffMargin: 10 } }
+    // **把触发点压到很低**：一份"上限 800 · 触发点 150 · 余量 10"的声明——三区一算就过线。
+    // **上限要压到实际三区之上、但不能太远**（实到 705 字节：`B6` 那一条报的就是
+    // "用了 705（触发点 150）"，而交接提示词那几十个字节要写得下）。压到 200 的话 `planBudget`
+    // 直接给 `stop`——那一趟连一步都不走，交接自然一次都没有。
+    // **705 这个读数随前缀字节走**：W11 收工口径那三句进「我的任务」之后它从 629 涨到 705，
+    // 上限因此从 700 抬到 800（那三句是给模型的话，涨是它们的目的，不是漂）。
+    const tiny = { ...DECL, contextLimit: 800, budget: { trigger: 150, handoffMargin: 10 } }
     // 预算那一栏由 `decl` 决定，而 `realDriver` 的 `onResult` 能拿到那一趟的读数。
     let result: { handoffs: readonly string[]; stopped: string } | null = null
     const driver = realDriver({

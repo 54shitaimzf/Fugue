@@ -72,6 +72,17 @@ export interface AssembleState {
     readonly evidenceRequired: readonly string[]
     readonly assertions: readonly string[]
   }
+  /**
+   * **这一格最多走几步**（运行时那道花钱的上界 · `--max-steps`）。它同时也是一句要发给模型的话。
+   *
+   * 它进 B 区（同一格跨步稳定：这个数在整个轮次里不变），而且**只以"上限"的样子进去**——绝不
+   * 写成"这是第几步"：那个字每步都变，B 区跨步复用那条性质当场破掉（`step` 到今天为止都不进
+   * 前缀，正是同一个道理）。`undefined` 就不写这一句（地板那一档：那一段短一行，装配照跑）。
+   *
+   * 它为什么在状态里而不是在 `step()` 里现拼：装配有两处（`step` 里那一次与驱动算预算用的
+   * `prefixOf` 那一次），两处读的必须是同一串字节——现拼就会各差这一段。
+   */
+  readonly maxSteps?: number
   readonly distill: string
   readonly recent: string
   readonly runtime: string
@@ -160,12 +171,27 @@ function emptyFor(id: SegmentId, protocol: Protocol): SegmentValue {
   }
 }
 
-/** 我的任务那一段的文本：契约的几项，末尾按序追加产物路径。 */
-function taskText(t: AssembleState['task'], outputs: readonly string[]): string {
+/**
+ * 我的任务那一段的文本：契约的几项 + **这一格的收工口径**，末尾按序追加产物路径。
+ *
+ * **收工口径那三句为什么在这里**（W11 那一轮真档照出来的）：那一格把活干完了，然后一直在
+ * 自证与重写，直到步数到顶——"这一格最多几步" · "做完怎么交卷" · "断言谁跑" 三样事实它手里
+ * 一件都没有。它们与产物路径同一档：逐 agent 不同、逐 agent 稳定，所以进 B 区（不是每步都要
+ * 重付一遍的 C 区）。
+ *
+ * **产物路径仍然是最后一行**：架构 § 8.11 那句"近因最好"要的就是它落在模型动手的那个位置，
+ * 所以这三句排在它**前面**——排在 `断言` 后面。
+ */
+function taskText(t: AssembleState['task'], outputs: readonly string[], maxSteps?: number): string {
   const lines: string[] = [`总目标：${t.goal}`, `问题：${t.question}`]
   if (t.deliverables.length > 0) lines.push(`交付物：${t.deliverables.join(' · ')}`)
   if (t.evidenceRequired.length > 0) lines.push(`要交的证据：${t.evidenceRequired.join(' · ')}`)
   if (t.assertions.length > 0) lines.push(`断言：${t.assertions.join(' · ')}`)
+  // 三句收工口径。第一句是这一格的预算（人给的那个数，缺省不写）；另两句是常量：交卷那一下只能
+  // 是"话说完了"（`end-turn`），而断言由 harness 跑、由它判过不过（架构 § 8.12 的分工表）。
+  if (maxSteps !== undefined) lines.push(`这一格最多 ${maxSteps} 步。`)
+  lines.push('做完就说明一句，不再调工具——交卷就是话说完。')
+  lines.push('断言由 harness 跑，不由你跑。')
   if (outputs.length > 0) lines.push(`产物路径：${outputs.join(' · ')}`)
   return lines.join('\n')
 }
@@ -223,7 +249,7 @@ const SOURCES: Readonly<Record<SegmentId, SourceRule>> = {
   },
   提交序列: { value: (s) => [...s.commits] },
   交接提示词: { value: (s) => s.handoff },
-  我的任务: { value: (s, who) => taskText(s.task, who === null ? [] : who.outputPaths) },
+  我的任务: { value: (s, who) => taskText(s.task, who === null ? [] : who.outputPaths, s.maxSteps) },
   凝聚理解: { value: (s) => s.distill },
   压缩前最近几次原文: { value: (s) => s.recent },
   // 运行时上下文是**积累段**：一句话加一串只追加的尾巴。空串与空尾巴都不产出分隔符。

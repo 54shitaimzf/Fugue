@@ -84,7 +84,7 @@ import { RoundStartError, startRound } from '../round/start.ts'
 import { RoundRunError, materializeCommit, runRound } from '../round/execute.ts'
 import type { DriverSupport, Stub } from '../round/execute.ts'
 import { realDriver, stubDriver } from '../round/driver.ts'
-import { wireCall } from '../runtime/step.ts'
+import { DEFAULT_MAX_STEPS, wireCall } from '../runtime/step.ts'
 import { makeDumpCall } from '../model/http.ts'
 import type { AgentHandle } from '../runtime/step.ts'
 import { targetAt } from '../model/http.ts'
@@ -214,7 +214,7 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              --report     印打回那三个数（从日志重算，不采集）
                              --metrics    印八元指标（**每个指标的分子与分母一起印**，从日志重算）
                              --materialize 起头时把 N 棵树也铺出来（缺省不铺）
-                             --max-steps <n>  **这一格最多走几步**（缺省 64）。--live 下每一步
+                             --max-steps <n>  **这一格最多走几步**（缺省 ${DEFAULT_MAX_STEPS}）。--live 下每一步
                              是一次真调用，所以这是"这一趟最多花多少"在命令面上的那道闸；
                              第一次联网把它压到个位数。
                              --no-handoff   到了预算触发点**不交接**（用完就停那一档）：
@@ -977,6 +977,7 @@ async function roundRun(
             driver: driverSupport({
               root,
               doc,
+              ...(maxSteps === undefined ? {} : { maxSteps }),
               ...(credentialOverride === undefined ? {} : { credential: credentialOverride }),
               ...(dumpDir === undefined ? {} : { dumpDir }),
             }),
@@ -1662,6 +1663,14 @@ export function driverSupport(o: {
   readonly credential?: string
   /** `--dump-wire` 那一档的落点（**已经在工作区之外**——守卫在 `dumpWireDir`）。不给就不落。 */
   readonly dumpDir?: string
+  /**
+   * 这一格最多走几步（`--max-steps`）。**它是「我的任务」里那句话的那个数**，所以要在拼状态
+   * 的时候就写进去——那一份状态同时喂给两处装配（`step` 里那一次与驱动算预算用的 `prefixOf`
+   * 那一次），两处读到的字节因此是同一串。
+   *
+   * 不给就是 `DEFAULT_MAX_STEPS`：发给模型的那个数与驱动真正停下来的那个数**同一个常量**。
+   */
+  readonly maxSteps?: number
 }): DriverSupport {
   const decl = modelDeclOf(DEFAULT_MODEL.id)
   const tools = publishedCatalog()
@@ -1684,6 +1693,9 @@ export function driverSupport(o: {
     const base = stateWithState(emptyState(), o.doc, o.root)
     const made: AssembleState = {
       ...base,
+      // **预算那一句由这里进前缀**：它的读者是模型，所以它得在状态里——不能等到 `step()` 里现拼
+      // （那样 `prefixOf` 与 `step` 两处装出来的字节会差这一段，而算预算的那一处读的正是 `prefixOf`）。
+      maxSteps: o.maxSteps ?? DEFAULT_MAX_STEPS,
       ...(c.kind === 'implement' ? { goal: c.goal, files: c.ownedPaths.map((path) => ({ path, text: '' })) } : {}),
       task: {
         goal: c.kind === 'implement' ? c.goal : c.kind === 'investigate' ? c.question : base.task.goal,

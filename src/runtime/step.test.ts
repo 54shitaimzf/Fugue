@@ -11,6 +11,9 @@
 //   ③ 三种 `StopReason`（调用工具 · 自然停 · 预算耗尽）**分得开**，不混成"结束了"
 //   ④ 用**假模型**（一串脚本化的响应）驱动它，三区稳定性照旧成立
 //      · 负对照：让循环在每步重写 C 区中部 → ② 变红
+//
+// ⑨ 是 W11 那一轮真档照出来的那三句收工口径（预算 · 怎么交卷 · 断言谁跑）：它们进的是 B 区，
+//    而预算那个数逐字跟着状态走——负对照两条（换一个数 → 那一句跟着变；不给 → 那一句不写）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -551,4 +554,53 @@ test('⑧ 第二步的请求带上第一步的往返：RuntimeRequest.turns 有�
     assert.ok(paired.every((id) => ids.includes(id)), '每一条 tool_result 都配得上对')
     console.log(`⑧ 读数：第二步带 ${String(walked.length)} 条 Turn · 发出 ${String(Buffer.byteLength(sent, 'utf8'))} 字节 · ${String(paired.length)} 条配对`)
   })
+})
+
+// ── ⑨ W11 · 收工口径那三句进 B 区，预算那个数跟着状态走 ──────────────────────
+
+test('⑨ 「我的任务」带三句收工口径（预算 · 交卷 · 断言谁跑）：预算逐字在里面 · 缺省不写那一句 · 改预算动 B 不动 A · 改步号不动 B', () => {
+  const dec = (b: Uint8Array): string => new TextDecoder().decode(b)
+  const p5 = prefixAt(handleOf({ ...fixtureState(0), maxSteps: 5 }))
+  const b5 = dec(p5.zoneB)
+
+  // 一 · 三句都在 B 区那一段里（架构 § 8.11 那张表：「我的任务」属于 B 区）。
+  const three = [
+    '这一格最多 5 步。',
+    '做完就说明一句，不再调工具——交卷就是话说完。',
+    '断言由 harness 跑，不由你跑。',
+  ]
+  for (const line of three) {
+    assert.ok(b5.includes(line), `B 区里该有这一句：${line}\nB 区是：${JSON.stringify(b5)}`)
+    assert.equal(dec(p5.zoneC).includes(line), false, `C 区里不该有这一句（那句话每步都要重付）：${line}`)
+    assert.equal(dec(p5.zoneA).includes(line), false, `A 区里不该有这一句（它逐 agent 各不相同）：${line}`)
+  }
+  // 产物路径照旧是那一段的最后一行（架构 § 8.11 那句"近因最好"：模型读到这里就动手）。
+  const last = b5.trimEnd().split('\n').at(-1) ?? ''
+  assert.equal(last, `产物路径：${WHO.outputPaths.join(' · ')}`, `「我的任务」最后一行该是产物路径，实际是：${last}`)
+
+  // 二 · 负对照一：换一个预算 → 那一句逐字跟着变（它不是一句写死的话），而 A 区一个字节不动。
+  const p4 = prefixAt(handleOf({ ...fixtureState(0), maxSteps: 4 }))
+  const b4 = dec(p4.zoneB)
+  assert.ok(b4.includes('这一格最多 4 步。'), `B 区里该写 4：${JSON.stringify(b4)}`)
+  assert.equal(b4.includes('这一格最多 5 步。'), false, '换了预算，旧那个数不该还在')
+  assert.notEqual(hashOf(p4.zoneB), hashOf(p5.zoneB), '预算变了，B 区的指纹该跟着变')
+  assert.equal(hashOf(p4.zoneA), hashOf(p5.zoneA), '预算变了，A 区不该动（它不认识「我的任务」）')
+
+  // 三 · 负对照二：**只有步号变**（同一格的下一步）→ B 区逐字节不动，C 区跟着变。
+  //     它守的是"预算那一句不许写成'这是第几步'"：那一个字每步都变，B 区跨步复用那条性质
+  //     当场破掉——`step` 到今天为止都不进前缀，正是为了同一件事。
+  const p1 = prefixAt(handleOf({ ...fixtureState(1), maxSteps: 5 }))
+  assert.equal(hashOf(p1.zoneB), hashOf(p5.zoneB), '只有步号变，B 区该逐字节相同')
+  assert.notEqual(hashOf(p1.zoneC), hashOf(p5.zoneC), '步号变了，C 区该跟着变（负对照的另一半）')
+
+  // 四 · 地板那一档：不给预算 → 那一句不写，另两句照在，装配照跑（不抛）。
+  const bare = prefixAt(handleOf(fixtureState(0)))
+  const bb = dec(bare.zoneB)
+  assert.equal(bb.includes('这一格最多'), false, '没给预算就不该写那一句')
+  assert.ok(bb.includes('做完就说明一句，不再调工具——交卷就是话说完。'), '另两句是常量，照旧在')
+  assert.ok(bb.includes('断言由 harness 跑，不由你跑。'), '另两句是常量，照旧在')
+  console.log(
+    `⑨ 读数：B 区带预算 ${p5.zoneB.length} 字节 · 不带预算 ${bare.zoneB.length} 字节（差 ${p5.zoneB.length - bare.zoneB.length}）` +
+      ` · 改步号 B 区指纹 ${hashOf(p1.zoneB)} 与带预算那份相同 · C 区指纹 ${hashOf(p1.zoneC)} ≠ ${hashOf(p5.zoneC)}`,
+  )
 })

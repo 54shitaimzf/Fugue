@@ -6,6 +6,10 @@
 //
 // 断言分两层：句柄那一栏是那一份协议（机制），装出来的 B 区里有契约那几行（后果）；再加一条
 // 负对照——同一份状态换成持轮者那一份，那几行就不在了（差量是**那一段**，不是别的东西）。
+//
+// ①f 量的是这一段的另一半（W11 那一轮真档照出来的那三句收工口径）：`--max-steps` 真的写进
+// 「我的任务」，而"不给"那一档写的是 `DEFAULT_MAX_STEPS`——发给模型的那个数与驱动停下来用的
+// 那个数同源。
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { tmpDir } from '../../test/helpers/tmp.ts'
@@ -15,6 +19,7 @@ import { sourcesFor } from '../assemble/sources.ts'
 import { readConfig } from '../config.ts'
 import type { Contract } from '../contract/types.ts'
 import { driverSupport } from './fugue.ts'
+import { DEFAULT_MAX_STEPS } from '../runtime/step.ts'
 
 /**
  * 一个**假**的凭据：`driverSupport` 在拼目标那一栏时会读它（`targetOf` 是取值的地方）。
@@ -98,4 +103,26 @@ test('①e 负对照：同一份状态换持轮者那份协议，「我的任务
   console.log(
     `①e 负对照读数：子 agent 那份 B 区 ${mine.zoneB.length} 字节 · 持轮者那份 ${holder.zoneB.length} 字节（差 ${mine.zoneB.length - holder.zoneB.length}）`,
   )
+})
+
+test('①f `--max-steps` 真的写进「我的任务」：给 3 就是 3，不给就是 `DEFAULT_MAX_STEPS`', async () => {
+  const root = tmpDir('fugue-driver-support-')
+  const doc = await readConfig(root)
+  const contract = contractOf()
+  const given = driverSupport({ root, doc, credential: '这一档不出网', maxSteps: 3 })
+  const handle = given.handle('agent-1' as never, contract)
+  const st3 = given.state('agent-1' as never, contract)
+  assert.equal(st3.maxSteps, 3, '给了 `--max-steps 3`，状态里就该是 3')
+  const b3 = new TextDecoder().decode(
+    assemble({ protocol: SUBAGENT_PROTOCOL, model: handle.model, segments: sourcesFor(SUBAGENT_PROTOCOL, st3, handle.coord) }).zoneB,
+  )
+  assert.ok(b3.includes('这一格最多 3 步。'), `「我的任务」里该写 3：${JSON.stringify(b3)}`)
+  // 不给：写的是那个常量。**这一条与驱动停下来的那个数是同一个常量**（`runtime/step.ts`）。
+  const none = driverSupport({ root, doc, credential: '这一档不出网' })
+  assert.equal(
+    none.state('agent-1' as never, contract).maxSteps,
+    DEFAULT_MAX_STEPS,
+    '不给 `--max-steps` 时状态里该是 `DEFAULT_MAX_STEPS`',
+  )
+  console.log(`①f 读数：--max-steps 3 → 状态里 ${String(st3.maxSteps)} · 不给 → ${String(DEFAULT_MAX_STEPS)}（= 运行时那个常量）`)
 })
