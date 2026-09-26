@@ -25,6 +25,7 @@ import { openTruth } from '../truth/truth.ts'
 import { estimateTokensOfText } from '../runtime/budget.ts'
 import type { SplitAssignment } from '../contract/build.ts'
 import { SEED_BUDGET, seedTextOf, seedTokensOf } from '../contract/build.ts'
+import { identFor } from '../identity.ts'
 import { seedRulerOf } from './seed.ts'
 import { startRound } from './start.ts'
 
@@ -48,7 +49,8 @@ const SEED: readonly RelPath[] = [A, B]
 const LATER = 'src/later.ts'
 
 const ROUND = 'r1' as RoundId
-const AGENT = 'agent/r1/1' as AgentId
+/** 第 0 个身份（构造次序里的第一格）——名字与分支一处给（架构 § 14.1 第 1 步）。 */
+const AGENT = identFor(ROUND, 0).agent
 
 interface Bench {
   readonly root: string
@@ -102,7 +104,7 @@ const SPLIT: SplitAssignment[] = [
   },
 ]
 
-/** 派发那一趟的输入。`seedOf` 与量法都由这一份给——`startRound` 的缺省量法就是被测的那一处。 */
+/** 派发那一趟的输入。种子与量法都由这一份给——`startRound` 的缺省量法就是被测的那一处。 */
 function startDeps(b: Bench, seed: readonly RelPath[], over: Record<string, unknown> = {}) {
   return {
     roots: createRoots(b.root as never),
@@ -111,9 +113,9 @@ function startDeps(b: Bench, seed: readonly RelPath[], over: Record<string, unkn
     round: ROUND,
     intent: { goal: '把解析器拆出来' },
     split: SPLIT,
-    agents: [AGENT],
-    branchOf: (a: AgentId) => `refs/heads/${a}` as BranchId,
-    seedOf: () => seed,
+    // **身份按构造次序问**（一处给）：这一批只有一份实现型，所以第 0 格就是 `AGENT`。
+    identityFor: (n: number) => identFor(ROUND, n),
+    seeds: [seed],
     ...over,
   } as Parameters<typeof startRound>[0]
 }

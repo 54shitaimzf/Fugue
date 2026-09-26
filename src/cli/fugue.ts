@@ -28,6 +28,7 @@ import {
 import type { ConfigDoc } from '../config.ts'
 import {
   BindingError,
+  actionNames,
   declaredDirs,
   envFor,
   parseInjections,
@@ -39,7 +40,7 @@ import { cacheLayoutOf, confine, degradedArgv } from '../boundary/confine.ts'
 import { createExecutor } from '../execute/exec.ts'
 import { ReclaimRefused, createReclaim } from '../execute/reclaim.ts'
 import type { DeclaredSet, Reclaim } from '../execute/reclaim.ts'
-import { agentFor, refFor } from '../identity.ts'
+import { agentFor, identFor, refFor } from '../identity.ts'
 import type { Delta } from '../delta.ts'
 import type { TreeEntry } from '../entries.ts'
 import type { LogEvent } from '../log/events.ts'
@@ -805,8 +806,9 @@ async function roundCmd(
   // 那张表写的是 `refs/heads/agent/<round>/<n>`——所以 agent 那一栏是 `agent/<round>/<n>`，
   // 于是这一份里的每一处都从同一个名字出发：分支 ref · 物化根 `mat/<agent>/` · 日志
   // `log/<agent>.jsonl`（§ 9.2 那张布局表）。
-  const agents: AgentId[] = split.map((_, i) => `agent/${round}/${i + 1}` as AgentId)
-  const branchOf = (a: AgentId): BranchId => refFor(a) as BranchId
+  // **身份分配器**（架构 § 14.1 第 1 步）：第 n 个 agent 的名字与它那条分支一处给（`identFor`）。
+  // 这一档没有调查型那一节，所以第 n 份草案就是第 n 个 agent（持轮者那一档由草案的节序定）。
+  const identityFor = (n: number): { agent: AgentId; branch: BranchId } => identFor(round, n)
   const materialize = flags.has('materialize')
 
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
@@ -818,9 +820,9 @@ async function roundCmd(
       round,
       intent: { goal },
       split,
-      agents,
-      branchOf,
-      seedOf: () => [] as readonly RelPath[],
+      identityFor,
+      // 这一档（人拆）没有种子：那一栏由调用方给（架构 § 8.12）。
+      seeds: [] as readonly RelPath[],
       // 物化那一档：每一条分支一个口，那个 agent 自己的日志。
       logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
       materialize,
@@ -840,7 +842,8 @@ async function roundCmd(
         trail: started.trail,
       })
     } else {
-      emitLine(`${started.round}\t${started.base}\t${started.built.contracts.length} 份契约\t${agents.length} 条分支`)
+      const owners = [...new Set(started.built.contracts.map((c) => c.agent))]
+      emitLine(`${started.round}\t${started.base}\t${started.built.contracts.length} 份契约\t${owners.length} 条分支`)
       for (const c of started.built.contracts) {
         emitLine(`  ${c.id}\t${c.agent}\t${c.kind}\t${writeSetLine(c)}`)
       }
@@ -919,8 +922,10 @@ async function roundRun(
 
   const rawRound = getConfig(doc, 'round.id')
   const round = typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1'
-  const agents: AgentId[] = split.map((_, i) => `agent/${round}/${i + 1}` as AgentId)
-  const branchOf = (a: AgentId): BranchId => refFor(a) as BranchId
+  /** **身份分配器**（架构 § 14.1 第 1 步）：名字与它那条分支一处给（`identFor`）。 */
+  const identityFor = (n: number): { agent: AgentId; branch: BranchId } => identFor(round, n)
+  /** 打桩那一档只要"这是第几格"（给那棵树的路径起个名）——同一个分配器给的次序。 */
+  const agents: AgentId[] = split.map((_, i) => identityFor(i).agent)
   // `--fail <断言名>`：把配置里**那一条**断言换成必然失败的一条。撞不上就什么都不做——这一档是
   // "走查要撞红"，不是"让这一趟注定失败"。
   const failTarget = typeof flags.get('fail') === 'string' ? (flags.get('fail') as string) : undefined
@@ -1032,9 +1037,9 @@ async function roundRun(
       round,
       intent: { goal },
       split,
-      agents,
-      branchOf,
-      seedOf: () => [] as readonly RelPath[],
+      identityFor,
+      // 这一档（人拆）没有种子：那一栏由调用方给（架构 § 8.12）。
+      seeds: [] as readonly RelPath[],
       logForAgent: agentLogOf,
       materialize: flags.has('materialize'),
       // **两条路在 `runRound` 眼里没有区别**（同一个 `AgentDriver`）：打桩那一档把 `Stub` 包
@@ -1307,6 +1312,10 @@ async function roundPlan(
       log: ctx.log,
       round,
       goal,
+      // **同上一个分配器**：门判出来的那一批契约的身份，就是放行那一下要发的那些（门只认契约集合）。
+      identityFor: (n: number) => identFor(round, n),
+      // 持轮者给的断言只能从绑好的动作里选（`actions.<名字>` 那一份表）。
+      actions: actionsTableOf(doc),
       handle,
       decl,
       call,
@@ -1324,6 +1333,8 @@ async function roundPlan(
       },
     })
 
+    const draft = r.gate.draft
+    const built = r.gate.built
     if (json) {
       emitJson({
         round: r.round,
@@ -1333,9 +1344,17 @@ async function roundPlan(
         steps: r.steps,
         stopped: r.stopped,
         held: r.held,
-        problems: [...r.problems],
+        problems: [...r.gate.problems],
         draftText: r.draftText,
-        sections: (r.draft?.sections ?? []).map((s) => ({ kind: s.kind, goal: s.kind === 'implement' ? s.goal : s.question })),
+        sections: (draft?.sections ?? []).map((s0) => ({
+          kind: s0.kind,
+          goal: s0.kind === 'implement' ? s0.goal : s0.question,
+        })),
+        // **判出来的那一批**：门停着的时候它已经造好了——一个字节都没发。
+        contracts: (built?.contracts ?? []).map((c) => ({ id: c.id, agent: c.agent, kind: c.kind, paths: writeSetPaths([c]) })),
+        seedLimit: built?.seedLimit ?? null,
+        seedTokens: built === null ? [] : [...built.seedTokens],
+        intersections: r.gate.precheck?.lines ?? [],
         seedRead: r.seedRead,
         occupancy: [...r.occupancy],
       })
@@ -1347,10 +1366,10 @@ async function roundPlan(
           r.draftText === null ? '没有写出来' : `${estimateTokensOfText(r.draftText)} token（那把尺的估账）· 正文进日志 holder/distill`
         }`,
       )
-      if (r.draft !== null) {
-        emitLine(`  要开 ${r.draft.sections.length} 个任务：`)
-        for (const [i, s0] of r.draft.sections.entries()) {
-          emitLine(`    第 ${i + 1} 节\t${s0.kind}\t${s0.kind === 'implement' ? s0.goal : s0.question}`)
+      if (draft !== null) {
+        emitLine(`  要开 ${draft.sections.length} 个任务：`)
+        for (const [k, s0] of draft.sections.entries()) {
+          emitLine(`    第 ${k + 1} 节\t${s0.kind}\t${s0.kind === 'implement' ? s0.goal : s0.question}`)
           if (s0.kind === 'implement') {
             emitLine(`      写入面：${s0.ownedPaths.join(' · ') || '（空）'}`)
             if (s0.deliverables.length > 0) emitLine(`      交付物：${s0.deliverables.map((d) => `${d.path}（${d.form}）`).join(' · ')}`)
@@ -1363,6 +1382,15 @@ async function roundPlan(
           `  种子\t在持轮者那份视图上取到 ${r.seedRead.loaded} 份内容` +
             (r.seedRead.missing.length === 0 ? '' : `\t这一棵树上没有：${r.seedRead.missing.join(' · ')}`),
         )
+      }
+      // **判出来的那一批契约**（门后面那一批）：停着的时候它已经在了，人批的就是它。
+      if (built !== null && r.gate.precheck !== null) {
+        emitLine(`  判：${built.contracts.length} 份契约造得出来（值域持有者逐字段核过）· 还没发`)
+        for (const c of built.contracts) emitLine(`    ${c.id}\t${c.agent}\t${c.kind}\t${writeSetLine(c)}`)
+        emitLine(`  预检：${writeSetPaths(built.contracts).length} 条路径 · ${r.gate.precheck.intersections.length} 对相交`)
+        for (const line of r.gate.precheck.lines) emitLine(`    ${line}（照发：这一站的口径是报出来、照发）`)
+      }
+      if (draft !== null) {
         emitLine('  每一格的预估占用（三区 + 工具目录 + seed；估账，不是读数）：')
         for (const row of r.occupancy) {
           emitLine(
@@ -1370,14 +1398,14 @@ async function roundPlan(
               (row.sweet ? '' : `\t${row.why}`),
           )
         }
-        if (r.draft.prose !== '') {
+        if (draft.prose !== '') {
           emitLine('  为什么这么拆（模型写的）：')
-          for (const line of r.draft.prose.split('\n')) emitLine(`    ${line}`)
+          for (const line of draft.prose.split('\n')) emitLine(`    ${line}`)
         }
       }
       if (!r.held) {
-        process.stderr.write('草案退回了（键域不完整——构造器不猜、不补）：\n')
-        for (const one of r.problems) process.stderr.write(`  ${one}\n`)
+        process.stderr.write('草案退回了（构造器不猜、不补）：\n')
+        for (const one of r.gate.problems) process.stderr.write(`  ${one}\n`)
         process.stderr.write('改完再跑一遍：' + `fugue --root ${root} round plan ${JSON.stringify(goal)}\n`)
       } else {
         process.stderr.write(
@@ -1546,6 +1574,19 @@ function writeSetLine(c: {
   if (c.kind === 'implement') return (c.ownedPaths ?? []).join(' · ')
   if (c.kind === 'resolve') return (c.conflictPaths ?? []).join(' · ')
   return (c.evidenceRequired ?? []).map((e) => e.artifact).join(' · ')
+}
+
+/**
+ * 绑好的动作表：名字 → 它声明的产出（`actions.<名字>` 那一条）。
+ *
+ * **持轮者给的断言只能从这里选**（PLAN § 5.10 的 C1 ⑦：架构 § 8.12 那张表里
+ * `assertions` 的候选就是工作区配置）。读它的是 `readBinding` 一处，所以“这个名字合不合形状”
+ * 的判据只有一份——报出来的话就是那一份说的（不猜、不补、不替它挑）。
+ */
+function actionsTableOf(doc: ConfigDoc): Readonly<Record<string, readonly RelPath[]>> {
+  const out: Record<string, readonly RelPath[]> = {}
+  for (const name of actionNames(doc)) out[name] = readBinding(doc, name).outputs as readonly RelPath[]
+  return out
 }
 
 /**

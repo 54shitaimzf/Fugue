@@ -173,9 +173,8 @@ function depsOf(b: Bench, call: CallModel, owned: readonly string[] = ['a.ts']):
         assertions: [{ name: '总是过', action: 'ok' }],
       },
     ],
-    agents: [AGENT],
-    branchOf: (a: AgentId) => `refs/heads/${a}` as BranchId,
-    seedOf: () => [],
+    identityFor: () => ({ agent: AGENT, branch: `refs/heads/${AGENT}` as BranchId }),
+    seeds: [] as readonly (readonly RelPath[])[],
     stub: realDriver({}),
     driver: {
       state: (agent: AgentId) => stateOf(agent),

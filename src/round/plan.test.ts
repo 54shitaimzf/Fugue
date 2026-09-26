@@ -34,6 +34,7 @@ import type { AgentHandle, ModelEvent, ToolCallRequest, ToolExecutor, ToolResult
 import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
 import { createToolHost } from '../tools/host.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
+import { identFor } from '../identity.ts'
 import { refHeadOf } from './head.ts'
 import { scanTree, WORKSPACE_STATE } from '../materialize/diffstat.ts'
 import { draftPathOf } from '../contract/draft.ts'
@@ -231,6 +232,10 @@ async function plan(
     execute,
     tools: CATALOG,
     maxSteps: 8,
+    // **身份按构造次序问**（调查型在前）：门判出来的那一批契约的身份就是放行那一下要发的那些。
+    identityFor: (n: number) => identFor(ROUND, n),
+    // 绑好的动作表：这一份台子把 `ok` 绑上、不声明产出（一条只跑退出码的断言）。
+    actions: { ok: [] as readonly RelPath[] },
     ...(opts.judge === true ? { judgeOnly: true } : {}),
     occupancy: {
       decl: DECL,
@@ -259,10 +264,10 @@ test('① 一趟预备态：零契约 · 零分支 · 真实工作树一个字�
   const b = await bench()
   try {
     const r = await plan(b, [section(), section({ goal: '把调用方改到新模块上', ownedPaths: ['src/callers'] })], { declare: true })
-    assert.equal(r.held, true, `该停在门口：${r.problems.join(' / ')}`)
+    assert.equal(r.held, true, `该停在门口：${r.gate.problems.join(' / ')}`)
     assert.equal(r.exit, 'declared', '模型调了 exit_plan_mode，这一趟该记成 declared')
     assert.equal(r.steps, 2, `该走两步（写草案 · 交卷），实际 ${r.steps}`)
-    assert.equal(r.draft?.sections.length, 2)
+    assert.equal(r.gate.draft?.sections.length, 2)
 
     const evs = await eventsOf(b)
     const names = evs.map((e) => e.t)
@@ -270,6 +275,15 @@ test('① 一趟预备态：零契约 · 零分支 · 真实工作树一个字�
       assert.ok(names.includes(want as never), `日志里没有 ${want}：${names.join(' · ')}`)
     }
     assert.equal(names.filter((n) => n === 'contract/issue').length, 0, '预备态发契约了')
+    // **判出来的那一批已经在手上，而一个字节都没发**（C2 的判据）：停在门口不是"看着像对"，
+    // 是那一批契约值已经造得出来且过了预检——只差人那一声放行。
+    assert.notEqual(r.gate.built, null, '停在门口却没造出契约集合')
+    assert.deepEqual(
+      r.gate.built?.contracts.map((c) => c.id),
+      ['r1.implement.1', 'r1.implement.2'],
+    )
+    assert.notEqual(r.gate.precheck, null, '预检没跑')
+    assert.deepEqual(r.gate.precheck?.intersections, [], '两格写不同的地方')
     assert.equal(names.filter((n) => n === 'mat/fork').length, 0, '预备态铺物化了')
     assert.equal(names.filter((n) => n === 'ckpt/commit').length, 0, '预备态提交了')
 
@@ -281,7 +295,7 @@ test('① 一趟预备态：零契约 · 零分支 · 真实工作树一个字�
 
     const stateLine = evs.find((e) => e.t === 'round/state' && e.from === 'Idle')
     assert.deepEqual(stateLine, { t: 'round/state', round: ROUND, from: 'Idle', to: 'Planning' }, '该走 Idle → Planning')
-    console.log(`① 读数：事件 ${names.join(' · ')}`)
+    console.log(`① 读数：事件 ${names.join(' · ')}（contract/issue 0 条）· 门后面那一批 ${r.gate.built?.contracts.length} 份已在手上`)
     console.log(`① 读数：refs [${refsOf(b.root).join(' · ')}]（开跑之前也是这 ${b.refs.length} 条）· 真实工作树指纹没动 · 盘上没有 .fugue/plan/`)
   } finally {
     await b.log.close()
@@ -299,7 +313,7 @@ test('② 出口三档落到同一个判据：读出来的草案逐字节相同'
       const r = await plan(b, sections, mode === 'declared' ? { declare: true } : mode === 'judged' ? { judge: true } : {})
       got.push(r)
       assert.equal(r.exit, mode, `这一趟该记成 ${mode}，实际 ${r.exit}`)
-      assert.equal(r.held, true, `${mode} 那一档该停在门口：${r.problems.join(' / ')}`)
+      assert.equal(r.held, true, `${mode} 那一档该停在门口：${r.gate.problems.join(' / ')}`)
       assert.equal(r.draftText, want, `${mode} 那一档读出来的草案与写下去的不是同一份`)
       assert.equal(r.steps, mode === 'judged' ? 0 : 2, `${mode} 那一档的步数不对：${r.steps}`)
       console.log(
@@ -311,8 +325,8 @@ test('② 出口三档落到同一个判据：读出来的草案逐字节相同'
       await b.truth.close()
     }
   }
-  assert.deepEqual(got.map((r) => r.problems.length), [0, 0, 0], '三档的判据该是同一个')
-  assert.deepEqual(got.map((r) => r.draft?.sections.length), [2, 2, 2])
+  assert.deepEqual(got.map((r) => r.gate.problems.length), [0, 0, 0], '三档的判据该是同一个')
+  assert.deepEqual(got.map((r) => r.gate.draft?.sections.length), [2, 2, 2])
 })
 
 test('③ 负对照：缺一个键而模型照样交卷 → 不许放行，报出哪一节哪个键', async () => {
@@ -323,12 +337,12 @@ test('③ 负对照：缺一个键而模型照样交卷 → 不许放行，报�
     const r = await plan(b, [section(), short], { declare: true })
     assert.equal(r.held, false, '草案缺一个键却放行了')
     assert.equal(r.exit, 'declared', '模型确实交了卷——判据不该被这件事改变')
-    assert.equal(r.problems.length, 1, `该报一处：${r.problems.join(' / ')}`)
-    assert.match(r.problems[0] ?? '', /第 2 节缺一个键：ownedPaths/)
+    assert.equal(r.gate.problems.length, 1, `该报一处：${r.gate.problems.join(' / ')}`)
+    assert.match(r.gate.problems[0] ?? '', /第 2 节缺一个键：ownedPaths/)
     assert.equal(r.occupancy.length, 0, '草案读不出来就不该印占用（印的是每一节）')
     const names = (await eventsOf(b)).map((e) => e.t)
     assert.equal(names.filter((n) => n === 'contract/issue').length, 0, '不许放行却发了契约')
-    console.log(`③ 读数：exit=${r.exit} · 停在门口=false · 报出「${r.problems[0]}」· contract/issue ${names.filter((n) => n === 'contract/issue').length} 条`)
+    console.log(`③ 读数：exit=${r.exit} · 停在门口=false · 报出「${r.gate.problems[0]}」· contract/issue ${names.filter((n) => n === 'contract/issue').length} 条`)
   } finally {
     await b.log.close()
     await b.truth.close()
@@ -415,7 +429,7 @@ test('⑥ 同一轮里再跑一趟：不造第二条 Idle → Planning，意图�
     assert.equal(first.held, true)
     const second = await plan(b, [section()], { judge: true })
     assert.equal(second.exit, 'judged')
-    assert.equal(second.held, true, `第二趟该照样判：${second.problems.join(' / ')}`)
+    assert.equal(second.held, true, `第二趟该照样判：${second.gate.problems.join(' / ')}`)
     const evs = await eventsOf(b)
     const lands = evs.filter((e) => e.t === 'round/state' && e.from === 'Idle' && e.to === 'Planning')
     assert.equal(lands.length, 1, `${lands.length} 条 Idle → Planning：第二趟把处境当成了 Idle`)
@@ -434,7 +448,7 @@ test('⑦ seed 那一段量的是内容：门上的差额与派发那一趟同�
     const CONTENT = '// 底里的解析器\n'
     const seedPaths: readonly RelPath[] = ['src-parse.ts', '这一条不在底上.ts']
     const r = await plan(b, [section({ seed: seedPaths })], { declare: true })
-    assert.equal(r.held, true, `该停在门口：${r.problems.join(' / ')}`)
+    assert.equal(r.held, true, `该停在门口：${r.gate.problems.join(' / ')}`)
     assert.equal(r.seedRead.from, 'tree')
     assert.equal(r.seedRead.loaded, 1, `该在视图上取到 1 份内容：${JSON.stringify(r.seedRead)}`)
     assert.deepEqual(r.seedRead.missing, ['这一条不在底上.ts'], '不在底上的那一条该被点名')

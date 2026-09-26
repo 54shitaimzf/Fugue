@@ -36,13 +36,16 @@ import { digestOf } from '../runtime/restart.ts'
 import { baseFor } from '../view/lower.ts'
 import type { Cause, RoundState, StepContext } from './machine.ts'
 import { step } from './machine.ts'
-import type { Draft, DraftKind, DraftSection } from '../contract/draft.ts'
-import { DraftError, draftOf, draftPathOf } from '../contract/draft.ts'
+import type { DraftKind, DraftSection } from '../contract/draft.ts'
+import { draftPathOf } from '../contract/draft.ts'
+import type { Identity } from '../contract/build.ts'
 import { seedTextOf } from '../contract/build.ts'
+import type { GateVerdict } from '../contract/gate.ts'
+import { gateOf } from '../contract/gate.ts'
 import type { SeedReading } from './seed.ts'
 import { seedRulerOf } from './seed.ts'
 
-/** 这一层自己的失败：底钉不住 · 视图打不开。**草案不成立不是它**——那是一件读数（`problems`）。 */
+/** 这一层自己的失败：底钉不住 · 视图打不开。**草案不成立不是它**——那是门的一份读数（`gate.problems`）。 */
 export class PlanError extends Error {}
 
 /**
@@ -99,6 +102,22 @@ export interface PlanDeps {
    * "模型说完了"收完的结果一样——差别只在谁触发的。
    */
   readonly judgeOnly?: boolean
+  /**
+   * 第 `n` 个 agent 的身份（从 0 起 · **构造次序**：调查型在前，其余按草案次序）。
+   *
+   * **门上这一份与派发那一轮该是同一个分配器**：门只认契约集合，而集合里每一份的
+   * `agent`/`branch` 就是它给的（架构 § 14.1 第 1 步）——两处不同的话，放行那一下拿到的
+   * 就不是人批的那一批。
+   */
+  readonly identityFor: (n: number) => Identity
+  /**
+   * 绑好的动作表：名字 → 它声明的产出（配置里 `actions.<名字>` 那一条）。
+   *
+   * **持轮者给的断言只能从这里选**（架构 § 8.12：`assertions` 的候选是工作区配置）——
+   * 给一个没绑的名字就当场退回并指出有哪几个，不猜、不补、不替它挑（PLAN § 5.10 的 C1 ⑦）。
+   * 一个都没绑也是一份合法的表：那时任何断言都退回。
+   */
+  readonly actions: Readonly<Record<string, readonly RelPath[]>>
   /** 每一格的预估占用要的那几样（给"规模对齐模型能力"那句一个能验的形状）。 */
   readonly occupancy: OccupancyContext
 }
@@ -152,10 +171,13 @@ export interface PlanResult {
   readonly stopped: string
   /** 草案文件的原文（视图里那一份，逐字节）。没写出来就是 `null`。 */
   readonly draftText: string | null
-  /** 读出来的那一份（键域不完整时是 `null`——不猜、不补）。 */
-  readonly draft: Draft | null
-  /** 键域那一条报出来的每一处。**空数组 = 停在门口**。 */
-  readonly problems: readonly string[]
+  /**
+   * 判出来的那一份：键域 · 值域 · 跨字段 · 绑定 · 预检（`contract/gate.ts` 一处）。
+   *
+   * **门停着的时候 `gate.built` 就是门后面那一批契约值**——一个字节都没发。放行那一下
+   * （`round go`）把同一份草案再判一遍，得到的是同一批值。
+   */
+  readonly gate: GateVerdict
   /** 种子那一份的读数：取到几份内容 · 哪几条在这一棵树上没有（读数，不参与判断）。 */
   readonly seedRead: SeedReading
   readonly occupancy: readonly OccupancyRow[]
@@ -295,8 +317,9 @@ async function roundStateOf(log: Log, round: RoundId): Promise<RoundState> {
 /**
  * 跑一趟预备态。**停在门口，不派发。**
  *
- * 返回里的 `problems` 就是那道门的判据：空数组 = 键域完整 = 停在门口；非空 = 退回并报出每一处
- * （架构 § 15.1.a 的"判"与"停"，`M11` 的构造器不猜不补）。**这一份不去拦"拆得好不好"**——
+ * 返回里的 `gate` 就是那道门的判据：`gate.problems` 空数组 = 停在门口；非空 = 退回
+ * 并报出是哪一节哪一个键（架构 § 15.1.a 的"判"与"停"，`M11` 的构造器不猜不补）。
+ * **这一份不去拦"拆得好不好"**——
  * 拆分没有事前判据（架构 § 8.12 自己写着"拆得太粗与拆得太细都没有事前判据"），所以规模与耦合
  * 只印出来、照发；那一问归 `round go` 那一次批。
  */
@@ -353,7 +376,7 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
       const r = await runtime.step(handle, new AbortController().signal)
       steps += 1
       if (r.outcome.kind === 'failed') {
-        // **失败也要走到判那一步**：它是"这一格停了"的一种，`problems` 会说出草案缺什么。
+        // **失败也要走到判那一步**：它是"这一格停了"的一种，`gate.problems` 会说出草案缺什么。
         stopped = `${r.outcome.error.why}：${r.outcome.error.message}`
         break
       }
@@ -369,37 +392,38 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
     }
   }
 
-  // 三 · 草案从视图里读回来。**它落在日志里**（`holder/distill` 那一路的 `digest` + 正文）：
-  // 真源仍然只有两处（git 对象库 + `M0` 日志），盘上不落第三处。
+  // 三 · 草案从视图里读回来，**接着就判**：键域 · 值域 · 跨字段 · 绑定 · 预检全在
+  // `contract/gate.ts` 那一处。放行那一下（`round go`）走的是同一段判据——**门只认契约集合**，
+  // 所以两处必须给出同一个答案。
   //
-  // 视图是调用方给的**那一份**：持轮者写它的那一下与这里读它的这一下是同一个对象——
-  // 两处各开一份视图的症状是"草案不在视图里"（读的那一份早于写的那一份建出来）。
+  // 真源仍然只有两处（git 对象库 + `M0` 日志），盘上不落第三处：草案跟着 `holder/distill` 的
+  // 正文进日志。视图是调用方给的**那一份**：持轮者写它的那一下与这里读它的这一下是同一个对象。
   const bytes = await deps.view.read(draftPath)
   const draftText = bytes === null ? null : new TextDecoder().decode(bytes)
-  let draft: Draft | null = null
-  let problems: readonly string[] = []
-  if (draftText === null) {
-    problems = [
-      `草案不在视图里：${draftPath}——持轮者这一趟没写出那一份` +
-        `（一个任务一节，每节一个标 json 的围栏块，键就是契约的键）`,
-    ]
-  } else {
-    seqs.push(await log.append('round', { t: 'holder/distill', agent: 'round' as AgentId, digest: digestOf(draftText), body: draftText }))
-    try {
-      draft = draftOf(draftText)
-    } catch (err) {
-      if (!(err instanceof DraftError)) throw err
-      problems = err.problems
-    }
+  if (draftText !== null) {
+    seqs.push(
+      await log.append('round', { t: 'holder/distill', agent: 'round' as AgentId, digest: digestOf(draftText), body: draftText }),
+    )
   }
 
-  // 四 · 印每一格的预估占用。**印，不判**（规模归模型；甜点区间那条带归架构，而它只把差额说出来）。
-  //
-  // `seed` 那一段的量法：在**持轮者这份视图**上取一次内容——它与派发那一趟是同一个量法 · 同一
-  // 把尺（`round/seed.ts`），所以门上印的差额与派发时判的那个数说的是同一件事。
+  // `seed` 那一段的量法：在**持轮者这份视图**上取一次内容——它与派发那一趟是同一把尺
+  // （`round/seed.ts`），所以门上印的差额与派发时判的那个数说的是同一件事。**装在这一处**：
+  // 门里要用它量每一份种子的上限，而下面印占用要用同一份读数。
   const ruler = seedRulerOf((p) => deps.view.read(p))
-  if (draft !== null) await ruler.load(draft.seeds.flat())
-  const occupancy = draft === null ? [] : occupancyOf(draft.sections, { ...deps.occupancy, seedText: ruler.textOf })
+  const gate = await gateOf(
+    { from: 'draft', goal, text: draftText, where: draftPath },
+    {
+      round,
+      base,
+      identityFor: deps.identityFor,
+      actions: deps.actions,
+      seedRuler: ruler,
+    },
+  )
+
+  // 四 · 印每一格的预估占用。**印，不判**（规模归模型；甜点区间那条带归架构，而它只把差额说出来）。
+  const occupancy =
+    gate.draft === null ? [] : occupancyOf(gate.draft.sections, { ...deps.occupancy, seedText: ruler.textOf })
 
   return {
     round,
@@ -408,11 +432,10 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
     steps,
     stopped,
     draftText,
-    draft,
-    problems,
+    gate,
     seedRead: ruler.reading,
     occupancy,
-    held: problems.length === 0,
+    held: gate.held,
     seqs,
   }
 }

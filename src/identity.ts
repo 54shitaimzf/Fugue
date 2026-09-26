@@ -20,11 +20,28 @@
 // 对方那半。
 //
 // 只有行为是纯函数、没有任何 import 之外的副作用——所以谁都可以 import 它。
-import type { AgentId, RefName, WriterId } from './terms.ts'
+import type { AgentId, BranchId, RefName, RoundId, WriterId } from './terms.ts'
 
 /** writer → 它推进的 ref。round 级的写者走主线。 */
 export function refFor(writer: WriterId): RefName {
   return writer === 'round' ? 'refs/heads/main' : `refs/heads/${writer}`
+}
+
+/**
+ * 身份分配器：第 `n` 个 agent 的那一份身份（**从 1 起** · 构造次序）。出处：架构 § 4 那张 ref 表
+ * （`refs/heads/agent/<round>/<n>`）· 架构 § 14.1 第 1 步（身份分配器）。
+ *
+ * **一处给两样，因为它们是同一个名字的两种用法。** 契约里的 `agent`（名字）与 `branch`（它推进
+ * 的那一条 ref）都由构造器问它要；而分支 · 物化根 `mat/<agent>/` · 日志 `log/<writer>.jsonl` 都
+ * 从同一个名字出发（§ 9.2 那张布局表）。分开各拼一遍的症状是"两份次序不是同一个序"——先派
+ * 调查型契约的时候错开一格，而那种错在日志里看不出来（两份身份都合法，只是换了个位置）。
+ *
+ * 序号按**构造次序**（调查型在最前）：`agent/<round>/1` 是这一轮第一个拿到契约的那一格，不是
+ * "第一个实现型"。
+ */
+export function identFor(round: RoundId, n: number): { readonly agent: AgentId; readonly branch: BranchId } {
+  const agent = `agent/${round}/${n + 1}` as AgentId
+  return { agent, branch: refFor(agent) as unknown as BranchId }
 }
 
 /**

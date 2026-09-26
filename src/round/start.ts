@@ -1,19 +1,20 @@
-// M12 轮起头：钉住底 · 发契约 · 起分支。出处：架构 § 8.13（`Idle → Planning` 的触发与守卫 ·
+// M12 轮起头：钉住底 · 判一遍 · 发契约 · 起分支。出处：架构 § 8.13（`Idle → Planning` 的触发与守卫 ·
 // `Planning → Delegated` · `Delegated → Working`）· 架构 § 8.14 的 C7 前半（"轮次开始时钉住
 // base"）· 架构 § 4（`fork` 定物化的底、`branch` 定视图的底，两者必须同一个提交）·
 // 架构 § 8.12 的写入集预检第一次调用（`Planning` 那一档）· PLAN § 5.7 的 A4 行。
 //
-// **这一份把五件事按顺序做完，一件事都不是新机制**（架构 § 14.1 那七步里的 1 · 2 · 4 · 6）：
+// **这一份把四件事按顺序做完，一件事都不是新机制**（架构 § 14.1 那七步里的 1 · 2 · 4 · 6）：
 //
 //   1. **钉住底**：`baseFor(truth, 'round')` 读一次 HEAD。**读一次，然后传下去**——契约里的底、
 //      N 条分支的底、N 次 `fork` 的底都是这同一个值。这就是 C7 前半那句话的落地：
 //      轮次开始时钉住 base，之后 HEAD 再动也不影响这一轮的判据（A7 的漂移检测读的正是它）。
-//   2. **量一遍种子**（架构 § 8.12 的 `seed` 那两条准则）：在这一轮钉住的底上把每一份种子取
-//      一次内容，量成 token。契约里那一栏因此是**判过的**，不是一条谁也不看的清单。
-//   3. **构造契约**（A1）并在 `Planning` 那一档跑一次预检（A2 的第一个调用点）。
-//   4. **发契约**：N 条 `contract/issue`。契约**住日志里**（架构 § 8.12），所以事件带正文；
+//   2. **判一遍**（`contract/gate.ts`）：人写的那两栏（意图 · 拆分）进去，**一批契约值 + 一次预检**出来——
+//      键域 · 值域 · 跨字段 · `seed` 超限都在那一处。量法（一份种子的账 = 指针清单 + 它在这一轮钉住
+//      的底上取到的内容）由这一份装好交给门（`seedRulerAt`）——架构 § 8.12 那两条准则。
+//   3. **发契约**：N 条 `contract/issue`。契约**住日志里**（架构 § 8.12），所以事件带正文；
 //      这一条边就是"契约之于派发，正如视图之于日志"。
-//   5. **起分支**：N 条 `refs/heads/<agent>` 定在**同一个 base** 上。
+//   4. **起分支**：N 条 `refs/heads/<agent>` 定在**同一个 base** 上——要起的那几条，
+//      就是这一批契约的持有者（一个来源：身份分配器给的那个次序）。
 //
 // **物化是可选的一步，而且缺省不做。** 架构 § 14.1 的 `SpawnOptions.deferMaterialize` 缺省 `true`
 // ——「走 D3（按需物化）」：这一轮开起来的时候，N 个 agent 一次都还没跑，铺 N 棵树是为还没发生的
@@ -32,18 +33,17 @@
 import { createHash } from 'node:crypto'
 import type { Log } from '../log/events.ts'
 import type { Roots } from '../roots/contract.ts'
-import type { AgentId, BranchId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../terms.ts'
+import type { AgentId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../terms.ts'
 import type { Truth } from '../truth/contract.ts'
 import { refFor } from '../identity.ts'
 import { baseFor } from '../view/lower.ts'
 import { fork } from '../materialize/fork.ts'
 import type { ForkResult } from '../materialize/fork.ts'
 import { DEFAULT_MATERIALIZE } from '../materialize/contract.ts'
-import type { Built, BuildDeps, Intent, SplitAssignment } from '../contract/build.ts'
-import { build } from '../contract/build.ts'
+import type { Built, Identity, Intent, SplitAssignment } from '../contract/build.ts'
+import { gateOf } from '../contract/gate.ts'
 import type { Contract } from '../contract/types.ts'
 import type { PrecheckResult } from '../contract/precheck.ts'
-import { planningGate } from '../contract/precheck.ts'
 import type { Cause, RoundState } from './machine.ts'
 import { step } from './machine.ts'
 import type { SeedReading } from './seed.ts'
@@ -57,7 +57,7 @@ export class RoundStartError extends Error {}
  *
  *   `intent` · `split` 是持轮者给的（架构 § 15.1 的意图 + § 15.1.a 的拆分草案）；
  *   `agent` · `branch` 由身份分配器给（§ 14.1 第 1 步）；这一份不认识它是怎么发出来的；
- *   `seedOf` · `actionOutputsOf` 是预备态与动作绑定给的（§ 8.12 那张字段来源表）。
+ *   `seeds` · `actionOutputsOf` 是预备态与动作绑定给的（§ 8.12 那张字段来源表）。
  */
 export interface RoundStartDeps {
   readonly roots: Roots
@@ -66,21 +66,31 @@ export interface RoundStartDeps {
   readonly round: RoundId
   readonly intent: Intent
   readonly split: readonly SplitAssignment[]
-  readonly agents: readonly AgentId[]
-  readonly branchOf: (agent: AgentId) => BranchId
-  readonly seedOf: (agent: AgentId) => readonly RelPath[]
-  readonly actionOutputsOf?: (agent: AgentId) => Readonly<Record<string, readonly RelPath[]>>
   /**
-   * 一份种子的量法。**不给就按这一轮钉住的那个底取一次内容**（`seedRulerAt`）：种子是路径的
-   * 指针，而账量的是「这些指针取出多少」（架构 § 8.12）——只量清单那一侧的话，那个上界
-   * （模型上限 − Zone A − 交接余量）对着一条几行的清单永远不响。给了就用给的：测试与
-   * "从别的树取"那一档从这个口进来。
+   * 第 `n` 个 agent 的身份（从 0 起 · **构造次序**：调查型在前，其余按草案次序）。
+   *
+   * **一个来源。** 契约里的身份 · 那几条分支 · 物化都从它来——再另给一份 agent 名单的
+   * 症状是"两份次序不是同一个"：先派调查型契约时错开一格（第一份实现型拿到第二个身份），而两份
+   * 身份都合法——那种错在日志里看不出来（架构 § 14.1 第 1 步）。
+   */
+  readonly identityFor: (n: number) => Identity
+  /**
+   * 逐份的种子（指针清单），**与构造次序同序**。**给值而不是给函数**：量的那一批与
+   * 发出去的那一批要是同一批（一个函数没有纯的保证）。不给就是这一轮没有种子。
+   */
+  readonly seeds?: readonly (readonly RelPath[])[]
+  /** 动作绑定声明的产出：逐份给（动作名 → 产出路径）。不给就是这一批一份都不声明。 */
+  readonly actionOutputsOf?: (n: number) => Readonly<Record<string, readonly RelPath[]>>
+  /**
+   * 一份种子的量法。**不给就按这一轮钉住的那个底取一次内容**（`seedRulerAt`）：种子是路径的指针，
+   * 而账量的是「这些指针取出多少」（架构 § 8.12）——只量清单那一侧的话，那个上界（模型上限 − Zone A −
+   * 交接余量）对着一条几行的清单永远不响。给了就用给的：测试与“从别的树取”那一档从这个口进来。
    */
   readonly seedTokens?: (paths: readonly RelPath[]) => number
   readonly seedLimit?: number
   /**
    * 第 `n` 个 agent 的日志口。**`mat/fork` 落在那个 agent 自己的日志里**，所以物化那一步要它。
-   * 不给就是"这一轮不物化"（`materialize` 也就无从谈起）。
+   * 不给就是“这一轮不物化”（`materialize` 也就无从谈起）。
    */
   readonly logForAgent?: (a: AgentId) => Log
   /**
@@ -101,7 +111,7 @@ export interface RoundStart {
   /** 种子那一份的读数：量法 · 取到几份内容 · 哪几条在这一棵树上没有（读数，不参与判断）。 */
   readonly seedRead: SeedReading
   readonly owners: Readonly<Record<ContractId, AgentId>>
-  /** `Planning` 那一档的预检结果（报出相交而照发；见 PLAN § 5.7 的口径一）。 */
+  /** 第一次写入集预检的结果（门里跑的 · 报出相交而照发；见 PLAN § 5.7 的口径一）。 */
   readonly precheck: PrecheckResult
   /** 铺出来的那几棵树。**没铺就是空的**——`deferMaterialize` 缺省为真。 */
   readonly forks: readonly ForkResult[]
@@ -109,13 +119,12 @@ export interface RoundStart {
 }
 
 /**
- * 轮起头。**顺序是承重的**：钉底在构造之前（契约里的底要那个值）· 构造在派发之前 ·
- * 预检在移出 `Planning` 之前（架构 § 8.12：第一次预检是 `Planning` 的**权威判定**）·
- * 分支在契约之后（`contract/issue` 里的 `owner` 要先定下来）。
+ * 轮起头。**顺序是承重的**：钉底在判之前（契约里的底要那个值，而量种子也在它上）·
+ * 判在落地之前（这一档是一条命令走完，所以不成批就一个字节都不落；判据与 `Planning` 那一档
+ * 是同一个，见 `contract/gate.ts`）· 契约在分支之前（`contract/issue` 里的 `owner` 要先定下来）。
  */
 export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
-  const { roots, truth, log, round, agents } = deps
-  if (agents.length === 0) throw new RoundStartError('一个 agent 都没有：轮次至少要有一条分支')
+  const { roots, truth, log, round } = deps
 
   // 一 · 钉住底。**读一次，然后一路传下去**——这就是 C7 前半。
   const base = await baseFor(truth, 'round')
@@ -125,45 +134,39 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
     )
   }
 
-  // 二 · 量一遍种子，再构造契约。**顺序是承重的**：量法要一个已经装好的值（`build` 是纯函数），
-  // 而"装"这一步要这一轮钉住的底——所以它在构造之前，与钉底之后。
+  // 二 · 判：这两栏（意图 · 拆分）与逐份种子进去，一批契约值加一次预检出来。
   //
-  // **逐份的种子在这里取一次定下来**，构造器读的就是这一份：两处各调一次 `deps.seedOf` 的症状
-  // 是"量的那一批与发出去的那一批可以不是同一批"（`seedOf` 是调用方给的函数，没有纯的保证）。
-  const seeds = new Map<AgentId, readonly RelPath[]>()
-  for (const a of agents) seeds.set(a, deps.seedOf(a))
+  // **量法在这一处装**：不给 `seedTokens` 就按这一轮钉住的那个底把每一份种子取
+  // 一次内容——同一份尺同时给了门里的度量与这一份的读数（`seedRead`）。
+  const seeds = deps.seeds ?? []
   const ruler = deps.seedTokens === undefined ? seedRulerAt(truth, base) : null
-  if (ruler !== null) await ruler.load([...seeds.values()].flat())
-  const seedTokens = ruler === null ? deps.seedTokens : ruler.tokensOf
-
-  // 三 · 构造契约。`agent` 逐份不同，所以 `identityFor` 从 `agents` 里取。
-  const buildDeps: BuildDeps = {
-    round,
-    base,
-    identityFor: (n: number) => {
-      const a = agents[n]
-      if (a === undefined) throw new RoundStartError(`拆分草案要第 ${n + 1} 个 agent，而这一轮只有 ${agents.length} 个`)
-      return { agent: a, branch: deps.branchOf(a) }
+  const gate = await gateOf(
+    { from: 'split', intent: deps.intent, split: deps.split, seeds },
+    {
+      round,
+      base,
+      identityFor: deps.identityFor,
+      ...(deps.actionOutputsOf === undefined ? {} : { actionOutputsOf: deps.actionOutputsOf }),
+      ...(ruler === null ? { seedTokens: deps.seedTokens } : { seedRuler: ruler }),
+      ...(deps.seedLimit === undefined ? {} : { seedLimit: deps.seedLimit }),
     },
-    split: deps.split,
-    seedOf: (n: number) => {
-      const a = agents[n]
-      if (a === undefined) throw new RoundStartError(`种子要第 ${n + 1} 个 agent，而这一轮只有 ${agents.length} 个`)
-      const got = seeds.get(a)
-      if (got === undefined) throw new RoundStartError(`第 ${n + 1} 个 agent 的种子没量过：${a}`)
-      return got
-    },
-    actionOutputsOf: (n: number) => {
-      const a = agents[n]
-      if (a === undefined || deps.actionOutputsOf === undefined) return {}
-      return deps.actionOutputsOf(a)
-    },
-    ...(seedTokens === undefined ? {} : { seedTokens }),
-    ...(deps.seedLimit === undefined ? {} : { seedLimit: deps.seedLimit }),
+  )
+  if (!gate.held || gate.built === null || gate.precheck === null) {
+    // **不成立就退回，不是裁剪后照发**（架构 § 8.12）。这一档没有"停在门口"：
+    // 人写的那两栏不成立就是一次用法错（人自己能改），而门那一档留给持轮者那条路（`round/plan.ts`）。
+    throw new RoundStartError(`这一轮派不出去（构造器不猜、不补）：\n  ${gate.problems.join('\n  ')}`)
   }
-  const built = build(deps.intent, buildDeps)
+  const built = gate.built
 
-  // 四 · 状态机那三步。每一步的判决都来自 `machine.ts`，这里只记转移与落事件。
+  // **要起分支的那几条 = 这一批契约的持有者**。一个来源：身份分配器给的那个
+  // 次序（调查型在前）——再另给一份 agent 名单的话，两份次序一旦不同就错开一格，
+  // 而那种错在日志里看不出来。
+  const agents = [...new Set(built.contracts.map((c) => c.agent as AgentId))]
+  if (agents.length === 0) {
+    throw new RoundStartError('这一批一份契约都没有：轮次至少要有一份契约与一条分支')
+  }
+
+  // 三 · 状态机那三步。每一步的判决都来自 `machine.ts`，这里只记转移与落事件。
   const trail: { from: RoundState; on: Cause; to: RoundState }[] = []
   let state: RoundState = 'Idle'
   const move = async (on: Cause, ctx: Parameters<typeof step>[2] = {}): Promise<void> => {
@@ -179,16 +182,7 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
   await log.append('round', { t: 'round/intent', round, digest: digestOf(intentBody), body: intentBody })
   await move('land', { intent: true })
 
-  // 五 · 第一次写入集预检：`Planning` 那一档的**权威判定**（架构 § 8.12）。
-  const gate = planningGate(built.contracts)
-  if (!gate.ok) {
-    // 这一站的口径是"报出照发"，所以这里到不了。留着它是为了让"改主意的代价是一处"这句话成立：
-    // 把 `planningGate` 的 `ok` 改成 `false`，这一条就接住了。
-    await move('abort')
-    throw new RoundStartError(`写入集预检不放行（${round}）：\n  ${gate.result.lines.join('\n  ')}`)
-  }
-
-  // 六 · 发契约：一份一条。**契约住日志里**（架构 § 8.12）——事件带正文，重放读得出。
+  // 四 · 发契约：一份一条。**契约住日志里**（架构 § 8.12）——事件带正文，重放读得出。
   const owners: Record<ContractId, AgentId> = {}
   for (const c of built.contracts) {
     owners[c.id] = c.agent as AgentId
@@ -203,7 +197,7 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
   }
   await move('contracts-issued')
 
-  // 七 · 起分支：**N 条分支定在同一个 `base` 上**。用 git 直接指（§ 4：`fugue branch` 是一条
+  // 五 · 起分支：**N 条分支定在同一个 `base` 上**。用 git 直接指（§ 4：`fugue branch` 是一条
   // 方便的路，不是一个前提），CAS 的 `expectedOld` 是 `null`——"它必须还不存在"。
   // 已经指着同一个提交算成功（幂等的那一半），指着别处才拒。
   for (const a of agents) {
@@ -220,7 +214,7 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
   }
   await move('branches-started')
 
-  // 八 · 物化：**可选，缺省不做**（`deferMaterialize`，架构 § 14.1）。做了就 N 次 `fork`，
+  // 六 · 物化：**可选，缺省不做**（`deferMaterialize`，架构 § 14.1）。做了就 N 次 `fork`，
   // 逐次都用**同一个 base**，逐次落在那个 agent 自己的日志里。
   const forks: ForkResult[] = []
   if (deps.materialize === true) {
@@ -245,7 +239,7 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
     built,
     seedRead: ruler === null ? SEED_FROM_GIVEN : ruler.reading,
     owners,
-    precheck: gate.result,
+    precheck: gate.precheck,
     forks,
     trail,
   }

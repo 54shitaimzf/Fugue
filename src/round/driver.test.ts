@@ -202,7 +202,7 @@ async function bench(readme = '底\n', ref = 'refs/heads/agent-1'): Promise<Benc
  * `support` 给了就是真驱动那一档（`B7.5`）：`call` · `execute` · `decl` · `handle` · `state`
  * 由它带进来。不给就是打桩那一档。
  */
-/** `depsOf` 那一份拆分：一条契约，或者（给 `agents` 时）N 条只有目标与产物路径不同的。 */
+/** `depsOf` 那一份拆分：一条契约，或者（给 `identityFor` 时）N 条只有目标与产物路径不同的。 */
 type SplitDraft = RoundRunDeps['split'][number]
 
 function depsOf(
@@ -210,7 +210,7 @@ function depsOf(
   driver: RoundRunDeps['stub'],
   support?: RoundRunDeps['driver'],
   round = 'r1',
-  over: { readonly split?: readonly SplitDraft[]; readonly agents?: readonly AgentId[] } = {},
+  over: { readonly split?: readonly SplitDraft[]; readonly identityFor?: (n: number) => { agent: AgentId; branch: BranchId } } = {},
 ): RoundRunDeps {
   const split: readonly SplitDraft[] = over.split ?? [
     {
@@ -243,9 +243,9 @@ function depsOf(
     // **`question` 不给**（给了就是派一份调查型契约，而那一份要一个非空的问题）。
     intent: { goal: '把一件事做完' },
     split,
-    agents: (over.agents ?? [AGENT]) as AgentId[],
-    branchOf: (a) => `refs/heads/${a}` as BranchId,
-    seedOf: () => [],
+    // **身份一个来源**（架构 § 14.1 第 1 步）：名字与它那条分支一处给。
+    identityFor: over.identityFor ?? (() => ({ agent: AGENT, branch: `refs/heads/${AGENT}` as BranchId })),
+    seeds: [] as readonly (readonly RelPath[])[],
     stub: driver,
     ...(support === undefined ? {} : { driver: support }),
     specsOf: () => [
@@ -463,7 +463,10 @@ test('①b 真轮次里两个 agent 各走一格：各自的 prefix/assemble 里
         },
         supportOf(b, scriptedModel(SCRIPTS), two),
         'r1',
-        { split, agents: two },
+        {
+          split,
+          identityFor: (n: number) => ({ agent: two[n] as AgentId, branch: `refs/heads/${two[n]}` as BranchId }),
+        },
       ),
     )
     assertLanded(run, '①b 两个 agent 各走一格')

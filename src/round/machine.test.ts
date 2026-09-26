@@ -8,6 +8,11 @@
 //      九个状态逐个 abort 到 `Aborted`；还在跑的时候 `gc-done` 当场拒，全停之后走得动
 //   ③ **状态机只做转移、不做动作**：`machine.ts` 里没有一次 `await`、没有一个句柄——这条断言
 //      读的是源码本身，不是行为；负对照：往那一份里塞一行 `await` → ③ 变红
+//
+//   ⑤ **门停在 `Planning`**（PLAN § 5.10 的 C2）：从 `Planning` 出去只有两条边（发契约 · 中止），
+//      **没有一条能让这一轮自己走掉**；而判那一份（`contract/gate.ts`）的 import 只来自词汇表
+//      与同一层——它拿不到日志、真源、视图，所以“门停着时没有 `contract/issue`”不是自觉，
+//      是签名上就没有地方发；负对照：往它的 import 里加一行日志那一侧 → ⑤ 变红
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -216,4 +221,53 @@ test('守卫与两个上界：意图没建立不走，打回超界才 Aborted', 
   const ctx: StepContext = Object.freeze({ intent: true, branches: Object.freeze(branches(['Done'])) })
   assert.equal(step('Idle', 'land', ctx), 'Planning')
   assert.deepEqual(ctx, { intent: true, branches: { 'r1/1': 'Done' } })
+})
+
+test('⑤ 门停在 Planning：从它出去只有两条边，而判那一份发不出契约', () => {
+  // **状态那一侧**：`Planning` 只认两个事件——发契约（人开的那一脚）与中止。
+  // “默认为停”在状态机里的形状就是这一行：没有第三条路。
+  assert.deepEqual(causesFrom('Planning'), ['abort', 'contracts-issued'])
+  assert.equal(step('Idle', 'land', { intent: true }), 'Planning')
+  // 没发契约就想起分支：图上没有这条边。
+  assert.throws(() => step('Planning', 'branches-started'), /图上没有这条边/)
+  assert.throws(() => step('Planning', 'all-stopped', { branches: {} }), /图上没有这条边/)
+
+  // **判那一份那一侧**：`contract/gate.ts` 的每一条 import 都落在词汇表与同一层里。
+  const file = fileURLToPath(new URL('../contract/gate.ts', import.meta.url))
+  const text = readFileSync(file, 'utf8')
+  const imports = text.split('\n').filter((l) => l.startsWith('import '))
+  assert.ok(imports.length >= 5, `门那一份的 import 只有 ${imports.length} 条——那这条判据是恒真的`)
+  for (const l of imports) {
+    assert.match(
+      l,
+      /from '(\.\.\/terms\.ts|\.\/(build|draft|precheck|types)\.ts)'$/,
+      `门那一份 import 了别处的东西：${l}`,
+    )
+  }
+  // **它一条事件都发不出去**：没有日志那个句柄，也就没有 `append` 可调。
+  // **只判代码行**：注释里说“不发契约”这件事本身不该把这条断言弄红。
+  const code = text
+    .split('\n')
+    .filter((l) => !l.trimStart().startsWith('//') && !l.trimStart().startsWith('*') && !l.trimStart().startsWith('/*'))
+    .join('\n')
+  for (const banned of ['.append(', 'openLog', 'refFor(', 'node:']) {
+    assert.equal(code.includes(banned), false, `gate.ts 的代码里出现了 ${banned}`)
+  }
+
+  // **负对照**：往它的 import 里加一行日志那一侧 → 那条判据当场红。
+  const polluted = text.replace(
+    "import { planningGate } from './precheck.ts'",
+    "import { openLog } from '../log/log.ts'\nimport { planningGate } from './precheck.ts'",
+  )
+  assert.equal(polluted !== text, true, '负对照没被改到——那这条判据是恒真的')
+  const badImports = polluted.split('\n').filter((l) => l.startsWith('import '))
+  assert.equal(
+    badImports.some((l) => !/from '(\.\.\/terms\.ts|\.\/(build|draft|precheck|types)\.ts)'$/.test(l)),
+    true,
+    '加了一行 IO 那一侧的 import，判据却没认出来',
+  )
+  console.log(
+    `⑤ 读数：Planning 认的事件 ${causesFrom('Planning').join(' · ')}（没有第三条）· ` +
+      `gate.ts 的 ${imports.length} 条 import 全在词汇表与同一层（拿不到日志）`,
+  )
 })
