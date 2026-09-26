@@ -234,7 +234,7 @@ const fs = require("fs")
 const T = process.argv[1]
 const snap = process.argv[2]
 const j = JSON.parse(fs.readFileSync(T + "/run2.json", "utf8"))
-const m = Object.fromEntries(j.metrics.map((r) => [r.metric, r.count]))
+const m = Object.fromEntries(j.report.map((r) => [r.metric, r.count]))
 console.log("  三个数：" + JSON.stringify(m))
 console.log("  预检：Planning " + j.precheckPlanning + " 对 · 合并前 " + j.precheckMerge.count + " 对")
 console.log("  冲突树：" + JSON.stringify(j.conflictTree))
@@ -276,7 +276,7 @@ const conflicts = rows.filter((e) => e.t === "merge/attempt").reduce((n, e) => n
 const rejects = rows.filter((e) => e.t === "round/state" && e.from === "Verifying" && e.to === "Working").length
 const denied = rows.filter((e) => e.t === "run/end" && e.denied).length
 const j = JSON.parse(fs.readFileSync(T + "/run2.json", "utf8"))
-const m = Object.fromEntries(j.metrics.map((r) => [r.metric, r.count]))
+const m = Object.fromEntries(j.report.map((r) => [r.metric, r.count]))
 const byHand = { conflicts, rejects, denied }
 console.log("  按日志手工数：" + JSON.stringify(byHand))
 console.log("  --report 印的：" + JSON.stringify(m))

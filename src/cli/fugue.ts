@@ -1032,19 +1032,17 @@ async function roundRun(
       if (agent === undefined) return usageFail('--deny：这一轮一个 agent 都没有')
       const r = await refuseOneWrite(ctx.truth, started.base, 'round-deny-')
       deniedAction = { agent, exit: r.exit, denied: r.denied, note: r.note }
-      const agentLog = openLog(root, { write: agent as WriterId, sync: 'each' })
-      try {
-        await agentLog.append(agent as WriterId, {
-          t: 'run/end',
-          agent,
-          step: 'deny',
-          exit: r.exit,
-          ms: 0,
-          denied: r.denied,
-        })
-      } finally {
-        await agentLog.close()
-      }
+      // **口用持轮者已经开着的那个**（`agentLogOf` 那一份缓存）。这一轮里这个 agent 的口是持轮者
+      // 开着的（`logOf` 那一栏：只借不还），同一个进程里再拿一次同一把锁是程序错误——`holdWriter`
+      // 当场拒。走查实测过（改之前）：这里另开一份 → 撞红那一趟 `run2.json` 0 字节 · 退出码 1 · 两个 FAIL。
+      await agentLogOf(agent).append(agent as WriterId, {
+        t: 'run/end',
+        agent,
+        step: 'deny',
+        exit: r.exit,
+        ms: 0,
+        denied: r.denied,
+      })
     }
 
     // 打回那三个数：**从日志重算**（架构 § 8.15）。同一份日志算两次同值——所以 `--report` 印的
