@@ -93,7 +93,7 @@ test('① 三个数印得出来，且关系可核对（触发点在 (0, 上限) 
   assert.deepEqual(checkBudget(DECL), [], '这份声明的三个数是自洽的')
   assert.equal(DECL.budget.trigger, triggerAt(DECL.contextLimit), '触发点是那一个函数算出来的')
   assert.equal(DECL.contextLimit, 128_000)
-  assert.equal(DECL.budget.trigger, 96_000)
+  assert.equal(DECL.budget.trigger, 44_800)
   assert.equal(DECL.budget.handoffMargin, 16_000)
 
   const plan = planBudget(askOf(prefixOf(emptyState())))
@@ -154,7 +154,7 @@ test('③ 三档分得开：没到触发点 · 到了且写不下 · 到了且�
   assert.ok(mid.used + 2_000 + mid.handoffMargin <= mid.limit, '交接加余量塞得下')
 
   // (c) 到了触发点，而**交接已经写不下** → `stop`（地板那一档：明确报出为什么停）。
-  const tooBig = stateWithUsed(DECL.budget.trigger + 14_000)
+  const tooBig = stateWithUsed(DECL.contextLimit - DECL.budget.handoffMargin)
   const stop = planBudget(askOf(prefixOf(tooBig), { handoff: handoffOf(DECL.budget.handoffMargin * 4) }))
   assert.equal(stop.kind, 'stop', `交接待写不下该停：${stop.why}`)
   console.log(`③ 读数：continue used=${small.used} · restart used=${mid.used} · stop used=${stop.used}`)
@@ -176,7 +176,7 @@ test('④ 负对照：触发点设在等于上限 → 关系核对当场报出�
   // 一份"过了正常触发点、又还在正常上限之内"的状态（用量 `U` 落在
   // `[trigger, limit - margin)` 这一段里）：正常预算下判"交接"，坏预算下**连触发都到不了**
   // ——它一直在 `continue` 里转，直到某一步直接撑爆（那一步是 `stop`，而交接已经写不下了）。
-  const mid = stateWithUsed(DECL.budget.trigger + 4_000) // 用量落在 [96000, 112000) 里
+  const mid = stateWithUsed(DECL.budget.trigger + 4_000) // 用量落在 [44800, 112000) 里
   const good = planBudget(askOf(prefixOf(mid)))
   assert.equal(good.kind, 'restart', `正常预算下：${good.kind}——${good.why}`)
   const plan = planBudget(askOf(prefixOf(mid), { decl: broken }))

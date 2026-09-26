@@ -119,7 +119,7 @@ test('② 目录：两条真声明，各指得出提供方 · 线协议 · 上�
     assert.deepEqual([m.systemPromptUpdate], ['in-history'], `${name} 的系统提示词更新方式`)
     assert.deepEqual([m.contextLimit], [128_000], `${name} 的上限`)
     assert.deepEqual([m.budget.trigger, m.budget.handoffMargin], [triggerAt(128_000), 16_000], `${name} 的预算两栏`)
-    assert.equal(m.budget.trigger, 96_000, '上限的四分之三')
+    assert.equal(m.budget.trigger, 44_800, '上限的 35%')
     assert.deepEqual(m.call, DEFAULT_CALL, `${name} 的调用配置`)
   }
   // 缺省 = 表的第一条，不是另一条写死的常量。

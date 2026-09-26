@@ -173,9 +173,12 @@ export interface ModelDecl {
  *
  * 它是函数不是常量，理由写在架构 § 23 U6：触发点与交接余量都是**模型相关的量**，而真实取值
  * 要等 `B7` 的 `handoff-yield` 读数。今天从一个比例算出来，改的是这一个数，不是七处声明。
+ *
+ * **比例这一版定成 35%**（架构 § 8.13.a · § 23 U6）：交接要早——触发点越贴上限，交接提示词那
+ * 一次调用就越贴着上限走，"写得下"这件事就越靠运气。U6 的实测收窄的是上限与余量本身。
  */
 export function triggerAt(contextLimit: number): number {
-  return Math.floor(contextLimit * 0.75)
+  return Math.floor(contextLimit * 0.35)
 }
 
 /**
