@@ -381,6 +381,14 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
    */
   let manifestNow: readonly RelPath[] = []
 
+  /**
+   * **命令跑完之后那棵树上还有没有这一条路径**（`ReclaimDeps.treeNow` 的实现）。
+   *
+   * `null` = 宿主还没说过（那一档按"有"算：宁可不报删除，也不报一条假的）。宿主在**卸载之前**
+   * 装它上来——`afterRun()` 的第一件事就是卸载，所以这一栏的寿命只有那一次 `collect`。
+   */
+  let treeNow: ((rel: RelPath) => Promise<boolean>) | null = null
+
   const host = createToolHost(view, roots, {
     actions: { writer, log, truth, head },
     commandFor,
@@ -420,6 +428,9 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
         return out.sort()
       },
       isTombstone: (p) => view.state().upper.some((e) => e.kind === 'tombstone' && e.path === p),
+      // **命令跑完之后那棵树上还有没有它**：宿主在卸载之前把这一条读口装上来
+      // （`execRoot.onTreeNow`）——卸载之后 `merged` 只剩一个空挂载点，再问就晚了。
+      treeNow: async (p) => (treeNow === null ? true : await treeNow(p)),
     }),
     execRoot: {
       log,
@@ -431,6 +442,10 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       // 每一次问执行面都顺手把两份机制事实记下来（回写要用）。
       onState: (r) => {
         strategyNow = r.strategy
+      },
+      // **回写那一支的删除判据要它**（见 `treeNow` 那一栏）：宿主在卸载之前把读口装上。
+      onTreeNow: (f) => {
+        treeNow = f
       },
       onSync: (m) => {
         manifestNow = m

@@ -430,6 +430,47 @@ test('① 同格内 `write` 之后 `bash cat`：回执里就是那一份字节�
  *     会用的缝，与"任何单元都不许让地板变低"同一类问题。
  * 所以这一条负对照要等一个真能造出那条路径的接缝（或者等整链测试那一档从外面注入一次执行）。
  */
+// ── ⑪ 同格内先 `write` 后 `bash rm`：那一条删除要活到收尾提交 ─────────
+
+/**
+ * **这一条是 W8 判据 ④ 漏掉的那一档，也是这一块改动的由头。**
+ *
+ * ③ 量的是"`bash rm` 一条底里就有的文件"，⑥ 量的是"视图没动就不重复落"，① 量的是"`write`
+ * 之后 `bash cat` 读得到"。三条都过，而**同一格里先 `write p` 再 `bash rm p`** 照样可以是错的：
+ * `write` 推出来的那份 delta 在 `bash` 之前的那一次 `ensure` 里被铺到树上，而那时算 delta 的
+ * 基点取错了（拿了"这一格历史上写过几次"那个号），于是同一条 delta **又落了一遍**——`rm` 留下
+ * 的白洞被它覆盖，回写报不出删除，收尾提交把模型已经删掉的那一份又交上去。**静默错**：不报错、
+ * 验收照过、提交里是错的。
+ *
+ * **写的必须是一条底里没有的新路径**：改一条底里就有的文件（`a.ts`）走的是 `modify`，那一档
+ * 删除回得来（实测 HEAD 上就过）；`add` 那一档才是"重新铺一遍"发生的形状。
+ *
+ * 判据落在**收尾提交的那一份**上（唯一能看到它的地方）：`p` 不在里面、而 `README.md` 还在
+ * （否则"什么都没提交"也能让前一条断言过）。
+ */
+test('⑪ 同格内先 `write` 后 `bash rm` 同一路径（新文件那一档）：收尾提交里没有它', async () => {
+  const b = await bench()
+  try {
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      oneCall('write', { path: 'fresh.txt', content: '先写这一份，随后把它删掉\n' }),
+      oneCall('bash', { command: '/bin/rm -f fresh.txt' }),
+      DONE,
+    ]
+    const run = await runRound({ ...depsOf(b, scriptedModel(scripts), ['a.ts', 'fresh.txt']), checkDrift: false })
+    assert.equal(run.report.ok, true, `验收该过：${JSON.stringify(run.report)}`)
+    const commit = run.advanced !== null ? String(run.advanced.commit) : ''
+    assert.equal(commit.length, 40, `真工作树该被推进，而那个提交号是：${commit}`)
+    const files = await commitFiles(b, commit)
+    assert.equal(files.includes('fresh.txt'), false, `模型删掉的那一份不该在提交里：${files.join(' ')}`)
+    assert.equal(files.includes('README.md'), true, `底里那一份要还在（否则"空提交"也过）：${files.join(' ')}`)
+    // 而 `bash rm` 真跑到了（不是"一条都没起进程"被当成"删成功"）。
+    const rows = await eventsOf(b.root)
+    assert.equal(rows.filter((e) => e.t === 'run/start').length, 1, '那一条 rm 该起过一次进程')
+  } finally {
+    await b.close()
+  }
+})
+
 test('⑩ 正常链路上 `ensure` 前那次 `collect` 是空的（一条 spurious 的 `mat/reclaim` 都没有）', async () => {
   const b = await bench()
   try {

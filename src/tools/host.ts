@@ -25,6 +25,7 @@ import type { ActionAsk, AskItem, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, T
 import { refuse } from './execute.ts'
 import { shellArgv } from './argv.ts'
 import { digestOf } from '../runtime/restart.ts'
+import { lstatSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ForkStrategy } from '../terms.ts'
 import type { ForkResult } from '../materialize/fork.ts'
@@ -36,7 +37,6 @@ import type { RefHead } from '../round/head.ts'
 import { isMounted, unmountOverlay } from '../materialize/mount.ts'
 import { matParts } from '../roots/paths.ts'
 import { lowerAt } from '../view/lower.ts'
-import { loadView } from '../view/view.ts'
 import type { Reclaim, DeclaredSet } from '../execute/reclaim.ts'
 import type { AbsPath } from '../terms.ts'
 
@@ -99,6 +99,16 @@ export interface HostOptions {
     readonly forkOf: (parts: { upper: AbsPath; merged: AbsPath; temp: AbsPath }) => Promise<ForkResult>
     /** 每次问答完执行面之后的那一下（**给调用点记账用**）。 */
     readonly onState?: (r: { readonly root: string; readonly strategy: ForkStrategy | null }) => void
+    /**
+     * **把"命令跑完之后那棵树上还有没有这一条路径"这条读口交出去**（回写那一支的删除判据
+     * 要它）。
+     *
+     * **它交出去的是一份快照，不是一个活的问句**：`merged` 挂着的时候它就是命令跑完之后那棵
+     * 树的全貌，而 `afterRun()` 的第一件事就是卸载——卸载之后那里只剩一个空挂载点，
+     * `existsSync` 一律为假，删除那一支于是把整棵声明树报成 `delete`（本地实测撞到过）。
+     * 所以宿主先把声明的那几棵子树**枚举成一份集合**，再把"查集合"这件事交出去。
+     */
+    readonly onTreeNow?: (probe: (rel: RelPath) => Promise<boolean>) => void
     /**
      * **这一趟落下去的清单**（`ensure` 的 `manifest`），每次同步之后交出去。
      *
@@ -204,6 +214,8 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
   let mat: { parts: { upper: AbsPath; merged: AbsPath; temp: AbsPath }; state: MatState } | null = null
 
   /**
+
+  /**
    * 视图在这一条声明路径下**动过**什么——回写那一支里删除那一条的源一。
    */
   function writtenNow(rel: RelPath): { readonly paths: readonly RelPath[]; readonly dead: ReadonlySet<RelPath> } {
@@ -239,8 +251,14 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
         return tell({ root: where.merged, strategy: r.strategy })
       }
     }
-    const now = await loadView(cfg.log, cfg.writer, { lower: lowerAt(cfg.truth, mat.state.base) })
-    const out = await syncTo(now, now.rev)
+    // **`now` 就是宿主手里这一份视图，不另开一份。** 原先这里 `loadView` 重放日志另拿一份：
+    // 那一份的 `rev` 是"这一格历史上写过几次"（全量重放，与"树铺到哪儿了"无关），而回写那一侧
+    // （`afterRun` → `collect` → `applyEdit`）读的是**这一份**。两份视图分家的后果是实测出来的：
+    // 同格内 `write tail.txt` → `bash rm tail.txt`，同步点把 `write` 那条 delta 又落回树里
+    // （`rm` 留下的白洞被它覆盖），回写报不出删除，收尾提交把模型已经删掉的那一份又交上去
+    // ——正是 W8 判据 ④ 说的那条静默错。
+    const now = view
+    const out = await syncTo(now, view.rev)
     return tell({ root: mat.parts.merged, strategy: out.strategy })
   }
 
@@ -256,7 +274,13 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
         view: {
           stat: (p) => now.stat(p),
           read: (p) => now.read(p),
-          rev: now.rev,
+          // **`rev` 报的是"这份视图此刻在哪个号"**：`ensure` 那一条断言问的就是它
+          // （`upTo > deps.view.rev` 拒的是"落一个还不存在的号"，§ 9.6）。delta 的基点不在
+          // 这里——`ensure` 拿 `st.rev`（`mat.state.rev`）当基点。
+          //
+          // **报错过一次**：报成"树已同步到哪"（一个与视图无关的水位）时，刚 fork 的树会把
+          // 视图此刻的号判成"还不存在"，整条 `bash` 当场退成被拒的结果（本地探针实测）。
+          rev: view.rev,
           deltasSince: (from) => now.diff(from),
           tombstones: () => now.state().upper.filter((e) => e.kind === 'tombstone').map((e) => e.path),
         },
@@ -276,6 +300,31 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     }
     cfg.onSync?.(out.manifest)
     return out
+  }
+
+  /**
+   * 把一棵子树里的**叶子**收进集合（相对根给路径）。
+   *
+   * 与上面那个走视图的 `walk()` 不是一件事：这一份读的是**真实的物化树**（`merged`），
+   * 只在卸载之前那一小段时间里问得动。深与宽都封顶（同一组常数）：它是探针，不是遍历产品。
+   */
+  function leavesUnder(abs: string, prefix: RelPath, into: Set<RelPath>, depth: number): void {
+    if (depth > MAX_DEPTH || into.size >= MAX_ROWS) return
+    let rows: string[]
+    try {
+      rows = readdirSync(abs)
+    } catch {
+      return
+    }
+    for (const name of rows.sort()) {
+      if (into.size >= MAX_ROWS) return
+      const next = join(abs, name)
+      const rel = `${prefix}/${name}` as RelPath
+      const st = lstatSync(next, { throwIfNoEntry: false })
+      if (st === undefined || st === null) continue
+      if (st.isDirectory()) leavesUnder(next, rel, into, depth + 1)
+      else into.add(rel)
+    }
   }
 
   /** 子进程的工作目录：**相对 cwd 拼到执行根上**。空串是根。 */
@@ -366,6 +415,18 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     const cfg = opts.execRoot
     const declared = declaredNow()
     if (re === undefined || cfg === undefined || mat === null || declared === null) return
+    // **先把"树上还有没有它"这份快照照下来，再卸载**：`merged` 挂着的时候它就是命令跑完之后
+    // 那棵树的全貌（底里继承来的与这一趟写下来的都在里面）；卸下来之后它只剩一个空挂载点，
+    // 那一刻再问就一律是"不在"了。照的是**声明的那几棵子树**（别处不归这一支管，也没必要走）。
+    const inTree = new Set<RelPath>()
+    for (const rel of opts.ownedPaths ?? []) {
+      const where = join(mat.parts.merged, rel)
+      const st = lstatSync(where, { throwIfNoEntry: false })
+      if (st === undefined || st === null) continue
+      inTree.add(rel)
+      if (st.isDirectory()) leavesUnder(where, rel, inTree, 0)
+    }
+    cfg.onTreeNow?.(async (rel) => inTree.has(rel))
     if (mat.parts.merged !== '' && isMounted(mat.parts.merged)) unmountOverlay(mat.parts.merged)
     const outside = await re.undeclared(view.id as unknown as AgentId, declared)
     if (outside.length > 0 && parts !== undefined) {

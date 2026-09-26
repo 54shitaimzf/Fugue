@@ -171,7 +171,13 @@ export async function ensure(deps: EnsureDeps, agent: AgentId, upTo: ViewRev): P
   const whiteoutMode = facts === null ? null : facts.whiteout
 
   // **已最新就是空操作**：不卸 · 不落 · 不写事件。挂载态仍然补齐（上面那段）。
-  const dirty = upTo !== st.rev
+  //
+  // **"两个号不同"不等于"有东西要落"**：刚 fork 的树里水位是 0，而视图的 delta 都挂在
+  // rev ≥ 1 上（`record()` 从 `cur + 1` 起）——那一趟一条都落不下去。不把这一档摘出来，
+  // 第一条只读的 `bash` 就会凭空写一条**空的** `mat/sync`（`from === to`），判据 ⑥ 那条读数
+  // （"视图没动就不落"）当场失效（本地实测撞到过）。
+  const deltas = upTo > st.rev ? deps.view.deltasSince(st.rev) : []
+  const dirty = deltas.length > 0
   // 声明目录里树里还没有的那些。**它写的是 `upper`，而写 `upper` 只能在卸载态**（§ 8.5），
   // 所以它与"有 delta 要落"共用同一个卸载窗口——两条都不需要时，一个字节都不碰。
   const missing = (deps.declared ?? []).filter((rel) => !existsSync(join(merged, rel)))
@@ -193,7 +199,7 @@ export async function ensure(deps: EnsureDeps, agent: AgentId, upTo: ViewRev): P
             view: deps.view,
           },
           manifestMap(st),
-          deps.view.deltasSince(st.rev),
+          deltas,
         )
       }
       for (const rel of missing) {

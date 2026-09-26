@@ -135,6 +135,21 @@ export interface ReclaimDeps {
    * 一种情形（视图动过 · base 里本来就有），少一个就少一种删除回得来。
    */
   readonly isDeclared?: (rel: RelPath) => readonly RelPath[]
+  /**
+   * **子进程跑完之后，那棵树上还有没有这一条路径**（`merged` 里的一次 `existsSync`）。
+   *
+   * **删除那一支的最后一句判据。** `collect` 在上面枚举的是 `upper`，而它只说"这一格自己写下来
+   * 的那些"；底里继承来的文件不在 `upper` 里，**而它们照样在那棵树上**。所以"这一条还在不在"
+   * 必须问**命令跑完之后那棵树**，不能只看 `upper`——两者混起来会出假删除（本地实测撞到过）：
+   * 只读的一整格（`cat`）把声明树整棵报成 `delete`，而判据 ⑥ 那条读数（"视图没动就不落
+   * `mat/sync`"）当场被那条假删除推出一条真的 `mat/sync`。
+   *
+   * 有了它，删除那一支的话就齐了：**盘上没有 · 树上也没有 · 而两源里说它本来在**（源一：视图
+   * 动过它；源二：底里有它）。少第三条是"这一条路径本来就不存在"，少前两条是"底里继承来的"。
+   *
+   * **不给它时按"在"算**（宁可不报删除，也不报一条假的）。
+   */
+  readonly treeNow?: (rel: RelPath) => Promise<boolean>
   /** 源一配的那一个分类：已经是墓碑的那几条不重复报（`DeclaredSet.isTombstone`）。 */
   readonly isTombstone?: (p: RelPath) => boolean
 }
@@ -191,21 +206,36 @@ export function createReclaim(deps: ReclaimDeps): Reclaim {
     async collect(a: AgentId, declared: DeclaredSet): Promise<Delta[]> {
       const landing = landingOf(deps, a)
       const out: Delta[] = []
+      // **"盘上走到的那些"单攒一份，不从 `out` 里回捞**：`out` 里现在也会混进删除那一支自己推
+      // 的条目（前面几条声明路径报出来的），而 `skip` 问的是"这条路径这一趟盘上还在不在"。
+      // 混起来会串味——先报出来的 `delete` 会替后面的声明路径挡掉它本该报的删除。
+      //
+      // 它含两样：**这一趟盘上枚举到的每一个叶子**（含 `walk` 报出来的白障——白障本来就在盘上），
+      // 以及**声明的 `rel` 自己**（盘上是一条文件时它就是那一叶；盘上是一条目录时它不是一条
+      // `Delta` 能表示的路径）。
+      const onDisk = new Set<RelPath>()
       for (const rel of topLevel(declared.paths)) {
         const at = join(landing, rel)
         const st = lstatSync(at, { throwIfNoEntry: false })
         // **盘上有的先收**（`add` / `modify` / `symlink`），再问"盘上没有而两源里有的那些"
         // ——顺序不能反：删除那一支要拿"已经收过的"当跳过集，否则它会把刚收过的那一条再报一次。
         if (st !== undefined && st !== null) {
-          if (st.isDirectory()) walk(at, rel, out)
+          onDisk.add(rel)
+          if (st.isDirectory()) {
+            const before = out.length
+            walk(at, rel, out)
+            for (const d of out.slice(before)) onDisk.add(pathOf(d))
+          }
           // **单条那一支也要过白障**：删一条声明过的**文件**时，`upper` 里留下的就是
           // 它自己那条字符设备（没有一层目录可以让 `walk` 去走）——不过这一关就是
           // “声明目录里有一条不是文件也不是链接的东西”，而真正发生的事是“删了它”。
           else if (whiteoutAt(at, st)) out.push({ kind: 'delete', path: rel })
           else out.push(leafOf(at, rel, st))
         }
-        // 盘上没有它时 `out` 里没有这个 rel 的任何一条，`skip` 是空集——同一段判断两种情形都走。
-        await collectDeleted(deps, a, rel, out, declared.paths, new Set(out.map(pathOf)))
+        // `onDisk` 只有一样：**这一趟盘上枚举到的那些**（`upper` 上的叶子与白障，加上 `rel`
+        // 自己）。删除那一支要拿它当"已经收过了"的跳过集——**"还在不在"不归它管**，那件事由
+        // `treeNow` 答（见 `collectDeleted`；两者混成一个集合会互相抵消，实测撞到过）。
+        await collectDeleted(deps, a, rel, out, declared.paths, onDisk)
       }
       // 按路径排序：同一批产出重放两次要给同一串字节，视图的 rev 序列才可比（X3 那条断言）。
       return out.sort((x, y) => (pathOf(x) < pathOf(y) ? -1 : pathOf(x) > pathOf(y) ? 1 : 0))
@@ -261,6 +291,8 @@ function topLevel(paths: readonly RelPath[]): RelPath[] {
  *          一个，这一源就不成立。
  *
  * 两源都不在 = 这一次本来就没有东西要回（命令面报成 `missing`），**不是**一条 `delete`。
+ * 两源里在、而**这一趟跑完之后树上还在**的那些同样不是删除（`deps.treeNow`）——源一/源二说
+ * 的是"它本来在"，`treeNow` 说的是"它现在还在不在"；两句都要问。
  *
  * **目录逐叶给。** 清单里没有"目录条目"这种东西（一条路径要么是叶子、要么不在清单里），
  * 所以声明的路径是目录时，用 `listAt` 枚举底里那一棵的**叶子**，一条一条给 `{kind:'delete'}`，
@@ -277,9 +309,23 @@ async function collectDeleted(
   const statAt = deps.statAt
   const listAt = deps.listAt
   const seen = new Set<RelPath>()
-  const push = (p: RelPath): void => {
-    if (seen.has(p) || p === rel) return
+  /**
+   * 报一条删除：**没报过 · 盘上那一趟没收到它 · 而它这一趟真的不在了**。
+   *
+   * 第三句是 `deps.treeNow`（"命令跑完之后那棵树上还有没有它"），**不能拿 `skip` 兼这一句**：
+   * `skip` 里是"盘上枚举到的那些"，而"视图里刚写出来、还没落地"与"底里继承来"的那两类也
+   * 不该报删除——把它们塞进 `skip` 会顺手把源一/源二本该报的那几条也挡掉（本地实测：先
+   * `write` 后 `bash rm` 那一档就是这么被抵消掉的）。
+   *
+   * **`p === rel` 不再是"重复"**：盘上还有它的那些已经在 `skip` 里（调用点把 `rel` 自己也放进
+   * 去了），所以走到这里而它不在 `skip` 里，说明**这一趟它没了**——那正是要报的删除。上一版
+   * 这里写的是 `p === rel` 一律跳，后果是"声明一条文件、同格内先 `write` 后 `bash rm`"永远报不
+   * 出来：视图里那一份还在，收尾就把它提交上去（模型删了、提交里还在的静默错，判据 ④ 说的那条）。
+   */
+  const push = async (p: RelPath): Promise<void> => {
+    if (seen.has(p)) return
     if (skip !== undefined && skip.has(p)) return
+    if (deps.treeNow === undefined || (await deps.treeNow(p))) return
     seen.add(p)
     out.push({ kind: 'delete', path: p })
   }
@@ -297,7 +343,7 @@ async function collectDeleted(
     for (const p of deps.isDeclared(rel)) {
       if (!declared.some((q) => p === q || p.startsWith(q + '/'))) continue
       if (deps.isTombstone(p)) continue
-      push(p)
+      await push(p)
     }
   }
 
@@ -319,7 +365,7 @@ async function collectDeleted(
           }
         }
       } else leaves.push(rel)
-      for (const p of leaves) push(p)
+      for (const p of leaves) await push(p)
     }
   }
 }
