@@ -29,6 +29,7 @@ import { emptyState } from '../assemble/sources.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 import { fixtureState } from '../model/fixture-state.ts'
 import { modelDeclOf } from '../model/contract.ts'
+import type { ModelDecl } from '../model/contract.ts'
 import { scriptedModel } from '../runtime/step.ts'
 import type { AgentHandle, ModelEvent, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
 import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
@@ -362,14 +363,17 @@ test('④ 每一格的预估占用印得出来；ownedPaths 铺到整棵树那�
     console.log(`④ 读数：第 1 节 used ${one.used} · 触发点 ${one.trigger} · 差额 ${one.headroom} · 甜点=${one.sweet}`)
 
     // **负对照**：把 `ownedPaths` 铺到整棵树——「文件内容」那一段随之涨到越界。
-    // **铺多少条由那把尺定**：先量一小片，按它撑到"甜点区间"之外（尺对这一段的读数是线性的），
-    // 于是换口径时这里跟着走，不用改断言。
+    // **它自带一份小窗口的声明**：负对照要的是"铺开就该越线"这件事有牙，而真实那份声明的窗口
+    // 是 1 000 000——拿它当尺，铺上几十万条路径也未必越线，那条断言就成了恒真的。窗口小是**这
+    // 面镜子的一部分**，不是把标准放松。
+    // **铺多少条仍由那把尺定**：先量一小片，按 1.5 倍往上撑，撑破"甜点区间"就停手。
     const { sub } = holderOf(b)
+    const SMALL: ModelDecl = { ...DECL, contextLimit: 8_000, budget: { trigger: 2_800, handoffMargin: 1_000 } }
     const pathsOf = (n: number): RelPath[] =>
       Array.from({ length: n }, (_, i) => `src/module-${String(i).padStart(4, '0')}/file-${i}.ts` as RelPath)
     const rowsOf = (n: number) =>
       occupancyOf([section({ ownedPaths: pathsOf(n) }) as unknown as DraftSection], {
-        decl: DECL,
+        decl: SMALL,
         base: sub,
         goal: '把树铺开',
         round: ROUND,
@@ -378,7 +382,7 @@ test('④ 每一格的预估占用印得出来；ownedPaths 铺到整棵树那�
       })
     // 按 1.5 倍往上撑，**撑破"甜点区间"就停手**（由尺判，不由条数判）——条数本身不是判据，
     // 它是"这一份状态"的尺寸；账与上限的关系才是判据。
-    let n = 1_000
+    let n = 10
     let big = rowsOf(n)[0]
     assert.ok(big !== undefined)
     for (let i = 0; i < 8 && big.sweet; i++) {

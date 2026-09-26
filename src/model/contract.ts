@@ -141,7 +141,8 @@ export const PROVIDERS: Readonly<Record<string, ProviderDecl>> = {
  *   `if (model === 'x')` 就是漏了一个声明式字段。
  * - `systemPromptUpdate`：两行（`in-history` · `rewrite-head`），逐字来自架构 § 8.11 那张
  *   "模型的声明 → C 怎么增长"的表。落到处理上是**三种**，那三种归提供方（§ 10.3）。
- * - `contextLimit`：上下文的上界。`seed` 那一条的不动项（架构 § 8.12）。
+ * - `contextLimit`：上下文的上界。`seed` 那一条的不动项（架构 § 8.12）。**这一版的模型都是
+ *   1 000 000 那一档**——它是声明的数，不是探出来的数。
  * - `budget`：三个模型相关的数——上限 · 触发点 · 交接余量（架构 § 23 U6：这一站只建立口径，
  *   **具体取值要等 `B7` 的读数**，所以触发点是从上限算出来的，不是一条独立常量）。
  * - `call`：轮内固定那四条里属于调用配置的那一条（§ 10.2）。**它没有位置，所以不进前缀**
@@ -215,8 +216,8 @@ export const MODEL_DECLS: Readonly<Record<string, ModelDecl>> = {
     wire: 'anthropic-messages',
     model: 'deepseek-chat',
     systemPromptUpdate: 'in-history',
-    contextLimit: 128_000,
-    budget: { trigger: triggerAt(128_000), handoffMargin: 16_000 },
+    contextLimit: 1_000_000,
+    budget: { trigger: triggerAt(1_000_000), handoffMargin: 16_000 },
     call: DEFAULT_CALL,
   },
   'deepseek-chat/openai': {
@@ -226,8 +227,8 @@ export const MODEL_DECLS: Readonly<Record<string, ModelDecl>> = {
     wire: 'openai-chat',
     model: 'deepseek-chat',
     systemPromptUpdate: 'in-history',
-    contextLimit: 128_000,
-    budget: { trigger: triggerAt(128_000), handoffMargin: 16_000 },
+    contextLimit: 1_000_000,
+    budget: { trigger: triggerAt(1_000_000), handoffMargin: 16_000 },
     call: DEFAULT_CALL,
   },
 }

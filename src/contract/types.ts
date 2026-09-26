@@ -456,8 +456,8 @@ export const VERDICTS: Readonly<Record<string, string>> = {
 
 // ── 第三级：跨字段的关系，加上那份清单本身 ────────────────────────────────────
 
-/** 模型的上下文上界，给 `seed` 那条判据当默认值。 */
-export const DEFAULT_MODEL_LIMIT = 200_000
+/** 模型的上下文上界，给 `seed` 那条判据当默认值（这一版的模型都在 1 000 000 那一档）。 */
+export const DEFAULT_MODEL_LIMIT = 1_000_000
 /** Zone A（前缀里的稳定那一段）的占地估计。 */
 export const ZONE_A_BUDGET = 24_000
 /** 交接余量：自重启时要留出的那一片。 */

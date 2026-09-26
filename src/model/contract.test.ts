@@ -27,7 +27,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CREDENTIAL_FILE, DEFAULT_CALL, DEFAULT_MODEL, MODEL_DECLS, MODEL_IDS, ModelDeclError, PREFIX_MODELS, PREFIX_MODEL_IDS, PROVIDERS, authWith, isAuthChain, STOP_REASONS, USAGE_COUNTS, USAGE_FIELDS, WIRES, WIRE_NAMES, authOf, checkEvents, isAuthRef, isModelRef, modelDeclOf, prefixDeclOf, providerOf, requestJson, stopped, toolCallsIn, triggerAt, usageCount } from './contract.ts'
 import type { ModelCall, ModelDecl, ModelEvent, ModelRequest, StopReason, ToolCall, Turn, Usage } from './contract.ts'
-import { HANDOFF_MARGIN, ZONE_A_BUDGET, checkContract, seedLimitOf } from '../contract/types.ts'
+import { DEFAULT_MODEL_LIMIT, HANDOFF_MARGIN, ZONE_A_BUDGET, checkContract, seedLimitOf } from '../contract/types.ts'
 import type { ImplementContract } from '../contract/types.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
 import { MODELS, modelOf } from '../assemble/models.ts'
@@ -117,9 +117,9 @@ test('② 目录：两条真声明，各指得出提供方 · 线协议 · 上�
     assert.deepEqual([WIRE_NAMES.includes(m.wire), PROVIDERS[m.provider] !== undefined], [true, true], `${name} 的线协议或提供方指不到`)
     assert.equal(m.model, 'deepseek-chat', `${name} 那边叫的名字`)
     assert.deepEqual([m.systemPromptUpdate], ['in-history'], `${name} 的系统提示词更新方式`)
-    assert.deepEqual([m.contextLimit], [128_000], `${name} 的上限`)
-    assert.deepEqual([m.budget.trigger, m.budget.handoffMargin], [triggerAt(128_000), 16_000], `${name} 的预算两栏`)
-    assert.equal(m.budget.trigger, 44_800, '上限的 35%')
+    assert.deepEqual([m.contextLimit], [1_000_000], `${name} 的上限`)
+    assert.deepEqual([m.budget.trigger, m.budget.handoffMargin], [triggerAt(1_000_000), 16_000], `${name} 的预算两栏`)
+    assert.equal(m.budget.trigger, 350_000, '上限的 35%')
     assert.deepEqual(m.call, DEFAULT_CALL, `${name} 的调用配置`)
   }
   // 缺省 = 表的第一条，不是另一条写死的常量。
@@ -245,7 +245,7 @@ test('④ 凭据只在出网那一步取：不在会话环境里时，装配与�
 })
 test('⑤ 估账与余量：contextLimit 接进 seedLimitOf，超限报"超了多少"，不裁剪照发', () => {
   // 三个数（上限 · Zone A · 交接余量）在两条路上是同一套算术。
-  assert.equal(seedLimitOf({}), 200_000 - ZONE_A_BUDGET - HANDOFF_MARGIN)
+  assert.equal(seedLimitOf({}), DEFAULT_MODEL_LIMIT - ZONE_A_BUDGET - HANDOFF_MARGIN)
   assert.equal(seedLimitOf({ modelLimit: 128_000 }), 128_000 - ZONE_A_BUDGET - HANDOFF_MARGIN)
   assert.equal(seedLimitOf({ modelLimit: 128_000 }), 88_000)
   // `seedLimit` 明写时仍然最优先（它是一条显式的窄化，架构 § 8.12 的"只可收窄"）。

@@ -205,9 +205,11 @@ test('③ seed 超限 → 拒绝派发，不裁剪后照发', () => {
   )
   assert.equal(small.seedLimit, seedLimitOf({}))
 
-  // 超限：一份 20 万 token 量级的种子（模型上限那个量级）。**量它的是尺**：ASCII 每四个字节
-  // 一个 token，所以摊到清单上就是八十万字符。
-  const fat = ['x'.repeat(4 * 200_000)] as readonly RelPath[]
+  // 超限：一份**比上限还大**的种子。尺寸由那条上限算出来（模型上限 − Zone A − 交接余量），
+  // 于是窗口改了这条断言跟着走——**量它的是尺**：ASCII 每四个字节一个 token，摊到清单上就是
+  // 四倍字符。
+  const overTokens = seedLimitOf({}) + 1_000
+  const fat = ['x'.repeat(4 * overTokens)] as readonly RelPath[]
   assert.throws(
     () => build(INTENT, deps({ seedOf: () => fat })),
     (err: unknown) => {

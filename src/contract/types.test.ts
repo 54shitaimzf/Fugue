@@ -14,8 +14,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Contract, ImplementContract, InvestigateContract, ResolveContract } from './types.ts'
 import {
+  DEFAULT_MODEL_LIMIT,
   FIELD_RULES,
+  HANDOFF_MARGIN,
   VARIANT_FIELDS,
+  ZONE_A_BUDGET,
   checkContract,
   contractFields,
   idShapeOf,
@@ -254,5 +257,5 @@ test('清单里那三条第三级的关系：actionOutputs ⊆ ownedPaths · see
   const over = checkContract(IMPLEMENT, CTX_BIG)
   assert.equal(over.length, 1, `该恰好报一条：${over.join(' / ')}`)
   assert.match(over[0], /10000000 token 超过上限/)
-  assert.equal(seedLimitOf({}), 200_000 - 24_000 - 16_000)
+  assert.equal(seedLimitOf({}), DEFAULT_MODEL_LIMIT - ZONE_A_BUDGET - HANDOFF_MARGIN)
 })

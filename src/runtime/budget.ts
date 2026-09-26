@@ -113,6 +113,30 @@ export function estimateTokensOfText(text: string): number {
   return estimateTokens(bytesOfText(text))
 }
 
+/**
+ * 凝聚理解那一栏的上限（架构 § 15.1.a）：**50 000 token**。
+ *
+ * **超了报出来，不裁剪。** 它是持轮者写的一份理解，不是配额——越过这条线是异常（模型把"这段
+ * 理解"写成了另一篇文档），而不是"该裁一段"。这里不给"拒"这个动作：产物已经进日志了，拒没有
+ * 对象；报出来由读的人判。
+ */
+export const DISTILL_LIMIT_TOKENS = 50_000
+
+/**
+ * 量一次凝聚理解：在限度之内给 `null`，超了给一句带两个数的话（超了多少 · 上限多少）。
+ *
+ * 它与 `seed` 超限那一句同一个形状（`contract/build.ts` 的 `seed` 那一条）：**都要把两个数说
+ * 出来**——只报"超了"没有可核对的东西（架构 § 8.12 那条"不裁剪后照发"的同一族纪律）。
+ */
+export function overDistillLimit(text: string): string | null {
+  const tokens = estimateTokensOfText(text)
+  if (tokens <= DISTILL_LIMIT_TOKENS) return null
+  return (
+    `凝聚理解 ${tokens} token 超过上限 ${DISTILL_LIMIT_TOKENS} token——超 ${tokens - DISTILL_LIMIT_TOKENS}；` +
+    '它是模型的产物，不裁剪，报出来由人判（架构 § 15.1.a）。'
+  )
+}
+
 /** 几段字节接成一段。**尺一次只量一段**——信封因此只算一次，不会被每个加数各加一遍。 */
 function concat(parts: readonly Uint8Array[]): Uint8Array {
   const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0))

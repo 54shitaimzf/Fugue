@@ -9,6 +9,8 @@
 //   ④ **负对照**：把触发点设在等于上限 → ① 的核对当场报出来，连"重试超界"都判不出来
 //   ⑤ **修正**：账按真读数的比修（没有读数就一步不修）；真数 = 这一趟输入的总量（三个数相加），
 //      全缺就是"没读数"，不拿 0 顶
+//   ⑥ **凝聚理解那一栏的上限**（架构 § 15.1.a）：50 000 token 以内不报，超了报出来（带两个数，
+//      不裁剪——它是模型的产物，没有"拒"的对象）
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { modelDeclOf, triggerAt } from '../model/contract.ts'
@@ -20,7 +22,7 @@ import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { emptyState } from '../assemble/sources.ts'
 import { fixtureState } from '../model/fixture-state.ts'
 import type { Prefix } from '../assemble/contract.ts'
-import { ENVELOPE_TOKENS, checkBudget, estimateTokens, planBudget } from './budget.ts'
+import { DISTILL_LIMIT_TOKENS, ENVELOPE_TOKENS, checkBudget, estimateTokens, estimateTokensOfText, overDistillLimit, planBudget } from './budget.ts'
 import { calibrate, ratioOf, truthOf } from './calib.ts'
 import type { BudgetAsk } from './budget.ts'
 
@@ -92,8 +94,8 @@ const askOf = (prefix: Prefix, over: Partial<BudgetAsk> = {}): BudgetAsk => ({
 test('① 三个数印得出来，且关系可核对（触发点在 (0, 上限) 之间 · 余量小于触发点）', () => {
   assert.deepEqual(checkBudget(DECL), [], '这份声明的三个数是自洽的')
   assert.equal(DECL.budget.trigger, triggerAt(DECL.contextLimit), '触发点是那一个函数算出来的')
-  assert.equal(DECL.contextLimit, 128_000)
-  assert.equal(DECL.budget.trigger, 44_800)
+  assert.equal(DECL.contextLimit, 1_000_000)
+  assert.equal(DECL.budget.trigger, 350_000)
   assert.equal(DECL.budget.handoffMargin, 16_000)
 
   const plan = planBudget(askOf(prefixOf(emptyState())))
@@ -169,14 +171,14 @@ test('④ 负对照：触发点设在等于上限 → 关系核对当场报出�
   }
   const bad = checkBudget(broken)
   assert.equal(bad.length, 1, `核对该报一条：${bad.join(' / ')}`)
-  assert.match(bad[0]!, /触发点 128000 不在 \(0, 128000\) 之间/)
+  assert.match(bad[0]!, new RegExp(`触发点 ${DECL.contextLimit} 不在 \\(0, ${DECL.contextLimit}\\) 之间`))
 
   // 而"三个数"里那一栏被改坏之后，判出来的那一档是 `stop` 而不是 `restart`——**交接这一步
   // 再也走不到了**。这正是坏预算的害处：它不报错，只是让"该交接的时候"变成"已经写不下了"。
   // 一份"过了正常触发点、又还在正常上限之内"的状态（用量 `U` 落在
   // `[trigger, limit - margin)` 这一段里）：正常预算下判"交接"，坏预算下**连触发都到不了**
   // ——它一直在 `continue` 里转，直到某一步直接撑爆（那一步是 `stop`，而交接已经写不下了）。
-  const mid = stateWithUsed(DECL.budget.trigger + 4_000) // 用量落在 [44800, 112000) 里
+  const mid = stateWithUsed(DECL.budget.trigger + 4_000) // 用量落在 [350000, 984000) 里
   const good = planBudget(askOf(prefixOf(mid)))
   assert.equal(good.kind, 'restart', `正常预算下：${good.kind}——${good.why}`)
   const plan = planBudget(askOf(prefixOf(mid), { decl: broken }))
@@ -216,4 +218,28 @@ test('⑤ 修正：账按真读数的比修，缺省一步不修 · 真数是这
   assert.deepEqual(calibrate([2, 2, 9]), { ratio: 2, samples: 3 })
   assert.equal(calibrate(Array.from({ length: 12 }, () => 3)).samples, 8, '只留最近八份')
   console.log(`⑤ 读数：尺 ${plain.raw} · 修 ×2 → ${fixed.used} · 真数（88 + 24000 + 0）= ${heard} · 中位数修正 ${JSON.stringify(calibrate([2, 2, 9]))}`)
+})
+
+// ── ⑥ 凝聚理解那一栏的上限 ────────────────────────────────────────────────────
+
+test('⑥ 凝聚理解的上限：50 000 token 以内不报，超了报出来（不裁剪）', () => {
+  assert.equal(DISTILL_LIMIT_TOKENS, 50_000)
+
+  // 那把尺：ASCII n 字节 ≈ ceil(n / 4) + 8（信封）。取两档贴着这条线站。
+  const ok = 'a'.repeat(199_000)
+  const over = 'a'.repeat(200_000)
+  const okTokens = estimateTokensOfText(ok)
+  const overTokens = estimateTokensOfText(over)
+  assert.ok(okTokens <= DISTILL_LIMIT_TOKENS, `限度内：${okTokens}`)
+  assert.ok(overTokens > DISTILL_LIMIT_TOKENS, `越线：${overTokens}`)
+
+  assert.equal(overDistillLimit(ok), null, '在限度之内不报')
+  assert.equal(overDistillLimit('字'.repeat(1_000)), null, '一份正常大小的理解不报')
+
+  const said = overDistillLimit(over)
+  assert.notEqual(said, null, '超了要报出来')
+  assert.match(said!, /凝聚理解 50008 token 超过上限 50000 token/)
+  assert.match(said!, /超 8；/)
+  assert.match(said!, /不裁剪/)
+  console.log(`⑥ 读数：${okTokens} token 不报 · ${overTokens} token 报「${said}」`)
 })
