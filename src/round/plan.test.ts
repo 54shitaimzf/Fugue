@@ -7,8 +7,9 @@
 //      人喊停（`judgeOnly`）——三条路读出来的草案逐字节相同、判出来的结果相同
 //   ③ **负对照**：草案缺一个键而模型照样调了 `exit_plan_mode` → 不许放行，要报出缺哪一节哪个键
 //   ④ **每一格的预估占用印得出来，且落在甜点区间**；负对照：`ownedPaths` 铺到整棵树 → 那一条变红
-//   ⑤ **持轮者那一格的作用域**：`bash` 与 `checkpoint` 回一句指路的话（不抛），而**工具目录与
-//      子 agent 逐条相同**（不给持轮者加工具——架构 § 15.4 那一句）
+//   ⑤ **持轮者那一格的作用域**：`bash` 与 `checkpoint` 回一句指路的话（不抛），而那一句要
+//      **指得出两截路**——换成哪几条工具，以及这一趟欠着什么（后者只在有产物那一趟拼）；
+//      而**工具目录与子 agent 逐条相同**（不给持轮者加工具——架构 § 15.4 那一句）
 //   ⑥ **同一轮里再跑一趟不造第二条 `Idle → Planning`**，意图只写一次（纪律 2/3）
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -446,7 +447,23 @@ test('⑤ 持轮者那一格的作用域：那三条回实话、不抛；工具�
   assert.deepEqual(seen, ['exit_plan_mode'], '被拦下的那三条不该进到里面那一层')
   const refused = await face.execute({ id: 'c3', name: 'bash', arguments: '{"command":"ls"}' }, h)
   assert.match(refused.output, /read · glob · grep/, '拒的话要指得出路')
-  console.log(`⑤ 读数：bash/run_action/checkpoint 各一句实话 · exit_plan_mode 记下 ${declared} 次 · 工具目录 ${HOLDER_PROTOCOL.toolCatalog.length} 条（与子 agent 同一份）`)
+  // **"指得出路"有两截**：换成哪几条工具（上面那一条），以及**这一趟欠着什么**。样本盘第三趟
+  // 真档（`--dump-wire`）照出来的正是缺了后一截：连着两次撞在 `bash` 上之后，它接着四步都在
+  // `glob` / `read` 里找方向，一次都没伸手写草案，最后停在步数上界。
+  assert.equal(
+    refused.output.includes('要交的是'),
+    false,
+    '没给产物的那一趟凭空说了产物——讨论态那一趟走的就是这一档（它的产物不落在文件上）',
+  )
+  const planned = holderFace(inner, { planPath: '.fugue/plan/r1.md' })
+  const refusedPlanned = await planned.execute({ id: 'c4', name: 'bash', arguments: '{"command":"ls"}' }, h)
+  assert.match(refusedPlanned.output, /\.fugue\/plan\/r1\.md/, '拒的话里点不出这一趟要交的那份草案')
+  assert.match(refusedPlanned.output, /现在把它写出来/, '拒的话说了产物，却没说下一步做什么')
+  console.log(
+    `⑤ 读数：bash/run_action/checkpoint 各一句实话 · exit_plan_mode 记下 ${declared} 次 · ` +
+      `工具目录 ${HOLDER_PROTOCOL.toolCatalog.length} 条（与子 agent 同一份）· ` +
+      `拒的话里带产物：${refusedPlanned.output.includes('.fugue/plan/r1.md') ? '是' : '否'}`,
+  )
 })
 
 test('⑥ 同一轮里再跑一趟：不造第二条 Idle → Planning，意图只写一次', async () => {

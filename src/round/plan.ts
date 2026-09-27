@@ -218,9 +218,35 @@ const HOLDER_REFUSAL: Readonly<Record<string, string>> = {
   checkpoint: '预备态不提交：草案跟着事件进日志就够了（架构 § 15.1.a——退回讨论态时没有东西要撤销）。',
 }
 
-/** `holderFace` 的那一栏：模型说了"预备态做完了"那一下。 */
+/**
+ * **拒的那一句要指得出路，而"路"有两截**：换成哪几条工具，以及**这一趟欠着什么**。
+ *
+ * 第二截是样本盘第三趟真档照出来的（`--dump-wire` 实录）：那一趟连着两次撞在 `bash` 上，
+ * 接着四步全在 `glob` / `read` 里找方向（`**` 那两条通配 · `AGENTS.md` · `check` 那一棵），一次都没
+ * 伸手写草案，最后停在步数上界。基础那三句只说清了"换哪几条工具"，没说"这一趟欠着什么"——
+ * 于是它把"伸手被拒"读成了"换个办法继续探"，而这一趟的预算就这么探完了。
+ *
+ * **有产物那一趟才拼第二截**：讨论态那一趟的产物是那场对话的凝聚、不落在文件上
+ * （架构 § 15.1.a），那儿只回基础那一句——多说的那截会指一个不存在的东西。
+ */
+function holderRefusalOf(name: string, planPath?: RelPath): string | undefined {
+  const base = HOLDER_REFUSAL[name]
+  if (base === undefined) return undefined
+  if (planPath === undefined) return base
+  return (
+    `${base}这一趟要交的是 ${planPath}——现在把它写出来（写哪儿 · 什么形状见「工作总目标」末尾）：` +
+    '它没写出来，这一趟就等于没跑。'
+  )
+}
+
+/** `holderFace` 的那一栏：模型说了"预备态做完了"那一下，以及**这一趟的写入面**（拒的话要指得出它）。 */
 export interface HolderFaceOptions {
   readonly onDeclare?: () => void
+  /**
+   * 这一趟要交的那份草案（预备态那一趟的那份）。给了它，被拦的那三条回的话里就多一截：
+   * **这一趟欠着什么**。
+   */
+  readonly planPath?: RelPath
 }
 
 /**
@@ -233,7 +259,7 @@ export interface HolderFaceOptions {
 export function holderFace(inner: ToolExecutor, opts: HolderFaceOptions = {}): ToolExecutor {
   return {
     async execute(call: ToolCallRequest, h: AgentHandle): Promise<ToolResult> {
-      const why = HOLDER_REFUSAL[call.name]
+      const why = holderRefusalOf(call.name, opts.planPath)
       if (why !== undefined) return { ok: false, output: why }
       const r = await inner.execute(call, h)
       if (call.name === 'exit_plan_mode' && r.ok && r.halt === true) opts.onDeclare?.()
@@ -397,6 +423,11 @@ export async function holderPass(deps: {
   readonly log: Log
   readonly call: CallModel
   readonly execute: ToolExecutor
+  /**
+   * 这一趟的产物（预备态那一趟的那份草案）：拒的话要指得出它。**讨论态那一趟不给**——
+   * 那一趟的产物不落在文件上（架构 § 15.1.a）。
+   */
+  readonly draftPath?: RelPath
   readonly tools?: readonly ToolEntry[]
   readonly maxSteps?: number
   /** 人喊停那一档：不请模型跑。 */
@@ -406,7 +437,10 @@ export async function holderPass(deps: {
     return { steps: 0, exit: 'judged', stopped: '人喊停：这一趟不请模型跑，拿手里那一份直接判', said: '' }
   }
   let declared = false
-  const face = holderFace(deps.execute, { onDeclare: () => (declared = true) })
+  const face = holderFace(deps.execute, {
+    onDeclare: () => (declared = true),
+    ...(deps.draftPath === undefined ? {} : { planPath: deps.draftPath }),
+  })
   const runtime = createRuntime({
     logOf: () => deps.log,
     call: deps.call,
@@ -492,6 +526,7 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
     log,
     call: deps.call,
     execute: deps.execute,
+    draftPath,
     ...(deps.tools === undefined ? {} : { tools: deps.tools }),
     ...(deps.maxSteps === undefined ? {} : { maxSteps: deps.maxSteps }),
     ...(deps.judgeOnly === true ? { judgeOnly: true } : {}),
