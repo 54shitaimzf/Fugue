@@ -12,6 +12,8 @@
 //      · 负对照：把 A 区那一栏改一个字节 → 两份的 `prefix-versions` 就分开了
 //   ⑤ 归因三处对照（闸四）：冷 · 共享头 · 同一格第 k 步——**三行恒在**，位置不存在的那一行报
 //      「没有读数」；负对照：日志说没命中就报没命中（这一份不假定任何一处该命中）
+//   ⑥ `prefix-versions` **逐 writer 各数一份**：交错的两个 writer 各持一份 `(A,B)` → 两版
+//      （合成一条链数的话是装配次数）· 同一个 writer 自己搬一次 → 各算一版
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -302,4 +304,45 @@ test('⑤ 负对照：日志说"共享头没命中"就报 0（这一份不假定
   assert.notEqual(broke[1].cacheReadTokens, null, '这是量到的 0，不是「没有读数」')
   assert.match(broke[1].note, /0 → 0/, '与冷那一处的比较照样印出来（两个 0 也印）')
   console.log(`⑤ 负对照读数：共享头第 0 步报 ${String(broke[1].cacheReadTokens)}（与冷 ${String(broke[0].cacheReadTokens)} 比）——读数跟着日志走`)
+})
+
+// ── ⑥ `prefix-versions` 逐 writer 各数一份 ────────────────────────────────────
+//
+// 由头：样本盘第一趟全链路真档（53 次调用 · 5 个 writer）。这一栏读出 **51**，而拿日志逐 writer
+// 查一遍是 **5**（round 1 · 四个格各 1）：A 区全日志只有一个版本（`f0c507a644adae97`），每个
+// writer 自己那一趟里 B 区**一个版本没变**——判据⑥ 那三条在真档下都成立，而这一支的读法把它们
+// 埋进交错里了（`merged` 是一条交错的流，而 `(A,B)` 是逐 writer 的东西）。
+
+test('⑥ `prefix-versions` 逐 writer 各数一份：交错不当作重装配', () => {
+  const w1 = 'agent/r1/1' as AgentId
+  const w2 = 'agent/r1/2' as AgentId
+  const rows: MergedRow[] = []
+  for (let i = 0; i < 4; i++) {
+    rows.push(row({ t: 'prefix/assemble', agent: w1, zoneAHash: 'a', zoneBHash: 'b1', zoneCHash: 'c' + String(i) }))
+    rows.push(row({ t: 'prefix/assemble', agent: w2, zoneAHash: 'a', zoneBHash: 'b2', zoneCHash: 'c' + String(i) }))
+  }
+  // 两个 writer 各持一份 `(A,B)` → **两版**。合成一条链数的话是 8 次装配 8 次「变了」。
+  assert.equal(valueOf(metricsOf(rows), 'prefix-versions'), 2, '两个 writer 各一份 → 两版，不是 8')
+  // 同一个 writer 自己那一趟里指纹搬了一次，照旧各算一版（这一支还是在跟着指纹走）。
+  const moved = metricsOf([
+    row({ t: 'prefix/assemble', agent: w1, zoneAHash: 'a', zoneBHash: 'b1', zoneCHash: 'c1' }),
+    row({ t: 'prefix/assemble', agent: w1, zoneAHash: 'a', zoneBHash: 'b2', zoneCHash: 'c2' }),
+    row({ t: 'prefix/assemble', agent: w2, zoneAHash: 'a', zoneBHash: 'b3', zoneCHash: 'c1' }),
+  ])
+  assert.equal(valueOf(moved, 'prefix-versions'), 3, '逐 writer 数：w1 两版 + w2 一版')
+  // 负对照：同一个 writer 上 A 换一个字节 → 它照样变两版（④ 里那一条负对照没被这一次改动碰掉）。
+  assert.equal(
+    valueOf(
+      metricsOf([
+        row({ t: 'prefix/assemble', agent: w1, zoneAHash: 'a1', zoneBHash: 'b1', zoneCHash: 'c1' }),
+        row({ t: 'prefix/assemble', agent: w1, zoneAHash: 'a2', zoneBHash: 'b1', zoneCHash: 'c1' }),
+      ]),
+      'prefix-versions',
+    ),
+    2,
+  )
+  console.log(
+    `⑥ 读数：交错 8 次装配 → ${valueOf(metricsOf(rows), 'prefix-versions')} 版（逐 writer 各一份）· ` +
+      `逐 writer 各搬一次 → ${valueOf(moved, 'prefix-versions')}`,
+  )
 })

@@ -72,8 +72,11 @@ export const METRIC_HOW: Readonly<Record<MetricId, string>> = {
     '分母：全部 `llm/call` 的条数。**分母不是 token 数**——那是"省了多少"的读法，' +
     '而这里问的是"有几趟命中了"。',
   'prefix-versions':
-    '**分子**：`prefix/assemble` 里 `(zoneAHash, zoneBHash)` **变化**的次数（第一次也算一次）' +
-    '——跨步稳定的那一段被重装配了几版；**分母恒为 1**（它是一个计数，不是一个比；`value` 就是分子）。',
+    '**分子**：`prefix/assemble` 里 `(zoneAHash, zoneBHash)` **变化**的次数（第一次也算一次）——' +
+    '跨步稳定的那一段被重装配了几版。**逐 writer 各数一份、再加起来**：B 区是逐 writer 一份' +
+    '（架构 § 8.11），而事件流是**交错**的——合成一条链数的话，每换一个 writer 都算一次「变了」。' +
+    '真档那一趟（53 次调用 · 5 个 writer）这一栏读出 51，逐 writer 查一遍是 5。**分母恒为 1**' +
+    '（它是一个计数，不是一个比；`value` 就是分子）。',
   'materialize-precision':
     '分子：`mat/fork` 与 `mat/sync` 的 `paths` 条数之和（**物化碰过的路径**）；' +
     '分母：`mat/reclaim` 的 `changed` 条数之和（**实际变更的路径**）。' +
@@ -138,7 +141,8 @@ export function metricsOf(rows: readonly MergedRow[], range: MetricsRange = {}):
   let starts = 0
   let detours = 0
   let prefixVersions = 0
-  let lastAb: string | null = null
+  /** 逐 writer 各记一份——`(A,B)` 是逐 writer 的东西（B 区逐 writer 一份）。 */
+  const lastAb = new Map<string, string>()
   let touched = 0
   let changed = 0
   const latencies: number[] = []
@@ -168,10 +172,12 @@ export function metricsOf(rows: readonly MergedRow[], range: MetricsRange = {}):
         break
       }
       case 'prefix/assemble': {
-        const ab = `${e.zoneAHash}/${e.zoneBHash}`
-        if (ab !== lastAb) {
+        // **按 writer 各数一份。** 交错的流里「变了」大半是换了一个 writer，不是重装配：
+        // 真档那一趟 53 次调用 · 5 个 writer 读出 51，而逐 writer 是 5。
+        const ab = `${e.agent}/${e.zoneAHash}/${e.zoneBHash}`
+        if (lastAb.get(e.agent) !== ab) {
           prefixVersions += 1
-          lastAb = ab
+          lastAb.set(e.agent, ab)
         }
         break
       }
