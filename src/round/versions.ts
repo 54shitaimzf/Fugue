@@ -33,7 +33,14 @@ export interface DistillVersion {
   readonly at: number
   /** 这一版正文的指纹（`digestOf`：sha256 的前十六位）。**正文逐字节相同则指纹相同**。 */
   readonly digest: string
-  /** **改自哪一版**：上一版正文的 `digest`。第一版没有这一栏（`null`）。 */
+  /**
+   * **改自哪一版**：**上一趟落地**那一版的正文 `digest`。第一版没有这一栏（`null`）。
+   *
+   * **它是「上一条落地」，不是「上一个不同的内容」。** 重落那一趟这个数就是它自己
+   * （`against === digest`）——链上因此看得见「又落了一遍同一版」（架构 § 15.1.a 的 `against` 栏）。
+   * 于是整条链由**落地次序**给出：第 i 条的 `against` 就是第 i-1 条那一版的指纹，按它一步步
+   * 往回走、每一步都用 `bodyOf` 取回正文，就走回了第一版（C5.a 的「按坐标取回」走的就是它）。
+   */
   readonly against: string | null
   /** 这一版的正文（逐字节就是视图里那一份）。 */
   readonly body: string

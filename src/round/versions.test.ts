@@ -10,6 +10,8 @@
 //   ③ **空账不抛**：这一轮一条都没有 → `Idle` · 没有底 · 空串 · 空链（读得出"还没有"，不是报错）
 //   ④ **逐节差异**（C5.b）：多了哪一节 · 少了哪一节 · 哪一节哪几栏变了；读不成草案就是 `null`
 //   ⑤ **人面读数**（C5.b）：第几版 · 第几次落地 · 与上一版差在哪几节（重落那一趟逐字节相同）
+//   ⑥ **按 `against` 走回第一版**：第 i 条的 `against` 就是第 i-1 条那一版的指纹（重落那一趟指向
+//      自己），按它一步步往回走、每一步都取回得了正文——这就是「按坐标取回」今天走的那条路
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -247,6 +249,51 @@ test('⑤ 人面读数：第几版 · 第几次落地 · 与上一版差在哪�
     console.log(
       `⑤ 读数：第 1 版/第 1 次落地 → 加 1 节 · 第 2 版/第 2 次落地 → 1 处 · ` +
         `第 2 版/第 3 次落地 → 与上一趟逐字节相同 · 一段话那一版（第 4 次落地）→ why「${String(fd.why)}」`,
+    )
+  } finally {
+    await b.close()
+  }
+})
+
+test('⑥ 按 `against` 走回第一版：第 i 条指着第 i-1 条那一版（重落那一趟指着自己）', async () => {
+  const b = await bench()
+  try {
+    const bodies = ['第一版：一段话。', '第二版：改了开头。', '第三版：再加一格。']
+    const ds = bodies.map(digestOf)
+    for (const [i, body] of bodies.entries()) {
+      await b.log.append('round', {
+        t: 'holder/distill',
+        round: R,
+        agent: HOLDER,
+        digest: ds[i] as string,
+        ...(i === 0 ? {} : { against: ds[i - 1] as string }),
+        body,
+      })
+    }
+    // 第四格：**重落第三版**——`against` 指着自己（「上一趟落地」就是它，不是「上一个不同的内容」）。
+    await b.log.append('round', {
+      t: 'holder/distill',
+      round: R,
+      agent: HOLDER,
+      digest: ds[2] as string,
+      against: ds[2] as string,
+      body: bodies[2] as string,
+    })
+
+    const f = await roundFactsOf(b.log, R)
+    assert.equal(f.versions.length, 4)
+    assert.equal(f.versions[0]?.against, null, '第一版没有来处')
+    assert.equal(f.versions[3]?.against, ds[2], '重落那一趟该指回自己')
+    // **口径那一句**：按落地次序一步步往回走，每一步的来处都写在 `against` 那一栏里。
+    for (let i = f.versions.length - 1; i > 0; i--) {
+      const v = f.versions[i]
+      const prev = f.versions[i - 1]
+      assert.equal(v?.against, prev?.digest, `第 ${i + 1} 条的 against 指不回第 ${i} 条`)
+      assert.equal(bodyOf(f, v?.against ?? ''), prev?.body, `第 ${i + 1} 条的来处取不回正文`)
+    }
+    console.log(
+      `⑥ 读数：链上 ${f.versions.length} 格（重落 1）· 每一条的 against 都是上一条那一版的指纹 · ` +
+        `从链尾走 ${f.versions.length - 1} 步回到第一版（${String(ds[0])}）`,
     )
   } finally {
     await b.close()
