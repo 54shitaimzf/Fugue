@@ -92,7 +92,7 @@ import { fingerprintOf } from '../contract/gate.ts'
 import { PlanError, planRound, pinnedBase } from '../round/plan.ts'
 import { RECENT_COUNT, SayError, recentOf, sayRound, sessionPathOf } from '../round/say.ts'
 import { estimateTokensOfText } from '../runtime/budget.ts'
-import { draftPathOf } from '../contract/draft.ts'
+import { draftPathOf, goalWithDraftRule } from '../contract/draft.ts'
 import { RoundRunError, materializeCommit, runRound } from '../round/execute.ts'
 import type { DriverSupport, Stub } from '../round/execute.ts'
 import { realDriver, stubDriver } from '../round/driver.ts'
@@ -1303,6 +1303,13 @@ async function holderWiringOf(o: {
   readonly goal: string
   /** B 区那一段：上一版凝聚理解（`holder/distill` 的最后一条）。 */
   readonly distill: string
+  /**
+   * **这一趟的产物是那一份草案**（预备态那一趟）——给了它才有末尾那一句与写入面那一栏。
+   *
+   * 讨论态那一趟不给：那一趟的产物是"修正后的理解"（不落文件 · 处境不动），说一句"往
+   * `.fugue/plan/` 里写"是错的（架构 § 15.1.a 那张表的两行）。
+   */
+  readonly draftPath?: RelPath
 }): Promise<{
   readonly base: CommitId
   readonly view: View
@@ -1316,6 +1323,9 @@ async function holderWiringOf(o: {
   readonly handleFor: (over: { readonly runtime: string; readonly recent: string }) => AgentHandle
 }> {
   // **钉住底**（读一次，然后传下去）：视图铺在它上面，日志里 `round/state` 那条链也以它为准。
+  // **这一趟的产物那一句拼在「工作总目标」那一段的末尾**（近因：模型读到的最后一处说什么，它
+  // 就做什么），而**要什么产物本来就是意图的一部分**——所以不另起一段。出处：S9 真档取证。
+  const goalText = o.draftPath === undefined ? o.goal : goalWithDraftRule(o.goal, o.draftPath)
   const base = await pinnedBase(o.ctx.truth)
   const view = await loadView(o.ctx.log, 'round' as WriterId, { lower: lowerAt(o.ctx.truth, base) })
   const head = await refHeadOf(o.ctx.log, 'round' as WriterId, base)
@@ -1325,6 +1335,9 @@ async function holderWiringOf(o: {
   const execute = createToolExecutor({
     logOf: () => o.ctx.log,
     host,
+    // **写入面那一栏**（架构 § 15.4：权限差别落在输入与作用域上）：持轮者那一趟只有草案那一棵
+    // 写得下去。讨论态那一趟不给它——那一趟没有产物文件（见 `draftPath` 那一栏）。
+    ...(o.draftPath === undefined ? {} : { planPath: o.draftPath }),
     fenceOf: (raw, cwd) => {
       const got = o.ctx.roots.resolveVirtual(raw, cwd as RelPath)
       return got.ok ? { ok: true as const, value: got.value } : { ok: false as const, error: got.error }
@@ -1351,7 +1364,7 @@ async function holderWiringOf(o: {
     // `assemble/sources.ts` 的 `cZoneHeadOf`。头是空的就不写这一栏（那时全文与尾巴逐字节相同）。
     state: {
       ...baseState,
-      goal: o.goal,
+      goal: goalText,
       distill: o.distill,
       recent: over.recent,
       ...(over.runtime === '' ? {} : { runtime: over.runtime }),
@@ -1422,6 +1435,8 @@ async function roundPlan(
       goal,
       // **凝聚理解**（架构 § 15.1.a 的 B 区那一段）：链尾那一版的正文（同一份读数）。
       distill: lastOf(facts)?.body ?? '',
+      // 预备态那一趟的产物是那份草案：末尾那一句与写入面都按它走（讨论态那一趟不给）。
+      draftPath,
     })
     const { base, view, execute, decl, call, tools, baseState } = w
     // 这一趟的句柄：**C 区第一条是空的**（这一趟没有人的话——那是 `fugue say` 那一格），
@@ -1617,6 +1632,8 @@ async function sayCommand(
       judge: false,
       goal: facts.goal,
       distill,
+      // **预备态那一趟才有产物文件**：讨论态（Idle）那一趟的产物是"修正后的理解"，不落文件。
+      ...(facts.state === 'Planning' ? { draftPath: draftPathOf(round) } : {}),
     })
     const makeHandle = (over: { readonly runtime: string; readonly recent: string }): AgentHandle =>
       w.handleFor({ runtime: over.runtime, recent: over.recent })

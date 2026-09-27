@@ -11,6 +11,7 @@ import { assemble, firstDivergence } from '../assemble/assemble.ts'
 import { sourcesFor } from '../assemble/sources.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 import { emptyState } from '../assemble/sources.ts'
+import { DRAFT_FIELDS, DRAFT_KINDS, draftPathOf, goalWithDraftRule } from '../contract/draft.ts'
 
 test('①d 子 agent 那份 B 区多出「我的任务」那一段，而持轮者那份没有它（A/C 两区逐字节相同）', () => {
   const dec = new TextDecoder()
@@ -40,5 +41,45 @@ test('①d 子 agent 那份 B 区多出「我的任务」那一段，而持轮�
   console.log(
     `①d 读数：子 agent B 区 ${sub.zoneB.length} 字节 · 持轮者 B 区 ${hold.zoneB.length} 字节 ` +
       `（差 ${sub.zoneB.length - hold.zoneB.length}）· A 区 ${sub.zoneA.length} · C 区 ${sub.zoneC.length}（两区逐字节相同）`,
+  )
+})
+
+
+// ── S9 那条缺口的封口：「工作总目标」那一段的末尾说得出草案写哪儿 · 什么形状 ─────────────
+//
+// 由头：真档取证（`tools/probe-live-s9.sh`）量出来的那条缺口——三次真档里持轮者拿到的前缀
+// 一个字节都没说这件事，于是真模型三次都写不出草案。这一条钉两样：**那一句与判据同源**
+// （键逐字从 `DRAFT_FIELDS` 念出来，不另抄一份），**位置在末尾**（近因：模型读到的最后一处
+// 说什么，它就做什么）。
+
+test('S9 · 「工作总目标」末尾那一句：写哪儿 · 什么形状，而键是从判键域那一份念出来的', () => {
+  const dec = new TextDecoder()
+  const draftPath = draftPathOf('r1')
+  const state: AssembleState = { ...emptyState(), goal: goalWithDraftRule('写一份 README.md', draftPath) }
+  const segs = sourcesFor(HOLDER_PROTOCOL, state, null)
+  const hold = assemble({ protocol: HOLDER_PROTOCOL, model: 'x' as never, segments: segs })
+  const text = dec.decode(hold.zoneB)
+
+  // 一 · 写哪儿：那一条路径就是 `round plan` 读回来的那一条（同一个函数给的）。
+  assert.ok(text.includes(draftPath), `那一段里没有草案路径：${text}`)
+  // 二 · 什么形状：每一节的键**逐字**来自 `DRAFT_FIELDS`（判键域用的就是那一份）。
+  for (const kind of DRAFT_KINDS) {
+    assert.ok(text.includes(DRAFT_FIELDS[kind].join(' · ')), `${kind} 那一节的键不在那一段里：${text}`)
+  }
+  // 三 · 位置：它在「工作总目标」那一段的**末尾**（人那一句在最前）。
+  assert.ok(text.startsWith('写一份 README.md'), `那一段的开头不是人那一句：${text.slice(0, 60)}`)
+  assert.ok(text.trimEnd().endsWith('写别的路径不算这一趟的产物。'), `那一段的末尾不是那一句：${text.slice(-200)}`)
+  // 四 · **它只在 B 区那一段里**：A 区（跨 agent 逐字节全等的那一段）与 C 区一个字节都不沾它。
+  //     这一条是那句"权限与差别落在作用域上"的另外半张脸——共用头不许被这一趟的产物撑开。
+  assert.equal(dec.decode(hold.zoneA).includes(draftPath), false, 'A 区里居然有草案路径')
+  assert.equal(dec.decode(hold.zoneC).includes(draftPath), false, 'C 区里居然有草案路径')
+  // 五 · **它是值不是段**：协议不加它，加它的是调用方给的那一份状态（`holderWiringOf`）。所以
+  //     "子 agent 那一份不带它"这件事由接线定，量在 `chain.test.ts` 那一条（讨论态那一趟与
+  //     录下来的子 agent 请求字节）。这里量的是同一件事的另一面：同一份状态换个模型，那一段照旧。
+  const again = dec.decode(assemble({ protocol: HOLDER_PROTOCOL, model: 'y' as never, segments: segs }).zoneB)
+  assert.equal(again, text, '换一个模型，那一段就变了')
+  console.log(
+    `S9 读数：「工作总目标」那一段 ${state.goal.length} 字节（人的意图 + 末尾那一句）· ` +
+      `键逐字来自 DRAFT_FIELDS · A/C 两区不沾它`,
   )
 })

@@ -132,6 +132,31 @@ export function draftPathOf(round: string): RelPath {
   return `.fugue/plan/${round}.md` as RelPath
 }
 
+/**
+ * **这一趟的产物那一句**（给模型看的那一段正文）：写哪儿 · 什么形状。
+ *
+ * 它是 S9 真档取证量出来的那条缺口的封口（`tools/probe-live-s9.sh` 三次真档：持轮者拿到的前缀里
+ * 没有一处说草案写哪儿 · 什么形状，于是真模型写不出草案）。两个要点：
+ *
+ *   · **位置由调用方拼在「工作总目标」那一段的末尾**（`goalWithDraftRule`）：那是这一趟里模型
+ *     读到的最后一处（`round plan` 那一趟 C 区是空的），而"要什么产物"本来就是意图的一部分；
+ *   · **键那几笔从 `DRAFT_FIELDS` 念出来**，不在这里另抄一份：判键域用的就是那一份（架构 § 8.12
+ *     「构造器不猜、不补」）。抄一份的后果是提示词与判据各说各话，而它一个错都不报。
+ */
+export function draftRuleTextOf(draftPath: RelPath): string {
+  const lines = DRAFT_KINDS.map((k) => `  ${k}：${DRAFT_FIELDS[k].join(' · ')}`)
+  return (
+    `这一趟要把拆分写进 \`${draftPath}\`：一个任务一节，每节一个标 \`json\` 的围栏块，键是：\n` +
+    lines.join('\n') +
+    '\n块外那些话留着——"为什么这么拆"那一句就是它。写别的路径不算这一趟的产物。'
+  )
+}
+
+/** 「工作总目标」那一段的正文：人的意图那一句 + **末尾**那一句产物说明（近因：末处说什么，它做什么）。 */
+export function goalWithDraftRule(goal: string, draftPath: RelPath): string {
+  return `${goal}\n\n${draftRuleTextOf(draftPath)}`
+}
+
 /** 一个围栏块：语言那一栏与正文。**不标语言的不算节**（它多半是示意）。 */
 const BLOCK = /```([A-Za-z0-9_-]*)[ \t]*\r?\n([\s\S]*?)```/g
 

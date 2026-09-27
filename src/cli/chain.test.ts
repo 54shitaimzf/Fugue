@@ -1052,3 +1052,61 @@ test('一趟命令读一遍：命令行那一层只有三处 `roundFactsOf`（`r
   }
   console.log(`读数：命令行那一层 roundFactsOf( 共 ${sites.length} 处（第 ${sites.map(([at]) => at).join(' · ')} 行），一处一条命令`)
 })
+
+
+// ── S9 那条缺口的封口：持轮者拿到的**请求字节**里说得出草案写哪儿 · 什么形状 ──────────────
+//
+// 由头：`tools/probe-live-s9.sh` 三次真档，`--dump-wire` 的实录里 `system` 只有项目方针那一份，
+// 两条 user 消息就只有目标那一句——**一个字节都没说草案写哪儿**，于是真模型三次都写不出草案
+// （空仓库那两次去问人了，靶子里有内容那次把交付物 `notes.md` 写进了自己的视图），判按
+// 「构造器不猜」退回。这一条把那一句钉在**发出去的字节**上，顺带钉住它的位置与两态之差。
+//
+// **不出网**：传输换成空回放目录（当场拒），而拒之前那一份请求已经落盘（`--dump-wire` 落的
+// 就是真发出去的那一份）——与 C5 那两条同一个手法。
+test('S9 · 持轮者的前缀里说得出草案写哪儿 · 什么形状（在「工作总目标」的末尾）', () => {
+  const root = tmpRoot()
+  assert.equal(fugue(root, 'write', 'README.md', '--from', srcOf()).code, 0)
+  assert.equal(fugue(root, 'commit', '-m', '底').code, 0)
+  const outside = tmpDir('fugue-goal-')
+  const empty = join(outside, '空夹具')
+  mkdirSync(empty, { recursive: true })
+  const dump = join(outside, 'wire')
+
+  const r = fugue(root, 'round', 'plan', '写一份 notes.md', '--wire-in', empty, '--dump-wire', dump)
+  assert.equal(r.code, 1, `写不出草案该退 1，实际 ${r.code}：${r.stderr.slice(0, 300)}`)
+
+  const request = readFileSync(join(dump, 'call-0001', 'request.json'), 'utf8')
+  // 一 · 写哪儿（`.fugue/plan/r1.md` 那一条就是 `round plan` 读回来的那一条）· 什么形状 ·
+  //     键那几笔（与判键域那一份同源）。
+  assert.ok(request.includes('.fugue/plan/r1.md'), `请求字节里没有草案那条路径：${request.slice(0, 400)}`)
+  assert.ok(request.includes('一个任务一节'), '请求字节里没说形状')
+  assert.ok(request.includes('ownedPaths'), '请求字节里没念草案的键')
+  // 二 · **位置**：它在「工作总目标」那一段的末尾（那一列里模型读到的最后一处；`round plan`
+  //     那一趟 C 区是空的）。只判"字节里有那一句"钉不住位置——这一条才是近因那一句话。
+  const goal = messagesOf(request)[0]?.content ?? ''
+  assert.ok(goal.startsWith('写一份 notes.md'), `第一条消息不是目标那一句：${goal.slice(0, 80)}`)
+  assert.ok(goal.trimEnd().endsWith('写别的路径不算这一趟的产物。'), `目标那一段的末尾不是那一句：${goal.slice(-200)}`)
+
+  // 三 · **负对照：讨论态那一趟不带它**——那一趟的产物是"修正后的理解"（不落文件 · 处境不动），
+  //     说一句"往 `.fugue/plan/` 里写"是错的（架构 § 15.1.a 那张表的两行）。换一份干净靶子。
+  const root2 = tmpRoot()
+  assert.equal(fugue(root2, 'write', 'README.md', '--from', srcOf()).code, 0)
+  assert.equal(fugue(root2, 'commit', '-m', '底').code, 0)
+  const dump2 = join(outside, 'wire2')
+  const talk = fugue(root2, 'say', '第二节也要拆', '--wire-in', empty, '--dump-wire', dump2)
+  assert.equal(talk.code, 1, `这一趟没有凝聚理解该退 1，实际 ${talk.code}：${talk.stderr.slice(0, 200)}`)
+  const request2 = readFileSync(join(dump2, 'call-0001', 'request.json'), 'utf8')
+  assert.equal(request2.includes('.fugue/plan/'), false, '讨论态那一趟居然说了往草案那个路径里写')
+
+  // 四 · **子 agent 那一侧不带它**（这一趟的产物那一句只对持轮者那一格说）：录下来的那份子
+  //     agent 请求（`round run` 那一趟 · 契约给的产物路径）里一个 `.fugue/plan/` 都没有。
+  //     那一份夹具**绑的就是当时的请求字节**（`--wire-in` 逐字节对账），所以接线一旦把它漏进
+  //     子 agent 的前缀，那条回放当场拒——这一条量与那一条是同一件事的两面。
+  const subRequest = readFileSync(join(WIRE_IN_DIR, 'wire', 'call-0001', 'request.json'), 'utf8')
+  assert.equal(subRequest.includes('.fugue/plan/'), false, '子 agent 那条请求里居然有草案路径')
+
+  console.log(
+    `S9 读数：预备态那条请求里 ${request.length} 字节（目标那一段 ${goal.length} 字节，末尾是那一句）· ` +
+      `讨论态那条请求里一个 \`.fugue/plan/\` 都没有 · 子 agent 那条请求里也没有`,
+  )
+})

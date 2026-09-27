@@ -13,11 +13,12 @@ import type { Capability, Denied } from './table.ts'
 import { capReceipt } from '../tools/receipt.ts'
 import { lookup } from './table.ts'
 import type { Log } from '../log/events.ts'
-import type { AgentId, StepId, WriterId } from '../terms.ts'
+import type { AgentId, RelPath, StepId, WriterId } from '../terms.ts'
 import type { Denied as FenceDenied } from '../roots/contract.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { DenyAsk, FaceResult, ToolContext, ToolHost } from '../tools/execute.ts'
-import { faceOf, noFace, parseArgs, publishedTools } from '../tools/execute.ts'
+import { faceOf, noFace, parseArgs, publishedTools, refuse } from '../tools/execute.ts'
+import { draftRuleTextOf } from '../contract/draft.ts'
 import { shellArgv } from '../tools/argv.ts'
 import { HOLDER_PROTOCOL } from '../assemble/protocol.ts'
 import type { AgentHandle, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
@@ -51,6 +52,18 @@ export interface DispatchDeps {
    * 物化面（没有 lazy 的那一半），而 `B6` 把 `ensure` 接上时这一处不动——它只是多等一次兑现。
    */
   readonly ensureOf?: (tool: string, args: Readonly<Record<string, unknown>>) => Promise<void>
+  /**
+   * **这一趟的写入面**：持轮者那一趟那份草案的路径（预备态那一趟才有）。
+   *
+   * 它不是能力表那一栏（那一栏说"这个工具落在哪层状态"），而是**这一趟的作用域**——架构 § 15.4
+   * 「权限差别只能落在输入与作用域上」。给了它，`write` 与 `edit` 只许落在那条路径**所在的那一棵
+   * 保留前缀**里（`.fugue/plan/`），写别处当场拒、拒的话里给准确路径与形状（架构 § 8.4 纪律 2）。
+   *
+   * 为什么不是"恰好那一条路径"：§ 15.1.a 那条硬要求说预备态的进度（设计稿 · 读过的文件清单）
+   * 也以文件形式落在工作区里，所以界取保留前缀那一棵、不新造一条界。真写错了轮次号那一档由门的
+   * 退回接住——它离得近，退回的话里就写着正确路径。
+   */
+  readonly planPath?: RelPath
 }
 
 /** 派发一次的结果：`ToolResult` 之外还给出**这一趟读了哪一格 · 跑了哪几条推论**。 */
@@ -61,6 +74,39 @@ export interface Dispatched {
   readonly applied: readonly string[]
   /** 这一趟是不是**被拒**（不是"命令自己退非零"）。`run/end` 的 `denied` 读它。 */
   readonly denied: boolean
+}
+
+/** 会改视图的那两条工具：**写入面那一栏只对它们有话说**（其余各条的路径参数是读的方向）。 */
+const WRITE_TOOLS: readonly string[] = ['write', 'edit']
+
+/** 写入面那一棵：那条草案路径所在的那一层（`.fugue/plan/r1.md` → `.fugue/plan/`）。 */
+function planDirOf(planPath: RelPath): string {
+  const at = planPath.lastIndexOf('/')
+  return at === -1 ? '' : planPath.slice(0, at + 1)
+}
+
+/**
+ * 一次写入落不落得下去。**拒的话就是最短的那句指示**：准确路径 + 形状 + 这一串为什么不算。
+ *
+ * 返回值是 `DenyAsk` 而不是一句话：那一条要落 `bound/deny`（`path` · `space` · `rule` 三个字段
+ * 就是那条事件的三栏），而"模型看见它为什么不行"与"日志里有一次拒"是同一件事的两个面。
+ */
+function writeScopeDenied(
+  tool: string,
+  args: Readonly<Record<string, unknown>>,
+  planPath: RelPath,
+): DenyAsk | null {
+  if (!WRITE_TOOLS.includes(tool)) return null
+  const raw = args['path']
+  if (typeof raw !== 'string') return null
+  const dir = planDirOf(planPath)
+  if (dir !== '' && raw.startsWith(dir) && raw.length > dir.length) return null
+  return refuse(
+    'plan-scope',
+    `持轮者这一趟只写草案那一棵：${dir === '' ? '（工作区根）' : dir}——写 ${raw} 不算这一趟的产物，一个字节都没落。` +
+      draftRuleTextOf(planPath),
+    raw,
+  )
 }
 
 /** 那几个工具的参数里有路径（`fence` 过的是它们，不是整串参数）。 */
@@ -191,6 +237,16 @@ export async function dispatch(
       }
     }
     applied.push('fence')
+  }
+
+  // **写入面**（S9 那条缺口的封口）：持轮者那一趟只有草案那一棵可以写。它排在围栏之后——
+  // 上面那一步把路径归一过了，这一处判的是归一后的那一份（两次判据同一把尺）。
+  if (deps.planPath !== undefined) {
+    const denied = writeScopeDenied(req.name, args, deps.planPath)
+    if (denied !== null) {
+      await deps.host.deny(denied)
+      return { result: { ok: false, output: denied.message }, capability: c, applied, denied: true }
+    }
   }
 
   const result = await fn(args, deps.host, ctx)

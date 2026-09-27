@@ -507,3 +507,75 @@ test('⑤ 负对照：把围栏那一栏关掉之后，越界那一次就真的�
     assert.equal(looseHost.denies.length, 0, '松的那一侧没有人拦它')
   })
 })
+
+
+// ── ⑥ 写入面那一栏（S9 真档取证那条缺口的封口）────────────────────────────────────
+//
+// 由头：`tools/probe-live-s9.sh` 三次真档，持轮者拿到的前缀里没有一处说草案写哪儿——其中一次
+// 它把交付物 `notes.md` 写进了自己的视图（真实工作树一个字节没动，那一笔全是白写的）。这一条
+// 把"错路走不通"钉在派发那一层：写别处当场拒，而拒的话就是最短的那句指示。
+//
+// 那一栏是**这一趟**的作用域，不是身份那一栏（`ctx.holder` 管的是"哪几条工具只有持轮者能用"），
+// 所以下面这几条用的是子 agent 那份句柄：界由 `planPath` 给，与谁在写无关。
+
+test('⑥ 写入面：写别处当场拒（拒的话里给准确路径 · 落一条 bound/deny），草案那一棵照旧', async () => {
+  await withLog(async (log, root) => {
+    // **真宿主**：`bound/deny` 是宿主那一道拒口落的（假宿主只把它记在内存里）——而"日志里
+    // 有一次拒"是这一条的取证面，所以这里不能用假的那一份。
+    const host = await realHostOf(log, root)
+    const fence = await fenceAt(root)
+    const planPath = '.fugue/plan/r1.md' as RelPath
+    const deps = { logOf: () => log, host, fenceOf: fence, planPath }
+    const h = handleOf()
+
+    // 一 · 写根上那份"交付物"：拒，而且**一个字节都没落**（下面读 `view/write` 那几条）。
+    const out = await dispatch(call('write', { path: 'notes.md', content: 'x' }), h, deps)
+    assert.equal(out.result.ok, false, `该拒：${out.result.output}`)
+    assert.equal(out.denied, true, '它是被拒的（不是工具自己失败）')
+    assert.match(out.result.output, /持轮者这一趟只写草案那一棵：\.fugue\/plan\//, out.result.output)
+    assert.match(out.result.output, /\.fugue\/plan\/r1\.md/, '拒的话里要给准确路径')
+    assert.match(out.result.output, /一个任务一节/, '拒的话里要说形状')
+
+    // 二 · 写草案那一份：过（它真的改到了视图）。
+    const good = await dispatch(call('write', { path: planPath, content: 'y' }), h, deps)
+    assert.equal(good.result.ok, true, good.result.output)
+
+    // 三 · 同一棵保留前缀里的另一份（§ 15.1.a：设计稿 · 读过的文件清单也以文件形式落着）：过。
+    const sibling = await dispatch(call('write', { path: '.fugue/plan/r1.设计稿.md', content: 'z' }), h, deps)
+    assert.equal(sibling.result.ok, true, `保留前缀那一棵里该写得下去：${sibling.result.output}`)
+
+    // 四 · `edit` 走同一条界（它也是改视图的那一条）。
+    const ed = await dispatch(call('edit', { path: 'notes.md', old_string: 'a', new_string: 'b' }), h, deps)
+    assert.equal(ed.result.ok, false, 'edit 也该被拦住')
+
+    // 五 · **真源那一栏**：两条 `bound/deny`（`rule` 是可分组的那一串 · `path` 是原文那一串），
+    //      而视图的变更只有写得下去的那两条——被拒的那两次一条 `view/write` 都没有。
+    const rows = await eventsOf(root)
+    const denies = rows.filter((e) => e.t === 'bound/deny')
+    assert.equal(denies.length, 2, `日志里的 bound/deny 条数：${denies.length}`)
+    assert.deepEqual(denies.map((e) => e.rule), ['plan-scope', 'plan-scope'])
+    assert.deepEqual(denies.map((e) => e.path), ['notes.md', 'notes.md'])
+    assert.deepEqual(denies.map((e) => e.space), ['virtual', 'virtual'])
+    const writes = rows.filter((e) => e.t === 'view/write').map((e) => e.path)
+    assert.deepEqual(writes, [planPath, '.fugue/plan/r1.设计稿.md'], `视图里改过的路径：${JSON.stringify(writes)}`)
+    console.log(
+      `⑥ 读数：拒 2 次（write · edit · 都落 bound/deny）· 写得下去 2 条（${writes.join(' · ')}）`,
+    )
+  })
+})
+
+test('⑥ 负对照：不给 `planPath` 那一栏，同一个 `notes.md` 就写得下去（拒是那一栏带来的）', async () => {
+  await withLog(async (log, root) => {
+    const host = fakeHost()
+    const fence = await fenceAt(root)
+    const out = await dispatch(call('write', { path: 'notes.md', content: 'x' }), handleOf(), {
+      logOf: () => log,
+      host,
+      fenceOf: fence,
+    })
+    assert.equal(out.result.ok, true, `不给那一栏就不该拦：${out.result.output}`)
+    assert.deepEqual(host.writes.map((w) => w.path), ['notes.md'])
+    assert.equal(host.denies.length, 0, '没有人拦它')
+    console.log('⑥ 负对照读数：同一份输入、只少了 planPath 那一栏 → 写下去了（拒不是别处来的）')
+  })
+})
