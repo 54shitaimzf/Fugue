@@ -43,7 +43,7 @@ import { runRound } from '../round/execute.ts'
 import type { RoundRunDeps } from '../round/execute.ts'
 
 const AGENT = 'agent-1' as AgentId
-const DECL = modelDeclOf('deepseek-chat/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic')
 const CATALOG = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 
 /** 测试自己起 git 时用同一套隔离：用户级配置不该决定测试的读数。 */
@@ -211,8 +211,8 @@ function handleOf(agent: AgentId, state: AssembleState): ReturnType<NonNullable<
     contract: 'r1.implement.1' as ContractId,
     protocol: SUBAGENT_PROTOCOL,
     model: DECL.id,
-    wireModel: 'deepseek-chat',
-    target: { providerId: 'fixture', host: '', wire: { name: 'anthropic-messages' }, path: '', model: 'deepseek-chat', from: 'fixture', headers: {} },
+    wireModel: 'deepseek-flash',
+    target: { providerId: 'fixture', host: '', wire: { name: 'anthropic-messages' }, path: '', model: 'deepseek-flash', from: 'fixture', headers: {} },
     adapter: { name: 'anthropic-messages' },
     state,
   } as never

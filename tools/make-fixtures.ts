@@ -31,11 +31,11 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: ['deliver/agent-1/'] }
 
 const PAIRS = [
-  { decl: 'deepseek-chat/anthropic', sse: 'anthropic-messages.sse', out: 'deepseek-chat-anthropic.json' },
-  { decl: 'deepseek-chat/openai', sse: 'openai-chat.sse', out: 'deepseek-chat-openai.json' },
+  { decl: 'deepseek-flash/anthropic', sse: 'anthropic-messages.sse', out: 'deepseek-flash-anthropic.json' },
+  { decl: 'deepseek-flash/openai', sse: 'openai-chat.sse', out: 'deepseek-flash-openai.json' },
   // **思考那一档录的是真会话**（`tools/probe-thinking.ts --live` 的第 1 次调用）：上游给的
   // `reasoning_content` 是这一份夹具存在的唯一理由——另两份里一个字都没有。
-  { decl: 'deepseek-chat/openai', sse: 'openai-chat-thinking.sse', out: 'deepseek-chat-openai-thinking.json' },
+  { decl: 'deepseek-flash/openai', sse: 'openai-chat-thinking.sse', out: 'deepseek-flash-openai-thinking.json' },
 ] as const
 
 const FIXTURES = join(ROOT, 'src', 'model', 'fixtures')

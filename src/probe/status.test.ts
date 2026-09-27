@@ -68,7 +68,7 @@ function call(agent: string, step: string, invocations: number, cacheRead: numbe
     t: 'llm/call',
     agent: agent as AgentId,
     step: step as never,
-    model: 'deepseek-chat' as never,
+    model: 'deepseek-flash/anthropic' as never,
     wire: 'anthropic-messages',
     toolCount: 9,
     invocations,
@@ -402,7 +402,7 @@ test('⑨ 逐趟账：每一条 `llm/call` 一行 + 合计；半截的流与"没
   // **给了档**：逐趟一笔、合计一笔。合计那个数走的是 `costOf`（一处算式）。
   const priced = callLinesOf(rows, { phase: 'off-peak' })
   assert.match(priced[0] as string, /· 钱 \$0\.000012（下界：有 1 条没量到）/)
-  assert.match(priced[2] as string, /· 费用 ≈ \$0\.000024（谷时 · deepseek-chat → deepseek-flash：未命中 \$0\.15\/M · 命中 \$0\.003\/M · 输出 \$0\.6\/M）/)
+  assert.match(priced[2] as string, /· 费用 ≈ \$0\.000024（谷时 · deepseek-flash\/anthropic → deepseek-flash：未命中 \$0\.15\/M · 命中 \$0\.003\/M · 输出 \$0\.6\/M）/)
 
   // 一次调用都没有那一档：合计照印，并说清"一次调用都还没有"。
   const none = callLinesOf([row({ t: 'round/state', round: 'r1' as RoundId, from: 'Idle' as never, to: 'Planning' as never })])

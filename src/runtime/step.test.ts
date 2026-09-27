@@ -44,7 +44,7 @@ import { runSteps } from './run.ts'
 
 const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: ['deliver/agent-1/'] }
 const FIXTURES = fileURLToPath(new URL('../model/fixtures/', import.meta.url))
-const DECL = modelDeclOf('deepseek-chat/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic')
 const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 
 /** 一次调用的四个数（假模型也守 `B1` 的口径：用量可以缺，缺了是 `null`）。 */
@@ -75,7 +75,7 @@ const SCRIPTS: readonly (readonly ModelEvent[])[] = [
 ]
 
 /** 一个夹具（`deleted` 那一档不存在：夹具是盘上的文件）。 */
-const FIXTURE: Fixture = readFixture(FIXTURES + 'deepseek-chat-anthropic.json')
+const FIXTURE: Fixture = readFixture(FIXTURES + 'deepseek-flash-anthropic.json')
 
 /** 一个临时工作区：日志落在它里面，跑完删干净。**写口一条命令一个**（`hold` 那条纪律）。 */
 async function withRoot<T>(fn: (root: string, log: LogHandle) => Promise<T>): Promise<T> {

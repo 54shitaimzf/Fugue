@@ -60,7 +60,7 @@ test('② 峰谷那一档：官方那两个窗（UTC）· 周末整天谷时 · 
 })
 
 test('③ 算钱：真档那一趟 · 峰谷真的分开 · 思考那一栏一分钱都不加', () => {
-  const row = priceOf('deepseek-chat/anthropic') // 账上写的是我们这个键
+  const row = priceOf('deepseek-flash/anthropic') // 账上写的是我们这个键
   assert.ok(row !== null, '账上那个键认不出价目')
   assert.equal(row.model, 'deepseek-flash', '我们自己发出去的名字没折回官方那一行的名字')
   const off = costOf(TRIP, row, 'off-peak')
@@ -93,9 +93,9 @@ test('③ 算钱：真档那一趟 · 峰谷真的分开 · 思考那一栏一�
 })
 
 test('④ 名字 → 价目行：账上那两个键都认得出，两种价混在一趟与没见过的名字都不给行', () => {
-  assert.equal(matchModels(['deepseek-chat/openai']).row?.model, 'deepseek-flash')
-  assert.equal(matchModels(['deepseek-chat/anthropic']).row?.model, 'deepseek-flash')
-  assert.equal(matchModels(['deepseek-chat/anthropic', 'deepseek-chat/openai']).row?.model, 'deepseek-flash')
+  assert.equal(matchModels(['deepseek-flash/openai']).row?.model, 'deepseek-flash')
+  assert.equal(matchModels(['deepseek-flash/anthropic']).row?.model, 'deepseek-flash')
+  assert.equal(matchModels(['deepseek-flash/anthropic', 'deepseek-flash/openai']).row?.model, 'deepseek-flash')
   assert.equal(matchModels(['deepseek-flash', 'deepseek-chat']).row?.model, 'deepseek-flash')
   assert.deepEqual(matchModels([]), { row: null, miss: 'empty' })
   assert.deepEqual(matchModels(['没有这个模型']), { row: null, miss: 'unknown' })
@@ -110,14 +110,14 @@ test('⑤ 钱那一行：算不出来时不拿 0 顶 · 价与档印在同一行
   const money = costOf(TRIP, flash, 'off-peak')
   const text = moneyText({
     money,
-    match: matchModels(['deepseek-chat/openai']),
+    match: matchModels(['deepseek-flash/openai']),
     phase: 'off-peak',
-    models: ['deepseek-chat/openai'],
+    models: ['deepseek-flash/openai'],
   })
   assert.ok(text.includes('0.000624'), text)
   assert.ok(text.includes('谷时'), text)
   assert.ok(text.includes('deepseek-flash'), text)
-  assert.ok(text.includes('deepseek-chat/openai'), '回执里没印账上那个名字，价与名对不上时看不出来')
+  assert.ok(text.includes('deepseek-flash/openai'), '回执里没印账上那个名字，价与名对不上时看不出来')
   const none = moneyText({ money, match: matchModels(['没有这个模型']), phase: 'peak', models: ['没有这个模型'] })
   assert.ok(none.includes('算不出来'), none)
   assert.ok(!none.includes('0.000000'), '没有价目时印了一个 0')

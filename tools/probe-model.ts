@@ -174,7 +174,7 @@ eq('事件联合里有 run/start 吗', names.includes('run/start'), true)
 // ── 四 · 声明本身 ──────────────────────────────────────────────────────────────
 console.log('\n四 · 声明这一份在盘上的样子')
 
-eq('MODEL_DECLS 的名字', MODEL_IDS, ['deepseek-chat/anthropic', 'deepseek-chat/openai'])
+eq('MODEL_DECLS 的名字', MODEL_IDS, ['deepseek-flash/anthropic', 'deepseek-flash/openai'])
 eq('PREFIX_MODELS 与 MODEL_DECLS 的键域相同', Object.keys(PREFIX_MODELS).sort(), Object.keys(MODEL_DECLS).sort())
 eq('PROVIDERS 的名字', Object.keys(PROVIDERS), ['deepseek'])
 {

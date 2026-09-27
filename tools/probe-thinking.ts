@@ -30,7 +30,7 @@ const at = (name: string): string | undefined => {
 const effort = (at('--effort') ?? 'low') as 'off' | 'low' | 'high' | 'max'
 const dumpDir = at('--dump')
 const credPath = at('--credential')
-const DECL_ID = 'deepseek-chat/openai'
+const DECL_ID = 'deepseek-flash/openai'
 
 const say = (s: string): void => console.log(`  ·  ${s}`)
 console.log('思考那一格：收 · 存 · 回传（探针）\n')

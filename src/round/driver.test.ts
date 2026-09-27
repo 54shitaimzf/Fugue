@@ -46,7 +46,7 @@ import { refHeadOf } from './head.ts'
 import { RefConflictError } from '../truth/truth.ts'
 
 const AGENT = 'agent-1' as AgentId
-const DECL = modelDeclOf('deepseek-chat/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic')
 const CATALOG = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 
 const GIT_ENV: NodeJS.ProcessEnv = {
@@ -283,8 +283,8 @@ function supportOf(b: Bench, call: CallModel, agents: readonly AgentId[] = [AGEN
       contract: 'r1.implement.1' as ContractId,
       protocol: SUBAGENT_PROTOCOL,
       model: DECL.id,
-      wireModel: 'deepseek-chat',
-      target: { providerId: 'fixture', host: '', wire: { name: 'anthropic-messages' }, path: '', model: 'deepseek-chat', from: 'fixture', headers: {} },
+      wireModel: 'deepseek-flash',
+      target: { providerId: 'fixture', host: '', wire: { name: 'anthropic-messages' }, path: '', model: 'deepseek-flash', from: 'fixture', headers: {} },
       adapter: { name: 'anthropic-messages' },
       state: stateOf(agent),
     }),
@@ -315,8 +315,8 @@ function askOf(b: Bench, call: CallModel | undefined, over: Record<string, unkno
       contract: 'r1.implement.1' as ContractId,
       protocol: SUBAGENT_PROTOCOL,
       model: DECL.id,
-      wireModel: 'deepseek-chat',
-      target: { providerId: 'fixture', host: '', wire: { name: 'anthropic-messages' }, path: '', model: 'deepseek-chat', from: 'fixture', headers: {} },
+      wireModel: 'deepseek-flash',
+      target: { providerId: 'fixture', host: '', wire: { name: 'anthropic-messages' }, path: '', model: 'deepseek-flash', from: 'fixture', headers: {} },
       adapter: { name: 'anthropic-messages' },
       state,
     },

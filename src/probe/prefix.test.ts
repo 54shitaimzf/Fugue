@@ -33,7 +33,7 @@ const call = (w: string, step: string): PrefixRow =>
       t: 'llm/call',
       agent: w as AgentId,
       step: step as never,
-      model: 'deepseek-chat' as never,
+      model: 'deepseek-flash/anthropic' as never,
       wire: 'anthropic-messages',
       toolCount: 9,
       invocations: 1,

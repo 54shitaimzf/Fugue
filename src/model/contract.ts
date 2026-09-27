@@ -136,7 +136,7 @@ export const PROVIDERS: Readonly<Record<string, ProviderDecl>> = {
  *   一个名字而不是一个值：解析成协议值是装配那一侧的事（`protocolFor`），这一份只声明"哪一份"。
  *   于是"换一个模型换一份提示词"是一个数据字段，而不是某处的分支——§ 10.3 的判据。
  * - `provider` · `wire` · `model`：**请求发给谁 · 走哪条线 · 那边叫它什么名字**。三样分开是
- *   因为它们的值域各不相同：一个 host 上有两条路（`deepseek-chat` 两个线协议），一条路上有
+ *   因为它们的值域各不相同：一个 host 上有两条路（`deepseek-flash` 两个线协议），一条路上有
  *   好几个模型。**适配器只读 `wire`，不读 `id`**——架构 § 10.3 的判据：适配器里出现
  *   `if (model === 'x')` 就是漏了一个声明式字段。
  * - `systemPromptUpdate`：两行（`in-history` · `rewrite-head`），逐字来自架构 § 8.11 那张
@@ -235,12 +235,12 @@ export const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'high', 
  * 提示词由轮次那一层定（`round/driver.ts`），不由模型定。
  */
 export const MODEL_DECLS: Readonly<Record<string, ModelDecl>> = {
-  'deepseek-chat/anthropic': {
-    id: 'deepseek-chat/anthropic' as ModelId,
+  'deepseek-flash/anthropic': {
+    id: 'deepseek-flash/anthropic' as ModelId,
     protocol: 'subagent',
     provider: 'deepseek',
     wire: 'anthropic-messages',
-    model: 'deepseek-chat',
+    model: 'deepseek-flash',
     systemPromptUpdate: 'in-history',
     contextLimit: 1_048_576,
     budget: { trigger: triggerAt(1_048_576), handoffMargin: 16_000 },
@@ -248,12 +248,12 @@ export const MODEL_DECLS: Readonly<Record<string, ModelDecl>> = {
     // 输出预算，4096 那一档的兜底常数装不下"想完再说"（那条线 `max_tokens` 是必填）。
     call: { thinking: 'high', maxTokens: 32_768 },
   },
-  'deepseek-chat/openai': {
-    id: 'deepseek-chat/openai' as ModelId,
+  'deepseek-flash/openai': {
+    id: 'deepseek-flash/openai' as ModelId,
     protocol: 'subagent',
     provider: 'deepseek',
     wire: 'openai-chat',
-    model: 'deepseek-chat',
+    model: 'deepseek-flash',
     systemPromptUpdate: 'in-history',
     contextLimit: 1_048_576,
     budget: { trigger: triggerAt(1_048_576), handoffMargin: 16_000 },

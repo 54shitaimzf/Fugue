@@ -70,7 +70,7 @@ process.on('exit', () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true })
 })
 
-const DECL = modelDeclOf('deepseek-chat/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic')
 const CATALOG = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 const ROUND = 'r1' as RoundId
 const GIT_ENV: NodeJS.ProcessEnv = {
@@ -177,8 +177,8 @@ function holderOf(b: Bench): { handle: AgentHandle; sub: AssembleState } {
     contract: '' as ContractId,
     protocol: HOLDER_PROTOCOL,
     model: DECL.id,
-    wireModel: 'deepseek-chat',
-    target: { providerId: 'fixture', host: '', wire: { name: 'anthropic-messages' }, path: '', model: 'deepseek-chat', from: 'fixture', headers: {} },
+    wireModel: 'deepseek-flash',
+    target: { providerId: 'fixture', host: '', wire: { name: 'anthropic-messages' }, path: '', model: 'deepseek-flash', from: 'fixture', headers: {} },
     adapter: { name: 'anthropic-messages' },
     state: holder,
   }

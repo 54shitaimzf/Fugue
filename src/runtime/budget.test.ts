@@ -26,7 +26,7 @@ import { DISTILL_LIMIT_TOKENS, ENVELOPE_TOKENS, checkBudget, estimateTokens, est
 import { calibrate, ratioOf, truthOf } from './calib.ts'
 import type { BudgetAsk } from './budget.ts'
 
-const DECL = modelDeclOf('deepseek-chat/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic')
 const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: [] }
 
 /** 工具目录与 `seed` 那两段：**账里递的是正文**（怎么量归 `planBudget`，调用方不换算）。 */

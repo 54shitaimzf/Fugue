@@ -120,7 +120,7 @@ function craft(reqPath, outDir, specPath) {
   const usage = { input_tokens: 1200, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 0 }
   let sse = ev('message_start', {
     type: 'message_start',
-    message: { id: 's9-1', type: 'message', role: 'assistant', model: 'deepseek-chat', content: [], stop_reason: null, usage },
+    message: { id: 's9-1', type: 'message', role: 'assistant', model: 'deepseek-flash', content: [], stop_reason: null, usage },
   })
   if (spec.kind === 'text') {
     sse += ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
@@ -158,8 +158,8 @@ function craft(reqPath, outDir, specPath) {
     JSON.stringify(
       {
         call: 1,
-        target: { providerId: 'deepseek', host: '（这一份没出网）', path: '/anthropic/v1/messages', model: 'deepseek-chat', from: 'walkthrough-s9', wire: 'anthropic-messages' },
-        model: 'deepseek-chat',
+        target: { providerId: 'deepseek', host: '（这一份没出网）', path: '/anthropic/v1/messages', model: 'deepseek-flash', from: 'walkthrough-s9', wire: 'anthropic-messages' },
+        model: 'deepseek-flash',
         requestBytes: reqBytes.length,
         requestHash: hashOf(reqBytes),
         responseBytes: respBytes.length,

@@ -43,7 +43,7 @@ import { refHeadOf } from '../round/head.ts'
 
 const AGENT = 'agent-1' as AgentId
 const CATALOG = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
-const DECL = modelDeclOf('deepseek-chat/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic')
 
 /** 测试自己起 git 时用同一套隔离：用户级配置不该决定测试的读数。 */
 const GIT_ENV: NodeJS.ProcessEnv = {
@@ -273,13 +273,13 @@ function handleOf(state: AssembleState): AgentHandle {
     contract: 'c-1' as ContractId,
     protocol: SUBAGENT_PROTOCOL,
     model: DECL.id,
-    wireModel: 'deepseek-chat',
+    wireModel: 'deepseek-flash',
     target: {
       providerId: 'fixture',
       host: '',
       wire: { name: 'anthropic-messages' } as AgentHandle['target']['wire'],
       path: '',
-      model: 'deepseek-chat',
+      model: 'deepseek-flash',
       from: 'fixture',
       headers: {},
     },

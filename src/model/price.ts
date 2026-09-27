@@ -34,7 +34,7 @@ export interface PriceRow {
   /**
    * 上游仍然接受、**按本行计价**的别的名字（官方页：旧名路由到同一个模型，价也照这一个算）。
    *
-   * 这一栏只放**上游那边的名字**：账上写的是我们自己的键（`deepseek-chat/openai` 一类），那一头
+   * 这一栏只放**上游那边的名字**：账上写的是我们自己的键（`deepseek-flash/openai` 一类），那一头
    * 由 `wireNameOf` 折回发出去的名字——两边的名字不混在一张表里。
    */
   readonly aliases: readonly string[]
@@ -45,9 +45,11 @@ export interface PriceRow {
 /**
  * 官方定价页（2026-09-10 那一版）上的价目。**改价的落地处就这一处。**
  *
- * `deepseek-chat` 与 `deepseek-reasoner` 是**我们自己发出去的名字**：官方页上已经没有它们
- * （2026-07-24 停用），而真档里它们照旧回来 `deepseek-flash`——那一趟就该按 Flash 那一栏算，所以
- * 它们在这张表里。**名字与价对不对得上，回执那一行把名字印出来给人核。**
+ * `deepseek-chat` 与 `deepseek-reasoner` 是**我们已经不发了的旧名字**（官方 2026-07-24 停用；
+ * 声明的改名见 `contract.ts` 那一格）。**它们留在这张表里，为的是读得懂旧账**：盘上那些 b16–b21
+ * 的日志与夹具里写的就是这两个名字，删掉就意味着"同一份日志今天读出来是算不出来"——一个读的人
+ * 什么都没改，读数却变了。真档里它们照旧回来 `deepseek-flash`，所以按 Flash 那一栏算。
+ * **名字与价对不对得上，回执那一行把名字印出来给人核。**
  */
 export const PRICE_BOOK: readonly PriceRow[] = [
   {

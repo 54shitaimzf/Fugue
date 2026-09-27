@@ -129,7 +129,7 @@ const usageOf = (u: Record<string, unknown> | undefined, chunkModel: string | nu
     ...out,
     // **上游报的模型名不在 `usage` 里**（官方 schema 把 `model` 放在补全对象上，流式那一档每一片都带），
     // 所以它从那一片 chunk 上取。读 `usage` 里那一栏的话，它一路都是 `null`——"它说它是谁"这一栏
-    // 正是"上游报的名字 vs 我们声明的名字"的读数（真档：声明 `deepseek-chat`，报的是 `deepseek-flash`）。
+    // 正是"上游报的名字 vs 我们声明的名字"的读数（真档：声明过 `deepseek-chat` 那个旧名，报的是 `deepseek-flash`）。
     model: chunkModel,
   }
 }

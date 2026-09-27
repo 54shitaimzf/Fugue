@@ -50,7 +50,7 @@ async function eventsOf(text: string, wire: WireAdapter, size: number): Promise<
 function request(tools = true): ModelRequest {
   const enc = new TextEncoder()
   return {
-    model: modelDeclOf('deepseek-chat/anthropic').model,
+    model: modelDeclOf('deepseek-flash/anthropic').model,
     zones: {
       A: enc.encode('你是子 agent。你的契约是：把工作树里的 .ts 数一遍。'),
       B: enc.encode('第 0 步。工作区：/w/fixture。'),
@@ -177,7 +177,7 @@ function escapedInJson(s: string): string {
 function requestWithEscapes(): ModelRequest {
   const enc = new TextEncoder()
   return {
-    model: modelDeclOf('deepseek-chat/anthropic').model,
+    model: modelDeclOf('deepseek-flash/anthropic').model,
     zones: {
       A: enc.encode('项目方针：换行要转义\n「引号」与\\反斜杠\t制表符也要转义。'),
       B: enc.encode('第 0 步。\n工作区：/w/fixture\n路径：src/a.ts'),
@@ -480,7 +480,7 @@ test('⑦ 思考：收得到（与实录里那些分片逐字节相同）· 回�
   // 思考 token：上游挂在**输出那一栏的明细**上（`completion_tokens_details.reasoning_tokens`）。
   // 真档是 78 ⊂ 175——它不进钱那一档，只作读数。
   assert.equal(call.usage?.reasoningTokens, 78, '实录里那 78 个思考 token 没接上')
-  // 上游报的模型名：**不在 `usage` 里，在每一片 chunk 上**。真档里我们声明的是 `deepseek-chat`，
+  // 上游报的模型名：**不在 `usage` 里，在每一片 chunk 上**。真档里我们声明的是 `deepseek-flash`，
   // 而上游一路报 `deepseek-flash`——这一栏就是"它说它是谁"的读数（负对照：换个不认得的名字 → null）。
   assert.equal(call.usage?.model, 'deepseek-flash', '上游报的模型名没接上')
   assert.equal(call.usage?.outputTokens, 175, '输出那一栏与实录对不上')

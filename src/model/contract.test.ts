@@ -67,8 +67,8 @@ function contractWithSeed(seed: readonly string[]): ImplementContract {
 
 test('① 声明是值，不是分支：取两次同一份，投影与声明同域且不换名字', () => {
   // 确定性：同一个名字取两次是同一个值（声明里没有一处读环境 · 时间 · 随机）。
-  assert.deepEqual(modelDeclOf('deepseek-chat/anthropic'), modelDeclOf('deepseek-chat/anthropic'))
-  assert.equal(modelDeclOf('deepseek-chat/anthropic'), FIRST)
+  assert.deepEqual(modelDeclOf('deepseek-flash/anthropic'), modelDeclOf('deepseek-flash/anthropic'))
+  assert.equal(modelDeclOf('deepseek-flash/anthropic'), FIRST)
   assert.deepEqual(PREFIX_MODEL_IDS, MODEL_IDS)
 
   // 前缀那一侧的表与声明表逐项相同：**投影不是第二张表**。
@@ -106,7 +106,7 @@ test('① 声明是值，不是分支：取两次同一份，投影与声明同�
 })
 
 test('② 目录：两条真声明，各指得出提供方 · 线协议 · 上限；查不到的名字当场拒', () => {
-  assert.deepEqual(MODEL_IDS, ['deepseek-chat/anthropic', 'deepseek-chat/openai'])
+  assert.deepEqual(MODEL_IDS, ['deepseek-flash/anthropic', 'deepseek-flash/openai'])
   assert.deepEqual(WIRE_NAMES, ['anthropic-messages', 'openai-chat'])
   assert.deepEqual(Object.keys(WIRES), [...WIRE_NAMES])
   // 两条线协议的路径两样：同一个 host 上两条路，这是"同一模型两个协议"那条验证的落点。
@@ -115,7 +115,7 @@ test('② 目录：两条真声明，各指得出提供方 · 线协议 · 上�
   for (const [name, m] of Object.entries(MODEL_DECLS)) {
     assert.equal(m.id, name, `${name} 的 id 与它的键不一致`)
     assert.deepEqual([WIRE_NAMES.includes(m.wire), PROVIDERS[m.provider] !== undefined], [true, true], `${name} 的线协议或提供方指不到`)
-    assert.equal(m.model, 'deepseek-chat', `${name} 那边叫的名字`)
+    assert.equal(m.model, 'deepseek-flash', `${name} 那边叫的名字`)
     assert.deepEqual([m.systemPromptUpdate], ['in-history'], `${name} 的系统提示词更新方式`)
     // 上限那一个数是**上游报的**（`GET /models` 的 `context_window` · `tools/probe-models.ts` 核它），
     // 不是"1M"那个取整的整数——差 48 576（4.6%），而预算三个数与 `seed` 的上限都从它长出来。
@@ -139,7 +139,7 @@ test('② 目录：两条真声明，各指得出提供方 · 线协议 · 上�
     return true
   })
   assert.throws(() => providerOf('openai'), ModelDeclError)
-  assert.deepEqual([isModelRef('deepseek-chat/anthropic'), isModelRef('deepseek-chat'), isModelRef('')], [true, false, false])
+  assert.deepEqual([isModelRef('deepseek-flash/anthropic'), isModelRef('deepseek-flash'), isModelRef('')], [true, false, false])
 })
 
 test('③ 凭据是一个引用：只收环境变量的名字或工作区外的路径，值不进声明', () => {
@@ -297,7 +297,7 @@ test('⑥ 前缀那一侧的四个字段与声明逐项相同（投影漏一个�
   assert.equal(MODELS, PREFIX_MODELS)
   // 查表那一路：`modelOf` 与 `modelDeclOf` 同一条口径（**值相同**，不是同一个对象的引用——
   // 投影每次新建一份，而"两份表不是各写一遍"这件事由 `MODELS === PREFIX_MODELS` 那一行量）。
-  assert.deepEqual(modelOf('deepseek-chat/openai'), prefixDeclOf(modelDeclOf('deepseek-chat/openai')))
+  assert.deepEqual(modelOf('deepseek-flash/openai'), prefixDeclOf(modelDeclOf('deepseek-flash/openai')))
   assert.deepEqual(modelOf(''), prefixDeclOf(DEFAULT_MODEL))
   assert.deepEqual(modelOf(undefined), prefixDeclOf(DEFAULT_MODEL))
   assert.throws(() => modelOf('gpt-9'), ModelDeclError)
@@ -499,7 +499,7 @@ const DECL = MODEL_DECLS[MODEL_IDS[0] as string] as (typeof MODEL_DECLS)[string]
 
 assert.ok(REPO.endsWith('/') || REPO.endsWith('\\'), `仓库根那一串要是个目录：${REPO}`)
 assert.ok(SRC.includes('export interface ModelRequest'), '盘上读到的那一份里没有 ModelRequest')
-assert.equal(DECL.model, 'deepseek-chat')
+assert.equal(DECL.model, 'deepseek-flash')
 
 // ── ② 一串事件积得出一次完整调用 ──────────────────────────────────────────────
 

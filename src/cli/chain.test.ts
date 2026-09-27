@@ -362,7 +362,7 @@ test('--live 那一档接的是真驱动：日志里有一条带 401 的 llm/cal
   assert.equal(one.status, 401, `那一条 llm/call 上的 status 该是 401（假凭据），实际 ${String(one.status)}`)
   assert.equal(one.invocations, 0)
   assert.deepEqual(Object.values(one.usage ?? {}).filter((v) => v !== null), [], '没走完的调用不该有用量读数')
-  assert.equal(one.model, 'deepseek-chat/anthropic', '这一格该走默认模型那条声明')
+  assert.equal(one.model, 'deepseek-flash/anthropic', '这一格该走默认模型那条声明')
   // 三 · 没静默地成功：盘上没有 a.ts（真驱动那一档没干完就不产出）。
   assert.equal(existsSync(join(root, 'a.ts')), false, '盘上出现了 a.ts——那说明这一趟不是真驱动那一条路')
   // 四 · **每一格为什么停**（第 5 批 · 疑点 2）：`--json` 里那一栏原先不存在；而这一趟的停因

@@ -27,7 +27,7 @@ import type { AgentId, BranchId, ContractId, WriterId } from '../terms.ts'
 import { planBudget } from './budget.ts'
 import { digestOf, handoffAt, promptOf, successorNameOf, successorOf } from './restart.ts'
 
-const DECL = modelDeclOf('deepseek-chat/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic')
 const AGENT = 'agent-1' as AgentId
 const WHO: AgentCoord = { id: AGENT, branch: 'refs/heads/agent-1', outputPaths: ['deliver/agent-1/'] }
 const BRANCH = 'refs/heads/agent-1' as BranchId

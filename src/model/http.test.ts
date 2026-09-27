@@ -38,7 +38,7 @@ import { canonicalOf, fixtureTarget, fixtureTransport, readFixture, recordOf, re
 
 const FIXTURES = fileURLToPath(new URL('./fixtures/', import.meta.url))
 const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: ['deliver/agent-1/'] }
-const DECL = modelDeclOf('deepseek-chat/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic')
 
 function prefixOf(step: number) {
   return assemble({
@@ -79,7 +79,7 @@ async function serveSplit(
     target: {
       providerId: 'local',
       host: `http://127.0.0.1:${port}`,
-      wire: fixtureTarget(fixture('deepseek-chat-anthropic')).wire,
+      wire: fixtureTarget(fixture('deepseek-flash-anthropic')).wire,
       path,
       model: DECL.model,
       from: 'decl',
@@ -93,7 +93,7 @@ async function serveSplit(
 // ── ① 上游分片：不丢不重（与整包到达同一串事件） ────────────────────────────────
 
 test('① 上游把一个事件拆成好几个 TCP 分片时，解析出的增量与手工拼起来的相同（不丢不重）', async () => {
-  const f = fixture('deepseek-chat-anthropic')
+  const f = fixture('deepseek-flash-anthropic')
   const served = await serveSplit(f.response, '/anthropic/v1/messages')
   try {
     const r = requestFrom(f)
@@ -138,7 +138,7 @@ test('① 上游把一个事件拆成好几个 TCP 分片时，解析出的增�
 // ── ② 一次调用落一条 llm/call；发出去的字节与装配出来的字节是同一份 ──────────────
 
 test('② 一次调用落一条 llm/call：模型 · 步 · 工具调用条数 · 用量四个数，且与 prefix/assemble 对得上', async () => {
-  const f = fixture('deepseek-chat-anthropic')
+  const f = fixture('deepseek-flash-anthropic')
   const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
   const prefix = prefixOf(0)
   const r = requestOf(prefix, f.target, tools, f.call)
@@ -214,7 +214,7 @@ test('② 一次调用落一条 llm/call：模型 · 步 · 工具调用条数 �
 // ── ③ 回放两次：请求体逐字节相同，事件串相同 ────────────────────────────────────
 
 test('③ 同一份夹具回放两次，请求体逐字节相同；连回放两次得到同一串事件', async () => {
-  for (const name of ['deepseek-chat-anthropic', 'deepseek-chat-openai']) {
+  for (const name of ['deepseek-flash-anthropic', 'deepseek-flash-openai']) {
     const f = fixture(name)
     const e1 = await drain(replayOf(f, 5).events)
     const e2 = await drain(replayOf(f, 5).events)
@@ -232,7 +232,7 @@ test('③ 同一份夹具回放两次，请求体逐字节相同；连回放两�
 // ── ④ 上游中途掐断：报错并记事件，不静默重试 ────────────────────────────────────
 
 test('④ 上游中途掐断 → 报错并记事件，不静默重试、不把半个响应当完整', async () => {
-  const f = fixture('deepseek-chat-anthropic')
+  const f = fixture('deepseek-flash-anthropic')
   // 从中间砍掉：那条 `stop_reason`（`message_delta`）与 `message_stop` 都没了。
   const cut = f.response.slice(0, Math.floor(f.response.length * 0.6))
   let posts = 0
@@ -291,7 +291,7 @@ function withoutCredential<T>(run: () => T): T {
 test('⑤ 夹具档不取凭据：`targetOf` 会去取（两条路都没有就拒），夹具档那一份不会', () => {
   withoutCredential(() => {
     assert.throws(
-      () => targetOf('deepseek-chat/anthropic'),
+      () => targetOf('deepseek-flash/anthropic'),
       (err: unknown) => {
         // **两条路都要出现在那句话里**（只报一条会让人以为另一条不存在）。
         assert.match((err as Error).message, /DEEPSEEK_API_KEY/, (err as Error).message)
@@ -301,7 +301,7 @@ test('⑤ 夹具档不取凭据：`targetOf` 会去取（两条路都没有就�
       '取不到凭据时 `targetOf` 却没拒',
     )
   })
-  const f = fixture('deepseek-chat-anthropic')
+  const f = fixture('deepseek-flash-anthropic')
   const t = fixtureTarget(f)
   assert.deepEqual(t.headers, {})
   assert.equal(hashOf(t.wire.bytes(requestFrom(f))), f.bodyHash)
@@ -318,17 +318,17 @@ test('⑤b targetAt：值从参数进来，不看环境变量；而没有值的�
   delete process.env['DEEPSEEK_API_KEY']
   try {
     // 一 · 给值那一档：环境变量没设也拼得出来，头里带的就是给的那个值（**两条线各一套头**）。
-    const a = targetAt('deepseek-chat/anthropic', 'k-给的值')
+    const a = targetAt('deepseek-flash/anthropic', 'k-给的值')
     assert.equal(a.headers['x-api-key'], 'k-给的值')
     assert.equal(a.headers['accept'], 'text/event-stream')
     assert.equal(a.headers['anthropic-version'], '2023-06-01')
-    const o = targetAt('deepseek-chat/openai', 'k-给的值')
+    const o = targetAt('deepseek-flash/openai', 'k-给的值')
     assert.equal(o.headers['authorization'], 'Bearer k-给的值')
     // 目标那几栏与声明一致（"给值"不改目标，只改凭据从哪来）。
     assert.equal(a.host, 'https://api.deepseek.com')
     assert.equal(a.path, '/anthropic/v1/messages')
     assert.equal(o.path, '/v1/chat/completions')
-    assert.equal(a.model, 'deepseek-chat')
+    assert.equal(a.model, 'deepseek-flash')
     assert.equal(a.from, 'decl')
     assert.equal(a.wire.name, 'anthropic-messages')
 
@@ -336,7 +336,7 @@ test('⑤b targetAt：值从参数进来，不看环境变量；而没有值的�
     withoutCredential(() => {
       let threw = false
       try {
-        targetOf('deepseek-chat/anthropic')
+        targetOf('deepseek-flash/anthropic')
       } catch (err) {
         threw = true
         assert.match((err as Error).message, /DEEPSEEK_API_KEY/)
@@ -345,7 +345,7 @@ test('⑤b targetAt：值从参数进来，不看环境变量；而没有值的�
     })
 
     // 三 · 给的值要是空串就没有意义：空凭据发出去换来一个 401，那看起来像"模型不行"。
-    assert.throws(() => targetAt('deepseek-chat/anthropic', ''), /不能是空/)
+    assert.throws(() => targetAt('deepseek-flash/anthropic', ''), /不能是空/)
     console.log(
       `⑤b 读数：targetAt（给值）anthropic 头 [${Object.keys(a.headers).join(' · ')}] · openai 鉴权栏 authorization · ` +
         '环境变量没设也拼得出来；targetOf（自己取，两条路都堵掉）照旧拒',
@@ -357,7 +357,7 @@ test('⑤b targetAt：值从参数进来，不看环境变量；而没有值的�
 // ── ⑦ `--dump-wire`：默认不落，而落的时候发出去的字节一模一样 ────────────────────
 
 test('⑦ dump-wire：不带它时一个文件都不写；带它时那一串请求体与夹具记的逐字节相同', async () => {
-  const f = fixture('deepseek-chat-anthropic')
+  const f = fixture('deepseek-flash-anthropic')
   const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
   const prefix = prefixOf(0)
   const t = fixtureTarget(f)
@@ -425,7 +425,7 @@ test('⑦ dump-wire：不带它时一个文件都不写；带它时那一串请�
 // `README` 写着"取值顺序：1. `sha256sum -c request.sha256`"。于是照着 README 敲一律报
 // "对不上"——**一份取证物自己说自己被改过**，而排障的人正在查别的问题。
 test('⑦b dump 的 *.sha256 是标准 sha256：sha256sum -c 对得上（短指纹那把不算）', async () => {
-  const f = fixture('deepseek-chat-anthropic')
+  const f = fixture('deepseek-flash-anthropic')
   const dir = tmpDir('fugue-dump-sha-')
   const t = fixtureTarget(f)
   const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
@@ -452,8 +452,8 @@ test('⑦b dump 的 *.sha256 是标准 sha256：sha256sum -c 对得上（短指�
 })
 
 test('⑧ 非 2xx：状态码与白名单响应头读得出来，响应体照旧带上前一截', async () => {
-  const t = { ...fixtureTarget(fixture('deepseek-chat-anthropic')), host: 'https://example.invalid', path: '/v1/messages' }
-  const r = { model: 'deepseek-chat', zones: { A: new Uint8Array(), B: new Uint8Array(), C: new Uint8Array() }, call: {} }
+  const t = { ...fixtureTarget(fixture('deepseek-flash-anthropic')), host: 'https://example.invalid', path: '/v1/messages' }
+  const r = { model: 'deepseek-flash', zones: { A: new Uint8Array(), B: new Uint8Array(), C: new Uint8Array() }, call: {} }
   const realFetch = globalThis.fetch
   globalThis.fetch = (async () =>
     new Response('{"error":{"message":"rate limited"}}', {
@@ -489,7 +489,7 @@ test('⑧ 非 2xx：状态码与白名单响应头读得出来，响应体照旧
 // ——落盘原先只在 `ledger()` 被读的时候发生，而 `step()` 的失败那一档不读账（它的 `catch` 只记
 // `failure` 与上游那几个事实）。于是"为什么没成"这个最需要取证的问题，恰好是唯一没有取证物的。
 test('⑦c 上游回 401：事件那边抛，而 dump 里 request.json / response.sse / failure 三样都在', async () => {
-  const f = fixture('deepseek-chat-anthropic')
+  const f = fixture('deepseek-flash-anthropic')
   const t = { ...fixtureTarget(f), host: 'https://example.invalid', path: '/anthropic/v1/messages' }
   const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
   const prefix = prefixOf(0)

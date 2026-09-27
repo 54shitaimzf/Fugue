@@ -36,9 +36,9 @@ import {
 import type { MergedRow } from './metrics.ts'
 
 const FIXTURES = fileURLToPath(new URL('../model/fixtures/', import.meta.url))
-const ANTHROPIC: Fixture = readFixture(FIXTURES + 'deepseek-chat-anthropic.json')
-const OPENAI: Fixture = readFixture(FIXTURES + 'deepseek-chat-openai.json')
-const DECL = modelDeclOf('deepseek-chat/anthropic')
+const ANTHROPIC: Fixture = readFixture(FIXTURES + 'deepseek-flash-anthropic.json')
+const OPENAI: Fixture = readFixture(FIXTURES + 'deepseek-flash-openai.json')
+const DECL = modelDeclOf('deepseek-flash/anthropic')
 
 /** 一件事件配一个位置（交错的读侧那一份形状）。 */
 let seq = 0

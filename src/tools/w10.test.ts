@@ -115,9 +115,9 @@ function handleOf(): AgentHandle {
     branch: `refs/heads/${AGENT}` as never,
     contract: 'r1' as never,
     protocol: SUBAGENT_PROTOCOL,
-    model: 'deepseek-chat',
-    wireModel: 'deepseek-chat',
-    target: { providerId: 'fixture', host: '', wire: { name: 'anthropic-messages' }, path: '', model: 'deepseek-chat', from: 'fixture', headers: {} },
+    model: 'deepseek-flash/anthropic',
+    wireModel: 'deepseek-flash',
+    target: { providerId: 'fixture', host: '', wire: { name: 'anthropic-messages' }, path: '', model: 'deepseek-flash', from: 'fixture', headers: {} },
     adapter: { name: 'anthropic-messages' },
     state: { ...emptyState(), step: 0 },
   }
