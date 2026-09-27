@@ -96,6 +96,45 @@ export interface Dispatched {
   readonly denied: boolean
 }
 
+/**
+ * 还剩几步起提示。**它是个数，不是开关**：留给模型"把产物落下去"的最小余量。
+ *
+ * 上界 8 那一档从第 6 步（0 起第 5 步）起提示，也就是最后三步各说一次——样本盘第十一趟那一趟
+ * 8 步全花在探路上，而那三步里没有一处说预算正在用完（见 `stepsHintOf` 的由头）。
+ */
+const STEPS_HINT_AT = 3
+
+/**
+ * **预算快用完时，工具结果末尾多一句"还剩几步"**。空串 = 不加。
+ *
+ * 由头（样本盘第十一趟 · 案一 · 上界 8 · `--dump-wire` 实录）：那一趟持轮者 8 步全是读 / `glob` /
+ * `grep`，一个字节都没写——`.fugue/plan/r1.md` 不在视图里，门当场退回。它的 B 区里已经有"这一格
+ * 最多 8 步"与"草案没写出来这一趟就等于没跑"两句，而它们是**每趟只出现一次**的静态事实：那 8 步
+ * 里没有一处提醒它"预算正在用完"。这一句补的正是那件事。
+ *
+ * **落点必须是工具结果**（C 区那条只追加的尾巴）：往 C 区那一段的**头**里塞每步都变的东西会把
+ * 整条尾巴作废（§ 8.11 的"只追加"）——§ 5.10 那条口径早就把两个合法落点定死在这一处。
+ *
+ * **只给持轮者那一格。** 它是判据① 那一栏的格（没有可执行的树 · 产物是一份文件 · 自然长度贴着
+ * 上界），而子 agent 那一档的请求字节被回放夹具钉着（`src/cli/__fixture__/wire-in/`）——先在这一格
+ * 量到增益，再决定要不要推给子 agent（推过去要真跑一趟重录那份录像）。
+ *
+ * 拼在**截断之前**：上界 8 KiB 那条规矩因此照旧成立，而"尾留 4 KiB"那条保证这一句切不掉
+ * （它在正文的最末尾）。
+ */
+function stepsHintOf(h: AgentHandle): string {
+  if (h.protocol !== HOLDER_PROTOCOL) return ''
+  const cap = h.state.maxSteps
+  if (cap === undefined) return ''
+  const step = Number(h.state.step)
+  const left = cap - step - 1
+  if (left < 0 || left > STEPS_HINT_AT) return ''
+  return (
+    `\n（这一格最多 ${cap} 步 · 这是第 ${step + 1} 步：还剩 ${left} 步。` +
+    '先把那份草案写出来——先落一节也行，那一节该有的键要写全。）'
+  )
+}
+
 /** 会改视图的那两条工具：**写入面那一栏只对它们有话说**（其余各条的路径参数是读的方向）。 */
 const WRITE_TOOLS: readonly string[] = ['write', 'edit']
 
@@ -434,7 +473,8 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
       // 视图层的读 · `grep` 的命中 · `bash` 的 stdout/stderr 都从这儿出去（`read_image`
       // 那条取字节的路不受影响：它的回执本来就只有一行尺寸）。
       // 上限与切法是架构的常量（`MAX_RECEIPT_BYTES` 那三个数），不给模型选。
-      return { ...out.result, output: capReceipt(out.result.output) }
+      // **预算那一句拼在截断之前**：尾留那 4 KiB 保证它切不掉，而 8 KiB 那条上界照旧。
+      return { ...out.result, output: capReceipt(out.result.output + stepsHintOf(h)) }
     },
   }
 }
