@@ -13,7 +13,7 @@
 //
 // 板子与 `round/driver.test.ts` 同一套（真 git 仓库 · 真对象库 · 真日志）；不联网。
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -27,7 +27,7 @@ import type { SplitAssignment } from '../contract/build.ts'
 import { SEED_BUDGET, seedTextOf, seedTokensOf } from '../contract/build.ts'
 import { identFor } from '../identity.ts'
 import { seedRulerOf } from './seed.ts'
-import { startRound } from './start.ts'
+import { RoundStartError, startRound } from './start.ts'
 
 /** 测试自己起 git 时用同一套隔离：用户级配置不该决定测试的读数。 */
 const GIT_ENV: NodeJS.ProcessEnv = {
@@ -236,6 +236,55 @@ test('④ 清单里混一条不在底上的：它只算自己那一行，而 mis
     assert.deepEqual(started.seedRead.missing, [LATER], '该点名那一条不在底上的')
     assert.equal(started.seedRead.loaded, 2)
     console.log(`④ 读数：三条种子里 ${started.seedRead.loaded} 条取到内容 · missing=${started.seedRead.missing.join(' · ')} · 账 ${got} token`)
+  } finally {
+    await b.close()
+  }
+})
+
+// ⑦ **处境守卫**：同一轮起第二次当场拒。出处：架构 § 8.13（`Idle → Planning` 的触发是"意图快照
+// 已建立"，它只在 `Idle` 里成立）· PLAN § 5.12 的 C6 之后那一格（走查九段 § 四 量到的缺口：
+// 在一轮已经 `Working` 的靶子上再跑一次，它不拒，又落一条 `Idle → Planning`、把同一份契约再发
+// 一遍）。**判据是两样**：拒的原文里报得出处境，且**一个字节都不落**。
+test('⑦ 处境守卫：这一轮在日志里已经起过头了 → 当场拒 · 一个字节都不落', async () => {
+  const b = await bench()
+  try {
+    // 先真的起一轮：`Idle → Planning → Delegated → Working`（发契约 · 起分支都在里头）。
+    const first = await startRound(startDeps(b, SEED))
+    assert.equal(first.trail[0]?.from, 'Idle', '第一趟该从 Idle 起')
+    assert.equal(first.trail.at(-1)?.to, 'Working', `第一趟的终点是 ${String(first.trail.at(-1)?.to)}`)
+    const at = join(b.root, '.fugue', 'log', 'round.jsonl')
+    const before = readFileSync(at, 'utf8')
+    const rows = (text: string): Record<string, unknown>[] =>
+      text.split('\n').filter((l) => l.trim() !== '').map((l) => JSON.parse(l) as Record<string, unknown>)
+    const n0 = rows(before).length
+    assert.equal(rows(before).filter((e) => e['t'] === 'round/state').length, 3, '第一趟该走过三条边')
+    // **同一轮再起一次**（从前它照发：又一条 `Idle → Planning`、同一份契约再发一遍）。
+    await assert.rejects(
+      () => startRound(startDeps(b, SEED)),
+      (err: Error) => {
+        assert.ok(err instanceof RoundStartError, `拒的类型不对：${err.name}`)
+        assert.match(err.message, /这一轮的处境是 Working/, `拒的原文里没有处境：${err.message}`)
+        assert.match(err.message, /不再从 Idle 起一次/, `拒的原文里没说清楚为什么：${err.message}`)
+        assert.match(err.message, /config set round.id/, '拒的原文里没有另一条路（换轮次号）')
+        return true
+      },
+      '同一轮起了第二次却照发',
+    )
+    const after = readFileSync(at, 'utf8')
+    assert.equal(after, before, '拒那一趟落了字节')
+    const rows2 = rows(after)
+    assert.equal(rows2.length, n0, '拒那一趟落了事件')
+    assert.equal(
+      rows2.filter((e) => e['t'] === 'round/state' && e['from'] === 'Idle').length,
+      1,
+      '处境链上多了一条从 Idle 起的边',
+    )
+    assert.equal(rows2.filter((e) => e['t'] === 'contract/issue').length, 1, '同一份契约又发了一遍')
+    assert.equal(rows2.filter((e) => e['t'] === 'round/intent').length, 1, '轮级意图落了第二条')
+    console.log(
+      `⑦ 读数：同一轮起第二次当场拒（这一轮的处境是 Working）· round.jsonl ${before.length} 字节 / ${n0} 条一个字节没动` +
+        ' · 从 Idle 起的边 1 条 · contract/issue 1 条 · round/intent 1 条',
+    )
   } finally {
     await b.close()
   }

@@ -59,7 +59,7 @@ import { step } from './machine.ts'
 import type { SeedReading } from './seed.ts'
 import { SEED_FROM_GIVEN, seedRulerAt } from './seed.ts'
 // **判完之后那一步与预备态那一档共用**（`issueAndStart`）——同一个函数，因此两处不会各发一份。
-import { RoundStartError, issueAndStart } from './dispatch.ts'
+import { RoundStartError, issueAndStart, roundStateOf } from './dispatch.ts'
 import type { TrailStep } from './dispatch.ts'
 
 export { RoundStartError }
@@ -145,6 +145,27 @@ export interface RoundStart {
  */
 export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
   const { roots, truth, log, round } = deps
+
+  // 零 · **处境守卫**：这一轮在日志里已经起过头了（`round/state` 链上有东西），就不再从 `Idle`
+  // 起一次。出处：架构 § 8.13——`Idle → Planning` 的触发是"意图快照已建立"，而它只在 `Idle` 里
+  // 成立（§ 9.4 的重放口径：落下来的每一条都是当时判过的）。与 `planRound` 那一处同一个口径
+  // （预备态也不假定 `Idle`，见 `round/plan.ts` 第一步）。
+  //
+  // **守卫住在这一层，不在命令行那一层**：`round new`（配置那一档）与 `round run`（一条命令跑完
+  // 一轮）都从这里起跑——两处各写一遍就会有一处漏。漏掉那一处的样子（走查九段 § 四 量到的）：
+  // 在一轮已经 `Working` 的靶子上再跑一次，它不拒，又落一条 `Idle → Planning`、把同一份契约再发
+  // 一遍——**那种"重跑"没有任何一处判据看得见**，而它的读数长得像一次正常的开轮次。
+  //
+  // **拒的时候把处境报出来**：同样是拒，"这一轮已经在走（`Working`）"与"这一轮派不出去（构造器
+  // 不猜）"是两件事。守卫排在钉底与落意图之前，所以拒那一趟**一个字节都不落**。
+  const logged = await roundStateOf(log, round)
+  if (logged !== 'Idle') {
+    throw new RoundStartError(
+      `这一轮的处境是 ${logged}：这一轮已经从 Idle 起过头了，不再从 Idle 起一次（这一趟一个字节都不落）。\n` +
+        '  要继续这一轮：从日志里那批契约起跑——这条路今天还没有（缺口如实报：`round run` 只认得配置里那一档）。\n' +
+        `  要另开一轮：换一个轮次号——\`fugue --root ${roots.realRoot} config set round.id <新号>\`。`,
+    )
+  }
 
   // 一 · 钉住底。**读一次，然后一路传下去**——这就是 C7 前半。
   const base = await baseFor(truth, 'round')

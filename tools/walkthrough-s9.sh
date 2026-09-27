@@ -28,9 +28,11 @@
 # 那条路根本不存在——这正是这一份最早那版报 13 个 FAIL 的根。
 #
 # **缺口如实报**：`round go` 之后，"从日志里那批契约起跑"那条命令今天还没有——`round run` 走的是
-# 配置里的 `round.split`（人拆那一档），而它**不看着处境那条链**：在一轮已经放行（`Working`）的
-# 靶子上再跑，它不拒，而是又落一条 `Idle→Planning`、把同一份契约再发一遍。§ 四 把这两条读数
-# **量出来印出来**（S8 那条纪律：量不到的写出来，不拿"放行成功"顶替）。
+# 配置里的 `round.split`（人拆那一档 · 从 `Idle` 起头）。它**看着处境那条链**：在一轮已经放行
+# （`Working`）的靶子上再起一轮，`startRound` 的处境守卫当场拒，**一个字节都不落**
+# （`round/start.ts`；从前它不拒——又落一条 `Idle→Planning`、把同一份契约再发一遍，那种"重跑"
+# 没有任何一处判据看得见）。§ 四 把这条读数**量出来印出来**（S8 那条纪律：量不到的写出来，不拿
+# "放行成功"顶替），**剩下的缺口只有一条**：那条从日志那批契约起跑的命令。
 #
 # `--live` 那一支：同一串路换真模型跑一遍（每一步真发一次调用）。那一支的断言是**不变量**
 # （每条路都收得住并进判 · 版本那一栏印得出 · 退出码 0/1 之内），不是夹具档那些定值。
@@ -449,21 +451,27 @@ check "⑥ 第二次放行的退出码（这一批已经发过了）" "1" "$?"
 check "⑥ 第二次放行一个字节都没落" "$BEFORE" "$(wc -c < "$W/.fugue/log/round.jsonl" | tr -d ' ')"
 
 echo
-echo "=== 四 · 放行之后谁跑：如实报（缺口）==="
-# **缺口量出来印出来**：`round go` 之后，"从日志里那批契约起跑"那条命令今天还没有——`round run`
-# 走的是配置里 `round.split` 那一档（人拆），而它**不看着处境那条链**：在一轮已经放行（`Working`）
-# 的靶子上再跑，它不拒，而是**又落一条 `Idle→Planning`、把同一份契约再发一遍**。下面两条读数
-# 就是缺口的样子（不是期望的行为）：补齐那条命令、或给 `round run` 加上处境的守卫之后，这两条
-# 会当场翻红——那时候 § 四 要跟着改。缺口本身记在 PLAN § 5.12 的补完清单里。
+echo "=== 四 · 放行之后谁跑：处境守卫当场拒（缺口只剩一条）==="
+# **两件事分开量**（S8 那条纪律：量不到的写出来，不拿"放行成功"顶替）：
+#   1. **拒得住**：在一轮已经放行（`Working`）的靶子上再起一轮 → `startRound` 的处境守卫当场拒，
+#      而且一个字节都不落（从前它不拒：又落一条 `Idle→Planning`、把同一份契约再发一遍）。
+#   2. **缺口还在**：「从日志里那批契约起跑」那条命令今天没有——`round run` 走的是配置里
+#      `round.split` 那一档（人拆 · 从 `Idle` 起头）。所以这一段只证"拒得住"，不假装"能接着跑"。
+BEFORE2=$(wc -c < "$W/.fugue/log/round.jsonl" | tr -d ' ')
 $FUGUE --root "$W" round run '写一份 notes.md' --max-steps 1 > "$T/gap.out" 2> "$T/gap.err"
 RCGAP=$?
 printf '  rc = %s\n' "$RCGAP"
 sed 's/^/  | /' "$T/gap.out"
 sed 's/^/  err| /' "$T/gap.err"
-check "⑦ 缺口读数：再跑一趟又发了一遍同一份契约（日志里 contract/issue 条数）" "2" "$(logcount 'contract/issue')"
-check "⑦ 缺口读数：处境链上又多了一条 Idle→Planning（它不从放行那一刻起头）" "2" "$(node "$T/s9.js" edges "$W/.fugue/log/round.jsonl" Idle)"
-printf '  如实报：从日志里那批契约起跑的那条命令今天还没有——`round run` 走的是配置里 `round.split`\n'
-printf '          那一档（人拆 · 从 Idle 起头），上面那两条读数是它在一轮已放行的靶子上做的事。\n'
+check "⑦ 处境守卫：在一轮已经 Working 的靶子上再起一轮的退出码" "1" "$RCGAP"
+has "$T/gap.err" '这一轮的处境是 Working' "⑦ 拒的原文里报出了处境"
+has "$T/gap.err" '不再从 Idle 起一次' "⑦ 拒的原文里说清楚了为什么"
+has "$T/gap.err" 'config set round.id' "⑦ 拒的原文里给了另一条路（换轮次号）"
+check "⑦ 契约份数照旧（没有又发一遍）" "1" "$(logcount 'contract/issue')"
+check "⑦ 处境链上照旧只有一条 Idle→Planning" "1" "$(node "$T/s9.js" edges "$W/.fugue/log/round.jsonl" Idle)"
+check "⑦ 拒那一趟一个字节都不落" "$BEFORE2" "$(wc -c < "$W/.fugue/log/round.jsonl" | tr -d ' ')"
+printf '  如实报：从日志里那批契约起跑的那条命令今天还没有（`round run` 走的是配置里 `round.split`\n'
+printf '          那一档 · 从 Idle 起头）——上面量到的是"在一轮已经放行的靶子上它拒得住"。\n'
 
 echo
 echo "=== 五 · 地板那一档（人拆 · 回放档）：真产物 · 真断言 · 树哈希 ==="
