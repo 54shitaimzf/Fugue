@@ -9,6 +9,14 @@
 //       跑完那一趟之后判**真实工作树**：过了打印 `已知答案全中`，不过把红的那几条连
 //       "差在哪"一起印出来，退出码 1。
 //
+//   node tools/scenario/board-node.ts fence <工作区>
+//       这一趟的围栏（日志里那些 `run/confined`）：`full · bwrap+landlock · mode …` —— 它回答
+//       "这一趟的读数能不能当证据"。`row` 那一行里与「探路」并排印。
+//
+//   node tools/scenario/board-node.ts recon <工作区>
+//       步子花在哪儿（`run/start` 的 argv）：视图里 vs 视图之外或账本（`.fugue`）。**读数不是
+//       判据**——它回答"预算烧在找 harness 上，还是在干活上"。
+//
 //   node tools/scenario/board-node.ts row <cases.json> <工作区> <work.json> <案名> <趟> <门退回> <观察>
 //       把一轮压成账上那一行（制表符分隔）。用量从日志现算（`statusOf`），不看模型报什么。
 //       **越界那一栏读 `snap.refusals`**（`bound/deny` 与内核拒相加），不读三数里的 `denied`：
@@ -51,13 +59,17 @@ function treeOfDisk(ws: string, c: CaseDecl): Tree {
  */
 function fenceLine(rows: readonly unknown[]): string {
   // **日志读回来的是行**：事件在 `r.e` 那一栏里（与 `row` 那一支同一个读法）。
-  const fences = rows.filter((r) => (r as { e?: { t?: string } }).e?.t === 'run/confined') as unknown as {
+  // **字段在 `r.e` 里**（与 `r.e.t` 同一个读法）——读在"行"那一层上时每一格都是 `undefined`，
+  // 而那一趟恰好一个子进程都没有（b14 那一次），于是这条错路一直没被走到过。
+  const fences = rows
+    .map((r) => (r as { e?: unknown }).e)
+    .filter((e): e is { t?: string } => typeof e === 'object' && e !== null && (e as { t?: string }).t === 'run/confined') as unknown as {
     mode: string
     enforcement: string
     layers?: readonly string[]
     reach?: readonly string[]
   }[]
-  if (fences.length === 0) return '—（这一趟没有子进程）'
+  if (fences.length === 0) return '—（日志里一条 run/confined 都没有：这一趟没有子进程，或这份账早于那个事件）'
   const shape = (f: { enforcement: string; layers?: readonly string[]; mode: string }): string => {
     const layers = (f.layers ?? []).join('+')
     return f.enforcement + ' · ' + (layers === '' ? '（一层都没有）' : layers) + ' · mode ' + f.mode
@@ -69,6 +81,89 @@ function fenceLine(rows: readonly unknown[]): string {
     ' · 只读根 ' + String((first.reach ?? []).length) + ' 条 · ' + String(fences.length) + ' 格各一条' +
     (distinct.length > 1 ? '（**不一致**：' + distinct.join(' / ') + '）' : '')
   )
+}
+
+/**
+ * **这一格的步子花在哪儿**（`run/start` 那些 `argv`）：视图里 vs 视图之外。
+ *
+ * 它回答的是第十四趟之后留下的那个问题——"两格烧光预算"到底是因为**看见了别格的核对脚本**，
+ * 还是因为**在找 harness 本身**。逐条读那一趟的 `run/start`：`r1/2` 收工之后的七步在
+ * `/tmp/scenario-b14/…` · `.fugue/config` · `work.json` 里翻（那是**漏出去的那一面**——
+ * `$OUT` 就在它够得着的地方，`9b85430` 的挂载层把它关了）；`r1/4` 那几步在试"那三份核对
+ * 怎么跑"（真仓库里也有的代价，与地界无关）；`r1/3` 读了另外两份核对脚本，6 步收敛。
+ * 三格的读数各不一样，所以"看得见别格的核对"这一条解释不了那两格的预算。
+ *
+ * **它是读数不是判据**：`/tmp` 对模型是一个正常的临时目录，走过去本身不算错——这一栏只把
+ * "坐标在视图之外的步子"摆出来，与「围栏」那一行一起读（围栏那一行说这一趟的读数能不能
+ * 当证据，这一行说它的步子在不在自家地界里）。
+ */
+function reconLine(rows: readonly unknown[]): string {
+  // 视图之外的坐标：宿主上的绝对路径 · 往上走 · harness 自己那本账（`.fugue`）。
+  // `/bin/sh` 那一类不出现在这里——只看 `argv` 的**最后一项**（那就是命令正文）。
+  const OUTSIDE = /(^|[\s"'`=;|(])(\/tmp|\/home|\/root|\/etc|\/proc|\/var|\/opt|\/usr\/local)(\/|\s|$)|(^|[\s"'`=;|(])\.\.(\/|\s|$)|(^|[\s"'`=;|(])\.fugue(\/|\s|$)|(^|[\s;&|])cd\s+\/(\s|$|&&)/
+  const runs = rows
+    .map((r) => (r as { e?: unknown }).e)
+    .filter((e): e is { t?: string } => typeof e === 'object' && e !== null && (e as { t?: string }).t === 'run/start') as unknown as {
+    agent?: string
+    argv?: readonly string[]
+  }[]
+  if (runs.length === 0) return '—（这一趟没有子进程）'
+  const per = new Map<string, { out: number; all: number }>()
+  for (const r of runs) {
+    const argv = r.argv ?? []
+    const cmd = argv.length === 0 ? '' : String(argv[argv.length - 1])
+    const who = r.agent ?? '?'
+    const cell = per.get(who) ?? { out: 0, all: 0 }
+    cell.all += 1
+    if (OUTSIDE.test(cmd)) cell.out += 1
+    per.set(who, cell)
+  }
+  const cells = [...per.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))
+  const out = cells.reduce((n, [, c]) => n + c.out, 0)
+  const all = cells.reduce((n, [, c]) => n + c.all, 0)
+  return (
+    String(out) + '/' + String(all) + ' 步在视图之外或账本里（' +
+    cells.map(([who, c]) => who.replace('agent/', '') + ' ' + String(c.out) + '/' + String(c.all)).join(' · ') +
+    '）· 读数，不当判据'
+  )
+}
+
+/**
+ * **两个读面自己有没有牙**（离线 · 不花钱）：拿两把假日志喂进去，读数得逐字对上。
+ *
+ * 由头是实打实的一条错路：`run/confined` 与 `run/start` 的字段住在 `r.e` 里，而这两处原先
+ * 读在"行"那一层上——每一格都是 `undefined`，只是那一趟恰好一个子进程都没有，于是它一路
+ * 绿着（`—（这一趟没有子进程）`）。**读数读错一个字段与读数读对是同一张脸**，所以要有一条
+ * 拿得到红的自检。
+ */
+function readingsSelfTest(): number {
+  let bad = 0
+  const complain = (what: string, got: string, want: string): void => {
+    bad++
+    console.log('  FAIL 读面自检 · ' + what + '：实得「' + got + '」，要的是「' + want + '」')
+  }
+  // 一 · 围栏那一行：一条 `run/confined`，四个字段各自落位
+  const fenceRows = [
+    { seq: 1, e: { t: 'run/start', agent: 'agent/r1/1', argv: ['/bin/sh', '-c', 'ls'] } },
+    { seq: 2, e: { t: 'run/confined', agent: 'agent/r1/1', mode: 'workspace-write', enforcement: 'full', layers: ['bwrap', 'landlock'], reach: ['/usr', '/bin', '/lib', '/etc/ssl', '/etc/alternatives', '/etc/ld.so.cache'] } },
+  ]
+  const got = fenceLine(fenceRows)
+  if (!got.includes('full · bwrap+landlock · mode workspace-write')) complain('围栏 · 档与层', got, 'full · bwrap+landlock · mode workspace-write')
+  if (!got.includes('只读根 6 条')) complain('围栏 · 只读根', got, '只读根 6 条')
+  if (!fenceLine([]).startsWith('—（日志里一条 run/confined 都没有')) complain('围栏 · 空那一档', fenceLine([]), '—（日志里一条 run/confined 都没有…）')
+  console.log('  ok   读面自检 · 围栏：' + got)
+  // 二 · 探路那一行：两格三条命令，只有一条的坐标在视图之外
+  const reconRows = [
+    { seq: 1, e: { t: 'run/start', agent: 'agent/r1/1', argv: ['/bin/sh', '-c', 'cat a.ts'] } },
+    { seq: 2, e: { t: 'run/start', agent: 'agent/r1/1', argv: ['/bin/sh', '-c', 'ls /tmp/probe && cat .fugue/config'] } },
+    { seq: 3, e: { t: 'run/start', agent: 'agent/r1/2', argv: ['/bin/sh', '-c', 'grep -rn x src'] } },
+  ]
+  const recon = reconLine(reconRows)
+  if (!recon.startsWith('1/3 步')) complain('探路 · 计数', recon, '1/3 步…')
+  if (!recon.includes('r1/1 1/2') || !recon.includes('r1/2 0/1')) complain('探路 · 按格', recon, 'r1/1 1/2 · r1/2 0/1')
+  if (reconLine([]) !== '—（这一趟没有子进程）') complain('探路 · 空那一档', reconLine([]), '—（这一趟没有子进程）')
+  console.log('  ok   读面自检 · 探路：' + recon)
+  return bad
 }
 
 const byName = (all: CaseDecl[], name: string): CaseDecl => {
@@ -94,6 +189,7 @@ if (cmd === 'selftest') {
     else console.log('  ok   ' + c.name + '：底不过 · 答案过 · 覆盖 ' + c.covers.join('/') + ' · 观察 ' + String((c.observes ?? []).length) + ' 条')
   }
   console.log(bad ? '\n' + String(bad) + ' 案没过' : '\n' + String(all.length) + ' 案都过（判据有牙：底那一棵每一种都判不过）')
+  bad += readingsSelfTest()
   process.exit(bad ? 1 : 0)
 } else if (cmd === 'usage') {
   // 门退回那一条路上没有 `work.json`，可是那几步的调用是真花掉的——单开一个读面记它。
@@ -105,6 +201,10 @@ if (cmd === 'selftest') {
   // 这一趟的围栏：`round work` 每一格第一次起子进程时记一条（见 `driver.ts`）。
   const rows = await Array.fromAsync(openLog(rest[0] ?? casesFile).readMerged())
   console.log(fenceLine(rows as never))
+  process.exit(0)
+} else if (cmd === 'recon') {
+  const rows = await Array.fromAsync(openLog(rest[0] ?? casesFile).readMerged())
+  console.log(reconLine(rows as never))
   process.exit(0)
 } else if (cmd === 'judge') {
   const c = byName(readCases(casesFile), rest[1])
@@ -150,11 +250,12 @@ if (cmd === 'selftest') {
         (snap.outside.paths.length === 0 ? '' : '（' + snap.outside.paths.join(' · ') + '）'),
     )
   }
+  console.log('  探路：' + reconLine(rows as never))
   console.log('  围栏：' + fenceLine(rows as never))
   console.log('  已知答案：' + v.why)
   for (const line of boardLines(c.name, v).slice(1)) console.log(line)
   process.exit(0)
 } else {
-  console.error('用法：board-node.ts selftest <cases.json> | judge <cases.json> <工作区> <案名> | fence <工作区> | row <cases.json> <工作区> <work.json> <案名> <趟> <门退回> <观察>')
+  console.error('用法：board-node.ts selftest <cases.json> | judge <cases.json> <工作区> <案名> | fence <工作区> | recon <工作区> | row <cases.json> <工作区> <work.json> <案名> <趟> <门退回> <观察>')
   process.exit(2)
 }
