@@ -154,7 +154,7 @@ test('② 围栏：.. 穿越 · 绝对路径 · 逃逸软链 → Denied（lstat 
   // 拒绝文案指路，不筑墙（§ 8.4 纪律 2）
   const out = denied('/etc/passwd')
   assert.match(out.message, /outside the workspace|paths inside the view are relative/)
-  assert.match(out.message, /goes through an application \(§ 15\.3\.b\)/)
+  assert.match(out.message, /goes through an application \(architecture § 15\.3\.b\)/)
   assert.equal(out.raw, '/etc/passwd')
   assert.match(denied('esc/passwd').message, /symlink/)
 })

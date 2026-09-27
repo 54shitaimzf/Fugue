@@ -20,7 +20,7 @@ import type { Denied, DenyKind, Result } from './contract.ts'
 import { resolveRaw, toPhysical } from './paths.ts'
 
 /** 拒绝文案里那句指路（架构 § 8.4 纪律 2 的原句）。**文案是形状的一部分**：拒绝要给出去处。 */
-const APPLY = 'reaching outside the workspace goes through an application (§ 15.3.b).'
+const APPLY = 'reaching outside the workspace goes through an application (architecture § 15.3.b).'
 
 function refusal(
   kind: DenyKind,

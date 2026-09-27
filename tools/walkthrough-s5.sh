@@ -232,14 +232,14 @@ for p in ../outside.txt /etc/passwd; do
   RC=$?
   printf '  read  %-18s 退 %s：%s\n' "$p" "$RC" "$MSG"
   check "read $p · 拒了" "$RC" "1"
-  check "read $p · 文案带指路（那句原话在）" "$(printf '%s' "$MSG" | grep -c 'goes through an application')" "1"
+  check "read $p · 文案带指路（那句原话在）" "$(printf '%s' "$MSG" | grep -c 'goes through an application (architecture')" "1"
 done
 for p in ../outside.txt /etc/passwd; do
   MSG=$(printf 'hi\n' | fugue --agent "$AGENT" write "$p" --stdin 2>&1 >/dev/null)
   RC=$?
   printf '  write %-18s 退 %s：%s\n' "$p" "$RC" "$MSG"
   check "write $p · 拒了" "$RC" "1"
-  check "write $p · 文案带指路（那句原话在）" "$(printf '%s' "$MSG" | grep -c 'goes through an application')" "1"
+  check "write $p · 文案带指路（那句原话在）" "$(printf '%s' "$MSG" | grep -c 'goes through an application (architecture')" "1"
 done
 check "工作区外没有落下东西" "$([ -e "$WORK/outside.txt" ] && echo 有 || echo 没有)" "没有"
 # 正对照：拒的是"走出工作区"，不是"路径写法"。这两条照读照写（`src/a.c` 是夹具里那份源码：
