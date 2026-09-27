@@ -93,9 +93,11 @@ test('① 每个字段都有值域持有者，且持有者那一格真的在跑'
   const extra = ruleKeys().filter((k) => !declared.has(k))
   assert.deepEqual(extra, [], `持有者表里有字段是三个变体都没有的：${extra.join(' · ')}`)
 
-  // 每一格都能被指认：`holder` 是一句人话，不是空串。
+  // 每一格都能被指认：`holder` 是一句人话，不是空串；而**每一格都要有一句形状**——那一句是
+  // 发给模型的那段提示念的那一份（`draftRuleTextOf`），少一格只是那一段里印成 `undefined`。
   for (const [field, rule] of Object.entries(FIELD_RULES)) {
     assert.ok(rule.holder.trim().length > 0, `${field} 的持有者没写出来`)
+    assert.ok(rule.shape.trim().length > 0, `${field} 没有一句形状`)
     assert.equal(typeof rule.check, 'function', `${field} 没有自己的检查`)
   }
 

@@ -21,7 +21,7 @@ import type { RelPath } from '../terms.ts'
 import { isSegment } from '../roots/paths.ts'
 import type { SplitAssignment } from './build.ts'
 import type { Assertion, Deliverable } from './types.ts'
-import { VARIANT_FIELDS } from './types.ts'
+import { FIELD_RULES, VARIANT_FIELDS } from './types.ts'
 
 /**
  * 草案认得的两节。**没有 `resolve`**：解决型契约由 `M13` 的冲突报告给，而冲突是折到那一步
@@ -31,6 +31,16 @@ export type DraftKind = 'implement' | 'investigate'
 
 /** 两节的次序：调查型在前（与 `build()` 的构造次序同一件事）。 */
 export const DRAFT_KINDS: readonly DraftKind[] = ['investigate', 'implement']
+
+/**
+ * 那一条**跨节的次序规则**，一处：判它的那两句（`checkDraft`）与写给模型看的那一段
+ * （`draftRuleTextOf`）都从这一句来。
+ *
+ * 为什么收成一处：真档那一趟量到过它的缺席——草案的键与值都对（形状那一句进前缀之后），退回来的
+ * 唯一一句就是"调查型那一节要排在第一节"，而那一句是**印给人的**。两处各写一遍的症状与形状那一栏
+ * 一样：模型照提示写、判它不认。
+ */
+const SECTION_ORDER_RULE = '最多一节调查型，而且它要排在第一节——契约按草案的次序发身份与分支'
 
 /**
  * 草案不给的那几个键，逐变体。**它是一条减法，不是第二份字段表**：草案的键域 = 契约的字段表
@@ -70,6 +80,12 @@ for (const kind of DRAFT_KINDS) {
   const both = DRAFT_FIELDS[kind].filter((f) => NOT_IN_DRAFT[kind].includes(f))
   if (both.length > 0) throw new Error(`这两栏都说要给（${kind}）：${both.join(' · ')}——一处说了算`)
   if (!DRAFT_FIELDS[kind].includes('kind')) throw new Error(`${kind} 那一节的键域里没有 kind：判它是哪一节要靠它`)
+  // **每一笔都要有一句形状**：那一句是发给模型的那段提示念的（`draftRuleTextOf`）——少一笔的
+  // 症状是那一段里印出一个"（没有一句形状）"，而它不报错。与 `types.ts` 那条同一条纪律。
+  const noShape = DRAFT_FIELDS[kind].filter((f) => (FIELD_RULES[f]?.shape ?? '').trim() === '')
+  if (noShape.length > 0) {
+    throw new Error(`${kind} 那一节里这几笔没有一句形状（值域持有者表里那一格没写）：${noShape.join(' · ')}`)
+  }
 }
 
 /** 一节草案读出来的值。**每一栏都给全**（那几节没有的那几栏是空值，不是 `undefined`）。 */
@@ -140,21 +156,32 @@ export function draftPathOf(round: string): RelPath {
  *
  *   · **位置由调用方拼在「工作总目标」那一段的末尾**（`goalWithDraftRule`）：那是这一趟里模型
  *     读到的最后一处（`round plan` 那一趟 C 区是空的），而"要什么产物"本来就是意图的一部分；
- *   · **键那几笔从 `DRAFT_FIELDS` 念出来**，不在这里另抄一份：判键域用的就是那一份（架构 § 8.12
- *     「构造器不猜、不补」）。抄一份的后果是提示词与判据各说各话，而它一个错都不报。
+ *   · **键从 `DRAFT_FIELDS` 念、形状从 `FIELD_RULES` 念**，两样都不在这里另抄一份：判键域与
+ *     判值域用的就是那两份（架构 § 8.12「构造器不猜、不补」）。抄一份的后果是提示词与判据
+ *     各说各话，而它一个错都不报——症状只有一个：模型老是写不中。
  */
-export function draftRuleTextOf(draftPath: RelPath): string {
-  const lines = DRAFT_KINDS.map((k) => `  ${k}：${DRAFT_FIELDS[k].join(' · ')}`)
+export function draftRuleTextOf(draftPath: RelPath, actionNames: readonly string[] = []): string {
+  const lines = DRAFT_KINDS.map(
+    (k) => `  ${k}：${DRAFT_FIELDS[k].map((f) => `${f}：${FIELD_RULES[f]?.shape ?? '（没有一句形状）'}`).join(' · ')}`,
+  )
   return (
-    `这一趟要把拆分写进 \`${draftPath}\`：一个任务一节，每节一个标 \`json\` 的围栏块，键是：\n` +
+    `这一趟要把拆分写进 \`${draftPath}\`：一个任务一节，每节一个标 \`json\` 的围栏块；` +
+    '块里按那一节的 kind 给这几个键，值要写成那个形状：\n' +
     lines.join('\n') +
-    '\n块外那些话留着——"为什么这么拆"那一句就是它。写别的路径不算这一趟的产物。'
+    `\n${SECTION_ORDER_RULE}。\n` +
+    // `assertions` 里那个 `action` **只能从工作区绑好的动作里挑**（PLAN § 5.10 的 C1 ⑦：不猜、
+    // 不补、不替它挑）。而"绑好了哪几个"是**工作区的事实**，模型无从得知——所以由调用方给进来。
+    // 真档那一趟它就是最后那一处：草案的键与值都对，退回来的唯一一句是"指向一个没绑的动作"。
+    `assertions 里那个 action 只能从工作区绑好的动作里挑：${
+      actionNames.length === 0 ? '（今天一条都没绑——先用 fugue config set actions.<名字> 绑一个）' : actionNames.join(' · ')
+    }。\n` +
+    '块外那些话留着——"为什么这么拆"那一句就是它。写别的路径不算这一趟的产物。'
   )
 }
 
 /** 「工作总目标」那一段的正文：人的意图那一句 + **末尾**那一句产物说明（近因：末处说什么，它做什么）。 */
-export function goalWithDraftRule(goal: string, draftPath: RelPath): string {
-  return `${goal}\n\n${draftRuleTextOf(draftPath)}`
+export function goalWithDraftRule(goal: string, draftPath: RelPath, actionNames: readonly string[] = []): string {
+  return `${goal}\n\n${draftRuleTextOf(draftPath, actionNames)}`
 }
 
 /** 一个围栏块：语言那一栏与正文。**不标语言的不算节**（它多半是示意）。 */
@@ -376,10 +403,10 @@ export function draftOf(text: string): Draft {
 
   const investigate = sections.filter((s) => s.kind === 'investigate')
   if (investigate.length > 1) {
-    problems.push(`草案里有 ${investigate.length} 节调查型：最多一节（它们都问同一个轮级的问题）`)
+    problems.push(`草案里有 ${investigate.length} 节调查型：${SECTION_ORDER_RULE}（它们都问同一个轮级的问题）`)
   }
   if (investigate.length === 1 && sections[0]?.kind !== 'investigate') {
-    problems.push('调查型那一节要排在第一节：契约按草案的次序发身份与分支（架构 § 8.12 · A4）')
+    problems.push(`调查型那一节没在第一节：${SECTION_ORDER_RULE}（架构 § 8.12 · A4）`)
   }
   if (problems.length > 0) throw new DraftError(problems)
 

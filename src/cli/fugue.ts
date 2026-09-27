@@ -1325,7 +1325,10 @@ async function holderWiringOf(o: {
   // **钉住底**（读一次，然后传下去）：视图铺在它上面，日志里 `round/state` 那条链也以它为准。
   // **这一趟的产物那一句拼在「工作总目标」那一段的末尾**（近因：模型读到的最后一处说什么，它
   // 就做什么），而**要什么产物本来就是意图的一部分**——所以不另起一段。出处：S9 真档取证。
-  const goalText = o.draftPath === undefined ? o.goal : goalWithDraftRule(o.goal, o.draftPath)
+  const goalText =
+    o.draftPath === undefined
+      ? o.goal
+      : goalWithDraftRule(o.goal, o.draftPath, Object.keys(actionsTableOf(o.doc)).sort())
   const base = await pinnedBase(o.ctx.truth)
   const view = await loadView(o.ctx.log, 'round' as WriterId, { lower: lowerAt(o.ctx.truth, base) })
   const head = await refHeadOf(o.ctx.log, 'round' as WriterId, base)

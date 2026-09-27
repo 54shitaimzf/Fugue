@@ -140,6 +140,15 @@ export type ContractIssue = string
 export interface FieldRule {
   /** 值域持有者，指得出它住哪（架构 § 8.12 那张表的第三列）。 */
   readonly holder: string
+  /**
+   * **一句形状**：这一格的值要写成什么样（`一句话` · `路径数组` · `数组，每条 {path, form}`…）。
+   *
+   * 它是**写给模型看的那一段**念的那一份（`contract/draft.ts` 的 `draftRuleTextOf`：草案那一份
+   * 提示里逐键印它）。为什么在这一份里、而不是在提示词那一处另写一遍：形状与判据是两个读者、
+   * 一个来源——另写一遍的后果是提示词与 `check` 各说各话，而它一个错都不报（症状只有一个：模型
+   * 老是写不中）。**不含字段名**（印的时候是 `字段名：形状`）。
+   */
+  readonly shape: string
   /** `null` = 这个值合法；一串话 = 为什么不合法。**只判"什么算一个合法的 X"。** */
   readonly check: (value: unknown) => string | null
 }
@@ -272,6 +281,7 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   // 一份从别处来的值（配置 · 草稿 · 日志里读回来的），那一刻 `kind` 还只是一串字符。
   kind: {
     holder: '契约本体（三个变体）',
+    shape: 'implement 或 investigate',
     check: (v) =>
       v === 'implement' || v === 'investigate' || v === 'resolve'
         ? null
@@ -279,19 +289,21 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   },
   id: {
     holder: 'M11（唯一生成者）——形状见 idShapeOf；唯一性由构造器保证：同一个轮次里同一变体逐号发，轮与轮之间不重用（D9）',
+    shape: '系统发的，草案不给',
     check: (v) => (idShapeOf(v) === null ? `id 要写成 <轮次>.<变体>.<序号>：${JSON.stringify(v)}` : null),
   },
   // 三格身份：值的**存在性**由分配器与 M1 判（分支在不在 · 名字是不是登录名），这里只判它是不是一个名字。
-  agent: { holder: '身份分配器（§ 14.1）', check: (v) => nonEmptyString(v, 'agent') },
-  branch: { holder: '身份分配器（§ 14.1）；存在性由 M1 判', check: (v) => nonEmptyString(v, 'branch') },
-  goal: { holder: 'round/intent（轮级意图是它的上界）', check: (v) => nonEmptyString(v, 'goal') },
-  question: { holder: 'round/intent（轮级意图是它的上界）', check: (v) => nonEmptyString(v, 'question') },
+  agent: { holder: '身份分配器（§ 14.1）', shape: '系统发的，草案不给', check: (v) => nonEmptyString(v, 'agent') },
+  branch: { holder: '身份分配器（§ 14.1）；存在性由 M1 判', shape: '系统发的，草案不给', check: (v) => nonEmptyString(v, 'branch') },
+  goal: { holder: 'round/intent（轮级意图是它的上界）', shape: '一句话', check: (v) => nonEmptyString(v, 'goal') },
+  question: { holder: 'round/intent（轮级意图是它的上界）', shape: '一句话', check: (v) => nonEmptyString(v, 'question') },
 
   // 两格路径集合：语法归 M3（`isRelPath`），这里只用它。
   // `ownedPaths` 另有一条：不许占住构造器留给调查型的那一段——那一段是
   // "investigate 不可能与任何契约相交"（架构 § 8.12 的验证性质）唯一的守卫。
   ownedPaths: {
     holder: 'M3（路径语法）· 构造器（`evidence` 那一段归它）',
+    shape: '路径数组（视图内的相对路径；不许占 evidence 那一段——那是构造器留给调查型的）',
     check: (v) => {
       const syntax = pathArrayField(v, 'ownedPaths', upperBoundField)
       if (syntax !== null) return syntax
@@ -303,10 +315,12 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   },
   conflictPaths: {
     holder: 'M13（即报告的冲突路径集）',
+    shape: '路径数组（视图内的相对路径）',
     check: (v) => pathArrayField(v, 'conflictPaths', upperBoundField),
   },
   seed: {
     holder: 'M3（路径语法）；上界那一条由构造器按 § 8.12 的两条准则判（见 seedProblems）',
+    shape: '路径数组（视图内的相对路径）',
     check: (v) => pathArrayField(v, 'seed', upperBoundField),
   },
 
@@ -315,6 +329,7 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   // 交不交得出东西，判据是 `assertions`——那一格非空。
   deliverables: {
     holder: '工作区配置',
+    shape: '数组，每条 {path, form}（path 是视图内的相对路径 · form 是一句话）',
     check: (v) => listProblem(v, 'deliverables', deliverableProblem),
   },
   // 这一格非空：**"验收门只剩一条断言"那一档有下限，下限是一条**——零条会让
@@ -322,15 +337,18 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   // （PLAN § 5.7 的地板第二档）。
   assertions: {
     holder: '工作区配置（候选）· 验证门（可执行性）',
+    shape: '数组，每条 {action, name}，至少一条',
     check: (v) => listProblem(v, 'assertions', assertionProblem, { nonEmpty: true }),
   },
   evidenceRequired: {
     holder: 'M3（路径合法性）· M13（增量核对）',
+    shape: '数组，每条 {note}，note 是一个段（不含 / 与 \\，不以点开头），至少一条',
     check: (v) => listProblem(v, 'evidenceRequired', evidenceProblem, { nonEmpty: true }),
   },
 
   actionOutputs: {
     holder: '系统级动作白名单（ActionName）· 构造器（⊆ ownedPaths）',
+    shape: '系统造的，草案不给',
     check: (v) => {
       if (!isObject(v)) return 'actionOutputs 要是一个对象：键是动作名，值是产出路径'
       const bad: string[] = []
@@ -343,7 +361,16 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
       return bad.length === 0 ? null : bad.join('；')
     },
   },
-  base: { holder: 'M1', check: (v) => nonEmptyString(v, 'base') },
+  base: { holder: 'M1', shape: '系统发的，草案不给', check: (v) => nonEmptyString(v, 'base') },
+}
+
+// **每一格都要有一句形状**：那一句是写给模型看的那一段念的那一份（`draftRuleTextOf`），
+// 少一格的表现是那一段里那一笔印成 `undefined`——而它不报错，只是一个键的形状没人说。
+// 与上面那条"字段 ↔ 持有者"的封口同一条纪律：当场炸，不等它漂。
+for (const [field, rule] of Object.entries(FIELD_RULES)) {
+  if (typeof rule.shape !== 'string' || rule.shape.trim() === '') {
+    throw new Error(`值域持有者表里 ${field} 那一格没有一句形状：草案那一份提示要逐键印它`)
+  }
 }
 
 /**

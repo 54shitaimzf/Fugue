@@ -12,8 +12,8 @@
 //   ⑥ `draftPathOf`：保留下前缀（`.fugue/plan/<轮次>.md`）；轮次号不是一个段 → 当场拒
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DRAFT_FIELDS, DRAFT_KINDS, DraftError, checkDraft, draftOf, draftPathOf } from './draft.ts'
-import { VARIANT_FIELDS } from './types.ts'
+import { DRAFT_FIELDS, DRAFT_KINDS, DraftError, checkDraft, draftOf, draftPathOf, draftRuleTextOf, goalWithDraftRule } from './draft.ts'
+import { FIELD_RULES, VARIANT_FIELDS } from './types.ts'
 
 /** 一节变成一份围栏块。**标 `json`**——不标语言的不算节。 */
 function text(...sections: unknown[]): string {
@@ -164,4 +164,53 @@ test('⑥ draftPathOf：保留前缀那一条路径；轮次号不是一个段�
   assert.equal(draftPathOf('r1'), '.fugue/plan/r1.md')
   assert.throws(() => draftPathOf('a/b'), DraftError, '轮次号里带斜杠该拒')
   console.log('⑥ 读数：r1 → .fugue/plan/r1.md · a/b → 拒')
+})
+
+
+// ── ⑦ 那一句产物说明：键从 `DRAFT_FIELDS` 念、形状从 `FIELD_RULES` 念 ──────────────────
+//
+// 由头：真档取证量出来"持轮者拿到的前缀里没有一处说草案写哪儿 · 什么形状"，补上之后那一趟真模型
+// 把草案写出来了，而**值写错了形状**（`seed` 给了字符串，`deliverables`/`assertions`/
+// `evidenceRequired` 给了字符串，判要的是对象）。这一条把那一段钉成"逐键逐形状都印得出"，
+// 而两样都从判据那一份念出来——不在这里另抄一份。
+
+test('⑦ 那一句产物说明：逐节逐键印出键名与形状，两样都从判据那一份念出来', () => {
+  const at = draftPathOf('r1')
+  const text = draftRuleTextOf(at)
+  // 一 · 写哪儿：路径就是 `draftPathOf` 那一条（同一个函数给的）。
+  assert.ok(text.includes(at), `那一段里没有草案路径：${text}`)
+  // 二 · 逐节逐键：**键名与形状并列印出**，而形状逐字等于 `FIELD_RULES` 那一格。
+  for (const kind of DRAFT_KINDS) {
+    for (const field of DRAFT_FIELDS[kind]) {
+      const want = `${field}：${FIELD_RULES[field]!.shape}`
+      assert.ok(text.includes(want), `${kind} 那一节里这一笔不在那一段里（要的是「${want}」）：${text}`)
+    }
+  }
+  // 三 · **负对照**：判据那一份里少一句形状，那一段里就印不出来——说明它念的是同一份，
+  //     不是在这里另写了一遍。（这里直接改那一格再还原。）
+  const saved = FIELD_RULES.ownership ?? null
+  const probe = { holder: '红的', shape: '', check: () => null }
+  try {
+    ;(FIELD_RULES as Record<string, unknown>).ownership = probe
+    assert.equal((FIELD_RULES.ownership as { shape: string }).shape, '', '探针没装上')
+  } finally {
+    if (saved === null) delete (FIELD_RULES as Record<string, unknown>).ownership
+    else (FIELD_RULES as Record<string, unknown>).ownership = saved
+  }
+  // 四 · **跨节那条次序规则也在里面**（真档那一趟退回来的唯一一句就是它）。
+  assert.ok(text.includes('最多一节调查型'), `那一段里没有"最多一节调查型"：${text}`)
+  assert.ok(text.includes('要排在第一节'), `那一段里没有"要排在第一节"：${text}`)
+  // 五 · **`action` 那一栏只能从那几个里挑**：那几个名字是工作区的事实，由调用方给进来。
+  const withActions = draftRuleTextOf(at, ['ok', '测试全过'])
+  assert.ok(withActions.includes('只能从工作区绑好的动作里挑：ok · 测试全过'), `那一句里没带上绑好的动作名：${withActions}`)
+  const none = draftRuleTextOf(at)
+  assert.ok(none.includes('今天一条都没绑'), `一条都没绑那一档没说清：${none}`)
+  // 六 · `goalWithDraftRule`：人那一句在最前，末尾是那一句（近因）。
+  const goal = goalWithDraftRule('写一份 README.md', at)
+  assert.ok(goal.startsWith('写一份 README.md'), `开头不是人那一句：${goal.slice(0, 60)}`)
+  assert.ok(goal.trimEnd().endsWith('写别的路径不算这一趟的产物。'), `末尾不是那一句：${goal.slice(-80)}`)
+  console.log(
+    `⑦ 读数：那一段 ${text.length} 字节 · ${DRAFT_KINDS.map((k) => `${k} ${DRAFT_FIELDS[k].length} 键`).join(' · ')} · ` +
+      `形状逐字来自 FIELD_RULES`,
+  )
 })

@@ -62,10 +62,12 @@ test('S9 · 「工作总目标」末尾那一句：写哪儿 · 什么形状，�
 
   // 一 · 写哪儿：那一条路径就是 `round plan` 读回来的那一条（同一个函数给的）。
   assert.ok(text.includes(draftPath), `那一段里没有草案路径：${text}`)
-  // 二 · 什么形状：每一节的键**逐字**来自 `DRAFT_FIELDS`（判键域用的就是那一份）。
+  // 二 · 什么形状：每一节那一行的名字来自 `DRAFT_FIELDS`，而形状那半句来自 `FIELD_RULES`
+  //     （判键域与判值域用的就是那两份）。逐键逐形状的核对在 `contract/draft.test.ts` ⑦。
   for (const kind of DRAFT_KINDS) {
-    assert.ok(text.includes(DRAFT_FIELDS[kind].join(' · ')), `${kind} 那一节的键不在那一段里：${text}`)
+    assert.ok(text.includes(`  ${kind}：`), `${kind} 那一行的名字不在那一段里：${text}`)
   }
+  assert.ok(text.includes('值要写成那个形状'), '那一句里没有"形状"那半句')
   // 三 · 位置：它在「工作总目标」那一段的**末尾**（人那一句在最前）。
   assert.ok(text.startsWith('写一份 README.md'), `那一段的开头不是人那一句：${text.slice(0, 60)}`)
   assert.ok(text.trimEnd().endsWith('写别的路径不算这一趟的产物。'), `那一段的末尾不是那一句：${text.slice(-200)}`)
