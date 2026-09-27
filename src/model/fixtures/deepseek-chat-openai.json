@@ -362,7 +362,7 @@
       "outputTokens": 64,
       "reasoningTokens": null,
       "rawStop": null,
-      "model": null
+      "model": "deepseek-chat"
     },
     "text": "先看一眼工作树。",
     "toolCalls": [

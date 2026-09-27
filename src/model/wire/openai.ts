@@ -96,7 +96,7 @@ function thinkingOf(v: ThinkingLevel | undefined): ThinkingLevel {
   return v
 }
 
-const usageOf = (u: Record<string, unknown> | undefined): Partial<Usage> | null => {
+const usageOf = (u: Record<string, unknown> | undefined, chunkModel: string | null): Partial<Usage> | null => {
   if (u === undefined) return null
   const num = (k: string): number | null => (typeof u[k] === 'number' ? (u[k] as number) : null)
   const details = (u['prompt_tokens_details'] ?? {}) as Record<string, unknown>
@@ -121,7 +121,10 @@ const usageOf = (u: Record<string, unknown> | undefined): Partial<Usage> | null 
   if (!Object.values(out).some((v) => v !== null)) return null
   return {
     ...out,
-    model: typeof u['model'] === 'string' ? (u['model'] as string) : null,
+    // **上游报的模型名不在 `usage` 里**（官方 schema 把 `model` 放在补全对象上，流式那一档每一片都带），
+    // 所以它从那一片 chunk 上取。读 `usage` 里那一栏的话，它一路都是 `null`——"它说它是谁"这一栏
+    // 正是"上游报的名字 vs 我们声明的名字"的读数（真档：声明 `deepseek-chat`，报的是 `deepseek-flash`）。
+    model: chunkModel,
     rawStop: typeof u['finish_reason'] === 'string' ? (u['finish_reason'] as string) : null,
   }
 }
@@ -200,7 +203,8 @@ export function wireOf(): WireAdapter {
       const p = payload as Record<string, unknown>
       if (s.done) throw new WireError('这一条流已经收尾了，后面还有 data 帧——不把半截的响应当完整的用')
       const out: ModelEvent[] = []
-      const usage = usageOf(p['usage'] as Record<string, unknown> | undefined)
+      const chunkModel = typeof p['model'] === 'string' ? (p['model'] as string) : null
+      const usage = usageOf(p['usage'] as Record<string, unknown> | undefined, chunkModel)
       if (usage !== null) out.push({ t: 'usage', usage })
       const choices = p['choices']
       if (!Array.isArray(choices) || choices.length === 0) return out

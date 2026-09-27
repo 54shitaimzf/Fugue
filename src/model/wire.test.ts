@@ -480,6 +480,9 @@ test('⑦ 思考：收得到（与实录里那些分片逐字节相同）· 回�
   // 思考 token：上游挂在**输出那一栏的明细**上（`completion_tokens_details.reasoning_tokens`）。
   // 真档是 78 ⊂ 175——它不进钱那一档，只作读数。
   assert.equal(call.usage?.reasoningTokens, 78, '实录里那 78 个思考 token 没接上')
+  // 上游报的模型名：**不在 `usage` 里，在每一片 chunk 上**。真档里我们声明的是 `deepseek-chat`，
+  // 而上游一路报 `deepseek-flash`——这一栏就是"它说它是谁"的读数（负对照：换个不认得的名字 → null）。
+  assert.equal(call.usage?.model, 'deepseek-flash', '上游报的模型名没接上')
   assert.equal(call.usage?.outputTokens, 175, '输出那一栏与实录对不上')
   console.log(`⑦ 思考 token 读数：${call.usage?.reasoningTokens} ⊂ 输出 ${call.usage?.outputTokens}`)
   // 负对照：一次喂一个字节（分片横跨块边界），拼出来还是那一串。
