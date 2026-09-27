@@ -355,6 +355,8 @@ test('⑤ 事件联合的判别名与计划 § 5.18 那张表逐条相符（`too
   assert.match(got.stdout, /代码里 28 条/, '代码那一侧该是 28 条')
   assert.match(got.stdout, /计划里 28 条/, '计划那一侧该是 28 条')
   assert.match(got.stdout, /每一条都在/, '两向都要相符')
+  // 架构 § 8.1 那一份也对着代码数（同一个联合的**第二张**散文表——它漂过一次，少 6 条）
+  assert.match(got.stdout, /架构里 28 条/, '架构 § 8.1 那一侧也该是 28 条')
   console.log(`⑤ 读数：${got.stdout.split('\n').filter((l) => l.includes('条') || l.includes('相符')).map((l) => l.trim()).join(' · ')}`)
 })
 

@@ -1,0 +1,288 @@
+{
+  "note": "样本盘：每一案自带一份**出题人写的已知答案**（`answer`）与一棵**应当判过的树**（`solved`）。答案只写结果，不写过程——怎么拆、改几步、用哪条工具归模型。跑法见 README.md。",
+  "cases": [
+    {
+      "name": "改码 · 记账库",
+      "covers": [
+        "计划",
+        "派发",
+        "合并",
+        "验收"
+      ],
+      "goal": "让 check/ 底下那三份检查都通过：src/format.ts 的 yuan 要按分格式化，src/total.ts 里要有 avg，过时的 legacy/old-format.js 删掉。README.md 里补一句怎么用。",
+      "maxSteps": 8,
+      "base": [
+        {
+          "path": "AGENTS.md",
+          "text": "# penny 记账模块（项目方针）\n\n这是一个很小的 TypeScript 记账库。\n\n## 纪律\n\n- 金额一律以**分**为单位在内部流转；只有给人看的时候才换算成元。\n- 格式化的唯一出口是 `src/format.ts` 的 `yuan`——别的模块不许各写一份 `toFixed`。\n- **不留死代码**：确认 `src/` 里没有调用点的旧实现要当场删掉，不要「留着做对照」——对照看提交历史。\n- 写完就核：`check/` 底下那一份跑一下，别只看结论。\n"
+        },
+        {
+          "path": "src/format.ts",
+          "text": "// 金额的呈现：**唯一出口**（AGENTS.md 的纪律二）。\n// TODO：今天是把分直接当元印出去了，要改成「分 / 100，保留两位」。\nexport function yuan(cents: number): string {\n  return String(cents)\n}\n\nexport function fen(yuanText: string): number {\n  return Math.round(Number(yuanText) * 100)\n}\n"
+        },
+        {
+          "path": "src/total.ts",
+          "text": "// 求和那一类纯函数。\n\nexport function total(xs: readonly number[]): number {\n  let sum = 0\n  for (const x of xs) sum += x\n  return sum\n}\n\nexport function max(xs: readonly number[]): number {\n  return xs.reduce((a, b) => (b > a ? b : a), Number.NEGATIVE_INFINITY)\n}\n"
+        },
+        {
+          "path": "legacy/old-format.js",
+          "text": "// 上一版的实现：它把分当元印，与 src/format.ts 的 TODO 是同一件事。\n// 已经没有调用点（grep 过 src/）——按 AGENTS.md 的纪律三，这一份该删掉。\nmodule.exports = { yuan: (cents) => String(cents) }\n"
+        },
+        {
+          "path": "README.md",
+          "text": "# penny\n\n金额在内部一律是**分**。给人看的时候走 `src/format.ts`。\n"
+        },
+        {
+          "path": "check/format.js",
+          "text": "'use strict'\n// 给人看的那一份：分 → 元的字符串。\nconst { yuan } = require('../src/format.ts')\nconst got = yuan(1234)\nif (got !== '12.34') {\n  console.error('yuan(1234) 实得 ' + JSON.stringify(got) + '，要的是 \"12.34\"')\n  process.exit(1)\n}\n"
+        },
+        {
+          "path": "check/avg.js",
+          "text": "'use strict'\n// 算术平均，空数组给 0。\nconst { avg } = require('../src/total.ts')\nconst got = [avg([1, 2, 3]), avg([])]\nif (got[0] !== 2 || got[1] !== 0) {\n  console.error('avg 实得 ' + JSON.stringify(got) + '，要的是 [2,0]')\n  process.exit(1)\n}\n"
+        },
+        {
+          "path": "check/legacy.js",
+          "text": "'use strict'\n// 旧实现不在了。\nconst fs = require('node:fs')\nconst p = require('node:path').join(__dirname, '..', 'legacy', 'old-format.js')\nif (fs.existsSync(p)) {\n  console.error('legacy/old-format.js 还在')\n  process.exit(1)\n}\n"
+        }
+      ],
+      "actions": {
+        "ok": {
+          "argv": [
+            "/bin/sh",
+            "-c",
+            "true"
+          ]
+        },
+        "format": {
+          "argv": [
+            "node",
+            "check/format.js"
+          ]
+        },
+        "avg": {
+          "argv": [
+            "node",
+            "check/avg.js"
+          ]
+        },
+        "legacy_gone": {
+          "argv": [
+            "node",
+            "check/legacy.js"
+          ]
+        }
+      },
+      "observes": [
+        "node check/format.js",
+        "node check/avg.js",
+        "node check/legacy.js"
+      ],
+      "answer": [
+        {
+          "path": "src/format.ts",
+          "form": "file",
+          "contains": [
+            "toFixed(2)"
+          ],
+          "notContains": [
+            "String(cents)"
+          ]
+        },
+        {
+          "path": "src/total.ts",
+          "form": "file",
+          "contains": [
+            "avg"
+          ]
+        },
+        {
+          "path": "legacy/old-format.js",
+          "form": "absent"
+        }
+      ],
+      "solved": {
+        "src/format.ts": "export function yuan(cents: number): string {\n  return (cents / 100).toFixed(2)\n}\n\nexport function fen(yuanText: string): number {\n  return Math.round(Number(yuanText) * 100)\n}\n",
+        "src/total.ts": "export function total(xs: readonly number[]): number {\n  return xs.reduce((a, b) => a + b, 0)\n}\n\nexport function avg(xs: readonly number[]): number {\n  if (xs.length === 0) return 0\n  return total(xs) / xs.length\n}\n",
+        "legacy/old-format.js": null,
+        "README.md": "# penny\n\n金额在内部一律是**分**。给人看的时候走 `src/format.ts` 的 `yuan(cents)`。\n"
+      }
+    },
+    {
+      "name": "改码 · 单文件（最小的一案，反复采样用）",
+      "covers": [
+        "计划",
+        "派发",
+        "验收"
+      ],
+      "goal": "check/fields.js 现在不通过：src/fields.js 的 splitFields 要把每个字段去掉两头空白、丢掉空字段。只改这一个文件。",
+      "maxSteps": 6,
+      "base": [
+        {
+          "path": "AGENTS.md",
+          "text": "# 小模块（项目方针）\n\n- 一个文件一件事：这一仓只有 `src/fields.js` 与它那一份检查。\n- 导出名不要改（别的地方在用）。\n- 写完就核：`node check/fields.js`。\n"
+        },
+        {
+          "path": "src/fields.js",
+          "text": "'use strict'\n\n/** 把一行逗号分隔的字段切成数组。**今天不 trim、也不丢空的**。 */\nfunction splitFields(line) {\n  return line.split(',')\n}\n\nmodule.exports = { splitFields }\n"
+        },
+        {
+          "path": "check/fields.js",
+          "text": "'use strict'\nconst { splitFields } = require('../src/fields.js')\nconst got = JSON.stringify(splitFields(' a, b ,,c , '))\nconst want = JSON.stringify(['a', 'b', 'c'])\nif (got !== want) {\n  console.error('实得 ' + got + '，要的是 ' + want)\n  process.exit(1)\n}\n"
+        }
+      ],
+      "actions": {
+        "ok": {
+          "argv": [
+            "/bin/sh",
+            "-c",
+            "true"
+          ]
+        },
+        "fields": {
+          "argv": [
+            "node",
+            "check/fields.js"
+          ]
+        }
+      },
+      "observes": [
+        "node check/fields.js"
+      ],
+      "answer": [
+        {
+          "path": "src/fields.js",
+          "form": "file",
+          "contains": [
+            "splitFields"
+          ],
+          "notContains": [
+            "return line.split(',')"
+          ]
+        }
+      ],
+      "solved": {
+        "src/fields.js": "'use strict'\n\nfunction splitFields(line) {\n  return line\n    .split(',')\n    .map((one) => one.trim())\n    .filter((one) => one !== '')\n}\n\nmodule.exports = { splitFields }\n",
+        "check/fields.js": "'use strict'\nconst { splitFields } = require('../src/fields.js')\nconst got = JSON.stringify(splitFields(' a, b ,,c , '))\nconst want = JSON.stringify(['a', 'b', 'c'])\nif (got !== want) {\n  console.error('实得 ' + got + '，要的是 ' + want)\n  process.exit(1)\n}\n"
+      }
+    },
+    {
+      "name": "两格各改一份 · 合并那一档",
+      "covers": [
+        "派发",
+        "合并",
+        "验收"
+      ],
+      "goal": "给 counter 加一个 dec（减一）、把 format 的 fmt 改成保留两位小数——两件事各一格。",
+      "maxSteps": 6,
+      "assertions": [
+        {
+          "name": "两份检查都过",
+          "action": "all",
+          "argv": [
+            "node",
+            "check/all.js"
+          ]
+        }
+      ],
+      "split": [
+        {
+          "goal": "在 src/counter.js 里加一个 export function dec(x: number): number——返回 x - 1。只改这一个文件。",
+          "ownedPaths": [
+            "src/counter.js"
+          ],
+          "deliverables": [
+            {
+              "path": "src/counter.js",
+              "form": "一份文件"
+            }
+          ],
+          "assertions": [
+            {
+              "name": "有 dec",
+              "action": "all"
+            }
+          ]
+        },
+        {
+          "goal": "把 src/format.js 的 fmt 改成返回 (n / 100).toFixed(2)。只改这一个文件。",
+          "ownedPaths": [
+            "src/format.js"
+          ],
+          "deliverables": [
+            {
+              "path": "src/format.js",
+              "form": "一份文件"
+            }
+          ],
+          "assertions": [
+            {
+              "name": "fmt 两位小数",
+              "action": "all"
+            }
+          ]
+        }
+      ],
+      "base": [
+        {
+          "path": "AGENTS.md",
+          "text": "# counter（项目方针）\n\n- 一个文件一件事：`src/counter.js` 住计数那一族，`src/format.js` 住给人看的字符串。\n- 导出名不要改、不要删（别的地方在用）。\n- 写完就核：`node check/all.js`。\n"
+        },
+        {
+          "path": "src/counter.js",
+          "text": "'use strict'\n\n/** 加一。 */\nfunction inc(x) {\n  return x + 1\n}\n\nmodule.exports = { inc }\n"
+        },
+        {
+          "path": "src/format.js",
+          "text": "'use strict'\n\n/** 金额的呈现：**今天把分直接当元印出去了**。 */\nfunction fmt(n) {\n  return String(n)\n}\n\nmodule.exports = { fmt }\n"
+        },
+        {
+          "path": "check/all.js",
+          "text": "'use strict'\nconst c = require('../src/counter.js')\nconst f = require('../src/format.js')\nconst bad = []\nif (c.inc(1) !== 2) bad.push('inc')\nif (typeof c.dec !== 'function' || c.dec(5) !== 4) bad.push('dec')\nif (f.fmt(1234) !== '12.34') bad.push('fmt')\nif (bad.length) {\n  console.error('还差：' + bad.join(' · '))\n  process.exit(1)\n}\n"
+        }
+      ],
+      "actions": {
+        "ok": {
+          "argv": [
+            "/bin/sh",
+            "-c",
+            "true"
+          ]
+        },
+        "all": {
+          "argv": [
+            "node",
+            "check/all.js"
+          ]
+        }
+      },
+      "observes": [
+        "node check/all.js"
+      ],
+      "answer": [
+        {
+          "path": "src/counter.js",
+          "form": "file",
+          "contains": [
+            "inc",
+            "dec",
+            "module.exports"
+          ]
+        },
+        {
+          "path": "src/format.js",
+          "form": "file",
+          "contains": [
+            "toFixed(2)"
+          ],
+          "notContains": [
+            "return String(n)"
+          ]
+        }
+      ],
+      "solved": {
+        "src/counter.js": "'use strict'\n\nfunction inc(x) {\n  return x + 1\n}\n\nfunction dec(x) {\n  return x - 1\n}\n\nmodule.exports = { inc, dec }\n",
+        "src/format.js": "'use strict'\n\nfunction fmt(n) {\n  return (n / 100).toFixed(2)\n}\n\nmodule.exports = { fmt }\n"
+      }
+    }
+  ]
+}
