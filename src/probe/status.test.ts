@@ -71,7 +71,7 @@ function call(agent: string, step: string, invocations: number, cacheRead: numbe
     invocations,
     status: null,
     headers: null,
-    usage: { inputTokens: null, cacheReadTokens: cacheRead, cacheWriteTokens: 0, outputTokens: 10 },
+    usage: { inputTokens: null, cacheReadTokens: cacheRead, cacheWriteTokens: 0, outputTokens: 10, reasoningTokens: null },
     rawStop: 'end_turn',
     stop: 'end-turn',
   }

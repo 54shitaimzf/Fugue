@@ -50,19 +50,19 @@ function script(): MergedRow[] {
   const agent = 'agent-1' as AgentId
   return [
     row({ t: 'prefix/assemble', agent, zoneAHash: 'a1', zoneBHash: 'b1', zoneCHash: 'c1' }),
-    row({ t: 'llm/call', agent, step: '0', model: DECL.id, wire: 'anthropic-messages', toolCount: 9, invocations: 1, usage: { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64 }, rawStop: 'tool_use', stop: 'tool-calls' }),
+    row({ t: 'llm/call', agent, step: '0', model: DECL.id, wire: 'anthropic-messages', toolCount: 9, invocations: 1, usage: { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null }, rawStop: 'tool_use', stop: 'tool-calls' }),
     // 这一行**绕了**：它用 shell 干 `grep` 干的事（命令行里出现了那个工具名）。
     row({ t: 'run/start', agent, step: '0', action: 'bash', argv0: '/bin/sh', argv: ['/bin/sh', '-c', 'grep -n TODO a.ts'], cwd: '' }),
     row({ t: 'run/end', agent, step: '0', exit: 0, ms: 3, denied: false }),
     row({ t: 'prefix/assemble', agent, zoneAHash: 'a1', zoneBHash: 'b1', zoneCHash: 'c2' }),
-    row({ t: 'llm/call', agent, step: '1', model: DECL.id, wire: 'anthropic-messages', toolCount: 9, invocations: 0, usage: { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64 }, rawStop: 'end_turn', stop: 'end-turn' }),
+    row({ t: 'llm/call', agent, step: '1', model: DECL.id, wire: 'anthropic-messages', toolCount: 9, invocations: 0, usage: { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null }, rawStop: 'end_turn', stop: 'end-turn' }),
     // 物化那一趟：碰了两条、而实际变了一条（精度那一支的分母与分子因此不同）。
     row({ t: 'mat/fork', agent, base: 'c0' as never, strategy: 'hardlink', paths: ['a.ts', 'b.ts'], hashes: ['h1', 'h2'], ms: 12 }),
     row({ t: 'mat/reclaim', agent, declared: [], changed: ['a.ts'] }),
     // 一次交接：后继那一格走了两步才写出东西。
     row({ t: 'agent/handoff', agent, successor: 'agent-1-2' as AgentId, contract: 'c-1' as never, digest: 'd1', body: '【交接】…' }),
-    row({ t: 'llm/call', agent: 'agent-1-2' as AgentId, step: '0', model: DECL.id, wire: 'anthropic-messages', toolCount: 9, invocations: 1, usage: { inputTokens: 88, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 64 }, rawStop: 'tool_use', stop: 'tool-calls' }),
-    row({ t: 'llm/call', agent: 'agent-1-2' as AgentId, step: '1', model: DECL.id, wire: 'anthropic-messages', toolCount: 9, invocations: 1, usage: { inputTokens: 88, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 64 }, rawStop: 'tool_use', stop: 'tool-calls' }),
+    row({ t: 'llm/call', agent: 'agent-1-2' as AgentId, step: '0', model: DECL.id, wire: 'anthropic-messages', toolCount: 9, invocations: 1, usage: { inputTokens: 88, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null }, rawStop: 'tool_use', stop: 'tool-calls' }),
+    row({ t: 'llm/call', agent: 'agent-1-2' as AgentId, step: '1', model: DECL.id, wire: 'anthropic-messages', toolCount: 9, invocations: 1, usage: { inputTokens: 88, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null }, rawStop: 'tool_use', stop: 'tool-calls' }),
     row({ t: 'view/write', agent: 'agent-1-2' as AgentId, path: 'x.ts' as never, rev: 1 as never, blob: 'bl' as never, mode: 0o100644 }),
     row({ t: 'ckpt/commit', agent: 'agent-1-2' as AgentId, commit: 'deadbeef' as never, rev: 1 as never, msg: '第一个' }),
     row({ t: 'round/state', round: 'r1' as RoundId, from: 'Working', to: 'Merging' }),
@@ -145,7 +145,7 @@ test('③ 真夹具那一次调用：prefix-hit-rate > 0（上游报回了缓存
       model: DECL.id,
       wire: 'anthropic-messages',
       toolCount: 9, invocations: 1,
-      usage: { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64 },
+      usage: { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null },
       rawStop: 'tool_use',
       stop: 'tool-calls',
     }),
@@ -164,7 +164,7 @@ test('③ 真夹具那一次调用：prefix-hit-rate > 0（上游报回了缓存
       model: DECL.id,
       wire: 'anthropic-messages',
       toolCount: 9, invocations: 1,
-      usage: { inputTokens: 88, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 64 },
+      usage: { inputTokens: 88, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null },
       rawStop: 'tool_use',
       stop: 'tool-calls',
     }),
@@ -207,7 +207,7 @@ test('④ 两套协议解出来的工具调用序列语义相同 · 负对照：
   // 在同一个 (A,B) 上是同一版——这正是"两个协议可比"那句话的落点。
   const rows = (wire: string): MergedRow[] => [
     row({ t: 'prefix/assemble', agent: 'agent-1' as AgentId, zoneAHash: 'a1', zoneBHash: 'b1', zoneCHash: 'c1' }),
-    row({ t: 'llm/call', agent: 'agent-1' as AgentId, step: '0', model: DECL.id, wire, toolCount: 9, invocations: 1, usage: { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64 }, rawStop: 'tool_use', stop: 'tool-calls' }),
+    row({ t: 'llm/call', agent: 'agent-1' as AgentId, step: '0', model: DECL.id, wire, toolCount: 9, invocations: 1, usage: { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null }, rawStop: 'tool_use', stop: 'tool-calls' }),
   ]
   const onAnthropic = metricsOf(rows('anthropic-messages'))
   const onOpenai = metricsOf(rows('openai-chat'))
@@ -250,7 +250,7 @@ const callsOf = (who: string, hits: readonly (number | null)[], input = 100): Me
       wire: 'anthropic-messages',
       toolCount: 9,
       invocations: 1,
-      usage: { inputTokens: input, cacheReadTokens: h, cacheWriteTokens: 0, outputTokens: 8 },
+      usage: { inputTokens: input, cacheReadTokens: h, cacheWriteTokens: 0, outputTokens: 8, reasoningTokens: null },
       rawStop: 'tool_use',
       stop: 'tool-calls',
     }),

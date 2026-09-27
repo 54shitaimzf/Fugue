@@ -101,6 +101,8 @@ const usageOf = (u: Record<string, unknown> | undefined): Partial<Usage> | null 
   const num = (k: string): number | null => (typeof u[k] === 'number' ? (u[k] as number) : null)
   const details = (u['prompt_tokens_details'] ?? {}) as Record<string, unknown>
   const cached = typeof details['cached_tokens'] === 'number' ? (details['cached_tokens'] as number) : null
+  const cdetails = (u['completion_tokens_details'] ?? {}) as Record<string, unknown>
+  const reasoned = typeof cdetails['reasoning_tokens'] === 'number' ? (cdetails['reasoning_tokens'] as number) : null
   const hit = num('prompt_cache_hit_tokens')
   const miss = num('prompt_cache_miss_tokens')
   const prompt = num('prompt_tokens')
@@ -112,6 +114,9 @@ const usageOf = (u: Record<string, unknown> | undefined): Partial<Usage> | null 
     // 隐式缓存的这条线上**没有缓存写入这一项**——它是 `null`，不是 0。
     cacheWriteTokens: null,
     outputTokens: num('completion_tokens'),
+    // 思考那一部分是**输出里的明细**（官方 schema 把 `completion_tokens_details.reasoning_tokens`
+    // 归在"输出的拆解"下面）：它不进钱那一档，只作读数。
+    reasoningTokens: reasoned,
   }
   if (!Object.values(out).some((v) => v !== null)) return null
   return {

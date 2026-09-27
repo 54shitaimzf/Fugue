@@ -360,6 +360,7 @@
       "cacheReadTokens": 2560,
       "cacheWriteTokens": null,
       "outputTokens": 175,
+      "reasoningTokens": 78,
       "rawStop": null,
       "model": null
     },

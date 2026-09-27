@@ -115,6 +115,8 @@ const usageOf = (u: Record<string, unknown> | undefined): Partial<Usage> | null 
     cacheReadTokens: num('cache_read_input_tokens'),
     cacheWriteTokens: num('cache_creation_input_tokens'),
     outputTokens: num('output_tokens'),
+    // 思考 token **这条线不报**：Anthropic 那一份 `usage` 里没有这一项，所以它是 `null`——不拿
+    // `output_tokens` 顶（那会把"没量到"写成"量到了"）。
   }
   return Object.values(out).some((v) => v !== null) ? out : null
 }

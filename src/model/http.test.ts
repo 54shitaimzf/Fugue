@@ -188,6 +188,7 @@ test('② 一次调用落一条 llm/call：模型 · 步 · 工具调用条数 �
       cacheReadTokens: record.usage?.cacheReadTokens ?? null,
       cacheWriteTokens: record.usage?.cacheWriteTokens ?? null,
       outputTokens: record.usage?.outputTokens ?? null,
+      reasoningTokens: record.usage?.reasoningTokens ?? null,
     },
     rawStop: record.rawStop,
     stop: record.stop,

@@ -78,7 +78,8 @@ for (const pair of PAIRS) {
       `请求 ${body.length} 字节（${hashOf(body)}）· 响应 ${response.length} 字节 · ` +
       `积出 ${call.toolCalls.length} 条调用（${call.toolCalls.map((c) => c.name).join(' · ')}）· ` +
       `思考 ${call.thinking?.text.length ?? 0} 个字 · ` +
-      `用量 ${call.usage?.inputTokens}/${call.usage?.cacheReadTokens}/${call.usage?.cacheWriteTokens}/${call.usage?.outputTokens} · ` +
+      `用量 ${call.usage?.inputTokens}/${call.usage?.cacheReadTokens}/${call.usage?.cacheWriteTokens}/${call.usage?.outputTokens}` +
+      `（思考 ${call.usage?.reasoningTokens ?? '没有读数'}） · ` +
       `停因 ${call.stop}\n`,
   )
   // 规范文本也印一份指纹：回放时核的是它。

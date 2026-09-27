@@ -384,6 +384,8 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
           cacheReadTokens: usage?.cacheReadTokens ?? null,
           cacheWriteTokens: usage?.cacheWriteTokens ?? null,
           outputTokens: usage?.outputTokens ?? null,
+          // 思考那一部分是输出里的明细（不在钱那四样里）：记它不动账，但"想了多少"只有它能量到。
+          reasoningTokens: usage?.reasoningTokens ?? null,
         },
         // 提供方自己的原话来自**收尾那一条事件**（`checkEvents` 把它放在账的 `rawStop` 上），
         // 不是来自用量那一条（`usage.rawStop` 在两条线上常常是 null）。

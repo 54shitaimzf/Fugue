@@ -48,7 +48,7 @@ const DECL = modelDeclOf('deepseek-chat/anthropic')
 const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 
 /** 一次调用的四个数（假模型也守 `B1` 的口径：用量可以缺，缺了是 `null`）。 */
-const USAGE = { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, rawStop: null, model: null }
+const USAGE = { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null, rawStop: null, model: null }
 
 /** 一条工具调用（三段：起点 · 分片 · 收尾）。 */
 function callOne(index: number, id: string, name: string, args: string): ModelEvent[] {
@@ -175,7 +175,7 @@ test('① 每一步落一条 `prefix/assemble` 与一条 `llm/call`，步号单�
     assert.equal((calls[1] as { invocations: number }).invocations, 0)
     assert.equal(first.stop, 'tool-calls')
     assert.equal(first.rawStop, 'tool_use')
-    assert.deepEqual(first.usage, { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64 })
+    assert.deepEqual(first.usage, { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null })
     console.log(
       `① 读数：${r.steps} 步 · ${events.length} 条事件（${prefix.length} assemble + ${calls.length} call）· ` +
         `步号 ${steps.join(' → ')} · 公布工具 ${first.toolCount} 条 · 用量 ${JSON.stringify(first.usage)}`,

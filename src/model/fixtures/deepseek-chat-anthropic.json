@@ -360,6 +360,7 @@
       "cacheReadTokens": 24000,
       "cacheWriteTokens": 0,
       "outputTokens": 64,
+      "reasoningTokens": null,
       "rawStop": null,
       "model": "deepseek-chat"
     },

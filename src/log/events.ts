@@ -221,6 +221,13 @@ export type LogEvent =
         cacheReadTokens: number | null
         cacheWriteTokens: number | null
         outputTokens: number | null
+        /**
+         * **输出那一个数里的拆解**：思考花掉的那部分（上游的
+         * `completion_tokens_details.reasoning_tokens`）。**它不是第五个数**——`outputTokens` 已经含它，
+         * 钱只从 `USAGE_COUNTS` 那四样算；这一栏回答的是"想占了多少"。只有 Chat Completions 那条线报它，
+         * Anthropic 那条线是 `null`。
+         */
+        reasoningTokens: number | null
       }
       /** 提供方自己的结束原因（原话）。半截的流是 `null`。 */
       rawStop: string | null

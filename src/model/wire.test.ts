@@ -477,6 +477,11 @@ test('⑦ 思考：收得到（与实录里那些分片逐字节相同）· 回�
   const call = checkEvents(await eventsOf(sse, openaiWireOf(), 4096))
   assert.equal(call.thinking?.text, want, '解出来的思考与上游那些分片拼起来的对不上')
   assert.equal(call.thinking?.signature, null, 'Chat Completions 那条线上没有签名这一栏')
+  // 思考 token：上游挂在**输出那一栏的明细**上（`completion_tokens_details.reasoning_tokens`）。
+  // 真档是 78 ⊂ 175——它不进钱那一档，只作读数。
+  assert.equal(call.usage?.reasoningTokens, 78, '实录里那 78 个思考 token 没接上')
+  assert.equal(call.usage?.outputTokens, 175, '输出那一栏与实录对不上')
+  console.log(`⑦ 思考 token 读数：${call.usage?.reasoningTokens} ⊂ 输出 ${call.usage?.outputTokens}`)
   // 负对照：一次喂一个字节（分片横跨块边界），拼出来还是那一串。
   const oneByte = checkEvents(await eventsOf(sse, openaiWireOf(), 1))
   assert.deepEqual(oneByte.thinking, call.thinking, '按 1 字节切块喂进去，思考变了')

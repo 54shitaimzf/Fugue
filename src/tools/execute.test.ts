@@ -259,7 +259,7 @@ function callOne(index: number, id: string, name: string, args: unknown): ModelE
   ]
 }
 
-const USAGE = { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, rawStop: null, model: null }
+const USAGE = { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null, rawStop: null, model: null }
 
 function stateOf(): AssembleState {
   return { ...emptyState(), ...fixtureState(0), step: 0, cwd: '' }

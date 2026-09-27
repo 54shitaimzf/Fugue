@@ -35,6 +35,8 @@
 // （同一个框，少中间那根竖线）；只有屏幕**矮**到装不下这几行时才截断，并且末行说出还剩几行。
 // 高度连五行都没有（画不出框 + 账尾）时印一句"太矮"，不静默给一个空帧。
 import type { MetricValue } from '../probe/metrics.ts'
+import { costOf, matchModels, moneyText } from '../model/price.ts'
+import type { Phase } from '../model/price.ts'
 import type { MetricReading } from '../probe/round.ts'
 import type { StatusSnapshot } from '../probe/status.ts'
 
@@ -71,6 +73,11 @@ export interface FrameInput {
   readonly metrics?: readonly MetricValue[]
   /** 读源三：打回那三个数。同上，不给就不印。 */
   readonly report?: readonly MetricReading[]
+  /**
+   * 读的时候是峰时还是谷时（官方价目分两档）。**不给就不印钱那一栏**——账上没有时刻，这一档只能由
+   * 读的人给（与 `status --once` 那条同一个口径）。
+   */
+  readonly phase?: Phase
   readonly width: number
   readonly height: number
 }
@@ -116,8 +123,14 @@ export function bodyOf(o: {
   )
   right.push(
     `用量 调用 ${s.usage.calls} · input ${usageText(s.usage.inputTokens)} · cacheRead ${usageText(s.usage.cacheReadTokens)}` +
-      ` · cacheWrite ${usageText(s.usage.cacheWriteTokens)} · output ${usageText(s.usage.outputTokens)}`,
+      ` · cacheWrite ${usageText(s.usage.cacheWriteTokens)} · output ${usageText(s.usage.outputTokens)}` +
+      ` · 思考 ${usageText(s.usage.reasoningTokens)}`,
   )
+  // 钱那一栏：与 `status --once` 同一处算法、同一句话（`src/model/price.ts` 的 `moneyText`）。
+  if (o.phase !== undefined) {
+    const match = matchModels(s.models)
+    right.push(moneyText({ money: costOf(s.usage, match.row, o.phase), match, phase: o.phase, models: s.models }))
+  }
   for (const m of o.metrics ?? []) {
     right.push(`${m.metric} ${m.value === null ? '算不出来' : m.value}（${m.numerator ?? '—'}/${m.denominator ?? '—'}）`)
   }

@@ -39,7 +39,7 @@ const call = (w: string, step: string): PrefixRow =>
       invocations: 1,
       status: null,
       headers: null,
-      usage: { inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null },
+      usage: { inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null, reasoningTokens: null },
       rawStop: 'end_turn',
       stop: 'end-turn',
     },

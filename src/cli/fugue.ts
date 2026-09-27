@@ -120,6 +120,7 @@ import { tmpdir } from 'node:os'
 import { computeAll, reportOf } from '../probe/round.ts'
 import { computeAllMetrics, computeAttribution, lineOf, lineOfAttribution } from '../probe/metrics.ts'
 import { linesOf, snapshot } from '../probe/status.ts'
+import { phaseOf } from '../model/price.ts'
 import type { StatusRow } from '../probe/status.ts'
 import { follow, readNew } from '../probe/watch.ts'
 
@@ -647,7 +648,8 @@ async function statusCmd(
       emitJson(s)
       return 0
     }
-    for (const line of linesOf(s)) emitLine(line)
+    // 钱那一栏要一个档：**读的时候按当时的钟算**（官方价目分峰谷两档）。
+    for (const line of linesOf(s, { phase: phaseOf(new Date()) })) emitLine(line)
     return 0
   } finally {
     await log.close()

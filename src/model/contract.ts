@@ -496,6 +496,14 @@ export interface Usage {
   /** 这次调用**写进**缓存的那一部分（有断点的协议才有这一项；隐式缓存的那条线上是 `null`）。 */
   readonly cacheWriteTokens: number | null
   readonly outputTokens: number | null
+  /**
+   * 输出那一个数里的**拆解**（上游报的 `completion_tokens_details.reasoning_tokens`）：思考花掉的那部分。
+   *
+   * **它不是第五个数**：上游那两栏是"总计 + 明细"，`outputTokens` 已经含它，再加一遍就是把钱算两回。
+   * 所以它进 `USAGE_FIELDS`（读数）不进 `USAGE_COUNTS`（钱那四样）。只有 Chat Completions 那条线报它，
+   * Anthropic 那条线不给（那里是 `null`——不拿 `outputTokens` 顶）。
+   */
+  readonly reasoningTokens: number | null
   /** 提供方自己的结束原因，原样带过来（不是我们那套 `StopReason`）。 */
   readonly rawStop: string | null
   /** 提供方报的模型名——**它可能与声明的 `model` 不同**（别名 · 路由），所以两个都留着。 */
@@ -514,11 +522,13 @@ export const USAGE_COUNTS: readonly (keyof Usage)[] = [
 ]
 
 /**
- * 这一栏的全部字段：四个数 + 提供方自己的结束原因 + 它报的模型名。后两样不是用量，是**读数旁边
- * 的两个坐标**（一个是"为什么停"的原始说法，一个是"它说它是谁"）——分开列，是为了让"四个数"
- * 这句话有一处指得出来，而不是被这两个坐标混进去变成六个。
+ * 这一栏的全部字段：四个数 + 思考那一栏的拆解 + 提供方自己的结束原因 + 它报的模型名。
+ *
+ * **"四个数"这句话不许漂**：`USAGE_COUNTS` 还是那四样（钱只从它们算），后面三样各自是别的东西——
+ * `reasoningTokens` 是 `outputTokens` 的明细（不是第五个数）· `rawStop` 是"为什么停"的原始说法 ·
+ * `model` 是"它说它是谁"。分开列，是为了让每一句都有一处指得出来。
  */
-export const USAGE_FIELDS: readonly (keyof Usage)[] = [...USAGE_COUNTS, 'rawStop', 'model']
+export const USAGE_FIELDS: readonly (keyof Usage)[] = [...USAGE_COUNTS, 'reasoningTokens', 'rawStop', 'model']
 
 /** 一次思考：它想的那一串 + 那条线给的签名（Anthropic 有，Chat Completions 没有）。 */
 export interface Thinking {
@@ -699,6 +709,7 @@ export function usageUpdate(prev: Usage | null, part: Partial<Usage>): Usage {
     cacheReadTokens: null,
     cacheWriteTokens: null,
     outputTokens: null,
+    reasoningTokens: null,
     rawStop: null,
     model: null,
   }

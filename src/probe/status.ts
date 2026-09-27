@@ -9,8 +9,8 @@
 //      （不在这里另立一张边表）：每一条记下来的转移都拿图核一遍它是"一条边"还是"跳了几步"。
 //   ② 每一格走到哪儿 —— `llm/call` · `run/start` · `run/end` · `agent/stop` · `agent/handoff`
 //      那几族事件按 writer 归拢。
-//   ③ 用量与条数 —— `llm/call` 的四个数（**缺项不拿 0 顶**：`missing` 那一栏就是"没量到"的条数，
-//      与"量到 0"分得开，`B1` 的那一条）。
+//   ③ 用量与条数 —— `llm/call` 的四个数 + 思考那一栏的拆解（`reasoningTokens`）
+//      （**缺项不拿 0 顶**：`missing` 那一栏就是"没量到"的条数，与"量到 0"分得开，`B1` 的那一条）。
 //
 // **实测照出来的一条事实（写在这里，免得下一个人重新推）：`round/state` 记的不是一条路径。**
 // 打桩跑一趟 `round run`（两个格 · 三步），账上只有四条：`Idle→Planning` · `Planning→Delegated` ·
@@ -24,6 +24,8 @@
 // 图上根本走不通的记进 `unrouted`（**读面不许因为一条奇怪的账就整份读不出来**）。
 // 要"每一步都落一条事件"是一个**写面**的改动（会动前缀账、会让 W10 那条基线作废），不在这里做。
 import type { Log, LogEvent } from '../log/events.ts'
+import { costOf, matchModels, moneyText } from '../model/price.ts'
+import type { Phase } from '../model/price.ts'
 import { EDGES, STATES, abortEdges } from '../round/machine.ts'
 import type { Cause, Edge } from '../round/machine.ts'
 import { rejectsIn } from './round.ts'
@@ -48,6 +50,11 @@ export interface UsageTotals {
   readonly cacheReadTokens: UsageTotal
   readonly cacheWriteTokens: UsageTotal
   readonly outputTokens: UsageTotal
+  /**
+   * **输出那一个数里的拆解**：思考花掉的那部分。**它不是第五个数**（`outputTokens` 已经含它），
+   * 所以它不进 `src/model/price.ts` 那个算式——这一栏回答的是"想占了多少"。
+   */
+  readonly reasoningTokens: UsageTotal
 }
 
 /** 一格走到哪儿了。**每一栏都指得到事件**，一处推断都没有。 */
@@ -163,6 +170,8 @@ export interface StatusSnapshot {
   /** 树那一侧那一栏（`mat/reclaim` 里 `changed` 非空的那些）。**与"被挡"分开**。 */
   readonly outside: OutsideTally
   readonly usage: UsageTotals
+  /** 这一份日志里出现过的模型名（`llm/call` 的 `model`，去重排序）。**价目那一栏按它查**。 */
+  readonly models: readonly string[]
   /** 一共读了几条事件。 */
   readonly events: number
   readonly last: { readonly writer: string; readonly seq: number; readonly t: string } | null
@@ -215,8 +224,10 @@ function totalOf(list: readonly (number | null)[]): UsageTotal {
   let total = 0
   let missing = 0
   for (const v of list) {
-    if (v === null) missing++
-    else total += v
+    // **不是数字的都算"没量到"**：盘上那些早先落下来的日志没有 `reasoningTokens` 这一栏
+    // （字段是后加的），`undefined` 加进去会得到 NaN——一个 NaN 会把整行读数带走。
+    if (typeof v === 'number') total += v
+    else missing++
   }
   return { total, missing }
 }
@@ -263,8 +274,11 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
     cacheReadTokens: [] as (number | null)[],
     cacheWriteTokens: [] as (number | null)[],
     outputTokens: [] as (number | null)[],
+    reasoningTokens: [] as (number | null)[],
   }
   let calls = 0
+  /** 账上出现过的模型名（`llm/call` 的 `model`）。出口排序——**价目那一栏按它查**。 */
+  const models = new Set<string>()
   let contracts = 0
   let attempts = 0
   let conflicts = 0
@@ -354,6 +368,8 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
       usage.cacheReadTokens.push(e.usage.cacheReadTokens)
       usage.cacheWriteTokens.push(e.usage.cacheWriteTokens)
       usage.outputTokens.push(e.usage.outputTokens)
+      usage.reasoningTokens.push(e.usage.reasoningTokens)
+      models.add(e.model)
       continue
     }
     if (e.t === 'run/start') {
@@ -456,7 +472,9 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
       cacheReadTokens: totalOf(usage.cacheReadTokens),
       cacheWriteTokens: totalOf(usage.cacheWriteTokens),
       outputTokens: totalOf(usage.outputTokens),
+      reasoningTokens: totalOf(usage.reasoningTokens),
     },
+    models: [...models].sort(),
     events: rows.length,
     last,
   }
@@ -479,7 +497,15 @@ export async function snapshot(log: Pick<Log, 'readMerged'>): Promise<StatusSnap
  *
  * 跳步与"图上没有这条路"都在这里印出来：读面不许把"账与图对不上"这件事咽下去。
  */
-export function linesOf(s: StatusSnapshot): readonly string[] {
+export interface LinesOptions {
+  /**
+   * 读的时候是峰时还是谷时（官方价目分两档）。**不给就不印钱那一栏**——账上没有时刻，这一档只能由
+   * 读的人给（`src/model/price.ts` 的 `phaseOf` 拿当时的钟算）。
+   */
+  readonly phase?: Phase
+}
+
+export function linesOf(s: StatusSnapshot, opts: LinesOptions = {}): readonly string[] {
   const out: string[] = []
   if (s.rounds.length === 0) out.push('一条轮次状态都没有：这份日志里还没开过轮次')
   for (const r of s.rounds) {
@@ -512,8 +538,14 @@ export function linesOf(s: StatusSnapshot): readonly string[] {
   const one = (n: string, t: UsageTotal): string => `${n} ${t.total}${t.missing > 0 ? `（缺 ${t.missing} 条）` : ''}`
   out.push(
     `用量 调用 ${u.calls} · ${one('input', u.inputTokens)} · ${one('cacheRead', u.cacheReadTokens)}` +
-      ` · ${one('cacheWrite', u.cacheWriteTokens)} · ${one('output', u.outputTokens)}`,
+      ` · ${one('cacheWrite', u.cacheWriteTokens)} · ${one('output', u.outputTokens)}` +
+      ` · ${one('思考', u.reasoningTokens)}`,
   )
+  // 钱那一栏：**读的人给了档才印**（账上没有时刻）。算不出来时那一行会说"算不出来"，不拿 0 顶。
+  if (opts.phase !== undefined) {
+    const match = matchModels(s.models)
+    out.push(moneyText({ money: costOf(u, match.row, opts.phase), match, phase: opts.phase, models: s.models }))
+  }
   out.push(
     s.last === null
       ? '事件 0 条'
