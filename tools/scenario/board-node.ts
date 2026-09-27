@@ -35,6 +35,16 @@ type CaseDecl = {
   answer: Answer
   base: { path: string; text: string }[]
   solved: Record<string, string | null>
+  /**
+   * **同一案的另一棵等价实现**：已知答案必须判它过。由头是第十六趟那一趟真档——模型把
+   * `yuan` 写成手算整数与两位小数（**不带 `toFixed`**，反而更贴 `AGENTS.md` 的"唯一出口"），
+   * 行为全对（`node check/format.js` 退出 0 · `yuan(1234)` 得 `12.34`），却被答案里那句
+   * `contains: ["toFixed(2)"]` 判红。**答案那一栏不许挑机制**：它只挑名字与形状，行为归
+   * `observes`。这一栏就是那件事的绊线——判不过就是"这条判据在挑机制"。
+   */
+  alsoSolved?: Record<string, string | null>
+  /** `alsoSolved` 那棵树的出处（人读，判据不看它）。 */
+  alsoSolvedWhy?: string
   observes?: string[]
   split?: unknown[]
 }
@@ -249,8 +259,20 @@ if (cmd === 'selftest') {
     if (c.answer.length === 0) problems.push('一条判据都没有')
     if (!c.covers || c.covers.length === 0) problems.push('没写它覆盖哪些环节')
     if ((c.observes ?? []).length === 0) problems.push('没有一条能自己跑的观察（`observes`）')
+    // **等价实现也判过**：答案那一栏只许挑名字与形状，不许挑机制（第十六趟照出来的那一处
+    // 假红：不带 `toFixed` 的正确实现，被 `contains` 那一栏判红）。
+    const alt = c.alsoSolved
+    if (alt !== undefined) {
+      const also = judgeOf(c.answer, alt)
+      if (!also.ok) problems.push('另一棵等价实现判不过（这条判据在挑机制）：' + also.why)
+    }
     if (problems.length) { bad++; for (const p of problems) console.log('  FAIL ' + c.name + '：' + p) }
-    else console.log('  ok   ' + c.name + '：底不过 · 答案过 · 覆盖 ' + c.covers.join('/') + ' · 观察 ' + String((c.observes ?? []).length) + ' 条')
+    else {
+      console.log(
+        '  ok   ' + c.name + '：底不过 · 答案过 · 覆盖 ' + c.covers.join('/') + ' · 观察 ' +
+          String((c.observes ?? []).length) + ' 条' + (alt === undefined ? '' : ' · 等价实现也过'),
+      )
+    }
   }
   console.log(bad ? '\n' + String(bad) + ' 案没过' : '\n' + String(all.length) + ' 案都过（判据有牙：底那一棵每一种都判不过）')
   bad += readingsSelfTest()
