@@ -413,3 +413,31 @@ test('X0 · chmod 的「没有变化」：一句话、不落一条变更；真�
   assert.equal((JSON.parse(fugue(root, '--json', 'ensure').stdout) as { noop: boolean }).noop, true)
   assert.equal(statSync(join(merged, 'own.txt')).mode & 0o777, 0o755, '盘上还是那次真变化的模式')
 })
+
+test('观察那三条命令：认不得的开关当场退 2（不静默收下），认得的照旧', () => {
+  const root = tmpRoot()
+  const w = fugueStdin(root, '第一版\n', 'write', 'a.txt', '--stdin')
+  assert.equal(w.code, 0, w.stderr)
+
+  // **认不得的**：退 2（命令行不成立），且报的话里指名道姓 + 说得出这一条认哪几个。
+  const grep = fugue(root, 'log', '--grep', 'llm')
+  assert.equal(grep.code, 2, `log 收下了一个不认识的开关：${grep.stdout.slice(0, 120)}`)
+  assert.match(grep.stderr, /log 不认这几个开关：--grep/)
+  assert.match(grep.stderr, /--agent/)
+  const once = fugue(root, 'watch', '--once')
+  assert.equal(once.code, 2, `watch 收下了 --once：${once.stdout.slice(0, 120)}`)
+  assert.match(once.stderr, /watch 不认这几个开关：--once/)
+  assert.match(once.stderr, /--follow/)
+  const iv = fugue(root, 'status', '--interval', '200')
+  assert.equal(iv.code, 2, `status 收下了 --interval：${iv.stdout.slice(0, 120)}`)
+  assert.match(iv.stderr, /status 不认这几个开关：--interval/)
+
+  // **认得的照旧**：退 0，读数一个字节不变（闸不认识的那几个才拒）。
+  assert.equal(fugue(root, 'log').code, 0)
+  assert.equal(fugue(root, '--json', 'log', '--agent', 'round').code, 0)
+  assert.equal(fugue(root, 'watch').code, 0)
+  assert.equal(fugue(root, 'status', '--once').code, 0)
+  console.log(
+    '读数：log --grep → 2 · watch --once → 2 · status --interval → 2 · 认得的四条（log · --json log --agent · watch · status --once）照旧 0',
+  )
+})

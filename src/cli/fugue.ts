@@ -581,6 +581,36 @@ function emit(pos: LogPos, e: LogEvent, json: boolean): void {
 }
 
 /**
+ * 观察那三条命令认的开关（`log` · `watch` · `status`）。**各给各的**：不给它们共用一张大表——
+ * 那样子命令会收下不属于自己的开关，而"收下"与"用上"在读数上分不开。
+ */
+const LOG_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help']
+const WATCH_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help', 'follow', 'interval']
+const STATUS_FLAGS: readonly string[] = ['root', 'json', 'help', 'once']
+
+/**
+ * **认不得的开关当场拒**（退 2），不静默收下。
+ *
+ * 为什么这一族要拒：写错的开关被咽下去之后，人看到的是"命令跑了、什么都没变"——那与"这个开关
+ * 今天没用"在读数上分不开（`log --grep x` 找不到东西，与"日志里没有匹配"也是同一张脸）。用法
+ * 错是 2，做不成是 1，两者不许混（架构 § 9.8）：收下一个不认识的开关属于**命令行不成立**。
+ *
+ * 报的话里把**这一条命令认的那几个**印出来：拒一条命令时，人要知道的是"那该怎么办"。
+ */
+function unknownFlagsOf(
+  cmd: string,
+  flags: Map<string, string | true>,
+  allowed: readonly string[],
+): string | null {
+  const bad = [...flags.keys()].filter((k) => !allowed.includes(k))
+  if (bad.length === 0) return null
+  return (
+    `${cmd} 不认这几个开关：${bad.map((k) => '--' + k).join(' · ')}——这一条命令认的是 ` +
+    allowed.map((k) => '--' + k).join(' · ')
+  )
+}
+
+/**
  * `status --once`：**把账重放一次，给人看这一刻的处境**（PLAN § 5.18 的第 12 格）。
  *
  * 纯读两头都占了：开日志口**不带 `write`**（不取锁、不追加）、不建视图、不碰真源。`--once` 是
@@ -591,13 +621,8 @@ async function statusCmd(
   flags: Map<string, string | true>,
   json: boolean,
 ): Promise<number> {
-  const bad = [...flags.keys()].filter((k) => k !== 'root' && k !== 'json' && k !== 'once' && k !== 'help')
-  if (bad.length > 0) {
-    return usageFail(
-      `status 不认这几个开关：${bad.map((k) => '--' + k).join(' · ')}——` +
-        '今天只有 --once（一次快照）；跟随是另一条命令：watch --follow',
-    )
-  }
+  const bad = unknownFlagsOf('status', flags, STATUS_FLAGS)
+  if (bad !== null) return usageFail(`${bad}；一次快照就加 --once，跟随是另一条命令：watch --follow`)
   const log = openLog(root)
   try {
     const s = await snapshot(log)
@@ -623,6 +648,8 @@ async function watchCmd(
   flags: Map<string, string | true>,
   json: boolean,
 ): Promise<number> {
+  const bad = unknownFlagsOf('watch', flags, WATCH_FLAGS)
+  if (bad !== null) return usageFail(`${bad}；不给 --follow 就把账上有的念一遍就停`)
   const intervalRaw = flags.get('interval')
   let intervalMs = 200
   if (typeof intervalRaw === 'string') {
@@ -3244,6 +3271,8 @@ async function run(argv: readonly string[]): Promise<number> {
   }
 
   if (cmd === 'log') {
+    const bad = unknownFlagsOf('log', flags, LOG_FLAGS)
+    if (bad !== null) return usageFail(`${bad}；log 是抄本——不渲染、不筛选`)
     const only = flags.get('agent')
     const log = openLog(root)
     try {
