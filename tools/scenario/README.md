@@ -9,12 +9,14 @@
 
     sh tools/scenario/board.sh --selftest                  # 离线：判据自己有牙没有（不花钱）
     sh tools/scenario/board.sh --live --runs 3             # 真档：每一案连跑 3 趟
+    sh tools/scenario/board.sh --live --runs 5 --gate-only  # 只跑到门口：门退回率多样本（便宜）
     sh tools/scenario/board.sh --live --case "改码 · 单文件（最小的一案，反复采样用）"
     sh tools/scenario/board.sh --stub                      # 打桩档：只烟测铺底与判据
     sh tools/scenario/board.sh --live --out /tmp/盘-01      # 读数落在哪
 
-`--stub` 跑不动那条链：`round plan` 那一格要真响应才有草案，打桩档到不了门口（那一趟记
-"退回"，不是读数）。
+`--stub` **一次调用都不发**：持轮者那一趟没有打桩那一档（`--wire-in` 与 `--judge` 之外都会真发
+调用），所以这一档走人喊停那条路（`--judge`：一步都不跑）——它只烟测"铺底 · 判据 · 账"三样，
+那一趟照旧记"退回"，账上四列全 0。
 
 ## 四样东西
 
@@ -47,7 +49,15 @@ cacheRead · output · 推进`
   写集预检**当场拒——`merge：合并前的写入集预检不放行：r1.implement.1 与 r1.implement.2：
   src/counter.js ↔ src/counter.js [implement × implement]`，**0 次调用**。所以"冲突"这一段
   今天要先回答"怎么进得去"。
-- **持轮者那一格到不了门口**：6 步撞上界、草案没写出来（`.fugue/plan/r1.md` 不在视图里），
-  门退回——不是"没人能判"，是那一格收了工却没交卷。
+- **持轮者那一格的收工口径补上之后**（两案每案 3 趟 · 同一把尺）：门退回 2/2 → **4/6 停在
+  门口**；退回来的那两趟换了面貌——一趟 4 步自然收工而草案空、一趟把 `write` 打在
+  `src/fields.js` 上被 `plan-scope` 当场拒。「改码 · 单文件」拿到读数的两趟**已知答案都过**。
+- **冲突环进得去**：持轮者自己拆出来的两节撞在同一份文件上，合并那一折报「重折之后仍然冲突：
+  `src/format.ts`」，而 `work.json` 是空的——那一趟因此没有读数（记"没有读数"是对的）。
+- **`bash` 在物化树里抛过 `ENOTDIR`**（`.fugue/mat/<agent>/upper/legacy/old-format.js`）：
+  `tool-threw` 穿出了工具面。没兜 `ENOTDIR` 的 `lstat` 只剩下 `src/execute/reclaim.ts` 的
+  `walk` 与 `leavesUnder`，以及 `src/materialize/lay.ts` 的 `walk`——`land.ts` 的 `diskEntry`
+  明确把 `ENOTDIR` 读成"这条路径不存在"。**没有复现**，先记着（那一档要的是"异常不许穿出
+  工具面"，不是"哪一行漏了兜底"）。
 
 **取证用，不是产品的一部分**（仓库约定 § 七）。凭据经环境变量给，不打印它的值。

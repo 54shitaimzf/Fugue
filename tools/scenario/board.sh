@@ -5,6 +5,7 @@
 #   sh tools/scenario/board.sh --selftest                 # 离线：判据自己有牙没有（不花钱）
 #   sh tools/scenario/board.sh --stub                     # 打桩档：机制烟测（不出网）
 #   sh tools/scenario/board.sh --live --runs 3            # 真档：每一案连跑 3 趟，逐趟判已知答案
+#   sh tools/scenario/board.sh --live --runs 5 --gate-only    # 只跑到门口：门退回率多样本（一趟 ≈ 一次持轮者那一趟）
 #   sh tools/scenario/board.sh --live --case "改码 · 单文件（最小的一案，反复采样用）"
 #
 # 它逐案做五件事（每一件都留读数在 $OUT 里）：
@@ -23,6 +24,7 @@ cd /home/ubuntu/fugue || exit 9
 LIVE=no
 MODE=run
 RUNS=1
+GATE_ONLY=no
 ONECASE=
 OUT=/tmp/scenario-out
 while [ $# -gt 0 ]; do
@@ -31,6 +33,7 @@ while [ $# -gt 0 ]; do
     --live) LIVE=yes ;;
     --stub) LIVE=no ;;
     --runs) RUNS=$2; shift ;;
+    --gate-only) GATE_ONLY=yes ;;
     --case) ONECASE=$2; shift ;;
     --out) OUT=$2; shift ;;
     *) echo "不认这个开关：$1"; exit 2 ;;
@@ -135,6 +138,11 @@ run_one() { # run_one <案名> <case-N> <趟>
   GOAL=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).goal)' "$OUT/decl/$cn/meta.json")
   HASSPLIT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).split ? "yes" : "no")' "$OUT/decl/$cn/meta.json")
   GATE=—
+  # **只到门口这一档跳过人拆那一案**：那一档不经门（`round run` 直接从配置里读拆分），量不到①。
+  if [ "$GATE_ONLY" = yes ] && [ "$HASSPLIT" = yes ]; then
+    printf '（%s 第 %s 趟：人拆那一档不经门，"只到门口"这一档跳过它）\n' "$name" "$run"
+    return
+  fi
   if [ "$HASSPLIT" = yes ]; then
     if [ "$LIVE" = yes ]; then
       FX "$W" --json --report --metrics round run "$GOAL" --live --max-steps "$MAX" > "$D/work.json" 2> "$D/work.err"
@@ -145,10 +153,21 @@ run_one() { # run_one <案名> <case-N> <趟>
     if [ "$LIVE" = yes ]; then
       FX "$W" round plan "$GOAL" --live --max-steps "$MAX" > "$D/plan.out" 2> "$D/plan.err"
     else
-      FX "$W" round plan "$GOAL" --max-steps "$MAX" > "$D/plan.out" 2> "$D/plan.err"
+      # **打桩档一次调用都不发。** 持轮者那一趟没有打桩那一档（`--wire-in` 与 `--judge` 之外都会
+      # 真发调用：`round plan` 缺省就是真网络），所以这一档走人喊停那条路——`--judge` 一步都不跑，
+      # 拿视图里那一份直接判。账上因此四列全 0，而那一趟照旧记"退回"（烟雾档只烟测铺底 · 判据 · 账）。
+      FX "$W" round plan "$GOAL" --judge > "$D/plan.out" 2> "$D/plan.err"
     fi
     if grep -q '停在门口' "$D/plan.out"; then
       GATE=停在门口
+      if [ "$GATE_ONLY" = yes ]; then
+        # **只跑到门口**：这一档量的是那道门（判据①那一句"门退回率"），派发与验收都不跑——
+        # 一趟的调用数因此只是持轮者那一趟的数（上界在 `--max-steps` 上），多样本才花得起。
+        U=$(node tools/scenario/board-node.ts usage "$W")
+        printf '%s\t%s\t%s\t—\t—\t—\t—\t—\t—\t—\t%s\t只到门口\n' "$name" "$run" "$GATE" "$U" >> "$OUT/ledger.tsv"
+        printf '（%s 第 %s 趟：停在门口——派发与验收没跑 · 账 %s）\n' "$name" "$run" "$U"
+        return
+      fi
       FX "$W" --json round go > "$D/go.json" 2> "$D/go.err"
       if [ "$LIVE" = yes ]; then
         FX "$W" --json --report --metrics round work --live --max-steps "$MAX" > "$D/work.json" 2> "$D/work.err"
@@ -207,6 +226,13 @@ echo
 echo "=== 三 · 账（$OUT/ledger.tsv）==="
 sed 's/^/  /' "$OUT/ledger.tsv"
 echo
+if [ "$GATE_ONLY" = yes ]; then
+  # **门那一条读数单独报**：分母是"能进门的案"（人拆那一案这一档跳过），与派发之后分开。
+  TAB=$(printf '\t')
+  AT=$(grep -c '停在门口' "$OUT/ledger.tsv" || true)
+  BACK=$(grep -c "${TAB}退回${TAB}" "$OUT/ledger.tsv" || true)
+  printf '门：停在门口 %s 趟 · 退回 %s 趟\n' "$AT" "$BACK"
+fi
 printf '机制：PASS %s · FAIL %s\n' "$MACH_PASS" "$MACH_FAIL"
 [ "$MACH_FAIL" = "0" ] || exit 1
 exit 0
