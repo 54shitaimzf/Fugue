@@ -31,7 +31,7 @@ import { HOLDER_PROTOCOL, SUBAGENT_PROTOCOL } from './protocol.ts'
 import { render, stableStringify } from './render.ts'
 import { assemble, hashOf } from './assemble.ts'
 import type { AgentCoord, AssembleState } from './sources.ts'
-import { HOLDER, SOURCE_IDS, SourceError, emptyState, readPolicy, resolverFor, sourcesFor } from './sources.ts'
+import { HOLDER, SOURCE_IDS, SourceError, emptyState, readPolicy, resolverFor, sourcesFor, writeScopeLine } from './sources.ts'
 
 /** 造一段状态：十二个段各有非空的值，量「排进哪一区」时才量得出东西。 */
 function stateWith(over: Partial<AssembleState> = {}): AssembleState {
@@ -278,6 +278,27 @@ function snapshot(dir: string): string[] {
       return `${name} ${s.size} ${s.mtimeMs}`
     })
 }
+
+test('⑨ 写入面那一句：逐条列契约声明的那几条 · 排在交付物之后 · 空集不写 · 持轮者那一份没有它', () => {
+  const st = stateWith({ task: { ...stateWith().task, ownedPaths: ['src/format.ts', 'README.md'] } })
+  const task = sourcesFor(SUBAGENT_PROTOCOL, st, AGENT_2)['我的任务'] as string
+  assert.match(task, /写入面：src\/format\.ts · README\.md——只改这几条/, `写入面那一句没进「我的任务」：${task}`)
+  assert.match(task, /别的地方一个字节都不要动，删除也算/, '那一句没说清"删除也算"')
+  // 位置：**交付物之后、产物路径之前**。交付物是"交什么"，这一句是"哪几条归你"——同一档的
+  // 两件事挨着；而收工口径那三句与产物路径照旧排在最后（架构 § 8.11 的近因那条）。
+  assert.ok(task.indexOf('写入面：') > task.indexOf('交付物：'), `写入面跑到交付物前面去了：${task}`)
+  assert.ok(task.indexOf('写入面：') < task.indexOf('产物路径：'), `写入面跑到产物路径后面去了：${task}`)
+  // 空集 / 没给：一句都不写（地板那一档：不凭空造一句）。
+  assert.deepEqual(writeScopeLine([]), [], '空集该一句都不写')
+  assert.deepEqual(writeScopeLine(undefined), [], '没给该一句都不写')
+  const bare = sourcesFor(SUBAGENT_PROTOCOL, stateWith(), AGENT_2)['我的任务'] as string
+  assert.ok(!bare.includes('写入面'), `没给写入面却写了那一句：${bare}`)
+  // 持轮者那一份：它的 B 区里没有「我的任务」这一段（架构 § 8.11）——那一句也到不了它那儿
+  // （它手里是全部契约，写入面由草案那一棵给）。
+  const held = sourcesFor(HOLDER_PROTOCOL, st, HOLDER)
+  assert.ok(!JSON.stringify(held).includes('写入面'), '持轮者那一份里出现了写入面那一句')
+  console.log(`⑨ 读数：${String(task.split('\n').find((l) => l.startsWith('写入面：'))).slice(0, 44)}… · 空集 0 句 · 持轮者 0 处`)
+})
 
 /** 去掉注释：`⑤` 量的是依赖，而注释里正写着「哪几样不许进来」。 */
 function withoutComments(src: string): string {

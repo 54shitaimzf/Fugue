@@ -71,6 +71,16 @@ export interface AssembleState {
     readonly deliverables: readonly string[]
     readonly evidenceRequired: readonly string[]
     readonly assertions: readonly string[]
+    /**
+     * **这一格的写入面**（契约那一条 `declaredSetOf(contract)`：实现型是 `ownedPaths` · 解决型是
+     * 冲突路径集 · 调查型是它那几份证据的路径）。
+     *
+     * 它与 `maxSteps` 同一档：逐 agent 不同、逐 agent 稳定，所以进 B 区；`undefined` 就是不写那
+     * 一句（地板那一档：那一段短一行、装配照跑）。**投影只有一处**——派发那一层建句柄时从契约拿
+     * （`src/cli/fugue.ts` 的 `stateFor`），与执行那一侧 `writeScope` · 回收那一侧 `declaredSetOf`
+     * 读的是同一个集合（架构 § 8.9：产出经声明集回写）。
+     */
+    readonly ownedPaths?: readonly string[]
   }
   /**
    * **这一格最多走几步**（运行时那道花钱的上界 · `--max-steps`）。它同时也是一句要发给模型的话。
@@ -127,7 +137,7 @@ export function emptyState(): AssembleState {
     files: [],
     commits: [],
     handoff: '',
-    task: { goal: '', question: '', deliverables: [], evidenceRequired: [], assertions: [] },
+    task: { goal: '', question: '', deliverables: [], evidenceRequired: [], assertions: [], ownedPaths: [] },
     distill: '',
     recent: '',
     runtime: '',
@@ -200,6 +210,26 @@ export function stepBudgetLine(maxSteps?: number): readonly string[] {
 }
 
 /**
+ * **这一格的写入面**：哪几条归它（含它们下面），以及"别处一个字节都不要动"。
+ *
+ * 由头（样本盘第八 · 九 · 十趟真档 · 同一件事连着出现）：契约 `r1.implement.1` 声明
+ * `src/format.ts` + `README.md`，而它看见 `legacy/old-format.js` 那份过时的死代码就 `rm -f` 掉
+ * ——删的是**别的格**的地界。`write` / `edit` 那两条路当场拒（`writeScope`），而 `bash` 那一条
+ * 按架构 § 8.7 只报不拒（拒 = 不收它 + 记事件），于是"别动别人的地界"这件事在**输入**这一侧没人
+ * 说过。这一句补的就是它：与"我的任务"那几项同一档——模型无从得知、而这一趟非知道不可。
+ *
+ * **它只说边界，不说怎么干活**：写哪儿（产物路径）仍然排在最后一行（架构 § 8.11 的近因那条）。
+ * 空集不写（没有边界可说的那一格：不凭空造一句）。
+ */
+export function writeScopeLine(paths: readonly string[] | undefined): readonly string[] {
+  if (paths === undefined || paths.length === 0) return []
+  return [
+    `写入面：${paths.join(' · ')}——只改这几条（含它们下面）。` +
+      '别的地方一个字节都不要动，删除也算：看见过时的东西，在结论里说一句，不要顺手清。',
+  ]
+}
+
+/**
  * 我的任务那一段的文本：契约的几项 + **这一格的收工口径**，末尾按序追加产物路径。
  *
  * **收工口径那三句为什么在这里**（W11 那一轮真档照出来的）：那一格把活干完了，然后一直在
@@ -216,6 +246,9 @@ export function stepBudgetLine(maxSteps?: number): readonly string[] {
 function taskText(t: AssembleState['task'], outputs: readonly string[], maxSteps?: number): string {
   const lines: string[] = [`总目标：${t.goal}`, `问题：${t.question}`]
   if (t.deliverables.length > 0) lines.push(`交付物：${t.deliverables.join(' · ')}`)
+  // **写入面排在交付物后面**：交付物是"交什么"，这一句是"哪几条归你"——同一档的两件事，
+  // 而收工口径那三句照旧排在它们之后（它们与产物路径是一组）。
+  lines.push(...writeScopeLine(t.ownedPaths))
   if (t.evidenceRequired.length > 0) lines.push(`要交的证据：${t.evidenceRequired.join(' · ')}`)
   if (t.assertions.length > 0) lines.push(`断言：${t.assertions.join(' · ')}`)
   // 三句收工口径。第一句是这一格的预算（人给的那个数，缺省不写）；另两句是常量：交卷那一下只能

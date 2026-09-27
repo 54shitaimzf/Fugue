@@ -543,6 +543,14 @@ test('序 1 · `--wire-in` 把真响应喂回去：验收照过 · 产物逐字�
     assert.equal(mine['stop'], kept['stop'], `${c}：停因不同`)
   }
 
+  // **写入面那一句真的发出去了**（架构 § 8.12 · 计划 § 5.10 那一格）：它由契约投影进 B 区
+  // （`declaredSetOf`），与执行侧 `writeScope` · 回收那一侧读的是同一个集合。这一条只能落在这
+  // 一串字节上——把投影拆掉之后**重录也遮不住**（重录出来的请求里没有这一句），而只核指纹的
+  // 回放档只会说"这一份不是那一次请求"。
+  const sent = readFileSync(join(WIRE_IN_DIR, 'wire', WIRE_CALLS[0] as string, 'request.json'), 'utf8')
+  assert.match(sent, /写入面：notes\.md——只改这几条/, `发出去的请求里没有写入面那一句：${sent.slice(0, 200)}`)
+  assert.match(sent, /别的地方一个字节都不要动，删除也算/, '写入面那一句少了"删除也算"那半句')
+
   // 停因：**收敛**（`end-turn`）——不是"步数到顶"。这一条同时是 § 5.12 序 12 那三句收工口径的读数。
   const one = j.agents[0]
   assert.ok(one !== undefined, `这一趟没落停因：${JSON.stringify(j.agents)}`)

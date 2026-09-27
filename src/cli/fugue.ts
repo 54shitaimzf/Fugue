@@ -2791,6 +2791,9 @@ export function driverSupport(o: {
         // `outputsOf`）。它**没有断言**——那一栏空着（"断言由 harness 跑"那一句因此也不该出现）。
         evidenceRequired: c.kind === 'investigate' ? c.evidenceRequired.map((e) => e.note) : c.assertions.map((a) => a.name),
         assertions: c.kind === 'investigate' ? [] : c.assertions.map((a) => a.name),
+        // **写入面与执行那一侧同一个集合**（同一份 `declaredSetOf`）：它进了 B 区那一段，
+        // 于是"别处别动"这句话在它伸手**之前**就在（`writeScope` 那一条是伸手**之后**才拒的）。
+        ownedPaths: [...declaredSetOf(c)],
       },
     }
     states.set(agent, made)

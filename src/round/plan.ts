@@ -399,6 +399,9 @@ export function occupancyOf(sections: readonly DraftSection[], ctx: OccupancyCon
         deliverables: s.kind === 'implement' ? s.deliverables.map((d) => d.path) : [],
         evidenceRequired: s.kind === 'implement' ? s.assertions.map((a) => a.name) : s.evidenceRequired.map((e) => e.note),
         assertions: s.kind === 'implement' ? s.assertions.map((a) => a.name) : [],
+        // 调查型那几份证据的路径到派发那一刻才由位置定名（`declaredSetOf` 读的是契约），估账这
+        // 一份拿不到它们——差的是那一句的长度，量的是"装得下装不下"，不是读数。
+        ownedPaths: s.kind === 'implement' ? [...s.ownedPaths] : [],
       },
       ...(ctx.maxSteps === undefined ? {} : { maxSteps: ctx.maxSteps }),
     }
