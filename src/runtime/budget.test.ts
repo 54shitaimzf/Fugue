@@ -94,8 +94,8 @@ const askOf = (prefix: Prefix, over: Partial<BudgetAsk> = {}): BudgetAsk => ({
 test('① 三个数印得出来，且关系可核对（触发点在 (0, 上限) 之间 · 余量小于触发点）', () => {
   assert.deepEqual(checkBudget(DECL), [], '这份声明的三个数是自洽的')
   assert.equal(DECL.budget.trigger, triggerAt(DECL.contextLimit), '触发点是那一个函数算出来的')
-  assert.equal(DECL.contextLimit, 1_000_000)
-  assert.equal(DECL.budget.trigger, 350_000)
+  assert.equal(DECL.contextLimit, 1_048_576, '上游报的上下文窗（`GET /models`），不是"1M"那个取整')
+  assert.equal(DECL.budget.trigger, 367_001)
   assert.equal(DECL.budget.handoffMargin, 16_000)
 
   const plan = planBudget(askOf(prefixOf(emptyState())))

@@ -559,11 +559,12 @@ test('⑨ 声明的上限接进 seed 那一条：一份 8 000 的声明把种子
     assert.equal(bad.held, false, '8 000 那一档该当场拒')
     assert.equal(bad.gate.built, null)
     assert.match(bad.gate.problems.join('\n'), /上限 0 token/, `报出来的上限不是那条算式给的：${bad.gate.problems.join(' / ')}`)
-    // **负对照**：同一份草案 · 换回真那一份声明（1 000 000）→ 停在门口，上限就是那条算式的结果。
+    // **负对照**：同一份草案 · 换回真那一份声明（上游报的 1 048 576）→ 停在门口，上限就是那条
+    // 算式的结果：1 048 576 − Zone A（8% 上去取整 = 83 887）− 交接余量 16 000 = 948 689。
     const ok = await plan(b, [section({ seed })], { declare: true })
-    assert.equal(ok.held, true, `1 000 000 那一档该停在门口：${ok.gate.problems.join(' / ')}`)
-    assert.equal(ok.gate.built?.seedLimit, 904_000)
-    console.log(`⑨ 读数：8 000 的声明 → 上限 0（${bad.gate.problems[0]}）· 1 000 000 的声明 → 上限 ${ok.gate.built?.seedLimit}`)
+    assert.equal(ok.held, true, `1 048 576 那一档该停在门口：${ok.gate.problems.join(' / ')}`)
+    assert.equal(ok.gate.built?.seedLimit, 948_689)
+    console.log(`⑨ 读数：8 000 的声明 → 上限 0（${bad.gate.problems[0]}）· 1 048 576 的声明 → 上限 ${ok.gate.built?.seedLimit}`)
   } finally {
     await b.log.close()
     await b.truth.close()

@@ -117,9 +117,11 @@ test('② 目录：两条真声明，各指得出提供方 · 线协议 · 上�
     assert.deepEqual([WIRE_NAMES.includes(m.wire), PROVIDERS[m.provider] !== undefined], [true, true], `${name} 的线协议或提供方指不到`)
     assert.equal(m.model, 'deepseek-chat', `${name} 那边叫的名字`)
     assert.deepEqual([m.systemPromptUpdate], ['in-history'], `${name} 的系统提示词更新方式`)
-    assert.deepEqual([m.contextLimit], [1_000_000], `${name} 的上限`)
-    assert.deepEqual([m.budget.trigger, m.budget.handoffMargin], [triggerAt(1_000_000), 16_000], `${name} 的预算两栏`)
-    assert.equal(m.budget.trigger, 350_000, '上限的 35%')
+    // 上限那一个数是**上游报的**（`GET /models` 的 `context_window` · `tools/probe-models.ts` 核它），
+    // 不是"1M"那个取整的整数——差 48 576（4.6%），而预算三个数与 `seed` 的上限都从它长出来。
+    assert.deepEqual([m.contextLimit], [1_048_576], `${name} 的上限`)
+    assert.deepEqual([m.budget.trigger, m.budget.handoffMargin], [triggerAt(1_048_576), 16_000], `${name} 的预算两栏`)
+    assert.equal(m.budget.trigger, 367_001, '上限的 35%（取整到整数）')
     // **思考那一档必须写出来**（两条线对"没写"的解释相反），输出预算跟着抬到 32K：
     // 思考与答案共用同一个输出预算，"想完再说"在 4096 那一档装不下。
     assert.deepEqual(m.call, { thinking: 'high', maxTokens: 32_768 }, `${name} 的调用配置`)
@@ -248,6 +250,13 @@ test('④ 凭据只在出网那一步取：不在会话环境里时，装配与�
 test('⑤ 估账与余量：contextLimit 接进 seedLimitOf，超限报"超了多少"，不裁剪照发', () => {
   // 三个数（上限 · Zone A · 交接余量）在两条路上是同一套算术。
   assert.equal(seedLimitOf({}), DEFAULT_MODEL_LIMIT - zoneABudgetOf(DEFAULT_MODEL_LIMIT) - HANDOFF_MARGIN)
+  // **这一处从序 29 起可证伪了**：声明里那一个上限是上游说的 1 048 576，而 `DEFAULT_MODEL_LIMIT`
+  // 是**这一份的缺省**（"不是任何一个模型的声明"，`types.ts` 那一行写着）——两个数不再相等，于是
+  // "命令面漏递一处"这件事在读数上看得见了（原先两个数一样，漏递一个字节都不变）。
+  // 算式那一层本来就有牙（`round/start.test.ts` ⑥）；这一条补的是**接线**那一层的牙。
+  const declaredLimit = modelDeclOf(DEFAULT_MODEL.id).contextLimit
+  assert.notEqual(declaredLimit, DEFAULT_MODEL_LIMIT, '两个数一样的话，漏递一处在读数上看不出来')
+  assert.notEqual(seedLimitOf({ modelLimit: declaredLimit }), seedLimitOf({}), '递与不递的种子上限该不同')
   assert.equal(seedLimitOf({ modelLimit: 128_000 }), 128_000 - zoneABudgetOf(128_000) - HANDOFF_MARGIN)
   assert.equal(seedLimitOf({ modelLimit: 128_000 }), 101_760)
   // `seedLimit` 明写时仍然最优先（它是一条显式的窄化，架构 § 8.12 的"只可收窄"）。

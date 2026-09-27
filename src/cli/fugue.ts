@@ -2718,9 +2718,10 @@ function publishedCatalog(): ReturnType<typeof catalog> {
  * 三处（`round new` · `round run` · `round go`）递的是同一个数——三处各自读一次声明的话，
  * "发给模型的那个上限"与"判种子的那个上限"会静默分家。
  *
- * **这一处今天不可证伪**（如实记，不装成有牙）：目录里那一个数就是缺省——`DEFAULT_MODEL` 的
- * `contextLimit` 与 `contract/types.ts` 的 `DEFAULT_MODEL_LIMIT` 都是 1 000 000（`model/contract.ts`
- * 第 226 行 · 第 460 行），所以三处**漏递一处，读数一个字节都不变**。
+ * **这一处从序 29 起可证伪了**：`DEFAULT_MODEL` 的 `contextLimit` 是上游报的 1 048 576，而
+ * `contract/types.ts` 的 `DEFAULT_MODEL_LIMIT` 是**这一份的缺省**（1 000 000，"不是任何一个模型的
+ * 声明"）——两个数不再相等，所以三处**漏递一处，读数就变**（`model/contract.test.ts` 里那一条
+ * `assert.notEqual` 钉的就是它：递与不递的种子上限不同）。在这之前两个数一样，漏递不可见。
  *   · **算式那一层有牙**：`round/start.test.ts` ⑥（`modelLimit: 8 000` → 上限 0 · 不递 → 904 000）。
  *   · **接线那一层的牙要等「模型目录可换」那一格**：那时给它一条断言——换一个上限不同的声明，
  *     三处的读数都跟着动。今天装牙只有一个办法（为一条断言开一个换模型的入口），那是把形状往

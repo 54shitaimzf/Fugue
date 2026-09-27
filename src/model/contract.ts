@@ -141,8 +141,11 @@ export const PROVIDERS: Readonly<Record<string, ProviderDecl>> = {
  *   `if (model === 'x')` 就是漏了一个声明式字段。
  * - `systemPromptUpdate`：两行（`in-history` · `rewrite-head`），逐字来自架构 § 8.11 那张
  *   "模型的声明 → C 怎么增长"的表。落到处理上是**三种**，那三种归提供方（§ 10.3）。
- * - `contextLimit`：上下文的上界。`seed` 那一条的不动项（架构 § 8.12）。**这一版的模型都是
- *   1 000 000 那一档**——它是声明的数，不是探出来的数。
+ * - `contextLimit`：上下文的上界。`seed` 那一条的不动项（架构 § 8.12）。**这一版两个线协议都是
+ *   `1_048_576`（1 MiB）**——官方文档那一页把这一档写成"1M"（取整），而 `GET /models` 逐字报的是
+ *   `1048576`。**声明抄的是后一个**（能机读的那一个）：文档那个"1M"是给人看的，抄错了差 4.6%，
+ *   而预算那三个数与 `seed` 的上限都从这一个数长出来。`tools/probe-models.ts` 是它的牙
+ *   （对不上就非零退出）——它是拿真读数换掉"人写的整数"的那一格（PLAN § 5.12 序 29）。
  * - `budget`：三个模型相关的数——上限 · 触发点 · 交接余量（架构 § 23 U6：这一站只建立口径，
  *   **具体取值要等 `B7` 的读数**，所以触发点是从上限算出来的，不是一条独立常量）。
  * - `call`：轮内固定那四条里属于调用配置的那一条（§ 10.2）。**它没有位置，所以不进前缀**
@@ -223,6 +226,10 @@ export const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'high', 
  * 那条验证在 `B2` 就没法落地（两个适配器里有一个没有声明喂它）。`budget` 两行都由
  * `triggerAt(contextLimit)` 算出来，于是"上限 · 触发点 · 交接余量"三者的关系只有一处。
  *
+ * **上限那一个数是实测的**（`GET /models` 的 `context_window` = 1 048 576）：它是这一份里唯一
+ * 一个不归我们定的数——上游说多长就是多长。输出预算（`call.maxTokens`）反过来是我们的闸：
+ * 上游说 393 216，我们只给自己 32 768（思考与答案共用它，抬到上游那一档没有依据）。
+ *
  * **`protocol` 两条都是 `'subagent'`。** 这不是抄的：`'holder'` 是**持轮者那一格**用的
  * （B 区多两段、少一段），而模型目录描述的是"干一格的 agent"，不是轮次的主线。持轮者换不换
  * 提示词由轮次那一层定（`round/driver.ts`），不由模型定。
@@ -235,8 +242,8 @@ export const MODEL_DECLS: Readonly<Record<string, ModelDecl>> = {
     wire: 'anthropic-messages',
     model: 'deepseek-chat',
     systemPromptUpdate: 'in-history',
-    contextLimit: 1_000_000,
-    budget: { trigger: triggerAt(1_000_000), handoffMargin: 16_000 },
+    contextLimit: 1_048_576,
+    budget: { trigger: triggerAt(1_048_576), handoffMargin: 16_000 },
     // 思考开在 `high`（照 DeepSeek Harness 那一档）。**输出预算跟着抬**：思考与答案共用同一个
     // 输出预算，4096 那一档的兜底常数装不下"想完再说"（那条线 `max_tokens` 是必填）。
     call: { thinking: 'high', maxTokens: 32_768 },
@@ -248,8 +255,8 @@ export const MODEL_DECLS: Readonly<Record<string, ModelDecl>> = {
     wire: 'openai-chat',
     model: 'deepseek-chat',
     systemPromptUpdate: 'in-history',
-    contextLimit: 1_000_000,
-    budget: { trigger: triggerAt(1_000_000), handoffMargin: 16_000 },
+    contextLimit: 1_048_576,
+    budget: { trigger: triggerAt(1_048_576), handoffMargin: 16_000 },
     // 思考开在 `high`（照 DeepSeek Harness 那一档）。**输出预算跟着抬**：思考与答案共用同一个
     // 输出预算，4096 那一档的兜底常数装不下"想完再说"（那条线 `max_tokens` 是必填）。
     call: { thinking: 'high', maxTokens: 32_768 },
