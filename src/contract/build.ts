@@ -347,7 +347,10 @@ export function evidenceFor(agent: string, intent: Intent): Evidence[] {
     // 而备注收下它就等于让人自己指定目录层次——那正是"按位置定名"要收上来的东西。
     // 一个段的规矩只有一处实现（`M3` 的 `isSegment`），这里用它。
     if (!isSegment(name)) {
-      throw new BuildError(`第 ${i + 1} 条证据的备注要是一个段（不含 / 与 \\，不以点开头）：${JSON.stringify(one.note)}`)
+      throw new BuildError(
+        `第 ${i + 1} 条证据的备注要是一个段（不含 / 与 \\，不以点开头）：${JSON.stringify(one.note)}——` +
+          '它当目录名用（产物落在 evidence/<agent>/<note>）：要写说明就写进 question 那一句',
+      )
     }
     const artifact = [EVIDENCE_PREFIX, ...who, name].join('/')
     identSegments(artifact, `第 ${i + 1} 条证据的产物目录`)

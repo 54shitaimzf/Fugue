@@ -342,7 +342,8 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   },
   evidenceRequired: {
     holder: 'M3（路径合法性）· M13（增量核对）',
-    shape: '数组，每条 {note}，note 是一个段（不含 / 与 \\，不以点开头），至少一条',
+    shape: '数组，每条 {note}，至少一条；note 当目录名用（产物落在 evidence/<agent>/<note>），'
+        + '所以它要是一个短名：不含 / 与 \\、不以点开头、不写句子（要写说明就写进 question 那一句），例如「现状」',
     check: (v) => listProblem(v, 'evidenceRequired', evidenceProblem, { nonEmpty: true }),
   },
 
