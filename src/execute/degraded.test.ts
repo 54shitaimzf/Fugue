@@ -44,6 +44,28 @@ function fugueEnv(env: Record<string, string>, root: string, ...args: string[]):
   return { code: r.status ?? -1, out: r.stdout, err: r.stderr }
 }
 
+/**
+ * 一面"除了 `bwrap` 什么都有"的 PATH：把两个 bin 目录整个镜像过来，去掉那一个。
+ *
+ * 这是 § 15.7 的 E4 唯一的真做法——探针每次现探（`probeBwrap()`），所以"挂载层死掉"这件事
+ * 只能从 PATH 上做出来，不能靠一栏配置说。
+ */
+function noBwrapPath(): Record<string, string> {
+  const bin = mkdtempSync(join(tmpdir(), 'fugue-x4-bin-'))
+  BINS.push(bin)
+  for (const dir of ['/usr/bin', '/usr/local/bin']) {
+    for (const name of readdirSync(dir)) {
+      if (name === 'bwrap') continue
+      try {
+        symlinkSync(join(dir, name), join(bin, name))
+      } catch {
+        // 重名（/usr/local/bin 覆盖 /usr/bin）不是错，先来的那个算
+      }
+    }
+  }
+  return { PATH: bin }
+}
+
 function git(cwd: string, ...args: string[]): string {
   const r = spawnSync('git', args, {
     cwd,
@@ -159,10 +181,15 @@ test('X4 ① · 同一份声明集：全档与退化档的产出逐字节相同�
   const bytesFull = readFileSync(cacheApp)
 
   // 对齐之后跑退化档：**同一个 agent 的第二次**，比的是同一棵树里的同一份产出。
+  //
+  // **这一档是"挂载层真的不在"**（把 `bwrap` 从 PATH 上拿掉 · § 15.7 的 E4），不是
+  // `--mode workspace-write`：后者今天两层都在场（`policy.ts` 那一段由头），产出照旧落在
+  // **绑定那一侧**——拿它当退化档，"两处落点"这件事就量不到了。
   assert.equal(fugue(w.root, 'ensure').code, 0)
-  const deg = fugue(w.root, '--json', 'run', 'build', '--mode', 'workspace-write')
+  const deg = fugueEnv(noBwrapPath(), w.root, '--json', 'run', 'build')
   assert.equal(deg.code, 0, deg.err)
   const second = JSON.parse(deg.out.trim()) as Record<string, unknown>
+  assert.equal(second.sandbox, false, '这一档自己探出来：挂载层不在')
   assert.equal(second.exit, first.exit, '退出码相同')
   assert.deepEqual(second.reclaimed, ['dist/app'], '声明集内的产出照样收得回来')
   assert.equal(second.enforcement, 'partial')
@@ -219,16 +246,18 @@ test('X4 ② · 未声明的写入：这一档长得出来，被回收拒，日�
 
 test('X4 ③ · 如实报档：run/confined 与 stderr 都说清这一次是哪个档', () => {
   const w = workspace()
+  // **`--mode workspace-write` 今天两层都在场**：挂载层把树整个绑成可写，而树以外一条都不在
+  // （见 `policy.ts` 那一段由头）——档管的是"树可不可写"，围栏管的是"看得见什么"。
   const deg = fugue(w.root, 'run', 'build', '--mode', 'workspace-write')
   assert.equal(deg.code, 0, deg.err)
-  assert.match(deg.err, /workspace-write · partial 档/)
-  assert.match(deg.err, /没有沙箱（命令行上点名要树可写那一档（--mode workspace-write））/)
-  assert.match(deg.out, /^0\t\d+\tpartial\n$/, 'stdout 上那一行也报的是 partial')
+  assert.match(deg.err, /workspace-write · full 档/)
+  assert.match(deg.err, /树可写/)
+  assert.match(deg.out, /^0\t\d+\tfull\n$/, 'stdout 上那一行也报的是 full')
 
   const confined = rowsOf(w.root).filter((r) => r.e.t === 'run/confined')
   assert.deepEqual(
     confined.map((r) => ({ mode: r.e.mode, enforcement: r.e.enforcement })),
-    [{ mode: 'workspace-write', enforcement: 'partial' }],
+    [{ mode: 'workspace-write', enforcement: 'full' }],
   )
 
   // 默认档一行没动：还是 read-only + full。
@@ -239,7 +268,7 @@ test('X4 ③ · 如实报档：run/confined 与 stderr 都说清这一次是哪�
     rowsOf(w.root)
       .filter((r) => r.e.t === 'run/confined')
       .map((r) => r.e.enforcement),
-    ['partial', 'full'],
+    ['full', 'full'],
   )
 })
 
@@ -251,20 +280,7 @@ test('X4 ④ · 地板：bwrap 从 PATH 上拿掉，同一趟照样跑得出同�
   assert.equal(sandboxed.sandbox, true, '这台机器上 bwrap 在')
   const bytes = readFileSync(at(w.root, 'cache', 'dist', 'app'))
 
-  // 一面"除了 bwrap 什么都有"的 PATH：把两个 bin 目录整个镜像过来，去掉那一个。
-  const bin = mkdtempSync(join(tmpdir(), 'fugue-x4-bin-'))
-  BINS.push(bin)
-  for (const dir of ['/usr/bin', '/usr/local/bin']) {
-    for (const name of readdirSync(dir)) {
-      if (name === 'bwrap') continue
-      try {
-        symlinkSync(join(dir, name), join(bin, name))
-      } catch {
-        // 重名（/usr/local/bin 覆盖 /usr/bin）不是错，先来的那个算
-      }
-    }
-  }
-  const noBwrap = { PATH: bin }
+  const noBwrap = noBwrapPath()
   const probe = spawnSync('bwrap', ['--version'], { env: { ...process.env, ...noBwrap }, encoding: 'utf8' })
   assert.equal((probe.error as NodeJS.ErrnoException | undefined)?.code, 'ENOENT', '这条路上真没有 bwrap')
 
@@ -276,6 +292,8 @@ test('X4 ④ · 地板：bwrap 从 PATH 上拿掉，同一趟照样跑得出同�
   assert.equal(j.sandbox, false, '自己探出来 bwrap 不在')
   assert.deepEqual(j.layers, ['landlock'], '挂载层不在，第二层还在场（Y6）')
   assert.equal(j.enforcement, 'partial')
+  // **那一句"如实报告"落在 `sandboxNote` 上**：`--json` 这一档不印 stderr 那一段
+  // （非 `--json` 那一版才印，X4 ③ 量的是它）。
   assert.match(String(j.sandboxNote), /bwrap/)
   assert.deepEqual(j.reclaimed, ['dist/app'])
   assert.equal(readFileSync(at(w.root, 'upper', 'dist', 'app')).equals(bytes), true, '产出与全档那一趟逐字节相同')

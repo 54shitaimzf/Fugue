@@ -87,15 +87,21 @@ export interface PolicyInput {
  * 一处解析：`fugue policy` 与 `fugue run` 读的都是它，两处不各自算一遍。
  *
  * 三栏的算法各自一句话：
- *   · `layers`：挂载层**只在 `read-only` 档用**（`workspace-write` 那一档要的是树可写，挂载层
- *     在那里没有可关的东西——X4 的口径，一个字没改）；第二层**两档都上**（它与挂载层正交）。
+ *   · `layers`：**两层各管一维，与档正交**——挂载层管"子进程看得见什么"（`workspace-write` 那一档
+ *     把树整个绑成可写，树以外照旧一条都不在），第二层管"写得动什么"。两档都上（由头见
+ *     `resolvePolicy` 里那一处）。
  *   · `mode`：见文件头——挂着的是事实。
  *   · `enforcement`：两层都在场才是 `full`。
  */
 export function resolvePolicy(i: PolicyInput): Policy {
   const wanted: PolicyMode = i.mode ?? 'read-only'
   const probed = i.probed ?? probeLayers(i.roots)
-  const mount = wanted === 'read-only' && probed.layers.includes('bwrap')
+  // **挂载层与档无关**：它管的是"子进程看得见什么"，而"树可不可写"只是 `--bind` 与 `--ro-bind`
+  // 那一字的差别——`confine()` 两档都包得出来（树那一条按档选）。旧口径（"`workspace-write` 用
+  // 不上挂载层"）在 `confine()` 长出可写树之后就只剩一个后果：真档那一趟的 `bash` 在宿主上裸跑。
+  // 第十五趟样本盘量到过它——`case-1-1` 那一格读到了 `/tmp/scenario-b14/...` 下这一趟的验收
+  // 结果与请求实录，于是"它自己解出来的"这句话就不再是一条证据。
+  const mount = probed.layers.includes('bwrap')
   const land = probed.layers.includes('landlock')
   const layers: readonly PolicyLayer[] = [
     ...(mount ? (['bwrap'] as const) : []),
@@ -109,7 +115,7 @@ export function resolvePolicy(i: PolicyInput): Policy {
     ? SANDBOX_COORDS
     : { tree: i.roots.mergedRoot(i.agent), home: cache.home, tmp: i.roots.tempRoot(i.agent) }
   // **档是事实**：挂载层在场时它给的是命令行要的那一档（`read-only` 档把树绑成只读、
-  // `workspace-write` 档不挂它）；挂载层不在时，第二层在就由它说了算——它管着写那一维，
+  // `workspace-write` 档把它绑成可写）；挂载层不在时，第二层在就由它说了算——它管着写那一维，
   // 所以"缺省档"意味着树不可写；两层都不在才是 E4 那一档（树可写）。
   const mode: PolicyMode = fenced ? wanted : land ? wanted : 'workspace-write'
   // 可写落点 = **挂进树里的那几处**：`declaredDirs` 把嵌套的收成最外层（挂的永远是目录那一级，

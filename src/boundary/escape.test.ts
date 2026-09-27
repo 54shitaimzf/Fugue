@@ -88,7 +88,7 @@ const MADE: Made[] = []
  * 沙箱里的三条），退化档那一份点名要树可写那一档——那一档里没有挂载，坐标照实写宿主那三条。
  * 两份策略各自的坐标都从这里进 `fx`（argv 那一侧），宿主那一侧另有一份 `host`。
  */
-function fixture(sandbox = true): Made {
+function fixture(sandbox = true, mode?: 'read-only' | 'workspace-write'): Made {
   const root = mkdtempSync(join(tmpdir(), 'fugue-y1-'))
   const outside = mkdtempSync(join(tmpdir(), 'fugue-y1-out-'))
   mkdirSync(join(root, 'src'), { recursive: true })
@@ -122,7 +122,12 @@ function fixture(sandbox = true): Made {
   // 跑器照一份真策略包（Y2 起）：沙箱档是缺省那份（bwrap 在场 · 网切掉 · 清单是缺省那份），
   // 退化档点名要树可写那一档（那一档里一层都没有）。
   const policy = resolvePolicy(
-    sandbox ? { roots, agent: AGENT, doc: {} } : { roots, agent: AGENT, doc: {}, mode: 'workspace-write' },
+    // **退化档要说清两层都不在**：`mode` 那一栏只说树可不可写，而"看得见什么"那一维由
+    // 挂载层定（`policy.ts`）。只给 `mode` 的话，探针照旧报 bwrap 在场、坐标是沙箱里那三条，
+    // 而跑器走的是 `degradedArgv`——argv 里的 `/work/...` 在宿主上不存在，整张表全变"拒"。
+    sandbox
+      ? { roots, agent: AGENT, doc: {}, ...(mode === undefined ? {} : { mode }) }
+      : { roots, agent: AGENT, doc: {}, mode: 'workspace-write', probed: { layers: [], note: '退化档：两层都不在（E4）' } },
   )
   const env = envFor({
     agent: AGENT,
@@ -210,6 +215,35 @@ test('Y1 ① · 仪器可证伪：一条该通的读出通、一条该拒的读�
   assert.equal(pick(b, '树内读（相对 cwd）').verdict, 'pass')
   assert.equal(pick(b, '声明目录写').verdict, 'pass')
   assert.equal(pick(b, '本 agent 的家').verdict, 'pass')
+})
+
+test('Y3 ⑤ · 树可写那一档：看得见什么那一维照旧关着（树内可写 · 树外十二条全拒）', () => {
+  // 由头（第十五趟样本盘 · 案一）：`--mode workspace-write` 那一档以前**一层围栏都不上**
+  // （`policy.ts` 的旧口径：挂载层只在 `read-only` 档用），于是真档那一趟的 `bash` 在宿主上
+  // 裸跑——那一格读到了 `/tmp/scenario-b14/...` 下这一趟的验收结果与请求实录，"它自己解出来
+  // 的"这句话就不再是一条证据。**判据落在这张表上**：档管的是树可不可写（乙那一组在这一档
+  // 翻成"通"），而"够得着什么"那一维由挂载层管——丙六条 + 丁六条必须**一条都够不着**。
+  const w = fixture(true, 'workspace-write')
+  const rows = runEscapeTable(ESCAPE_CASES, w.fx)
+  show('树可写那一档（bwrap 那一层在 · mode=workspace-write）', rows)
+
+  // 一 · 树以内：该通的通，而"树内该拒"那三条在这一档里**本来就可写**（这一档的语义）。
+  for (const name of ['树内读', '树内读（相对 cwd）', '声明目录写', '本 agent 的家']) {
+    assert.equal(pick(rows, name).verdict, 'pass', `${name}：这一档该通的要通`)
+  }
+  for (const name of ['树内新建', '原地改源文件', '删除源文件']) {
+    assert.equal(pick(rows, name).verdict, 'pass', `${name}：这一档树是可写的（模式=workspace-write）`)
+  }
+  // 二 · 树以外：**十二条一条都不许够得着**（这就是那一处泄漏的封口）。
+  const outside = ['写工作区外', '绝对路径读宿主', '.. 穿越读宿主', '软链指向树外', '经 /proc 的另一条坐标', 'shell 里 cd / 再读']
+  const leak = ['工作区配置', '工作区日志', '真源工作树（宿主路径）', '别家的物化树（宿主路径）', '宿主那个家', '挂进来的宿主盘']
+  for (const name of [...outside, ...leak]) {
+    assert.equal(pick(rows, name).verdict, 'deny', `${name}：树以外那一条在这一档上够着了——账本与答案纸就在这条路上`)
+  }
+  // 三 · 这一档的两层都在场（档与围栏正交那句话的读数面）。
+  assert.deepEqual(w.fx.policy.layers, ['bwrap', 'landlock'], '这一档两层都在场')
+  assert.equal(w.fx.policy.enforcement, 'full')
+  assert.equal(w.fx.policy.mode, 'workspace-write')
 })
 
 test('Y1 ② · 表里每条都给读数与文案，不吞异常；每条该拒的都带一句指路', () => {

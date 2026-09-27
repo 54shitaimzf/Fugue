@@ -174,8 +174,10 @@ test('Y2 ① · 两处读同一份：fugue policy 与 run/confined 的五栏逐�
   const evs2 = events(root, 'run/confined')
   assert.equal(evs2.length, 2)
   assert.deepEqual(fiveOfPolicy(p2), fiveOfEvent(evs2[1] as Record<string, unknown>), '那一档也是同一份')
-  assert.deepEqual(p2.layers, ['landlock'], '这一档不用挂载围栏那一层，第二层照上（它与档正交）')
-  assert.equal(p2.enforcement, 'partial')
+  // **这一档也要挂载围栏**（见 `policy.ts` 那一段由头）：档管的是树可不可写，围栏管的是
+  // 子进程看得见什么——两件事正交，缺了后者就是"bash 在宿主上裸跑"（第十五趟样本盘量到的）。
+  assert.deepEqual(p2.layers, ['bwrap', 'landlock'], '这一档两层都在场（挂载层把树挂成可写，树以外照旧不在）')
+  assert.equal(p2.enforcement, 'full')
 })
 
 test('Y2 ② · 从同一处来：配置里那一栏一改，两处一起变', () => {

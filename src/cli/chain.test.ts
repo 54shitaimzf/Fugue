@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { tmpDir } from '../../test/helpers/tmp.ts'
+import { openLog } from '../log/log.ts'
 import { clearMaterialization, removeTree } from '../materialize/mount.ts'
 import { matParts } from '../roots/paths.ts'
 
@@ -492,7 +493,7 @@ function wireRoot(s: WireScenario): string {
   return root
 }
 
-test('序 1 · `--wire-in` 把真响应喂回去：验收照过 · 产物逐字节相同 · 每一条调用逐条对上（不出网 · 不读凭据）', () => {
+test('序 1 · `--wire-in` 把真响应喂回去：验收照过 · 产物逐字节相同 · 每一条调用逐条对上（不出网 · 不读凭据）', async () => {
   const s = scenarioOf()
   const root = wireRoot(s)
   const dump = tmpDir('fugue-wire-in-out-')
@@ -551,6 +552,27 @@ test('序 1 · `--wire-in` 把真响应喂回去：验收照过 · 产物逐字�
   assert.match(sent, /Write surface: notes\.md — these paths are yours/, `发出去的请求里没有写入面那一句：${sent.slice(0, 200)}`)
   assert.match(sent, /Do not change a single byte anywhere else, deleting included/, '写入面那一句少了"删除也算"那半句')
 
+  // **这一趟的围栏落进了日志**（第十五趟样本盘那条缝的封口）：`bash` 是这一格伸出去的那只手，
+  // 而"伸出去看得见什么"以前在日志里一个字都没有——账上于是分不开"模型自己解出来的"与
+  // "它翻到了我们的账本"。录的那一趟有一次 `bash`，所以这一条同时量着两件事：**它真的起了
+  // 子进程**，而那一趟的围栏是 `full`（挂载层在场 · 账本与答案纸在它够不着的地方）。
+  const log = openLog(root)
+  const rows = await Array.fromAsync(log.readMerged())
+  await log.close()
+  const fences = rows
+    .filter((r) => (r as { e?: { t?: string } }).e?.t === 'run/confined')
+    .map((r) => (r as unknown as { e: { mode: string; enforcement: string; layers?: readonly string[]; reach?: readonly string[] } }).e) as {
+    mode: string
+    enforcement: string
+    layers?: readonly string[]
+    reach?: readonly string[]
+  }[]
+  assert.ok(fences.length > 0, '录的那一趟调过一次 bash，日志里该有它那一条围栏')
+  assert.equal(fences[0]?.enforcement, 'full', `这一趟的围栏不是 full：${JSON.stringify(fences[0])}`)
+  assert.deepEqual([...(fences[0]?.layers ?? [])], ['bwrap', 'landlock'], '两层都在场才是看得见什么那一维关着')
+  assert.equal(fences[0]?.mode, 'workspace-write', '这一格点名要的是树可写那一档')
+  assert.equal((fences[0]?.reach ?? []).length, 6, '只读根清单就是策略值里那一份（缺省 6 条）')
+
   // 停因：**收敛**（`end-turn`）——不是"步数到顶"。这一条同时是 § 5.12 序 12 那三句收工口径的读数。
   const one = j.agents[0]
   assert.ok(one !== undefined, `这一趟没落停因：${JSON.stringify(j.agents)}`)
@@ -558,7 +580,8 @@ test('序 1 · `--wire-in` 把真响应喂回去：验收照过 · 产物逐字�
   wireCleanup(root)
   console.log(
     `序 1 读数：回放 ${WIRE_CALLS.length} 条调用 · 逐条 requestHash/responseHash 相同 · 验收 ${j.verify.pass}/${j.verify.fail} · ` +
-      `停因「${one.stopped}」· 产物 ${Object.keys(s.expected).join(' ')} 逐字节相同 · 一次 fetch 都没有`,
+      `停因「${one.stopped}」· 产物 ${Object.keys(s.expected).join(' ')} 逐字节相同 · 一次 fetch 都没有 · ` +
+      `围栏 ${fences[0]?.enforcement}（${(fences[0]?.layers ?? []).join('+')}）`,
   )
 })
 

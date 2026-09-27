@@ -42,6 +42,35 @@ function treeOfDisk(ws: string, c: CaseDecl): Tree {
   }
   return out
 }
+/**
+ * **这一趟的围栏**（日志里那些 `run/confined`）：一条一格，值是与 `fugue run` 同源的策略值。
+ *
+ * 它只回答一个问题：**这一趟的读数能不能当证据**。挂载层不在场时子进程读得到账本与答案纸
+ * （`$OUT` 就在它够得着的地方），那时"已知答案过"这句话分不开"它自己解出来的"与"它翻到了
+ * 我们的账本"。第十五趟样本盘照出来的正是这一条。
+ */
+function fenceLine(rows: readonly unknown[]): string {
+  // **日志读回来的是行**：事件在 `r.e` 那一栏里（与 `row` 那一支同一个读法）。
+  const fences = rows.filter((r) => (r as { e?: { t?: string } }).e?.t === 'run/confined') as unknown as {
+    mode: string
+    enforcement: string
+    layers?: readonly string[]
+    reach?: readonly string[]
+  }[]
+  if (fences.length === 0) return '—（这一趟没有子进程）'
+  const shape = (f: { enforcement: string; layers?: readonly string[]; mode: string }): string => {
+    const layers = (f.layers ?? []).join('+')
+    return f.enforcement + ' · ' + (layers === '' ? '（一层都没有）' : layers) + ' · mode ' + f.mode
+  }
+  const first = fences[0] as { enforcement: string; layers?: readonly string[]; mode: string; reach?: readonly string[] }
+  const distinct = [...new Set(fences.map(shape))]
+  return (
+    shape(first) +
+    ' · 只读根 ' + String((first.reach ?? []).length) + ' 条 · ' + String(fences.length) + ' 格各一条' +
+    (distinct.length > 1 ? '（**不一致**：' + distinct.join(' / ') + '）' : '')
+  )
+}
+
 const byName = (all: CaseDecl[], name: string): CaseDecl => {
   const one = all.find((c) => c.name === name)
   if (one === undefined) { console.error('不认这个案名：' + name); process.exit(2) }
@@ -71,6 +100,11 @@ if (cmd === 'selftest') {
   const rows = await Array.fromAsync(openLog(rest[0] ?? casesFile).readMerged())
   const u = statusOf(rows as never).usage
   console.log([String(u.calls), String(u.inputTokens.total), String(u.cacheReadTokens.total), String(u.outputTokens.total)].join('\t'))
+  process.exit(0)
+} else if (cmd === 'fence') {
+  // 这一趟的围栏：`round work` 每一格第一次起子进程时记一条（见 `driver.ts`）。
+  const rows = await Array.fromAsync(openLog(rest[0] ?? casesFile).readMerged())
+  console.log(fenceLine(rows as never))
   process.exit(0)
 } else if (cmd === 'judge') {
   const c = byName(readCases(casesFile), rest[1])
@@ -116,10 +150,11 @@ if (cmd === 'selftest') {
         (snap.outside.paths.length === 0 ? '' : '（' + snap.outside.paths.join(' · ') + '）'),
     )
   }
+  console.log('  围栏：' + fenceLine(rows as never))
   console.log('  已知答案：' + v.why)
   for (const line of boardLines(c.name, v).slice(1)) console.log(line)
   process.exit(0)
 } else {
-  console.error('用法：board-node.ts selftest <cases.json> | judge <cases.json> <工作区> <案名> | row <cases.json> <工作区> <work.json> <案名> <趟> <门退回> <观察>')
+  console.error('用法：board-node.ts selftest <cases.json> | judge <cases.json> <工作区> <案名> | fence <工作区> | row <cases.json> <工作区> <work.json> <案名> <趟> <门退回> <观察>')
   process.exit(2)
 }

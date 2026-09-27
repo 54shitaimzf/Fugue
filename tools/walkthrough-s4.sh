@@ -13,8 +13,8 @@
 # 一趟 · 逐个串行一趟，`mat/*` 与 `run/*` 逐条相同，`ms` 不比）；走查这一份比的是**同一批
 # agent 两次的产物字节与退出码**——它是可用性的材料（§ 4.1 第二档），不是那条性质的第二次判决。
 #
-# **这台机器按 `overlayfs` 档走**（E2 的地板）。要是 `fork` 退到了 `hardlink-ro`/`copy`，第六、七
-# 两节里那两条退化档会当场被拒（树可写而没有 `upper` 可枚举——`ReclaimRefused`，X4 记下的边界：
+# **这台机器按 `overlayfs` 档走**（E2 的地板）。要是 `fork` 退到了 `hardlink-ro`/`copy`，第六节
+# 那条"树可写"档会当场被拒（树可写而没有 `upper` 可枚举——`ReclaimRefused`，X4 记下的边界：
 # 两条地板叠在一起的现场不在这一站的范围里），那时走查会红在那里，那是**读数**，不是回归。
 #
 # 跑法（在 ext4 上 · 仓库根）：sh tools/walkthrough-s4.sh
@@ -273,7 +273,11 @@ check "四个 agent 的产物两两不同（各写各的那一句真进了产物
 printf '  （同一批 agent 的两次逐字节相同是断言；**跨 agent 的字节不作为断言**——带 -g 的二进制里会'
 printf '进物化树路径，X3 记过这条口径。这里的四个 blob 两两不同，是"各写各的"那条读数）\n'
 
-# ── 六 · 未声明的写入：默认档由内核拒 · 退化档由回收拒并记事件 ─────────────
+# ── 六 · 未声明的写入：默认档由内核拒 · 树可写那一档由回收拒并记事件 ─────────
+#
+# **这一节量的是"树敞不敞开"那一维，不是"有没有挂载层"那一维**：`--mode workspace-write`
+# 今天两层都在场（挂载层把树整个绑成可写），所以未声明的写入内核不拒、由回收如实报出来；
+# 真正"挂载层不在"那一档在第七节（`partial` + 第二层接过来）。
 printf '\n══ 六 · 第三条验证的现场：未声明的写入被拒并记事件 ══\n'
 A1=agent/r1/1
 RC=$(json_run "$OUT/dirty-default.json" --agent "$A1" run dirty)
@@ -282,12 +286,12 @@ check "默认档 · denied 读出来了" "$(jget "$OUT/dirty-default.json" denie
 check "默认档 · 树里没有 junk.txt" "$([ -e "$(upper_of "$A1")/junk.txt" ] && echo 有 || echo 没有)" "没有"
 check "默认档 · 没有 mat/reclaim" "$(count_of "$A1" mat/reclaim)" "0"
 RC=$(json_run "$OUT/dirty-deg.json" --agent "$A1" run dirty --mode workspace-write)
-check "退化档 · dirty 退码（子进程成功了）" "$RC" "0"
-check "退化档 · enforcement 如实报 partial" "$(jget "$OUT/dirty-deg.json" enforcement)" "partial"
-check "退化档 · undeclared" "$(jget "$OUT/dirty-deg.json" undeclared)" "junk.txt"
-check "退化档 · junk.txt 真写下去了" "$(cat "$(upper_of "$A1")/junk.txt" 2>/dev/null)" "undeclared"
-check "退化档 · 正好一条 mat/reclaim" "$(count_of "$A1" mat/reclaim)" "1"
-check "退化档 · 视图里读不到 junk.txt" "$(node "$FUGUE" --root "$WORK" --agent "$A1" read junk.txt >/dev/null 2>&1; echo $?)" "1"
+check "树可写那一档 · dirty 退码（子进程成功了）" "$RC" "0"
+check "树可写那一档 · enforcement 如实报 full（两层都在场）" "$(jget "$OUT/dirty-deg.json" enforcement)" "full"
+check "树可写那一档 · undeclared" "$(jget "$OUT/dirty-deg.json" undeclared)" "junk.txt"
+check "树可写那一档 · junk.txt 真写下去了" "$(cat "$(upper_of "$A1")/junk.txt" 2>/dev/null)" "undeclared"
+check "树可写那一档 · 正好一条 mat/reclaim" "$(count_of "$A1" mat/reclaim)" "1"
+check "树可写那一档 · 视图里读不到 junk.txt" "$(node "$FUGUE" --root "$WORK" --agent "$A1" read junk.txt >/dev/null 2>&1; echo $?)" "1"
 
 # ── 七 · 地板：把 bwrap 从 PATH 上拿掉 ─────────────────────────────────────
 printf '\n══ 七 · 地板：bwrap 从 PATH 上拿掉——第二层接过来，同一趟照样跑得出同一份声明集 ══\n'

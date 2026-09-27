@@ -12,7 +12,7 @@
 // 照跑——查了就是把地板调低）· **`fugue policy` 照旧照报**（它只读策略值，不做启动检查）。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -44,13 +44,42 @@ console.log('badout ok')
 `
 
 function fugue(root: string, ...args: string[]): { code: number; out: string; err: string } {
+  return fugueEnv({}, root, ...args)
+}
+
+/** `env` 是**加在**宿主环境上的那几栏（`PATH` 那一条负对照要换掉它）。 */
+function fugueEnv(env: Record<string, string>, root: string, ...args: string[]): { code: number; out: string; err: string } {
   const r = spawnSync(process.execPath, [CLI, '--root', root, ...args], {
     encoding: 'utf8',
     input: '',
     maxBuffer: 1 << 26,
-    env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
+    env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', ...env },
   })
   return { code: r.status ?? -1, out: r.stdout, err: r.stderr }
+}
+
+const BINS: string[] = []
+
+/**
+ * 一面"除了 `bwrap` 什么都有"的 PATH：把两个 bin 目录整个镜像过来，去掉那一个。
+ *
+ * **这是 E4 唯一的真做法**：探针每次现探（`probeBwrap()`），所以"挂载层死掉"只能从 PATH 上
+ * 做出来，不能靠一栏配置说。
+ */
+function noBwrapPath(): Record<string, string> {
+  const bin = mkdtempSync(join(tmpdir(), 'fugue-y4-bin-'))
+  BINS.push(bin)
+  for (const dir of ['/usr/bin', '/usr/local/bin']) {
+    for (const name of readdirSync(dir)) {
+      if (name === 'bwrap') continue
+      try {
+        symlinkSync(join(dir, name), join(bin, name))
+      } catch {
+        // 重名（/usr/local/bin 覆盖 /usr/bin）不是错，先来的那个算
+      }
+    }
+  }
+  return { PATH: bin }
 }
 
 function git(cwd: string, ...args: string[]): string {
@@ -113,6 +142,7 @@ function fixture(): Made {
 }
 
 after(() => {
+  for (const b of BINS) rmSync(b, { recursive: true, force: true })
   for (const m of MADE) {
     fugue(m.root, '--agent', AGENT, 'dispose')
     try {
@@ -244,13 +274,21 @@ test('Y4 ④ · 两条守地板的读数：层不在场时不查清单 · `fugue
   const m = fixture()
   assert.equal(fugue(m.root, 'config', 'set', 'boundary.reach', `["/usr","/opt","${GHOST}"]`).code, 0)
 
-  // 树可写那一档：清单不参与任何事，所以同一份过期清单**拦不住这一趟**（查了就是把地板调低）。
-  const deg = fugue(m.root, '--agent', AGENT, '--json', 'run', 'good', '--mode', 'workspace-write')
+  // **挂载层不在那一档**：清单不进 argv，所以同一份过期清单**拦不住这一趟**（查了就是把地板
+  // 调低）。这一档只能从 PATH 上做出来（探针现探），不能靠 `--mode` 说——今天
+  // `workspace-write` 也是两层都在场，那份清单照旧要成立。
+  const deg = fugueEnv(noBwrapPath(), m.root, '--agent', AGENT, '--json', 'run', 'good', '--mode', 'workspace-write')
   assert.equal(deg.code, 0, deg.err)
   const j = JSON.parse(deg.out) as Record<string, unknown>
   assert.equal(j.mode, 'workspace-write')
   assert.equal(j.enforcement, 'partial')
   assert.equal(j.sandbox, false, '这一档没有沙箱：清单根本没被读')
+
+  // 正读（这一格改的那一处）：同一份过期清单在**两层都在场**的那一档上当场拒——
+  // 以前 `workspace-write` 不查它，因为那一档根本没有挂载围栏。
+  const fenced = fugue(m.root, '--agent', AGENT, '--json', 'run', 'good', '--mode', 'workspace-write')
+  assert.equal(fenced.code, 1, `两层都在场时这份清单该拒：${fenced.out}${fenced.err}`)
+  assert.match(fenced.err, new RegExp(`boundary\\.reach 里这一条在宿主上不存在：${GHOST}`))
 
   // `fugue policy` 只读策略值：它照旧把这份清单原样报出来（如实报告，不做启动检查）。
   const p = fugue(m.root, '--agent', AGENT, 'policy', 'good')

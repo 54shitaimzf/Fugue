@@ -24,6 +24,15 @@
 #   五 · 把这一轮压成账上一行（`$OUT/ledger.tsv`）：门退回 · 停因 · 验收 · 已知答案 · 观察 ·
 #        打回三数 · 调用与四个 token 数（用量从日志现算，不看模型报什么）
 #
+# **账本自己也要看得见**（第十五趟样本盘照出来的那条缝）：账 · 实录 · 判分结果都住在 `$OUT` 里，
+# 而助手手里那条 `bash` 只要够得着它，这一趟的读数就分不开"它自己解出来的"与"它翻到了我们的
+# 账本"（那一趟 `case-1-1` 读到的是 `/tmp/scenario-b14/run/case-1-1/work.json` 与 `wire-plan/`
+# 的请求实录）。两半各做一件事：
+#   · **围栏那一半由产品封**：`round work` 每一格第一次起子进程时记一条 `run/confined`
+#     （`src/round/driver.ts`），这一份逐趟核它是不是 `full`——不是就当场红，那一趟的数字不进账。
+#   · **这一半是绊线**：`$OUT` 里放一枚记号，跑完在实录里找它（`--dump-wire` 那一档）。
+#     找不到不证明什么，找到了就是当场红——它是读数，不是判据。
+#
 # **取证用，不是产品的一部分**（仓库约定 § 七）。凭据经环境变量给（`authOf` 唯一取值处），不打印它的值。
 set -u
 cd /home/ubuntu/fugue || exit 9
@@ -87,6 +96,9 @@ fi
 rm -rf "$OUT"
 mkdir -p "$OUT"
 printf '案\t趟\t门退回\t停因收敛\t验收\t已知答案\t观察\t冲突\t拒绝\t越界\t调用\tinput\tcacheRead\toutput\t推进\n' > "$OUT/ledger.tsv"
+# **绊线那一枚记号**：它住在这本账旁边，助手够得着的话就该在实录里现形。
+CANARY="FUGUE-CANARY-$(node -e 'process.stdout.write(require("crypto").randomBytes(6).toString("hex"))')"
+printf '%s\n' "$CANARY" > "$OUT/canary.txt"
 
 # 逐案：把声明摊成一份速查文件（sh 里解析 JSON 不如交给 node）
 node -e '
@@ -214,6 +226,19 @@ run_one() { # run_one <案名> <case-N> <趟>
     bad "$name 第 $run 趟：这一趟没跑起来—— $(head -2 "$D/work.err" | tr '\n' ' ')"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t—\t—\t—\t—\t—\t—\t—\t—\n' "$name" "$run" "$GATE" 没有读数 没有读数 没有读数 "—" >> "$OUT/ledger.tsv"
     return
+  fi
+  # **这一趟的围栏**（第十五趟那条缝的封口）：真档里每一格第一次起子进程时记一条
+  # `run/confined`。不是 `full` 就是"子进程读得到 $OUT 这本账"——那一趟的数字不当证据。
+  if [ "$LIVE" = yes ]; then
+    FENCE=$(node tools/scenario/board-node.ts fence "$W" 2> /dev/null)
+    case "$FENCE" in
+      full*) ok "$name 第 $run 趟：围栏 full——子进程够不到账本与答案纸" ;;
+      —*) ok "$name 第 $run 趟：这一趟没有子进程（围栏那一栏不适用）" ;;
+      *) bad "$name 第 $run 趟：这一趟的围栏是「$FENCE」——那一档里子进程读得到 $OUT，读数不当证据" ;;
+    esac
+    if [ "$DUMP" = yes ] && grep -rqF "$CANARY" "$D" 2> /dev/null; then
+      bad "$name 第 $run 趟：实录里出现了账本那枚记号（$CANARY）——助手翻到了 $OUT"
+    fi
   fi
   # 清掉物化坐标（内核在 tmp 里挖的那个点会让 git add -A 吃 EACCES）
   for a in $(git -C "$W" for-each-ref --format='%(refname:short)' refs/heads/agent 2> /dev/null); do

@@ -272,6 +272,15 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
    *     产出面仍然由契约给（`declaredSetOf` → `ownedPaths`），回写那一支读的是它。
    */
   let policy: Policy | null = null
+  /**
+   * **这一趟的围栏记过没有**（每格只在第一次起子进程时记一次）。
+   *
+   * 由头（第十五趟样本盘 · 案一）：`bash` 是这一格伸出去的那只手，而"伸出去看得见什么"
+   * 在日志里一个字都没有——账上于是分不开"模型自己解出来的"与"它翻到了我们自己的账本"
+   * （那一趟 `case-1-1` 读到了 `$OUT` 下这一趟的验收结果与请求实录）。一条 `run/confined`
+   * 记一份策略值（与 `fugue run` 那条**同一个形状 · 同一个 `Policy`**），够判这一件事。
+   */
+  let fenceWritten = false
   const policyNow = async (): Promise<Policy> => {
     if (policy === null) {
       const probed = probeLayers(roots)
@@ -312,6 +321,21 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     mkdirSync(cache.home, { recursive: true })
     mkdirSync(cache.xdgCache, { recursive: true })
     const p = await policyNow()
+    // **这一趟的围栏**：一层一条（见 `fenceWritten` 那一段）。读它的只有一处——判这一趟的
+    // 读数能不能当证据（`tools/scenario/board-node.ts` 的 `fence`）。放在这里而不是构造这一份
+    // 的时候：`policyNow()` 是现探的，而"这一格到底包成了哪一档"只有包的时候才知道。
+    if (!fenceWritten) {
+      fenceWritten = true
+      await log.append(writer, {
+        t: 'run/confined',
+        agent: me,
+        mode: p.mode,
+        enforcement: p.enforcement,
+        net: p.net,
+        layers: p.layers,
+        reach: p.reach.roRoots,
+      })
+    }
     // **两档各有各的包法**（与 `fugue run` 那条路逐字同一条纪律）：
     //   · 挂载层在场：`confine` 包成 `bwrap`——“看得见什么”由它管，真实工作区不进挂载；
     //   · 挂载层不在场：`degradedArgv` 退到第二层（Landlock）——“写得动什么”由内核管；
@@ -340,15 +364,16 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       // 第二层那一档：子进程就在宿主上跑，`spawn` 的 cwd 由宿主拼（与挂载档同一个形状）。
       return { cwd: '', argv: degradedArgv(line, { roots, policy: p }).argv }
     }
-    if (parts !== undefined) {
-      await parts.log.append(parts.writer, {
-        t: 'bound/deny',
-        agent: me,
-        path: ask.command,
-        space: 'physical',
-        rule: 'confine:none',
-      })
-    }
+    // **这一条拒也要落进日志**：它没有子进程可言，`run/end` 那条路不会替它记。
+    // （原先这里读的是 `parts`——那一栏在这一份里不存在，走到这一支就是一次 `ReferenceError`；
+    //   而这一支只有"两层都没有"时才到，单测与走查都没撞到过它。日志口在这一层就是 `log`。）
+    await log.append(writer, {
+      t: 'bound/deny',
+      agent: me,
+      path: ask.command,
+      space: 'physical',
+      rule: 'confine:none',
+    })
     throw new Error(
       `这一趟跑不了子进程：两层的围栏都不在场（${p.enforcement}），而执行类工具要跑在物化树里。` +
         '装回 bwrap 或让第二层（Landlock）可用再跑；在那之前这一步只能靠 read / write / edit / glob / grep。',
