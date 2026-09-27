@@ -5,11 +5,15 @@
 # **一条命令跑完这一站**：
 #   建仓库 → 一个提交 → 配置里两条真断言 + 三份拆分草案 →
 #   `round new` 钉底（分支的底 · 日志里那几条事件 · 契约正文 · 相交报出而照发 · 不相交报 0 对）→
-#   `round run` 干净一趟（折 → 验 → 定格 → 推进）→
+#   `round work` 接着跑干净一趟（折 → 验 → 定格 → 推进）→
 #   故意撞红一趟（一处冲突 → 冲突树物化 → 解决 → 重折 · 一次验收打回 · 一次动作被拒 · 真实工作树不动）→
 #   打回那三个数与日志重放对账 → 漂移那一档（判据是「目标树 vs 盘上」：会被改写 → 拒 · 只被删 → 拒 ·
 #   两边逐字节相同 → 照合并 · 红负对照）→
 #   地板两档（一份契约直合 · 验收门只剩一条断言）→ 收尾：不留挂载 · 不留进程 · 不留孤儿分支。
+#
+# **每一节一趟轮次号**（r1 那一条链 · r2 撞红 · r3 两边一样 · r4 只被删 · r5 地板）：处境守卫是
+# "一轮只从 Idle 起一次头"（`src/round/start.ts` 的零号守卫），同号再来一趟当场拒——换号是这一份
+# 走查自己能定的事（`config set round.id`），而 agent 的名字与分支都带这个号。
 #
 # **它只用手边的东西**（与 S2–S6 那几份同一个形状）：每一步都是独立进程（§ 9.6），
 # 所以收尾不需要杀进程；`--materialize` 那一档不在这里（它要卸挂载，归 S4 的走查）。
@@ -19,17 +23,29 @@ set -u
 cd /home/ubuntu/fugue || exit 9
 FUGUE="node src/cli/fugue.ts"
 W=$(mktemp -d /tmp/fugue-s7-XXXXXX)
+# **负对照那一份另开一个工作区**：一轮只从 Idle 起一次头，同一份里量不了两次 `round new`（见
+# 第二节末那一段）。它在第一节末照 `$W` 拷一份。
+W0=""
+# 这一份走查用掉的轮次号（每一节一个）：收尾按它逐个收——agent 的名字是 `agent/<轮次>/<n>`。
+ROUNDS="r1 r2 r3 r4 r5"
 T=$(mktemp -d /tmp/fugue-s7-read-XXXXXX)
 PASS=0
 FAIL=0
 cleanup() {
-  for n in 1 2 3; do
-    $FUGUE --root "$W" --agent "agent/r1/$n" dispose > /dev/null 2>&1
+  for r in $ROUNDS; do
+    for n in 1 2 3; do
+      $FUGUE --root "$W" --agent "agent/$r/$n" dispose > /dev/null 2>&1
+    done
   done
+  if [ -n "$W0" ]; then
+    for n in 1 2 3; do
+      $FUGUE --root "$W0" --agent "agent/r1/$n" dispose > /dev/null 2>&1
+    done
+  fi
   if [ "${KEEP:-0}" = "1" ]; then
-    printf '（KEEP=1，现场留着：%s · 读数在 %s）\n' "$W" "$T"
+    printf '（KEEP=1，现场留着：%s · 负对照那一份 %s · 读数在 %s）\n' "$W" "$W0" "$T"
   else
-    rm -rf "$W" "$T"
+    rm -rf "$W" "$W0" "$T"
   fi
 }
 trap cleanup EXIT
@@ -82,15 +98,21 @@ sync_disk() {
 }
 # 三条 agent 分支要在每一趟轮次之前是**空的**：`round run` 拒绝复用一条指过东西的分支
 # （它不会搬别人的分支头）。所以收下一趟之前把这一趟的 agent 连分支带物化一起收掉。
+# **带轮次号**（`drop_agents r3`）：名字与分支都是 `agent/<轮次>/<n>` 那个形状。
 drop_agents() {
   for n in 1 2 3; do
-    $FUGUE --root "$W" --agent "agent/r1/$n" dispose > /dev/null 2>&1
+    $FUGUE --root "$W" --agent "agent/$1/$n" dispose > /dev/null 2>&1
   done
   for n in 1 2 3; do
-    git -C "$W" update-ref -d "refs/heads/agent/r1/$n" > /dev/null 2>&1
+    git -C "$W" update-ref -d "refs/heads/agent/$1/$n" > /dev/null 2>&1
   done
   # agent 的日志不删：run/end（第三个数的来源）落在 agent 那一份里，删了它第五段就数不出来。
   return 0
+}
+# **换一轮**：每一节真 `round run` 之前先把轮次号换掉（处境守卫只认 `Idle`）。换号只做这一件事
+# ——底由 `git reset` / `sync_disk` 摆，契约由配置给（`round run` 每趟都从配置里读那一批草案）。
+new_round() {
+  $FUGUE --root "$W" config set round.id "$1" > /dev/null || bad "config set round.id $1"
 }
 
 echo "=== 一 · 建仓库：一个提交 · 两条真断言 · 三份拆分草案 ==="
@@ -110,6 +132,9 @@ $FUGUE --root "$W" config set round.assertions \
   '[{"name":"合并之后 src/a.ts 在","argv":["/bin/sh","-c","test -f src/a.ts"]},
     {"name":"合并之后 src/b.ts 在","argv":["/bin/sh","-c","test -f src/b.ts"]}]' \
   > /dev/null || bad "config set round.assertions"
+# **动作表要绑**：草案里每一节的断言写的是 `{action:"x"}`，而"断言只能从已绑动作里选"是架构
+# § 8.12 那条——绑一个真的（`/bin/sh -c true`：这一份量的是链，不是断言本身的内容）。
+$FUGUE --root "$W" config set actions.x '{"argv":["/bin/sh","-c","true"]}' > /dev/null || bad "config set actions.x"
 # 三份草案：第一与第三的写入面都是 `src/a.ts` —— **它们相交**（`Planning` 那一档报出而照发，
 # 合并前那一档缺省只报不拒；折叠里因此真撞出一次冲突）。
 $FUGUE --root "$W" config set round.split \
@@ -118,6 +143,20 @@ $FUGUE --root "$W" config set round.split \
     {"goal":"也改 a","ownedPaths":["src/a.ts"],"assertions":[{"action":"x","name":"x"}]}]' \
   > /dev/null || bad "config set round.split"
 printf '  base = %s\n' "$BASE"
+
+# **第一条验证的负对照（不交那一半）另开一份工作区来量**：同一个预检、同一个读者与切分，只有
+# 写入面互不相交，它必须报 0 对——量具对"这就是相交"有分辨力，不是见谁都报。不在 `$W` 里量：
+# 一轮只从 Idle 起一次头，而下面第二节那一趟 `round new` 会把处境推到 Working，再来一次当场拒
+# （"这一轮已经从 Idle 起过头了"）——原来那一版就是这么从第二节起节节倒的。
+W0=$(mktemp -d /tmp/fugue-s7-zero-XXXXXX)
+cp -r "$W/." "$W0/"
+$FUGUE --root "$W0" round new '不相交的负对照' --split '[{"goal":"只改 a","ownedPaths":["src/a.ts"],"assertions":[{"action":"x","name":"x"}]},
+  {"goal":"只改 b","ownedPaths":["src/b.ts"],"assertions":[{"action":"x","name":"x"}]}]' > "$T/new2.out" 2> "$T/new2.err"
+RC0=$?
+printf '  不相交那一趟 rc = %s · stderr：%s\n' "$RC0" "$(tr -d '\n' < "$T/new2.err")"
+check "不相交那一趟的退出码" "0" "$RC0"
+has "$T/new2.err" '0 对相交' "不相交时报的是 0 对（第一条验证的负对照）"
+has "$T/new2.err" '2 条路径' "预检真跑了（报出看了 2 条路径——不是没跑才没有那一行）"
 
 echo
 echo "=== 二 · round new：钉底 · 发契约 · 起分支 ==="
@@ -161,25 +200,17 @@ fs.writeFileSync(T + "/r2.tsv", rows2.map((r) => r.join("\t")).join("\n") + "\n"
 process.exit(okStates && okContracts && okBodies && okFork ? 0 : 1)
 ' "$T" || bad "round new 那一节的读数：node 那一段自己挂了"
 readings "$T/r2.tsv"
-# **第一条验证的负对照（不交那一半）**：同一个预检、同一个读者与切分，只有写入面互不相交，
-# 它必须报 0 对——量具对"这就是相交"有分辨力，不是见谁都报。
-$FUGUE --root "$W" round new '不相交的负对照' --split '[{"goal":"只改 a","ownedPaths":["src/a.ts"],"assertions":[{"action":"x","name":"x"}]},
-  {"goal":"只改 b","ownedPaths":["src/b.ts"],"assertions":[{"action":"x","name":"x"}]}]' > "$T/new2.out" 2> "$T/new2.err"
-RC0=$?
-printf '  不相交那一趟 rc = %s · stderr：%s\n' "$RC0" "$(tr -d '\n' < "$T/new2.err")"
-check "不相交那一趟的退出码" "0" "$RC0"
-has "$T/new2.err" '0 对相交' "不相交时报的是 0 对（第一条验证的负对照）"
-has "$T/new2.err" '2 条路径' "预检真跑了（报出看了 2 条路径——不是没跑才没有那一行）"
-drop_agents
 
 echo
 echo "=== 三 · round run 干净一趟：拆分 → 并行 → 合并 → 验收 ==="
-# **收口四样里的 1（一条命令跑完一个轮次）与 3（地板第一档）。**
+# **收口四样里的 3（地板第一档）· 以及"接着跑"那一半**：上面 `round new` 已经把那一批发出去
+# 了（处境 Working），所以这一节走 `round work`——从日志里那批契约接着跑（`round run` 是"从 Idle
+# 一条命令跑完一个轮次"那一档，在同一份工作区里再来一次会被拒：一轮只从 Idle 起一次头）。
 # 干净那一趟的三份草案里第一与第三都写 `src/a.ts` —— 折叠时真撞一次车，冲突环解掉它。
 sync_disk
 # 盘上就是底那一份（`sync_disk` 刚摊平过）——漂移那一档照样放行：推进是在写新内容，**合并本来
 # 就该改它**（判据放行的两档之一是"盘上 == 底"，见 `src/merge/drift.ts` 的文件头）。
-$FUGUE --root "$W" round run '把 a 与 b 各改一处' --report > "$T/run1.out" 2> "$T/run1.err"
+$FUGUE --root "$W" round work --report > "$T/run1.out" 2> "$T/run1.err"
 RC1=$?
 printf '  rc = %s\n' "$RC1"
 sed 's/^/  /' "$T/run1.out"
@@ -210,7 +241,7 @@ fs.writeFileSync(T + "/r3.tsv", (ok ? "ok" : "bad") + "\t干净一趟：撞了�
 process.exit(ok ? 0 : 1)
 ' "$T" || bad "干净那一趟的三个数：node 那一段自己挂了"
 readings "$T/r3.tsv"
-drop_agents
+drop_agents r1
 
 echo
 echo "=== 四 · 故意撞红一趟：一处冲突 · 一次打回 · 一次被拒 · 真实工作树一个字节不动 ==="
@@ -224,10 +255,12 @@ SNAP=$(tree_now)
 if [ -z "$SNAP" ]; then bad "这一趟的起点读数没取到（tree_now 给的是空串）"; fi
 printf '  这一趟之前的树 = %s（= 那个底）\n' "$SNAP"
 sync_disk
+new_round r2
 $FUGUE --root "$W" round run '再跑一趟，故意撞红' \
   --fail '合并之后 src/b.ts 在' --deny --retry 1 --report --json > "$T/run2.json" 2> "$T/run2.err"
 RC2=$?
 printf '  rc = %s（没通过那一档的退出码是 1，不是用法错）\n' "$RC2"
+sed 's/^/  err| /' "$T/run2.err"
 check "撞红那一趟的退出码" "1" "$RC2"
 node -e '
 const fs = require("fs")
@@ -261,7 +294,7 @@ if [ "$(tree_now)" = "$SNAP" ]; then
 else
   bad "注入失败断言之后真实工作树变了：$SNAP → $(tree_now)"
 fi
-drop_agents
+drop_agents r2
 
 echo
 echo "=== 五 · 打回三个数与日志重放对账 ==="
@@ -272,9 +305,13 @@ const T = process.argv[1]
 const lines = fs.readFileSync(T + "/log2.json", "utf8").trim().split("\n").map((l) => JSON.parse(l))
 const rows = lines.map((l) => l.e)
 // **手工按三条判据各数一遍**——三条判据都写在这一段里，与 `src/probe/round.ts` 那一份无关。
-const conflicts = rows.filter((e) => e.t === "merge/attempt").reduce((n, e) => n + e.conflicts, 0)
-const rejects = rows.filter((e) => e.t === "round/state" && e.from === "Verifying" && e.to === "Working").length
-const denied = rows.filter((e) => e.t === "run/end" && e.denied).length
+// **按这一趟的轮次号筛**：`merge/attempt` 与 `round/state` 自己带 `round`（§ 8.1 那张表逐字），
+// 按它筛；`run/end` **不带**轮次号，所以按 writer 名字筛这一届（`agent/r2/<n>`）——这一份走查里
+// 只有 r2 那一趟带 `--deny`，于是"两个数相等"是确定的。
+const R = "r2"
+const conflicts = rows.filter((e) => e.t === "merge/attempt" && e.round === R).reduce((n, e) => n + e.conflicts, 0)
+const rejects = rows.filter((e) => e.t === "round/state" && e.round === R && e.from === "Verifying" && e.to === "Working").length
+const denied = lines.filter((l) => l.e.t === "run/end" && l.e.denied && String(l.pos.writer).startsWith("agent/" + R + "/")).length
 const j = JSON.parse(fs.readFileSync(T + "/run2.json", "utf8"))
 const m = Object.fromEntries(j.report.map((r) => [r.metric, r.count]))
 const byHand = { conflicts, rejects, denied }
@@ -299,6 +336,7 @@ echo "=== 六 · 漂移那一档：判据是「目标树 vs 盘上」（A10）==
 # 与它算出来的结果**逐字节相同**——`--poke-exact` 抄的正是折出来的目标树里那条路径的字节
 # （`--poke` 是「追加上一行」，抄不出「一样」）。于是推进之后工作树与提交仍然一致：没人丢字节。
 sync_disk
+new_round r3
 $FUGUE --root "$W" round run '两边一样那一趟' --poke-exact src/a.ts > "$T/run3.out" 2> "$T/run3.err"
 RC3=$?
 printf '  两边一样那一趟 rc = %s\n' "$RC3"
@@ -337,18 +375,16 @@ fs.writeFileSync(T + "/r6.tsv", rows.map((r) => (r[0] ? "ok" : "bad") + "\t" + r
 process.exit(commits.length === 2 && commits.includes(head) ? 0 : 1)
 ' "$T" "$W" || bad "两边一样那一趟的事件读数：node 那一段自己挂了"
 readings "$T/r6.tsv"
-drop_agents
+drop_agents r3
 
 # 六之二 · **只被删的那一条 → 拒**（A10 补上的那一栏）。
-# 六之一那一趟把 `src/z.ts` 新写上去、随提交点进了主线。这一趟先 `sync_disk`（盘上摊回主线那棵
-# 树：z 因此回到盘上），再把它从盘上拿掉——于是底与主线里都**在**、盘上**没有**，而目标树里也
-# 没有（谁都不写这一条路径）：第 7 步推进会把它删掉。`--poke` 再把一条手改写上去，判据那一档要
-# 拦的正是这个（换判据之前，这一条一处都不「写」，「会被覆盖的那些」是空的，两个集合没得相交
-# ——手改被静默退回底那一版，退出码 0）。
+# 这一趟的盘上比底多出一条 `src/z.ts`：它不在底里、也不在目标树里（谁都不写这一条路径），所以
+# 第 7 步推进会把它从盘上拿掉。这一条是 `--poke` 当场写上去的（"轮次中有人手改了这条"那一行）
+# ——判据那一档要拦的正是它：盘上那一份既不是底、也不是目标树，而这次推进要动到它。
 sync_disk
-rm -f "$W/src/z.ts"
 SNAP_D=$(tree_now)
 HEAD_D=$(git -C "$W" rev-parse 'refs/heads/main')
+new_round r4
 $FUGUE --root "$W" round run '只被删那一趟' --poke src/z.ts > "$T/run4.out" 2> "$T/run4.err"
 RC4=$?
 printf '  只被删那一趟 rc = %s\n' "$RC4"
@@ -367,7 +403,7 @@ if [ "$(cat "$W/src/z.ts" 2>/dev/null)" = "轮次中有人手改了这条：src/
 else
   bad "拒的时候那条手改的字节没了"
 fi
-drop_agents
+drop_agents r4
 
 echo
 echo "=== 六之三 · 第四条验证的红负对照：手改一个字节 → 那把尺子当场变红 ==="
@@ -388,7 +424,6 @@ if [ "$(tree_now)" = "$(git -C "$W" rev-parse 'refs/heads/main^{tree}')" ]; then
 else
   bad "放回去之后仍报不一致"
 fi
-drop_agents
 
 echo
 echo "=== 七 · 地板两档：两条分支直合 · 验收门只剩一条断言 ==="
@@ -401,6 +436,7 @@ $FUGUE --root "$W" config set round.split \
   '[{"goal":"只改 a","ownedPaths":["src/a.ts"],"assertions":[{"action":"x","name":"x"}]}]' > /dev/null || bad "地板那一档的拆分配置"
 SNAP6=$(tree_now)
 sync_disk
+new_round r5
 $FUGUE --root "$W" round run '地板那一趟' --report --json > "$T/run5.json" 2> "$T/run5.err"
 RC5=$?
 printf '  rc = %s\n' "$RC5"
@@ -445,8 +481,8 @@ $FUGUE --root "$W" --json log > "$T/log3.json" 2>/dev/null
 REFS=$(git -C "$W" for-each-ref --format='%(refname)' refs/heads | wc -l)
 check "分支：main + 最后一趟那一条 agent" "2" "$REFS"
 LAST=$(git -C "$W" for-each-ref --format='%(refname)' refs/heads | grep agent | tr -d "\n")
-check "留着的正是地板那一趟的 agent" "refs/heads/agent/r1/1" "$LAST"
-STRAY=$(git -C "$W" for-each-ref --format='%(refname)' refs/heads | grep -vc "^refs/heads/agent/r1/1$" || true)
+check "留着的正是地板那一趟的 agent" "refs/heads/agent/r5/1" "$LAST"
+STRAY=$(git -C "$W" for-each-ref --format='%(refname)' refs/heads | grep -vc "^refs/heads/agent/r5/1$" || true)
 check "没有多出来的分支" "1" "${STRAY:-0}"
 puts=$(grep -c . "$T/log3.json" 2>/dev/null || true)
 printf '  日志条数（三趟加起来）：%s\n' "${puts:-0}"
