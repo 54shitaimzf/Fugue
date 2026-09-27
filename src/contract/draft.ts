@@ -21,7 +21,7 @@ import type { RelPath } from '../terms.ts'
 import { isSegment } from '../roots/paths.ts'
 import type { SplitAssignment } from './build.ts'
 import type { Assertion, Deliverable } from './types.ts'
-import { FIELD_RULES, VARIANT_FIELDS } from './types.ts'
+import { EVIDENCE_PREFIX, FIELD_RULES, VARIANT_FIELDS } from './types.ts'
 
 /**
  * 草案认得的两节。**没有 `resolve`**：解决型契约由 `M13` 的冲突报告给，而冲突是折到那一步
@@ -41,6 +41,27 @@ export const DRAFT_KINDS: readonly DraftKind[] = ['investigate', 'implement']
  * 一样：模型照提示写、判它不认。
  */
 const SECTION_ORDER_RULE = '最多一节调查型，而且它要排在第一节——契约按草案的次序发身份与分支'
+
+/**
+ * **每一节是独立的一格**——与上面那条次序规则同类：机器知道、模型无从得知，所以一处：
+ * 印给模型的那一段（`draftRuleTextOf`）与判它的那一句都从这一句来。
+ *
+ * 由头：样本盘第一趟真档（`sh tools/scenario/board.sh --live --max-steps 16`，第 1 案
+ * 「改码 · 记账库」）。持轮者把第一节写成调查型（README 该按哪个口径补），第二节的 `goal` 里
+ * 写了「写法照第 1 节的结论」——那是一句**谁也兑现不了**的指路：每一格的分支都从同一个底起
+ *（`issueAndStart` 那一句「N 条分支定在同一个 `base`」），第二节那一格跑的时候看不见第一节的
+ * 产物；而调查型那一节的证据连折叠都不进（`round/execute.ts` 折叠那一行的
+ * `.filter((c) => c.kind !== 'investigate')`）。那一格于是把 16 步里的大半花在找「第 1 节」上
+ *（去读 `.fugue/mat/agent/r1/1/merged` · 别的格的日志，连持轮者那一趟的 `plan.out` 都读了），
+ * 一次都没伸手写 `src/format.ts`，最后停在步数上界：那一份契约交了空卷，验收跟着红。
+ *
+ * 后半句那一栏（`seed`）也有它自己的坑：**`seed` 是底上那一棵树的指针**，指一条别节将来才
+ * 产出的路径（比如 `evidence/...`）不会报错——`seedRulerOf` 只把读不到的那几条记进 `missing`
+ *（一条读数，不判）。所以「底上就已经有的那几条」这半句必须一起说，不然这一句本身会引诱出
+ * 下一个静默落空。
+ */
+const SECTION_ISOLATION_RULE =
+  '每一节都是独立的一格：分支都从同一个底起，跑的时候看不见别节的产物（调查型那一节交的证据也不在这一轮的工作树里）——所以一节要用的东西只能来自底上就已经有的那几条 seed，或者由你把结论直接写进这一节的 goal / deliverables，别指"第 N 节的结论"'
 
 /**
  * 草案不给的那几个键，逐变体。**它是一条减法，不是第二份字段表**：草案的键域 = 契约的字段表
@@ -184,6 +205,7 @@ export function draftRuleTextOf(
     '块里按那一节的 kind 给这几个键，值要写成那个形状：\n' +
     lines.join('\n') +
     `\n${SECTION_ORDER_RULE}。\n` +
+    `${SECTION_ISOLATION_RULE}。\n` +
     // `assertions` 里那个 `action` **只能从工作区绑好的动作里挑**（PLAN § 5.10 的 C1 ⑦：不猜、
     // 不补、不替它挑）。而"绑好了哪几个"是**工作区的事实**，模型无从得知——所以由调用方给进来。
     // 真档那一趟它就是最后那一处：草案的键与值都对，退回来的唯一一句是"指向一个没绑的动作"。
@@ -288,6 +310,14 @@ function readSection(raw: unknown, at: number, problems: string[]): DraftSection
   const has = (f: string): boolean => want.includes(f) && got.includes(f)
   const ownedPaths = has('ownedPaths') ? paths(raw['ownedPaths'], 'ownedPaths') : []
   const seed = has('seed') ? paths(raw['seed'], 'seed') : []
+  // **`seed` 里不许指别节的产物**（见 `SECTION_ISOLATION_RULE` 后半句）：`evidence/` 那一段归
+  // 构造器、只有调查型那一节写得进去，而它跑的时候谁也看不见。指了不是「读不到就算了」得好听：
+  // `seedRulerOf` 只把读不到的那几条记进 `missing`（一条读数，不判），于是这一个指路静默落空。
+  for (const one of seed ?? []) {
+    if (one === EVIDENCE_PREFIX || one.startsWith(`${EVIDENCE_PREFIX}/`)) {
+      bad.push(`seed 里有一条指着 ${EVIDENCE_PREFIX}/：${one}——${SECTION_ISOLATION_RULE}`)
+    }
+  }
 
   let deliverables: Deliverable[] = []
   if (has('deliverables')) {
