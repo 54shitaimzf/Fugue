@@ -190,38 +190,56 @@ export interface VersionFace {
   readonly landing: number
   /** 与上一趟落的那一版**逐字节相同**（"只判不跑"那一趟会遇到）。 */
   readonly same: boolean
+  /**
+   * 印出来的差异是**与第几版**比出来的。`null` = 这一栏没有差异可印（第一版 · 与上一趟逐字节
+   * 相同 · 那两版里有一版读不成草案）。
+   *
+   * **它不是 `version - 1`**：回退那一趟（A→B→A）比的是它真正改自的那一版（B），而按内容编号
+   * 减一会指到一个不存在的「第 0 版」——那一档印出来的会是假的形状（`versions.test.ts` ⑦）。
+   */
+  readonly againstVersion: number | null
   /** 逐节与开头那段散文的差异，一行一句。`same` 为真、或印不出差异时是空的。 */
   readonly lines: readonly string[]
-  /** 印不出逐节差异的原因（这一版读不成一份草案）；能印就是 `null`。 */
+  /** 印不出逐节差异的原因（**哪一版**读不成一份草案）；能印就是 `null`。 */
   readonly why: string | null
 }
 
 /**
  * 一版的人面读数。
  *
- * **比的是"上一个内容版本"，不是"上一次落地"**：同一份内容重落过几趟，上一版仍旧是那一个
- * 不同的内容——否则"改了一版"与"又落了一遍"会混成同一格（架构 § 15.1.a 的 `against` 那一栏
- * 记的正是这个区别）。
+ * **比的是「上一趟落地的那一版」**（`against` 链上前一条）：重落那一趟逐字节相同、不印差异
+ * （`same`），而**回退**那一趟（A→B→A）比的是它真正改自的那一版 B——按内容编号去比会拿一个
+ * 不存在的上一版（第 0 版），那时印出来的形状是假的。实测过两档（`versions.test.ts` ⑦ 拿它当
+ * 断言）：回退到第 1 版会被印成「第一版：逐节全是加的」，而一段话落在草案之后会被印成
+ * 「这一版不是一份草案」——错的其实是上一版。
  *
  * 逐节那一半走 `draftOf`：**讨论态那一趟落的是话**（凝聚理解），它不是草案——那时 `why` 说得
- * 出来原因，`lines` 是空的。
+ * 出来是**哪一版**读不成，`lines` 是空的。
  */
 export function versionFaceOf(facts: RoundFacts, v: DistillVersion): VersionFace {
   const version = versionIndexOf(facts, v.digest) ?? v.at
   const prev = v.at === 1 ? null : (facts.versions[v.at - 2] ?? null)
   const same = prev !== null && prev.digest === v.digest
-  const head = { version, landing: v.at, same }
-  if (same) return { ...head, lines: [], why: null }
-  const lines = sectionDiffOf(previousBodyOf(facts, version), v.body)
-  return lines === null
-    ? { ...head, lines: [], why: '这一版不是一份草案（读不成逐节）：没有逐节差异可印' }
-    : { ...head, lines, why: null }
-}
-
-/** 上一个内容版本（第 `version - 1` 版）的正文：链上第一次落到那一份内容的那一条。 */
-function previousBodyOf(facts: RoundFacts, version: number): string | null {
-  if (version <= 1) return null
-  return facts.versions.find((x) => versionIndexOf(facts, x.digest) === version - 1)?.body ?? null
+  const basis = { version, landing: v.at, same }
+  if (same) return { ...basis, againstVersion: null, lines: [], why: null }
+  const lines = sectionDiffOf(prev?.body ?? null, v.body)
+  if (lines === null) {
+    return {
+      ...basis,
+      againstVersion: null,
+      lines: [],
+      why:
+        asDraft(v.body) === null
+          ? '这一版不是一份草案（读不成逐节）：没有逐节差异可印'
+          : '上一趟落的那一版不是一份草案（讨论态落的是话）：比不出逐节差异',
+    }
+  }
+  return {
+    ...basis,
+    againstVersion: prev === null ? null : (versionIndexOf(facts, prev.digest) ?? null),
+    lines,
+    why: null,
+  }
 }
 
 /** 逐节要比的那几栏（`DraftSection` 的那八栏；少一栏就是漏比一栏）。 */

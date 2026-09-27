@@ -1873,7 +1873,8 @@ function versionLinesOf(face: VersionFace | null, where: '讨论态' | '预备�
   const head = `  版本：第 ${face.version} 版（这一轮第 ${face.landing} 次落地）`
   if (face.same) return [`${head}\t与上一趟逐字节相同`]
   if (face.why !== null) return where === '讨论态' ? [head] : [`${head}\t${face.why}`]
-  const vs = face.version === 1 ? '第一版' : `与第 ${face.version - 1} 版比`
+  // **比的是哪一版由读数给**（`againstVersion`）：回退那一趟它不是 `version - 1`（见 `versionFaceOf`）。
+  const vs = face.againstVersion === null ? '第一版' : `与第 ${face.againstVersion} 版比`
   return [`${head}\t${vs}：${face.lines.length} 处`, ...face.lines.map((l) => `    ${l}`)]
 }
 

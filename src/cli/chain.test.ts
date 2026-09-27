@@ -992,7 +992,14 @@ test('C5.b · `--json` 那一栏与人面印的是同一张读数：号 · 落�
   const asJson = fugue(jsonRoot, '--json', 'round', 'plan', '写一份 a.ts', '--judge')
   assert.equal(asJson.code, 0, asJson.stderr)
   const j = JSON.parse(asJson.stdout) as {
-    version: { version: number; landing: number; same: boolean; lines: string[]; why: string | null } | null
+    version: {
+      version: number
+      landing: number
+      same: boolean
+      againstVersion: number | null
+      lines: string[]
+      why: string | null
+    } | null
   }
   assert.ok(j.version !== null, `--json 里没有版本那一栏：${asJson.stdout.slice(0, 400)}`)
   assert.equal(j.version.version, Number(face[1]), '--json 里的号与人面印的不是同一个')
@@ -1000,6 +1007,7 @@ test('C5.b · `--json` 那一栏与人面印的是同一张读数：号 · 落�
   assert.equal(face[3], String(Number(face[1]) - 1), '人面比的那一版不是上一版')
   assert.equal(j.version.same, false, '改过的那一版不该报"逐字节相同"')
   assert.equal(j.version.why, null, '草案读得成，不该报"读不成逐节"')
+  assert.equal(j.version.againstVersion, Number(face[3]), '--json 里"与第几版比"那一栏与人面印的不是同一个')
   assert.equal(j.version.lines.length, Number(face[4]), '--json 里的差异条数与人面印的"几处"对不上')
   for (const line of j.version.lines) assert.ok(human.stdout.includes(`    ${line}`), `这一条差异人面没印：${line}`)
   assert.deepEqual(j.version.lines, ['~ 第 1 节：goal 变了'], '差异那一栏不是手写的那一条')
@@ -1008,14 +1016,18 @@ test('C5.b · `--json` 那一栏与人面印的是同一张读数：号 · 落�
   const humanSame = fugue(humanRoot, 'round', 'plan', '写一份 a.ts', '--judge')
   assert.match(humanSame.stdout, /版本：第 2 版（这一轮第 3 次落地）\t与上一趟逐字节相同/, humanSame.stdout.slice(0, 500))
   const jsonSame = fugue(jsonRoot, '--json', 'round', 'plan', '写一份 a.ts', '--judge')
-  const j2 = JSON.parse(jsonSame.stdout) as { version: { version: number; landing: number; same: boolean; lines: string[] } }
+  const j2 = JSON.parse(jsonSame.stdout) as {
+    version: { version: number; landing: number; same: boolean; againstVersion: number | null; lines: string[] }
+  }
   assert.equal(j2.version.version, 2, '重落同一版不该涨号')
   assert.equal(j2.version.landing, 3, '落地次数该照数')
   assert.equal(j2.version.same, true)
   assert.deepEqual(j2.version.lines, [], '重落那一档不该有差异那一栏')
+  assert.equal(j2.version.againstVersion, null, '重落那一档没有差异，也就没有"比的是哪一版"')
   console.log(
     `C5.b 同源读数：人面「第 ${face[1]} 版（这一轮第 ${face[2]} 次落地）· 与第 ${face[3]} 版比：${face[4]} 处」` +
-      ` ↔ --json version=${j.version.version} landing=${j.version.landing} same=${String(j.version.same)} lines=${j.version.lines.length}` +
+      ` ↔ --json version=${j.version.version} landing=${j.version.landing} same=${String(j.version.same)}` +
+      ` againstVersion=${String(j.version.againstVersion)} lines=${j.version.lines.length}` +
       ` · 重落那一档两边都是第 ${j2.version.version} 版 / 第 ${j2.version.landing} 次落地 / 逐字节相同`,
   )
 })

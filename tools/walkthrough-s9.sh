@@ -36,6 +36,8 @@
 #
 # `--live` 那一支：同一串路换真模型跑一遍（每一步真发一次调用）。那一支的断言是**不变量**
 # （每条路都收得住并进判 · 版本那一栏印得出 · 退出码 0/1 之内），不是夹具档那些定值。
+# **这一支今天没取证**（它要花真调用）：上面那些读数全是夹具档的。它与 `tools/live-round.sh`
+# 的关系是**超集**（那边跑的是同一串路、覆盖面更窄），所以跟着那一档一起跑就够——不专门为它花钱。
 #
 # 用法：sh tools/walkthrough-s9.sh [--live]。退出码 0 且 FAIL 0 才算走通。KEEP=1 留下现场。
 set -u
@@ -430,6 +432,30 @@ else
   # 原话在日志里出现 0 次（"不另存"的牙）。它在视图里，不在工作树上。
   check "⑤ 会话记录只被 ① 写过（人 + 持轮者两笔）" "2" "$(node "$T/s9.js" writes "$W/.fugue/log/round.jsonl" '.fugue/session/r1.jsonl')"
   check "⑤ 那句原话不落日志" "0" "$(loghas '为什么这么拆再写清楚一点')"
+fi
+
+# ⑤b 回退那一档（A→B→A）：把草案写回**第 1 版那一份**（逐字节）再判一遍。**版本那一栏说的必须是
+#     真话**：号退回内容坐标（讨论 1 · 草案 2 → 第 2 版），而差异比的是它**真正改自的那一版**
+#     （上一趟落地的第 3 版）——按内容编号减一会指到一个不存在的「第 0 版」，那时印出来的是假的
+#     形状（实测：改之前它印「第一版：逐节全是加的」／「这一版不是一份草案」）。
+$FUGUE --root "$W" write .fugue/plan/r1.md --from "$T/draft1.md" > /dev/null 2>&1 || bad "⑤b 草案写回第 1 版那一份"
+N=$((N + 1))
+OUTF="$T/run-$N.out"
+$FUGUE --root "$W" round plan '写一份 notes.md' --judge > "$OUTF" 2> "$T/run-$N.err"
+RC=$?
+printf '  rc = %s\n' "$RC"
+sed 's/^/  | /' "$OUTF"
+if [ "$LIVE" = yes ]; then
+  has "$OUTF" '版本：第' "⑤b live：回退之后版本那一栏照旧印得出来"
+else
+  check "⑤b 回退那一趟的退出码" "0" "$RC"
+  has "$OUTF" '版本：第 2 版' "⑤b 号退回内容坐标（第 2 版：讨论 1 · 草案 2）"
+  has "$OUTF" '与第 3 版比' "⑤b 差异比的是它真正改自的那一版（上一趟落地的第 3 版）"
+  has "$OUTF" '开头那段（为什么这么拆）变了' "⑤b 与那一版的差印出来了"
+  check "⑤b 没有把回退印成假形状（没印「这一版不是一份草案」）" "0" "$(grep -c '这一版不是一份草案' "$OUTF" || true)"
+  check "⑤b 也没印「第一版：逐节全是加的」" "0" "$(grep -c '第一版：' "$OUTF" || true)"
+  check "⑤b 处境照旧" "Planning" "$(laststate)"
+  check "⑤b 门停着：日志里 contract/issue 条数" "0" "$(logcount 'contract/issue')"
 fi
 
 echo

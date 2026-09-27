@@ -10,6 +10,8 @@
 //   ③ **空账不抛**：这一轮一条都没有 → `Idle` · 没有底 · 空串 · 空链（读得出"还没有"，不是报错）
 //   ④ **逐节差异**（C5.b）：多了哪一节 · 少了哪一节 · 哪一节哪几栏变了；读不成草案就是 `null`
 //   ⑤ **人面读数**（C5.b）：第几版 · 第几次落地 · 与上一版差在哪几节（重落那一趟逐字节相同）
+//   ⑦ **回退那一档（A→B→A）**：比的是上一趟落地的那一版（第 2 版），不是按内容编号减一（那会指到
+//      一个不存在的第 0 版）；`why` 分得清是**哪一版**读不成草案
 //   ⑥ **按 `against` 走回第一版**：第 i 条的 `against` 就是第 i-1 条那一版的指纹（重落那一趟指向
 //      自己），按它一步步往回走、每一步都取回得了正文——这就是「按坐标取回」今天走的那条路
 import assert from 'node:assert/strict'
@@ -226,16 +228,19 @@ test('⑤ 人面读数：第几版 · 第几次落地 · 与上一版差在哪�
     assert.equal(fa.same, false)
     assert.deepEqual(fa.lines, ['+ 第 1 节：把解析器拆成独立模块'], '第一版：逐节全是加的')
     assert.equal(fa.why, null)
+    assert.equal(fa.againstVersion, null, '第一版没有可比的那一版')
     const fb = versionFaceOf(f, second)
     assert.equal(fb.version, 2, '内容变了 → 第 2 版')
     assert.equal(fb.landing, 2)
     assert.equal(fb.same, false)
     assert.deepEqual(fb.lines, ['~ 第 1 节：ownedPaths 变了'])
+    assert.equal(fb.againstVersion, 1, '第 2 版比的是上一趟落地的那一版（第 1 版）')
     const fc = versionFaceOf(f, third)
     assert.equal(fc.version, 2, '重落同一版不涨号')
     assert.equal(fc.landing, 3)
     assert.equal(fc.same, true, '与上一趟逐字节相同')
     assert.deepEqual(fc.lines, [], '逐字节相同就没有差异可印')
+    assert.equal(fc.againstVersion, null, '没有印差异就没有"比的是哪一版"')
     // 讨论态那一档：一段话读不成草案 → 印得出"第几版"，而差异那一栏给的是原因。
     await b.log.append('round', { t: 'holder/distill', round: R, agent: HOLDER, digest: digestOf('这是一段话。'), body: '这是一段话。' })
     const f2 = await roundFactsOf(b.log, R)
@@ -294,6 +299,53 @@ test('⑥ 按 `against` 走回第一版：第 i 条指着第 i-1 条那一版（
     console.log(
       `⑥ 读数：链上 ${f.versions.length} 格（重落 1）· 每一条的 against 都是上一条那一版的指纹 · ` +
         `从链尾走 ${f.versions.length - 1} 步回到第一版（${String(ds[0])}）`,
+    )
+  } finally {
+    await b.close()
+  }
+})
+
+test('⑦ 回退那一档（A→B→A）：比的是上一趟落地的那一版，不是按内容编号减一', async () => {
+  const b = await bench()
+  try {
+    // A（一节）→ B（改了那一节的 goal 与开头那段）→ A（逐字节回到第一版）。
+    const a = draftText([section()])
+    const bb = draftText([section({ goal: '把调用方改到新模块上' })], '换了个说法。')
+    const d = (t: string): string => digestOf(t)
+    await b.log.append('round', { t: 'holder/distill', round: R, agent: HOLDER, digest: d(a), body: a })
+    await b.log.append('round', { t: 'holder/distill', round: R, agent: HOLDER, digest: d(bb), against: d(a), body: bb })
+    await b.log.append('round', { t: 'holder/distill', round: R, agent: HOLDER, digest: d(a), against: d(bb), body: a })
+
+    const f = await roundFactsOf(b.log, R)
+    const back = f.versions[2]
+    assert.ok(back !== undefined)
+    const face = versionFaceOf(f, back)
+    assert.equal(face.version, 1, '内容回到了第一版：号退回 1（这一栏是内容的号）')
+    assert.equal(face.landing, 3)
+    assert.equal(face.same, false, '与上一趟（B）不是逐字节相同')
+    assert.equal(face.againstVersion, 2, '比的是它真正改自的那一版（B = 第 2 版），不是第 0 版')
+    assert.deepEqual(
+      face.lines,
+      ['~ 开头那段（为什么这么拆）变了', '~ 第 1 节：goal 变了'],
+      '回退不是「第一版：逐节全是加的」——那是按内容编号减一那一档印出来的假形状',
+    )
+    assert.equal(face.why, null)
+
+    // 一段话落在草案之后，草案又落在话之后：**上一版**读不成，`why` 该说的是上一版（不是这一版）。
+    const prose = '这一趟说的是话，不是草案。'
+    await b.log.append('round', { t: 'holder/distill', round: R, agent: HOLDER, digest: d(prose), against: d(a), body: prose })
+    await b.log.append('round', { t: 'holder/distill', round: R, agent: HOLDER, digest: d(a), against: d(prose), body: a })
+    const f2 = await roundFactsOf(b.log, R)
+    const after = f2.versions[4]
+    assert.ok(after !== undefined)
+    const face2 = versionFaceOf(f2, after)
+    assert.equal(face2.version, 1, '这一版的内容又是 A（内容的号照旧是 1）')
+    assert.equal(face2.againstVersion, null, '印不出差异就没有"比的是哪一版"')
+    assert.match(String(face2.why), /上一趟落的那一版不是一份草案/, `why 没说是哪一版：${String(face2.why)}`)
+    assert.ok(!String(face2.why).includes('这一版不是'), `why 把它说成这一版读不成：${String(face2.why)}`)
+    console.log(
+      `⑦ 读数：回退（A→B→A）→ 第 ${face.version} 版 / 第 ${face.landing} 次落地 · 与第 ${String(face.againstVersion)} 版比 ${face.lines.length} 处` +
+        ` · 一段话落在草案之后 → why「${String(face2.why)}」`,
     )
   } finally {
     await b.close()
