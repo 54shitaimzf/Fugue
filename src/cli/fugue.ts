@@ -2414,6 +2414,14 @@ function publishedCatalog(): ReturnType<typeof catalog> {
  * **`seed` 那一条的算式要它**：`contract/` 不认识模型目录，所以由命令面这一层取一次递下去。
  * 三处（`round new` · `round run` · `round go`）递的是同一个数——三处各自读一次声明的话，
  * "发给模型的那个上限"与"判种子的那个上限"会静默分家。
+ *
+ * **这一处今天不可证伪**（如实记，不装成有牙）：目录里那一个数就是缺省——`DEFAULT_MODEL` 的
+ * `contextLimit` 与 `contract/types.ts` 的 `DEFAULT_MODEL_LIMIT` 都是 1 000 000（`model/contract.ts`
+ * 第 226 行 · 第 460 行），所以三处**漏递一处，读数一个字节都不变**。
+ *   · **算式那一层有牙**：`round/start.test.ts` ⑥（`modelLimit: 8 000` → 上限 0 · 不递 → 904 000）。
+ *   · **接线那一层的牙要等「模型目录可换」那一格**：那时给它一条断言——换一个上限不同的声明，
+ *     三处的读数都跟着动。今天装牙只有一个办法（为一条断言开一个换模型的入口），那是把形状往
+ *     错的方向拽：那个入口属于"模型目录可换"那一格，不属于这一处。
  */
 function modelLimitOf(): number {
   return modelDeclOf(DEFAULT_MODEL.id).contextLimit
