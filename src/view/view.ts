@@ -19,6 +19,7 @@ import type { Delta } from '../delta.ts'
 import { EMPTY_TREE_ID } from '../entries.ts'
 import type { DirEntry, EntryMeta } from '../entries.ts'
 import { agentFor } from '../identity.ts'
+import { PathShapeError } from '../path-shape.ts'
 import type { LogEvent, LogReader } from '../log/events.ts'
 import type { AgentId, BlobId, CommitId, RelPath, ViewRev, WriterId } from '../terms.ts'
 import type {
@@ -84,13 +85,13 @@ function pathOf(raw: RelPath, opts: { root?: boolean } = {}): string {
   while (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1)
   if (p === '' || p === '.') {
     if (opts.root === true) return ''
-    throw new Error('需要一个路径')
+    throw new PathShapeError('需要一个路径（`.` 是根，不指某一条文件）')
   }
-  if (p.startsWith('/')) throw new Error(`视图内的路径是相对的：${raw}`)
+  if (p.startsWith('/')) throw new PathShapeError(`视图内的路径是相对的：${raw}`)
   for (const s of p.split('/')) {
-    if (s === '') throw new Error(`路径里有空段：${raw}`)
-    if (s === '.') throw new Error(`路径里有 . 段：${raw}`)
-    if (s === '..') throw new Error(`路径里有 ..：${raw}`)
+    if (s === '') throw new PathShapeError(`路径里有空段：${raw}`)
+    if (s === '.') throw new PathShapeError(`路径里有 . 段：${raw}`)
+    if (s === '..') throw new PathShapeError(`路径里有 ..：${raw}`)
   }
   return p
 }

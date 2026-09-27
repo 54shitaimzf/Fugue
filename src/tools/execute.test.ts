@@ -143,6 +143,42 @@ test('① 参数不是对象 · 少了必填参数：两条都是"一次失败�
   }
 })
 
+// ── ①d 路径形状 ─────────────────────────────────────────────────────────────
+
+test('①d 路径形状不合法：一条失败的结果，不是抛——抛出去那一趟当场就没了', async () => {
+  const b = await bench()
+  try {
+    // **真档那一趟**（`--dump-wire` 实录）：持轮者第 2 步 `read {"path":"."}`——它想"读一下
+    // 工作区"——视图那层抛「需要一个路径」→ `tool-threw` → **那一趟两句话就结束**，草案一个
+    // 字节都没写，判据 ④ 的"打回三数"与判据 ③ 的"停因是收敛"两处跟着红。
+    // 下面这几条都是模型真会发的那种写法（`.` 与 `..` 最常见）。
+    const shapes = ['.', '..', '../x', 'a/./b', 'a//b', 'a/..', '/abs.txt']
+    for (const p of shapes) {
+      const r = await face('read', { path: p }, b.host)
+      assert.equal(r.ok, false, `read ${JSON.stringify(p)} 该回一条失败的结果`)
+      assert.match(r.output, /路径/, `read ${JSON.stringify(p)} 那句没说清路径哪里不对：${r.output}`)
+      // **要指得出路**：那几句末尾都点出 glob 是看全貌的那一条（架构 § 8.4 纪律 2）。
+      assert.match(r.output, /glob/, `read ${JSON.stringify(p)} 那句没指路：${r.output}`)
+    }
+    // 走路径的另外三条同一档：它们的 `path` 是同一个模型的输入。
+    const wrote = await face('write', { path: '.', content: 'x' }, b.host)
+    assert.equal(wrote.ok, false, 'write 一条目录路径该回一条失败的结果')
+    const edited = await face('edit', { path: '..', old_string: 'a', new_string: 'b' }, b.host)
+    assert.equal(edited.ok, false, 'edit 一条 .. 路径该回一条失败的结果')
+    // **负对照：实现自己坏了照旧抛。** 接掉它等于把真 bug 变成一句给模型看的话——`tool-threw`
+    // 那一档要留着（真档上它照出过物化树里的 `ENOTDIR`）。
+    const broken = new Proxy({} as ToolHost, {
+      get: () => async () => {
+        throw new Error('实现里坏了')
+      },
+    })
+    await assert.rejects(async () => await face('read', { path: 'a.md' }, broken), /实现里坏了/)
+    console.log('①d 读数：7 种坏形状逐条回结果（read）· write/edit 各一条 · 负对照：实现坏了照旧抛')
+  } finally {
+    await b.close()
+  }
+})
+
 // ── ② 写进去的字节读回来逐字节相同 ────────────────────────────────────────────
 
 test('② write 之后立刻 read：字节逐字节相同（含非 UTF-8 的字节）', async () => {

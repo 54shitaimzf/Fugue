@@ -15,6 +15,9 @@
 // "公布的工具每一条都有实现"，而这句话只有在"实现表"是一份**读得出来的名单**时才量得到。
 // 写成"调用时才 `throw`"就量不到了——那时缺口只在真被调到时才现形。
 import type { Capability, Denied } from '../capability/table.ts'
+// **路径形状那一个错来自叶子**（`src/path-shape.ts`）：视图那一层抛它，这一层按它接成一条结果。
+// 不 import 视图那边——这一层的头注写着"不认识视图"，而这条规矩两层共用，所以它有一条自己的家。
+import { PathShapeError } from '../path-shape.ts'
 import { lineCount } from './receipt.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
@@ -285,6 +288,31 @@ function missing(tool: string, name: string): FaceResult {
 
 const utf8Of = (b: Uint8Array): string => Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString('utf8')
 const bytesOf = (s: string): Uint8Array => new Uint8Array(Buffer.from(s, 'utf8'))
+
+/**
+ * **模型给的路径形状不合法，是一条失败的结果，不是把这一趟打死。**
+ *
+ * 出处：架构 § 8.4 纪律 2（工具面只有那一个入口，错路要指出来）· § 8.9（工具结果）。抛出去在
+ * `runtime/step.ts` 那里是一条 `tool-threw`，**那一趟当场结束**——真档照出过一次：持轮者第 2 步
+ * `read {"path":"."}`，那一趟两句话就没了，草案一个字节都没写（`--dump-wire` 实录）。
+ *
+ * **只接路径形状那一类**（`PathShapeError`）：实现自己坏了（视图 · 宿主 · 物化树里那些没料到的
+ * 错）照旧抛——那是 `tool-threw` 该管的事，接掉它等于把真 bug 变成一句给模型看的话。
+ */
+async function guardPath(f: () => Promise<FaceResult>): Promise<FaceResult> {
+  try {
+    return await f()
+  } catch (err) {
+    if (!(err instanceof PathShapeError)) throw err
+    return no(
+      `${err.message}——那几栏要指向一条具体的文件（视图内的相对路径）。` +
+        '要看工作区里有哪些路径用 glob：pattern 给 `**/*` 就是全都要。',
+    )
+  }
+}
+
+/** 走路径那四条：它们的 `path` 是模型的输入，所以过 `guardPath`（其余各条不碰路径算术）。 */
+const PATH_TOOLS: readonly string[] = ['read', 'write', 'edit', 'read_image']
 
 // ── 视图类那五个 ───────────────────────────────────────────────────────────────
 //
@@ -613,7 +641,9 @@ export function publishedTools(names: readonly string[], entries: readonly ToolE
 
 /** 一次调用能不能跑。**没实现就是拒，话里指得出这一条从哪来。** */
 export function faceOf(tool: string): ToolFn | null {
-  return IMPLEMENTED[tool] ?? null
+  const fn = IMPLEMENTED[tool]
+  if (fn === undefined) return null
+  return PATH_TOOLS.includes(tool) ? (args, host, ctx) => guardPath(() => fn(args, host, ctx)) : fn
 }
 
 /**
