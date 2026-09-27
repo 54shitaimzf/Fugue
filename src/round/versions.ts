@@ -98,6 +98,19 @@ export function lastOf(facts: RoundFacts): DistillVersion | null {
 }
 
 /**
+ * 这一轮**当下那一版**的人面读数（链尾那一版：讨论态是理解 · 预备态是草案）。一次都没落过就是
+ * `null`。
+ *
+ * **一次读 → 一张读数 → 两个渲染器**：人面印的那几行（`cli/fugue.ts` 的 `versionLinesOf`）与
+ * 机器面那几栏（`--json`）都从这一张出来——PLAN § 5.12 的 C5.b 那一句「与 `--json` 那两栏同源」
+ * 落的就是它：两个渲染器不会各算各的（口径只有一处：`versionFaceOf`）。
+ */
+export function latestFaceOf(facts: RoundFacts): VersionFace | null {
+  const v = lastOf(facts)
+  return v === null ? null : versionFaceOf(facts, v)
+}
+
+/**
  * **第几版**（**内容坐标**，从 1 起）：链上第几个**不同的内容**——那一份 `digest` 第一次出现
  * 时，它前面已经有过几个不同的 `digest`，加一。
  *

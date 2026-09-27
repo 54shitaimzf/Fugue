@@ -624,8 +624,8 @@ const DRAFT_SECTION = {
 }
 
 /** 一份草案的正文：一个任务一节（标 `json` 的围栏块）——与持轮者写的是同一个形状。 */
-function draftMd(): string {
-  return ['## 一 · 写 a.ts', '', '```json', JSON.stringify(DRAFT_SECTION, null, 2), '```'].join('\n')
+function draftMd(over: Partial<typeof DRAFT_SECTION> = {}): string {
+  return ['## 一 · 写 a.ts', '', '```json', JSON.stringify({ ...DRAFT_SECTION, ...over }, null, 2), '```'].join('\n')
 }
 
 /** 轮级日志（`.fugue/log/round.jsonl`）里全部事件，按写入次序。 */
@@ -944,5 +944,78 @@ test('C5 · `fugue say` 预备态：那句话进请求字节 · 原话不另存 
   console.log(
     `C5 预备态读数：退 ${r.code} · 请求里有那句话 · 会话记录 0 份（原话不另存）· ` +
       `round/state 1 条（Idle → Planning）· contract/issue 0 条 · holder/distill 指纹未变`,
+  )
+})
+
+// ── C5.b · `--json` 那一栏与人面印的是同一张读数（PLAN § 5.12 的 C5.b「与 `--json` 那两栏同源」）──
+//
+// C5.b 落地时只做了人面（三处打印），`--json` 那两栏一直空着——这一条量的是"同源"：**同一份处境
+// 下，两个渲染器给出的号 · 落地次数 · 同否 · 差异逐字对得上**。
+//
+// **两个靶子**：`--json` 与不带它在同一份日志上会各自多落一版，所以两个靶子各读一面，读的是同一
+// 份处境。板子与上面那两条 C5.b 同一条路（人写草案进视图 → `round plan --judge` 不跑模型）。
+// 第二版只改第一节的 `goal`：逐节差异恰好一处（`~ 第 1 节：goal 变了`）——**这一条是手写的期望**，
+// 所以把差异口径退化成"整篇不同"也会让它变红（同一个 `sectionDiffOf` 供两个渲染器）。
+test('C5.b · `--json` 那一栏与人面印的是同一张读数：号 · 落地次数 · 同否 · 差异逐字对上', () => {
+  /** 把一份靶子搭到「预备态 · 草案第 2 版刚写进视图」：底 → 动作绑定 → 草案 v1 判一遍 → 草案 v2。 */
+  const preset = (): string => {
+    const root = tmpRoot()
+    const outside = tmpDir('fugue-chain-ver-')
+    const bottom = join(outside, 'bottom.txt')
+    writeFileSync(bottom, '底。\n')
+    assert.equal(fugue(root, 'write', 'README.md', '--from', bottom).code, 0)
+    assert.equal(fugue(root, 'commit', '-m', '底').code, 0)
+    assert.equal(fugue(root, 'config', 'set', 'actions.ok', JSON.stringify({ argv: ['/bin/sh', '-c', 'true'], outputs: [] })).code, 0)
+    // 第一版：判一遍（第 1 次落地）——两个靶子都要走过这一步，不然下面读到的号不是同一个。
+    const v1 = join(outside, 'r1.md')
+    writeFileSync(v1, draftMd())
+    assert.equal(fugue(root, 'write', '.fugue/plan/r1.md', '--from', v1).code, 0)
+    const first = fugue(root, 'round', 'plan', '写一份 a.ts', '--judge')
+    assert.equal(first.code, 0, `第一版那一趟退了 ${first.code}：${first.stderr.slice(0, 300)}`)
+    // 第二版：只改第一节的 `goal`（逐节差异恰好一处）。
+    const v2 = join(outside, 'r1.v2.md')
+    writeFileSync(v2, draftMd({ goal: `${DRAFT_SECTION.goal}（第二版）` }))
+    assert.equal(fugue(root, 'write', '.fugue/plan/r1.md', '--from', v2).code, 0)
+    return root
+  }
+  const humanRoot = preset()
+  const jsonRoot = preset()
+
+  // 人面那两栏：第 2 版 · 第 2 次落地 · 与第 1 版比 1 处 + 那一条逐字。
+  const human = fugue(humanRoot, 'round', 'plan', '写一份 a.ts', '--judge')
+  assert.equal(human.code, 0, human.stderr)
+  const face = /版本：第 (\d+) 版（这一轮第 (\d+) 次落地）\t与第 (\d+) 版比：(\d+) 处/.exec(human.stdout)
+  assert.ok(face !== null, `人面没印出第几版与差异：${human.stdout.slice(0, 500)}`)
+  assert.match(human.stdout, /    ~ 第 1 节：goal 变了/, human.stdout.slice(0, 500))
+
+  // 机器面那几栏：同一份处境。
+  const asJson = fugue(jsonRoot, '--json', 'round', 'plan', '写一份 a.ts', '--judge')
+  assert.equal(asJson.code, 0, asJson.stderr)
+  const j = JSON.parse(asJson.stdout) as {
+    version: { version: number; landing: number; same: boolean; lines: string[]; why: string | null } | null
+  }
+  assert.ok(j.version !== null, `--json 里没有版本那一栏：${asJson.stdout.slice(0, 400)}`)
+  assert.equal(j.version.version, Number(face[1]), '--json 里的号与人面印的不是同一个')
+  assert.equal(j.version.landing, Number(face[2]), '--json 里的落地次数与人面印的不是同一个')
+  assert.equal(face[3], String(Number(face[1]) - 1), '人面比的那一版不是上一版')
+  assert.equal(j.version.same, false, '改过的那一版不该报"逐字节相同"')
+  assert.equal(j.version.why, null, '草案读得成，不该报"读不成逐节"')
+  assert.equal(j.version.lines.length, Number(face[4]), '--json 里的差异条数与人面印的"几处"对不上')
+  for (const line of j.version.lines) assert.ok(human.stdout.includes(`    ${line}`), `这一条差异人面没印：${line}`)
+  assert.deepEqual(j.version.lines, ['~ 第 1 节：goal 变了'], '差异那一栏不是手写的那一条')
+
+  // 再落一遍**同一份正文**：两个渲染器都该说"与上一趟逐字节相同"（号不涨 · 次数照数）。
+  const humanSame = fugue(humanRoot, 'round', 'plan', '写一份 a.ts', '--judge')
+  assert.match(humanSame.stdout, /版本：第 2 版（这一轮第 3 次落地）\t与上一趟逐字节相同/, humanSame.stdout.slice(0, 500))
+  const jsonSame = fugue(jsonRoot, '--json', 'round', 'plan', '写一份 a.ts', '--judge')
+  const j2 = JSON.parse(jsonSame.stdout) as { version: { version: number; landing: number; same: boolean; lines: string[] } }
+  assert.equal(j2.version.version, 2, '重落同一版不该涨号')
+  assert.equal(j2.version.landing, 3, '落地次数该照数')
+  assert.equal(j2.version.same, true)
+  assert.deepEqual(j2.version.lines, [], '重落那一档不该有差异那一栏')
+  console.log(
+    `C5.b 同源读数：人面「第 ${face[1]} 版（这一轮第 ${face[2]} 次落地）· 与第 ${face[3]} 版比：${face[4]} 处」` +
+      ` ↔ --json version=${j.version.version} landing=${j.version.landing} same=${String(j.version.same)} lines=${j.version.lines.length}` +
+      ` · 重落那一档两边都是第 ${j2.version.version} 版 / 第 ${j2.version.landing} 次落地 / 逐字节相同`,
   )
 })

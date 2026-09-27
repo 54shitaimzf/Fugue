@@ -86,8 +86,8 @@ import { createToolExecutor } from '../capability/dispatch.ts'
 import { refHeadOf } from '../round/head.ts'
 import { RoundStartError, startRound } from '../round/start.ts'
 import { approvalsOf, dispatchRound } from '../round/dispatch.ts'
-import { lastOf, roundFactsOf, versionFaceOf } from '../round/versions.ts'
-import type { RoundFacts } from '../round/versions.ts'
+import { lastOf, latestFaceOf, roundFactsOf } from '../round/versions.ts'
+import type { VersionFace } from '../round/versions.ts'
 import { fingerprintOf } from '../contract/gate.ts'
 import { PlanError, planRound, pinnedBase } from '../round/plan.ts'
 import { RECENT_COUNT, SayError, recentOf, sayRound, sessionPathOf } from '../round/say.ts'
@@ -1432,6 +1432,10 @@ async function roundPlan(
     // 读数——它换不来放行，新的一批照样停在门口。
     const earlier = fingerprint === null ? [] : await approvalsOf(ctx.log)
     const same = earlier.find((x) => x.fingerprint === fingerprint) ?? null
+    // **版本那一栏：一次读，两个渲染器**（PLAN § 5.12 的 C5.b「与 `--json` 那两栏同源」）——下面
+    // 机器面那几栏与人面那几行出自同一张 `VersionFace`。**这一趟没写出草案时那一栏是空的**（判据
+    // 与人面印那一处逐字相同：人面不印的处境，机器面也不该报一个旧的号）。
+    const version = r.draftText === null ? null : await latestFaceOf(await roundFactsOf(ctx.log, round))
     if (json) {
       emitJson({
         round: r.round,
@@ -1456,6 +1460,8 @@ async function roundPlan(
         sameAs: same === null ? null : same.round,
         seedRead: r.seedRead,
         occupancy: [...r.occupancy],
+        // **版本那一栏**（`versionJsonOf`：`VersionFace` 逐字段投影）——与人面那几行同源。
+        version: versionJsonOf(version),
       })
     } else {
       emitLine(`${r.round}\t${r.held ? '停在门口' : '退回'}\t${r.steps} 步\t${r.exit}`)
@@ -1465,9 +1471,10 @@ async function roundPlan(
           r.draftText === null ? '没有写出来' : `${estimateTokensOfText(r.draftText)} token（那把尺的估账）· 正文进日志 holder/distill`
         }`,
       )
-      // **人面那一栏**（C5.b）：这一版是第几版 · 与上一版差在哪几节。
+      // **人面那一栏**（C5.b）：这一版是第几版 · 与上一版差在哪几节——与上面 `--json` 那几栏
+      // 读的是同一张读数（`version`）。
       if (r.draftText !== null) {
-        for (const line of versionLinesOf(await roundFactsOf(ctx.log, round), '预备态')) emitLine(line)
+        for (const line of versionLinesOf(version, '预备态')) emitLine(line)
       }
       if (draft !== null) {
         emitLine(`  要开 ${draft.sections.length} 个任务：`)
@@ -1622,6 +1629,11 @@ async function sayCommand(
           },
         }),
     })
+    // **版本那一栏：一次读，两个渲染器**（同上）。**这一趟落了东西才有这一栏**：讨论态那一趟落的
+    // 是一段话（`r.distill`）、预备态那一趟改的是那份草案（`r.plan.draftText`）——两态各自那一条
+    // 判据与下面人面印的那一处**是同一个**（不然机器面会在"这一趟什么都没落"时报一个旧的号）。
+    const landed = r.where === '讨论态' ? r.distill !== null : r.plan?.draftText != null
+    const version = landed ? await latestFaceOf(await roundFactsOf(ctx.log, round)) : null
     if (json) {
       emitJson({
         round: r.round,
@@ -1642,6 +1654,8 @@ async function sayCommand(
         problems: r.plan === null ? [] : [...r.plan.gate.problems],
         contracts: r.plan?.gate.built?.contracts.length ?? 0,
         occupancy: r.plan === null ? [] : [...r.plan.occupancy],
+        // **版本那一栏**（`versionJsonOf`）——与人面那几行同源。
+        version: versionJsonOf(version),
       })
     } else {
       emitLine(`${r.round}\t${r.where}\t${r.steps} 步\t${r.exit}`)
@@ -1659,14 +1673,14 @@ async function sayCommand(
         )
         // **人面那一栏**（C5.b）：这一版是第几版（讨论态落的是话，逐节差异那一栏不印）。
         if (r.distill !== null) {
-          for (const line of versionLinesOf(await roundFactsOf(ctx.log, round), '讨论态')) emitLine(line)
+          for (const line of versionLinesOf(version, '讨论态')) emitLine(line)
         }
         emitLine(`  这一态的处境没动：${r.state}（讨论不落地——落地是 fugue round plan <目标>）`)
       } else {
         emitLine(`  草案：${draftPathOf(round)}\t这一趟改的是它（原话不另存：工作区里找不到第二份）`)
         // **人面那一栏**（C5.b）：这一版是第几版 · 与上一版差在哪几节。
         if (r.plan?.draftText != null) {
-          for (const line of versionLinesOf(await roundFactsOf(ctx.log, round), '预备态')) emitLine(line)
+          for (const line of versionLinesOf(version, '预备态')) emitLine(line)
         }
         emitLine(
           `  判：${r.plan?.held === true ? '仍然停在门口' : '退回'}\t契约造得出来 ` +
@@ -1812,18 +1826,30 @@ function credentialFor(decl: ReturnType<typeof modelDeclOf>, wire: WireFlags, ju
 /**
  * 人面那一栏：**这一版是第几版 · 与上一版差在哪几节**（PLAN § 5.12 的 C5.b）。
  *
+ * **收的是一张读数，不是日志**（`latestFaceOf`）：同一条读数还有机器面那一个渲染器
+ * （`versionJsonOf`），两处因此不会各算各的。`null` = 这一轮还没落过（那一栏不印）。
+ *
  * 讨论态那一趟落的是**一段话**（凝聚理解）不是草案——那时只印第几版，逐节差异那一栏不印
  * （`versionFaceOf` 的 `why` 说得出来原因）。
  */
-function versionLinesOf(facts: RoundFacts, where: '讨论态' | '预备态'): string[] {
-  const v = lastOf(facts)
-  if (v === null) return []
-  const face = versionFaceOf(facts, v)
+function versionLinesOf(face: VersionFace | null, where: '讨论态' | '预备态'): string[] {
+  if (face === null) return []
   const head = `  版本：第 ${face.version} 版（这一轮第 ${face.landing} 次落地）`
   if (face.same) return [`${head}\t与上一趟逐字节相同`]
   if (face.why !== null) return where === '讨论态' ? [head] : [`${head}\t${face.why}`]
   const vs = face.version === 1 ? '第一版' : `与第 ${face.version - 1} 版比`
   return [`${head}\t${vs}：${face.lines.length} 处`, ...face.lines.map((l) => `    ${l}`)]
+}
+
+/**
+ * 机器面那一栏：**同一张读数的另一个渲染器**（PLAN § 5.12 的 C5.b「与 `--json` 那两栏同源」）。
+ *
+ * **逐字段投影，一个名字都不改**——`--json` 那一栏的形状就是 `VersionFace` 本身，所以人面与机器面
+ * 之间没有可漂移的余地（口径只有一处：`round/versions.ts` 的 `versionFaceOf`）。这一轮还没落过就是
+ * `null`：那一栏在、值是空的，与"这一栏不存在"分得开。
+ */
+function versionJsonOf(face: VersionFace | null): VersionFace | null {
+  return face === null ? null : { ...face, lines: [...face.lines] }
 }
 
 /**
