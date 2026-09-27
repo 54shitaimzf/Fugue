@@ -1,8 +1,8 @@
 event: message_start
-data: {"type":"message_start","message":{"id":"1cf5e899-5e45-4b35-b63f-307923338911","type":"message","role":"assistant","model":"deepseek-v4-flash","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":261,"cache_creation_input_tokens":0,"cache_read_input_tokens":2176,"output_tokens":0,"service_tier":"standard"}}}
+data: {"type":"message_start","message":{"id":"92d19cea-0e37-4b86-871b-1f80c6dab3a8","type":"message","role":"assistant","model":"deepseek-v4-flash","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":179,"cache_creation_input_tokens":0,"cache_read_input_tokens":2304,"output_tokens":0,"service_tier":"standard"}}}
 
 event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_00_Ut2xwmfQs52hXFVoqgCa0125","name":"bash","input":{}}}
+data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_00_vbK3Lf8sSzV3n3HFwzgF0445","name":"bash","input":{}}}
 
 event: ping
 data: {"type":"ping"}
@@ -44,7 +44,7 @@ event: content_block_stop
 data: {"type":"content_block_stop","index":0}
 
 event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"input_tokens":261,"cache_creation_input_tokens":0,"cache_read_input_tokens":2176,"output_tokens":38,"service_tier":"standard"}}
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"input_tokens":179,"cache_creation_input_tokens":0,"cache_read_input_tokens":2304,"output_tokens":38,"service_tier":"standard"}}
 
 event: message_stop
 data: {"type":"message_stop"}

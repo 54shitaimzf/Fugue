@@ -18,6 +18,7 @@ import { lowerFor } from '../view/lower.ts'
 import { createToolHost } from '../tools/host.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
 import { shellArgv } from '../tools/argv.ts'
+import { capReceipt } from '../tools/receipt.ts'
 import { createRoots } from '../roots/roots.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { ForkStrategy } from '../terms.ts'
@@ -41,11 +42,11 @@ import { checkpoint } from '../checkpoint.ts'
 import { snapshotOf } from '../view/snapshot.ts'
 import type { Stub } from './execute.ts'
 import { HarnessError, createRuntime } from '../runtime/step.ts'
-import type { AgentHandle, CallModel, StepResult, ToolExecutor } from '../runtime/step.ts'
+import type { AgentHandle, CallModel, StepResult, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
 import { planBudget } from '../runtime/budget.ts'
 import { calibrate, ratioOf, truthOf } from '../runtime/calib.ts'
 import { assemble } from '../assemble/assemble.ts'
-import { sourcesFor } from '../assemble/sources.ts'
+import { sourcesFor, stepsLeftTail } from '../assemble/sources.ts'
 import type { Prefix } from '../assemble/contract.ts'
 import { handoffAt, successorOf } from '../runtime/restart.ts'
 import { refFor } from '../identity.ts'
@@ -216,6 +217,31 @@ export interface RealDriverOptions {
    * `ownedPaths`），而"谁来写"是这一层的事。真模型那一档这份产出由模型自己写，这个口就不给。
    */
   readonly deliver?: (view: View, contract: Contract, agent: AgentId) => Promise<readonly RelPath[]>
+}
+
+/** 契约那一格念的**收工那半句**（`sources.ts` 的 `stepsLeftTail` 第三个参数）。 */
+const AGENT_LAND_NOW =
+  'Land the deliverable(s) now and hand in — the harness runs the assertions, so spend what is left on the files rather than on verifying them.'
+
+/**
+ * **契约那一格的"还剩几步"**（收工口径的第三面 · 推到子 agent 那一档）。
+ *
+ * 与持轮者那一格（`plan.ts` 的 `holderFace`）**同一个数**（`ask.maxSteps`，也就是循环停下来用的
+ * 那个）· **同一处减法**（`sources.ts` 的 `stepsLeftTail`），只有收工那半句不同。由头见那一份的
+ * 注释：第十六趟案一 cap 16 第五趟，一格 16 步里 10 步在视图之外找编译器，工作第 5–6 步就做完了。
+ *
+ * **不给上界就原样交回去**（不包一层）：没有上界就没有"还剩几步"可言，而空壳只会让 `ToolExecutor`
+ * 那张脸多一层看不出差别的东西。
+ */
+function withStepsLeft(inner: ToolExecutor, maxSteps?: number): ToolExecutor {
+  if (maxSteps === undefined) return inner
+  return {
+    async execute(call: ToolCallRequest, h: AgentHandle): Promise<ToolResult> {
+      const r = await inner.execute(call, h)
+      const tail = stepsLeftTail(Number(h.state.step), maxSteps, AGENT_LAND_NOW)
+      return tail === '' ? r : { ...r, output: capReceipt(r.output + tail) }
+    },
+  }
 }
 
 export function realDriver(opts: RealDriverOptions = {}): AgentDriver {
@@ -494,10 +520,12 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       writeScope: ownedPaths,
       ensureOf: () => Promise.resolve(),
     })
+  // **这一格的"还剩几步"**：与持轮者那一格同一个数、同一处减法，收工那半句换成"把产物落下去"。
+  const gated = withStepsLeft(execute, maxSteps)
   const runtime = createRuntime({
     logOf: () => log,
     call: ask.call as CallModel,
-    execute,
+    execute: gated,
     ...(ask.tools === undefined ? {} : { tools: ask.tools }),
   })
   // **产出先写进视图**（契约那几样），再让循环跑：循环负责"说话与调工具"，产出这件事归契约。

@@ -7,6 +7,7 @@
 //   ② 假模型驱动整轮 → 走到一次真提交，而**真工作树一个字节不动**
 //   ③ 交接那一趟接得上：触发点到了落 `agent/handoff`，后继接着干完
 //   ④ 驱动不在时**明确报出来**（不是静默地交一个空提交）
+//   ①e 契约那一格的收工口径第三面：预算快用完时，回执末尾多一句"还剩几步"（第十六趟那一格照出来的）
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -1023,6 +1024,87 @@ test('①c3 真读数修正下一步的账：报了用量就跟着它走，没�
  *        `grep -c` 一条只属于这一次跑的记号——产品仓库的同一路径里没有它；
  *   三 · 工具结果进的是**模型真看见的那串字节**（下一步的 C 区是那份前缀的一段）。
  */
+// ── ①e 契约那一格的"还剩几步"（收工口径的第三面 · 推到子 agent 那一档）──────────
+
+/**
+ * **预算快用完时，契约那一格的回执末尾也多一句"还剩几步"**（持轮者那一格那一条在 `plan.test.ts`
+ * 的 ⑪ 里）。
+ *
+ * 由头：样本盘第十六趟（案一 · cap 16 · 第五趟，`/tmp/scenario-b21/run/case-1-3`）——持轮者这一趟
+ * 没拆（整件事一份契约 · 一格），那一格 **16 步里 10 步在视图之外找 TypeScript 编译器**，而工作
+ * 第 5–6 步就做完了（写两个文件 + 删 `legacy/`），最后停在 16 步上界。它手里有"这一格最多几步"
+ * （「我的任务」那一句），但那 10 步里没有一处提醒它"预算正在用完"。
+ *
+ * 断言的形状（与持轮者那一格同一个）：一串 **8 步**的脚本（写 `a.ts` → 读 6 次 → 收工）——
+ *   · 给上界 8 → 第 5 · 6 · 7 步各带一句，数是 **3 · 2 · 1**，而句子里那半句是**契约那一格的**
+ *     （"把产物落下去"，不是持轮者那句"写草案"）；
+ *   · 不给上界 → **一次都不说**（负对照）。
+ * 两条路的读数不同，所以它不是"脚本短所以没出现"那种瞎绿。
+ */
+test('①e 契约那一格：预算快用完时回执末尾多一句"还剩几步"（上界前那三步），不给上界一次都不说', async () => {
+  const read = (i: number): readonly ModelEvent[] => [
+    ...callOne(0, `r${i}`, 'read', { path: 'a.ts' }),
+    { t: 'usage', usage: USAGE },
+    { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+  ]
+  /** 8 步：写 → 读 6 次 → 说完。 */
+  const EIGHT: readonly (readonly ModelEvent[])[] = [
+    SCRIPTS[0] as readonly ModelEvent[],
+    ...Array.from({ length: 6 }, (_unused, i) => read(i + 2)),
+    SCRIPTS[1] as readonly ModelEvent[],
+  ]
+  const record = (): { call: CallModel; seen: string[] } => {
+    const seen: string[] = []
+    const inner = scriptedModel(EIGHT)
+    // **只收最后那一条轮次**：C 区那条尾巴是累积的，逐条收会把同一份回执数好几遍。
+    const call: CallModel = (req: RuntimeRequest, signal: AbortSignal) => {
+      for (const one of (req.turns ?? []).at(-1)?.results ?? []) seen.push(one.output)
+      return inner(req, signal)
+    }
+    return { call, seen }
+  }
+
+  const b = await bench()
+  try {
+    const capped = record()
+    await runRound({ ...depsOf(b, realDriver({}), supportOf(b, capped.call)), maxSteps: 8 })
+    const hits = capped.seen.filter((o) => o.includes(' left.'))
+    assert.equal(
+      hits.length,
+      3,
+      `上界 8 那一档该从第 5 步起每步说一次（还剩 3 · 2 · 1 步）：${hits.map((h) => h.slice(-90)).join(' | ')}`,
+    )
+    assert.match(hits[0] ?? '', /3 left\./, `第 5 步那一次说的数不对：${hits[0] ?? ''}`)
+    assert.match(hits[1] ?? '', /2 left\./, `第 6 步那一次说的数不对：${hits[1] ?? ''}`)
+    assert.match(hits[2] ?? '', /1 left\./, `第 7 步那一次说的数不对：${hits[2] ?? ''}`)
+    assert.ok(
+      hits.every((h) => h.includes('Land the deliverable(s) now')),
+      `契约那一格的收工那半句该是"把产物落下去"：${hits[0] ?? ''}`,
+    )
+    assert.equal(
+      capped.seen.filter((o) => o.includes('Write the draft now')).length,
+      0,
+      '持轮者那一句不该出现在契约那一格',
+    )
+
+    // 负对照：命令行那一栏空着（没有上界）→ 一次都不说。
+    const b2 = await bench()
+    try {
+      const bare = record()
+      await runRound(depsOf(b2, realDriver({}), supportOf(b2, bare.call)))
+      assert.equal(bare.seen.filter((o) => o.includes(' left.')).length, 0, '没给上界却说了"还剩几步"')
+      console.log(
+        `①e 读数：上界 8 那一趟，模型看到的 ${capped.seen.length} 份回执里 ${hits.length} 份带"还剩"` +
+          `（${hits.map((h) => (h.match(/\d+ left\./) ?? [''])[0]).join(' · ')}）· 没给上界那一趟 ${bare.seen.filter((o) => o.includes(' left.')).length} 份`,
+      )
+    } finally {
+      await b2.close()
+    }
+  } finally {
+    await b.close()
+  }
+})
+
 test('①d `bash` 落在这一格的物化根上（不是进程自己的目录，也不是真实工作区）', async () => {
   // **靶子那串字节在台子那一步就写进底**（工作树与提交一起）：测试体里再改盘会被漂移检当场拦下
   // （"盘上那一份既不是底、也不是这次合并算出来的"）——那正是它该做的。
