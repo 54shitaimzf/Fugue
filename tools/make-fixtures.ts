@@ -33,6 +33,9 @@ const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPat
 const PAIRS = [
   { decl: 'deepseek-chat/anthropic', sse: 'anthropic-messages.sse', out: 'deepseek-chat-anthropic.json' },
   { decl: 'deepseek-chat/openai', sse: 'openai-chat.sse', out: 'deepseek-chat-openai.json' },
+  // **思考那一档录的是真会话**（`tools/probe-thinking.ts --live` 的第 1 次调用）：上游给的
+  // `reasoning_content` 是这一份夹具存在的唯一理由——另两份里一个字都没有。
+  { decl: 'deepseek-chat/openai', sse: 'openai-chat-thinking.sse', out: 'deepseek-chat-openai-thinking.json' },
 ] as const
 
 const FIXTURES = join(ROOT, 'src', 'model', 'fixtures')
@@ -74,6 +77,7 @@ for (const pair of PAIRS) {
     `${pair.out}：zones A/B/C = ${prefix.zoneA.length}/${prefix.zoneB.length}/${prefix.zoneC.length} 字节 · ` +
       `请求 ${body.length} 字节（${hashOf(body)}）· 响应 ${response.length} 字节 · ` +
       `积出 ${call.toolCalls.length} 条调用（${call.toolCalls.map((c) => c.name).join(' · ')}）· ` +
+      `思考 ${call.thinking?.text.length ?? 0} 个字 · ` +
       `用量 ${call.usage?.inputTokens}/${call.usage?.cacheReadTokens}/${call.usage?.cacheWriteTokens}/${call.usage?.outputTokens} · ` +
       `停因 ${call.stop}\n`,
   )

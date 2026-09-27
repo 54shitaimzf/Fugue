@@ -166,6 +166,10 @@ export interface ModelDecl {
   readonly call: {
     readonly temperature?: number
     readonly maxTokens?: number
+    /**
+     * 思考档位（见 `THINKING_LEVELS`）。**声明里必须有一条**：两条线对"没写"的解释相反。
+     */
+    readonly thinking?: ThinkingLevel
   }
 }
 
@@ -205,6 +209,14 @@ export function triggerAt(contextLimit: number): number {
 export const DEFAULT_CALL: Readonly<{ temperature?: number; maxTokens?: number }> = {}
 
 /**
+ * 思考的四档。**名字用上游那一套**（`reasoning_effort` 的取值）：`off` 是关，其余三档原样发。
+ * 它比温度多一条约束：**必须写出来**——两条线对"没写"的解释是相反的（Chat Completions 那条线
+ * 上思考默认是开的，Anthropic 那条线上不写就是不开），所以"要不要想"不能靠缺省。
+ */
+export type ThinkingLevel = 'off' | 'low' | 'high' | 'max'
+export const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'high', 'max']
+
+/**
  * 模型目录。**今天两条记录，同一个模型的两个线协议。**
  *
  * 两条都留着，是因为"同一模型两个协议可比"是 S8 的第二条验证（架构 § 20）：只声明一条的话，
@@ -225,7 +237,9 @@ export const MODEL_DECLS: Readonly<Record<string, ModelDecl>> = {
     systemPromptUpdate: 'in-history',
     contextLimit: 1_000_000,
     budget: { trigger: triggerAt(1_000_000), handoffMargin: 16_000 },
-    call: DEFAULT_CALL,
+    // 思考开在 `high`（照 DeepSeek Harness 那一档）。**输出预算跟着抬**：思考与答案共用同一个
+    // 输出预算，4096 那一档的兜底常数装不下"想完再说"（那条线 `max_tokens` 是必填）。
+    call: { thinking: 'high', maxTokens: 32_768 },
   },
   'deepseek-chat/openai': {
     id: 'deepseek-chat/openai' as ModelId,
@@ -236,7 +250,9 @@ export const MODEL_DECLS: Readonly<Record<string, ModelDecl>> = {
     systemPromptUpdate: 'in-history',
     contextLimit: 1_000_000,
     budget: { trigger: triggerAt(1_000_000), handoffMargin: 16_000 },
-    call: DEFAULT_CALL,
+    // 思考开在 `high`（照 DeepSeek Harness 那一档）。**输出预算跟着抬**：思考与答案共用同一个
+    // 输出预算，4096 那一档的兜底常数装不下"想完再说"（那条线 `max_tokens` 是必填）。
+    call: { thinking: 'high', maxTokens: 32_768 },
   },
 }
 
@@ -504,6 +520,12 @@ export const USAGE_COUNTS: readonly (keyof Usage)[] = [
  */
 export const USAGE_FIELDS: readonly (keyof Usage)[] = [...USAGE_COUNTS, 'rawStop', 'model']
 
+/** 一次思考：它想的那一串 + 那条线给的签名（Anthropic 有，Chat Completions 没有）。 */
+export interface Thinking {
+  readonly text: string
+  readonly signature: string | null
+}
+
 /**
  * 一段工具调用**收尾之前**的样子：参数是一串还没拼完的 JSON（线协议上它是分片流过来的）。
  *
@@ -560,6 +582,14 @@ export const STOP_REASONS: readonly StopReason[] = ['tool-calls', 'end-turn', 'm
 export interface Turn {
   /** 模型这一步说的话（没说就没有这一栏）。 */
   readonly text?: string
+  /**
+   * 这一步它想的那一串（思考那一档开着才有；`undefined` = 这一步没有思考）。
+   *
+   * **它不是日志，是请求的一部分**：请求带 `tools` 时，上游要求把历史每一步的思考原样回传
+   * （连没调工具的那些步也一样），不回传就是 400。`signature` 那一栏只有 Anthropic 那条线有
+   * ——它也是回传时必须原样带上的东西，所以两栏一起走。
+   */
+  readonly thinking?: Thinking
   /** 它调了哪几条工具（`arguments` 是原样那一串 JSON 文本）。 */
   readonly calls: readonly { readonly id: string | null; readonly name: string; readonly arguments: string }[]
   /** 每一条回了什么。与 `calls` 逐条对位。 */
@@ -622,6 +652,10 @@ export interface ModelRequest {
  */
 export type ModelEvent =
   | { readonly t: 'delta'; readonly text: string }
+  /** 它想的那一串又来了几个字符。**与 `delta` 各走各的**：思考不是给人看的话。 */
+  | { readonly t: 'reasoning-delta'; readonly text: string }
+  /** 思考块的签名（Anthropic 那条线才有）：回传时必须原样带上，所以它也是一条事件。 */
+  | { readonly t: 'reasoning-signature'; readonly signature: string }
   | { readonly t: 'tool-start'; readonly index: number; readonly id: string | null; readonly name: string | null }
   | { readonly t: 'tool-delta'; readonly index: number; readonly args: string }
   | {
@@ -644,6 +678,8 @@ export function usageCount(u: Usage): number {
 /** 一次调用积出来的东西。**`usage` 与 `stop` 的 `null` 是"没有读数"，不是 0**（见下面两条）。 */
 export interface ModelCall {
   readonly text: string
+  /** 这一步它想的那一串。`null` = 这一串事件里没有思考（思考没开，或这条线不给）。 */
+  readonly thinking: Thinking | null
   readonly toolCalls: readonly ToolCall[]
   /** `null` = 这一串事件里没有任何读数；字段为 `null` = 那一项没量到。**两级都不是 0。** */
   readonly usage: Usage | null
@@ -686,6 +722,8 @@ function isIndex(v: number): boolean {
  */
 export function checkEvents(events: readonly ModelEvent[]): ModelCall {
   let text = ''
+  let reasoning = ''
+  let signature: string | null = null
   let usage: Usage | null = null
   let rawStop: string | null = null
   let stop: StopReason | null = null
@@ -700,6 +738,16 @@ export function checkEvents(events: readonly ModelEvent[]): ModelCall {
       case 'delta':
         if (typeof e.text !== 'string') throw new EventSequenceError(`第 ${at} 条 \`delta\` 的 text 不是字符串`)
         text += e.text
+        break
+      case 'reasoning-delta':
+        if (typeof e.text !== 'string') throw new EventSequenceError(`第 ${at} 条 \`reasoning-delta\` 的 text 不是字符串`)
+        reasoning += e.text
+        break
+      case 'reasoning-signature':
+        if (typeof e.signature !== 'string' || e.signature === '') {
+          throw new EventSequenceError(`第 ${at} 条 \`reasoning-signature\` 的 signature 要是非空字符串`)
+        }
+        signature = e.signature
         break
       case 'tool-start': {
         if (!isIndex(e.index)) throw new EventSequenceError(`第 ${at} 条 \`tool-start\` 的 index 要是一个非负整数：${String(e.index)}`)
@@ -767,7 +815,10 @@ export function checkEvents(events: readonly ModelEvent[]): ModelCall {
     throw new EventSequenceError(`有 ${parts.size} 条工具调用开着没收尾（index ${open}）：分片拼完了要有 \`tool-call\``)
   }
   // `stop` 已经是一条 `stop` 事件给的（上面那次检查），所以这里的 `stop` 一定是那五种之一。
-  return { text, toolCalls: done, usage, stop: stop as StopReason, rawStop }
+  // **"没有思考"与"想了个空"要分得开**：一个字都没想、也没有签名 → `null`（思考没开）；
+  // 有签名但没文本 → 也是一条真实的思考（Anthropic 那条线上它照样要回传）。
+  const thinking: Thinking | null = reasoning === '' && signature === null ? null : { text: reasoning, signature }
+  return { text, thinking, toolCalls: done, usage, stop: stop as StopReason, rawStop }
 }
 
 /** 把分片拼完的那几条工具调用取出来。**与 `checkEvents` 同一条实现**（一处，两个出口）。 */

@@ -28,7 +28,7 @@
 //   `max-tokens` / `stop-sequence` / `refusal` → `failed`（它没能说完，而**不是"结束了"**）
 import type { Log } from '../log/events.ts'
 import type { AgentId, BranchId, ContractId, LogSeq, StepId, WriterId } from '../terms.ts'
-import type { ModelCall, ModelEvent, StopReason, Usage } from '../model/contract.ts'
+import type { ModelCall, ModelEvent, StopReason, Thinking, Turn, Usage } from '../model/contract.ts'
 import { checkEvents } from '../model/contract.ts'
 import type { Target, Transport } from '../model/http.ts'
 import type { WireFacts } from '../model/http.ts'
@@ -274,8 +274,10 @@ export function recordingExecutor(
 function turnOf(
   said: string,
   done: readonly { readonly id: string | null; readonly name: string; readonly arguments: string; readonly output: string; readonly isError: boolean }[],
+  thinking: Thinking | null,
 ): Turn {
   return {
+    ...(thinking === null ? {} : { thinking }),
     ...(said === '' ? {} : { text: said }),
     calls: done.map((d) => ({ id: d.id, name: d.name, arguments: d.arguments })),
     results: done.map((d) => ({ id: d.id, output: d.output, isError: d.isError })),
@@ -436,15 +438,19 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     const outcome = halted ? { kind: 'done' as const, usage } : outcomeOf(call.stop, usage, said)
     // 这一步什么都没发生（没说话、也没调工具）——不追加一个空的 `Turn`：空的一步会让
     // `上一步结果` 变成空串，而"这一步无事发生"与"上一步的结果丢了"是两件事。
-    const quiet = said === '' && done.length === 0
+    // **想过也算发生过**：只想不说、也没伸手的一步，它的思考照样要留在轮次里——带工具时
+    // 不回传就是 400（上游那一页的 Tool Calls 一节），所以"安静"这一档必须把思考算进去。
+    const quiet = said === '' && done.length === 0 && call.thinking === null
     const next: AssembleState = quiet
       ? { ...h.state, step: h.state.step + 1 }
       : {
           ...h.state,
           step: h.state.step + 1,
           // `上一步结果` 与 `运行时上下文` 都是 C 区的段：前者是"刚过去那一步"，后者是那条只追加的尾巴。
-          lastStep: turnText(turnOf(said, done)),
-          turns: [...(h.state.turns ?? []), turnOf(said, done)],
+          // **C 区那一段文本里不渲染思考**：思考走原生轮次那一路（`Turn.thinking`），写进文本面
+          // 等于同一份东西发两遍，还把那一段每步都变的字节撑大。
+          lastStep: turnText(turnOf(said, done, call.thinking)),
+          turns: [...(h.state.turns ?? []), turnOf(said, done, call.thinking)],
         }
     return { outcome, next, seqs }
   }

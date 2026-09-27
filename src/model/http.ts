@@ -10,7 +10,7 @@
 //
 // **凭据只在 `targetOf` 里被取一次**，也就是说"取凭据"这件事只发生在**真要发一次请求**的
 // 时候——装配 · 重放 · 夹具档一条断言都不经过这里（PLAN § 5.8 的口径一）。
-import type { ModelCall, ModelEvent, ModelRequest, Turn } from './contract.ts'
+import type { ModelCall, ModelEvent, ModelRequest, ThinkingLevel, Turn } from './contract.ts'
 import { ModelDeclError, WIRES, authOf, modelDeclOf, promptCacheFor, providerOf } from './contract.ts'
 import { checkEvents } from './contract.ts'
 import { hashOf } from '../assemble/assemble.ts'
@@ -477,7 +477,7 @@ export function wireRequestOf(request: {
   readonly turns?: readonly Turn[]
   /** C 区那一段的**头**（人说的那一句）：有轮次时它照旧要发。见 `wireHeadOf`。 */
   readonly cHead?: Uint8Array
-  readonly call?: { readonly temperature?: number; readonly maxTokens?: number }
+  readonly call?: { readonly temperature?: number; readonly maxTokens?: number; readonly thinking?: ThinkingLevel }
 }): ModelRequest {
   return {
     model: request.model,

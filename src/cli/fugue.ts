@@ -1418,6 +1418,10 @@ async function holderWiringOf(o: {
     wireModel: decl.model,
     target: targetAt(decl.id, credentialFor(decl, o.wire, o.judge)),
     adapter: { name: decl.wire },
+    // **轮内固定的调用配置**（架构 § 10.2 的必固四条之一）**在声明里，而这里必须把它接上**。
+    // 这一栏原先一处都没接：声明里那两栏是空的，于是没人看得出来"声明了却没发出去"——思考那一格
+    // 一开就露了（真档第一趟读到的 `max_tokens` 是那条线的兜底 4096，而声明里写的是 32K）。
+    call: decl.call,
     // C 区那一段 = **头**（人说的那一句：`runtime`）+ 只追加的尾巴（走过的那几步）——见
     // `assemble/sources.ts` 的 `cZoneHeadOf`。头是空的就不写这一栏（那时全文与尾巴逐字节相同）。
     state: {
@@ -2816,6 +2820,8 @@ export function driverSupport(o: {
       wireModel: decl.model,
       target,
       adapter: { name: decl.wire },
+      // 同上：声明里那一栏必须真的发出去（思考那一档与输出预算都在里面）。
+      call: decl.call,
       state: stateFor(agent, c),
     }
     handles.set(agent, made)

@@ -17,16 +17,17 @@
 // 我们的事件，而"多了一种块"不该让整条流断掉。反过来，**不认识的 `stop_reason` 要报**——
 // 结束原因是 `B4` 那三档判据的输入（`StepOutcome` 的 continue/done/failed），猜一个会让循环
 // 按错的原因往下走。
-import type { ModelEvent, StopReason, Usage } from '../contract.ts'
+import type { ModelEvent, StopReason, ThinkingLevel, Turn, Usage } from '../contract.ts'
 import type { WireAdapter } from './stream.ts'
 import { WireError, bodyOf, wireHeadOf } from './stream.ts'
+import { THINKING_LEVELS } from '../contract.ts'
 
 /** 请求里那几样这一份要用到的：三区字节 · 提供方那边的模型名 · 工具目录 · 调用配置。 */
 interface MessagesRequest {
   readonly model: string
   readonly zones: { readonly A: Uint8Array; readonly B: Uint8Array; readonly C: Uint8Array }
   readonly tools?: readonly { readonly name: string; readonly description: string; readonly parameters: unknown }[]
-  readonly call?: { readonly temperature?: number; readonly maxTokens?: number }
+  readonly call?: { readonly temperature?: number; readonly maxTokens?: number; readonly thinking?: ThinkingLevel }
   /** 断点发不发（`WIRES` 那一栏，经 `promptCacheFor` 带过来）。 */
   readonly promptCache?: 'explicit' | 'implicit'
   /** 已经走过的那几步（给了就发原生轮次，不给就照旧发 C 区那条文本）。 */
@@ -41,6 +42,15 @@ interface MessagesRequest {
  */
 function turnMessages(turn: Turn, at: number): Record<string, unknown>[] {
   const said: Record<string, unknown>[] = []
+  // **思考块排在最前**：这条线上它就是助理消息的第一块（顺序是形状的一部分），而带工具时
+  // 它必须原样回传——`signature` 一起带上，缺了签名这块就不成立了。
+  if (turn.thinking !== undefined && (turn.thinking.text !== '' || turn.thinking.signature !== null)) {
+    said.push({
+      type: 'thinking',
+      thinking: turn.thinking.text,
+      ...(turn.thinking.signature === null ? {} : { signature: turn.thinking.signature }),
+    })
+  }
   if (turn.text !== undefined && turn.text !== '') said.push({ type: 'text', text: turn.text })
   const ids: string[] = []
   turn.calls.forEach((c, i) => {
@@ -88,6 +98,13 @@ const STOP_OF: Readonly<Record<string, StopReason>> = {
   max_tokens: 'max-tokens',
   stop_sequence: 'stop-sequence',
   refusal: 'refusal',
+}
+
+/** 声明里那一栏 → 一个真档位。没写就是 `off`（这条线上不写就是不开，两边一致）。 */
+function thinkingOf(v: ThinkingLevel | undefined): ThinkingLevel {
+  if (v === undefined) return 'off'
+  if (!THINKING_LEVELS.includes(v)) throw new WireError(`没有这一档思考：${String(v)}（有的是 ${THINKING_LEVELS.join(' · ')}）`)
+  return v
 }
 
 const usageOf = (u: Record<string, unknown> | undefined): Partial<Usage> | null => {
@@ -180,6 +197,12 @@ export function wireOf(): WireAdapter {
         // `dataRecords` 只认 `data:` 行——解出 0 条事件，`finish` 再把"没有 stop_reason"当半截
         // 的流报出来（实测：同一条请求体加不加这一栏，回的是 705 字节 JSON 与 18404 字节 SSE）。
         stream: true,
+        // **思考那一栏**：这条线上它要显式开（不写就是不开），`budget_tokens` 被忽略，档位走
+        // `output_config.effort`（官方 Anthropic 兼容表：`thinking` 支持、`output_config` 只认
+        // `effort`）。`off` 那一档**一个字段都不发**——与这一格之前逐字节相同。
+        ...(thinkingOf(req.call?.thinking) === 'off'
+          ? {}
+          : { thinking: { type: 'enabled' }, output_config: { effort: thinkingOf(req.call?.thinking) } }),
         // **两个线协议在"省略"这一件事上语义不同**：这一条线上 `temperature` 不填 = 由提供方定，
         // 填 0.2 就是**真的要 0.2**（而那条线的默认值是 1）。所以缺省不是常量 0.2，是"不填"。
         ...(req.call?.temperature === undefined ? {} : { temperature: req.call.temperature }),
@@ -211,7 +234,10 @@ export function wireOf(): WireAdapter {
         }
         case 'content_block_start': {
           const cb = (p['content_block'] ?? {}) as Record<string, unknown>
-          if (cb['type'] !== 'tool_use') return [] // `text` · `thinking` 之类：不是事件，跳过
+          // 思考块的**开头**不是事件（内容是后面的 `thinking_delta` 一条条给的），但它必须
+          // 认出来：认不出来它就会掉进下面那条"跳过"里，而回传那一半要靠这里的形状。
+          if (cb['type'] === 'thinking') return []
+          if (cb['type'] !== 'tool_use') return [] // `text` 之类：不是事件，跳过
           const index = p['index']
           if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
             throw new WireError(`content_block_start 的 index 不是非负整数：${JSON.stringify(index)}`)
@@ -237,7 +263,19 @@ export function wireOf(): WireAdapter {
             if (partial === '') return [] // 那一条线上第一片常常是空串
             return [{ t: 'tool-delta', index, args: partial }]
           }
-          return [] // `thinking_delta` 那一类：不是我们的事件
+          if (delta['type'] === 'thinking_delta') {
+            const text = delta['thinking']
+            if (typeof text !== 'string') throw new WireError(`thinking_delta 的 thinking 不是字符串：${JSON.stringify(text)}`)
+            return text === '' ? [] : [{ t: 'reasoning-delta', text }]
+          }
+          if (delta['type'] === 'signature_delta') {
+            const signature = delta['signature']
+            if (typeof signature !== 'string' || signature === '') {
+              throw new WireError(`signature_delta 的 signature 不是非空字符串：${JSON.stringify(signature)}`)
+            }
+            return [{ t: 'reasoning-signature', signature }]
+          }
+          return [] // 别的块（`redacted_thinking` 之类）：不是我们的事件
         }
         case 'content_block_stop': {
           const index = p['index']

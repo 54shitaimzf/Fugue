@@ -455,3 +455,81 @@ test('⑥ 带走过的步：messages 里是 assistant 的 tool_use 与 user 的 
   assert.throws(() => wire.bytes(broken), /tool_use_id 对不上/, '孤儿回执要当场抛')
   console.log('⑥ 读数：原生轮次 ' + String(Buffer.byteLength(new TextDecoder().decode(wire.bytes(walked)), 'utf8')) + ' 字节 · 文本旧路 ' + String(Buffer.byteLength(new TextDecoder().decode(wire.bytes(base)), 'utf8')) + ' 字节')
 })
+
+// ── ⑦ 思考那一格：收得到 · 回得去（`U1`）─────────────────────────────────────────
+//
+// 装置是**真录下来的那一份**：`openai-chat-thinking.sse` 来自 `node tools/probe-thinking.ts --live`
+// 的第 1 次调用（思考档 `low` · 上游给了 312 个字的思考 · 80 条带 `reasoning_content` 的帧）。
+// 它证明的是"这条线真的会给思考"，而不只是我们的解析器认这个字段。
+//
+// 两条断言各带一个负对照；**"不回传就 400"那条规矩的真档读数在探针里**（同一次真跑的第 3 趟：
+// 拿掉思考 → 上游回 400 `The reasoning_content in the thinking mode must be passed back to the API.`），
+// 所以这里只量"那一串有没有原样进请求体"这一半——它是那条规矩的装置。
+
+test('⑦ 思考：收得到（与实录里那些分片逐字节相同）· 回得去（两条线各一档）；不带它时那一栏一个字都不出现', async () => {
+  const sse = fixture('openai-chat-thinking.sse')
+  // 基准：把上游那些 `reasoning_content` 分片按原样拼起来（JSON 转义要还原）。
+  const want = [...sse.matchAll(/"reasoning_content":"((?:[^"\\]|\\.)*)"/g)]
+    .map((m) => JSON.parse(`"${String(m[1])}"`) as string)
+    .join('')
+  assert.ok(want.length > 100, `实录里的思考太短（${want.length} 个字）——夹具换错了？`)
+
+  const call = checkEvents(await eventsOf(sse, openaiWireOf(), 4096))
+  assert.equal(call.thinking?.text, want, '解出来的思考与上游那些分片拼起来的对不上')
+  assert.equal(call.thinking?.signature, null, 'Chat Completions 那条线上没有签名这一栏')
+  // 负对照：一次喂一个字节（分片横跨块边界），拼出来还是那一串。
+  const oneByte = checkEvents(await eventsOf(sse, openaiWireOf(), 1))
+  assert.deepEqual(oneByte.thinking, call.thinking, '按 1 字节切块喂进去，思考变了')
+
+  // 回传：两条线各发一次带思考的轮次，那一串要**逐字节**出现在请求体里。
+  const base = request(false)
+  const turn = { thinking: call.thinking as { text: string; signature: string | null }, text: '看过了。', calls: [], results: [] }
+  const openaiSent = JSON.parse(new TextDecoder().decode(openaiWireOf().bytes({ ...base, turns: [turn] } satisfies ModelRequest))) as {
+    messages: { reasoning_content?: string }[]
+  }
+  assert.equal(openaiSent.messages.at(-1)?.reasoning_content, want, 'Chat Completions 那条线没把思考发回去')
+
+  // Messages 那条线：思考块排在助理消息第一位，签名一并带上。
+  const signed = { ...base, turns: [{ ...turn, thinking: { text: want, signature: 'sig-从实录里来' } }] } satisfies ModelRequest
+  const aSent = JSON.parse(new TextDecoder().decode(anthropicWireOf().bytes(signed))) as {
+    messages: { content: { type: string; thinking?: string; signature?: string }[] }[]
+  }
+  const said = aSent.messages.at(-1) as { content: { type: string; thinking?: string; signature?: string }[] }
+  assert.equal(said.content[0]?.type, 'thinking', '思考块要排在助理消息的第一位')
+  assert.equal(said.content[0]?.thinking, want)
+  assert.equal(said.content[0]?.signature, 'sig-从实录里来')
+  // 没有签名的那一档：那一栏不出现（不是发一个空串）。
+  const unsigned = { ...base, turns: [turn] } satisfies ModelRequest
+  const uSent = JSON.parse(new TextDecoder().decode(anthropicWireOf().bytes(unsigned))) as {
+    messages: { content: { type: string; signature?: string }[] }[]
+  }
+  assert.equal((uSent.messages.at(-1) as { content: { signature?: string }[] }).content[0]?.signature, undefined)
+
+  // 负对照一：这一轮的 `Turn` 里没有思考 → 两条线上那一栏都不出现。
+  const dropped = { ...base, turns: [{ text: '看过了。', calls: [], results: [] }] } satisfies ModelRequest
+  assert.ok(!new TextDecoder().decode(openaiWireOf().bytes(dropped)).includes('reasoning_content'), '没思考时不该出现那一栏')
+  assert.ok(!new TextDecoder().decode(anthropicWireOf().bytes(dropped)).includes('"thinking"'), '没思考时不该出现思考块')
+
+  // 负对照二：档位那一栏——`off` 在 Chat Completions 那条线上要**写出来**（那条线不写就是开），
+  // 而在 Messages 那条线上一个字段都不发（那条线不写就是不开）。
+  const off: ModelRequest = { ...base, call: { thinking: 'off' } }
+  const offOpen = JSON.parse(new TextDecoder().decode(openaiWireOf().bytes(off))) as { thinking?: { type?: string }; reasoning_effort?: string }
+  assert.deepEqual(offOpen.thinking, { type: 'disabled' }, 'Chat Completions 那条线上 `off` 要写成 disabled')
+  assert.equal(offOpen.reasoning_effort, undefined, '关掉思考时不该带那一栏')
+  const offAnth = JSON.parse(new TextDecoder().decode(anthropicWireOf().bytes(off))) as { thinking?: unknown; output_config?: unknown }
+  assert.equal(offAnth.thinking, undefined, 'Messages 那条线上 `off` 一个字段都不发')
+  assert.equal(offAnth.output_config, undefined)
+  const on: ModelRequest = { ...base, call: { thinking: 'max' } }
+  const onOpen = JSON.parse(new TextDecoder().decode(openaiWireOf().bytes(on))) as { thinking?: { type?: string }; reasoning_effort?: string }
+  assert.deepEqual(onOpen.thinking, { type: 'enabled' })
+  assert.equal(onOpen.reasoning_effort, 'max')
+  const onAnth = JSON.parse(new TextDecoder().decode(anthropicWireOf().bytes(on))) as { thinking?: { type?: string }; output_config?: { effort?: string } }
+  assert.deepEqual(onAnth.thinking, { type: 'enabled' })
+  assert.deepEqual(onAnth.output_config, { effort: 'max' })
+
+  console.log(
+    `⑦ 读数：实录里 ${String(want.length)} 个字的思考（${String(call.toolCalls.length)} 条工具调用）· 回传后请求体 ` +
+      `openai ${String(Buffer.byteLength(new TextDecoder().decode(openaiWireOf().bytes({ ...base, turns: [turn] }))))} 字节 · ` +
+      `anthropic ${String(Buffer.byteLength(new TextDecoder().decode(anthropicWireOf().bytes(unsigned))))} 字节`,
+  )
+})

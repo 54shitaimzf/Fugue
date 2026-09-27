@@ -120,7 +120,9 @@ test('② 目录：两条真声明，各指得出提供方 · 线协议 · 上�
     assert.deepEqual([m.contextLimit], [1_000_000], `${name} 的上限`)
     assert.deepEqual([m.budget.trigger, m.budget.handoffMargin], [triggerAt(1_000_000), 16_000], `${name} 的预算两栏`)
     assert.equal(m.budget.trigger, 350_000, '上限的 35%')
-    assert.deepEqual(m.call, DEFAULT_CALL, `${name} 的调用配置`)
+    // **思考那一档必须写出来**（两条线对"没写"的解释相反），输出预算跟着抬到 32K：
+    // 思考与答案共用同一个输出预算，"想完再说"在 4096 那一档装不下。
+    assert.deepEqual(m.call, { thinking: 'high', maxTokens: 32_768 }, `${name} 的调用配置`)
   }
   // 缺省 = 表的第一条，不是另一条写死的常量。
   assert.equal(DEFAULT_MODEL, FIRST)
@@ -408,10 +410,21 @@ test('① 一个请求与一串事件能往返序列化，字段一个不多一�
   assert.equal(USAGE_COUNTS.length, 4)
 
   // 事件那六个 `t`：联合里读出来的（不是第二份名单）。
-  assert.deepEqual(eventKinds(), ['delta', 'stop', 'tool-call', 'tool-delta', 'tool-start', 'usage'])
+  assert.deepEqual(eventKinds(), [
+    'delta',
+    'reasoning-delta',
+    'reasoning-signature',
+    'stop',
+    'tool-call',
+    'tool-delta',
+    'tool-start',
+    'usage',
+  ])
   // 每一种事件都造一条真的出来（联合里有的，就得有东西能产出它）。
   const every: ModelEvent[] = [
     { t: 'delta', text: '先' },
+    { t: 'reasoning-delta', text: '它想：' },
+    { t: 'reasoning-signature', signature: 'sig-1' },
     { t: 'tool-start', index: 0, id: 't1', name: 'read' },
     { t: 'tool-delta', index: 0, args: '{"path":"a"}' },
     { t: 'tool-call', index: 0, id: 't1', name: 'read', arguments: '{"path":"a"}' },
@@ -464,7 +477,7 @@ test('① 一个请求与一串事件能往返序列化，字段一个不多一�
   const direct = checkEvents(events)
   const roundTrip = checkEvents(JSON.parse(JSON.stringify(events)) as ModelEvent[])
   assert.deepEqual(roundTrip, direct, '事件往返之后积出来的账不一样')
-  assert.deepEqual(producedKeys(direct), ['rawStop', 'stop', 'text', 'toolCalls', 'usage'], '积出来的账的键集不是那五个')
+  assert.deepEqual(producedKeys(direct), ['rawStop', 'stop', 'text', 'thinking', 'toolCalls', 'usage'], '积出来的账的键集不是那六个')
 })
 
 // ── 这一份测试要读的两样：盘上的源码与模型目录 ────────────────────────────────
@@ -498,6 +511,8 @@ test('② 一串事件积得出一次完整调用：工具调用三段拼成一�
   assert.equal(call.usage, null)
   assert.equal(call.stop, 'tool-calls')
   assert.equal(call.rawStop, null, '没有 stop 的 raw 时它该是 null')
+  // **没有思考事件 → `null`**：那是"没开思考"，与"想了但一个字都没说"是两件事。
+  assert.equal(call.thinking, null)
 
   // 用量并多次：只覆盖真的报了的字段，别的保持"没有读数"。
   const merged = checkEvents([

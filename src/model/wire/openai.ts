@@ -17,15 +17,16 @@
 // **收尾为什么不在 `parse` 里发**：那一片只知道"又多了一个 index"，不知道后面还会不会来下一片。
 // 一条调用的三段（起点 · 分片 · 收尾）必须在**同一处**定下来（`checkEvents` 只认这个形状），
 // 所以"收尾"归 `finish`——它是"这条流到头了"那一刻的判决。
-import type { ModelEvent, StopReason, Turn, Usage } from '../contract.ts'
+import type { ModelEvent, StopReason, ThinkingLevel, Turn, Usage } from '../contract.ts'
 import type { WireAdapter } from './stream.ts'
 import { WireError, bodyOf, wireHeadOf } from './stream.ts'
+import { THINKING_LEVELS } from '../contract.ts'
 
 interface ChatRequest {
   readonly model: string
   readonly zones: { readonly A: Uint8Array; readonly B: Uint8Array; readonly C: Uint8Array }
   readonly tools?: readonly { readonly name: string; readonly description: string; readonly parameters: unknown }[]
-  readonly call?: { readonly temperature?: number; readonly maxTokens?: number }
+  readonly call?: { readonly temperature?: number; readonly maxTokens?: number; readonly thinking?: ThinkingLevel }
   /** 已经走过的那几步（给了就发原生轮次；这一条线原先不认它，尾巴只以文本发）。 */
   readonly turns?: readonly Turn[]
   /** C 区那一段的**头**（人说的那一句）：有轮次时它照旧要发。见 `wireHeadOf`。 */
@@ -48,7 +49,13 @@ function turnMessages(turn: Turn, at: number): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
   if ((turn.text !== undefined && turn.text !== '') || calls.length > 0) {
     // 只伸手不说话的助理消息在这一条线上是 `content: ''` + `tool_calls`。
-    out.push({ role: 'assistant', content: turn.text ?? '', ...(calls.length === 0 ? {} : { tool_calls: calls }) })
+    // **思考那一栏与 `content` 平级**，位置无所谓，但带工具时它必须原样回来（不回传 → 400）。
+    out.push({
+      role: 'assistant',
+      content: turn.text ?? '',
+      ...(turn.thinking === undefined ? {} : { reasoning_content: turn.thinking.text }),
+      ...(calls.length === 0 ? {} : { tool_calls: calls }),
+    })
   }
   turn.results.forEach((r, i) => {
     const id = r.id ?? calls[i]?.id ?? `call_${at}_${i}`
@@ -82,6 +89,13 @@ const STOP_OF: Readonly<Record<string, StopReason>> = {
  * DeepSeek 那一侧另给 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`。
  * 两套都认（`??` 链），**认不出来就是 `null`，不猜一个 0**——`usageCount` 会如实报"没有读数"。
  */
+/** 声明里那一栏 → 一个真档位。**没写就是关**：这条线上的默认是开，而我们不允许"默认"决定它。 */
+function thinkingOf(v: ThinkingLevel | undefined): ThinkingLevel {
+  if (v === undefined) return 'off'
+  if (!THINKING_LEVELS.includes(v)) throw new WireError(`没有这一档思考：${String(v)}（有的是 ${THINKING_LEVELS.join(' · ')}）`)
+  return v
+}
+
 const usageOf = (u: Record<string, unknown> | undefined): Partial<Usage> | null => {
   if (u === undefined) return null
   const num = (k: string): number | null => (typeof u[k] === 'number' ? (u[k] as number) : null)
@@ -150,6 +164,11 @@ export function wireOf(): WireAdapter {
         // 的是一条整的 `chat.completion`，`dataRecords` 一个 `data:` 行都找不到，`finish` 报
         // "流到头了没有收到 finish_reason"——话是错的，账也是空的（`usage` 拿不到）。
         stream: true,
+        // **思考那一栏**：这条线上思考默认是开的，所以**两档都要写出来**——`off` 写 `disabled`，
+        // 其余三档写 `enabled` + `reasoning_effort`。没写那一栏时我们不猜上游会怎么解释它。
+        ...(thinkingOf(req.call?.thinking) === 'off'
+          ? { thinking: { type: 'disabled' } }
+          : { thinking: { type: 'enabled' }, reasoning_effort: thinkingOf(req.call?.thinking) }),
         // 这一条线上省略 `temperature` = 由提供方定（那边默认是 1）；填了就是要那个数。**缺省不是
         // 常量**：两个适配器共用一份 `call`，各自那边的"省略"含义不同，所以"缺省填什么"归各自。
         ...(req.call?.temperature === undefined ? {} : { temperature: req.call.temperature }),
@@ -184,6 +203,10 @@ export function wireOf(): WireAdapter {
         const delta = (raw['delta'] ?? {}) as Record<string, unknown>
         const text = textOf(delta['content'])
         if (text !== null) out.push({ t: 'delta', text })
+        // 思考是**另一栏**（`reasoning_content`），与 `content` 平级：它不是给人看的话，
+        // 但它必须一路活到下一步的请求里。
+        const thought = textOf(delta['reasoning_content'])
+        if (thought !== null) out.push({ t: 'reasoning-delta', text: thought })
         const calls = delta['tool_calls']
         if (Array.isArray(calls)) {
           for (const rawCall of calls as Record<string, unknown>[]) {
