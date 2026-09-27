@@ -16,6 +16,9 @@
 //   ⑦ **越界那一栏**：`bound/deny` 按由头分组 + 内核那一档，两者相加是 `total`；而**三数看不见
 //      视图那一侧的拒**（那几条工具不落 `run/end`）——这一条把"那一栏没有生产者"钉住
 //      · 负对照：抹掉那三条 `bound/deny` → 越界只剩内核那一档
+//   ⑧ **树那一侧那一栏**（`mat/reclaim` 里 `changed` 非空）与"被挡"分开：`rows` 是报了几条 ·
+//      `paths` 是去重排序之后的路径集；`changed` 为空的那几条不算（那是"照例读到空集"那个读数）
+//      · 负对照：抹掉那几条 → 0 与空
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -334,4 +337,45 @@ test('⑦ 越界那一栏：`bound/deny` 按由头分组 + 内核那一档；三
     `⑦ 读数：越界 ${s.refusals.total} 次（内核 ${s.refusals.kernel} · ` +
       `${s.refusals.byRule.map((r) => `${r.rule} ${r.count}`).join(' · ')}）· 同一份日志三数里 denied ${three.count}`,
   )
+})
+
+// ── ⑧ 树那一侧的越界（样本盘第九趟 · `agent/r1/4` 那四条里的真信号）────────────────────
+//
+// 由头：那一格的 `mat/reclaim` 报了四条，三条是同一条路径（`__probe.txt`——它往树里写了一个
+// 探针文件，随后自己 `rm -f` 掉了），一条是祖先白障的噪声（那一档已清，见 `ca8e246`）。
+// 真信号那三条今天哪里都不去：回收不收它（对，声明集外的就是不该收），三数与 `refusals` 也
+// 看不见它（那两栏量的是"被挡"）。它单独一栏，与"被挡"分开读。
+
+test('⑧ 树那一侧的越界：`mat/reclaim` 里 `changed` 非空的那几条，与"被挡"分开', () => {
+  seq = 0
+  const rows = [
+    row({ t: 'mat/reclaim', agent: 'agent/r1/4' as AgentId, declared: ['legacy/old-format.js'] as never[], changed: ['__probe.txt'] as never[] }, 'agent/r1/4'),
+    row({ t: 'mat/reclaim', agent: 'agent/r1/4' as AgentId, declared: ['legacy/old-format.js'] as never[], changed: ['__probe.txt'] as never[] }, 'agent/r1/4'),
+    // **`changed` 为空的那一条不是越界**：它是"照例读到空集"那个读数（默认档每次运行都取）。
+    row({ t: 'mat/reclaim', agent: 'agent/r1/1' as AgentId, declared: [] as never[], changed: [] as never[] }, 'agent/r1/1'),
+    // 同一格跑几趟会把同一条路径再报一次：`rows` 是几趟，`paths` 才是"动过哪儿"。
+    row({ t: 'mat/reclaim', agent: 'agent/r1/2' as AgentId, declared: [] as never[], changed: ['__probe.txt', 'stray/x'] as never[] }, 'agent/r1/2'),
+    row({ t: 'bound/deny', agent: 'agent/r1/5' as AgentId, path: 'src/total.ts', space: 'virtual', rule: 'contract-scope' }, 'agent/r1/5'),
+  ]
+  const s = statusOf(rows)
+
+  assert.equal(s.outside.rows, 3, '三条 `changed` 非空')
+  assert.deepEqual(s.outside.paths, ['__probe.txt', 'stray/x'], '去重排序之后的路径集')
+
+  // **两栏分开**：被挡的那一次不进这一栏，报出来的这几条也不进那一栏。
+  assert.equal(s.refusals.total, 1)
+  assert.equal(s.refusals.byRule[0]?.rule, 'contract-scope')
+  assert.equal(s.outside.paths.includes('src/total.ts'), false, '被挡的那一条没落进树里')
+
+  const line = linesOf(s).find((l) => l.startsWith('越界 '))
+  assert.ok(
+    line !== undefined && line.includes('被挡 1 次') && line.includes('树上报了没挡的 3 条') && line.includes('__probe.txt'),
+    `人面那一行：${String(line)}`,
+  )
+
+  // 负对照：抹掉那几条 `mat/reclaim` → 这一栏回到 0 与空。
+  const bare = statusOf(rows.filter((r) => r.e.t !== 'mat/reclaim'))
+  assert.equal(bare.outside.rows, 0)
+  assert.deepEqual(bare.outside.paths, [])
+  console.log(`⑧ 读数：树上报了没挡的 ${s.outside.rows} 条（${s.outside.paths.join(' · ')}）· 被挡 ${s.refusals.total} 次`)
 })

@@ -133,6 +133,20 @@ export interface RefusalTally {
   readonly byRule: readonly RefusalRule[]
 }
 
+/**
+ * **树那一侧的越界读数**：子进程在物化树里改了声明集之外的东西——`mat/reclaim` 里 `changed`
+ * 非空的那几条。**它与 `refusals` 不是一件事**：那一栏量的是"被挡"（内核拒 · 围栏拦 · 写入面
+ * 拒），这一栏量的是"报了但没挡"——`workspace-write` 那一档里内核不拦未声明的写入，回收如实
+ * 报出来、也不收它（§ 8.7），于是它既没进三数、也没进 `refusals`。
+ *
+ * `rows` 是报出来的条数 · `paths` 是那些改动**去重排序**之后的路径。同一格跑几趟会把同一条
+ * 路径再报一次——那是"报了几趟"，而"动过哪儿"要看路径集。
+ */
+export interface OutsideTally {
+  readonly rows: number
+  readonly paths: readonly string[]
+}
+
 /** 一次快照。**它是 `status --once` 的全部输出，也是 TUI 的那个读源。** */
 export interface StatusSnapshot {
   /** 账上见过的每一条轮次链，按第一次出现的次序。 */
@@ -146,6 +160,8 @@ export interface StatusSnapshot {
   readonly accepts: AcceptTally
   /** 越界那一栏（`bound/deny` 与内核拒合起来的那一份读数）。**与打回那三个数分开**。 */
   readonly refusals: RefusalTally
+  /** 树那一侧那一栏（`mat/reclaim` 里 `changed` 非空的那些）。**与"被挡"分开**。 */
+  readonly outside: OutsideTally
   readonly usage: UsageTotals
   /** 一共读了几条事件。 */
   readonly events: number
@@ -258,6 +274,9 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
   /** 越界那一栏的两个来源：内核那一档（与 `denied` 同一个计数点）· `bound/deny` 按由头。 */
   let kernelDenies = 0
   const refusalRules = new Map<string, number>()
+  /** 树那一侧那一栏：报了几条，加它们动过的那些路径（去重）。 */
+  let outsideRows = 0
+  const outsidePaths = new Set<string>()
   let current: RoundId | null = null
   let last: StatusSnapshot['last'] = null
 
@@ -360,6 +379,16 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
       a.last = e.t
       continue
     }
+    if (e.t === 'mat/reclaim') {
+      // **树那一侧那一栏**：`changed` 非空的是"子进程在树里改了声明之外的东西"；空的那些是
+      // "照例读到空集"那个读数（默认档里每一次都取），不是越界——两样不许混。
+      if (e.changed.length > 0) {
+        outsideRows++
+        for (const p of e.changed) outsidePaths.add(p)
+      }
+      slotOf(pos.writer).last = e.t
+      continue
+    }
     if (e.t === 'agent/handoff') {
       const a = slotOf(pos.writer)
       a.handoffs++
@@ -420,6 +449,7 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
     conflicts,
     accepts: { pass, fail, accepts },
     refusals,
+    outside: { rows: outsideRows, paths: [...outsidePaths].sort() },
     usage: {
       calls,
       inputTokens: totalOf(usage.inputTokens),
@@ -472,9 +502,12 @@ export function linesOf(s: StatusSnapshot): readonly string[] {
       `（过 ${s.accepts.pass} / 没过 ${s.accepts.fail}）`,
   )
   // **恒印这一行**（零也印）：少了它，"没量到"与"量到 0"就分不开——与用量那一行同一条规矩。
+  // 两半分开写：**被挡**（内核 · 围栏 · 写入面）与**报了没挡**（树里那些集外改动）不是一件事。
   out.push(
     `越界 被挡 ${s.refusals.total} 次（内核拒 ${s.refusals.kernel}` +
-      `${s.refusals.byRule.length === 0 ? '' : ` · ${s.refusals.byRule.map((r) => `${r.rule} ${r.count}`).join(' · ')}`}）`,
+      `${s.refusals.byRule.length === 0 ? '' : ` · ${s.refusals.byRule.map((r) => `${r.rule} ${r.count}`).join(' · ')}`}）` +
+      ` · 树上报了没挡的 ${s.outside.rows} 条` +
+      `${s.outside.paths.length === 0 ? '' : `（${s.outside.paths.join(' · ')}）`}`,
   )
   const one = (n: string, t: UsageTotal): string => `${n} ${t.total}${t.missing > 0 ? `（缺 ${t.missing} 条）` : ''}`
   out.push(

@@ -112,7 +112,8 @@ if (cmd === 'selftest') {
     const split = snap.refusals.byRule.map((r) => `${r.rule} ${r.count}`).join(' · ')
     console.log(
       '  越界：被挡 ' + String(snap.refusals.total) + ' 次（内核 ' + String(snap.refusals.kernel) +
-        (split === '' ? '' : ' · ' + split) + '）',
+        (split === '' ? '' : ' · ' + split) + '）· 树上报了没挡的 ' + String(snap.outside.rows) + ' 条' +
+        (snap.outside.paths.length === 0 ? '' : '（' + snap.outside.paths.join(' · ') + '）'),
     )
   }
   console.log('  已知答案：' + v.why)
