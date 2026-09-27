@@ -69,3 +69,21 @@ test('⑥ 判据自己不碰输入：同一份输入判两次逐字段相同，�
   assert.equal(JSON.stringify(tree), before)
   assert.deepEqual(boardLines('样本一', one), ['  样本一：已知答案全中（2 条）'])
 })
+
+// ── ⑦ 那一栏报的「字节」要真是字节 ────────────────────────────────────────────
+//
+// 由头：样本盘第一趟全链路真档。`legacy/old-format.js` 在盘上 **243 字节**，而判据那一行印的是
+// 「应当不在，实得在（**149 字节**）」——`String.length` 是字符数（那份带中文注释的底：149 字符
+// = 243 字节）。它把「盘上那一份一个字节都没动」读成了「像被改过」，诊断时先绕了一圈。
+
+test('⑦ 那一栏的「字节」是 UTF-8 字节，不是字符数', () => {
+  const cjk = '上一版的实现：把分当元印。'
+  const bytes = new TextEncoder().encode(cjk).length
+  assert.notEqual(bytes, cjk.length, '这一条探针本身要挑一份「字节数 ≠ 字符数」的文本，否则量不出东西')
+  const there = judgeOf([{ path: 'legacy/old-format.js', form: 'absent' }], T({ 'legacy/old-format.js': cjk }))
+  assert.match(there.verdicts[0].note, new RegExp(String(bytes) + ' 字节'), `absent 那一支报的不是字节：${there.verdicts[0].note}`)
+  assert.equal(there.verdicts[0].note.includes(String(cjk.length) + ' 字节'), false, '它报的还是字符数')
+  const file = judgeOf([{ path: 'a.ts', form: 'file', contains: ['把分'] }], T({ 'a.ts': cjk }))
+  assert.match(file.verdicts[0].note, new RegExp(String(bytes) + ' 字节'), `file 那一支报的不是字节：${file.verdicts[0].note}`)
+  console.log(`⑦ 读数：${cjk.length} 字符的底报成 ${bytes} 字节（absent 与 file 两支都是）`)
+})

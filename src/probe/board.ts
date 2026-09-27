@@ -46,12 +46,20 @@ export type BoardVerdict = {
   readonly why: string
 }
 
+/**
+ * **「字节」要真是字节。** `String.length` 是**字符数**，而这一份报的是那份文件在盘上占多少。
+ * 真档上差过一次大的：`legacy/old-format.js` 243 字节的底读成「149 字节」，于是它的长度看起来
+ * 像「被改过」，而其实一个字节都没动——那一趟的困惑就烧在这里。UTF-8 里一个汉字三字节，一份
+ * 带中文注释的文件两者能差四成。
+ */
+const bytesOf = (text: string): number => new TextEncoder().encode(text).length
+
 function judgeOne(c: AnswerCheck, tree: Tree): CheckVerdict {
   const got = tree[c.path]
   const there = got !== null && got !== undefined
   if (c.form === 'absent') {
     return there
-      ? { path: c.path, verdict: 'fail', note: '应当不在，实得在（' + String(got.length) + ' 字节）' }
+      ? { path: c.path, verdict: 'fail', note: '应当不在，实得在（' + String(bytesOf(got)) + ' 字节）' }
       : { path: c.path, verdict: 'pass', note: '不在' }
   }
   if (!there) return { path: c.path, verdict: 'fail', note: '应当在，实得不在' }
@@ -62,7 +70,7 @@ function judgeOne(c: AnswerCheck, tree: Tree): CheckVerdict {
   for (const one of c.notContains ?? []) {
     if (text.includes(one)) return { path: c.path, verdict: 'fail', note: '内容里不该有 ' + JSON.stringify(one) }
   }
-  return { path: c.path, verdict: 'pass', note: '在（' + String(text.length) + ' 字节）' + ((c.contains ?? []).length ? ' · 该有的都有' : '') }
+  return { path: c.path, verdict: 'pass', note: '在（' + String(bytesOf(text)) + ' 字节）' + ((c.contains ?? []).length ? ' · 该有的都有' : '') }
 }
 
 /** **判**：一份已知答案 × 一棵树的快照 → 过不过 + 每一条的读数。 */
