@@ -12,6 +12,9 @@
 //   ④ **站前三处读数**在 `tools/probe-round.ts` 里（读数不是断言，落进 A0 的提交信息）
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { isRelPath } from '../roots/paths.ts'
+import type { RelPath } from '../terms.ts'
+import { draftRuleTextOf } from './draft.ts'
 import type { Contract, ImplementContract, InvestigateContract, ResolveContract } from './types.ts'
 import {
   DEFAULT_MODEL_LIMIT,
@@ -303,4 +306,37 @@ test('⑤ Zone A 按当前上限的 8% 算 · 算出来为负取地板 0 并报�
   const fixedZoneA = (limit: number): number => limit - 24_000 - HANDOFF_MARGIN
   assert.equal(fixedZoneA(DEFAULT_MODEL_LIMIT), 960_000)
   assert.notEqual(fixedZoneA(DEFAULT_MODEL_LIMIT), seedLimitOf({}))
+})
+
+// ── ⑥ 形状那一栏与判词同源 ────────────────────────────────────────────────────
+
+test('⑥ 路径那一栏的形状把判词写全了：形状是模型读到的那一份，判词在 M3', () => {
+  // **真档那一趟退回来的那一个值**（`tools/scenario/board.sh` 的原始输出）：
+  //   r1.implement.3：ownedPaths：ownedPaths[1]不是视图内的路径："legacy/"
+  // 它想占住那个目录，于是带了个结尾的 `/`——判词那边 `isSegment('')` 为假，整趟退回。
+  assert.equal(isRelPath('legacy/'), false, '结尾带 / 的路径 M3 是拒的')
+  assert.equal(isRelPath('a//b'), false)
+  assert.equal(isRelPath('a/./b'), false)
+  assert.equal(isRelPath('a/../b'), false)
+  assert.equal(isRelPath('a\\b'), false)
+  // 负对照：正常那一条要照旧合法——这一栏不许把对的也一起说成错的。
+  assert.equal(isRelPath('legacy/old-format.js'), true, '正常那一条被误伤了')
+  assert.equal(isRelPath('src/total.ts'), true)
+
+  // 形状那一栏是**模型读到的那一份**：判词拒的那几条，它都要说出来。
+  for (const field of ['ownedPaths', 'conflictPaths', 'seed'] as const) {
+    const shape = FIELD_RULES[field]!.shape
+    for (const clause of ['非空', '结尾不带 `/`', '不是 `.` 或 `..`', '不带 `\\`']) {
+      assert.ok(shape.includes(clause), `${field} 那一栏的形状里少了「${clause}」：${shape}`)
+    }
+  }
+  // 而它真的到得了模型眼前：`draftRuleTextOf` 逐键念的就是这一栏（架构 § 8.12 那张表）。
+  const text = draftRuleTextOf('.fugue/plan/r1.md' as RelPath)
+  for (const field of ['ownedPaths', 'seed', 'deliverables'] as const) {
+    assert.ok(text.includes(FIELD_RULES[field]!.shape), `提示词里没念到 ${field} 那一栏的形状`)
+  }
+  console.log(
+    `⑥ 读数：ending-slash 那一条判词 false · ${FIELD_RULES['ownedPaths']!.shape.length} 字的形状那一句` +
+      '（ownedPaths · conflictPaths · seed 三格共用同一句）',
+  )
 })

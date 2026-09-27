@@ -276,6 +276,18 @@ function listProblem(
  * 值的这一面只判"这个值合不合法"。像"这条路径现在存不存在"、"这个动作绑定现在在不在配置里"
  * 这类问题**不在这里**——它们是关系（路径 × 视图 × 策略），归第三级。
  */
+/**
+ * 「视图内的相对路径」这一句**写全了的版本**：判词在 `M3`（`roots/paths.ts` 的 `isSegment`），
+ * 而这一句是**模型读到的那一份**（`draft.ts` 的 `draftRuleTextOf` 逐键念它）。两处各说各话时，
+ * 症状只有一个——模型老写不中，而它一个字都不报。
+ *
+ * 真档照出过一次（`tools/scenario/board.sh` 那一趟退回来的原始输出）：
+ * `r1.implement.3：ownedPaths：ownedPaths[1]不是视图内的路径："legacy/"`——它想占住那个目录，
+ * 于是带了个结尾的 `/`，而 `isSegment('')` 为假。那一趟别的都对，整趟照样退回。
+ */
+const REL_PATH_SHAPE =
+  '视图内的相对路径：非空 · `/` 分段，每段不带 `\\`、不是 `.` 或 `..`、结尾不带 `/`'
+
 export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   // 这一格是三个变体的判别键。"它已经由联合类型保证了"在这里不成立：`checkContract` 收的是
   // 一份从别处来的值（配置 · 草稿 · 日志里读回来的），那一刻 `kind` 还只是一串字符。
@@ -303,7 +315,7 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   // "investigate 不可能与任何契约相交"（架构 § 8.12 的验证性质）唯一的守卫。
   ownedPaths: {
     holder: 'M3（路径语法）· 构造器（`evidence` 那一段归它）',
-    shape: '路径数组（视图内的相对路径；不许占 evidence 那一段——那是构造器留给调查型的）',
+    shape: `路径数组（${REL_PATH_SHAPE}；不许占 evidence 那一段——那是构造器留给调查型的）`,
     check: (v) => {
       const syntax = pathArrayField(v, 'ownedPaths', upperBoundField)
       if (syntax !== null) return syntax
@@ -315,12 +327,12 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   },
   conflictPaths: {
     holder: 'M13（即报告的冲突路径集）',
-    shape: '路径数组（视图内的相对路径）',
+    shape: `路径数组（${REL_PATH_SHAPE}）`,
     check: (v) => pathArrayField(v, 'conflictPaths', upperBoundField),
   },
   seed: {
     holder: 'M3（路径语法）；上界那一条由构造器按 § 8.12 的两条准则判（见 seedProblems）',
-    shape: '路径数组（视图内的相对路径）',
+    shape: `路径数组（${REL_PATH_SHAPE}）`,
     check: (v) => pathArrayField(v, 'seed', upperBoundField),
   },
 
@@ -329,7 +341,7 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   // 交不交得出东西，判据是 `assertions`——那一格非空。
   deliverables: {
     holder: '工作区配置',
-    shape: '数组，每条 {path, form}（path 是视图内的相对路径 · form 是一句话）',
+    shape: `数组，每条 {path, form}（path 是${REL_PATH_SHAPE} · form 是一句话）`,
     check: (v) => listProblem(v, 'deliverables', deliverableProblem),
   },
   // 这一格非空：**"验收门只剩一条断言"那一档有下限，下限是一条**——零条会让
