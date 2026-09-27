@@ -119,7 +119,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { computeAll, reportOf } from '../probe/round.ts'
 import { computeAllMetrics, computeAttribution, lineOf, lineOfAttribution } from '../probe/metrics.ts'
-import { linesOf, snapshot } from '../probe/status.ts'
+import { callLinesOf, linesOf, rowsOf, snapshot } from '../probe/status.ts'
 import { phaseOf } from '../model/price.ts'
 import type { StatusRow } from '../probe/status.ts'
 import { follow, readNew } from '../probe/watch.ts'
@@ -255,7 +255,8 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              --fail <n>   让第 n 个 agent 交一个"必然失败"的提交（走查要撞红）
                              --deny <n>   第 n 个 agent 的格子里多跑一条必然被拒的动作
                              --retry <n>  Verifying → Working 那条回边允许走几次（缺省 1：没通过自动回一次；0 = 一遍都不重来）
-                             --report     印打回那三个数（从日志重算，不采集）
+                             --report     印打回那三个数与逐趟账（从日志重算，不采集）
+                             ·            逐趟账 = 每一条 llm/call 一行 + 合计（含思考与费用）
                              --metrics    印八元指标（**每个指标的分子与分母一起印**，从日志重算）
                              --materialize 起头时把 N 棵树也铺出来（缺省不铺）
                              --live        接真驱动：每一步发一次真调用（要凭据），不再是打桩那一档。
@@ -1220,7 +1221,10 @@ async function roundRun(
     // **归因三处对照**（闸四的另一半 · PLAN § 5.12 序 3）：也是从日志重算——与上面那三个数、
     // 与八元指标同一个源（同一份日志 · 同样不采集）。三行恒在，缺的写「没有读数」。
     const attribution = await computeAttribution(() => ctx.log.readMerged())
-    const report = reportOf({ round }, readings, attribution.map(lineOfAttribution))
+    // **逐趟账**（PLAN § 5.9 的 `G5`）：每一条 `llm/call` 一行 + 合计。它也是从同一份日志重算，
+    // 钱的档按读这一次的钟算（账上没有时刻）。
+    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()) })
+    const report = reportOf({ round }, readings, attribution.map(lineOfAttribution), callLines)
     // 八元指标（架构 § 8.15）：**与上面那三个数同一个来源**（同一份日志 · 同样重算）。
     // 那一趟的日志就是刚才跑出来的那一份——所以 `--metrics` 印的就是这一趟。
     const metrics = flags.has('metrics') ? await computeAllMetrics(() => ctx.log.readMerged(), { round }) : null
@@ -1280,6 +1284,8 @@ function emitRunFace(o: {
       metrics: metrics === null ? null : [...metrics],
       report: report.readings,
       attribution: [...attribution],
+      // 逐趟账：`--json` 与文字那一档给的是同一件事（同一个数组的两档渲染）。
+      callLines: [...report.callLines],
     })
   } else {
     emitLine(`${run.round}\t${run.base}\t${run.state}`)
@@ -1300,6 +1306,9 @@ function emitRunFace(o: {
       for (const l of report.lines) emitLine(`  ${l}`)
       emitLine('归因三处对照（闸四：命中落在哪一段；三行恒在，缺的写「没有读数」）：')
       for (const l of report.attributionLines) emitLine(`  ${l}`)
+      // **每趟 `usage` 一行**（`G5` 那句话的兑现）：末行是合计，钱按官方价目表算。
+      emitLine('逐趟账（每一条 `llm/call` 一行，末行是合计；钱按官方价目表算）：')
+      for (const l of report.callLines) emitLine(`  ${l}`)
     }
     if (metrics !== null) {
       emitLine('八元指标（从日志重算，不采集；分子与分母一起印）：')
@@ -1920,7 +1929,8 @@ async function roundWork(root: string, flags: Map<string, string | true>, args: 
     // 三 · 打回那三个数与八元指标（**与 `round run` 同一份读法**：同一份日志上的重算，不采集）。
     const readings = await computeAll(() => ctx.log.readMerged(), { round })
     const attribution = await computeAttribution(() => ctx.log.readMerged())
-    const report = reportOf({ round }, readings, attribution.map(lineOfAttribution))
+    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()) })
+    const report = reportOf({ round }, readings, attribution.map(lineOfAttribution), callLines)
     const metrics = flags.has('metrics') ? await computeAllMetrics(() => ctx.log.readMerged(), { round }) : null
     // **复用了哪几格**印在 stderr：它是"这一趟只补了没交卷的那几格"的读数（重跑不重复烧钱）。
     if (run.reused.length > 0) {

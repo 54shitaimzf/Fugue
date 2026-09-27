@@ -24,8 +24,8 @@
 // 图上根本走不通的记进 `unrouted`（**读面不许因为一条奇怪的账就整份读不出来**）。
 // 要"每一步都落一条事件"是一个**写面**的改动（会动前缀账、会让 W10 那条基线作废），不在这里做。
 import type { Log, LogEvent } from '../log/events.ts'
-import { costOf, matchModels, moneyText } from '../model/price.ts'
-import type { Phase } from '../model/price.ts'
+import { costOf, formatUsd, matchModels, moneyText } from '../model/price.ts'
+import type { Billable, Phase } from '../model/price.ts'
 import { EDGES, STATES, abortEdges } from '../round/machine.ts'
 import type { Cause, Edge } from '../round/machine.ts'
 import { rejectsIn } from './round.ts'
@@ -487,9 +487,82 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
  * 只有日志目录知道——交错那一条一处都不用枚举，也不会漏掉某个 agent（`probe/round.ts` 的同一句话）。
  */
 export async function snapshot(log: Pick<Log, 'readMerged'>): Promise<StatusSnapshot> {
+  return statusOf(await rowsOf(() => log.readMerged()))
+}
+
+/** 交错那一份读侧 → 一整份行。**两处共用**：`snapshot` 要它折快照，`callLinesOf` 要它逐趟列。 */
+export async function rowsOf(read: () => AsyncIterable<StatusRow>): Promise<StatusRow[]> {
   const rows: StatusRow[] = []
-  for await (const r of log.readMerged()) rows.push(r)
-  return statusOf(rows)
+  for await (const r of read()) rows.push(r)
+  return rows
+}
+
+/**
+ * 一次调用那几个数的人读写法：**没量到的印「未量到」，不拿 0 顶**（与用量那一行同一条规矩）。
+ */
+function callNums(u: { readonly inputTokens: number | null; readonly cacheReadTokens: number | null; readonly cacheWriteTokens: number | null; readonly outputTokens: number | null; readonly reasoningTokens: number | null }): string {
+  const at = (v: number | null): string => (typeof v === 'number' ? String(v) : '未量到')
+  return (
+    `input ${at(u.inputTokens)} · cacheRead ${at(u.cacheReadTokens)}` +
+    ` · cacheWrite ${at(u.cacheWriteTokens)} · output ${at(u.outputTokens)}（思考 ${at(u.reasoningTokens)}）`
+  )
+}
+
+/** 一次调用的钱。**只吃那四个数**（思考 token 是输出里的明细，再加一遍就是把同一笔钱算两回）。 */
+function oneCallMoney(model: string, u: Parameters<typeof callNums>[0], phase: Phase): string {
+  const row = matchModels([model]).row
+  const b: Billable = {
+    calls: 1,
+    inputTokens: totalOf([u.inputTokens]),
+    cacheReadTokens: totalOf([u.cacheReadTokens]),
+    cacheWriteTokens: totalOf([u.cacheWriteTokens]),
+    outputTokens: totalOf([u.outputTokens]),
+  }
+  const m = costOf(b, row, phase)
+  if (m.usd === null) return `算不出来：${model} 不在价目表里——不拿 0 顶`
+  return `${formatUsd(m.usd)}${m.missing > 0 ? `（下界：有 ${m.missing} 条没量到）` : ''}`
+}
+
+/**
+ * **逐趟账**：每一条 `llm/call` 一行（`--report` 里那一栏 · PLAN § 5.9 的 `G5` 那句话）。
+ *
+ * 为什么要逐趟而不是只有合计：一趟里那几步的价钱差着量级——探路那几步几十 token，落笔那一步
+ * 几百到几千。「这一轮花了多少」合计答得出，而"钱花在哪一步"只有逐趟答得出，那正是"预算被探路
+ * 吃满"这个失败形状要看的那一栏。
+ *
+ * **每一行都指得到一条事件**（`llm/call` 的 `agent` · `step` · `stop` · `rawStop` · `thinking` ·
+ * `usage`），没有一处推断。合计那一行走 `statusOf`（与 `status --once` 同一个汇总，不另算一份）。
+ *
+ * 钱的档由读的人给（账上没有时刻）：**不给档就不印钱**，而"不印"这件事在那一行里说出来
+ * （与用量那一栏同一条规矩：少印要说，不拿 0 顶）。
+ */
+export function callLinesOf(rows: readonly StatusRow[], opts: LinesOptions = {}): readonly string[] {
+  const out: string[] = []
+  for (const { e } of rows) {
+    if (e.t !== 'llm/call') continue
+    // 半截的流那一档（`stop` 为 `null`）：**不许当"走完了"**，所以它有自己的写法。
+    const why = e.stop === null ? 'cut-stream（这一趟没走完）' : e.rawStop === null ? e.stop : `${e.stop}（${e.rawStop}）`
+    const money =
+      opts.phase === undefined ? ' · 钱 没印（读的时候没给峰谷档）' : ` · 钱 ${oneCallMoney(e.model, e.usage, opts.phase)}`
+    out.push(`格 ${e.agent} · 步 ${e.step} · ${why} · 思考 ${e.thinking ?? '没声明'} · ${callNums(e.usage)}${money}`)
+  }
+  const s = statusOf(rows)
+  const u = s.usage
+  const one = (n: string, t: UsageTotal): string => `${n} ${t.total}${t.missing > 0 ? `（缺 ${t.missing} 条）` : ''}`
+  const total =
+    `合计 调用 ${u.calls} · ${one('input', u.inputTokens)} · ${one('cacheRead', u.cacheReadTokens)}` +
+    ` · ${one('cacheWrite', u.cacheWriteTokens)} · ${one('output', u.outputTokens)} · ${one('思考', u.reasoningTokens)}`
+  if (u.calls === 0) {
+    out.push(`${total}——这一份日志里一次调用都还没有`)
+    return out
+  }
+  if (opts.phase === undefined) {
+    out.push(`${total} · 费用 没印：读的时候没给峰谷档（账上没有时刻，这一档只能由读的人给）——不拿 0 顶`)
+    return out
+  }
+  const match = matchModels(s.models)
+  out.push(`${total} · ${moneyText({ money: costOf(u, match.row, opts.phase), match, phase: opts.phase, models: s.models })}`)
+  return out
 }
 
 /**
@@ -545,6 +618,9 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions = {}): readonly st
   if (opts.phase !== undefined) {
     const match = matchModels(s.models)
     out.push(moneyText({ money: costOf(u, match.row, opts.phase), match, phase: opts.phase, models: s.models }))
+  } else {
+    // **少印要说**：原先这一档静默地少一行，于是"没给档"与"这一份日志没有钱那一栏"长得一样。
+    out.push('费用 没印：读的时候没给峰谷档（账上没有时刻，这一档只能由读的人给）——不拿 0 顶')
   }
   out.push(
     s.last === null

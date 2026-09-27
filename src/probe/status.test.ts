@@ -19,6 +19,9 @@
 //   ⑧ **树那一侧那一栏**（`mat/reclaim` 里 `changed` 非空）与"被挡"分开：`rows` 是报了几条 ·
 //      `paths` 是去重排序之后的路径集；`changed` 为空的那几条不算（那是"照例读到空集"那个读数）
 //      · 负对照：抹掉那几条 → 0 与空
+//   ⑨ **逐趟账**（`--report` 那一栏 · PLAN § 5.9 的 `G5`）：每一条 `llm/call` 一行，末行是合计；
+//      半截的流（`stop` 为 `null`）印「这一趟没走完」；没量到的印「未量到」；**没给峰谷档就说
+//      钱没印**（少印要说）；给了档则逐趟与合计各一笔钱——合计那个数与 `costOf` 同源
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -29,7 +32,7 @@ import type { LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import type { AgentId, RoundId } from '../terms.ts'
 import { computeMerged } from './round.ts'
-import { causeOf, linesOf, routeOf, snapshot, statusOf } from './status.ts'
+import { callLinesOf, causeOf, linesOf, routeOf, snapshot, statusOf } from './status.ts'
 import type { StatusRow } from './status.ts'
 import { follow, readNew } from './watch.ts'
 
@@ -71,6 +74,8 @@ function call(agent: string, step: string, invocations: number, cacheRead: numbe
     invocations,
     status: null,
     headers: null,
+    // 这一栏（序 27 起）：**声明的是哪一档思考**，`null` = 声明里没写。
+    thinking: 'high',
     usage: { inputTokens: null, cacheReadTokens: cacheRead, cacheWriteTokens: 0, outputTokens: 10, reasoningTokens: null },
     rawStop: 'end_turn',
     stop: 'end-turn',
@@ -378,4 +383,31 @@ test('⑧ 树那一侧的越界：`mat/reclaim` 里 `changed` 非空的那几条
   assert.equal(bare.outside.rows, 0)
   assert.deepEqual(bare.outside.paths, [])
   console.log(`⑧ 读数：树上报了没挡的 ${s.outside.rows} 条（${s.outside.paths.join(' · ')}）· 被挡 ${s.refusals.total} 次`)
+})
+
+test('⑨ 逐趟账：每一条 `llm/call` 一行 + 合计；半截的流与"没给档"都印出来，不拿 0 顶', () => {
+  const rows = [
+    row(call('agent/r1/1', '0', 1, 1920), 'agent/r1/1'),
+    // 半截的流：`stop` 是 `null`（`cut-stream`）。**不许当"走完了"**，所以它有自己的写法。
+    row({ ...(call('agent/r1/1', '1', 0, 1920) as object), stop: null, rawStop: null } as LogEvent, 'agent/r1/1'),
+  ]
+  // **没给档**：逐趟与合计都说"钱没印"，而"没印"这件事本身印出来了（少印要说）。
+  const bare = callLinesOf(rows)
+  assert.equal(bare.length, 3, `两条调用 + 一行合计，盘上是 ${bare.length} 行`)
+  assert.match(bare[0] as string, /步 0 · end-turn（end_turn） · 思考 high · input 未量到 · cacheRead 1920 · cacheWrite 0 · output 10（思考 未量到） · 钱 没印/)
+  assert.match(bare[1] as string, /cut-stream（这一趟没走完）/)
+  assert.match(bare[2] as string, /^合计 调用 2 · input 0（缺 2 条） · cacheRead 3840 · cacheWrite 0 · output 20 · 思考 0（缺 2 条） · 费用 没印：/)
+  assert.match(linesOf(statusOf(rows)).join('\n'), /费用 没印：读的时候没给峰谷档/, '`linesOf` 那一档也要说"少印"')
+
+  // **给了档**：逐趟一笔、合计一笔。合计那个数走的是 `costOf`（一处算式）。
+  const priced = callLinesOf(rows, { phase: 'off-peak' })
+  assert.match(priced[0] as string, /· 钱 \$0\.000012（下界：有 1 条没量到）/)
+  assert.match(priced[2] as string, /· 费用 ≈ \$0\.000024（谷时 · deepseek-chat → deepseek-flash：未命中 \$0\.15\/M · 命中 \$0\.003\/M · 输出 \$0\.6\/M）/)
+
+  // 一次调用都没有那一档：合计照印，并说清"一次调用都还没有"。
+  const none = callLinesOf([row({ t: 'round/state', round: 'r1' as RoundId, from: 'Idle' as never, to: 'Planning' as never })])
+  assert.equal(none.length, 1)
+  assert.match(none[0] as string, /合计 调用 0 · .*——这一份日志里一次调用都还没有/)
+  console.log(`⑨ 读数：${bare[0] as string}`)
+  console.log(`⑨ 读数：${priced[2] as string}`)
 })

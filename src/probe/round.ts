@@ -113,6 +113,12 @@ export interface RoundReport {
    * 是「没有读数」，由 `probe/metrics.ts` 那一边排好版；这一份只负责带上它。
    */
   readonly attributionLines: readonly string[]
+  /**
+   * **逐趟账**：每一条 `llm/call` 一行，末行是合计（PLAN § 5.9 的 `G5`：「`--report` 里每趟
+   * `usage` 四个数一行」）。它由 `probe/status.ts` 的 `callLinesOf` 排，这一份只负责带上它——
+   * 汇总那一处与 `status --once` 是同一份实现（`statusOf`），不在这里另算一遍。
+   */
+  readonly callLines: readonly string[]
   /** 是否是"故意撞红"的那一趟：三个数逐个大于 0。**它是 A8 ② 那条断言的判据。** */
   readonly allPositive: boolean
 }
@@ -128,9 +134,10 @@ export function reportOf(
   range: Range,
   readings: readonly MetricReading[],
   attributionLines: readonly string[] = [],
+  callLines: readonly string[] = [],
 ): RoundReport {
   const lines = readings.map((r) => `${r.metric}\t${r.count}\t${r.how}`)
-  return { range, readings, lines, attributionLines, allPositive: readings.every((r) => r.count > 0) }
+  return { range, readings, lines, attributionLines, callLines, allPositive: readings.every((r) => r.count > 0) }
 }
 
 /** 一个状态序列里 `Verifying → Working` 的条数——**纯函数那一半，给"同一份日志重算两次"那条断言用**。 */
