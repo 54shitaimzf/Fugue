@@ -40,7 +40,7 @@ export const DRAFT_KINDS: readonly DraftKind[] = ['investigate', 'implement']
  * 唯一一句就是"调查型那一节要排在第一节"，而那一句是**印给人的**。两处各写一遍的症状与形状那一栏
  * 一样：模型照提示写、判它不认。
  */
-const SECTION_ORDER_RULE = '最多一节调查型，而且它要排在第一节——契约按草案的次序发身份与分支'
+const SECTION_ORDER_RULE = 'at most one investigate section, and it comes first — contracts take their identity and branch from the order of the draft'
 
 /**
  * **每一节是独立的一格**——与上面那条次序规则同类：机器知道、模型无从得知，所以一处：
@@ -61,7 +61,7 @@ const SECTION_ORDER_RULE = '最多一节调查型，而且它要排在第一节�
  * 下一个静默落空。
  */
 const SECTION_ISOLATION_RULE =
-  '每一节都是独立的一格：分支都从同一个底起，跑的时候看不见别节的产物（调查型那一节交的证据也不在这一轮的工作树里）——所以一节要用的东西只能来自底上就已经有的那几条 seed，或者由你把结论直接写进这一节的 goal / deliverables，别指"第 N 节的结论"'
+  `each section is an independent task: all branches start from the same base and cannot see another section's output while running (the evidence an investigate section hands in is not in this round's work tree either) — so what a section needs must come from seeds that already exist on the base, or be written straight into that section's goal / deliverables by you; never point at "the conclusion of section N"`
 
 /**
  * 草案不给的那几个键，逐变体。**它是一条减法，不是第二份字段表**：草案的键域 = 契约的字段表
@@ -187,7 +187,7 @@ export function draftRuleTextOf(
   actionCommands: Readonly<Record<string, string>> = {},
 ): string {
   const lines = DRAFT_KINDS.map(
-    (k) => `  ${k}：${DRAFT_FIELDS[k].map((f) => `${f}：${FIELD_RULES[f]?.shape ?? '（没有一句形状）'}`).join(' · ')}`,
+    (k) => `  ${k}: ${DRAFT_FIELDS[k].map((f) => `${f}: ${FIELD_RULES[f]?.shape ?? '(no shape given)'}`).join(' · ')}`,
   )
   // **它跑的什么也要印出来。** `assertions.action` 只能从这几个里挑，而"只给名字"那一版真档
   // 照出过一次后果：那一趟为了弄清哪个动作核哪一处，去找工作区的配置——它猜的是 `*.json` /
@@ -197,22 +197,22 @@ export function draftRuleTextOf(
   const shown = actionNames.map((n) => {
     const cmd = actionCommands[n]
     // **不给命令就与原来那一版逐字相同**（`name`）：夹具与单测那一档不该因为这一栏变字节。
-    return cmd === undefined || cmd === '' ? n : `${n}（${cmd}）`
+    return cmd === undefined || cmd === '' ? n : `${n} (${cmd})`
   })
   const withCommand = actionNames.some((n) => (actionCommands[n] ?? '') !== '')
   return (
-    `这一趟要把拆分写进 \`${draftPath}\`：一个任务一节，每节一个标 \`json\` 的围栏块；` +
-    '块里按那一节的 kind 给这几个键，值要写成那个形状：\n' +
+    `Write the split into \`${draftPath}\`: one task per section, each section in a fenced block tagged \`json\`;` +
+    " inside the block give the keys for that section's kind, with each value in the shape shown:\n" +
     lines.join('\n') +
-    `\n${SECTION_ORDER_RULE}。\n` +
-    `${SECTION_ISOLATION_RULE}。\n` +
+    `\n${SECTION_ORDER_RULE}.\n` +
+    `${SECTION_ISOLATION_RULE}.\n` +
     // `assertions` 里那个 `action` **只能从工作区绑好的动作里挑**（PLAN § 5.10 的 C1 ⑦：不猜、
     // 不补、不替它挑）。而"绑好了哪几个"是**工作区的事实**，模型无从得知——所以由调用方给进来。
     // 真档那一趟它就是最后那一处：草案的键与值都对，退回来的唯一一句是"指向一个没绑的动作"。
-    `assertions 里那个 action 只能从工作区绑好的动作里挑${withCommand ? '（名字后面括号里是它跑什么）' : ''}：${
-      actionNames.length === 0 ? '（今天一条都没绑——先用 fugue config set actions.<名字> 绑一个）' : shown.join(' · ')
-    }。\n` +
-    '块外那些话留着——"为什么这么拆"那一句就是它。写别的路径不算这一趟的产物。'
+    `the action in assertions can only come from the actions bound in this workspace${withCommand ? ' (the command it runs is in parentheses after the name)' : ''}: ${
+      actionNames.length === 0 ? '(none is bound today — bind one first with fugue config set actions.<name>)' : shown.join(' · ')
+    }.\n` +
+    'Keep the prose outside the blocks — that is where "why split it this way" belongs. Another path does not count as this pass\'s deliverable.'
   )
 }
 

@@ -286,14 +286,14 @@ function listProblem(
  * 于是带了个结尾的 `/`，而 `isSegment('')` 为假。那一趟别的都对，整趟照样退回。
  */
 const REL_PATH_SHAPE =
-  '视图内的相对路径：非空 · `/` 分段，每段不带 `\\`、不是 `.` 或 `..`、结尾不带 `/`'
+  'a relative path inside the view: non-empty, `/`-separated, no `\\` in a segment, not `.` or `..`, no trailing `/`'
 
 export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   // 这一格是三个变体的判别键。"它已经由联合类型保证了"在这里不成立：`checkContract` 收的是
   // 一份从别处来的值（配置 · 草稿 · 日志里读回来的），那一刻 `kind` 还只是一串字符。
   kind: {
     holder: '契约本体（三个变体）',
-    shape: 'implement 或 investigate',
+    shape: 'implement or investigate',
     check: (v) =>
       v === 'implement' || v === 'investigate' || v === 'resolve'
         ? null
@@ -301,21 +301,21 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   },
   id: {
     holder: 'M11（唯一生成者）——形状见 idShapeOf；唯一性由构造器保证：同一个轮次里同一变体逐号发，轮与轮之间不重用（D9）',
-    shape: '系统发的，草案不给',
+    shape: 'issued by the system; not part of the draft',
     check: (v) => (idShapeOf(v) === null ? `id 要写成 <轮次>.<变体>.<序号>：${JSON.stringify(v)}` : null),
   },
   // 三格身份：值的**存在性**由分配器与 M1 判（分支在不在 · 名字是不是登录名），这里只判它是不是一个名字。
-  agent: { holder: '身份分配器（§ 14.1）', shape: '系统发的，草案不给', check: (v) => nonEmptyString(v, 'agent') },
-  branch: { holder: '身份分配器（§ 14.1）；存在性由 M1 判', shape: '系统发的，草案不给', check: (v) => nonEmptyString(v, 'branch') },
-  goal: { holder: 'round/intent（轮级意图是它的上界）', shape: '一句话', check: (v) => nonEmptyString(v, 'goal') },
-  question: { holder: 'round/intent（轮级意图是它的上界）', shape: '一句话', check: (v) => nonEmptyString(v, 'question') },
+  agent: { holder: '身份分配器（§ 14.1）', shape: 'issued by the system; not part of the draft', check: (v) => nonEmptyString(v, 'agent') },
+  branch: { holder: '身份分配器（§ 14.1）；存在性由 M1 判', shape: 'issued by the system; not part of the draft', check: (v) => nonEmptyString(v, 'branch') },
+  goal: { holder: 'round/intent（轮级意图是它的上界）', shape: 'one sentence', check: (v) => nonEmptyString(v, 'goal') },
+  question: { holder: 'round/intent（轮级意图是它的上界）', shape: 'one sentence', check: (v) => nonEmptyString(v, 'question') },
 
   // 两格路径集合：语法归 M3（`isRelPath`），这里只用它。
   // `ownedPaths` 另有一条：不许占住构造器留给调查型的那一段——那一段是
   // "investigate 不可能与任何契约相交"（架构 § 8.12 的验证性质）唯一的守卫。
   ownedPaths: {
     holder: 'M3（路径语法）· 构造器（`evidence` 那一段归它）',
-    shape: `路径数组（${REL_PATH_SHAPE}；不许占 evidence 那一段——那是构造器留给调查型的）`,
+    shape: `path array (${REL_PATH_SHAPE}; the ${EVIDENCE_PREFIX}/ prefix is off limits — the constructor reserves it for investigate)`,
     check: (v) => {
       const syntax = pathArrayField(v, 'ownedPaths', upperBoundField)
       if (syntax !== null) return syntax
@@ -327,12 +327,12 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   },
   conflictPaths: {
     holder: 'M13（即报告的冲突路径集）',
-    shape: `路径数组（${REL_PATH_SHAPE}）`,
+    shape: `path array (${REL_PATH_SHAPE})`,
     check: (v) => pathArrayField(v, 'conflictPaths', upperBoundField),
   },
   seed: {
     holder: 'M3（路径语法）；上界那一条由构造器按 § 8.12 的两条准则判（见 seedProblems）',
-    shape: `路径数组（${REL_PATH_SHAPE}）`,
+    shape: `path array (${REL_PATH_SHAPE})`,
     check: (v) => pathArrayField(v, 'seed', upperBoundField),
   },
 
@@ -341,7 +341,7 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   // 交不交得出东西，判据是 `assertions`——那一格非空。
   deliverables: {
     holder: '工作区配置',
-    shape: `数组，每条 {path, form}（path 是${REL_PATH_SHAPE} · form 是一句话）`,
+    shape: `array of {path, form} (path is ${REL_PATH_SHAPE}; form is one sentence)`,
     check: (v) => listProblem(v, 'deliverables', deliverableProblem),
   },
   // 这一格非空：**"验收门只剩一条断言"那一档有下限，下限是一条**——零条会让
@@ -349,19 +349,19 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
   // （PLAN § 5.7 的地板第二档）。
   assertions: {
     holder: '工作区配置（候选）· 验证门（可执行性）',
-    shape: '数组，每条 {action, name}，至少一条',
+    shape: 'array of {action, name}, at least one',
     check: (v) => listProblem(v, 'assertions', assertionProblem, { nonEmpty: true }),
   },
   evidenceRequired: {
     holder: 'M3（路径合法性）· M13（增量核对）',
-    shape: '数组，每条 {note}，至少一条；note 当目录名用（产物落在 evidence/<agent>/<note>），'
-        + '所以它要是一个短名：不含 / 与 \\、不以点开头、不写句子（要写说明就写进 question 那一句），例如「现状」',
+    shape: 'array of {note}, at least one; note is used as a directory name (the output lands in evidence/<agent>/<note>),'
+        + ' so it must be a short name: no / or \\, not starting with a dot, not a sentence (put prose in the question line instead), for example "current-state"',
     check: (v) => listProblem(v, 'evidenceRequired', evidenceProblem, { nonEmpty: true }),
   },
 
   actionOutputs: {
     holder: '系统级动作白名单（ActionName）· 构造器（⊆ ownedPaths）',
-    shape: '系统造的，草案不给',
+    shape: 'built by the system; not part of the draft',
     check: (v) => {
       if (!isObject(v)) return 'actionOutputs 要是一个对象：键是动作名，值是产出路径'
       const bad: string[] = []
@@ -374,7 +374,7 @@ export const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
       return bad.length === 0 ? null : bad.join('；')
     },
   },
-  base: { holder: 'M1', shape: '系统发的，草案不给', check: (v) => nonEmptyString(v, 'base') },
+  base: { holder: 'M1', shape: 'issued by the system; not part of the draft', check: (v) => nonEmptyString(v, 'base') },
 }
 
 // **每一格都要有一句形状**：那一句是写给模型看的那一段念的那一份（`draftRuleTextOf`），

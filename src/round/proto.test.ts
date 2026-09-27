@@ -36,8 +36,8 @@ test('①d 子 agent 那份 B 区多出「我的任务」那一段，而持轮�
   assert.equal(firstDivergence(sub.zoneA, hold.zoneA), -1, 'A 区不同了')
   assert.equal(firstDivergence(sub.zoneC, hold.zoneC), -1, 'C 区不同了')
   // 而 B 区那一段：子 agent 那份有「我的任务」，持轮者那份没有。
-  assert.ok(text.includes('产物路径：deliver/agent-1/'), `子 agent 那份 B 区里没有「我的任务」那一段：${text}`)
-  assert.equal(dec.decode(hold.zoneB).includes('产物路径：'), false, '持轮者那份 B 区里居然有「我的任务」那一段')
+  assert.ok(text.includes('Output paths: deliver/agent-1/'), `子 agent 那份 B 区里没有「我的任务」那一段：${text}`)
+  assert.equal(dec.decode(hold.zoneB).includes('Output paths:'), false, '持轮者那份 B 区里居然有「我的任务」那一段')
   assert.ok(sub.zoneB.length > hold.zoneB.length, '两份 B 区的长短关系不对')
   console.log(
     `①d 读数：子 agent B 区 ${sub.zoneB.length} 字节 · 持轮者 B 区 ${hold.zoneB.length} 字节 ` +
@@ -66,12 +66,12 @@ test('S9 · 「工作总目标」末尾那一句：写哪儿 · 什么形状，�
   // 二 · 什么形状：每一节那一行的名字来自 `DRAFT_FIELDS`，而形状那半句来自 `FIELD_RULES`
   //     （判键域与判值域用的就是那两份）。逐键逐形状的核对在 `contract/draft.test.ts` ⑦。
   for (const kind of DRAFT_KINDS) {
-    assert.ok(text.includes(`  ${kind}：`), `${kind} 那一行的名字不在那一段里：${text}`)
+    assert.ok(text.includes(`  ${kind}: `), `${kind} 那一行的名字不在那一段里：${text}`)
   }
-  assert.ok(text.includes('值要写成那个形状'), '那一句里没有"形状"那半句')
+  assert.ok(text.includes('in the shape shown'), '那一句里没有"形状"那半句')
   // 三 · 位置：它在「工作总目标」那一段的**末尾**（人那一句在最前）。
   assert.ok(text.startsWith('写一份 README.md'), `那一段的开头不是人那一句：${text.slice(0, 60)}`)
-  assert.ok(text.trimEnd().endsWith('写别的路径不算这一趟的产物。'), `那一段的末尾不是那一句：${text.slice(-200)}`)
+  assert.ok(text.trimEnd().endsWith("Another path does not count as this pass's deliverable."), `那一段的末尾不是那一句：${text.slice(-200)}`)
   // 四 · **它只在 B 区那一段里**：A 区（跨 agent 逐字节全等的那一段）与 C 区一个字节都不沾它。
   //     这一条是那句"权限与差别落在作用域上"的另外半张脸——共用头不许被这一趟的产物撑开。
   assert.equal(dec.decode(hold.zoneA).includes(draftPath), false, 'A 区里居然有草案路径')
@@ -112,17 +112,17 @@ test('①e 持轮者那一趟的前缀里说得出收工口径，而子 agent �
     }).zoneB,
   )
   // 一 · 预算那一句：那个数就是 `--max-steps` 给的那个。
-  assert.ok(hold.includes('这一格最多 6 步。'), `收工口径里没有预算那一句：${hold}`)
+  assert.ok(hold.includes('At most 6 steps for this task.'), `收工口径里没有预算那一句：${hold}`)
   // 二 · 这一格没有可执行的树：**事先**在，而不是等它伸手之后才回一句（那一句一步）。
-  assert.ok(hold.includes('这一格没有可执行的树'), '收工口径里没有"这一格没有可执行的树"')
+  assert.ok(hold.includes('This task has no executable tree'), '收工口径里没有"这一格没有可执行的树"')
   assert.ok(hold.includes('`bash`'), '那一句没有点出被拦的那条工具名')
   // 二之二 · 产物与它的边界：那两趟"退回"各犯一条——产物不在（4 步自然收工 · 草案空）· 伸手去
   //         改源码（`write src/fields.js` 被 `plan-scope` 拒）。两句都要事先在。
-  assert.ok(hold.includes('它没写出来，这一趟就等于没跑'), '收工口径里没有"产物不在就等于没跑"')
-  assert.ok(hold.includes('这一趟不动工作树里的源码'), '收工口径里没有"这一趟不动源码"')
+  assert.ok(hold.includes('if it is not written, this pass did not happen'), '收工口径里没有"产物不在就等于没跑"')
+  assert.ok(hold.includes('This pass does not touch the source in the work tree'), '收工口径里没有"这一趟不动源码"')
   // 三 · 位置：收工口径在草案那一句**之前**——末尾留给"写哪儿 · 什么形状"（近因）。
-  assert.ok(hold.indexOf('这一格最多 6 步。') < hold.indexOf('这一趟要把拆分写进'), '收工口径跑到产物说明后面去了')
-  assert.ok(hold.trimEnd().endsWith('写别的路径不算这一趟的产物。'), `那一段的末尾不是产物说明：${hold.slice(-120)}`)
+  assert.ok(hold.indexOf('At most 6 steps for this task.') < hold.indexOf('Write the split into'), '收工口径跑到产物说明后面去了')
+  assert.ok(hold.trimEnd().endsWith("Another path does not count as this pass's deliverable."), `那一段的末尾不是产物说明：${hold.slice(-120)}`)
   // 四 · 负对照：子 agent 那一份里没有"这一格没有可执行的树"（它那一格跑得动），而预算那一句两边都在。
   const coord = { id: 'agent/r1/1', branch: 'refs/heads/agent/r1/1', outputPaths: [] }
   const sub = dec.decode(
@@ -147,8 +147,8 @@ test('①e 持轮者那一趟的前缀里说得出收工口径，而子 agent �
       ),
     }).zoneB,
   )
-  assert.equal(sub.includes('这一格没有可执行的树'), false, '子 agent 那一份里居然有"这一格没有可执行的树"')
-  assert.equal(sub.includes('这一趟不动工作树里的源码'), false, '子 agent 那一份里居然有"这一趟不动源码"——它那一格正是要改源码的')
-  assert.ok(sub.includes('这一格最多 6 步。'), '子 agent 那一份里丢了预算那一句')
+  assert.equal(sub.includes('This task has no executable tree'), false, '子 agent 那一份里居然有"这一格没有可执行的树"')
+  assert.equal(sub.includes('This pass does not touch the source in the work tree'), false, '子 agent 那一份里居然有"这一趟不动源码"——它那一格正是要改源码的')
+  assert.ok(sub.includes('At most 6 steps for this task.'), '子 agent 那一份里丢了预算那一句')
   console.log(`①e 读数：持轮者那份 B 区 ${hold.length} 字节（人的意图 + 收工口径 + 产物说明）· 子 agent 那份 ${sub.length} 字节`)
 })

@@ -32,7 +32,9 @@ test('① 序列化两次逐字节相同 · 键序稳定 · 无空格', () => {
   assert.equal(first, second, '两次序列化的字节不同')
   assert.equal(first, first.trim(), '序列化的两头有空白')
   assert.ok(!first.includes('\n'), '序列化里出现了换行')
-  assert.ok(!first.includes(', '), '序列化里出现了「, 」——有空格的序列化不是同一份字节')
+  // **"无空格"量的是结构那几处**：字符串值里面的空格是值本身（英文描述里就有「, 」）。
+  const structure = first.replace(/"(?:[^"\\]|\\.)*"/g, '""')
+  assert.ok(!/\s/.test(structure), `序列化的结构里有空白：${structure.slice(0, 120)}`)
 
   // 键序稳定：同一份对象换一个插入顺序，字节仍然相同（不然哈希会跟着构造顺序动）。
   const a: ToolEntry = { name: 'x', description: 'd', parameters: { type: 'object', b: 1, a: 2 } }

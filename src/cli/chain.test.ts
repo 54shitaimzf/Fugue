@@ -548,8 +548,8 @@ test('序 1 · `--wire-in` 把真响应喂回去：验收照过 · 产物逐字�
   // 一串字节上——把投影拆掉之后**重录也遮不住**（重录出来的请求里没有这一句），而只核指纹的
   // 回放档只会说"这一份不是那一次请求"。
   const sent = readFileSync(join(WIRE_IN_DIR, 'wire', WIRE_CALLS[0] as string, 'request.json'), 'utf8')
-  assert.match(sent, /写入面：notes\.md——只改这几条/, `发出去的请求里没有写入面那一句：${sent.slice(0, 200)}`)
-  assert.match(sent, /别的地方一个字节都不要动，删除也算/, '写入面那一句少了"删除也算"那半句')
+  assert.match(sent, /Write surface: notes\.md — these paths are yours/, `发出去的请求里没有写入面那一句：${sent.slice(0, 200)}`)
+  assert.match(sent, /Do not change a single byte anywhere else, deleting included/, '写入面那一句少了"删除也算"那半句')
 
   // 停因：**收敛**（`end-turn`）——不是"步数到顶"。这一条同时是 § 5.12 序 12 那三句收工口径的读数。
   const one = j.agents[0]
@@ -1087,13 +1087,13 @@ test('S9 · 持轮者的前缀里说得出草案写哪儿 · 什么形状（在�
   // 一 · 写哪儿（`.fugue/plan/r1.md` 那一条就是 `round plan` 读回来的那一条）· 什么形状 ·
   //     键那几笔（与判键域那一份同源）。
   assert.ok(request.includes('.fugue/plan/r1.md'), `请求字节里没有草案那条路径：${request.slice(0, 400)}`)
-  assert.ok(request.includes('一个任务一节'), '请求字节里没说形状')
+  assert.ok(request.includes('one task per section'), '请求字节里没说形状')
   assert.ok(request.includes('ownedPaths'), '请求字节里没念草案的键')
   // 二 · **位置**：它在「工作总目标」那一段的末尾（那一列里模型读到的最后一处；`round plan`
   //     那一趟 C 区是空的）。只判"字节里有那一句"钉不住位置——这一条才是近因那一句话。
   const goal = messagesOf(request)[0]?.content ?? ''
   assert.ok(goal.startsWith('写一份 notes.md'), `第一条消息不是目标那一句：${goal.slice(0, 80)}`)
-  assert.ok(goal.trimEnd().endsWith('写别的路径不算这一趟的产物。'), `目标那一段的末尾不是那一句：${goal.slice(-200)}`)
+  assert.ok(goal.trimEnd().endsWith("Another path does not count as this pass's deliverable."), `目标那一段的末尾不是那一句：${goal.slice(-200)}`)
 
   // 三 · **负对照：讨论态那一趟不带它**——那一趟的产物是"修正后的理解"（不落文件 · 处境不动），
   //     说一句"往 `.fugue/plan/` 里写"是错的（架构 § 15.1.a 那张表的两行）。换一份干净靶子。

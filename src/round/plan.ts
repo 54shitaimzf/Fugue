@@ -214,9 +214,9 @@ export interface PlanResult {
  * 那一句同一个形状）。
  */
 const HOLDER_REFUSAL: Readonly<Record<string, string>> = {
-  bash: '这一格没有可执行的树：预备态不物化（架构 § 15.1.a）。读文件用 read · glob · grep，要写用 write · edit。',
-  run_action: '同上：预备态不物化，动作没有地方跑（架构 § 15.1.a）。要判什么，等派发之后由验收那一档跑。',
-  checkpoint: '预备态不提交：草案跟着事件进日志就够了（架构 § 15.1.a——退回讨论态时没有东西要撤销）。',
+  bash: 'This task has no executable tree: the planning phase does not materialize one (architecture § 15.1.a). Use read · glob · grep to look at files, write · edit to change them.',
+  run_action: 'Same reason: the planning phase materializes nothing, so an action has nowhere to run (architecture § 15.1.a). Whatever has to be checked runs in the acceptance step after dispatch.',
+  checkpoint: 'The planning phase does not commit: the draft travelling with the event in the log is enough (architecture § 15.1.a — there is nothing to undo on the way back to discussion).',
 }
 
 /**
@@ -235,8 +235,8 @@ function holderRefusalOf(name: string, planPath?: RelPath): string | undefined {
   if (base === undefined) return undefined
   if (planPath === undefined) return base
   return (
-    `${base}这一趟要交的是 ${planPath}——现在把它写出来（写哪儿 · 什么形状见「工作总目标」末尾）：` +
-    '它没写出来，这一趟就等于没跑。'
+    `${base} This task is expected to hand in ${planPath} — write it now (where and in what shape: see the end of the goal):` +
+    ' if it is not written, this pass did not happen.'
   )
 }
 
@@ -268,8 +268,8 @@ function stepBudgetTail(step: number, maxSteps?: number): string {
   const left = maxSteps - step - 1
   if (left < 0 || left > STEPS_HINT_AT) return ''
   return (
-    `\n（这一格最多 ${maxSteps} 步 · 这是第 ${step + 1} 步：还剩 ${left} 步。` +
-    '先把那份草案写出来——先落一节也行，那一节该有的键要写全。）'
+    `\n(At most ${maxSteps} steps for this task · this is step ${step + 1}: ${left} left.` +
+    ' Write the draft now — landing one section is enough to start, but every key that section needs must be there.)'
   )
 }
 
@@ -327,13 +327,13 @@ export function holderFace(inner: ToolExecutor, opts: HolderFaceOptions = {}): T
 export function holderClosingRuleLines(maxSteps?: number): readonly string[] {
   return [
     ...stepBudgetLine(maxSteps),
-    '这一格没有可执行的树：预备态不物化，`bash` 与 `run_action` 试也不会通——要判什么，派发之后由验收那一档跑。',
+    'This task has no executable tree: the planning phase materializes nothing, so `bash` and `run_action` cannot work here — whatever has to be checked runs in the acceptance step after dispatch.',
     // 另两句是**这一趟的产物与它的边界**（样本盘第二趟真档照出来的两处）：一趟 4 步自然收工
     // 而草案空——它觉得自己说完了；一趟把 `write` 打在 `src/fields.js` 上被 `plan-scope` 当场
     // 拒——它把目标那一句"改这个文件"当成了自己的活，那一趟就废了。两处都不是"拒绝得不对"，
     // 是**伸手之前没人告诉它这一趟要交什么、不碰什么**。
-    '这一趟的产物是那份草案文件（写哪儿 · 什么形状见下）：它没写出来，这一趟就等于没跑。',
-    '这一趟不动工作树里的源码：你要交的是"怎么拆"，改代码是拆分之后那些格的事。',
+    'The deliverable of this pass is that draft file (where and in what shape: below): if it is not written, this pass did not happen.',
+    'This pass does not touch the source in the work tree: what you hand in is how to split the work; changing code is the business of the tasks after the split.',
   ]
 }
 

@@ -123,7 +123,7 @@ function writeScopeDenied(
   if (dir !== '' && raw.startsWith(dir) && raw.length > dir.length) return null
   return refuse(
     'plan-scope',
-    `持轮者这一趟只写草案那一棵：${dir === '' ? '（工作区根）' : dir}——写 ${raw} 不算这一趟的产物，一个字节都没落。` +
+    `In the planning phase you only write that one draft tree: ${dir === '' ? '(the workspace root)' : dir} — writing ${raw} does not count as this pass's deliverable; not one byte landed. ` +
       draftRuleTextOf(planPath),
     raw,
   )
@@ -145,11 +145,11 @@ function contractScopeDenied(
   const raw = args['path']
   if (typeof raw !== 'string') return null
   if (scope.some((p) => raw === p || raw.startsWith(`${p}/`))) return null
-  const mine = scope.length === 0 ? '这一格没有声明任何可写的路径' : `这一格只写它声明的那几条：${scope.join(' · ')}`
+  const mine = scope.length === 0 ? 'This task declares no writable paths' : `This task writes only the paths it declares: ${scope.join(' · ')}`
   return refuse(
     'contract-scope',
-    `${mine}——写在 ${raw} 上的那一次不算这一格的产出，一个字节都没落。` +
-      '别处那一份要是别的格的地界，那一格才该写它；要是这一格本来该有它，让持轮者重发契约（`ownedPaths` 那一栏）。',
+    `${mine} — what was written to ${raw} does not count as this task's output; not one byte landed. ` +
+      'If that path belongs to another task, that task is the one to write it; if this task should have owned it, have the holder re-issue the contract (the `ownedPaths` column).',
     raw,
   )
 }

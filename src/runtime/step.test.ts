@@ -565,9 +565,9 @@ test('⑨ 「我的任务」带三句收工口径（预算 · 交卷 · 断言�
 
   // 一 · 三句都在 B 区那一段里（架构 § 8.11 那张表：「我的任务」属于 B 区）。
   const three = [
-    '这一格最多 5 步。',
-    '做完就说明一句，不再调工具——交卷就是话说完。',
-    '断言由 harness 跑，不由你跑。',
+    'At most 5 steps for this task.',
+    'When the work is done, say so in one message and stop calling tools — handing in is ending the turn.',
+    'The harness runs the assertions, not you.',
   ]
   for (const line of three) {
     assert.ok(b5.includes(line), `B 区里该有这一句：${line}\nB 区是：${JSON.stringify(b5)}`)
@@ -576,13 +576,13 @@ test('⑨ 「我的任务」带三句收工口径（预算 · 交卷 · 断言�
   }
   // 产物路径照旧是那一段的最后一行（架构 § 8.11 那句"近因最好"：模型读到这里就动手）。
   const last = b5.trimEnd().split('\n').at(-1) ?? ''
-  assert.equal(last, `产物路径：${WHO.outputPaths.join(' · ')}`, `「我的任务」最后一行该是产物路径，实际是：${last}`)
+  assert.equal(last, `Output paths: ${WHO.outputPaths.join(' · ')}`, `「我的任务」最后一行该是产物路径，实际是：${last}`)
 
   // 二 · 负对照一：换一个预算 → 那一句逐字跟着变（它不是一句写死的话），而 A 区一个字节不动。
   const p4 = prefixAt(handleOf({ ...fixtureState(0), maxSteps: 4 }))
   const b4 = dec(p4.zoneB)
-  assert.ok(b4.includes('这一格最多 4 步。'), `B 区里该写 4：${JSON.stringify(b4)}`)
-  assert.equal(b4.includes('这一格最多 5 步。'), false, '换了预算，旧那个数不该还在')
+  assert.ok(b4.includes('At most 4 steps for this task.'), `B 区里该写 4：${JSON.stringify(b4)}`)
+  assert.equal(b4.includes('At most 5 steps for this task.'), false, '换了预算，旧那个数不该还在')
   assert.notEqual(hashOf(p4.zoneB), hashOf(p5.zoneB), '预算变了，B 区的指纹该跟着变')
   assert.equal(hashOf(p4.zoneA), hashOf(p5.zoneA), '预算变了，A 区不该动（它不认识「我的任务」）')
 
@@ -596,9 +596,9 @@ test('⑨ 「我的任务」带三句收工口径（预算 · 交卷 · 断言�
   // 四 · 地板那一档：不给预算 → 那一句不写，另两句照在，装配照跑（不抛）。
   const bare = prefixAt(handleOf(fixtureState(0)))
   const bb = dec(bare.zoneB)
-  assert.equal(bb.includes('这一格最多'), false, '没给预算就不该写那一句')
-  assert.ok(bb.includes('做完就说明一句，不再调工具——交卷就是话说完。'), '另两句是常量，照旧在')
-  assert.ok(bb.includes('断言由 harness 跑，不由你跑。'), '另两句是常量，照旧在')
+  assert.equal(bb.includes('At most '), false, '没给预算就不该写那一句')
+  assert.ok(bb.includes('When the work is done, say so in one message and stop calling tools — handing in is ending the turn.'), '另两句是常量，照旧在')
+  assert.ok(bb.includes('The harness runs the assertions, not you.'), '另两句是常量，照旧在')
   console.log(
     `⑨ 读数：B 区带预算 ${p5.zoneB.length} 字节 · 不带预算 ${bare.zoneB.length} 字节（差 ${p5.zoneB.length - bare.zoneB.length}）` +
       ` · 改步号 B 区指纹 ${hashOf(p1.zoneB)} 与带预算那份相同 · C 区指纹 ${hashOf(p1.zoneC)} ≠ ${hashOf(p5.zoneC)}`,

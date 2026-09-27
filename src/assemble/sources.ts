@@ -206,7 +206,7 @@ function emptyFor(id: SegmentId, protocol: Protocol): SegmentValue {
  * 那一段短一行、装配照跑（地板那一档）。
  */
 export function stepBudgetLine(maxSteps?: number): readonly string[] {
-  return maxSteps === undefined ? [] : [`这一格最多 ${maxSteps} 步。`]
+  return maxSteps === undefined ? [] : [`At most ${maxSteps} steps for this task.`]
 }
 
 /**
@@ -224,8 +224,8 @@ export function stepBudgetLine(maxSteps?: number): readonly string[] {
 export function writeScopeLine(paths: readonly string[] | undefined): readonly string[] {
   if (paths === undefined || paths.length === 0) return []
   return [
-    `写入面：${paths.join(' · ')}——只改这几条（含它们下面）。` +
-      '别的地方一个字节都不要动，删除也算：看见过时的东西，在结论里说一句，不要顺手清。',
+    `Write surface: ${paths.join(' · ')} — these paths are yours, including everything under them.` +
+      ' Do not change a single byte anywhere else, deleting included: if you find something stale, say so in your conclusion instead of clearing it away.',
   ]
 }
 
@@ -244,19 +244,19 @@ export function writeScopeLine(paths: readonly string[] | undefined): readonly s
  * 的树，而"这一格没有树"与"断言由 harness 跑"是同一件事的两面——区别只在那一格伸不伸得出手。
  */
 function taskText(t: AssembleState['task'], outputs: readonly string[], maxSteps?: number): string {
-  const lines: string[] = [`总目标：${t.goal}`, `问题：${t.question}`]
-  if (t.deliverables.length > 0) lines.push(`交付物：${t.deliverables.join(' · ')}`)
+  const lines: string[] = [`Goal: ${t.goal}`, `Question: ${t.question}`]
+  if (t.deliverables.length > 0) lines.push(`Deliverables: ${t.deliverables.join(' · ')}`)
   // **写入面排在交付物后面**：交付物是"交什么"，这一句是"哪几条归你"——同一档的两件事，
   // 而收工口径那三句照旧排在它们之后（它们与产物路径是一组）。
   lines.push(...writeScopeLine(t.ownedPaths))
-  if (t.evidenceRequired.length > 0) lines.push(`要交的证据：${t.evidenceRequired.join(' · ')}`)
-  if (t.assertions.length > 0) lines.push(`断言：${t.assertions.join(' · ')}`)
+  if (t.evidenceRequired.length > 0) lines.push(`Evidence required: ${t.evidenceRequired.join(' · ')}`)
+  if (t.assertions.length > 0) lines.push(`Assertions: ${t.assertions.join(' · ')}`)
   // 三句收工口径。第一句是这一格的预算（人给的那个数，缺省不写）；另两句是常量：交卷那一下只能
   // 是"话说完了"（`end-turn`），而断言由 harness 跑、由它判过不过（架构 § 8.12 的分工表）。
   lines.push(...stepBudgetLine(maxSteps))
-  lines.push('做完就说明一句，不再调工具——交卷就是话说完。')
-  lines.push('断言由 harness 跑，不由你跑。')
-  if (outputs.length > 0) lines.push(`产物路径：${outputs.join(' · ')}`)
+  lines.push('When the work is done, say so in one message and stop calling tools — handing in is ending the turn.')
+  lines.push('The harness runs the assertions, not you.')
+  if (outputs.length > 0) lines.push(`Output paths: ${outputs.join(' · ')}`)
   return lines.join('\n')
 }
 
@@ -269,7 +269,7 @@ function taskText(t: AssembleState['task'], outputs: readonly string[], maxSteps
  */
 export function appendOutputs(text: string, outputs: readonly string[]): string {
   if (outputs.length === 0) return text
-  return `${text === '' ? '' : `${text}\n`}产物路径：${outputs.join(' · ')}`
+  return `${text === '' ? '' : `${text}\n`}Output paths: ${outputs.join(' · ')}`
 }
 
 /**
@@ -280,10 +280,10 @@ export function appendOutputs(text: string, outputs: readonly string[]): string 
  */
 export function turnText(turn: Turn): string {
   const lines: string[] = []
-  if (turn.text !== undefined && turn.text !== '') lines.push(`模型：${turn.text}`)
+  if (turn.text !== undefined && turn.text !== '') lines.push(`Model: ${turn.text}`)
   turn.results.forEach((r, i) => {
     const name = turn.calls[i]?.name ?? '?'
-    lines.push(`${r.isError ? '工具（失败）' : '工具'} ${name}（第 ${i + 1} 条）：\n${r.output}`)
+    lines.push(`${r.isError ? 'Tool (failed)' : 'Tool'} ${name} (call ${i + 1})：\n${r.output}`)
   })
   return lines.join('\n')
 }

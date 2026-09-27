@@ -135,8 +135,8 @@ test('③ 一次报全：缺键 · 多键 · 类型不对，三处都在', () =>
 test('④ 指路的话：五种形状各有各的一句', () => {
   const cases: readonly { readonly why: string; readonly body: string; readonly want: RegExp }[] = [
     { why: 'resolve 那一节', body: text({ kind: 'resolve', goal: 'x', assertions: [] }), want: /解决型契约由冲突报告给，不在草案里/ },
-    { why: '两个调查型', body: text(INVESTIGATE, INVESTIGATE), want: /最多一节/ },
-    { why: '调查型不在第一节', body: text(IMPLEMENT_1, INVESTIGATE, IMPLEMENT_2), want: /要排在第一节/ },
+    { why: '两个调查型', body: text(INVESTIGATE, INVESTIGATE), want: /at most one investigate section/ },
+    { why: '调查型不在第一节', body: text(IMPLEMENT_1, INVESTIGATE, IMPLEMENT_2), want: /it comes first/ },
     { why: '一个节都没有', body: '## 草案\n\n我先想了想，还没写。\n', want: /一个任务节都没有/ },
     { why: '围栏块不是 JSON', body: text(IMPLEMENT_1).replace('{"kind"', '{kind"'), want: /不是合法的 JSON/ },
     { why: '另一个变体的键', body: text({ ...IMPLEMENT_1, question: '凭什么' }), want: /它是 investigate 那一节的键/ },
@@ -145,7 +145,7 @@ test('④ 指路的话：五种形状各有各的一句', () => {
     {
       why: 'seed 指着别节的证据',
       body: text({ ...IMPLEMENT_1, seed: ['evidence/agent-1/现状'] }),
-      want: /看不见别节的产物/,
+      want: /cannot see another section's output/,
     },
   ]
   for (const c of cases) {
@@ -190,7 +190,7 @@ test('⑦ 那一句产物说明：逐节逐键印出键名与形状，两样都�
   // 二 · 逐节逐键：**键名与形状并列印出**，而形状逐字等于 `FIELD_RULES` 那一格。
   for (const kind of DRAFT_KINDS) {
     for (const field of DRAFT_FIELDS[kind]) {
-      const want = `${field}：${FIELD_RULES[field]!.shape}`
+      const want = `${field}: ${FIELD_RULES[field]!.shape}`
       assert.ok(text.includes(want), `${kind} 那一节里这一笔不在那一段里（要的是「${want}」）：${text}`)
     }
   }
@@ -206,35 +206,35 @@ test('⑦ 那一句产物说明：逐节逐键印出键名与形状，两样都�
     else (FIELD_RULES as Record<string, unknown>).ownership = saved
   }
   // 四 · **跨节那条次序规则也在里面**（真档那一趟退回来的唯一一句就是它）。
-  assert.ok(text.includes('最多一节调查型'), `那一段里没有"最多一节调查型"：${text}`)
-  assert.ok(text.includes('要排在第一节'), `那一段里没有"要排在第一节"：${text}`)
+  assert.ok(text.includes('at most one investigate section'), `那一段里没有"最多一节调查型"：${text}`)
+  assert.ok(text.includes('it comes first'), `那一段里没有"要排在第一节"：${text}`)
   // 五之一 · **跨节那条「每一节独立」的规则也在里面**（样本盘第一趟真档退回来的那一句：
   //         第二节的 goal 指了「第 1 节的结论」，而它跑的时候看不见第一节的产物）。两半都要在：
   //         前半句是那一件事实，后半句（`seed` 只能是底上就有的那几条）堵的是它自己引出来的坑。
-  assert.ok(text.includes('每一节都是独立的一格'), `那一段里没有"每一节都是独立的一格"：${text}`)
-  assert.ok(text.includes('看不见别节的产物'), `那一句里没有"看不见别节的产物"：${text}`)
-  assert.ok(text.includes('只能来自底上就已经有的那几条'), `那一句里没有"底上就已经有的那几条"那半句：${text}`)
+  assert.ok(text.includes('each section is an independent task'), `那一段里没有"每一节都是独立的一格"：${text}`)
+  assert.ok(text.includes("cannot see another section's output"), `那一句里没有"看不见别节的产物"：${text}`)
+  assert.ok(text.includes('must come from seeds that already exist on the base'), `那一句里没有"底上就已经有的那几条"那半句：${text}`)
   // 五 · **`action` 那一栏只能从那几个里挑**：那几个名字是工作区的事实，由调用方给进来。
   //      **名字后面还要带上"它跑什么"**：只给名字的那一版真档里，那一趟为了弄清哪个动作核哪
   //      一处，去找工作区的配置（它猜 `*.json` / `*.yaml` / `*.toml`，而那一份叫 `.fugue/config`），
   //      8 步里四步花在找它上，一次都没伸手写草案，最后停在步数上界（`--dump-wire` 实录）。
   const withActions = draftRuleTextOf(at, ['ok', '测试全过'])
-  assert.ok(withActions.includes('只能从工作区绑好的动作里挑：ok · 测试全过'), `那一句里没带上绑好的动作名：${withActions}`)
+  assert.ok(withActions.includes('can only come from the actions bound in this workspace: ok · 测试全过'), `那一句里没带上绑好的动作名：${withActions}`)
   const withCommands = draftRuleTextOf(at, ['ok', '测试全过'], { ok: '/bin/sh -c true' })
   assert.ok(
-    withCommands.includes('ok（/bin/sh -c true） · 测试全过'),
+    withCommands.includes('ok (/bin/sh -c true) · 测试全过'),
     `带了命令的那一档没把命令印出来：${withCommands}`,
   )
-  assert.ok(withCommands.includes('（名字后面括号里是它跑什么）'), `没有一处说括号里那一栏是什么：${withCommands}`)
+  assert.ok(withCommands.includes('(the command it runs is in parentheses after the name)'), `没有一处说括号里那一栏是什么：${withCommands}`)
   // 负对照：一条命令都没给（夹具与单测那一档）→ 不凭空多出那一栏解释，也不替它编一个命令。
-  assert.equal(withActions.includes('名字后面括号里是它跑什么'), false, '没给命令却说了括号里是它跑什么')
+  assert.equal(withActions.includes('the command it runs is in parentheses after the name'), false, '没给命令却说了括号里是它跑什么')
   assert.equal(withActions.includes('/bin/sh'), false, '没给命令却凭空印出一个命令')
   const none = draftRuleTextOf(at)
-  assert.ok(none.includes('今天一条都没绑'), `一条都没绑那一档没说清：${none}`)
+  assert.ok(none.includes('none is bound today'), `一条都没绑那一档没说清：${none}`)
   // 六 · `goalWithDraftRule`：人那一句在最前，末尾是那一句（近因）。
   const goal = goalWithDraftRule('写一份 README.md', at)
   assert.ok(goal.startsWith('写一份 README.md'), `开头不是人那一句：${goal.slice(0, 60)}`)
-  assert.ok(goal.trimEnd().endsWith('写别的路径不算这一趟的产物。'), `末尾不是那一句：${goal.slice(-80)}`)
+  assert.ok(goal.trimEnd().endsWith("Another path does not count as this pass's deliverable."), `末尾不是那一句：${goal.slice(-80)}`)
   console.log(
     `⑦ 读数：那一段 ${text.length} 字节（带命令那一版 ${withCommands.length} 字节）· ` +
       `${DRAFT_KINDS.map((k) => `${k} ${DRAFT_FIELDS[k].length} 键`).join(' · ')} · 形状逐字来自 FIELD_RULES`,

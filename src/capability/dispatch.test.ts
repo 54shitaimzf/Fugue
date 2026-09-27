@@ -532,9 +532,9 @@ test('⑥ 写入面：写别处当场拒（拒的话里给准确路径 · 落一
     const out = await dispatch(call('write', { path: 'notes.md', content: 'x' }), h, deps)
     assert.equal(out.result.ok, false, `该拒：${out.result.output}`)
     assert.equal(out.denied, true, '它是被拒的（不是工具自己失败）')
-    assert.match(out.result.output, /持轮者这一趟只写草案那一棵：\.fugue\/plan\//, out.result.output)
+    assert.match(out.result.output, /In the planning phase you only write that one draft tree: \.fugue\/plan\//, out.result.output)
     assert.match(out.result.output, /\.fugue\/plan\/r1\.md/, '拒的话里要给准确路径')
-    assert.match(out.result.output, /一个任务一节/, '拒的话里要说形状')
+    assert.match(out.result.output, /one task per section/, '拒的话里要说形状')
 
     // 二 · 写草案那一份：过（它真的改到了视图）。
     const good = await dispatch(call('write', { path: planPath, content: 'y' }), h, deps)
@@ -603,7 +603,7 @@ test('⑧ 契约的写入面：写别格的地界当场拒（落一条 bound/den
     assert.equal(out.result.ok, false, `该拒：${out.result.output}`)
     assert.equal(out.denied, true, '它是被拒的（不是工具自己失败）')
     assert.match(out.result.output, /src\/format\.ts · README\.md/, '拒的话里要列出声明的那几条')
-    assert.match(out.result.output, /一个字节都没落/, out.result.output)
+    assert.match(out.result.output, /not one byte landed/, out.result.output)
 
     // 二 · 声明的那一条：过（它真的改到了视图）。
     const good = await dispatch(call('write', { path: 'src/format.ts', content: 'yuan' }), h, deps)

@@ -326,7 +326,7 @@ test('⑥ 路径那一栏的形状把判词写全了：形状是模型读到的�
   // 形状那一栏是**模型读到的那一份**：判词拒的那几条，它都要说出来。
   for (const field of ['ownedPaths', 'conflictPaths', 'seed'] as const) {
     const shape = FIELD_RULES[field]!.shape
-    for (const clause of ['非空', '结尾不带 `/`', '不是 `.` 或 `..`', '不带 `\\`']) {
+    for (const clause of ['non-empty', 'no trailing `/`', 'not `.` or `..`', 'no `\\` in a segment']) {
       assert.ok(shape.includes(clause), `${field} 那一栏的形状里少了「${clause}」：${shape}`)
     }
   }

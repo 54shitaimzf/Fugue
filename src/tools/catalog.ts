@@ -34,7 +34,7 @@ export interface ToolEntry {
 }
 
 /** 一小段公共片段：路径一律是视图内的相对路径（架构 § 1.5 结论 3）。 */
-const PATH = { type: 'string', description: '视图内的相对路径' } as const
+const PATH = { type: 'string', description: 'Relative path inside the view' } as const
 
 /**
  * 那十二个工具，逐个写它的参数面。**顺序不承重**：承重的是名字的域——能力表（§ 8.9）以这套
@@ -48,24 +48,24 @@ const PATH = { type: 'string', description: '视图内的相对路径' } as cons
 export const TOOL_ENTRIES: readonly ToolEntry[] = [
   {
     name: 'write',
-    description: '把一个文件的全部内容写成给定文本：新建，或整篇替换。每一次都写全文，所以改文件中间的一小处应当用 edit，不要重抄一遍（那会把别处的改动抹掉）。写完这一步的文件就在视图里，后续的读与跑都看得见。',
+    description: 'Write the full contents of a file: create it, or replace the whole file. Every call writes the entire text, so a small change in the middle of a file should use edit rather than retyping it (retyping drops changes made elsewhere). The file is in the view as soon as this step lands: later reads and runs see it.',
     parameters: {
       type: 'object',
-      properties: { path: PATH, content: { type: 'string', description: '要写进去的文本' } },
+      properties: { path: PATH, content: { type: 'string', description: 'The text to write' } },
       required: ['path', 'content'],
       additionalProperties: false,
     },
   },
   {
     name: 'edit',
-    description: '在一处精确替换一个文件里的字符串：old_string 要带上足够的上下文，好让它在文件里只出现一次。不唯一时它先报出来，不猜是哪一处——那时把 old_string 写长一点，或者给 replace_all。整篇换掉用 write。',
+    description: 'Replace one exact string in a file: give old_string enough context to appear exactly once. When it is not unique the call reports that instead of guessing which one — then make old_string longer, or pass replace_all. To replace the whole file use write.',
     parameters: {
       type: 'object',
       properties: {
         path: PATH,
-        old_string: { type: 'string', description: '要被替换掉的那一段原文' },
-        new_string: { type: 'string', description: '换成的那一段' },
-        replace_all: { type: 'boolean', description: '把每一处都换掉（缺省只换一处）' },
+        old_string: { type: 'string', description: 'The exact text to replace' },
+        new_string: { type: 'string', description: 'The text to put in its place' },
+        replace_all: { type: 'boolean', description: 'Replace every occurrence (default: one only)' },
       },
       required: ['path', 'old_string', 'new_string'],
       additionalProperties: false,
@@ -73,7 +73,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'read_image',
-    description: '读一张图片，返回图片本身。read 只认文本文件，图片要走这一个。',
+    description: 'Read an image and return the image itself. read only handles text files; images go through this one.',
     parameters: {
       type: 'object',
       properties: { path: PATH },
@@ -83,12 +83,12 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'bash',
-    description: '执行一条命令，拿到它的退出码与输出。**工作区是只读的**：这条命令改不了任何文件，要产出文件用 write 或跑一个动作（run_action）。适合验证与查看这一类只读的活（跑测试、看仓库状态、算个数）。',
+    description: 'Run a shell command and get its exit code and output. **The work tree is read-only**: this command cannot change any file — to produce files use write, or run an action (run_action). Suited to read-only work such as running tests, looking at repo state, or doing arithmetic.',
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', description: '要执行的命令行' },
-        cwd: { type: 'string', description: '在哪个相对路径下执行（缺省是视图的根）' },
+        command: { type: 'string', description: 'The command line to run' },
+        cwd: { type: 'string', description: 'Relative path to run in (default: the view root)' },
       },
       required: ['command'],
       additionalProperties: false,
@@ -96,13 +96,13 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'read',
-    description: '读一个文件的内容，返回带行号的原文。可以只读一段（offset 从 1 数，limit 是最多几行）——长文件先用 grep 定位，再读那一段，比整篇读进来省。要改它用 edit 或 write；图片用 read_image。',
+    description: 'Read a file and return its text with line numbers. Read a slice when the file is long (offset is 1-based, limit caps the lines) — locate with grep first; that is cheaper than reading the whole file. To change it use edit or write; for images use read_image.',
     parameters: {
       type: 'object',
       properties: {
         path: PATH,
-        offset: { type: 'integer', description: '从第几行开始（从 1 数）' },
-        limit: { type: 'integer', description: '最多读几行' },
+        offset: { type: 'integer', description: 'First line to read (1-based)' },
+        limit: { type: 'integer', description: 'Maximum number of lines' },
       },
       required: ['path'],
       additionalProperties: false,
@@ -110,12 +110,12 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'glob',
-    description: '按路径模式找文件，返回匹配的路径。知道文件名的一部分而不知道它在哪时用它；要找的是文件的内容用 grep。缺省从这一步的工作目录起找。',
+    description: 'Find files by path pattern and return the matching paths. Use it when you know part of a file name but not where it is; to search contents use grep. Searches from this step\'s working directory by default.',
     parameters: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: '路径模式，例如 src/**/*.ts' },
-        path: { type: 'string', description: '在哪个相对路径下找（缺省是视图的根）' },
+        pattern: { type: 'string', description: 'Path pattern, for example src/**/*.ts' },
+        path: { type: 'string', description: 'Relative path to search under (default: the view root)' },
       },
       required: ['pattern'],
       additionalProperties: false,
@@ -123,14 +123,14 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'grep',
-    description: '按内容找文件，返回匹配的行、文件名或条数（output_mode 决定哪一种；不确定要哪一种时用 content）。要找的是路径而不是内容用 glob。',
+    description: 'Find files by content and return matching lines, file names, or counts (output_mode picks which; use content when unsure). To search paths rather than contents use glob.',
     parameters: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: '要匹配的正则' },
-        path: { type: 'string', description: '在哪个相对路径下找（缺省是视图的根）' },
-        glob: { type: 'string', description: '只看这些路径（路径模式）' },
-        output_mode: { type: 'string', enum: ['content', 'files_with_matches', 'count'], description: '要哪一种结果' },
+        pattern: { type: 'string', description: 'Regular expression to match' },
+        path: { type: 'string', description: 'Relative path to search under (default: the view root)' },
+        glob: { type: 'string', description: 'Only look at these paths (path pattern)' },
+        output_mode: { type: 'string', enum: ['content', 'files_with_matches', 'count'], description: 'Which kind of result to return' },
       },
       required: ['pattern'],
       additionalProperties: false,
@@ -138,19 +138,19 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'todo_write',
-    description: '记下当前的待办清单：一次给全，它整体覆盖上一次那一份。多步的活开始前写上，每推进一步更新那一行（正在做的那一条用 in_progress）。它是给自己看的进度，不是给人看的汇报。',
+    description: 'Record the current to-do list: give it in full and it replaces the previous list. Write it before starting multi-step work and update the line as you advance (the one you are on uses in_progress). It is progress for yourself, not a report for anyone else.',
     parameters: {
       type: 'object',
       properties: {
         todos: {
           type: 'array',
-          description: '这一份完整的清单',
+          description: 'The complete list',
           items: {
             type: 'object',
             properties: {
-              content: { type: 'string', description: '这件事要做什么' },
-              activeForm: { type: 'string', description: '正在做它时的说法' },
-              status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: '它到哪一步了' },
+              content: { type: 'string', description: 'What this item is' },
+              activeForm: { type: 'string', description: 'How to phrase it while in progress' },
+              status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: 'Where it stands' },
             },
             required: ['content', 'status'],
             additionalProperties: false,
@@ -163,27 +163,27 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'ask_user_question',
-    description: '问人一个问题，给出可选的答案。**只在答案归人时用它**：查得到的（代码在哪、现在怎么做的）先自己查，能自己定的按"最干净、最可扩展"定下来。一次可以问几个，每个给几个选项、各带一句代价说明。',
+    description: 'Ask a person a question, with options to choose from. **Use it only when the answer belongs to a person**: look up what is lookable (where the code is, how it works today), and settle what you can settle by the "cleanest and most extensible" rule. Several questions at a time are fine, each with options and a one-line note on what the choice costs.',
     parameters: {
       type: 'object',
       properties: {
         questions: {
           type: 'array',
-          description: '要问的问题，一次可以问几个',
+          description: 'Questions to ask; several at a time are fine',
           items: {
             type: 'object',
             properties: {
-              question: { type: 'string', description: '问什么' },
-              header: { type: 'string', description: '短标题' },
-              multiSelect: { type: 'boolean', description: '可以多选吗' },
+              question: { type: 'string', description: 'What to ask' },
+              header: { type: 'string', description: 'Short heading' },
+              multiSelect: { type: 'boolean', description: 'May more than one be selected' },
               options: {
                 type: 'array',
-                description: '可选的答案',
+                description: 'The answers to pick from',
                 items: {
                   type: 'object',
                   properties: {
-                    label: { type: 'string', description: '答案本身' },
-                    description: { type: 'string', description: '一句话说清这个选择的代价' },
+                    label: { type: 'string', description: 'The answer itself' },
+                    description: { type: 'string', description: 'One line on what this choice costs' },
                   },
                   required: ['label'],
                   additionalProperties: false,
@@ -201,12 +201,12 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'exit_plan_mode',
-    description: '说一声预备态做完了：接下来要动真东西，门由人开。计划写完整了再调它，而且它是那一步的最后一个调用——交出去之后等人批，批了才动手。',
+    description: 'Say that the planning phase is done: real work comes next, and a person opens the gate. Call it once the plan is complete, and make it the last call of that step — after handing it over you wait for approval before anything is touched.',
     parameters: {
       type: 'object',
       properties: {
-        plan: { type: 'string', description: '接下来打算怎么做' },
-        planFilePath: { type: 'string', description: '这份计划写在哪个文件里' },
+        plan: { type: 'string', description: 'What you intend to do next' },
+        planFilePath: { type: 'string', description: 'Which file this plan is written in' },
       },
       required: ['plan'],
       additionalProperties: false,
@@ -214,22 +214,22 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'checkpoint',
-    description: '把当前视图定格成一次提交，拿到它的提交号。产出告一段落时用它留一个可以回的落点；一轮结束时系统也会自己收一次。',
+    description: 'Freeze the current view into one commit and get its id. Use it to leave a point you can come back to when a piece of work lands; a round also commits once by itself when it ends.',
     parameters: {
       type: 'object',
-      properties: { message: { type: 'string', description: '这一次提交说的是什么' } },
+      properties: { message: { type: 'string', description: 'What this commit says' } },
       required: ['message'],
       additionalProperties: false,
     },
   },
   {
     name: 'run_action',
-    description: '跑一个已经绑好的动作（构建 · 测试一类），它声明的产出会写回视图。动作是配好的、可复现的那几条命令：要跑的是临时的一条命令用 bash，要看某个动作收什么参数用它的名字去配置里查。',
+    description: 'Run an action that is already bound (a build, a test); the outputs it declares are written back into the view. Actions are the prepared, reproducible commands: for a one-off command use bash, and to see what an action takes, look its name up in the config.',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', description: '动作的名字，绑在配置里' },
-        args: { type: 'array', description: '传给这个动作的参数', items: { type: 'string' } },
+        action: { type: 'string', description: 'The action name, bound in the config' },
+        args: { type: 'array', description: 'Arguments passed to this action', items: { type: 'string' } },
       },
       required: ['action'],
       additionalProperties: false,

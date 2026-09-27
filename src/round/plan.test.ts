@@ -457,14 +457,14 @@ test('⑤ 持轮者那一格的作用域：那三条回实话、不抛；工具�
   // 真档（`--dump-wire`）照出来的正是缺了后一截：连着两次撞在 `bash` 上之后，它接着四步都在
   // `glob` / `read` 里找方向，一次都没伸手写草案，最后停在步数上界。
   assert.equal(
-    refused.output.includes('要交的是'),
+    refused.output.includes('is expected to hand in'),
     false,
     '没给产物的那一趟凭空说了产物——讨论态那一趟走的就是这一档（它的产物不落在文件上）',
   )
   const planned = holderFace(inner, { planPath: '.fugue/plan/r1.md' })
   const refusedPlanned = await planned.execute({ id: 'c4', name: 'bash', arguments: '{"command":"ls"}' }, h)
   assert.match(refusedPlanned.output, /\.fugue\/plan\/r1\.md/, '拒的话里点不出这一趟要交的那份草案')
-  assert.match(refusedPlanned.output, /现在把它写出来/, '拒的话说了产物，却没说下一步做什么')
+  assert.match(refusedPlanned.output, /write it now/, '拒的话说了产物，却没说下一步做什么')
   console.log(
     `⑤ 读数：bash/run_action/checkpoint 各一句实话 · exit_plan_mode 记下 ${declared} 次 · ` +
       `工具目录 ${HOLDER_PROTOCOL.toolCatalog.length} 条（与子 agent 同一份）· ` +
@@ -591,11 +591,11 @@ test('⑪ 预算快用完时：回执末尾多一句"还剩几步"（上界前�
   }
   const at = (step: number): AgentHandle => ({ state: { step } }) as unknown as AgentHandle
   const far = await holderFace(big, { maxSteps: 10 }).execute({ id: 'c1', name: 'read', arguments: '{}' }, at(0))
-  assert.equal(far.output.includes('还剩'), false, `离上界还远时不该说：${far.output.slice(-120)}`)
+  assert.equal(far.output.includes(' left.'), false, `离上界还远时不该说：${far.output.slice(-120)}`)
   const near = await holderFace(big, { maxSteps: 4 }).execute({ id: 'c2', name: 'read', arguments: '{}' }, at(3))
-  assert.match(near.output, /还剩 0 步/, `该多那一句：${near.output.slice(-200)}`)
-  assert.match(near.output, /先把那份草案写出来/, '那一句没说下一步做什么')
-  assert.ok(near.output.endsWith('）'), `那一句该在回执的最末尾（尾留 4 KiB 保证它切不掉）：${near.output.slice(-60)}`)
+  assert.match(near.output, /0 left\./, `该多那一句：${near.output.slice(-200)}`)
+  assert.match(near.output, /Write the draft now/, '那一句没说下一步做什么')
+  assert.ok(near.output.endsWith('must be there.)'), `那一句该在回执的最末尾（尾留 4 KiB 保证它切不掉）：${near.output.slice(-60)}`)
   assert.ok(Buffer.byteLength(near.output) < 9000, `上界那一刀该照旧：${Buffer.byteLength(near.output)} 字节`)
 
   // 二 · 真那一条路：持轮者跑 8 步（上界 8），把**模型每一步真正看到的回执**收下来。
@@ -631,23 +631,23 @@ test('⑪ 预算快用完时：回执末尾多一句"还剩几步"（上界前�
     }
     const capped = record()
     await plan(b, [section()], { call: capped.call, maxSteps: 8 })
-    const hits = capped.seen.filter((o) => o.includes('还剩'))
+    const hits = capped.seen.filter((o) => o.includes(' left.'))
     assert.equal(
       hits.length,
       3,
       `上界 8 那一档该从第 5 步起每步说一次（还剩 3 · 2 · 1 步）：${hits.map((h) => h.slice(-90)).join(' | ')}`,
     )
-    assert.match(hits[0] ?? '', /还剩 3 步/, `第 5 步那一次说的数不对：${hits[0] ?? ''}`)
-    assert.match(hits[1] ?? '', /还剩 2 步/, `第 6 步那一次说的数不对：${hits[1] ?? ''}`)
-    assert.match(hits[2] ?? '', /还剩 1 步/, `第 7 步那一次说的数不对：${hits[2] ?? ''}`)
+    assert.match(hits[0] ?? '', /3 left\./, `第 5 步那一次说的数不对：${hits[0] ?? ''}`)
+    assert.match(hits[1] ?? '', /2 left\./, `第 6 步那一次说的数不对：${hits[1] ?? ''}`)
+    assert.match(hits[2] ?? '', /1 left\./, `第 7 步那一次说的数不对：${hits[2] ?? ''}`)
 
     // 三 · **负对照：命令行那一栏空着**（没有上界）→ 一次都不说。
     const bare = record()
     await plan(b, [section()], { call: bare.call, maxSteps: null })
-    assert.equal(bare.seen.filter((o) => o.includes('还剩')).length, 0, '没给上界却说了"还剩几步"')
+    assert.equal(bare.seen.filter((o) => o.includes(' left.')).length, 0, '没给上界却说了"还剩几步"')
     console.log(
       `⑪ 读数：上界 8 那一趟，模型看到的 ${capped.seen.length} 份回执里 ${hits.length} 份带"还剩"` +
-        `（${hits.map((h) => (h.match(/还剩 \d+ 步/) ?? [''])[0]).join(' · ')}）· 没给上界那一趟 ${bare.seen.filter((o) => o.includes('还剩')).length} 份`,
+        `（${hits.map((h) => (h.match(/\d+ left\./) ?? [''])[0]).join(' · ')}）· 没给上界那一趟 ${bare.seen.filter((o) => o.includes(' left.')).length} 份`,
     )
   } finally {
     await b.log.close()
