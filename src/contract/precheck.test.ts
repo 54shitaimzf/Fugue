@@ -4,7 +4,7 @@
 //   ① **两个契约的写入集相交 → 报出是哪两份契约、哪几条路径**：判据是路径的`包含`而不是相等
 //      （写入集是上界）。负对照：把判据换成"只比第一级目录"→ ① 变红（漏掉深层那一对）
 //   ② **第一版不拒派发**（PLAN § 5.7 的口径一）：`Planning` 那一档报出相交而 `ok` 仍为真；
-//      而合并前那一档**报出即拒**（不可逆点，兜底那一侧 fail-closed）。两档的判据是同一个函数
+//      而合并前那一档**缺省只报不拒**（判决进 `precheckMerge` · `--strict-merge-gate` 才是旧严宽）。两档的判据是同一个函数
 //   ③ **同一个函数在两处给出同一答案**：`Planning` 与合并前的 `intersections` 逐条相同；
 //      而调查型的产物目录**不与任何契约相交**——它靠的是 `evidence` 那一段归构造器，
 //      所以这一条同时量"那个前缀有没有被守卫"
@@ -122,7 +122,7 @@ test('① 相交报出是哪两份契约、哪几条路径；判据是包含而�
   assert.equal(precheck([implement(1, ['src/parse/x.ts']), implement(2, ['src/parse/y.ts'])]).intersections.length, 0)
 })
 
-test('② Planning 那一档报出而照发；合并前那一档报出即拒', () => {
+test('② 两档的判决逐条相同：Planning 那一档报出而照发，合并前那一档同样只是报出', () => {
   const hit = [implement(1, ['src/parse']), implement(2, ['src/parse/x.ts'])]
 
   const plan = planningGate(hit)
@@ -132,7 +132,7 @@ test('② Planning 那一档报出而照发；合并前那一档报出即拒', (
   assert.match(plan.say, /r1\.implement\.1 与 r1\.implement\.2/)
 
   const merge = mergeGate(hit)
-  assert.equal(merge.ok, false, '合并前那一档该 fail-closed')
+  assert.equal(merge.ok, false, '合并前那一档该报出相交（判决在这里，拦不拦由调用方定）')
   assert.match(merge.say, /拒绝合并/)
   // 两档的判据逐条相同——判决不同，判据同一份。
   assert.deepEqual(plan.result.intersections, merge.result.intersections)

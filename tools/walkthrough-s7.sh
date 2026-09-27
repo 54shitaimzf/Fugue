@@ -111,7 +111,7 @@ $FUGUE --root "$W" config set round.assertions \
     {"name":"合并之后 src/b.ts 在","argv":["/bin/sh","-c","test -f src/b.ts"]}]' \
   > /dev/null || bad "config set round.assertions"
 # 三份草案：第一与第三的写入面都是 `src/a.ts` —— **它们相交**（`Planning` 那一档报出而照发，
-# 合并前那一档要 `--soft-merge-gate` 才放行；折叠里因此真撞出一次冲突）。
+# 合并前那一档缺省只报不拒；折叠里因此真撞出一次冲突）。
 $FUGUE --root "$W" config set round.split \
   '[{"goal":"改 a","ownedPaths":["src/a.ts"],"assertions":[{"action":"x","name":"x"}]},
     {"goal":"改 b","ownedPaths":["src/b.ts"],"assertions":[{"action":"x","name":"x"}]},
@@ -179,7 +179,7 @@ echo "=== 三 · round run 干净一趟：拆分 → 并行 → 合并 → 验�
 sync_disk
 # 盘上就是底那一份（`sync_disk` 刚摊平过）——漂移那一档照样放行：推进是在写新内容，**合并本来
 # 就该改它**（判据放行的两档之一是"盘上 == 底"，见 `src/merge/drift.ts` 的文件头）。
-$FUGUE --root "$W" round run '把 a 与 b 各改一处' --soft-merge-gate --report > "$T/run1.out" 2> "$T/run1.err"
+$FUGUE --root "$W" round run '把 a 与 b 各改一处' --report > "$T/run1.out" 2> "$T/run1.err"
 RC1=$?
 printf '  rc = %s\n' "$RC1"
 sed 's/^/  /' "$T/run1.out"
@@ -224,7 +224,7 @@ SNAP=$(tree_now)
 if [ -z "$SNAP" ]; then bad "这一趟的起点读数没取到（tree_now 给的是空串）"; fi
 printf '  这一趟之前的树 = %s（= 那个底）\n' "$SNAP"
 sync_disk
-$FUGUE --root "$W" round run '再跑一趟，故意撞红' --soft-merge-gate \
+$FUGUE --root "$W" round run '再跑一趟，故意撞红' \
   --fail '合并之后 src/b.ts 在' --deny --retry 1 --report --json > "$T/run2.json" 2> "$T/run2.err"
 RC2=$?
 printf '  rc = %s（没通过那一档的退出码是 1，不是用法错）\n' "$RC2"
@@ -299,7 +299,7 @@ echo "=== 六 · 漂移那一档：判据是「目标树 vs 盘上」（A10）==
 # 与它算出来的结果**逐字节相同**——`--poke-exact` 抄的正是折出来的目标树里那条路径的字节
 # （`--poke` 是「追加上一行」，抄不出「一样」）。于是推进之后工作树与提交仍然一致：没人丢字节。
 sync_disk
-$FUGUE --root "$W" round run '两边一样那一趟' --soft-merge-gate --poke-exact src/a.ts > "$T/run3.out" 2> "$T/run3.err"
+$FUGUE --root "$W" round run '两边一样那一趟' --poke-exact src/a.ts > "$T/run3.out" 2> "$T/run3.err"
 RC3=$?
 printf '  两边一样那一趟 rc = %s\n' "$RC3"
 sed 's/^/  err| /' "$T/run3.err"
@@ -349,7 +349,7 @@ sync_disk
 rm -f "$W/src/z.ts"
 SNAP_D=$(tree_now)
 HEAD_D=$(git -C "$W" rev-parse 'refs/heads/main')
-$FUGUE --root "$W" round run '只被删那一趟' --soft-merge-gate --poke src/z.ts > "$T/run4.out" 2> "$T/run4.err"
+$FUGUE --root "$W" round run '只被删那一趟' --poke src/z.ts > "$T/run4.out" 2> "$T/run4.err"
 RC4=$?
 printf '  只被删那一趟 rc = %s\n' "$RC4"
 sed 's/^/  err| /' "$T/run4.err"

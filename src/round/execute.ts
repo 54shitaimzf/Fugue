@@ -200,15 +200,20 @@ export interface RunTailDeps {
    */
   readonly handoff?: boolean
   /**
-   * 合并前那一档预检的严宽。**缺省 `false`：报出即拒**（`mergeGate`——合并是不可逆点，兜底那
-   * 一侧 fail-closed，架构 § 8.12 的第二次预检）。给 `true` 就把它拉平到 `Planning` 那一档：
-   * **报出来、照发**。
+   * 合并前那一档预检的严宽。**缺省 `false`：只报不拒**——判决照旧进 `precheckMerge` 那一栏、
+   * 照旧印在报告那一行（`预检：Planning N 对 · 合并前 M 对`），而它不再拦下这一轮。
+   * 给 `true` 才是 fail-closed（`mergeGate` 报出即拒）。
    *
-   * 这一档存在的理由是走查：两份契约的写入面相交时（`Planning` 那一档的口径是报出照发），
-   * 硬那一档会先拦住合并，于是"折叠里真撞出一次冲突"这件事走不到。拉平之后，真冲突由 `fold`
-   * 当场报出——**没有任何东西被静默**，只是同一件事报在哪一步。
+   * **为什么反过来**（人拍的 · 样本盘第十二趟之后）：两道闸各管一件事，而"声明相交"不等于
+   * "真撞车"——`ownedPaths` 只是上界（越界那一栏就是证据：声明里没有、实际改了的路径不止一条）。
+   * 真撞车由 `fold` 当场报出并走冲突环；"折得干净但合起来坏"由验收在**推进之前**拦住
+   * （`commitThenAdvance` 不过就不动真实工作树 · 还能回一次）。而原来那一档站在最坏的位置：
+   * 格子全跑完了才拒，那一轮的模型调用已经花掉——防住的却不是"坏合并"，只是"申报有重叠"。
+   * 严那一档留着（`--strict-merge-gate`）：改主意的条件是真档里量到"合并干净而验收也没拦住"
+   * 的合并（那说明缺的是断言，不是这道拒），或者相交那对数在门那一档印出来之后仍频繁被人
+   * 误批。
    */
-  readonly softMergeGate?: boolean
+  readonly strictMergeGate?: boolean
   /**
    * 合并之前那一下（**给走查用**）：轮次中有人手改了工作树时，那一次改动要落在"基线取完之后、
    * 漂移检之前"这个窗口里。缺省什么都不做——真轮次里那个窗口是用户自己的手。
@@ -367,7 +372,10 @@ export async function runIssued(deps: RunTailDeps, batch: IssuedBatch): Promise<
 
   // 三 · 合并前那一次预检：**兜底那一侧报出即拒**（架构 § 8.12 的第二次预检）。
   const mergeCheck = mergeGate(batch.contracts)
-  if (!mergeCheck.ok && deps.softMergeGate !== true) {
+  // **缺省只报不拒**：`mergeCheck` 的判决进 `precheckMerge`（报告那一行印出来），折叠照做——
+  // 真撞车由 `fold` 报出、走冲突环；折得干净而合起来坏的由验收在推进之前拦住。
+  // `strictMergeGate` 那一档才是"报出即拒"（走查与想复现旧严宽的那一档用）。
+  if (!mergeCheck.ok && deps.strictMergeGate === true) {
     throw new RoundRunError('merge', `合并前的写入集预检不放行：\n  ${mergeCheck.result.lines.join('\n  ')}`)
   }
 

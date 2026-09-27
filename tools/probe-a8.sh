@@ -43,7 +43,7 @@ $FUGUE --root "$W" commit -m '起点' > /dev/null || bad "commit"
 BASE=$(git -C "$W" rev-parse refs/heads/main)
 # 三份草案：第一与第三的写入面都是 `src/a.ts` —— **它们相交**。于是：
 #   · `Planning` 那一档**报出来、照发**（PLAN § 5.7 的口径一）
-#   · 合并前那一档**默认报出即拒**；走查要撞出折叠里的那次冲突，所以带 `--soft-merge-gate`
+#   · 合并前那一档**缺省只报不拒**（判决印在报告那一行，折叠照做——撞出折叠里那次冲突）
 #     （把那一档的严宽拉平到 `Planning` 那一档；真冲突由折叠当场报出，不静默）
 $FUGUE --root "$W" config set round.split \
   '[{"goal":"改 a","ownedPaths":["src/a.ts"],"assertions":[{"action":"x","name":"x"}]},
@@ -62,7 +62,7 @@ echo
 # 收敛到另一侧的话下一折会报同一个冲突（那是这条路的真实形状，写进提交信息的疑点里）。
 
 echo "=== 二 · 干净的一趟：一条命令跑完一个轮次 ==="
-$FUGUE --root "$W" round run '把 a 与 b 各改一处' --soft-merge-gate --report > "$T/run1.out" 2> "$T/run1.err"
+$FUGUE --root "$W" round run '把 a 与 b 各改一处' --report > "$T/run1.out" 2> "$T/run1.err"
 RC1=$?
 printf '  rc = %s\n' "$RC1"
 sed 's/^/  /' "$T/run1.out"
@@ -81,7 +81,7 @@ git -C "$W" update-ref refs/heads/main "$BASE"
 printf 'export const a = 1\n' > "$W/src/a.ts"
 printf 'export const b = 2\n' > "$W/src/b.ts"
 # `--retry 1`：给那条回边一次余量，于是这一趟停在 `Working`（回边走了一次 = 打回读数第二个数）。
-$FUGUE --root "$W" round run '再跑一趟，故意撞红' --soft-merge-gate --fail '合并之后 src/b.ts 在' --deny --retry 1 --report --json > "$T/run2.json" 2> "$T/run2.err"
+$FUGUE --root "$W" round run '再跑一趟，故意撞红' --fail '合并之后 src/b.ts 在' --deny --retry 1 --report --json > "$T/run2.json" 2> "$T/run2.err"
 RC2=$?
 printf '  rc = %s（没通过那一档的退出码该是 1）\n' "$RC2"
 sed 's/^/  err| /' "$T/run2.err"
@@ -107,7 +107,7 @@ process.exit(allPositive && j.advanced === null && j.verify.ok === false && j.st
 
 echo
 echo "=== 四 · 同一份日志重算两次：三个数同值 ==="
-$FUGUE --root "$W" round run '再算一遍' --soft-merge-gate --json > "$T/run3.json" 2> "$T/run3.err"
+$FUGUE --root "$W" round run '再算一遍' --json > "$T/run3.json" 2> "$T/run3.err"
 node -e '
 const fs = require("fs")
 const W = process.argv[1]

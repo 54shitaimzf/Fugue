@@ -18,10 +18,16 @@
 //
 //   `intersect(contracts)`        报出相交的那几对与路径（两处都调它）
 //   `planningGate(contracts)`     `Planning` 那一档的判决：**报出即放行**，话里带着那几对
-//   `mergeGate(contracts)`        合并前那一档的判决：**报出即拒**（不可逆点，兜底那一侧 fail-closed）
+//   `mergeGate(contracts)`        合并前那一档的判决：**同样只报**——判决进 `precheckMerge`、
+//                                 印在报告那一行；要 fail-closed 走 `RunDeps.strictMergeGate`
 //
-// 判决的形状留在这两个小函数里，调用点不各自 if 一遍——这样"改主意的代价是它被推回一档"那句话
-// 落在一处：把 `planningGate` 的 `ok` 改成 `false` 就是把门立回 `Planning`。
+// **两处都只报不拒**（人拍的 · 样本盘第十二趟之后）：相交是**读数**，不是"坏合并"的判据——
+// `ownedPaths` 只是上界，申报有重叠而实际没撞车是常态。真撞车由 `fold` 当场报出并走冲突环，
+// 折得干净而合起来坏的由验收在**推进之前**拦住（`commitThenAdvance`）。原来合并前那一档站在
+// 最坏的位置：格子全跑完了才拒，那一轮的钱已经花掉，防住的却不是坏合并。
+//
+// 判决的形状仍留在这两个小函数里，调用点不各自 if 一遍——"改主意的代价是它被推回一档"那句话
+// 因此还成立：把 `mergeGate` 的 `ok` 接回拒那一支（今天 `RunDeps.strictMergeGate` 就是它）。
 import type { Contract, ContractIssue } from './types.ts'
 import { EVIDENCE_PREFIX } from './types.ts'
 import type { ContractId, RelPath } from '../terms.ts'

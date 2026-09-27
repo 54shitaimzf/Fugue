@@ -117,10 +117,43 @@ function draftText(): string {
 }
 
 /** 把这一轮摆在门口：`round/intent`（钉住的底 + 意图）· `Idle → Planning` · `holder/distill`（草案）。 */
-async function atGate(b: Bench): Promise<void> {
+async function atGate(b: Bench, text: string = draftText()): Promise<void> {
   await b.log.append('round', { t: 'round/intent', round: ROUND, base: b.base, digest: 'd'.repeat(16), body: JSON.stringify({ goal: GOAL }) })
   await b.log.append('round', { t: 'round/state', round: ROUND, from: 'Idle', to: 'Planning' })
-  await b.log.append('round', { t: 'holder/distill', round: ROUND, agent: 'round' as AgentId, digest: 'e'.repeat(16), body: draftText() })
+  await b.log.append('round', { t: 'holder/distill', round: ROUND, agent: 'round' as AgentId, digest: 'e'.repeat(16), body: text })
+}
+
+/**
+ * 两节**写入面相交**的草案：第一格声明两条（其中一条与第二格重合），第二格声明那一条。
+ *
+ * 这一档正是要量的那件事——**申报有重叠，而实际没撞车**（夹具那一档只照契约声明的第一条路径写，
+ * 于是两格各写各的：`A` 与 `B2`）。第十二趟之前，这种拆分到不了折叠：合并前那一档预检按**申报**
+ * 相交当场拒，而格子的钱已经花掉了。
+ */
+function draftTextCrossing(): string {
+  const one = (goal: string, owned: readonly string[]): Record<string, unknown> => ({
+    kind: 'implement',
+    goal,
+    ownedPaths: [...owned],
+    deliverables: [{ path: owned[0] as string, form: '模块' }],
+    assertions: [{ name: '单元测试全过', action: 'test' }],
+    seed: [],
+  })
+  return [
+    '## 一 · 解析器',
+    '',
+    '为什么这么拆：两格的申报有一条重合（写入面相交——量这一档要的就是它）。',
+    '',
+    '```json',
+    JSON.stringify(one('把解析拆成独立模块', [A, B2]), null, 2),
+    '```',
+    '',
+    '## 二 · 渲染器',
+    '',
+    '```json',
+    JSON.stringify(one('把渲染也拆成独立模块', [B2]), null, 2),
+    '```',
+  ].join('\n')
 }
 
 /** 放行（`round go` 那一半）：契约逐条落 · 两条分支定在同一个底上 · 处境 `Working`。 */
@@ -247,6 +280,48 @@ test('② 接着跑：那一批跑完 · 验收过 · 定格 + 推进（工作�
     console.log(
       `② 读数：验收 ${run.report.pass}/${run.report.fail} · 折叠 ${run.fold.kind === 'folded' ? `折了 ${run.fold.steps} 步` : '冲突'} · ` +
         `推进 写 ${wrote.length} 条（${wrote.join(' · ')}）· 处境 ${run.state} · 停因一份都没有（夹具那一档没有 llm/call）`,
+    )
+  } finally {
+    await logs.close()
+    await b.close()
+  }
+})
+
+test('⑤ 声明相交不再当场拒：判决照旧进读数、折叠照做；`strictMergeGate` 那一档照旧 fail-closed', async () => {
+  // 一 · 严那一档（`--strict-merge-gate`）：照旧拒——旧严宽留着，改主意的条件写在那一栏的注释里。
+  const strict = await bench()
+  const strictLogs = logsOf(strict)
+  try {
+    await atGate(strict, draftTextCrossing())
+    await go(strict)
+    const batch = await issuedBatchOf(strict.log, ROUND)
+    assert.equal(batch.precheck.intersections.length, 1, `这一档该有 1 对相交，实际 ${batch.precheck.intersections.length}`)
+    await assert.rejects(
+      async () => await runIssued({ ...tailDeps(strict, [], strictLogs), strictMergeGate: true }, batch),
+      /合并前的写入集预检不放行/,
+      '严那一档该照旧拒',
+    )
+  } finally {
+    await strictLogs.close()
+    await strict.close()
+  }
+
+  // 二 · 缺省那一档：**不拒**。判决照旧进 `precheckMerge`（报告那一行印出来），折叠照做；
+  //      真撞车由折叠报出、走冲突环；折得干净而合起来坏的，由验收在**推进之前**拦住。
+  const b = await bench()
+  const logs = logsOf(b)
+  try {
+    await atGate(b, draftTextCrossing())
+    await go(b)
+    const batch = await issuedBatchOf(b.log, ROUND)
+    const run = await runIssued(tailDeps(b, [], logs), batch)
+    assert.equal(run.precheckMerge.count, 1, '相交那对数该照旧进读数（只报不拒的"报"就是它）')
+    assert.equal(run.precheckMerge.ok, false, '判决本身照旧是"有相交"')
+    assert.equal(run.report.ok, true, `折完验完该过：${JSON.stringify(run.report.results)}`)
+    assert.notEqual(run.advanced, null, '缺省那一档该照做（验收过了就推进）')
+    console.log(
+      `⑤ 读数：声明相交 ${run.precheckMerge.count} 对 → 不拒 · 折叠 ${run.fold.kind === 'folded' ? `折了 ${run.fold.steps} 步` : '走到冲突环'} · ` +
+        `验收 ${run.report.pass}/${run.report.fail} · 推进 ${run.advanced === null ? '没有' : `写 ${(run.advanced.written ?? []).join(' ')}`}`,
     )
   } finally {
     await logs.close()

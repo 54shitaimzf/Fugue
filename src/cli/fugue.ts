@@ -272,8 +272,9 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              sha256）。默认不落——不给这个开关时那一层根本不存在，一个字节
                              都不写、请求体也一个字节不变。**目录必须在工作区之外**：落进
                              <root> 会被下一轮的 fork 当成漂移（§ 8.14）。看完就删。
-                             --soft-merge-gate 合并前那一档预检的严宽拉平到 Planning 那一档
-                             （缺省是报出即拒——合并不可逆）；真冲突仍由折叠当场报出，不静默
+                             --strict-merge-gate 合并前那一档预检恢复"报出即拒"（缺省只报
+                             不拒：相交那对数印在报告那一行，折叠照做——真冲突由折叠当场
+                             报出、走冲突环，折干净而合起来坏的由验收在推进之前拦住）
                              --poke <路径>  **在折叠之后、物化之前手改一条路径**（模拟轮次中
                              用户的手，用来量漂移那一档）；缺省什么都不做
                              --poke-exact <路径> 同上，但抄的是这一趟目标树里那条路径的
@@ -1005,10 +1006,10 @@ async function roundRun(
   const failTarget = typeof flags.get('fail') === 'string' ? (flags.get('fail') as string) : undefined
   const retriesLeft = numberOf(flags.get('retry'), 0) ?? RETRY_DEFAULT
   const deny = flags.has('deny')
-  // 合并前那一档预检的严宽：**缺省报出即拒**（不可逆点，A2 的 `mergeGate`）。
-  // `--soft-merge-gate` 把它拉平到 `Planning` 那一档（报出、照发）——真冲突由折叠当场报出，
-  // 不静默。走查要撞出折叠里那一次冲突，就得走这一档（两份契约的写入面相交时，硬那一档先拦）。
-  const softMergeGate = flags.has('soft-merge-gate')
+  // 合并前那一档预检的严宽：**缺省只报不拒**（判决进 `precheckMerge`、印在报告那一行；折叠照做，
+  // 真冲突由它当场报出）。`--strict-merge-gate` 才是 fail-closed 那一档——留着的理由与改主意的
+  // 条件写在 `RunDeps.strictMergeGate` 那一段。
+  const strictMergeGate = flags.has('strict-merge-gate')
   // `--poke <路径>`：**在漂移检之前手改一条路径**（走查要量漂移那一条）。不给就什么都不做。
   const poke = typeof flags.get('poke') === 'string' ? (flags.get('poke') as string) : undefined
   // `--poke-exact <路径>[,<路径>…]`：**把这一趟折出来的目标树里那几条路径的字节照抄到盘上**，
@@ -1155,7 +1156,7 @@ async function roundRun(
         : {}),
       specsOf,
       retriesLeft,
-      softMergeGate,
+      strictMergeGate,
       onDrift: reportDrift,
       ...(poke === undefined
         ? {}
@@ -1890,7 +1891,7 @@ async function roundWork(root: string, flags: Map<string, string | true>, args: 
           : stubDriver(stubOfIssued(ctx)),
         specsOf: specsOfContract(doc),
         retriesLeft,
-        softMergeGate: flags.has('soft-merge-gate'),
+        strictMergeGate: flags.has('strict-merge-gate'),
         ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
         ...(handoff === undefined ? {} : { handoff }),
         ...(real
