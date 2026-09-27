@@ -236,6 +236,28 @@ export function stepBudgetLine(maxSteps?: number): readonly string[] {
 export const STEPS_HINT_AT = 3
 
 /**
+ * **语言那一句**（谁读谁的语言：这一格是"模型面"那半）。
+ *
+ * 由头是第十六趟与第二十二趟那两组读数：模型自己的话**摇摆**——持轮者的收工话是中文
+ * （`写好了 .fugue/plan/r1.md（本 pass 的交付物）…`）、子 agent 那一支两次英文一次中文
+ * （`Done — README.md is the only file touched…` / `完成。README.md 已补上那句用法…`），
+ * 而两趟的目标与材料都是中文。**那一句话哪里都不落**（提交信息是契书那一句 · `work.json`
+ * 只有步数与停因 · `agent/stop` 只有 `steps` 与 `stopped`），所以它不是判据、是读数——
+ * 可它是**唯一一处模型自己挑语言的地方**，而按已决口径（模型面英文 · 人面中文 · 双读者按模型
+ * 那一侧）这一处该是英文。
+ *
+ * **两半都写出来**：模型自己的话（想什么 · 收工说什么）是模型面 → 英文；它交付的那些文件是
+ * 人读的 → 注释与说明用中文。只写前一半的话，模型会把"英文"顺手带到产物的注释上（那正是人
+ * 读的那一半）。**它进的是 B 区**（与那三句收工口径同一档：逐 agent 稳定、每步不重付），
+ * 而"产物路径"仍然是最后一行（架构 § 8.11 那句"近因最好"）。
+ *
+ * **一处给**：子 agent 的「我的任务」与持轮者那一趟的收工口径（`round/plan.ts`）念的是同一句
+ * ——两处各写一份，症状是"两句话慢慢不一样了"，而它一个错都不报。
+ */
+export const MODEL_FACING_LANGUAGE_LINE =
+  'Say it in English: your own words here are read by the harness, not by a person. The files you deliver are read by people — write their comments and notes in Chinese.'
+
+/**
  * **预算快用完时，回执末尾多一句"还剩几步"**。空串 = 不加。
  *
  * 由头有两处，同一个缺少：
@@ -312,6 +334,8 @@ function taskText(t: AssembleState['task'], outputs: readonly string[], maxSteps
   lines.push(...stepBudgetLine(maxSteps))
   lines.push('When the work is done, say so in one message and stop calling tools — handing in is ending the turn.')
   lines.push('The harness runs the assertions, not you.')
+  // 语言那一句（`MODEL_FACING_LANGUAGE_LINE`）：模型自己的话是模型面，产物的注释是人面。
+  lines.push(MODEL_FACING_LANGUAGE_LINE)
   if (outputs.length > 0) lines.push(`Output paths: ${outputs.join(' · ')}`)
   return lines.join('\n')
 }

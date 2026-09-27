@@ -28,7 +28,7 @@ import { createRuntime } from '../runtime/step.ts'
 import type { ModelDecl } from '../model/contract.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
-import { emptyState, sourcesFor, stepBudgetLine, stepsLeftTail } from '../assemble/sources.ts'
+import { MODEL_FACING_LANGUAGE_LINE, emptyState, sourcesFor, stepBudgetLine, stepsLeftTail } from '../assemble/sources.ts'
 import { capReceipt } from '../tools/receipt.ts'
 import { assemble } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
@@ -309,6 +309,8 @@ export function holderClosingRuleLines(maxSteps?: number): readonly string[] {
     // 是**伸手之前没人告诉它这一趟要交什么、不碰什么**。
     'The deliverable of this pass is that draft file (where and in what shape: below): if it is not written, this pass did not happen.',
     'This pass does not touch the source in the work tree: what you hand in is how to split the work; changing code is the business of the tasks after the split.',
+    // **语言那一句与子 agent 那一份逐字相同**（`sources.ts` 里那一处给）：两格念同一句。
+    MODEL_FACING_LANGUAGE_LINE,
   ]
 }
 

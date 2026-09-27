@@ -593,6 +593,8 @@ test('⑨ 「我的任务」带三句收工口径（预算 · 交卷 · 断言�
     'At most 5 steps for this task.',
     'When the work is done, say so in one message and stop calling tools — handing in is ending the turn.',
     'The harness runs the assertions, not you.',
+    // 语言那一句（序 31）：模型自己的话是模型面 → 英文；它交付的文件是人读的 → 注释中文。
+    'Say it in English: your own words here are read by the harness, not by a person. The files you deliver are read by people — write their comments and notes in Chinese.',
   ]
   for (const line of three) {
     assert.ok(b5.includes(line), `B 区里该有这一句：${line}\nB 区是：${JSON.stringify(b5)}`)
@@ -624,6 +626,7 @@ test('⑨ 「我的任务」带三句收工口径（预算 · 交卷 · 断言�
   assert.equal(bb.includes('At most '), false, '没给预算就不该写那一句')
   assert.ok(bb.includes('When the work is done, say so in one message and stop calling tools — handing in is ending the turn.'), '另两句是常量，照旧在')
   assert.ok(bb.includes('The harness runs the assertions, not you.'), '另两句是常量，照旧在')
+  assert.ok(bb.includes('Say it in English:'), '语言那一句也是常量（不给预算它照旧在）')
   console.log(
     `⑨ 读数：B 区带预算 ${p5.zoneB.length} 字节 · 不带预算 ${bare.zoneB.length} 字节（差 ${p5.zoneB.length - bare.zoneB.length}）` +
       ` · 改步号 B 区指纹 ${hashOf(p1.zoneB)} 与带预算那份相同 · C 区指纹 ${hashOf(p1.zoneC)} ≠ ${hashOf(p5.zoneC)}`,
