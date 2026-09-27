@@ -21,7 +21,7 @@ import { INFERENCE_LIST, TOOL_NAMES, lookup } from './table.ts'
 import type { Log, LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import type { AgentId, BranchId, ContractId, RelPath, WriterId } from '../terms.ts'
-import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
+import { HOLDER_PROTOCOL, SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { emptyState } from '../assemble/sources.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
@@ -123,13 +123,13 @@ function stateOf(step = 0, cwd = ''): AssembleState {
   return { ...emptyState(), step, cwd }
 }
 
-function handleOf(state: AssembleState = stateOf()): AgentHandle {
+function handleOf(state: AssembleState = stateOf(), protocol = SUBAGENT_PROTOCOL): AgentHandle {
   return {
     agent: AGENT,
     coord: { id: AGENT, branch: 'refs/heads/agent-1', outputPaths: [] },
     branch: 'refs/heads/agent-1' as BranchId,
     contract: 'c-1' as ContractId,
-    protocol: SUBAGENT_PROTOCOL,
+    protocol,
     model: 'deepseek-chat/anthropic' as AgentHandle['model'],
     wireModel: 'deepseek-chat',
     target: {
@@ -577,5 +577,66 @@ test('⑥ 负对照：不给 `planPath` 那一栏，同一个 `notes.md` 就写�
     assert.deepEqual(host.writes.map((w) => w.path), ['notes.md'])
     assert.equal(host.denies.length, 0, '没有人拦它')
     console.log('⑥ 负对照读数：同一份输入、只少了 planPath 那一栏 → 写下去了（拒不是别处来的）')
+  })
+})
+
+
+// ── ⑦ `exit_plan_mode` 自报的那条路径：必须就是这一趟那一份 ───────────────────────────
+//
+// 由头与 ⑥ 同一条（`tools/probe-live-s9.sh` 量出来的那条缺口）。这一栏原先是一个模型自己编的
+// 参数（目录里只说"这份计划写在哪个文件里"），而 `round plan` 读回来的是 `draftPathOf(round)`
+// 那一条——两处分家不报错，只表现为"草案不在视图里"。**路径只有一个来源**：这一栏是核对。
+
+test('⑦ `exit_plan_mode`：自报的路径不等于这一趟那一份 → 当场拒（不落 holder/plan · 落 bound/deny）', async () => {
+  await withLog(async (log, root) => {
+    const host = fakeHost()
+    const fence = await fenceAt(root)
+    const planPath = '.fugue/plan/r1.md' as RelPath
+    const deps = { logOf: () => log, host, fenceOf: fence, planPath }
+    // **持轮者那一份句柄**：`exit_plan_mode` 只有那一格调得动（子 agent 调它得到另一句话）。
+    const h = handleOf(stateOf(), HOLDER_PROTOCOL)
+
+    // 一 · 报一个别处写的路径：拒，而且那一份计划**没有落进日志**（`declarePlan` 都没走到）。
+    const bad = await dispatch(call('exit_plan_mode', { plan: '拆成一格', planFilePath: 'notes.md' }), h, deps)
+    assert.equal(bad.result.ok, false, `该拒：${bad.result.output}`)
+    // **这一条是工具面自己拒的**（`no(...)` 那条路，与子 agent 调 `ask_user_question` 同一档）：
+    // `Dispatched.denied` 读的是四条推论与围栏，所以它在这里是 false——这一次的凭据是上面那句
+    // 话与下面那条 `bound/deny`（"模型看见了"与"日志里有一次拒"是同一件事的两个面）。
+    assert.equal(bad.denied, false, '工具面自己拒的那一档不置 denied（四条推论与围栏才置）')
+    assert.match(bad.result.output, /\.fugue\/plan\/r1\.md/, '拒的话里要给准确路径')
+    assert.match(bad.result.output, /草案只有那一份/, bad.result.output)
+    assert.equal(host.plans.length, 0, '被拒的那一趟不该落 holder/plan')
+    assert.equal(host.denies.length, 1, '宿主那一道拒口收到一次')
+    assert.equal(host.denies[0]!.rule, 'plan-path', `由头那一栏是：${host.denies[0]!.rule}`)
+    assert.equal(host.denies[0]!.path, 'notes.md', '被拒的那一串原文进日志')
+
+    // 二 · 报的就是那一份：过，而 `path` 那一栏照旧由它自己给（这一栏不许补、不许改）。
+    const good = await dispatch(call('exit_plan_mode', { plan: '拆成一格', planFilePath: planPath }), h, deps)
+    assert.equal(good.result.ok, true, good.result.output)
+    assert.equal(host.plans.length, 1, '过了的那一趟要落一份计划')
+    assert.equal(host.plans[0]!.path, planPath)
+
+    // 三 · 不给那一栏（目录里 `planFilePath` 不是必填）：过——它不是"必须自报"，是"报了就得对"。
+    const bare = await dispatch(call('exit_plan_mode', { plan: '拆成一格' }), h, deps)
+    assert.equal(bare.result.ok, true, bare.result.output)
+    assert.equal(host.plans.length, 2, '不给那一栏的那一趟照旧落一份计划')
+    assert.equal(host.plans[1]!.path, undefined)
+    console.log(`⑦ 读数：报别的路径拒一次（rule plan-path）· 报对与不报都过（plans ${host.plans.length} 份）`)
+  })
+})
+
+test('⑦ 负对照：不给 `planPath` 那一栏，报一个别处的路径也照旧过（拒是那一栏带来的）', async () => {
+  await withLog(async (log, root) => {
+    const host = fakeHost()
+    const fence = await fenceAt(root)
+    const out = await dispatch(
+      call('exit_plan_mode', { plan: '拆成一格', planFilePath: 'notes.md' }),
+      handleOf(stateOf(), HOLDER_PROTOCOL),
+      { logOf: () => log, host, fenceOf: fence },
+    )
+    assert.equal(out.result.ok, true, `不给那一栏就不该拦：${out.result.output}`)
+    assert.equal(host.plans[0]!.path, 'notes.md', '那一栏照旧原样交出去')
+    assert.equal(host.denies.length, 0, '没有人拦它')
+    console.log('⑦ 负对照读数：同一份输入、只少了 planPath 那一栏 → 报了 notes.md 也照旧过')
   })
 })

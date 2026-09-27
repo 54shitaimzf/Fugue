@@ -197,7 +197,14 @@ export async function dispatch(
   }
 
   const cwd = h.cwd ?? ''
-  const ctx: ToolContext = { agent: h.agent, step: h.state.step, cwd, holder: h.protocol === HOLDER_PROTOCOL }
+  const ctx: ToolContext = {
+    agent: h.agent,
+    step: h.state.step,
+    cwd,
+    holder: h.protocol === HOLDER_PROTOCOL,
+    // **这一趟那一份草案的路径**递给工具面：写入面那一栏与 `exit_plan_mode` 自报那一栏都读它。
+    ...(deps.planPath === undefined ? {} : { planPath: deps.planPath }),
+  }
   const args: Record<string, unknown> = { ...(given ?? parsed.value) }
   const applied: string[] = []
 

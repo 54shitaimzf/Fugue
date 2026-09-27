@@ -34,6 +34,13 @@ export interface ToolContext {
   readonly holder: boolean
   /** 视图内的相对路径，工具收的那种路径都相对它（`bash` 的 `cwd` 也是）。 */
   readonly cwd: string
+  /**
+   * **这一趟那一份草案的路径**（持轮者那一趟才有：`DispatchDeps.planPath`）。
+   *
+   * 它是这一趟**唯一**产物的位置。今天两处读它：写入面那一栏（`write` · `edit` 只许落在它那
+   * 一棵里）与 `exit_plan_mode` 自报的那一栏（必须就是它——那条路径只有一个来源，不许有第二个）。
+   */
+  readonly planPath?: string
 }
 
 /**
@@ -501,6 +508,16 @@ const exitPlanModeFace: ToolFn = async (args, host, ctx) => {
   // 指得出出路的话（架构 § 8.4 纪律 2），不落事件、也不停。
   if (!ctx.holder) {
     return no('这不是你这一格的事：你拿到的是一份契约，照它做完这一步就行——计划是持轮者在预备态里的事。')
+  }
+  // **自报的那一条路径必须就是这一趟那一份**（S9 那条缺口的第二半）：`round plan` 读回来的
+  // 是 `draftPathOf(round)` 那一条，模型报一个别处写的路径只会让那一栏与真源分家——而分家
+  // 不报错，只表现为"草案不在视图里"。路径只有一个来源，所以这一栏是核对，不是第二个真源。
+  if (file !== null && ctx.planPath !== undefined && file !== ctx.planPath) {
+    const message =
+      `planFilePath 要就是这一趟那一份：${ctx.planPath}——拿到的是 ${file}。` +
+      '草案只有那一份，写别处的不算：那份文件写没写，由它自己的内容判，不由这一栏判。'
+    await host.deny(refuse('plan-path', message, file))
+    return no(message)
   }
   await host.declarePlan({ plan, ...(file === null ? {} : { path: file }) })
   return {
