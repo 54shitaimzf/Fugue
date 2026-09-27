@@ -253,7 +253,7 @@ export function holderFace(inner: ToolExecutor, opts: HolderFaceOptions = {}): T
  *
  * **这里不说"别调工具了，说完交卷"**（子 agent 那一份有这一句）：架构 § 15.1.a 那一句"拆完了
  * 不借工具调用表达"——持轮者那一趟的收工由 `end-turn` 与那道门判，不押在它的自觉上。所以这一
- * 份只说它无从得知的事实：几步 · 有没有树。
+ * 份只说它无从得知的事实：几步 · 有没有树 · **这一趟的产物是哪一份、不碰什么**。
  *
  * 步数那一句与 `runtime/step.ts` 停下来用的那个数**同源**：两处读的都是 `wire.maxSteps`
  * （`cli/fugue.ts` 的 `holderWiringOf` 与 `roundPlan`）——一个数的两处用法，不是两个数。
@@ -262,6 +262,12 @@ export function holderClosingRuleLines(maxSteps?: number): readonly string[] {
   return [
     ...stepBudgetLine(maxSteps),
     '这一格没有可执行的树：预备态不物化，`bash` 与 `run_action` 试也不会通——要判什么，派发之后由验收那一档跑。',
+    // 另两句是**这一趟的产物与它的边界**（样本盘第二趟真档照出来的两处）：一趟 4 步自然收工
+    // 而草案空——它觉得自己说完了；一趟把 `write` 打在 `src/fields.js` 上被 `plan-scope` 当场
+    // 拒——它把目标那一句"改这个文件"当成了自己的活，那一趟就废了。两处都不是"拒绝得不对"，
+    // 是**伸手之前没人告诉它这一趟要交什么、不碰什么**。
+    '这一趟的产物是那份草案文件（写哪儿 · 什么形状见下）：它没写出来，这一趟就等于没跑。',
+    '这一趟不动工作树里的源码：你要交的是"怎么拆"，改代码是拆分之后那些格的事。',
   ]
 }
 

@@ -116,6 +116,10 @@ test('①e 持轮者那一趟的前缀里说得出收工口径，而子 agent �
   // 二 · 这一格没有可执行的树：**事先**在，而不是等它伸手之后才回一句（那一句一步）。
   assert.ok(hold.includes('这一格没有可执行的树'), '收工口径里没有"这一格没有可执行的树"')
   assert.ok(hold.includes('`bash`'), '那一句没有点出被拦的那条工具名')
+  // 二之二 · 产物与它的边界：那两趟"退回"各犯一条——产物不在（4 步自然收工 · 草案空）· 伸手去
+  //         改源码（`write src/fields.js` 被 `plan-scope` 拒）。两句都要事先在。
+  assert.ok(hold.includes('它没写出来，这一趟就等于没跑'), '收工口径里没有"产物不在就等于没跑"')
+  assert.ok(hold.includes('这一趟不动工作树里的源码'), '收工口径里没有"这一趟不动源码"')
   // 三 · 位置：收工口径在草案那一句**之前**——末尾留给"写哪儿 · 什么形状"（近因）。
   assert.ok(hold.indexOf('这一格最多 6 步。') < hold.indexOf('这一趟要把拆分写进'), '收工口径跑到产物说明后面去了')
   assert.ok(hold.trimEnd().endsWith('写别的路径不算这一趟的产物。'), `那一段的末尾不是产物说明：${hold.slice(-120)}`)
@@ -144,6 +148,7 @@ test('①e 持轮者那一趟的前缀里说得出收工口径，而子 agent �
     }).zoneB,
   )
   assert.equal(sub.includes('这一格没有可执行的树'), false, '子 agent 那一份里居然有"这一格没有可执行的树"')
+  assert.equal(sub.includes('这一趟不动工作树里的源码'), false, '子 agent 那一份里居然有"这一趟不动源码"——它那一格正是要改源码的')
   assert.ok(sub.includes('这一格最多 6 步。'), '子 agent 那一份里丢了预算那一句')
   console.log(`①e 读数：持轮者那份 B 区 ${hold.length} 字节（人的意图 + 收工口径 + 产物说明）· 子 agent 那份 ${sub.length} 字节`)
 })
