@@ -56,30 +56,64 @@ function treeOfDisk(ws: string, c: CaseDecl): Tree {
  * 它只回答一个问题：**这一趟的读数能不能当证据**。挂载层不在场时子进程读得到账本与答案纸
  * （`$OUT` 就在它够得着的地方），那时"已知答案过"这句话分不开"它自己解出来的"与"它翻到了
  * 我们的账本"。第十五趟样本盘照出来的正是这一条。
+ *
+ * **三种形状分得开**（第十九趟照出来的一处静默）：`—（这一趟没有子进程）` 只在**真的一个
+ * `run/start` 都没有**时印；有子进程而**一条 `run/confined` 都没有**（那份账早于这个事件，
+ * 或这一档本来就不落记录）印的是 `缺：…`。第十五趟那一份账正是后一种形状（34 个子进程 ·
+ * 0 条记录），而两半原先**都以 `—` 开头**，样本盘那段判据（`full*`→ok · `—*`→不适用 ·
+ * `*`→红）于是把一份漏出去的账按"不适用"放过、还数进 `PASS`。同一族的第二处：逐格不一致
+ * （甲格 `full` · 乙格 `partial`）原先只在括号里报一句"不一致"，字符串照旧以 `full` 开头，
+ * 于是也走 `ok`。**这一处的分界只有一条：`full` 留给"每一格都有记录、每一条都是 `full`"；
+ * 其余一律以 `缺：` 开头，走 `*` 那一支当场红。**
  */
 function fenceLine(rows: readonly unknown[]): string {
   // **日志读回来的是行**：事件在 `r.e` 那一栏里（与 `row` 那一支同一个读法）。
   // **字段在 `r.e` 里**（与 `r.e.t` 同一个读法）——读在"行"那一层上时每一格都是 `undefined`，
   // 而那一趟恰好一个子进程都没有（b14 那一次），于是这条错路一直没被走到过。
-  const fences = rows
+  const events = rows
     .map((r) => (r as { e?: unknown }).e)
-    .filter((e): e is { t?: string } => typeof e === 'object' && e !== null && (e as { t?: string }).t === 'run/confined') as unknown as {
+    .filter((e): e is { t?: string } => typeof e === 'object' && e !== null)
+  const fences = events.filter((e) => e.t === 'run/confined') as unknown as {
+    agent?: string
     mode: string
     enforcement: string
     layers?: readonly string[]
     reach?: readonly string[]
   }[]
-  if (fences.length === 0) return '—（日志里一条 run/confined 都没有：这一趟没有子进程，或这份账早于那个事件）'
+  const runs = events.filter((e) => e.t === 'run/start') as unknown as { agent?: string }[]
+  /** 起过子进程/落过记录的格（排序只为一件事：同一份账读两遍印出来一样）。 */
+  const who = (list: readonly { agent?: string }[]): string[] =>
+    [...new Set(list.map((e) => String(e.agent ?? '?')))].sort()
+  if (fences.length === 0) {
+    // **`—` 只留给真的没有子进程那一档**：有子进程而没有记录是"围栏算不出来"，不是"不适用"。
+    if (runs.length === 0) return '—（这一趟没有子进程）'
+    return (
+      '缺：这一趟有 ' + String(runs.length) + ' 个子进程（' + who(runs).join(' · ') +
+      '），一条 run/confined 都没有——这份账早于那个事件，或这一档不落记录；围栏算不出来，这一趟的数字不当证据'
+    )
+  }
   const shape = (f: { enforcement: string; layers?: readonly string[]; mode: string }): string => {
     const layers = (f.layers ?? []).join('+')
     return f.enforcement + ' · ' + (layers === '' ? '（一层都没有）' : layers) + ' · mode ' + f.mode
   }
   const first = fences[0] as { enforcement: string; layers?: readonly string[]; mode: string; reach?: readonly string[] }
   const distinct = [...new Set(fences.map(shape))]
-  return (
+  const bare =
     shape(first) +
     ' · 只读根 ' + String((first.reach ?? []).length) + ' 条 · ' + String(fences.length) + ' 格各一条' +
     (distinct.length > 1 ? '（**不一致**：' + distinct.join(' / ') + '）' : '')
+  // **`full` 的充分必要条件**：每一格都有记录（第一次起子进程时落）· 逐格同一个形状 · 那个形状
+  // 以 `full` 开头。三条缺一条就不是 `full`——逐格不一致与"某一格是 `partial`"原先都印成
+  // `full …（不一致）` 而以 `full` 开头，于是走了 `ok`。
+  const unfenced = who(runs).filter((a) => !who(fences).includes(a))
+  const notFull = distinct.filter((s) => !s.startsWith('full'))
+  if (unfenced.length === 0 && notFull.length === 0 && distinct.length === 1) return bare
+  return (
+    '缺：' +
+    (unfenced.length === 0 ? '' : '起过子进程而没有 run/confined 的格：' + unfenced.join(' · ') + '；') +
+    (notFull.length === 0 ? '' : '不是 full 的档：' + notFull.join(' / ') + '；') +
+    (distinct.length > 1 ? '逐格不一致：' + distinct.join(' / ') + '；' : '') +
+    '这一趟的数字不当证据 ｜ ' + bare
   )
 }
 
@@ -150,8 +184,38 @@ function readingsSelfTest(): number {
   const got = fenceLine(fenceRows)
   if (!got.includes('full · bwrap+landlock · mode workspace-write')) complain('围栏 · 档与层', got, 'full · bwrap+landlock · mode workspace-write')
   if (!got.includes('只读根 6 条')) complain('围栏 · 只读根', got, '只读根 6 条')
-  if (!fenceLine([]).startsWith('—（日志里一条 run/confined 都没有')) complain('围栏 · 空那一档', fenceLine([]), '—（日志里一条 run/confined 都没有…）')
+  if (fenceLine([]) !== '—（这一趟没有子进程）') complain('围栏 · 空那一档', fenceLine([]), '—（这一趟没有子进程）')
+  // 一之二 · **三种形状分得开**（由头：第十五趟那一份账 —— 34 个子进程 · 0 条记录 —— 两半原先
+  // 都以 `—` 开头，样本盘那段判据按"不适用"放过、还数进 `PASS`）。三条负对照各要一个红：
+  // 有子进程而没有记录 · 逐格缺一条 · 档不是 `full`——每一条都必须是 `缺：…`。
+  const noRecord = [
+    { seq: 1, e: { t: 'run/start', agent: 'agent/r1/1', argv: ['/bin/sh', '-c', 'ls'] } },
+  ]
+  const gaps: readonly [string, string][] = [
+    ['有子进程而没有记录', fenceLine(noRecord)],
+    [
+      '逐格缺一条',
+      fenceLine([
+        { seq: 1, e: { t: 'run/start', agent: 'agent/r1/1', argv: ['/bin/sh', '-c', 'ls'] } },
+        { seq: 2, e: { t: 'run/start', agent: 'agent/r1/2', argv: ['/bin/sh', '-c', 'ls'] } },
+        { seq: 3, e: { t: 'run/confined', agent: 'agent/r1/2', mode: 'workspace-write', enforcement: 'full', layers: ['bwrap', 'landlock'], reach: ['/usr'] } },
+      ]),
+    ],
+    [
+      '档不是 full',
+      fenceLine([
+        { seq: 1, e: { t: 'run/start', agent: 'agent/r1/1', argv: ['/bin/sh', '-c', 'ls'] } },
+        { seq: 2, e: { t: 'run/confined', agent: 'agent/r1/1', mode: 'workspace-write', enforcement: 'partial', layers: ['landlock'], reach: ['/usr'] } },
+      ]),
+    ],
+  ]
+  for (const [what, line] of gaps) {
+    if (!line.startsWith('缺：')) complain('围栏 · ' + what, line, '缺：…（样本盘那段判据：只有 `full*` 与真的没有子进程那一档算 ok）')
+  }
+  const gapText = gaps.map(([what, line]) => what + ' → ' + line.slice(0, 12) + '…').join(' · ')
   console.log('  ok   读面自检 · 围栏：' + got)
+  console.log('  ok   读面自检 · 围栏那三档：真没有子进程 → ' + fenceLine([]) + ' ｜ ' + gapText)
+  if (gaps.some(([, line]) => line.includes('（这一趟没有子进程）'))) complain('围栏 · 缺记录不许印成没有子进程', gapText, '缺：…')
   // 二 · 探路那一行：两格三条命令，只有一条的坐标在视图之外
   const reconRows = [
     { seq: 1, e: { t: 'run/start', agent: 'agent/r1/1', argv: ['/bin/sh', '-c', 'cat a.ts'] } },
