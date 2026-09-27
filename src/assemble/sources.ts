@@ -195,6 +195,23 @@ function emptyFor(id: SegmentId, protocol: Protocol): SegmentValue {
 }
 
 /**
+ * 一份路径清单 → **去重之后的清单**（次序照第一次出现）。
+ *
+ * 由头是一条真读数（第十五趟 · 案一 · `r1/2` 那一格的「我的任务」正文）：
+ * `交付物：src/format.ts · src/format.ts · src/total.ts · README.md`——持轮者那份草案把同一条
+ * 路径写了两遍，而这一行是**给模型看的**：重复的那一条只占地方，一个字的信息都不添（这一行
+ * 本来只印路径，不印 `form`）。同一份草案若把同一条路径声明两次而 `form` 不同，**人读的那一份
+ * 照旧印原始的那一对对**（`fugue round plan` 与门那份读数印的是 `路径（形状）`）——草案写了
+ * 什么，报告里就要看得出什么，那是草案的毛病，不该在模型那一行里顺带抹掉。
+ *
+ * **它只归这一行与写入面那一行**：`Deliverables` 与 `Write surface` 说的都是"哪几条归你"，
+ * 而"哪几条"天然是一个集合。断言的名单 · 证据的名单不在此列——那两句是出题人/草案的原话。
+ */
+export function pathSet(paths: readonly string[]): string[] {
+  return [...new Set(paths)]
+}
+
+/**
  * **这一格最多几步**：这一格的预算那一句（人给的那个数，缺省不写）。**一处给**——子 agent 的
  * 「我的任务」与持轮者那一趟的收工口径（`round/plan.ts` 的 `holderClosingRuleLines`）念的是
  * 同一句。两处各写一份的症状是"两句话慢慢不一样了"，而它一个错都不报。
@@ -224,7 +241,7 @@ export function stepBudgetLine(maxSteps?: number): readonly string[] {
 export function writeScopeLine(paths: readonly string[] | undefined): readonly string[] {
   if (paths === undefined || paths.length === 0) return []
   return [
-    `Write surface: ${paths.join(' · ')} — these paths are yours, including everything under them.` +
+    `Write surface: ${pathSet(paths).join(' · ')} — these paths are yours, including everything under them.` +
       ' Do not change a single byte anywhere else, deleting included: if you find something stale, say so in your conclusion instead of clearing it away.',
   ]
 }
@@ -245,7 +262,7 @@ export function writeScopeLine(paths: readonly string[] | undefined): readonly s
  */
 function taskText(t: AssembleState['task'], outputs: readonly string[], maxSteps?: number): string {
   const lines: string[] = [`Goal: ${t.goal}`, `Question: ${t.question}`]
-  if (t.deliverables.length > 0) lines.push(`Deliverables: ${t.deliverables.join(' · ')}`)
+  if (t.deliverables.length > 0) lines.push(`Deliverables: ${pathSet(t.deliverables).join(' · ')}`)
   // **写入面排在交付物后面**：交付物是"交什么"，这一句是"哪几条归你"——同一档的两件事，
   // 而收工口径那三句照旧排在它们之后（它们与产物路径是一组）。
   lines.push(...writeScopeLine(t.ownedPaths))

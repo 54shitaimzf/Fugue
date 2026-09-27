@@ -31,7 +31,7 @@ import { HOLDER_PROTOCOL, SUBAGENT_PROTOCOL } from './protocol.ts'
 import { render, stableStringify } from './render.ts'
 import { assemble, hashOf } from './assemble.ts'
 import type { AgentCoord, AssembleState } from './sources.ts'
-import { HOLDER, SOURCE_IDS, SourceError, emptyState, readPolicy, resolverFor, sourcesFor, writeScopeLine } from './sources.ts'
+import { HOLDER, SOURCE_IDS, SourceError, emptyState, pathSet, readPolicy, resolverFor, sourcesFor, writeScopeLine } from './sources.ts'
 
 /** 造一段状态：十二个段各有非空的值，量「排进哪一区」时才量得出东西。 */
 function stateWith(over: Partial<AssembleState> = {}): AssembleState {
@@ -298,6 +298,29 @@ test('⑨ 写入面那一句：逐条列契约声明的那几条 · 排在交付
   const held = sourcesFor(HOLDER_PROTOCOL, st, HOLDER)
   assert.ok(!JSON.stringify(held).includes('Write surface:'), '持轮者那一份里出现了写入面那一句')
   console.log(`⑨ 读数：${String(task.split('\n').find((l) => l.startsWith('Write surface:'))).slice(0, 44)}… · 空集 0 句 · 持轮者 0 处`)
+})
+
+test('⑩ 交付物与写入面都是"路径的集合"：同一条写两遍只印一次，次序照首次出现', () => {
+  const st = stateWith({
+    task: {
+      ...stateWith().task,
+      deliverables: ['src/format.ts', 'src/format.ts', 'src/total.ts'],
+      ownedPaths: ['README.md', 'src/format.ts', 'src/format.ts'],
+    },
+  })
+  const task = sourcesFor(SUBAGENT_PROTOCOL, st, AGENT_2)['我的任务'] as string
+  const deliv = task.split('\n').find((l) => l.startsWith('Deliverables:'))
+  assert.equal(deliv, 'Deliverables: src/format.ts · src/total.ts', `交付物那一行没去重：${deliv}`)
+  const write = task.split('\n').find((l) => l.startsWith('Write surface:'))
+  assert.ok(
+    String(write).startsWith('Write surface: README.md · src/format.ts —'),
+    `写入面那一行没去重、或次序变了：${write}`,
+  )
+  // 边界：全同 → 一条 · 空 → 空 · 不同的一条都不许丢。
+  assert.deepEqual(pathSet(['a', 'a', 'a']), ['a'])
+  assert.deepEqual(pathSet([]), [])
+  assert.deepEqual(pathSet(['a', 'b', 'a', 'c', 'b']), ['a', 'b', 'c'])
+  console.log(`⑩ 读数：${String(deliv)} ｜ ${String(write).slice(0, 40)}…`)
 })
 
 /** 去掉注释：`⑤` 量的是依赖，而注释里正写着「哪几样不许进来」。 */
