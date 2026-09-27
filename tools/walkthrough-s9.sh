@@ -5,7 +5,8 @@
 #   持轮者那一档（`$W`）：讨论态说一句 → 理解改了（Harness 判自然结束）→ 人写草案 + `--judge`
 #     （人喊停那一档 · 也是这一站的地板）→ `round plan` 模型交卷（declared）
 #     → 上界那一档（`--max-steps 1` · 步数到顶）→ 预备态说一句（改草案 · 重判 · 门再停一次 ·
-#     版本那一栏印得到"第 3 版"与差异）→ `round go` 放行（契约逐条 · 分支起来 · 处境 Working）。
+#     版本那一栏印得到"第 3 版"与差异）→ `round go` 放行（契约逐条 · 分支起来 · 处境 Working）
+#     → `round work` **接着跑**（那一批从日志读回 → 跑格 → 验收 → 定格 + 推进）。
 #   地板那一档（`$FW` · 照 `src/cli/__fixture__/wire-in/scenario.json` 搭）：
 #     `round run <目标> --wire-in <夹具>` → 真产物落盘 → 两条真断言跑过 → 工作树与定格那个提交
 #     逐字节一致。
@@ -27,12 +28,11 @@
 # `.fugue/log/round.jsonl` 的 `view/write` 那几条上），所以"删掉 `.fugue/session/r1.jsonl`"
 # 那条路根本不存在——这正是这一份最早那版报 13 个 FAIL 的根。
 #
-# **缺口如实报**：`round go` 之后，"从日志里那批契约起跑"那条命令今天还没有——`round run` 走的是
-# 配置里的 `round.split`（人拆那一档 · 从 `Idle` 起头）。它**看着处境那条链**：在一轮已经放行
-# （`Working`）的靶子上再起一轮，`startRound` 的处境守卫当场拒，**一个字节都不落**
-# （`round/start.ts`；从前它不拒——又落一条 `Idle→Planning`、把同一份契约再发一遍，那种"重跑"
-# 没有任何一处判据看得见）。§ 四 把这条读数**量出来印出来**（S8 那条纪律：量不到的写出来，不拿
-# "放行成功"顶替），**剩下的缺口只有一条**：那条从日志那批契约起跑的命令。
+# **§ 四 量的是"接着跑"**：`round go` 之后那一环归 `round work`——契约与底**从日志读回**
+# （`contract/issue` 的正文与 `round/intent` 的底：一句配置都不看、一份契约都不重算），尾巴与
+# `round run` 是同一条（`runIssued`）。同一段里还有两条读数：在一轮已经放行（`Working`）的靶子上
+# 再起一轮（`round run`），`startRound` 的处境守卫当场拒、**一个字节都不落**（同一批不重复派发）；
+# 第二次 `round work` 照旧拒（那批契约已经跑过了）。三条都是量出来的，不拿"放行成功"顶替。
 #
 # `--live` 那一支：同一串路换真模型跑一遍（每一步真发一次调用）。那一支的断言是**不变量**
 # （每条路都收得住并进判 · 退出码 0/1 之内 · **版本那一栏跟着日志里的落地条数走**），不是夹具档
@@ -496,27 +496,55 @@ check "⑥ 第二次放行的退出码（这一批已经发过了）" "1" "$?"
 check "⑥ 第二次放行一个字节都没落" "$BEFORE" "$(wc -c < "$W/.fugue/log/round.jsonl" | tr -d ' ')"
 
 echo
-echo "=== 四 · 放行之后谁跑：处境守卫当场拒（缺口只剩一条）==="
-# **两件事分开量**（S8 那条纪律：量不到的写出来，不拿"放行成功"顶替）：
-#   1. **拒得住**：在一轮已经放行（`Working`）的靶子上再起一轮 → `startRound` 的处境守卫当场拒，
-#      而且一个字节都不落（从前它不拒：又落一条 `Idle→Planning`、把同一份契约再发一遍）。
-#   2. **缺口还在**：「从日志里那批契约起跑」那条命令今天没有——`round run` 走的是配置里
-#      `round.split` 那一档（人拆 · 从 `Idle` 起头）。所以这一段只证"拒得住"，不假装"能接着跑"。
+echo "=== 四 · 放行之后接着跑（round work）==="
+# **三件事依次量**（S8 那条纪律：量不到的写出来，不拿"放行成功"顶替）：
+#   1. **拒得住**：在一轮已经放行（`Working`）的靶子上再起一轮（`round run`）→ `startRound` 的
+#      处境守卫当场拒，而且一个字节都不落（同一批不重复派发）。
+#   2. **接着跑**：`round work` 从日志读回那一批（契约与底都从日志来，一句配置都不看）→ 跑格 →
+#      合并前预检 → 折叠 → 漂移检 → 验收（契约里那条断言，argv 从绑好的 `actions.ok` 来）→
+#      定格 + 推进。**工作树与定格那个提交逐字节一致**。
+#   3. **不重复**：第二次 `round work` 当场拒（那批契约已经跑过了），一个字节都不落。
 BEFORE2=$(wc -c < "$W/.fugue/log/round.jsonl" | tr -d ' ')
 $FUGUE --root "$W" round run '写一份 notes.md' --max-steps 1 > "$T/gap.out" 2> "$T/gap.err"
 RCGAP=$?
 printf '  rc = %s\n' "$RCGAP"
 sed 's/^/  | /' "$T/gap.out"
 sed 's/^/  err| /' "$T/gap.err"
-check "⑦ 处境守卫：在一轮已经 Working 的靶子上再起一轮的退出码" "1" "$RCGAP"
-has "$T/gap.err" '这一轮的处境是 Working' "⑦ 拒的原文里报出了处境"
-has "$T/gap.err" '不再从 Idle 起一次' "⑦ 拒的原文里说清楚了为什么"
-has "$T/gap.err" 'config set round.id' "⑦ 拒的原文里给了另一条路（换轮次号）"
-check "⑦ 契约份数照旧（没有又发一遍）" "1" "$(logcount 'contract/issue')"
-check "⑦ 处境链上照旧只有一条 Idle→Planning" "1" "$(node "$T/s9.js" edges "$W/.fugue/log/round.jsonl" Idle)"
-check "⑦ 拒那一趟一个字节都不落" "$BEFORE2" "$(wc -c < "$W/.fugue/log/round.jsonl" | tr -d ' ')"
-printf '  如实报：从日志里那批契约起跑的那条命令今天还没有（`round run` 走的是配置里 `round.split`\n'
-printf '          那一档 · 从 Idle 起头）——上面量到的是"在一轮已经放行的靶子上它拒得住"。\n'
+check "⑦a 处境守卫：在一轮已经 Working 的靶子上再起一轮的退出码" "1" "$RCGAP"
+has "$T/gap.err" '这一轮的处境是 Working' "⑦a 拒的原文里报出了处境"
+has "$T/gap.err" '不再从 Idle 起一次' "⑦a 拒的原文里说清楚了为什么"
+has "$T/gap.err" 'config set round.id' "⑦a 拒的原文里给了另一条路（换轮次号）"
+check "⑦a 契约份数照旧（没有又发一遍）" "1" "$(logcount 'contract/issue')"
+check "⑦a 处境链上照旧只有一条 Idle→Planning" "1" "$(node "$T/s9.js" edges "$W/.fugue/log/round.jsonl" Idle)"
+check "⑦a 拒那一趟一个字节都不落" "$BEFORE2" "$(wc -c < "$W/.fugue/log/round.jsonl" | tr -d ' ')"
+printf '  上面量到的是"同一批不重复派发"；接着跑走下面那一条（契约从日志读回 · 尾巴同一条）。\n'
+
+# 二 · **接着跑**（`round work`）：契约与底从日志来（`contract/issue` 的正文 · `round/intent` 的底），
+# 一句配置都不看、一份契约都不重算。打桩那一档（不给 --live/--wire-in）夹具档不花钱。
+printf '  --- round work（夹具档 · 打桩那一档）---\n'
+$FUGUE --root "$W" round work > "$T/work.out" 2> "$T/work.err"
+RCW=$?
+printf '  rc = %s\n' "$RCW"
+sed 's/^/  | /' "$T/work.out"
+sed 's/^/  err| /' "$T/work.err"
+check "⑦b 接着跑的退出码" "0" "$RCW"
+has "$T/work.out" '验收：通过 1' "⑦b 契约里那条断言跑过了（argv 从 actions.ok 来）"
+check "⑦b 契约份数照旧（接着跑不发契约）" "1" "$(logcount 'contract/issue')"
+check "⑦b 分支条数照旧（接着跑不起分支）" "1" "$(git -C "$W" for-each-ref --format='%(refname:short)' refs/heads/agent | wc -l | tr -d ' ')"
+check "⑦b 推进之后工作树与定格提交逐字节一致" "$(head_tree "$W")" "$(tree_now "$W")"
+check "⑦b 处境走到定格之后那一步" "Rebuilding" "$(laststate)"
+check "⑦b 日志里 merge/accept 一条" "1" "$(logcount 'merge/accept')"
+
+# 三 · **不重复**：那一批已经跑过了 → 当场拒 · 一个字节都不落。
+BEFORE3=$(wc -c < "$W/.fugue/log/round.jsonl" | tr -d ' ')
+$FUGUE --root "$W" round work > "$T/work2.out" 2> "$T/work2.err"
+RCW2=$?
+printf '  rc = %s\n' "$RCW2"
+sed 's/^/  err| /' "$T/work2.err"
+check "⑦c 第二次接着跑的退出码（那批契约已经跑过了）" "1" "$RCW2"
+has "$T/work2.err" '已经跑过了' "⑦c 拒的原文里说清楚了为什么"
+has "$T/work2.err" 'round.id' "⑦c 拒的原文里给了另一条路（换轮次号）"
+check "⑦c 第二次一个字节都不落" "$BEFORE3" "$(wc -c < "$W/.fugue/log/round.jsonl" | tr -d ' ')"
 
 echo
 echo "=== 五 · 地板那一档（人拆 · 回放档）：真产物 · 真断言 · 树哈希 ==="

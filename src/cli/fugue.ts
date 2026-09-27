@@ -93,7 +93,9 @@ import { PlanError, planRound, pinnedBase } from '../round/plan.ts'
 import { RECENT_COUNT, SayError, recentOf, sayRound, sessionPathOf } from '../round/say.ts'
 import { estimateTokensOfText } from '../runtime/budget.ts'
 import { draftPathOf, goalWithDraftRule } from '../contract/draft.ts'
-import { RoundRunError, materializeCommit, runRound } from '../round/execute.ts'
+import { RoundRunError, materializeCommit, runIssued, runRound } from '../round/execute.ts'
+import type { RoundRun } from '../round/execute.ts'
+import { RoundWorkError, issuedBatchOf } from '../round/work.ts'
 import type { DriverSupport, Stub } from '../round/execute.ts'
 import { realDriver, stubDriver } from '../round/driver.ts'
 import { RETRY_DEFAULT } from '../round/machine.ts'
@@ -108,7 +110,9 @@ import { implementedNames, publishedTools } from '../tools/execute.ts'
 import { CATALOG_STATES, TOOL_NAMES, catalog } from '../tools/catalog.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { Contract } from '../contract/types.ts'
+import { declaredSetOf } from '../contract/types.ts'
 import type { AssertionRunSpec } from '../merge/accept.ts'
+import type { DriftVerdict } from '../merge/drift.ts'
 import { entriesOf } from '../merge/accept.ts'
 import type { Assertion } from '../contract/types.ts'
 import { spawnSync } from 'node:child_process'
@@ -274,6 +278,17 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              用户的手，用来量漂移那一档）；缺省什么都不做
                              --poke-exact <路径> 同上，但抄的是这一趟目标树里那条路径的
                              字节（量"两边逐字节相同 → 照合并"那一档）
+  round work [--live|--wire-in <目录>] [--max-steps <n>] [--retry <n>] [--report] [--metrics]
+                             **接着跑**：把这一轮**已经发出去的那一批契约**跑完——放行（round go）
+                             之后那一环。契约与底**从日志里读回**（contract/issue 的正文 ·
+                             round/intent 的底），一句配置都不看、一份契约都不重算：人批的是哪一批，
+                             跑的就是哪一批。处境必须是 Working（放行走完 · 格还没跑）；别的处境当场
+                             拒并指一条路。**已经交过卷的格不重跑**——那条分支已经不是底了，就取回它
+                             那个提交复用（重跑不重复烧真调用）。
+                             断言从**契约里**来，命令行从配置里绑好的动作来（actions.<名字>）：契约
+                             只带动作名（架构 § 8.12），argv 归工作区配置。
+                             --live / --wire-in / --max-steps / --credential / --dump-wire / --report
+                             / --metrics / --retry 与 round run 同义。
   say <一句话> [--live|--wire-in <目录>] [--max-steps <n>]
                              **答完接着走**：那句话进这一趟的尾端（C 区第一条），并且立刻带着它
                              跑一趟持轮者——**停下来的那一处没有"等"这种状态**（命令返回时那一趟
@@ -833,7 +848,7 @@ async function roundCmd(
 ): Promise<number> {
   const verb = args[0]
   if (verb !== 'new') {
-    return usageFail(`round 的子命令是 new · plan · go · run：拿到的是 ${verb === undefined ? '（空）' : verb}`)
+    return usageFail(`round 的子命令是 new · plan · go · run · work：拿到的是 ${verb === undefined ? '（空）' : verb}`)
   }
   const goal = args[1]
   if (goal === undefined || goal === '') return usageFail('round new 需要 <目标>：轮级意图的那一句')
@@ -1141,13 +1156,7 @@ async function roundRun(
       specsOf,
       retriesLeft,
       softMergeGate,
-      onDrift: (d) => {
-        const covered = d.drift.colliding.length === 0 ? '（没有）' : d.drift.colliding.join(' · ')
-        process.stderr.write(
-          `漂移检：HEAD ${d.drift.headMoved ? '动了' : '没动'} · 这次合并动到 [${d.drift.touched.join(' · ')}] · ` +
-            `盘上与目标树不同 [${d.drift.divergent.join(' · ')}] · 会被覆盖的（盘上既不是底也不是目标树）[${covered}]\n`,
-        )
-      },
+      onDrift: reportDrift,
       ...(poke === undefined
         ? {}
         : {
@@ -1212,63 +1221,7 @@ async function roundRun(
     // 那一趟的日志就是刚才跑出来的那一份——所以 `--metrics` 印的就是这一趟。
     const metrics = flags.has('metrics') ? await computeAllMetrics(() => ctx.log.readMerged(), { round }) : null
 
-    if (json) {
-      emitJson({
-        round: started.round,
-        base: started.base,
-        state: started.state,
-        contracts: started.started.built.contracts.map((c) => ({ id: c.id, agent: c.agent, kind: c.kind })),
-        precheckPlanning: started.precheckPlanning,
-        precheckMerge: started.precheckMerge,
-        drift: started.drift === null ? null : { ok: started.drift.ok, dirty: started.drift.dirty, colliding: started.drift.colliding },
-        fold: started.fold.kind === 'folded' ? { kind: 'folded', steps: started.fold.steps } : { kind: 'conflict' },
-        conflictTree: started.conflictTree,
-        verify: { pass: started.report.pass, fail: started.report.fail, unrunnable: started.report.unrunnable, ok: started.report.ok },
-        assertions: started.report.results,
-        advanced: started.advanced === null ? null : { written: started.advanced.written, removed: started.advanced.removed, skipped: started.advanced.skipped },
-        deniedAction,
-        // **每一格为什么停**（`--live` 才有；打桩那一档是空数组——那句话不在打桩那条路上）。
-        agents: stops,
-        // **`--json` 与文字那一档给的是同一件事**：文字那一档 `--metrics` 印的是八元指标
-        // （`lineOf`），所以这一档的 `metrics` 就是那八条；不给 `--metrics` 时是 `null`。
-        // （原先这一栏放的是 `report.readings`——那是**打回**那三个数，与 `--report` 同源，
-        // 而八元指标另挂在 `probe` 那一栏。两条路给的不是一件事，名字还都叫指标。）
-        metrics: metrics === null ? null : [...metrics],
-        report: report.readings,
-        attribution: [...attribution],
-      })
-    } else {
-      emitLine(`${started.round}\t${started.base}\t${started.state}`)
-      emitLine(`  契约 ${started.started.built.contracts.length} 份：${started.started.built.contracts.map((c) => c.id).join(' · ')}`)
-      emitLine(`  预检：Planning ${started.precheckPlanning} 对 · 合并前 ${started.precheckMerge.count} 对`)
-      emitLine(`  折叠：${started.fold.kind === 'folded' ? `折了 ${started.fold.steps} 步` : '停在冲突上'}`)
-      emitLine(`  验收：通过 ${started.report.pass} · 没通过 ${started.report.fail} · 跑不起来 ${started.report.unrunnable}`)
-      if (started.advanced !== null) {
-        emitLine(`  推进：写 ${started.advanced.written.length} 条 · 删 ${started.advanced.removed.length} 条 · 跳过 ${started.advanced.skipped.length} 条`)
-      } else {
-        emitLine('  推进：没有（验收没过——真实工作树一个字节都没动）')
-      }
-      if (deniedAction !== null) emitLine(`  被拒的动作：exit ${deniedAction.exit} · denied=${String(deniedAction.denied)}（${deniedAction.note}）`)
-      // **停因**：一行一格。它只在真驱动那一档有内容（打桩那一档 `stops` 是空的）。
-      for (const s of stops) emitLine(`  停因：${s.agent} ${s.steps} 步 · ${s.stopped}`)
-      if (flags.has('report')) {
-        emitLine('打回读数（从日志重算，不采集）：')
-        for (const l of report.lines) emitLine(`  ${l}`)
-        emitLine('归因三处对照（闸四：命中落在哪一段；三行恒在，缺的写「没有读数」）：')
-        for (const l of report.attributionLines) emitLine(`  ${l}`)
-      }
-      if (metrics !== null) {
-        emitLine('八元指标（从日志重算，不采集；分子与分母一起印）：')
-        for (const m of metrics) emitLine(`  ${lineOf(m)}`)
-      }
-      if (!started.report.ok) {
-        for (const r of started.report.results.filter((x) => x.verdict !== 'pass')) {
-          process.stderr.write(`${r.verdict}\t${r.assertion}\t${r.note}\n`)
-        }
-      }
-    }
-    // 没通过那一档：退出码 1（**不是用法错**：这一趟真的跑了，只是没通过）。
-    return started.report.ok ? 0 : 1
+    return emitRunFace({ json, flags, run: started, stops, deniedAction, report, attribution: [...attribution], metrics })
   } catch (err) {
     if (err instanceof RoundRunError) return fail(`${err.at}：${err.message}`)
     if (err instanceof RoundStartError) return fail(err.message)
@@ -1278,6 +1231,98 @@ async function roundRun(
     await closeAgentLogs()
     await ctx.close()
   }
+}
+
+/**
+ * 一轮跑完之后那张面：**`round run` 与 `round work` 共用一份**（同一份读数 · 两个入口）。
+ *
+ * 它从 `RoundRun` 那一个返回值渲染两档（人面与 `--json`）——两档同源是那一份返回值的性质，
+ * 不是这一处的自觉：能印的都在 `RoundRun` 里，印不出来的这里也编不出来。
+ *
+ * 返回值就是这一趟的退出码：**验收过了 0 · 没过 1**（不是用法错——这一趟真的跑了）。
+ */
+function emitRunFace(o: {
+  readonly json: boolean
+  readonly flags: Map<string, string | true>
+  readonly run: RoundRun
+  readonly stops: readonly AgentStop[]
+  readonly deniedAction: { readonly agent: AgentId; readonly exit: number; readonly denied: boolean; readonly note: string } | null
+  readonly report: Awaited<ReturnType<typeof reportOf>>
+  readonly attribution: readonly string[]
+  readonly metrics: Awaited<ReturnType<typeof computeAllMetrics>> | null
+}): number {
+  const { json, flags, run, stops, deniedAction, report, attribution, metrics } = o
+  if (json) {
+    emitJson({
+      round: run.round,
+      base: run.base,
+      state: run.state,
+      contracts: run.batch.contracts.map((c) => ({ id: c.id, agent: c.agent, kind: c.kind })),
+      precheckPlanning: run.precheckPlanning,
+      precheckMerge: run.precheckMerge,
+      drift: run.drift === null ? null : { ok: run.drift.ok, dirty: run.drift.dirty, colliding: run.drift.colliding },
+      fold: run.fold.kind === 'folded' ? { kind: 'folded', steps: run.fold.steps } : { kind: 'conflict' },
+      conflictTree: run.conflictTree,
+      verify: { pass: run.report.pass, fail: run.report.fail, unrunnable: run.report.unrunnable, ok: run.report.ok },
+      assertions: run.report.results,
+      advanced: run.advanced === null ? null : { written: run.advanced.written, removed: run.advanced.removed, skipped: run.advanced.skipped },
+      deniedAction,
+      // **每一格为什么停**（`--live` 才有；打桩那一档是空数组——那句话不在打桩那条路上）。
+      agents: stops,
+      // **`--json` 与文字那一档给的是同一件事**：文字那一档 `--metrics` 印的是八元指标
+      // （`lineOf`），所以这一档的 `metrics` 就是那八条；不给 `--metrics` 时是 `null`。
+      // （原先这一栏放的是 `report.readings`——那是**打回**那三个数，与 `--report` 同源，
+      // 而八元指标另挂在 `probe` 那一栏。两条路给的不是一件事，名字还都叫指标。）
+      metrics: metrics === null ? null : [...metrics],
+      report: report.readings,
+      attribution: [...attribution],
+    })
+  } else {
+    emitLine(`${run.round}\t${run.base}\t${run.state}`)
+    emitLine(`  契约 ${run.batch.contracts.length} 份：${run.batch.contracts.map((c) => c.id).join(' · ')}`)
+    emitLine(`  预检：Planning ${run.precheckPlanning} 对 · 合并前 ${run.precheckMerge.count} 对`)
+    emitLine(`  折叠：${run.fold.kind === 'folded' ? `折了 ${run.fold.steps} 步` : '停在冲突上'}`)
+    emitLine(`  验收：通过 ${run.report.pass} · 没通过 ${run.report.fail} · 跑不起来 ${run.report.unrunnable}`)
+    if (run.advanced !== null) {
+      emitLine(`  推进：写 ${run.advanced.written.length} 条 · 删 ${run.advanced.removed.length} 条 · 跳过 ${run.advanced.skipped.length} 条`)
+    } else {
+      emitLine('  推进：没有（验收没过——真实工作树一个字节都没动）')
+    }
+    if (deniedAction !== null) emitLine(`  被拒的动作：exit ${deniedAction.exit} · denied=${String(deniedAction.denied)}（${deniedAction.note}）`)
+    // **停因**：一行一格。它只在真驱动那一档有内容（打桩那一档 `stops` 是空的）。
+    for (const s of stops) emitLine(`  停因：${s.agent} ${s.steps} 步 · ${s.stopped}`)
+    if (flags.has('report')) {
+      emitLine('打回读数（从日志重算，不采集）：')
+      for (const l of report.lines) emitLine(`  ${l}`)
+      emitLine('归因三处对照（闸四：命中落在哪一段；三行恒在，缺的写「没有读数」）：')
+      for (const l of report.attributionLines) emitLine(`  ${l}`)
+    }
+    if (metrics !== null) {
+      emitLine('八元指标（从日志重算，不采集；分子与分母一起印）：')
+      for (const m of metrics) emitLine(`  ${lineOf(m)}`)
+    }
+    if (!run.report.ok) {
+      for (const r of run.report.results.filter((x) => x.verdict !== 'pass')) {
+        process.stderr.write(`${r.verdict}\t${r.assertion}\t${r.note}\n`)
+      }
+    }
+  }
+  // 没通过那一档：退出码 1（**不是用法错**：这一趟真的跑了，只是没通过）。
+  return run.report.ok ? 0 : 1
+}
+
+/**
+ * 漂移检那三条读数原样报到 stderr（两个入口共用一份措辞）。
+ *
+ * **拒了也要说得出是哪一边**：判据的两边（这次合并动到哪些 · 盘上与目标树不同的那些）都印出来，
+ * 否则一句"漂移检没过"说不清是用户改了什么还是这次合并算错了。
+ */
+function reportDrift(d: DriftVerdict): void {
+  const covered = d.drift.colliding.length === 0 ? '（没有）' : d.drift.colliding.join(' · ')
+  process.stderr.write(
+    `漂移检：HEAD ${d.drift.headMoved ? '动了' : '没动'} · 这次合并动到 [${d.drift.touched.join(' · ')}] · ` +
+      `盘上与目标树不同 [${d.drift.divergent.join(' · ')}] · 会被覆盖的（盘上既不是底也不是目标树）[${covered}]\n`,
+  )
 }
 
 /**
@@ -1762,6 +1807,164 @@ async function sayCommand(
     throw err
   } finally {
     await ctx.close()
+  }
+}
+
+/**
+ * `fugue round work`：**放行之后接着跑**（架构 § 15.1.a 的"派"之后那一环 · PLAN § 5.11 的判据一句话）。
+ *
+ * **它与 `round run` 的分界只有一处：这一批契约从哪儿来。** `round run` 从配置里的 `round.split`
+ * 造（人拆那一档 · 从 `Idle` 起头）；这一条**从日志里读回**——`contract/issue` 的正文与
+ * `round/intent` 的底（`round/issuedBatchOf`）。一句配置都不看、一份契约都不重算，所以"人批的是
+ * 哪一批"这件事在这一条路上不可能漂。其余全部相同：跑格 → 合并前预检 → 折叠 → 漂移检 → 验收 →
+ * 定格 + 推进，走的是同一个 `runIssued`。
+ *
+ * **断言从契约里来**：契约只带动作名（架构 § 8.12），命令行从配置里绑好的动作读
+ * （`actions.<名字>` 的 `argv`）——绑不上就当场拒，不拿一条空命令顶。
+ *
+ * 处境不是 `Working` 时当场拒并指一条路（`whyNotWorking`）；已经交过卷的格不重跑
+ * （`runIssued` 从那条分支上取回它那个提交）。
+ */
+async function roundWork(root: string, flags: Map<string, string | true>, args: string[], json: boolean): Promise<number> {
+  if (args.length > 0) {
+    return usageFail(`round work 不带位置参数：拿到的是 ${args.join(' ')}（目标那一句在 round plan 那一趟给）`)
+  }
+  let doc: ConfigDoc
+  try {
+    doc = await readConfig(root)
+  } catch (err) {
+    if (err instanceof ConfigError) return fail(err.message)
+    throw err
+  }
+  const rawRound = getConfig(doc, 'round.id')
+  const round = typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1'
+
+  const wire = wireFlagsOf(root, flags)
+  const real = wire.live || wire.wireIn !== undefined
+  const handoff = flags.has('no-handoff') ? false : undefined
+  const retriesLeft = numberOf(flags.get('retry'), 0) ?? RETRY_DEFAULT
+  // **一个 agent 一个日志口、由调用方持有**（与 `round run` 同一条：`hold.ts` 那道栅栏）。
+  const agentLogs = new Map<AgentId, LogHandle>()
+  const agentLogOf = (a: AgentId): Log => {
+    const hit = agentLogs.get(a)
+    if (hit !== undefined) return hit
+    const made = openLog(root, { write: a as WriterId, sync: 'each' })
+    agentLogs.set(a, made)
+    return made
+  }
+  const closeAgentLogs = async (): Promise<void> => {
+    for (const [a, l] of agentLogs) {
+      agentLogs.delete(a)
+      await l.close()
+    }
+  }
+
+  const ctx = await openCtx(root, flags, { sync: 'each', write: true })
+  const stops: AgentStop[] = []
+  try {
+    // 一 · **这一批从日志来**（这一条与 `round run` 的全部差别就在这一行）。
+    const batch = await issuedBatchOf(ctx.log, round)
+    // 二 · 接上那条尾巴（与 `round run` 同一个函数）。
+    const run = await runIssued(
+      {
+        roots: ctx.roots,
+        truth: ctx.truth,
+        log: ctx.log,
+        round,
+        logOf: agentLogOf,
+        closeAgentLogs,
+        stub: real
+          ? realDriver({
+              onResult: (agent, r) => {
+                stops.push({ agent: String(agent), steps: r.steps, stopped: r.stopped })
+              },
+            })
+          : stubDriver(stubOfIssued(ctx)),
+        specsOf: specsOfContract(doc),
+        retriesLeft,
+        softMergeGate: flags.has('soft-merge-gate'),
+        ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
+        ...(handoff === undefined ? {} : { handoff }),
+        ...(real
+          ? {
+              driver: driverSupport({
+                root,
+                doc,
+                ...(wire.wireIn === undefined ? {} : { wireIn: wire.wireIn }),
+                ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
+                ...(wire.credential === undefined ? {} : { credential: wire.credential }),
+                ...(wire.dumpDir === undefined ? {} : { dumpDir: wire.dumpDir }),
+              }),
+            }
+          : {}),
+        onDrift: reportDrift,
+      },
+      batch,
+    )
+    // 三 · 打回那三个数与八元指标（**与 `round run` 同一份读法**：同一份日志上的重算，不采集）。
+    const readings = await computeAll(() => ctx.log.readMerged(), { round })
+    const attribution = await computeAttribution(() => ctx.log.readMerged())
+    const report = reportOf({ round }, readings, attribution.map(lineOfAttribution))
+    const metrics = flags.has('metrics') ? await computeAllMetrics(() => ctx.log.readMerged(), { round }) : null
+    // **复用了哪几格**印在 stderr：它是"这一趟只补了没交卷的那几格"的读数（重跑不重复烧钱）。
+    if (run.reused.length > 0) {
+      process.stderr.write(
+        `接着跑：${run.reused.length} 格已经交过卷（分支不是底了），取回它们的提交复用——没重跑：${run.reused.join(' · ')}\n`,
+      )
+    }
+    return emitRunFace({ json, flags, run, stops, deniedAction: null, report, attribution: [...attribution], metrics })
+  } catch (err) {
+    if (err instanceof RoundWorkError) return fail(err.message)
+    if (err instanceof RoundRunError) return fail(`${err.at}：${err.message}`)
+    if (err instanceof RoundStartError) return fail(err.message)
+    if (err instanceof BindingError) return fail(err.message)
+    throw err
+  } finally {
+    await closeAgentLogs()
+    await ctx.close()
+  }
+}
+
+/**
+ * 契约里的断言 → 真起的命令行。**契约只带动作名，argv 从工作区配置来**（架构 § 8.12：
+ * "契约不认识命令行"——`Assertion` 只带 `action`，起进程那几样归 `M7` 与 `M5`）。
+ *
+ * 绑不上就当场拒（`readBinding` 报出那个名字与现有的那几个）：不猜、不补、不拿一条空命令顶。
+ * 调查型契约没有断言（它的产物是证据），所以那一档给空数组——不是"少跑了一条"。
+ */
+function specsOfContract(doc: ConfigDoc): (c: Contract, agent: AgentId) => readonly AssertionRunSpec[] {
+  return (c) => {
+    const list = c.kind === 'investigate' ? [] : c.assertions
+    return list.map((a) => {
+      const b = readBinding(doc, a.action)
+      return {
+        assertion: a,
+        argv: b.argv,
+        env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/tmp' },
+        ...(b.cwd === '' ? {} : { cwd: b.cwd }),
+      }
+    })
+  }
+}
+
+/**
+ * 打桩那一档**只给 `round work` 用**（`round run` 那一份还带 `--fail` · `--deny` 那几个走查开关）。
+ * 它写契约声明的第一条路径：新树 = 底那棵树 + 这一格的改动（与 `round run` 那一份同一条理由——
+ * 只落改动那几条的话，底里其余的路径在目标树里都不存在，推进会当成"要删"）。
+ */
+function stubOfIssued(ctx: Ctx): Stub {
+  return {
+    run: async (agent, c, base, hint) => {
+      if (c.kind === 'resolve' && hint !== undefined) {
+        const inherited = new Map((await entriesOf(ctx.truth, hint.nextBranch)).map((e) => [e.name, e]))
+        return ctx.truth.commit(await ctx.truth.putTree([...inherited.values()]), [base], `（打桩·解冲突）${agent}`)
+      }
+      const where = declaredSetOf(c)[0] ?? `stub-${c.id}.txt`
+      const blob = await ctx.truth.putBlob(new TextEncoder().encode(`（打桩）${c.id} 改了 ${where}\n`))
+      const merged = new Map((await entriesOf(ctx.truth, base)).map((e) => [e.name, e]))
+      merged.set(where, { name: where, mode: 0o100644, id: blob })
+      return ctx.truth.commit(await ctx.truth.putTree([...merged.values()]), [base], `（打桩）${agent}`)
+    },
   }
 }
 
@@ -3344,6 +3547,7 @@ async function run(argv: readonly string[]): Promise<number> {
     if (sub === 'run') return await roundRun(root, flags, positional.slice(2), json)
     if (sub === 'plan') return await roundPlan(root, flags, positional.slice(2), json)
     if (sub === 'go') return await roundGo(root, flags, positional.slice(2), json)
+    if (sub === 'work') return await roundWork(root, flags, positional.slice(2), json)
     return await roundCmd(root, flags, positional.slice(1), json)
   }
 

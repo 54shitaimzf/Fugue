@@ -26,6 +26,7 @@ import type { AgentId, BranchId, CommitId, ContractId, RelPath, RoundId, WriterI
 import type { Built, Intent, SplitAssignment } from '../contract/build.ts'
 import type { Contract } from '../contract/types.ts'
 import { mergeGate, precheck } from '../contract/precheck.ts'
+import type { PrecheckResult } from '../contract/precheck.ts'
 import { mergeDrift } from '../merge/drift.ts'
 import type { DriftVerdict } from '../merge/drift.ts'
 import { conflictCount, conflictTreeEntries, fold, refold } from '../merge/merge.ts'
@@ -34,7 +35,7 @@ import { commitThenAdvance, entriesOf, verify } from '../merge/accept.ts'
 import type { AdvanceResult, AssertionRunSpec, VerifyReport } from '../merge/accept.ts'
 import { refFor } from '../identity.ts'
 import { startRound } from './start.ts'
-import type { RoundStart, RoundStartDeps } from './start.ts'
+import type { RoundStartDeps } from './start.ts'
 import { RETRY_DEFAULT, step } from './machine.ts'
 import type { Cause, RoundState } from './machine.ts'
 import { baseFor, lowerAt } from '../view/lower.ts'
@@ -95,9 +96,17 @@ export interface Stub {
 export interface RoundRun {
   readonly round: RoundId
   readonly base: CommitId
-  readonly started: RoundStart
+  /** 这一批契约（判完、发完之后的形状）。**它就是那条尾巴的入参**。 */
+  readonly batch: IssuedBatch
   /** 每个 agent 交的那个提交（按契约顺序）。 */
   readonly work: Readonly<Record<ContractId, CommitId>>
+  /**
+   * **这一趟没重跑、直接从分支上取回来的那几份**（`round work` 重跑那一档）。
+   *
+   * `round run` 恒为空数组（起头那一步保证每条分支都还在底上）；它非空的意思是"这一趟只补了
+   * 还没交卷的那几格"——重跑不重复烧真调用，读数就在这一栏。
+   */
+  readonly reused: readonly ContractId[]
   readonly precheckPlanning: number
   readonly precheckMerge: { readonly ok: boolean; readonly count: number }
   readonly drift: DriftVerdict | null
@@ -117,8 +126,29 @@ export interface RoundRun {
   readonly state: RoundState
 }
 
-export interface RoundRunDeps extends Omit<RoundStartDeps, 'log'> {
+/**
+ * 那一批契约：**判完、发完之后的形状**。
+ *
+ * 跑一轮的尾巴（跑格 → 合并前预检 → 折叠 → 漂移检 → 验收 → 定格 + 推进）只认这几样，于是
+ * 两条入口在这里合流：`round run`（起头 + 尾巴，一条命令跑完）与 `round work`（从日志里把这一批
+ * 读回来，接上同一条尾巴——放行之后接着跑）。
+ */
+export interface IssuedBatch {
+  readonly round: RoundId
+  /** 轮次钉住的那个底（契约里的底 · 各条分支的底）。 */
+  readonly base: CommitId
+  /** 这一批发出去的那几份契约值（按构造次序）。 */
+  readonly contracts: readonly Contract[]
+  /** `Planning` 那一档的预检（相交只报对数 · 照发）。 */
+  readonly precheck: PrecheckResult
+}
+
+/** 尾巴那一段要的那几样。**起头那几样不在这里**（`RoundRunDeps` 再补上它们）。 */
+export interface RunTailDeps {
+  readonly roots: Roots
+  readonly truth: Truth
   readonly log: Log
+  readonly round: RoundId
   /**
    * 某个 agent 自己的日志口。**`ckpt/commit` 是那个 agent 自己落的**（§ 8.1 的事件里 `agent`
    * 那一栏就是它），而持轮者那条句柄握着 `round` 的栅栏——一次命令一个 writer（`hold.ts` 那条
@@ -193,6 +223,12 @@ export interface RoundRunDeps extends Omit<RoundStartDeps, 'log'> {
   /** 漂移检跑完之后的读数口（**原始读数**：HEAD 动没动 · 脏路径 · 要写的路径 · 相交的那几条）。 */
   readonly onDrift?: (d: DriftVerdict) => void
 }
+
+/**
+ * 一条命令跑完一轮：**起头那几样**（`RoundStartDeps`：意图 · 拆分 · 身份 · 种子）+ 尾巴那一段。
+ * 单测与命令面给的都是它；`runIssued` 收的只有尾巴那一份（`RunTailDeps`）。
+ */
+export interface RoundRunDeps extends RunTailDeps, Omit<RoundStartDeps, 'log'> {}
 
 /**
  * 真驱动那一条路要多带的那几样。**不给就是打桩那一档**（`DriverAsk` 里那些可选栏一个都不读）。
@@ -281,18 +317,44 @@ async function openAgentView(deps: RoundRunDeps, agent: AgentId, base: CommitId)
 }
 
 export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
-  const { roots, truth, log, round } = deps
-
   // 一 · 起头。**不再取盘上那份基线**（A10）：判据换成"目标树 vs 盘上"之后，基线那一侧读的是
   // 轮次开始时钉住的那个底本身——它由 `M1` 拿着，不需要在盘上扫一遍。
   const started = await startRound(deps)
+  return await runIssued(deps, {
+    round: deps.round,
+    base: started.base,
+    contracts: started.built.contracts,
+    precheck: started.precheck,
+  })
+}
+
+/**
+ * 尾巴那一段：**一批已经发出去的契约 → 一格一格跑 → 合并 → 验收 → 推进**。
+ *
+ * 它不认识"这一批是怎么来的"：`round run` 从 `startRound` 手里接过它，`round work` 从日志里读
+ * 回来（`round/issuedBatchOf`）。两处走同一份代码的理由与预检那两处一样——折叠 · 漂移 · 验收 ·
+ * 推进这四段各写一遍的话，同一批契约会有两条口径，而它们在日志上长得一模一样。
+ *
+ * **已经交过卷的格不重跑**：那条分支已经不是这一轮钉住的底了，说明那一格上一趟把提交落下了。
+ * 取回来复用（`reused`）——"接着跑"的全部含义在这一行，也是重跑不重复烧真调用的那一处。
+ */
+export async function runIssued(deps: RunTailDeps, batch: IssuedBatch): Promise<RoundRun> {
+  const { roots, truth, log, round } = deps
 
   // 二 · 每个 agent 一格。契约按顺序，底是钉住的那一个——**每条分支的底相同**，所以一个 agent
   // 交上来的提交可以直接拿去折（它的父是 base）。
   const work: Record<ContractId, CommitId> = {}
-  for (const c of started.built.contracts) {
+  const reused: ContractId[] = []
+  for (const c of batch.contracts) {
     const agent = c.agent as AgentId
-    const commit = await deps.stub(await askOf(deps, c, agent, started.base))
+    // **已经交过卷的格不重跑**：那条分支已经不是这一轮钉住的底了。
+    const head = await baseFor(deps.truth, agent as WriterId)
+    if (head !== null && head !== batch.base) {
+      work[c.id] = head
+      reused.push(c.id as ContractId)
+      continue
+    }
+    const commit = await deps.stub(await askOf(deps, c, agent, batch.base))
     work[c.id] = commit
     // **真驱动自己落 `ckpt/commit`**（它走的是 § 9.6 那份 `checkpoint()`）；打桩那一份只算一棵树，
     // 所以它那一条由这里补。**两条路的交接面就是这一个函数**（`AgentDriver`）。
@@ -304,13 +366,13 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
   }
 
   // 三 · 合并前那一次预检：**兜底那一侧报出即拒**（架构 § 8.12 的第二次预检）。
-  const mergeCheck = mergeGate(started.built.contracts)
+  const mergeCheck = mergeGate(batch.contracts)
   if (!mergeCheck.ok && deps.softMergeGate !== true) {
     throw new RoundRunError('merge', `合并前的写入集预检不放行：\n  ${mergeCheck.result.lines.join('\n  ')}`)
   }
 
   // 四 · 折叠之前的两件事：兜底预检的读数与两条记账。
-  const foldable = started.built.contracts
+  const foldable = batch.contracts
     .filter((c) => c.kind !== 'investigate')
     .map((c) => work[c.id] as CommitId)
   // 折之前先记一笔尝试：`merge/attempt` 记的是"这次合并撞了几条路径"，而冲突那一档的最后一次
@@ -332,7 +394,7 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
     // 给解决者的那一份契约值：**它不进 `contract/issue`**（那是 A4 发出去的那四份），它是"折到
     // 这一步才知道"的那一份——`conflictPaths` 就是实际冲突集，`base` 是冲突报告给的那棵树
     // （架构 § 8.12 那张表的最后两行）。解决完它要跟着重折，所以也进 `work`。
-    resolvedContract = resolveContractOf(started.built.contracts, outcome.conflicts.map((c) => c.path), outcome.folded)
+    resolvedContract = resolveContractOf(batch.contracts, outcome.conflicts.map((c) => c.path), outcome.folded)
     const nextBranch = outcome.rest[0]
     if (nextBranch === undefined) throw new RoundRunError('merge', '撞上冲突却没有下一折——折叠表不成立')
     const resolvedAgent = resolvedContract.agent as AgentId
@@ -381,7 +443,7 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
   if (deps.afterFold !== undefined) await deps.afterFold(outcome.commit)
   let drift: DriftVerdict | null = null
   if (deps.checkDrift !== false) {
-    drift = await mergeDrift({ truth, realRoot: roots.realRoot, base: started.base, target: outcome.commit })
+    drift = await mergeDrift({ truth, realRoot: roots.realRoot, base: batch.base, target: outcome.commit })
     // **三条读数原样报出来**：判据的两边（这次合并动到哪些 · 盘上与目标树不同的那些）都要看得见，
     // 否则拒了也说不清是哪一边。它走 `onDrift`（CLI 把它接到 stderr）。
     deps.onDrift?.(drift)
@@ -393,7 +455,7 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
   try {
     await materializeCommit(truth, outcome.commit, matDir)
     const specs: AssertionRunSpec[] = []
-    for (const c of started.built.contracts) specs.push(...deps.specsOf(c, c.agent as AgentId))
+    for (const c of batch.contracts) specs.push(...deps.specsOf(c, c.agent as AgentId))
     // 冲突解决那一份也要验：它是这一轮里真的干了活的一份，跳过它等于验收少了一条。
     if (resolvedContract !== null) specs.push(...deps.specsOf(resolvedContract, resolvedContract.agent as AgentId))
     const report = verify(matDir, specs)
@@ -408,7 +470,7 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
       // **定格之后主线要挪到新提交**：不然工作树是新树、主线还指着轮次开始时的底，
       // 下一轮读到的底就是旧的（走查量到过）。CAS 钉在轮次开始时的那个底上。
       ref: refFor('round'),
-      refExpectedOld: started.base,
+      refExpectedOld: batch.base,
     })
 
     // 状态机那两步（A3）：**通过 → Committed；没过 → 回 Working 或 Aborted**。判决来自 `machine.ts`。
@@ -435,10 +497,11 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
 
     return {
       round,
-      base: started.base,
-      started,
+      base: batch.base,
+      batch,
+      reused,
       work,
-      precheckPlanning: started.precheck.intersections.length,
+      precheckPlanning: batch.precheck.intersections.length,
       precheckMerge: { ok: mergeCheck.ok, count: mergeCheck.result.intersections.length },
       drift,
       fold: outcome,
