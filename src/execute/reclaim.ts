@@ -260,9 +260,18 @@ export function createReclaim(deps: ReclaimDeps): Reclaim {
       if (deps.strategy !== 'overlayfs') return []
       const legit = new Set<RelPath>(deps.manifest)
       const out: RelPath[] = []
-      for (const rel of leavesUnder(roots.scratchRoot(a))) {
+      for (const { rel, whiteout } of leavesUnder(roots.scratchRoot(a))) {
         if (legit.has(rel)) continue
         if (declared.paths.some((p) => rel === p || rel.startsWith(`${p}/`))) continue
+        // **祖先白障不是"集外的改动"。** 声明的是 `legacy/old-format.js` 时，同格 `rm -f` 它、又把
+        // 空掉的父亲 `rmdir` 掉，内核在 `upper` 里为 `legacy` 留下一条白障——那是**那一次声明的
+        // 删除在上一层的影子**，不是第二件事（它下面那条声明路径正是被删掉的那一条）。少了这一句，
+        // 一次干净的声明删除会多报一条（真档读数：`declared ["legacy/old-format.js"] changed
+        // ["legacy"]`），而那一栏的用处是判越界率（§ 8.13.a）——噪声会把"没有越界"读成"有越界"。
+        //
+        // **两条都要**：只跳**白障**（父亲那一条要是别的形状——子进程把 `legacy` 换成了一个普通
+        // 文件——照报）· 只跳**祖先**（`legacy` 下面别的没声明的路径被删，那些白障各自照报）。
+        if (whiteout && declared.paths.some((p) => p.startsWith(`${rel}/`))) continue
         out.push(rel)
       }
       return out.sort()
@@ -426,9 +435,15 @@ function walk(dir: string, prefix: RelPath, out: Delta[]): void {
   }
 }
 
+/** `upper` 里的一个叶子：那条路径，加它是不是**白障**（`undeclared` 那一句要这个分别）。 */
+interface UpperLeaf {
+  readonly rel: RelPath
+  readonly whiteout: boolean
+}
+
 /** `upper` 里的叶子（文件 · 链接 · 白障），相对 `upper` 的路径，排序。 */
-function leavesUnder(root: string): RelPath[] {
-  const out: RelPath[] = []
+function leavesUnder(root: string): UpperLeaf[] {
+  const out: UpperLeaf[] = []
   const walkUpper = (dir: string, prefix: RelPath): void => {
     for (const name of readdirSync(dir).sort()) {
       // **`WORKSPACE_STATE` 那两条不算"未声明却被改动"**：它们在上层里是 `fork` 有意遮出来的
@@ -439,7 +454,9 @@ function leavesUnder(root: string): RelPath[] {
       const rel = prefix === '' ? name : `${prefix}/${name}`
       const st = lstatSync(abs)
       if (st.isDirectory()) walkUpper(abs, rel)
-      else out.push(rel)
+      // **白障那一条要单独标出来**：它说的是"这儿没有了"，与"子进程在这儿写了个东西"是两件事
+      // （分别的用处见 `undeclared` 那一句）。
+      else out.push({ rel, whiteout: whiteoutAt(abs, st) })
     }
   }
   const st = lstatSync(root, { throwIfNoEntry: false })

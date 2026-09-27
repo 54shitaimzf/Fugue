@@ -6,13 +6,15 @@
 //   ② 未声明的路径写不进去、也不进视图：默认档由内核拒（子进程非零退出 · 树一个字节没变）；
 //      树可写那一档由回收拒（`undeclared` 报出它，`collect` 一条都不收它）
 //   ③ 负对照：动作不声明 `outputs` 时，它写下的一切一条都不进视图（写是写成功了，字节在缓存里）
+//   ⑦ 声明集外那一栏的两条边界：祖先白障（声明的删除在上一层留下的影子）不算集外改动，
+//      而"别处的白障"与"不是白障的祖先"照报
 //
 // 夹具与 `run.test.ts` 同一套（真 git 仓库 + 真 fork + 真 bwrap），动作外加一个 `gen`：
 // 它往**两处**写——声明过的 `gen/`（要回写）与声明成 `cache` 的 `dist/`（不回写）。两处的
 // 去处不同，正是断言①要看的那件事。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,9 +25,9 @@ import { cacheLayoutOf, confine } from '../boundary/confine.ts'
 import { createExecutor } from './exec.ts'
 import { createReclaim } from './reclaim.ts'
 import { resolvePolicy } from '../boundary/policy.ts'
-import { unmountOverlay } from '../materialize/mount.ts'
+import { makeWhiteout, unmountOverlay } from '../materialize/mount.ts'
 import { createRoots } from '../roots/roots.ts'
-import type { AgentId } from '../terms.ts'
+import type { AbsPath, AgentId } from '../terms.ts'
 
 const CLI = fileURLToPath(new URL('../cli/fugue.ts', import.meta.url))
 
@@ -365,4 +367,36 @@ test('X2 ⑥ · 声明的那条路径的祖先在落地根里不是目录：回�
   // 那一条在盘上够不着，所以收不回来；而**不抛**才是这一条要的——不该被报成一条产出，也不该
   // 让这一格收场。
   assert.deepEqual(deltas, [], '够不着的那一条不该被报成产出')
+})
+
+test('X2 ⑦ · 声明的删除在父亲那一层留下的白障，不算"集外的改动"', async () => {
+  // 真档那一趟（样本盘第九趟 · 案一）：契约声明的就是 `legacy/old-format.js` 这一条，同格 `bash`
+  // 把它删掉、又把空掉的 `legacy` 目录 `rmdir` 掉，内核在 `upper` 里为 `legacy` 留下一条白障
+  // （字符设备 0:0）——于是回收把**一次干净的声明删除**报成了"集外改动"：
+  // `mat/reclaim declared ["legacy/old-format.js"] changed ["legacy"]`（那一趟同一格连报四条）。
+  // 那一栏的用处是判越界率（§ 8.13.a），而它是同一个改动在上一层的影子，不是第二件事。
+  const w = workspace(['round'])
+  const roots = createRoots(w.root)
+  const agent = 'round' as AgentId
+  const upper = roots.scratchRoot(agent)
+  assert.ok(existsSync(upper), 'fork 之后落地根该在')
+  const reclaim = createReclaim({ roots, strategy: 'overlayfs', manifest: [], landing: 'upper', treeOpen: true })
+  const declared = reclaim.declare(agent, ['legacy/old-format.js'])
+
+  // 一 · 祖先那一条白障（`mknod c 0 0`，内核留下的那一种）：不报。
+  makeWhiteout(join(upper, 'legacy') as AbsPath, 'direct')
+  assert.equal(lstatSync(join(upper, 'legacy')).isCharacterDevice(), true, '这一条该是白障')
+  assert.deepEqual(await reclaim.undeclared(agent, declared), [], '祖先白障不是集外的改动')
+
+  // 二 · 同一棵里**没被声明盖住**的那一条白障：照报——跳的只是"祖先"那一档，不是"凡是白障都跳"。
+  makeWhiteout(join(upper, 'notes.md') as AbsPath, 'direct')
+  assert.deepEqual(await reclaim.undeclared(agent, declared), ['notes.md'])
+
+  // 三 · 祖先那一层落的**不是**白障（子进程把父亲换成了一条普通文件）：照报。判据是"这条白障是
+  //      不是某条声明路径的祖先"，不是"这条路径是不是祖先"。
+  rmSync(join(upper, 'legacy'), { force: true })
+  rmSync(join(upper, 'notes.md'), { force: true })
+  writeFileSync(join(upper, 'legacy2'), 'a plain file\n')
+  const declared2 = reclaim.declare(agent, ['legacy2/old-format.js'])
+  assert.deepEqual(await reclaim.undeclared(agent, declared2), ['legacy2'], '不是白障的祖先照报')
 })
