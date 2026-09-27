@@ -7,6 +7,10 @@
 #   sh tools/scenario/board.sh --live --runs 3            # 真档：每一案连跑 3 趟，逐趟判已知答案
 #   sh tools/scenario/board.sh --live --runs 5 --gate-only    # 只跑到门口：门退回率多样本（一趟 ≈ 一次持轮者那一趟）
 #   sh tools/scenario/board.sh --live --case "改码 · 单文件（最小的一案，反复采样用）"
+#   sh tools/scenario/board.sh --live --runs 3 --gate-only --max-steps 16
+#       # 覆盖出题那一栏的上界：量的是"这一趟自然几步收工"（**不是拿它把判据弄绿**——
+#       #   § 5.9.2 那条纪律管的是后者：连续几趟停在"到了你给的上界"是协议或提示的问题）。
+#       #   用了哪个上界会落在 $OUT/decl/<案>/meta.json 与每趟那一行里，台账因此读得出来。
 #
 # 它逐案做五件事（每一件都留读数在 $OUT 里）：
 #   一 · 按 `base` 铺一份真仓库（主线 `main`）+ 把 `actions` 与（有 `split` 的案）`round.split` 写进配置
@@ -26,6 +30,8 @@ MODE=run
 RUNS=1
 GATE_ONLY=no
 ONECASE=
+# 空 = 用出题那一栏给的那个上界（缺省就是这样；覆盖只在我显式给了 `--max-steps` 时发生）。
+MAXOVERRIDE=
 OUT=/tmp/scenario-out
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -35,6 +41,9 @@ while [ $# -gt 0 ]; do
     --runs) RUNS=$2; shift ;;
     --gate-only) GATE_ONLY=yes ;;
     --case) ONECASE=$2; shift ;;
+    # 出题那一栏的上界（`meta.json` 的 `maxSteps`）在这里可以被**覆盖一次**：量"自然几步收工"用。
+    # 覆盖之后**处处读的都是它**（`run_one` 从 `meta.json` 现读），所以台账与真调用不可能分家。
+    --max-steps) MAXOVERRIDE=$2; shift ;;
     --out) OUT=$2; shift ;;
     *) echo "不认这个开关：$1"; exit 2 ;;
   esac
@@ -85,10 +94,13 @@ for (const [i, one] of c.entries()) {
     fs.mkdirSync(require("path").dirname(p), { recursive: true })
     fs.writeFileSync(p, f.text)
   }
-  fs.writeFileSync(dir + "/meta.json", JSON.stringify({ name: one.name, goal: one.goal, maxSteps: one.maxSteps ?? 6, covers: one.covers, actions: one.actions, split: one.split ?? null, assertions: one.assertions ?? null, observes: one.observes ?? [] }, null, 2))
+  // **上界：出题那一栏给的那个，除非人显式覆盖**（覆盖之后这一份就是唯一出处，`run_one` 读它）。
+  const override = process.argv[3] === "" ? null : Number(process.argv[3])
+  const maxSteps = override === null ? (one.maxSteps ?? 6) : override
+  fs.writeFileSync(dir + "/meta.json", JSON.stringify({ name: one.name, goal: one.goal, maxSteps, declaredMaxSteps: one.maxSteps ?? 6, maxStepsOverridden: override !== null, covers: one.covers, actions: one.actions, split: one.split ?? null, assertions: one.assertions ?? null, observes: one.observes ?? [] }, null, 2))
 }
 console.log(c.map((o, i) => "case-" + String(i + 1) + "\t" + o.name).join("\n"))
-' "$CASES" "$OUT/decl" > "$OUT/names.txt" || exit 9
+' "$CASES" "$OUT/decl" "$MAXOVERRIDE" > "$OUT/names.txt" || exit 9
 
 seed() { # seed <工作区> <case-N>
   mkdir -p "$1/.git/info"
@@ -165,7 +177,7 @@ run_one() { # run_one <案名> <case-N> <趟>
         # 一趟的调用数因此只是持轮者那一趟的数（上界在 `--max-steps` 上），多样本才花得起。
         U=$(node tools/scenario/board-node.ts usage "$W")
         printf '%s\t%s\t%s\t—\t—\t—\t—\t—\t—\t—\t%s\t只到门口\n' "$name" "$run" "$GATE" "$U" >> "$OUT/ledger.tsv"
-        printf '（%s 第 %s 趟：停在门口——派发与验收没跑 · 账 %s）\n' "$name" "$run" "$U"
+        printf '（%s 第 %s 趟：停在门口——派发与验收没跑 · 上界 %s · 账 %s）\n' "$name" "$run" "$MAX" "$U"
         return
       fi
       FX "$W" --json round go > "$D/go.json" 2> "$D/go.err"
@@ -176,7 +188,7 @@ run_one() { # run_one <案名> <case-N> <趟>
       fi
     else
       GATE=退回
-      printf '（%s 第 %s 趟：门退回了，放行与接着跑那两段没有东西可量）\n' "$name" "$run"
+      printf '（%s 第 %s 趟：门退回了（上界 %s），放行与接着跑那两段没有东西可量）\n' "$name" "$run" "$MAX"
       sed 's/^/  err| /' "$D/plan.err"
       U=$(node tools/scenario/board-node.ts usage "$W")
       printf '%s\t%s\t%s\t—\t—\t—\t—\t—\t—\t—\t%s\t—\n' "$name" "$run" "$GATE" "$U" >> "$OUT/ledger.tsv"
@@ -202,7 +214,7 @@ run_one() { # run_one <案名> <case-N> <趟>
   grep -v '^*$' "$D/judge.txt" | sed 's/^/  | /'
 }
 
-echo "=== 样本盘：$CASES（$([ "$LIVE" = yes ] && echo 真档 || echo 打桩档) · 每案 $RUNS 趟）==="
+echo "=== 样本盘：$CASES（$([ "$LIVE" = yes ] && echo 真档 || echo 打桩档) · 每案 $RUNS 趟$([ -n "$MAXOVERRIDE" ] && echo " · 上界覆盖 $MAXOVERRIDE"）)==="
 echo
 echo "=== 一 · 判据自己有牙没有（离线 · 不花钱）==="
 node tools/scenario/board-node.ts selftest "$CASES" || bad "判据自检"
