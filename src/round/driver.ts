@@ -464,6 +464,9 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
         const got = roots.resolveVirtual(raw, cwd as RelPath)
         return got.ok ? { ok: true as const, value: got.value } : { ok: false as const, error: got.error }
       },
+      // **这一格的写入面**（`declaredSetOf(contract)`）：与上面 `ownedPaths` 那一栏**同一个值**
+      // ——回收只收声明集内的产出，写也只许写声明集内。由头见 `DispatchDeps.writeScope`。
+      writeScope: ownedPaths,
       ensureOf: () => Promise.resolve(),
     })
   const runtime = createRuntime({

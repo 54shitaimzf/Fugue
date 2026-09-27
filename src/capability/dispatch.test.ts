@@ -581,6 +581,76 @@ test('⑥ 负对照：不给 `planPath` 那一栏，同一个 `notes.md` 就写�
 })
 
 
+// ── ⑧ 契约那一格的写入面（样本盘第八趟真档照出来的那条缝）────────────────────────────
+//
+// 由头：那一趟 `r1.implement.1` 的契约声明 `src/format.ts` + `README.md`，而它把 `src/total.ts`
+// （`r1.implement.2` 的地界）也写了一份 `avg`。两条分支各插一处，`git merge-tree` 干净通过，
+// 落成一棵有两个 `export function avg` 的树——验收当场红、那一趟打回（已知答案 0/3）。而**树那
+// 一侧那道闸门看不见它**：`undeclared()` 枚举的是 `upper`，而经视图落下去的那一份在清单里，
+// 按定义不算"集外的改动"。所以界要封在视图这一侧的写入口上。
+
+test('⑧ 契约的写入面：写别格的地界当场拒（落一条 bound/deny）· 声明的那几条照旧', async () => {
+  await withLog(async (log, root) => {
+    // 真宿主：`bound/deny` 是宿主那一道拒口落的，而"日志里有一次拒"是这一条的取证面。
+    const host = await realHostOf(log, root)
+    const fence = await fenceAt(root)
+    const scope = ['src/format.ts', 'README.md'] as RelPath[]
+    const deps = { logOf: () => log, host, fenceOf: fence, writeScope: scope }
+    const h = handleOf()
+
+    // 一 · 写别格的地界：拒，而且**一个字节都没落**。
+    const out = await dispatch(call('write', { path: 'src/total.ts', content: 'avg' }), h, deps)
+    assert.equal(out.result.ok, false, `该拒：${out.result.output}`)
+    assert.equal(out.denied, true, '它是被拒的（不是工具自己失败）')
+    assert.match(out.result.output, /src\/format\.ts · README\.md/, '拒的话里要列出声明的那几条')
+    assert.match(out.result.output, /一个字节都没落/, out.result.output)
+
+    // 二 · 声明的那一条：过（它真的改到了视图）。
+    const good = await dispatch(call('write', { path: 'src/format.ts', content: 'yuan' }), h, deps)
+    assert.equal(good.result.ok, true, good.result.output)
+
+    // 三 · `edit` 走同一条界（它也是改视图的那一条）。
+    const ed = await dispatch(call('edit', { path: 'src/total.ts', old_string: 'a', new_string: 'b' }), h, deps)
+    assert.equal(ed.result.ok, false, `edit 也该被拦住：${ed.result.output}`)
+
+    // 四 · **界是"上界"不是"路径表"**：声明一条目录，它下面照旧写得下去（`ownedPaths: ['src']`
+    //      那句"`src` 这一棵归你"）——而名字前缀像不等于在里面。
+    const wide = { ...deps, writeScope: ['src'] as RelPath[] }
+    const under = await dispatch(call('write', { path: 'src/deep/x.ts', content: 'x' }), h, wide)
+    assert.equal(under.result.ok, true, `声明目录时它下面该写得下去：${under.result.output}`)
+    const near = await dispatch(call('write', { path: 'src2/t.ts', content: 'x' }), h, wide)
+    assert.equal(near.result.ok, false, '名字前缀像不等于在里面：src2 不在 src 那一棵下')
+
+    // 五 · 真源那一栏：三条 `bound/deny`（`rule` 是可分组的那一串），而视图的变更只有写得下去的
+    //      那两条——被拒的三次一条 `view/write` 都没有。
+    const rows = await eventsOf(root)
+    const denies = rows.filter((e) => e.t === 'bound/deny')
+    assert.equal(denies.length, 3, `日志里的 bound/deny 条数：${denies.length}`)
+    assert.deepEqual(denies.map((e) => e.rule), ['contract-scope', 'contract-scope', 'contract-scope'])
+    assert.deepEqual(denies.map((e) => e.path), ['src/total.ts', 'src/total.ts', 'src2/t.ts'])
+    const writes = rows.filter((e) => e.t === 'view/write').map((e) => e.path)
+    assert.deepEqual(writes, ['src/format.ts', 'src/deep/x.ts'], `视图里改过的路径：${JSON.stringify(writes)}`)
+    console.log(`⑧ 读数：拒 3 次（rule contract-scope）· 写得下去 2 条（${writes.join(' · ')}）`)
+  })
+})
+
+test('⑧ 负对照：不给 `writeScope` 那一栏，同一个 `src/total.ts` 就写得下去（拒是那一栏带来的）', async () => {
+  await withLog(async (log, root) => {
+    const host = fakeHost()
+    const fence = await fenceAt(root)
+    const out = await dispatch(call('write', { path: 'src/total.ts', content: 'avg' }), handleOf(), {
+      logOf: () => log,
+      host,
+      fenceOf: fence,
+    })
+    assert.equal(out.result.ok, true, `不给那一栏就不该拦：${out.result.output}`)
+    assert.deepEqual(host.writes.map((w) => w.path), ['src/total.ts'])
+    assert.equal(host.denies.length, 0, '没有人拦它')
+    console.log('⑧ 负对照读数：同一份输入、只少了 writeScope 那一栏 → 写下去了（拒不是别处来的）')
+  })
+})
+
+
 // ── ⑦ `exit_plan_mode` 自报的那条路径：必须就是这一趟那一份 ───────────────────────────
 //
 // 由头与 ⑥ 同一条（`tools/probe-live-s9.sh` 量出来的那条缺口）。这一栏原先是一个模型自己编的

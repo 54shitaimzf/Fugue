@@ -64,6 +64,26 @@ export interface DispatchDeps {
    * 退回接住——它离得近，退回的话里就写着正确路径。
    */
   readonly planPath?: RelPath
+  /**
+   * **契约那一格的写入面**：`declaredSetOf(contract)` 那几条（实现型是 `ownedPaths` · 解决型是
+   * 冲突路径集 · 调查型是那几份证据的专属路径）。给了它，`write` 与 `edit` 只许落在这几条**或
+   * 它们下面**——写别处当场拒。
+   *
+   * **它与 `planPath` 是一条界的两个用法，不是两条界**：持轮者那一趟手里是全部契约、没有一份
+   * 属于它自己的写入面，所以那一趟的界由草案那一棵给；契约那一格反过来。两栏互斥。
+   *
+   * 界取"这几条或它们下面"而不是"恰好这几条"：`ownedPaths` 是**上界**（§ 8.12 那句"写入集
+   * 只可收窄，不可扩宽"）——`ownedPaths: ['src']` 说的是"`src` 这一棵归你"。而这一份与 `M6`
+   * 回收那一侧读的是**同一个集合**（`round/driver.ts` 那一处两栏给的是同一个值）：回收只收声明
+   * 集内的产出，写也只许写声明集内——同一条界两个面，一边宽一边窄就有一条缝。
+   *
+   * 由头（样本盘第八趟真档 · 案一）：契约 `r1.implement.1` 声明 `src/format.ts` + `README.md`，
+   * 而它把 `src/total.ts`（`r1.implement.2` 的地界）也写了一份 `avg`；两条分支各插一处，
+   * `git merge-tree` 干净通过，落成一棵有两个 `export function avg` 的树，验收当场红、那一趟
+   * 打回（已知答案 0/3）。**树那一侧那道闸门看不见它**：`M6` 的 `undeclared()` 枚举的是 `upper`，
+   * 而经视图（`mat/sync`）落下去的那一份按定义在清单里，不算"集外的改动"。
+   */
+  readonly writeScope?: readonly RelPath[]
 }
 
 /** 派发一次的结果：`ToolResult` 之外还给出**这一趟读了哪一格 · 跑了哪几条推论**。 */
@@ -105,6 +125,31 @@ function writeScopeDenied(
     'plan-scope',
     `持轮者这一趟只写草案那一棵：${dir === '' ? '（工作区根）' : dir}——写 ${raw} 不算这一趟的产物，一个字节都没落。` +
       draftRuleTextOf(planPath),
+    raw,
+  )
+}
+
+/**
+ * 契约那一格的写入面：写的那一条落不落在声明集里。**与上面那一条同一把尺**（准确路径 + 由头 +
+ * 这一串为什么不算），只是界换了来源。
+ *
+ * 空的那一份（调查型一条证据都不要）**不是"不设闸门"**：声明是空集，这一格就一个字节也不该写
+ * ——拒的话把这一句说出来，而不是悄悄放行。
+ */
+function contractScopeDenied(
+  tool: string,
+  args: Readonly<Record<string, unknown>>,
+  scope: readonly RelPath[],
+): DenyAsk | null {
+  if (!WRITE_TOOLS.includes(tool)) return null
+  const raw = args['path']
+  if (typeof raw !== 'string') return null
+  if (scope.some((p) => raw === p || raw.startsWith(`${p}/`))) return null
+  const mine = scope.length === 0 ? '这一格没有声明任何可写的路径' : `这一格只写它声明的那几条：${scope.join(' · ')}`
+  return refuse(
+    'contract-scope',
+    `${mine}——写在 ${raw} 上的那一次不算这一格的产出，一个字节都没落。` +
+      '别处那一份要是别的格的地界，那一格才该写它；要是这一格本来该有它，让持轮者重发契约（`ownedPaths` 那一栏）。',
     raw,
   )
 }
@@ -250,6 +295,16 @@ export async function dispatch(
   // 上面那一步把路径归一过了，这一处判的是归一后的那一份（两次判据同一把尺）。
   if (deps.planPath !== undefined) {
     const denied = writeScopeDenied(req.name, args, deps.planPath)
+    if (denied !== null) {
+      await deps.host.deny(denied)
+      return { result: { ok: false, output: denied.message }, capability: c, applied, denied: true }
+    }
+  }
+
+  // **契约那一格的写入面**：同一条界、另一个来源（由头见 `writeScope` 那一栏）。同样排在围栏
+  // 之后——判的是归一后的那一份。
+  if (deps.writeScope !== undefined) {
+    const denied = contractScopeDenied(req.name, args, deps.writeScope)
     if (denied !== null) {
       await deps.host.deny(denied)
       return { result: { ok: false, output: denied.message }, capability: c, applied, denied: true }
