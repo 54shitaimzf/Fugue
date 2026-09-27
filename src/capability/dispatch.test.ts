@@ -8,9 +8,6 @@
 //      一次越界的调用就再也不被拦住（同一份输入，只有表那一格变了）
 //   ④ 越界的 `bash` **在起进程之前就被挡住**：一次 `run` 都没有 · 视图一个字节没变 ·
 //      日志里有且只有一条 `bound/deny`，拒的话里带着指路
-//   ⑨ **预算快用完时那一句**：持轮者那一格的工具结果末尾多一句"还剩几步"，而**子 agent 那一档
-//      一个字节都不加**（回放夹具绑着它的请求字节）· 没有上界那一档也不加 · 负对照：把那一处
-//      接线去掉 → 这一条当场红
 //   ⑤ **一次工具调用 = 一对 `run/start` · `run/end`**（完整的 `argv` · 同一个 step · 分开的 ms），
 //      而视图层与真源层那些工具**不落**这两条；**围栏拦下的那一趟也不落**（它一次进程都没起），
 //      负对照读的就是"不过围栏"与"被围栏拦下"这两件事的差
@@ -654,46 +651,6 @@ test('⑧ 负对照：不给 `writeScope` 那一栏，同一个 `src/total.ts` �
 })
 
 
-// ── ⑨ 预算快用完时那一句（持轮者那一格 · 落在工具结果上）────────────────────────────
-//
-// 由头：样本盘第十一趟（案一 · 上界 8 · `--dump-wire` 实录）——持轮者 8 步全是读 / `glob` /
-// `grep`，一个字节没写，门退回。B 区那两句（最多几步 · 草案没写出来等于没跑）是每趟一次的静态
-// 事实，那 8 步里没有一处说"预算正在用完"。这一句落在**工具结果**上：C 区那条尾巴只追加，而往
-// 那一段的头里塞每步都变的东西会把整条尾巴作废（§ 8.11）。
-// **只给持轮者那一格**：子 agent 那一档的请求字节被回放夹具钉着（`src/cli/__fixture__/wire-in/`）。
-
-test('⑨ 预算快用完时：持轮者那一格的工具结果末尾多一句；子 agent 与没上界的那一格一个字节都不加', async () => {
-  await withLog(async (log, root) => {
-    const host = fakeHost()
-    const fence = await fenceAt(root)
-    const deps = depsOf(log, fence, { host })
-    // **走 `createToolExecutor` 那一道**：那一句接在"一次工具调用 = 一对事件"那一层（回执截断
-    // 的同一处），而 `dispatch` 是它里面的一个函数——量那一句就得量真正的出口。
-    const execute = createToolExecutor(deps)
-
-    // 一 · 持轮者 · 上界 4 · 第 3 步（0 起）：还剩 1 步 → 加。
-    const near = handleOf({ ...stateOf(2), maxSteps: 4 }, HOLDER_PROTOCOL)
-    const got = { result: await execute.execute(call('read', { path: 'notes.md' }), near) }
-    assert.match(got.result.output, /还剩 1 步/, `该多那一句：${got.result.output}`)
-    assert.match(got.result.output, /先把那份草案写出来/, got.result.output)
-
-    // 二 · 同一格 · 预算还远：一个字节都不加。
-    const far = handleOf({ ...stateOf(0), maxSteps: 10 }, HOLDER_PROTOCOL)
-    const none = { result: await execute.execute(call('read', { path: 'notes.md' }), far) }
-    assert.equal(none.result.output.includes('还剩'), false, `离上界还远时不该加：${none.result.output}`)
-
-    // 三 · **子 agent 那一档一个字节都不加**——回放夹具绑着它的请求字节，加一个字它就过期。
-    const sub = handleOf({ ...stateOf(2), maxSteps: 4 })
-    const subOut = { result: await execute.execute(call('read', { path: 'notes.md' }), sub) }
-    assert.equal(subOut.result.output.includes('还剩'), false, `子 agent 那一档不该加：${subOut.result.output}`)
-
-    // 四 · 没有上界那一档（命令行不给 `--max-steps`）：不加。
-    const noCap = handleOf({ ...stateOf(2) }, HOLDER_PROTOCOL)
-    const bare = { result: await execute.execute(call('read', { path: 'notes.md' }), noCap) }
-    assert.equal(bare.result.output.includes('还剩'), false, `没上界时不该加：${bare.result.output}`)
-    console.log(`⑨ 读数：持轮者第 3 步（上界 4）末尾是「…还剩 1 步。先把那份草案写出来…」`)
-  })
-})
 
 
 // ── ⑦ `exit_plan_mode` 自报的那条路径：必须就是这一趟那一份 ───────────────────────────

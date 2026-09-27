@@ -29,6 +29,7 @@ import type { ModelDecl } from '../model/contract.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { emptyState, sourcesFor, stepBudgetLine } from '../assemble/sources.ts'
+import { capReceipt } from '../tools/receipt.ts'
 import { assemble } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { estimateTokensOfText, planBudget } from '../runtime/budget.ts'
@@ -239,6 +240,39 @@ function holderRefusalOf(name: string, planPath?: RelPath): string | undefined {
   )
 }
 
+/**
+ * **剩三步以内开始说**（`left ≤ 3`）：上界 8 那一档从第 5 步起，第 5 · 6 · 7 步各说一次
+ * （第 8 步那一次模型已经用不上——步数到了就停）。它是个数，不是开关：留给模型"把产物落下去"
+ * 的最小余量。
+ */
+const STEPS_HINT_AT = 3
+
+/**
+ * **预算快用完时，回执末尾多一句"还剩几步"**。空串 = 不加。
+ *
+ * 由头（样本盘第十一趟 · 案一 · 上界 8 · `--dump-wire` 实录）：那一趟持轮者 8 步全是读 / `glob` /
+ * `grep`，一个字节都没写——`.fugue/plan/r1.md` 不在视图里，门当场退回。B 区里已经有"这一格最多
+ * 8 步"与"草案没写出来这一趟就等于没跑"两句（`holderGoalText`），而它们是**每趟只出现一次**的
+ * 静态事实：那 8 步里没有一处提醒它"预算正在用完"。这一句补的正是那件事。
+ *
+ * **收工口径的第三面。** 它与 `holderGoalText`（先说在前面 · 每趟一次）· `holderRefusalOf`（伸手
+ * 之后回的那一句 · 一步一次）是同一件事的三面：先说 · 拒时再说 · 快用完时说。三面读的都是
+ * **同一个数**（`holderPass` 那一栏的 `maxSteps`，也就是 `runtime` 停下来用的那个数）——不另立一处
+ * "它以为还剩几步"的账（W11 那一轮照出来的那一条）。
+ *
+ * **上界那一刀在`capReceipt` 之后再收一次**（`inner` 那一层已经收过）：这一句是常数长度，所以
+ * 只在正文真到 8 KiB 时才动第二刀，而"单条回执 8 KiB"这条上界在持轮者这一格照旧成立。
+ */
+function stepBudgetTail(step: number, maxSteps?: number): string {
+  if (maxSteps === undefined) return ''
+  const left = maxSteps - step - 1
+  if (left < 0 || left > STEPS_HINT_AT) return ''
+  return (
+    `\n（这一格最多 ${maxSteps} 步 · 这是第 ${step + 1} 步：还剩 ${left} 步。` +
+    '先把那份草案写出来——先落一节也行，那一节该有的键要写全。）'
+  )
+}
+
 /** `holderFace` 的那一栏：模型说了"预备态做完了"那一下，以及**这一趟的写入面**（拒的话要指得出它）。 */
 export interface HolderFaceOptions {
   readonly onDeclare?: () => void
@@ -247,6 +281,11 @@ export interface HolderFaceOptions {
    * **这一趟欠着什么**。
    */
   readonly planPath?: RelPath
+  /**
+   * 这一趟的上界（`--max-steps` 给的那个数）。**与 `runtime` 停下来用的那个数是同一个值**：
+   * 缺了它这一格就没有"还剩几步"可言（那也就不说这一句）。
+   */
+  readonly maxSteps?: number
 }
 
 /**
@@ -263,7 +302,8 @@ export function holderFace(inner: ToolExecutor, opts: HolderFaceOptions = {}): T
       if (why !== undefined) return { ok: false, output: why }
       const r = await inner.execute(call, h)
       if (call.name === 'exit_plan_mode' && r.ok && r.halt === true) opts.onDeclare?.()
-      return r
+      const tail = stepBudgetTail(Number(h.state.step), opts.maxSteps)
+      return tail === '' ? r : { ...r, output: capReceipt(r.output + tail) }
     },
   }
 }
@@ -445,6 +485,7 @@ export async function holderPass(deps: {
   const face = holderFace(deps.execute, {
     onDeclare: () => (declared = true),
     ...(deps.draftPath === undefined ? {} : { planPath: deps.draftPath }),
+    ...(deps.maxSteps === undefined ? {} : { maxSteps: deps.maxSteps }),
   })
   const runtime = createRuntime({
     logOf: () => deps.log,

@@ -11,6 +11,8 @@
 //      **指得出两截路**——换成哪几条工具，以及这一趟欠着什么（后者只在有产物那一趟拼）；
 //      而**工具目录与子 agent 逐条相同**（不给持轮者加工具——架构 § 15.4 那一句）
 //   ⑥ **同一轮里再跑一趟不造第二条 `Idle → Planning`**，意图只写一次（纪律 2/3）
+//   ⑪ **收工口径的第三面**：预算快用完时，回执末尾多一句"还剩几步"（上界前那三步各一次）；
+//      离上界还远 · 没给上界那两档一个字节都不加；而那一句在"单条回执 8 KiB"那一刀之后还在尾上
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -32,7 +34,7 @@ import { fixtureState } from '../model/fixture-state.ts'
 import { modelDeclOf } from '../model/contract.ts'
 import type { ModelDecl } from '../model/contract.ts'
 import { scriptedModel } from '../runtime/step.ts'
-import type { AgentHandle, ModelEvent, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
+import type { AgentHandle, CallModel, ModelEvent, RuntimeRequest, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
 import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
 import { createToolHost } from '../tools/host.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
@@ -222,6 +224,10 @@ async function plan(
     readonly counter?: { n: number }
     /** 这一轮的读数（`roundFactsOf`）：给了它，这一趟就不该再去读日志。 */
     readonly facts?: Awaited<ReturnType<typeof roundFactsOf>>
+    /** 这一趟的上界。**`null` = 不给**（命令行的 `--max-steps` 空着那一档）。缺省 8。 */
+    readonly maxSteps?: number | null
+    /** 模型那一串脚本。不给就是"写草案 · 收工"那两步（`scriptedModel([write, end])`）。 */
+    readonly call?: CallModel
   } = {},
 ): Promise<PlanResult> {
   const { handle, sub } = holderOf(b)
@@ -252,10 +258,10 @@ async function plan(
     goal: '把解析器拆出来',
     handle,
     decl,
-    call: scriptedModel([write, end]),
+    call: opts.call ?? scriptedModel([write, end]),
     execute,
     tools: CATALOG,
-    maxSteps: 8,
+    ...(opts.maxSteps === null ? {} : { maxSteps: opts.maxSteps ?? 8 }),
     // **身份按构造次序问**（调查型在前）：门判出来的那一批契约的身份就是放行那一下要发的那些。
     identityFor: (n: number) => identFor(ROUND, n),
     // 绑好的动作表：这一份台子把 `ok` 绑上、不声明产出（一条只跑退出码的断言）。
@@ -267,7 +273,7 @@ async function plan(
       base: sub,
       goal: '把解析器拆出来',
       round: ROUND,
-      maxSteps: 8,
+      maxSteps: opts.maxSteps ?? 8,
       tools: JSON.stringify(CATALOG),
     },
   })
@@ -435,7 +441,7 @@ test('⑤ 持轮者那一格的作用域：那三条回实话、不抛；工具�
   }
   let declared = 0
   const face = holderFace(inner, { onDeclare: () => (declared += 1) })
-  const h = {} as AgentHandle
+  const h = { state: { step: 0 } } as unknown as AgentHandle
   for (const name of ['bash', 'run_action', 'checkpoint']) {
     const r = await face.execute({ id: 'c1', name, arguments: '{}' }, h)
     assert.equal(r.ok, false, `${name} 该回一句实话`)
@@ -558,6 +564,91 @@ test('⑨ 声明的上限接进 seed 那一条：一份 8 000 的声明把种子
     assert.equal(ok.held, true, `1 000 000 那一档该停在门口：${ok.gate.problems.join(' / ')}`)
     assert.equal(ok.gate.built?.seedLimit, 904_000)
     console.log(`⑨ 读数：8 000 的声明 → 上限 0（${bad.gate.problems[0]}）· 1 000 000 的声明 → 上限 ${ok.gate.built?.seedLimit}`)
+  } finally {
+    await b.log.close()
+    await b.truth.close()
+  }
+})
+
+// ── ⑪ 收工口径的第三面：先说（`holderGoalText`）· 拒时再说（`holderRefusalOf`）· 快用完时说 ──
+//
+// 由头：样本盘第十一趟（案一 · 上界 8 · `--dump-wire` 实录）——持轮者 8 步全是读 / `glob` /
+// `grep`，一个字节没写，门退回。B 区那两句（"这一格最多 8 步" · "草案没写出来这一趟就等于没跑"）
+// 是**每趟只出现一次**的静态事实，那 8 步里没有一处说"预算正在用完"。
+//
+// **为什么这一条接在 `holderFace` 上，而不是 `createToolExecutor` 里**：上界这一个数在持轮者
+// 这一格只有一处——`holderPass` 那一栏的 `maxSteps`（与 `runtime` 停下来用的是同一个值）。
+// `AssembleState.maxSteps` 是"写进「我的任务」的那个数"，而**持轮者的 B 区里没有「我的任务」
+// 这一段**（架构 § 8.11）——照它读，那一条在产品路径上永远是空话：量到过（八步那一趟的
+// `--dump-wire` 请求里一个"还剩"都没有），而单测里手搭一个带 `maxSteps` 的句柄照样绿。
+
+test('⑪ 预算快用完时：回执末尾多一句"还剩几步"（上界前那三步），离上界还远 / 没给上界都不说', async () => {
+  // 一 · 纯的那一半：窗口（上界 4 · 第 3 步起）· 那一句在 8 KiB 那一刀之后仍在尾上。
+  const big: ToolExecutor = {
+    async execute(): Promise<ToolResult> {
+      return { ok: true, output: 'x'.repeat(9000) }
+    },
+  }
+  const at = (step: number): AgentHandle => ({ state: { step } }) as unknown as AgentHandle
+  const far = await holderFace(big, { maxSteps: 10 }).execute({ id: 'c1', name: 'read', arguments: '{}' }, at(0))
+  assert.equal(far.output.includes('还剩'), false, `离上界还远时不该说：${far.output.slice(-120)}`)
+  const near = await holderFace(big, { maxSteps: 4 }).execute({ id: 'c2', name: 'read', arguments: '{}' }, at(3))
+  assert.match(near.output, /还剩 0 步/, `该多那一句：${near.output.slice(-200)}`)
+  assert.match(near.output, /先把那份草案写出来/, '那一句没说下一步做什么')
+  assert.ok(near.output.endsWith('）'), `那一句该在回执的最末尾（尾留 4 KiB 保证它切不掉）：${near.output.slice(-60)}`)
+  assert.ok(Buffer.byteLength(near.output) < 9000, `上界那一刀该照旧：${Buffer.byteLength(near.output)} 字节`)
+
+  // 二 · 真那一条路：持轮者跑 8 步（上界 8），把**模型每一步真正看到的回执**收下来。
+  const b = await bench()
+  try {
+    const scripts = (): ModelEvent[][] => {
+      const out: ModelEvent[][] = [
+        [
+          ...callOne(0, 'c1', 'write', { path: draftPathOf(ROUND), content: draftText([section()]) }),
+          { t: 'usage', usage: USAGE },
+          { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+        ],
+      ]
+      for (let i = 0; i < 6; i += 1) {
+        out.push([
+          ...callOne(0, `r${i}`, 'read', { path: 'notes.md' }),
+          { t: 'usage', usage: USAGE },
+          { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+        ])
+      }
+      out.push([{ t: 'delta', text: '拆完了。' }, { t: 'usage', usage: USAGE }, { t: 'stop', reason: 'end-turn', raw: 'end_turn' }])
+      return out
+    }
+    const record = (): { call: CallModel; seen: string[] } => {
+      const seen: string[] = []
+      const inner = scriptedModel(scripts())
+      // **只收最后那一条轮次**：C 区那条尾巴是累积的，逐条收会把同一份回执数好几遍。
+      const call: CallModel = (req: RuntimeRequest, signal: AbortSignal) => {
+        for (const one of (req.turns ?? []).at(-1)?.results ?? []) seen.push(one.output)
+        return inner(req, signal)
+      }
+      return { call, seen }
+    }
+    const capped = record()
+    await plan(b, [section()], { call: capped.call, maxSteps: 8 })
+    const hits = capped.seen.filter((o) => o.includes('还剩'))
+    assert.equal(
+      hits.length,
+      3,
+      `上界 8 那一档该从第 5 步起每步说一次（还剩 3 · 2 · 1 步）：${hits.map((h) => h.slice(-90)).join(' | ')}`,
+    )
+    assert.match(hits[0] ?? '', /还剩 3 步/, `第 5 步那一次说的数不对：${hits[0] ?? ''}`)
+    assert.match(hits[1] ?? '', /还剩 2 步/, `第 6 步那一次说的数不对：${hits[1] ?? ''}`)
+    assert.match(hits[2] ?? '', /还剩 1 步/, `第 7 步那一次说的数不对：${hits[2] ?? ''}`)
+
+    // 三 · **负对照：命令行那一栏空着**（没有上界）→ 一次都不说。
+    const bare = record()
+    await plan(b, [section()], { call: bare.call, maxSteps: null })
+    assert.equal(bare.seen.filter((o) => o.includes('还剩')).length, 0, '没给上界却说了"还剩几步"')
+    console.log(
+      `⑪ 读数：上界 8 那一趟，模型看到的 ${capped.seen.length} 份回执里 ${hits.length} 份带"还剩"` +
+        `（${hits.map((h) => (h.match(/还剩 \d+ 步/) ?? [''])[0]).join(' · ')}）· 没给上界那一趟 ${bare.seen.filter((o) => o.includes('还剩')).length} 份`,
+    )
   } finally {
     await b.log.close()
     await b.truth.close()
