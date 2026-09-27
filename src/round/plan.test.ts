@@ -93,7 +93,7 @@ function callOne(index: number, id: string, name: string, args: unknown): ModelE
   ]
 }
 
-const USAGE = { inputTokens: 120, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 40, reasoningTokens: null, rawStop: null, model: null }
+const USAGE = { inputTokens: 120, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 40, reasoningTokens: null, model: null }
 
 /** 两条必须键都齐的一节。 */
 function section(over: Partial<DraftSection> = {}): Record<string, unknown> {

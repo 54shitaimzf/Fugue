@@ -125,7 +125,6 @@ const usageOf = (u: Record<string, unknown> | undefined, chunkModel: string | nu
     // 所以它从那一片 chunk 上取。读 `usage` 里那一栏的话，它一路都是 `null`——"它说它是谁"这一栏
     // 正是"上游报的名字 vs 我们声明的名字"的读数（真档：声明 `deepseek-chat`，报的是 `deepseek-flash`）。
     model: chunkModel,
-    rawStop: typeof u['finish_reason'] === 'string' ? (u['finish_reason'] as string) : null,
   }
 }
 

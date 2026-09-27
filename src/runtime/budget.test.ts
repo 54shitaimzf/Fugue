@@ -204,7 +204,7 @@ test('⑤ 修正：账按真读数的比修，缺省一步不修 · 真数是这
   assert.match(fixed.why, /按 3 份真读数修 ×2\.00/, fixed.why)
 
   // 真读数那一头：**三个数相加**（未命中 + 命中缓存 + 写进缓存），全缺就是"没读数"。
-  const NONE = { inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null, reasoningTokens: null, rawStop: null, model: null }
+  const NONE = { inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null, reasoningTokens: null, model: null }
   assert.equal(truthOf(null), null)
   assert.equal(truthOf(NONE), null, '全缺是"没读数"，不拿 0 顶')
   const heard = truthOf({ ...NONE, inputTokens: 88, cacheReadTokens: 24_000, cacheWriteTokens: 0 })

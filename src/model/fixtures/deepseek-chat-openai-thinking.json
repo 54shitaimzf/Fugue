@@ -361,7 +361,6 @@
       "cacheWriteTokens": null,
       "outputTokens": 175,
       "reasoningTokens": 78,
-      "rawStop": null,
       "model": "deepseek-flash"
     },
     "text": "",

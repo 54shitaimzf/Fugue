@@ -69,7 +69,7 @@ function callOne(index: number, id: string, name: string, args: unknown): ModelE
   ]
 }
 
-const USAGE = { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null, rawStop: null, model: null }
+const USAGE = { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null, model: null }
 
 /** 一串脚本：写一份交付物，然后说完。 */
 const SCRIPTS: readonly (readonly ModelEvent[])[] = [
@@ -95,7 +95,7 @@ const SCRIPTS: readonly (readonly ModelEvent[])[] = [
  * 撑爆（实测 ×82.49：交接一次之后一步都不走）。**真读数与估账同量级**是这里的取值纪律——
  * 脚本里的用量是造的，它得造得像。
  */
-const TINY_USAGE = { inputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null, rawStop: null, model: null }
+const TINY_USAGE = { inputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null, model: null }
 const TINY_SCRIPTS: readonly (readonly ModelEvent[])[] = SCRIPTS.map((step) =>
   step.map((e) => (e.t === 'usage' ? { t: 'usage', usage: TINY_USAGE } : e)),
 )
@@ -942,10 +942,10 @@ test('①c3 真读数修正下一步的账：报了用量就跟着它走，没�
     cacheReadTokens: number | null
     cacheWriteTokens: number | null
     outputTokens: number | null
-    rawStop: string | null
+    reasoningTokens: number | null
     model: string | null
   }
-  const NONE: Usageish = { inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null, reasoningTokens: null, rawStop: null, model: null }
+  const NONE: Usageish = { inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null, reasoningTokens: null, model: null }
   /** 那份 tiny 前缀的原始估账是 292（③ 的注释里那个数），900 是它三倍上下。 */
   const BIG: Usageish = { ...NONE, inputTokens: 900 }
   const withUsage = (usage: Usageish): readonly (readonly ModelEvent[])[] => {

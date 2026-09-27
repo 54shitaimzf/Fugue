@@ -82,7 +82,7 @@ const GIT_ENV: NodeJS.ProcessEnv = {
   GIT_COMMITTER_NAME: 'fugue',
   GIT_COMMITTER_EMAIL: 'fugue@localhost',
 }
-const USAGE = { inputTokens: 120, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 40, reasoningTokens: null, rawStop: null, model: null }
+const USAGE = { inputTokens: 120, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 40, reasoningTokens: null, model: null }
 
 /** 一条工具调用（三段：起点 · 分片 · 收尾）——字段名照 `B1` 的 `ModelEvent`。 */
 function callOne(index: number, id: string, name: string, args: unknown): ModelEvent[] {

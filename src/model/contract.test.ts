@@ -404,9 +404,9 @@ test('① 一个请求与一串事件能往返序列化，字段一个不多一�
     ['model', 'promptCache', 'zones'],
   )
   assert.deepEqual(interfaceKeys('Usage'), [...USAGE_FIELDS].sort(), '用量那一栏与 USAGE_FIELDS 对不上')
-  assert.equal(USAGE_FIELDS.length, 7)
-  // 架构 § 8.15 说的"用量的四个数"就是这四个——`USAGE_FIELDS` 多出来的三样里，一样是输出的明细
-  // （思考 token），两样是坐标；**钱只从这四个数算**（`src/model/price.ts`）。
+  assert.equal(USAGE_FIELDS.length, 6)
+  // 架构 § 8.15 说的"用量的四个数"就是这四个——`USAGE_FIELDS` 多出来的两样里，一样是输出的明细
+  // （思考 token），一样是坐标（上游报的模型名）；**钱只从这四个数算**（`src/model/price.ts`）。
   assert.deepEqual(USAGE_COUNTS, ['inputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'outputTokens'])
   assert.equal(USAGE_COUNTS.length, 4)
 
@@ -472,7 +472,7 @@ test('① 一个请求与一串事件能往返序列化，字段一个不多一�
     { t: 'tool-call', index: 1, id: 'call_2', name: 'read', arguments: '{"path":"src/model/contract.ts"}' },
     { t: 'tool-call', index: 0, id: null, name: 'grep', arguments: '{"pattern":"x","path":"src"}' },
     { t: 'usage', usage: { inputTokens: 2_000, cacheReadTokens: 20_000 } },
-    { t: 'usage', usage: { outputTokens: 300, cacheWriteTokens: null, rawStop: 'tool_use', model: 'deepseek-chat' } },
+    { t: 'usage', usage: { outputTokens: 300, cacheWriteTokens: null, model: 'deepseek-chat' } },
     { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
   ]
   const direct = checkEvents(events)
@@ -528,7 +528,6 @@ test('② 一串事件积得出一次完整调用：工具调用三段拼成一�
     cacheWriteTokens: 0,
     outputTokens: 12,
     reasoningTokens: 5,
-    rawStop: null,
     model: null,
   })
   // 0 与 null 分得开：报上来的 0 就是 0，没报的那两项是 null。

@@ -48,7 +48,7 @@ const DECL = modelDeclOf('deepseek-chat/anthropic')
 const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 
 /** 一次调用的四个数（假模型也守 `B1` 的口径：用量可以缺，缺了是 `null`）。 */
-const USAGE = { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null, rawStop: null, model: null }
+const USAGE = { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null, model: null }
 
 /** 一条工具调用（三段：起点 · 分片 · 收尾）。 */
 function callOne(index: number, id: string, name: string, args: string): ModelEvent[] {
@@ -165,6 +165,7 @@ test('① 每一步落一条 `prefix/assemble` 与一条 `llm/call`，步号单�
       invocations: number
       stop: string | null
       rawStop: string | null
+      thinking: string | null
       usage: Record<string, number | null>
     }
     assert.equal(first.model, DECL.id)
@@ -175,11 +176,27 @@ test('① 每一步落一条 `prefix/assemble` 与一条 `llm/call`，步号单�
     assert.equal((calls[1] as { invocations: number }).invocations, 0)
     assert.equal(first.stop, 'tool-calls')
     assert.equal(first.rawStop, 'tool_use')
+    // **"这一趟开了什么"只有这一栏答得出**（序 27）：声明里那一档原样记下来，不是适配器补出来的
+    // 那一档（`openai.ts` 把"没写"翻成 `disabled`、`anthropic.ts` 翻成一个字段都不发）。
+    assert.equal(first.thinking, 'high', '`llm/call` 没记这一趟声明的是哪一档思考')
     assert.deepEqual(first.usage, { inputTokens: 88, cacheReadTokens: 24000, cacheWriteTokens: 0, outputTokens: 64, reasoningTokens: null })
     console.log(
       `① 读数：${r.steps} 步 · ${events.length} 条事件（${prefix.length} assemble + ${calls.length} call）· ` +
-        `步号 ${steps.join(' → ')} · 公布工具 ${first.toolCount} 条 · 用量 ${JSON.stringify(first.usage)}`,
+        `步号 ${steps.join(' → ')} · 公布工具 ${first.toolCount} 条 · 思考 ${first.thinking} · 用量 ${JSON.stringify(first.usage)}`,
     )
+  })
+})
+
+test('①b `llm/call` 记的是**我们声明的那一档**：没写那一栏就是 `null`，不是 `off`', async () => {
+  await withRoot(async (root, log) => {
+    const { rt } = runtimeWith(log)
+    // 同一个句柄，只把调用配置里那一栏拿掉：`null` 说的是"声明里没写"，而 `off` 说的是
+    // "我们定下来这一趟不想"——两条线对"没写"的解释相反，所以这两件事在日志里不许长一样。
+    await rt.step({ ...handleOf(fixtureState(0)), call: { maxTokens: 1024 } }, new AbortController().signal)
+    const calls = (await eventsOf(root)).filter((e) => e.t === 'llm/call') as { thinking: string | null }[]
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0]?.thinking, null, '没写那一栏时它该是 `null`——`off` 是一个我们已经定下来的档')
+    console.log(`①b 读数：没写思考那一栏 → \`llm/call\` 记的是 ${JSON.stringify(calls[0]?.thinking)}`)
   })
 })
 

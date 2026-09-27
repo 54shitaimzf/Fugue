@@ -28,7 +28,7 @@
 //   `max-tokens` / `stop-sequence` / `refusal` → `failed`（它没能说完，而**不是"结束了"**）
 import type { Log } from '../log/events.ts'
 import type { AgentId, BranchId, ContractId, LogSeq, StepId, WriterId } from '../terms.ts'
-import type { ModelCall, ModelEvent, StopReason, Thinking, Turn, Usage } from '../model/contract.ts'
+import type { ModelCall, ModelEvent, StopReason, Thinking, ThinkingLevel, Turn, Usage } from '../model/contract.ts'
 import { checkEvents } from '../model/contract.ts'
 import type { Target, Transport } from '../model/http.ts'
 import type { WireFacts } from '../model/http.ts'
@@ -76,8 +76,14 @@ export interface AgentHandle {
   readonly target: Target
   readonly adapter: WireAdapter
   readonly state: AssembleState
-  /** 轮内固定的调用配置（架构 § 10.2 的必固四条之一）。 */
-  readonly call?: { readonly temperature?: number; readonly maxTokens?: number }
+  /**
+   * 轮内固定的调用配置（架构 § 10.2 的必固四条之一）：温度 · 输出预算 · **思考档**。
+   *
+   * `thinking` 原先不在这两个类型里（`RuntimeRequest.call` 同病），可它是 `ModelDecl.call` 的
+   * 第三个字段、适配器一直在读它——运行时这一侧只是**转手**，类型窄一栏不会当场红（没有编译
+   * 步骤），代价是"这一层不认识思考"这句话看着像真的。这一栏补上的是同一个事实的另一半。
+   */
+  readonly call?: { readonly temperature?: number; readonly maxTokens?: number; readonly thinking?: ThinkingLevel }
 }
 
 /** 一次工具调用（`B1` 的 `ToolCall` 的别名：名字 · 原样的参数 JSON 文本 · 那条线给的 id）。 */
@@ -119,7 +125,7 @@ export interface RuntimeRequest {
   readonly cHead?: Uint8Array
   /** 提供方那边什么名字（`ModelRequest.model`）。 */
   readonly model: string
-  readonly call?: { readonly temperature?: number; readonly maxTokens?: number }
+  readonly call?: { readonly temperature?: number; readonly maxTokens?: number; readonly thinking?: ThinkingLevel }
 }
 
 /** 第 2 步的出口：事件流 + 一次调用的账。 */
@@ -377,6 +383,10 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         step: String(h.state.step) as StepId,
         model: h.model,
         wire: h.target.wire.name,
+        // **这一趟声明了哪一档思考**（`null` = 声明里没写这一栏，与 `off` 是两件事）。
+        // 记的是**我们声明的那一档**，不是适配器补出来的那一档：`openai.ts` 把没写翻成
+        // `disabled`、`anthropic.ts` 把没写翻成一个字段都不发，两处都记会在日志里漂。
+        thinking: h.call?.thinking ?? null,
         toolCount: tools.length,
         invocations: calls.length,
         usage: {
@@ -387,8 +397,9 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
           // 思考那一部分是输出里的明细（不在钱那四样里）：记它不动账，但"想了多少"只有它能量到。
           reasoningTokens: usage?.reasoningTokens ?? null,
         },
-        // 提供方自己的原话来自**收尾那一条事件**（`checkEvents` 把它放在账的 `rawStop` 上），
-        // 不是来自用量那一条（`usage.rawStop` 在两条线上常常是 null）。
+        // 提供方自己的原话来自**收尾那一条事件**（`checkEvents` 把它放在账的 `rawStop` 上）。
+        // **`usage` 里原先也留了一栏同名**，两条线都想从 `usage` 对象里读它，而那个字段不在
+        // `usage` 里——它一路是 `null`（序 27 删掉了那一栏，读数一条都没有过）。
         rawStop: call?.rawStop ?? null,
         stop: call?.stop ?? null,
         // 上游给的那几个事实：**只有失败那一路才有**（状态码 · 请求号 · 限流那几条）。

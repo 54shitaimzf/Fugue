@@ -361,7 +361,6 @@
       "cacheWriteTokens": null,
       "outputTokens": 64,
       "reasoningTokens": null,
-      "rawStop": null,
       "model": "deepseek-chat"
     },
     "text": "先看一眼工作树。",

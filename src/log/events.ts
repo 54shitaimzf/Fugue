@@ -3,7 +3,7 @@
 // 这张联合是**消息的模式**，不是 M0 的解释对象。M0 不读 `t`，也不读任何载荷字段；
 // 它只做一件事——按 § 9.2 的信封写下去，再原样读回来。因此下面引用的类型即使改了
 // 值域（例如两处未决项定下来），M0 的实现一行都不用动。
-import type { ModelId, StopReason } from '../model/contract.ts'
+import type { ModelId, StopReason, ThinkingLevel } from '../model/contract.ts'
 import type {
   AgentId,
   AssertionResult,
@@ -190,6 +190,15 @@ export type LogEvent =
       model: ModelId
       /** 走哪条线协议（`WireName`）。两条线跑同一份状态时，这一栏是那两组读数的分组键。 */
       wire: string
+      /**
+       * **这一趟声明了哪一档思考**（`ModelDecl.call.thinking` 原样）。`null` = 声明里没写这一栏。
+       *
+       * 为什么 `null` 与 `off` 必须分得开：**两条线对"没写"的解释相反**（Chat Completions 那条线
+       * 默认是开的、Messages 那条线不写就是不开），所以"没写"是一个真实的、可能出事的状态。
+       * 适配器各自把没写翻成"关"（`openai.ts` 发 `disabled` · `anthropic.ts` 一个字段都不发），
+       * 而**日志记的是我们声明的那一档**，不是适配器补出来的那一档——两处都记就会漂。
+       */
+      thinking: ThinkingLevel | null
       /** 这一次请求公布了几条工具（**条数**进日志，schema 本身不进：`B7` 的哈希从这几样算得出）。 */
       toolCount: number
       /**

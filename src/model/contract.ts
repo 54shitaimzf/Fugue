@@ -504,8 +504,6 @@ export interface Usage {
    * Anthropic 那条线不给（那里是 `null`——不拿 `outputTokens` 顶）。
    */
   readonly reasoningTokens: number | null
-  /** 提供方自己的结束原因，原样带过来（不是我们那套 `StopReason`）。 */
-  readonly rawStop: string | null
   /** 提供方报的模型名——**它可能与声明的 `model` 不同**（别名 · 路由），所以两个都留着。 */
   readonly model: string | null
 }
@@ -524,11 +522,19 @@ export const USAGE_COUNTS: readonly (keyof Usage)[] = [
 /**
  * 这一栏的全部字段：四个数 + 思考那一栏的拆解 + 提供方自己的结束原因 + 它报的模型名。
  *
- * **"四个数"这句话不许漂**：`USAGE_COUNTS` 还是那四样（钱只从它们算），后面三样各自是别的东西——
- * `reasoningTokens` 是 `outputTokens` 的明细（不是第五个数）· `rawStop` 是"为什么停"的原始说法 ·
- * `model` 是"它说它是谁"。分开列，是为了让每一句都有一处指得出来。
+ * **"四个数"这句话不许漂**：`USAGE_COUNTS` 还是那四样（钱只从它们算），后面两样各自是别的东西——
+ * `reasoningTokens` 是 `outputTokens` 的明细（不是第五个数）· `model` 是"它说它是谁"。分开列，
+ * 是为了让每一句都有一处指得出来。
+ *
+ * **原先这里还有第三样：`rawStop`。它被删掉过一次（序 27）。** 那一栏想记的是"提供方自己的
+ * 结束原因"，而真正给它的那一条事件是 `stop`（`checkEvents` 从 `e.raw` 收，放在
+ * `ModelCall.rawStop` 上）。这一栏留着的时候，两条线的 `usageOf()` 都试着从 `usage` 里读它
+ * ——而 `finish_reason` / `stop_reason` **根本不长在 `usage` 里**，于是它一路是 `null`。一栏
+ * 从来不成立的值比没有这一栏更坏：读的人会以为"这一趟上游没给结束原因"。判据是读数，
+ * 不是"记得删"：`src/log/events.ts` 的 `llm/call` 顶层那一栏照旧有（它是活的），
+ * 而这一栏（`usage` 里那一份）一条读数都没有过。
  */
-export const USAGE_FIELDS: readonly (keyof Usage)[] = [...USAGE_COUNTS, 'reasoningTokens', 'rawStop', 'model']
+export const USAGE_FIELDS: readonly (keyof Usage)[] = [...USAGE_COUNTS, 'reasoningTokens', 'model']
 
 /** 一次思考：它想的那一串 + 那条线给的签名（Anthropic 有，Chat Completions 没有）。 */
 export interface Thinking {
@@ -710,7 +716,6 @@ export function usageUpdate(prev: Usage | null, part: Partial<Usage>): Usage {
     cacheWriteTokens: null,
     outputTokens: null,
     reasoningTokens: null,
-    rawStop: null,
     model: null,
   }
   const out: Record<string, unknown> = { ...base }
