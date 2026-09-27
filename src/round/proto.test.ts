@@ -12,6 +12,7 @@ import { sourcesFor } from '../assemble/sources.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 import { emptyState } from '../assemble/sources.ts'
 import { DRAFT_FIELDS, DRAFT_KINDS, draftPathOf, goalWithDraftRule } from '../contract/draft.ts'
+import { holderGoalText } from './plan.ts'
 
 test('①d 子 agent 那份 B 区多出「我的任务」那一段，而持轮者那份没有它（A/C 两区逐字节相同）', () => {
   const dec = new TextDecoder()
@@ -84,4 +85,65 @@ test('S9 · 「工作总目标」末尾那一句：写哪儿 · 什么形状，�
     `S9 读数：「工作总目标」那一段 ${state.goal.length} 字节（人的意图 + 末尾那一句）· ` +
       `键逐字来自 DRAFT_FIELDS · A/C 两区不沾它`,
   )
+})
+
+
+// ── W12 那条缺口的封口：持轮者那一趟的前缀里说得出**这一格的收工口径** ────────────────────
+//
+// 由头：`tools/scenario/board.sh` 第一趟真档（两案 · 每案 1 趟）——两案的持轮者都在步数上界上
+// 停住（8 步 / 6 步），草案一个字节都没写，门退回。补一次 `--dump-wire` 实录才看清它那几步：
+// 读两次 · glob 两次，**最后四步全在调 `bash`**（预备态没有可执行的树，一步回一句"这一格没有
+// 可执行的树"），而前缀里一件这样的事实都没有——它伸手之前无从知道，而拒绝是一步一句的。
+//
+// 这一条钉四样：**预算那一句在** · **"没有可执行的树"在**（且只在持轮者那一份里）· **位置在产物
+// 说明之前**（末尾留给"写哪儿 · 什么形状"）· **子 agent 那一份一个字节没变**（它的三句在
+// `我的任务` 里，由 `cli/chain.test.ts` 序 1 那份录下来的请求钉着）。
+
+test('①e 持轮者那一趟的前缀里说得出收工口径，而子 agent 那一份里没有"没有可执行的树"', () => {
+  const dec = new TextDecoder()
+  const draftPath = draftPathOf('r1')
+  // 这一份状态就是 `holderWiringOf` 给持轮者的那一份（改这一条时那边也要跟着改）。
+  const goal = holderGoalText('让 check 通过', draftPath, ['fields'], 6)
+  const hold = dec.decode(
+    assemble({
+      protocol: HOLDER_PROTOCOL,
+      model: 'x' as never,
+      segments: sourcesFor(HOLDER_PROTOCOL, { ...emptyState(), goal }, null),
+    }).zoneB,
+  )
+  // 一 · 预算那一句：那个数就是 `--max-steps` 给的那个。
+  assert.ok(hold.includes('这一格最多 6 步。'), `收工口径里没有预算那一句：${hold}`)
+  // 二 · 这一格没有可执行的树：**事先**在，而不是等它伸手之后才回一句（那一句一步）。
+  assert.ok(hold.includes('这一格没有可执行的树'), '收工口径里没有"这一格没有可执行的树"')
+  assert.ok(hold.includes('`bash`'), '那一句没有点出被拦的那条工具名')
+  // 三 · 位置：收工口径在草案那一句**之前**——末尾留给"写哪儿 · 什么形状"（近因）。
+  assert.ok(hold.indexOf('这一格最多 6 步。') < hold.indexOf('这一趟要把拆分写进'), '收工口径跑到产物说明后面去了')
+  assert.ok(hold.trimEnd().endsWith('写别的路径不算这一趟的产物。'), `那一段的末尾不是产物说明：${hold.slice(-120)}`)
+  // 四 · 负对照：子 agent 那一份里没有"这一格没有可执行的树"（它那一格跑得动），而预算那一句两边都在。
+  const coord = { id: 'agent/r1/1', branch: 'refs/heads/agent/r1/1', outputPaths: [] }
+  const sub = dec.decode(
+    assemble({
+      protocol: SUBAGENT_PROTOCOL,
+      model: 'x' as never,
+      segments: sourcesFor(
+        SUBAGENT_PROTOCOL,
+        {
+          ...emptyState(),
+          goal: '让 check 通过',
+          maxSteps: 6,
+          task: {
+            goal: '让 check 通过',
+            question: '',
+            deliverables: ['src/fields.js'],
+            evidenceRequired: ['核过'],
+            assertions: ['fields'],
+          },
+        },
+        coord,
+      ),
+    }).zoneB,
+  )
+  assert.equal(sub.includes('这一格没有可执行的树'), false, '子 agent 那一份里居然有"这一格没有可执行的树"')
+  assert.ok(sub.includes('这一格最多 6 步。'), '子 agent 那一份里丢了预算那一句')
+  console.log(`①e 读数：持轮者那份 B 区 ${hold.length} 字节（人的意图 + 收工口径 + 产物说明）· 子 agent 那份 ${sub.length} 字节`)
 })

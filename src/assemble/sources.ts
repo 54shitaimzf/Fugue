@@ -185,6 +185,21 @@ function emptyFor(id: SegmentId, protocol: Protocol): SegmentValue {
 }
 
 /**
+ * **这一格最多几步**：这一格的预算那一句（人给的那个数，缺省不写）。**一处给**——子 agent 的
+ * 「我的任务」与持轮者那一趟的收工口径（`round/plan.ts` 的 `holderClosingRuleLines`）念的是
+ * 同一句。两处各写一份的症状是"两句话慢慢不一样了"，而它一个错都不报。
+ *
+ * 这个数整个轮次不变（同一格跨步稳定），所以它在 B 区那一段里占一行；而**绝不写成"这是第几步"**
+ * ——那个字每步都变，B 区跨步复用那条性质当场破掉（`AssembleState.maxSteps` 那一段同一条理由）。
+ *
+ * **不替它挑一个数**：上界由人给（`runtime/step.ts` 那一段）；`undefined` 就是不写这一句，
+ * 那一段短一行、装配照跑（地板那一档）。
+ */
+export function stepBudgetLine(maxSteps?: number): readonly string[] {
+  return maxSteps === undefined ? [] : [`这一格最多 ${maxSteps} 步。`]
+}
+
+/**
  * 我的任务那一段的文本：契约的几项 + **这一格的收工口径**，末尾按序追加产物路径。
  *
  * **收工口径那三句为什么在这里**（W11 那一轮真档照出来的）：那一格把活干完了，然后一直在
@@ -194,6 +209,9 @@ function emptyFor(id: SegmentId, protocol: Protocol): SegmentValue {
  *
  * **产物路径仍然是最后一行**：架构 § 8.11 那句"近因最好"要的就是它落在模型动手的那个位置，
  * 所以这三句排在它**前面**——排在 `断言` 后面。
+ *
+ * **持轮者那一份另有两句**（`round/plan.ts` 的 `holderClosingRuleLines`）：它那一格没有可执行
+ * 的树，而"这一格没有树"与"断言由 harness 跑"是同一件事的两面——区别只在那一格伸不伸得出手。
  */
 function taskText(t: AssembleState['task'], outputs: readonly string[], maxSteps?: number): string {
   const lines: string[] = [`总目标：${t.goal}`, `问题：${t.question}`]
@@ -202,7 +220,7 @@ function taskText(t: AssembleState['task'], outputs: readonly string[], maxSteps
   if (t.assertions.length > 0) lines.push(`断言：${t.assertions.join(' · ')}`)
   // 三句收工口径。第一句是这一格的预算（人给的那个数，缺省不写）；另两句是常量：交卷那一下只能
   // 是"话说完了"（`end-turn`），而断言由 harness 跑、由它判过不过（架构 § 8.12 的分工表）。
-  if (maxSteps !== undefined) lines.push(`这一格最多 ${maxSteps} 步。`)
+  lines.push(...stepBudgetLine(maxSteps))
   lines.push('做完就说明一句，不再调工具——交卷就是话说完。')
   lines.push('断言由 harness 跑，不由你跑。')
   if (outputs.length > 0) lines.push(`产物路径：${outputs.join(' · ')}`)

@@ -28,7 +28,7 @@ import { createRuntime } from '../runtime/step.ts'
 import type { ModelDecl } from '../model/contract.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
-import { emptyState, sourcesFor } from '../assemble/sources.ts'
+import { emptyState, sourcesFor, stepBudgetLine } from '../assemble/sources.ts'
 import { assemble } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { estimateTokensOfText, planBudget } from '../runtime/budget.ts'
@@ -37,7 +37,7 @@ import { baseFor } from '../view/lower.ts'
 import type { Cause, RoundState, StepContext } from './machine.ts'
 import { step } from './machine.ts'
 import type { DraftKind, DraftSection } from '../contract/draft.ts'
-import { draftPathOf } from '../contract/draft.ts'
+import { draftPathOf, draftRuleTextOf } from '../contract/draft.ts'
 import type { Identity } from '../contract/build.ts'
 import { seedTextOf } from '../contract/build.ts'
 import type { GateVerdict } from '../contract/gate.ts'
@@ -240,6 +240,50 @@ export function holderFace(inner: ToolExecutor, opts: HolderFaceOptions = {}): T
       return r
     },
   }
+}
+
+/**
+ * **持轮者那一趟的收工口径**：这一格最多几步 · 这一格没有可执行的树。
+ *
+ * 它与上面那张 `HOLDER_REFUSAL` 是一件事的两面：这里是**先说在前面**，那里是它伸手之后回的那
+ * 一句。两面都要有，因为只有后面那一面的后果是**一步一次**的——真档读数（`tools/scenario/
+ * board.sh` 第一趟 · 两案都在步数上界上停住 · `--dump-wire` 实录）里，持轮者最后四步全在调
+ * `bash`：目标那一句说"check 不通过"、项目方针那一句说"写完就核"，两处都在催它去跑，而预备态
+ * 没有树。四步烧完，草案一个字节都没写，门退回。
+ *
+ * **这里不说"别调工具了，说完交卷"**（子 agent 那一份有这一句）：架构 § 15.1.a 那一句"拆完了
+ * 不借工具调用表达"——持轮者那一趟的收工由 `end-turn` 与那道门判，不押在它的自觉上。所以这一
+ * 份只说它无从得知的事实：几步 · 有没有树。
+ *
+ * 步数那一句与 `runtime/step.ts` 停下来用的那个数**同源**：两处读的都是 `wire.maxSteps`
+ * （`cli/fugue.ts` 的 `holderWiringOf` 与 `roundPlan`）——一个数的两处用法，不是两个数。
+ */
+export function holderClosingRuleLines(maxSteps?: number): readonly string[] {
+  return [
+    ...stepBudgetLine(maxSteps),
+    '这一格没有可执行的树：预备态不物化，`bash` 与 `run_action` 试也不会通——要判什么，派发之后由验收那一档跑。',
+  ]
+}
+
+/**
+ * 持轮者那一趟「工作总目标」那一段的正文：人的意图 + **收工口径那两句** + 末尾那一句产物说明。
+ *
+ * **那两句为什么跟着这一句走**：持轮者的 B 区里没有「我的任务」那一段（架构 § 8.11：它手里是
+ * 全部契约，不是一份），而"这一格最多几步" · "这一格有没有可执行的树"是**每一格**都要有的两样
+ * 事实——子 agent 那一份由「我的任务」带，持轮者这一份没有那一段可挂。
+ *
+ * **位置**：收工口径在产物说明**之前**，末尾留给"这一趟写哪儿 · 写成什么形状"（架构 § 8.12 那
+ * 句"近因最好"要的就是它落在模型动手的那个位置）；把收工口径放末尾，模型读完就先收工、后写草案。
+ *
+ * **讨论态那一趟不走这里**（`draftPath` 那一栏不给）：那一趟的产物是那场对话的凝聚，不落文件。
+ */
+export function holderGoalText(
+  goal: string,
+  draftPath: RelPath,
+  actionNames: readonly string[] = [],
+  maxSteps?: number,
+): string {
+  return `${goal}\n\n${holderClosingRuleLines(maxSteps).join('\n')}\n\n${draftRuleTextOf(draftPath, actionNames)}`
 }
 
 /**
