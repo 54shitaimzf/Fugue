@@ -13,6 +13,9 @@
 //   ⑤ `readNew` 两趟不重不漏，**其中一条落在晚出现的 writer 上**——它就是全局 `fromSeq` 会漏掉的
 //      那一档（负对照：`readMerged(3)` 拿不到它）
 //   ⑥ `follow` 到点就停（信号拨一下），而且**两条读面都是纯读**：走一遍之后日志目录逐字节不变
+//   ⑦ **越界那一栏**：`bound/deny` 按由头分组 + 内核那一档，两者相加是 `total`；而**三数看不见
+//      视图那一侧的拒**（那几条工具不落 `run/end`）——这一条把"那一栏没有生产者"钉住
+//      · 负对照：抹掉那三条 `bound/deny` → 越界只剩内核那一档
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -272,4 +275,63 @@ test('⑥ follow 到点就停；两条读面都是纯读（日志逐字节不变
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// ── ⑦ 越界那一栏（样本盘第九趟真档照出来的那个缺口）──────────────────────────────────
+//
+// 由头：那一趟 `agent/r1/5` 伸手写 `src/total.ts` 与 `src/format.ts`，两次都被 `contract-scope`
+// 挡下（`bound/deny` 各一条），而 `ledger.tsv` 的越界那一栏读的是 `denied`——**视图层那几条工具
+// 不落 `run/end`**（`capability/dispatch.ts` 里只有执行层那一格才落那一对事件），于是那两次一条
+// 都没进那三个数。而架构 § 8.13.a 那一栏（越界率）要的正是它："子 agent 想写契约没声明的地方"。
+// 这一条把它单独立成一个读数：**三数不动**（那是打回），越界按由头分组。
+
+test('⑦ 越界那一栏：`bound/deny` 按由头分组 + 内核那一档；三数看不见视图那一侧的拒', async () => {
+  seq = 0
+  const rows = [
+    row({ t: 'bound/deny', agent: 'agent/r1/5' as AgentId, path: 'src/total.ts', space: 'virtual', rule: 'contract-scope' }, 'agent/r1/5'),
+    row({ t: 'bound/deny', agent: 'agent/r1/5' as AgentId, path: 'src/format.ts', space: 'virtual', rule: 'contract-scope' }, 'agent/r1/5'),
+    row({ t: 'bound/deny', agent: 'agent/r1/1' as AgentId, path: '/etc/passwd', space: 'virtual', rule: 'fence:reach' }, 'agent/r1/1'),
+    row({ t: 'run/start', agent: 'agent/r1/2' as AgentId, step: '0' as never, action: 'bash', argv0: '/bin/sh' }, 'agent/r1/2'),
+    row({ t: 'run/end', agent: 'agent/r1/2' as AgentId, step: '0' as never, exit: 1, ms: 1, denied: true }, 'agent/r1/2'),
+  ]
+  const s = statusOf(rows)
+
+  // 一 · 两个来源都在，按由头分得开（次序是排过的：同一个数不许有两份写法）。
+  assert.equal(s.refusals.total, 4)
+  assert.equal(s.refusals.kernel, 1)
+  assert.deepEqual(
+    s.refusals.byRule,
+    [
+      { rule: 'contract-scope', count: 2 },
+      { rule: 'fence:reach', count: 1 },
+    ],
+    `按由头分组：${JSON.stringify(s.refusals.byRule)}`,
+  )
+
+  // 二 · **三数看不见视图那一侧的拒**——那就是这一栏要单独立起来的理由。
+  const three = await computeMerged(
+    (async function* () {
+      for (const r of rows) yield r
+    })(),
+    {},
+    'denied',
+  )
+  assert.equal(three.count, 1, '三数里的 denied 只有内核那一档')
+  assert.equal(s.refusals.total - s.refusals.kernel, 3, '三条 bound/deny 都不在那三个数里')
+
+  // 三 · 人面那一行把两半都印出来。
+  const line = linesOf(s).find((l) => l.startsWith('越界 '))
+  assert.ok(
+    line !== undefined && line.includes('被挡 4') && line.includes('内核拒 1') && line.includes('contract-scope 2'),
+    `人面那一行：${String(line)}`,
+  )
+
+  // 四 · 负对照：抹掉那三条 `bound/deny` → 越界只剩内核那一档（读数由那些事件产出，不是别处来的）。
+  const bare = statusOf(rows.filter((r) => r.e.t !== 'bound/deny'))
+  assert.equal(bare.refusals.total, 1)
+  assert.deepEqual(bare.refusals.byRule, [])
+  console.log(
+    `⑦ 读数：越界 ${s.refusals.total} 次（内核 ${s.refusals.kernel} · ` +
+      `${s.refusals.byRule.map((r) => `${r.rule} ${r.count}`).join(' · ')}）· 同一份日志三数里 denied ${three.count}`,
+  )
 })

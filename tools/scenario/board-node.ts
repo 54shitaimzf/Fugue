@@ -11,6 +11,8 @@
 //
 //   node tools/scenario/board-node.ts row <cases.json> <工作区> <work.json> <案名> <趟> <门退回> <观察>
 //       把一轮压成账上那一行（制表符分隔）。用量从日志现算（`statusOf`），不看模型报什么。
+//       **越界那一栏读 `snap.refusals`**（`bound/deny` 与内核拒相加），不读三数里的 `denied`：
+//       视图那一侧的拒不落 `run/end`，三数看不见它。两半与按由头的分组印在下面那一行。
 import fs from 'node:fs'
 import path from 'node:path'
 import { judgeOf, boardLines } from '../../src/probe/board.ts'
@@ -97,11 +99,22 @@ if (cmd === 'selftest') {
     name, run, gate, stop,
     '过 ' + String(v2.pass ?? 0) + '/' + String((v2.pass ?? 0) + (v2.fail ?? 0) + (v2.unrunnable ?? 0)),
     v.ok ? '过' : '不过（' + v.failed.join('·') + '）',
-    observe, countOf('conflicts'), countOf('rejects'), countOf('denied'),
+    // **越界那一栏读 `refusals`，不读 `denied`**：视图那一侧的拒（`contract-scope` 那一族）
+    // 不落 `run/end`，所以三数里的 `denied` 看不见它——而这一栏的名字是越界。两半的和写在
+    // 下面那一行（`内核 n` 就是 `denied` 那个数，`byRule` 是按由头分的那几档）。
+    observe, countOf('conflicts'), countOf('rejects'), String(snap.refusals.total),
     String(u.calls), String(u.inputTokens.total), String(u.cacheReadTokens.total), String(u.outputTokens.total),
     adv,
   ].join('\t'))
   console.log('  停因：' + (cells.length === 0 ? '（没有读数）' : cells.map((a: { agent: string; steps: number; stopped: string }) => a.agent + ' ' + String(a.steps) + ' 步 · ' + a.stopped).join(' ｜ ')))
+  {
+    // **恒印这一行**（零也印）：与状态那一面同一把尺——少了它，"没量到"与"量到 0"就分不开。
+    const split = snap.refusals.byRule.map((r) => `${r.rule} ${r.count}`).join(' · ')
+    console.log(
+      '  越界：被挡 ' + String(snap.refusals.total) + ' 次（内核 ' + String(snap.refusals.kernel) +
+        (split === '' ? '' : ' · ' + split) + '）',
+    )
+  }
   console.log('  已知答案：' + v.why)
   for (const line of boardLines(c.name, v).slice(1)) console.log(line)
   process.exit(0)

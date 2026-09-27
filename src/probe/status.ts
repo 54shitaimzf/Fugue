@@ -63,7 +63,11 @@ export interface AgentStatus {
   readonly actions: number
   /** 动作被内核拒了几次（`run/end` 的 `denied` 为真）。 */
   readonly denies: number
-  /** 边界挡了几次（`bound/deny` 条数）。**与上面那一栏分开**：一个是内核，一个是围栏。 */
+  /**
+   * 边界挡了几次（`bound/deny` 条数）。**与上面那一栏分开**：一个是内核，一个是围栏。
+   *
+   * 这是**逐格**那一份；快照那一层的 `refusals` 是同一件事的总账（两个来源相加 · 按由头分组）。
+   */
   readonly bounds: number
   /** 交了几次接（`agent/handoff` 条数）。 */
   readonly handoffs: number
@@ -99,6 +103,36 @@ export interface AcceptTally {
   readonly accepts: number
 }
 
+/** 越界那一栏的一档由头（`bound/deny` 的 `rule`）：被挡了几次。 */
+export interface RefusalRule {
+  readonly rule: string
+  readonly count: number
+}
+
+/**
+ * **越界那一栏的读数**：想写到声明集之外的落点，被挡了几次。**它与打回那三个数分开**——§ 8.13.a
+ * 那张表把它们当两样读：越界率说拆分切得干不干净，打回次数说这一轮过没过。
+ *
+ * 两个来源，各自是各自那一侧的事实：
+ *
+ *   · `byRule`（`bound/deny` 按 `rule` 分组）——**视图与围栏那一侧**：`write` / `edit` 落在声明集
+ *     外（`contract-scope`）· 持轮者写到保留前缀之外（`plan-scope`）· `exit_plan_mode` 自报的路径
+ *     不是这一趟那一份（`plan-path`）· 路径越出工作区（`fence:*`）。
+ *   · `kernel`（`run/end` 里 `denied` 为真的条数）——**执行那一侧**：内核把未声明的写入当场拒
+ *     （errno 30 那一档），也就是三数里那个 `denied`。
+ *
+ * **视图那一侧一条都不落 `run/end`**（那几条工具不起进程，`capability/dispatch.ts` 里只有执行层
+ * 那一格才落那一对事件），所以三数里的 `denied` 看不见它们——这一栏单独立起来的理由就是它。
+ *
+ * `total` 是两者相加。**按由头分组**是这个读数的用处所在：§ 8.13.a 要判的是"子 agent 想写契约
+ * 没声明的地方"，而那一族只认 `contract-scope` 这一档，不让总数替它说话。
+ */
+export interface RefusalTally {
+  readonly total: number
+  readonly kernel: number
+  readonly byRule: readonly RefusalRule[]
+}
+
 /** 一次快照。**它是 `status --once` 的全部输出，也是 TUI 的那个读源。** */
 export interface StatusSnapshot {
   /** 账上见过的每一条轮次链，按第一次出现的次序。 */
@@ -110,6 +144,8 @@ export interface StatusSnapshot {
   readonly attempts: number
   readonly conflicts: number
   readonly accepts: AcceptTally
+  /** 越界那一栏（`bound/deny` 与内核拒合起来的那一份读数）。**与打回那三个数分开**。 */
+  readonly refusals: RefusalTally
   readonly usage: UsageTotals
   /** 一共读了几条事件。 */
   readonly events: number
@@ -219,6 +255,9 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
   let pass = 0
   let fail = 0
   let accepts = 0
+  /** 越界那一栏的两个来源：内核那一档（与 `denied` 同一个计数点）· `bound/deny` 按由头。 */
+  let kernelDenies = 0
+  const refusalRules = new Map<string, number>()
   let current: RoundId | null = null
   let last: StatusSnapshot['last'] = null
 
@@ -306,13 +345,18 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
     }
     if (e.t === 'run/end') {
       const a = slotOf(pos.writer)
-      if (e.denied) a.denies++
+      if (e.denied) {
+        a.denies++
+        kernelDenies++
+      }
       a.last = e.t
       continue
     }
     if (e.t === 'bound/deny') {
       const a = slotOf(pos.writer)
       a.bounds++
+      // 越界那一栏按由头分组：**怎么算在这一个地方**（§ 8.13.a 那一族要的是"哪一种越界"）。
+      refusalRules.set(e.rule, (refusalRules.get(e.rule) ?? 0) + 1)
       a.last = e.t
       continue
     }
@@ -331,6 +375,16 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
     }
     // 其余各族的最近一条也算"这一格最后一条事件"（`view/*` · `mat/*` · `holder/*` · `prefix/*`）。
     slotOf(pos.writer).last = e.t
+  }
+
+  // **排序定死**：同一串事件折两次要给同一份快照（④ 那条验证性质），而 `Map` 的次序不是判据。
+  const byRule: RefusalRule[] = [...refusalRules.entries()]
+    .map(([rule, count]) => ({ rule, count }))
+    .sort((x, y) => (x.rule < y.rule ? -1 : x.rule > y.rule ? 1 : 0))
+  const refusals: RefusalTally = {
+    total: kernelDenies + byRule.reduce((n, r) => n + r.count, 0),
+    kernel: kernelDenies,
+    byRule,
   }
 
   return {
@@ -365,6 +419,7 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
     attempts,
     conflicts,
     accepts: { pass, fail, accepts },
+    refusals,
     usage: {
       calls,
       inputTokens: totalOf(usage.inputTokens),
@@ -415,6 +470,11 @@ export function linesOf(s: StatusSnapshot): readonly string[] {
   out.push(
     `契约 ${s.contracts} · 折叠尝试 ${s.attempts} · 冲突 ${s.conflicts} · 验收 ${s.accepts.accepts} 次` +
       `（过 ${s.accepts.pass} / 没过 ${s.accepts.fail}）`,
+  )
+  // **恒印这一行**（零也印）：少了它，"没量到"与"量到 0"就分不开——与用量那一行同一条规矩。
+  out.push(
+    `越界 被挡 ${s.refusals.total} 次（内核拒 ${s.refusals.kernel}` +
+      `${s.refusals.byRule.length === 0 ? '' : ` · ${s.refusals.byRule.map((r) => `${r.rule} ${r.count}`).join(' · ')}`}）`,
   )
   const one = (n: string, t: UsageTotal): string => `${n} ${t.total}${t.missing > 0 ? `（缺 ${t.missing} 条）` : ''}`
   out.push(
