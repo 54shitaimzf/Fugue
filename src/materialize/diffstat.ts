@@ -22,6 +22,7 @@
 // 开始丢整数（换算成时间约 256 ns 一档）。用串就没有这个问题，JSON 里也还是它本身。
 import { createHash } from 'node:crypto'
 import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, readSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import type { Stats } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { AbsPath, RelPath } from '../terms.ts'
 
@@ -79,6 +80,33 @@ export function hashBytes(bytes: Uint8Array | string): string {
  * **导出是给 `land.ts` 的**：那边问"盘上这条是什么"时只要一个内容哈希，要的正是这一份实现
  * ——文件的内容哈希在整个物化组里只该有一条路（口径一处，代价也一处）。
  */
+/**
+ * **看一条路径在不在：`ENOTDIR` 与 `ENOENT` 同义。**
+ *
+ * `lstat` 一条路径，取不回来给 `null`。两件事各是一个坑：
+ *
+ *   · **`{ throwIfNoEntry: false }` 不够。** 它只吞 `ENOENT`——父亲**不存在**时给 `undefined`，
+ *     而父亲**不是目录**时照抛 `ENOTDIR`（Node v24.21.0 本地实测：`legacy` 是一个普通文件时
+ *     `lstat('<root>/legacy/old-format.js', { throwIfNoEntry: false })` 抛 `ENOTDIR`）。
+ *   · **"祖先不是目录"就是"这条路径不存在"**（`land.ts` 开头那条口径）：文件换成目录、以及一条
+ *     whiteout（字符设备 0:0）挡在中间时都会撞上它。
+ *
+ * 真档那一趟（样本盘第 1 案 · `agent/r1/4`）：同格 `bash rm` 删掉 `legacy/old-format.js` 之后
+ * `upper/legacy` 是那次 `rm` 留下的白障，**下一趟回收**去 `lstat` 那条叶子路径（`topLevel()`
+ * 给的是路径本身，不是它那一段）→ `ENOTDIR` 穿出工具面（`tool-threw`），那一格就此收场
+ * （`agent/stop` 的 `stopped` 里就是那句话），判据③ 因此停在 3/4。同一个工作区里 `land.ts` 的
+ * `diskEntry` 已经认这条口径，少的是两处**回收读口**。
+ */
+export function statOrNull(abs: AbsPath): Stats | null {
+  try {
+    return lstatSync(abs)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null
+    throw err
+  }
+}
+
 export function hashFile(abs: AbsPath): string {
   const h = createHash('sha256')
   const fd = openSync(abs, 'r')

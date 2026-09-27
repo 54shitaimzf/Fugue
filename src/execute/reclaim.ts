@@ -38,7 +38,7 @@ import { lstatSync, readFileSync, readlinkSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { normMode } from '../delta.ts'
 import type { Delta } from '../delta.ts'
-import { WORKSPACE_STATE } from '../materialize/diffstat.ts'
+import { WORKSPACE_STATE, statOrNull } from '../materialize/diffstat.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { DirEntry, EntryMeta } from '../entries.ts'
 import type { AbsPath, AgentId, CommitId, ForkStrategy, RelPath } from '../terms.ts'
@@ -217,10 +217,12 @@ export function createReclaim(deps: ReclaimDeps): Reclaim {
       const onDisk = new Set<RelPath>()
       for (const rel of topLevel(declared.paths)) {
         const at = join(landing, rel)
-        const st = lstatSync(at, { throwIfNoEntry: false })
+        // **祖先不是目录 = 这条路径不存在**（`statOrNull` 那一句）：真档上这里抛过一次
+        // `ENOTDIR`（同格 `bash rm` 留下的白障挡在中间），那一格就此收场。
+        const st = statOrNull(at)
         // **盘上有的先收**（`add` / `modify` / `symlink`），再问"盘上没有而两源里有的那些"
         // ——顺序不能反：删除那一支要拿"已经收过的"当跳过集，否则它会把刚收过的那一条再报一次。
-        if (st !== undefined && st !== null) {
+        if (st !== null) {
           onDisk.add(rel)
           if (st.isDirectory()) {
             const before = out.length

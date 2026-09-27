@@ -32,6 +32,7 @@ import type { ForkResult } from '../materialize/fork.ts'
 import { ensure } from '../materialize/ensure.ts'
 import type { EnsureResult } from '../materialize/ensure.ts'
 import { matState } from '../materialize/manifest.ts'
+import { statOrNull } from '../materialize/diffstat.ts'
 import type { MatState } from '../materialize/manifest.ts'
 import type { RefHead } from '../round/head.ts'
 import { isMounted, unmountOverlay } from '../materialize/mount.ts'
@@ -421,8 +422,9 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     const inTree = new Set<RelPath>()
     for (const rel of opts.ownedPaths ?? []) {
       const where = join(mat.parts.merged, rel)
-      const st = lstatSync(where, { throwIfNoEntry: false })
-      if (st === undefined || st === null) continue
+      // 同一条口径（`statOrNull`）：声明的那条路径的祖先不是目录时，它就不在。
+      const st = statOrNull(where)
+      if (st === null) continue
       inTree.add(rel)
       if (st.isDirectory()) leavesUnder(where, rel, inTree, 0)
     }

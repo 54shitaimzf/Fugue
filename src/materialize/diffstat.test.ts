@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   lutimesSync,
   mkdirSync,
   readFileSync,
@@ -31,7 +32,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { tmpDir } from '../../test/helpers/tmp.ts'
-import { TreeStatError, WORKSPACE_STATE, diffStat, loadTreeStat, scanTree, storeTreeStat } from './diffstat.ts'
+import { TreeStatError, WORKSPACE_STATE, diffStat, loadTreeStat, scanTree, statOrNull, storeTreeStat } from './diffstat.ts'
 
 const CLI = fileURLToPath(new URL('../cli/fugue.ts', import.meta.url))
 
@@ -314,4 +315,25 @@ test('⑦ 命令行：三条断言都从 `fugue diff-stat` 走得通；量不了
   const nope = fugue(root, 'diff-stat', '没有这棵树')
   assert.equal(nope.code, 1)
   assert.ok(nope.stderr.includes('不是一棵能扫的树'), nope.stderr)
+})
+
+test('⑧ `statOrNull`：祖先不是目录也算"不在"（`ENOENT` 与 `ENOTDIR` 同义）', () => {
+  const root = tree({ 'dir/x.ts': 'x', plain: 'not a dir' })
+  assert.ok(statOrNull(join(root, 'dir', 'x.ts')) !== null, '在的那一条要读得出来')
+  assert.equal(statOrNull(join(root, 'dir', 'missing.ts')), null, '父亲在、它不在 → null（ENOENT）')
+  // 父亲**不是目录**：`{ throwIfNoEntry: false }` 在这种情形上照抛 `ENOTDIR`（本地实测），而
+  // 这一条口径说的是"它就不存在"。
+  assert.equal(statOrNull(join(root, 'plain', 'x.ts')), null, '祖先不是目录 → null（ENOTDIR）')
+  assert.equal(
+    (() => {
+      try {
+        lstatSync(join(root, 'plain', 'x.ts'), { throwIfNoEntry: false })
+        return 'no-throw'
+      } catch (err) {
+        return (err as NodeJS.ErrnoException).code
+      }
+    })(),
+    'ENOTDIR',
+    '负对照：裸 `lstatSync(..., { throwIfNoEntry: false })` 在祖先不是目录时照抛',
+  )
 })

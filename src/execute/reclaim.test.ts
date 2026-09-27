@@ -344,3 +344,25 @@ test('X2 ⑤ · 物化刚落下去的那些不许被报成"越了声明"（减�
   // 视图里那一份是：自己写下的 notes.txt + 声明集里收回来的那两条。
   assert.deepEqual(new Set(diffPaths(w.root)), new Set(['gen/out.txt', 'gen/sub/inner.txt', 'notes.txt']))
 })
+
+test('X2 ⑥ · 声明的那条路径的祖先在落地根里不是目录：回收照样收得动（不抛 ENOTDIR）', async () => {
+  // 真档那一趟（样本盘第 1 案 · `agent/r1/4`）：同格 `bash rm` 删掉 `legacy/old-format.js`，
+  // 随后又 `rmdir legacy`，而 `upper/legacy` 是那次 `rm` 留下来的**白障**（字符设备 0:0）。
+  // 下一趟回收去 `lstat` 那条叶子路径（`topLevel()` 给的是路径本身，不是它那一段）→ `ENOTDIR`
+  // 穿出工具面（`tool-threw`），那一格就此收场。
+  //
+  // 这里拿一条普通文件当那个祖先：**ENOTDIR 是同一种**（父亲不是目录），而白障要 `mknod`。
+  const w = workspace(['round'])
+  const roots = createRoots(w.root)
+  const agent = 'round' as AgentId
+  const upper = roots.scratchRoot(agent)
+  assert.ok(existsSync(upper), 'fork 之后落地根该在')
+  writeFileSync(join(upper, 'legacy'), 'not a dir\n')
+
+  const reclaim = createReclaim({ roots, strategy: 'overlayfs', manifest: [], landing: 'upper', treeOpen: true })
+  const declared = reclaim.declare(agent, ['legacy/old-format.js'])
+  const deltas = await reclaim.collect(agent, declared)
+  // 那一条在盘上够不着，所以收不回来；而**不抛**才是这一条要的——不该被报成一条产出，也不该
+  // 让这一格收场。
+  assert.deepEqual(deltas, [], '够不着的那一条不该被报成产出')
+})
