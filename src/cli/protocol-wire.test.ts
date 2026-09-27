@@ -130,3 +130,46 @@ test('①f `--max-steps` 真的写进「我的任务」：给 3 就是 3，**不
     `①f 读数：--max-steps 3 → 状态里 ${String(st3.maxSteps)} · 不给 → ${String(stNone.maxSteps)}（状态里那一栏缺席，前缀里那一句也不写）`,
   )
 })
+
+/**
+ * 一份**调查型**契约（干一格的形状，架构 § 8.12）：它**既没有 `deliverables` 也没有 `assertions`**
+ * ——那两栏是 `implement` / `resolve` 才有的（`InvestigateContract` 只有 question ·
+ * evidenceRequired · seed）。它的产物由构造器按位置定名。
+ */
+function investigateOf(): Contract {
+  return {
+    id: 'r1.investigate.1',
+    kind: 'investigate',
+    agent: 'agent-1',
+    branch: 'refs/heads/agent/agent-1',
+    question: 'greet 现在怎么拼字符串？',
+    evidenceRequired: [{ artifact: 'evidence/agent-1/现状', note: '现状' }],
+    seed: ['src/greet.js'],
+  } as unknown as Contract
+}
+
+test('①g 真驱动那一档：**调查型**契约的「我的任务」装得出来（它没有 deliverables / assertions）', async () => {
+  const { support } = await supportOf()
+  const contract = investigateOf()
+  // 这一行原先当场炸：`stateFor` 对三种变体只写了两个分支，调查型走到了
+  // `c.deliverables.map` 上（`Cannot read properties of undefined (reading 'map')`）。
+  // 真档链第一趟照出来的：2 份契约（1 份调查型 + 1 份实现型）**一个格都没跑**。
+  const handle = support.handle('agent-1' as never, contract)
+  const state = support.state('agent-1' as never, contract)
+  const b = new TextDecoder().decode(
+    assemble({ protocol: handle.protocol, model: handle.model, segments: sourcesFor(handle.protocol, state, handle.coord) }).zoneB,
+  )
+  assert.ok(b.includes('总目标：greet 现在怎么拼字符串？'), `B 区里没有调查型那句问题：${JSON.stringify(b)}`)
+  assert.ok(b.includes('要交的证据：现状'), `B 区里没有"要交的证据"那一行：${JSON.stringify(b)}`)
+  // **产物路径 = 契约写入面那几条**（`evidence/<agent 的每一段>/<备注>`，构造器按位置定名）。
+  // 原先给的是 `deliver/agent-1/`——旧约定，而这一行是 B 区的最后一行（近因那一处）：模型照它走
+  // 就会写到一个既不在契约写入面、验收也不看的地方。
+  assert.deepEqual([...handle.coord.outputPaths], ['evidence/agent-1/现状'], '调查型的产物路径该是契约写入面那几条')
+  assert.ok(b.includes('产物路径：evidence/agent-1/现状'), `B 区末尾没有那一行产物路径：${JSON.stringify(b)}`)
+  // 调查型没有断言那一栏：那两行都不该出现（空着不是漏了）。
+  assert.equal(b.includes('交付物：'), false, `调查型不该有"交付物"那一行：${JSON.stringify(b)}`)
+  assert.equal(b.includes('断言：'), false, `调查型不该有"断言"那一行：${JSON.stringify(b)}`)
+  console.log(
+    `①g 读数：调查型 B 区 ${b.length} 字节 · 产物路径 ${handle.coord.outputPaths.join(' · ')} · 没有"交付物"与"断言"那两行`,
+  )
+})

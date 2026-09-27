@@ -2201,7 +2201,10 @@ interface AgentStop {
 function outputsOf(c: Contract): readonly string[] {
   if (c.kind === 'implement') return []
   if (c.kind === 'resolve') return []
-  return [`deliver/${c.agent}/`]
+  // 调查型：**契约写入面那几条**（构造器按位置定名：`evidence/<agent 的每一段>/<备注>`）。
+  // 原先给的是 `deliver/<agent>/`——那是证据前缀那一次改写之前的旧约定，而这一行是 B 区的
+  // 最后一行（近因那一处）：模型照它走，就会写到一个**既不在契约写入面、验收也不看**的地方。
+  return c.evidenceRequired.map((e) => e.artifact)
 }
 
 function writeSetPaths(contracts: readonly Contract[]): string[] {
@@ -2750,9 +2753,22 @@ export function driverSupport(o: {
       task: {
         goal: c.kind === 'implement' ? c.goal : c.kind === 'investigate' ? c.question : base.task.goal,
         question: c.kind === 'investigate' ? c.question : '',
-        deliverables: c.kind === 'resolve' ? [...c.conflictPaths] : c.deliverables.map((d) => d.path),
-        evidenceRequired: c.assertions.map((a) => a.name),
-        assertions: c.assertions.map((a) => a.name),
+        // **三个变体各一个分支。** `implement` / `resolve` 那两条照旧（它们那几行的字节是录下来的
+        // 夹具绑着的，一个字都不能动）；补的是**调查型**那一条——它原先走 `c.deliverables.map`，
+        // 而 `InvestigateContract` **没有 `deliverables` 这一栏**（它只有 question ·
+        // evidenceRequired · seed），于是真驱动这一档在调查型那一格上当场
+        // `Cannot read properties of undefined (reading 'map')`：`round work --live` 第一次
+        // 跑到调查型契约时照出来的（真档链第一趟：2 份契约 · 一个格都没跑）。
+        deliverables:
+          c.kind === 'resolve'
+            ? [...c.conflictPaths]
+            : c.kind === 'implement'
+              ? c.deliverables.map((d) => d.path)
+              : [],
+        // 调查型的"要交的证据"是那几条备注；它的产物路径在末尾那行 `产物路径`（按位置定名，见
+        // `outputsOf`）。它**没有断言**——那一栏空着（"断言由 harness 跑"那一句因此也不该出现）。
+        evidenceRequired: c.kind === 'investigate' ? c.evidenceRequired.map((e) => e.note) : c.assertions.map((a) => a.name),
+        assertions: c.kind === 'investigate' ? [] : c.assertions.map((a) => a.name),
       },
     }
     states.set(agent, made)
