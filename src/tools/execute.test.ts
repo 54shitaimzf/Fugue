@@ -2,11 +2,12 @@
 // § 14.2 第 4 步 · § 9.6「`checkpoint`（模型侧）与 `fugue commit`（人侧）是同一个操作的两个
 // 名字」）。跑法：cd ~/fugue && node --test src/tools/execute.test.ts
 //
-//   ① 参数那一层：解不开的 JSON 是一次失败的结果（不是抛）· 少了必填参数说得出是哪一个
+//   ① 参数那一层：解不开的 JSON 是一次失败的结果（不是抛）· missing required argument 说得出是哪一个
 //   ② **写进去的字节读回来逐字节相同**（不是"写成功了"）：真视图 · 真日志 · 真对象库
 //   ③ `glob` / `grep` 按 `walk` 给的路径走，`**` 跨 `/`、`*` 不跨
 //   ④ **假模型驱动 读 → 写 → 检查点，走到一次真提交**，而**真工作树一个文件都没多**
 //   ⑤ 负对照：字节那一栏改成"读回来的 UTF-8 文本相同"→ 一条非法序列就把它变红
+//   ⑨ **模型读到的每一个字节都是英文**（口径：谁读谁的语言——人读的走中文 · 见证 § 8.11）
 import assert from 'node:assert/strict'
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -34,7 +35,8 @@ import type { AgentHandle } from '../runtime/step.ts'
 import { createRuntime, scriptedModel } from '../runtime/step.ts'
 import type { ToolCallRequest } from '../runtime/step.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
-import { faceOf, parseArgs } from './execute.ts'
+import { faceOf, noFace, parseArgs } from './execute.ts'
+import { capReceipt } from './receipt.ts'
 import type { ToolHost } from './execute.ts'
 import { createToolHost } from './host.ts'
 import { refHeadOf } from '../round/head.ts'
@@ -133,11 +135,11 @@ test('① 参数不是对象 · 少了必填参数：两条都是"一次失败�
 
     const noPath = await face('read', {}, b.host)
     assert.equal(noPath.ok, false)
-    assert.match(noPath.output, /少了必填参数 path/)
+    assert.match(noPath.output, /missing required argument path/)
 
     const noContent = await face('write', { path: 'a.txt' }, b.host)
     assert.equal(noContent.ok, false)
-    assert.match(noContent.output, /少了必填参数 content/)
+    assert.match(noContent.output, /missing required argument content/)
   } finally {
     await b.close()
   }
@@ -156,7 +158,7 @@ test('①d 路径形状不合法：一条失败的结果，不是抛——抛出
     for (const p of shapes) {
       const r = await face('read', { path: p }, b.host)
       assert.equal(r.ok, false, `read ${JSON.stringify(p)} 该回一条失败的结果`)
-      assert.match(r.output, /路径/, `read ${JSON.stringify(p)} 那句没说清路径哪里不对：${r.output}`)
+      assert.match(r.output, /path/, `read ${JSON.stringify(p)} 那句没说清路径哪里不对：${r.output}`)
       // **要指得出路**：那几句末尾都点出 glob 是看全貌的那一条（架构 § 8.4 纪律 2）。
       assert.match(r.output, /glob/, `read ${JSON.stringify(p)} 那句没指路：${r.output}`)
     }
@@ -188,7 +190,7 @@ test('② write 之后立刻 read：字节逐字节相同（含非 UTF-8 的字�
     const wrote = await face('write', { path: 'src/note.txt', content: text }, b.host)
     assert.equal(wrote.ok, true, wrote.output)
     // 返回文案不带 rev：那是架构内部的坐标，模型不需要看（W6 拿掉了它）。
-    assert.match(wrote.output, /写了 src\/note\.txt（\d+ 字节）\。$/)
+    assert.match(wrote.output, /wrote src\/note\.txt \(\d+ bytes\)\.$/)
 
     const got = await face('read', { path: 'src/note.txt' }, b.host)
     assert.equal(got.ok, true, got.output)
@@ -239,7 +241,7 @@ test('③ glob 与 grep：`**` 跨 `/` · `*` 不跨 · grep 报行号', async (
     assert.match(hits.output, /src\/deep\/c\.ts:1:/)
 
     const none = await face('glob', { pattern: '没有/*.zzz' }, b.host)
-    assert.match(none.output, /没有匹配/)
+    assert.match(none.output, /no path matches/)
   } finally {
     await b.close()
   }
@@ -482,7 +484,7 @@ test('⑥ 目录里 required 的键，实现读的名字与它逐字相等（不
     const need = (e.parameters as unknown as { readonly required?: readonly string[] }).required ?? []
     if (need.length === 0) {
       const got = await fn({}, host, { agent: AGENT, step: 0, cwd: '', holder: false })
-      assert.equal(got.output.includes('少了必填参数'), false, `${e.name} 目录里没有必填键，实现却报了缺：${got.output}`)
+      assert.equal(got.output.includes('missing required argument'), false, `${e.name} 目录里没有必填键，实现却报了缺：${got.output}`)
       continue
     }
     // **逐个问下去，不是只问第一个。** 原先只看第一次报出来的那个名字，于是"第一个键对得上、
@@ -494,10 +496,10 @@ test('⑥ 目录里 required 的键，实现读的名字与它逐字相等（不
     const got: string[] = []
     for (let i = 0; i < need.length; i++) {
       const r = await fn(given, host, { agent: AGENT, step: 0, cwd: '', holder: false })
-      const m = /少了必填参数 (\S+?)——/.exec(r.output)
+      const m = /missing required argument (\S+?) —/.exec(r.output)
       assert.ok(
         m !== null,
-        `${e.name} 给了 ${Object.keys(given).join(' · ') || '(空)'} 之后，实现报的不是"少了必填参数"：${r.output}`,
+        `${e.name} 给了 ${Object.keys(given).join(' · ') || '(空)'} 之后，实现报的不是"missing required argument"：${r.output}`,
       )
       got.push(m[1]!)
       given[m[1]!] = 'x'
@@ -558,7 +560,7 @@ test('⑥b edit：按公布面（old_string/new_string/replace_all）改得到�
     // ④ 负对照：目录里没有 `find`/`replace`（也没有 `to`/`mode`）——按旧名字给，缺的是公布的键。
     const legacy = await tryEdit({ path: 'src/a.ts', find: 'const a', replace: 'let a' })
     assert.equal(legacy.ok, false)
-    assert.match(legacy.output, /少了必填参数 old_string/)
+    assert.match(legacy.output, /missing required argument old_string/)
     assert.equal(await now(), 'const a = 42\nconst b = 2\n', '按未公布的名字给，一个字节都不许变')
   } finally {
     await b.close()
@@ -579,10 +581,10 @@ test('⑦ 待办：后一份整体覆盖前一份 · 重放得出同一份 · �
       b.host,
     )
     assert.equal(first.ok, true, first.output)
-    assert.match(first.output, /记下了 2 条待办/)
+    assert.match(first.output, /todos recorded: 2/)
 
     const second = await face('todo_write', { todos: [{ content: '写一遍', status: 'completed' }] }, b.host)
-    assert.match(second.output, /记下了 1 条待办/)
+    assert.match(second.output, /todos recorded: 1/)
     assert.equal(second.output.includes('读一遍'), false, '后一份整体覆盖前一份——前一份那一条不该还在回执里')
 
     // 落的是两条 `holder/todos`，而重放时这一格手里那份是最后一条。
@@ -613,7 +615,7 @@ test('⑧ exit_plan_mode：持轮者落 holder/plan 并停在门口；子 agent 
     // 子 agent：不是错误，是角色不对——回一句指得出出路的话，不落事件、也不叫停。
     const asSub = await face('exit_plan_mode', { plan: '我要先拆三格' }, b.host, '', false)
     assert.equal(asSub.ok, false, asSub.output)
-    assert.match(asSub.output, /这不是你这一格的事/)
+    assert.match(asSub.output, /not your cell's job/)
     assert.equal(asSub.halt, undefined, '子 agent 那一趟不叫停——它还得接着干活')
 
     // 持轮者：落事件 + 停在门口。
@@ -622,7 +624,7 @@ test('⑧ exit_plan_mode：持轮者落 holder/plan 并停在门口；子 agent 
     assert.equal(asHolder.halt, true, '停在门口：这一格到这儿为止')
     // **回执只说实话**（W10 处三 → C4 落地时那一句改回来）：门真的存在了（`fugue round go`）
     // ——这一趟只把计划落进日志，发契约是放行那一下的事（架构 § 15.1.a）。
-    assert.match(asHolder.output, /这一轮停在门口/)
+    assert.match(asHolder.output, /This round stops at the door/)
     assert.match(asHolder.output, /fugue round go/, '门由人开这句话该指得出放行那条命令')
 
     const rows: LogEvent[] = []
@@ -653,7 +655,7 @@ test('⑨ ask_user_question：持轮者落 holder/ask 并停在同一道门口�
     // 子 agent：角色不对，回一句指得出出路的话。
     const asSub = await face('ask_user_question', { questions: [{ question: '要不要删掉它？' }] }, b.host, '', false)
     assert.equal(asSub.ok, false, asSub.output)
-    assert.match(asSub.output, /这不是你这一格的事/)
+    assert.match(asSub.output, /not your cell's job/)
 
     // 问超了：当场拒，话里指得出去处（不是静默截断成前四个）。
     const tooMany = await face(
@@ -664,7 +666,7 @@ test('⑨ ask_user_question：持轮者落 holder/ask 并停在同一道门口�
       true,
     )
     assert.equal(tooMany.ok, false, tooMany.output)
-    assert.match(tooMany.output, /一次最多问 4 个/)
+    assert.match(tooMany.output, /at most 4 questions per call/)
 
     // 持轮者：落事件 + 停在门口。
     const asked = await face(
@@ -686,6 +688,83 @@ test('⑨ ask_user_question：持轮者落 holder/ask 并停在同一道门口�
     assert.equal(one.digest.length, 16, 'digest 与 round/intent 同一个口径（16 字符）')
     assert.equal(rows.some((e) => e.t === 'contract/issue'), false, '停在门口的时候不许发契约')
     assert.deepEqual(worktreeOf(b.root), before, `工作树多了东西：${worktreeOf(b.root).join(' ')}`)
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ⑨ 模型面那一份的语言 ────────────────────────────────────────────────────────
+//
+// **口径：谁读谁的语言。** 模型读到的每一个字节——装配出来的提示词 · 工具回执 · 拒的话 ·
+// 回执被截断时那句标记——走英文；人读的走中文（命令行 · 日志 · 报告 · 停因）；印记（断言 ·
+// 载入时抛出 · 配置错）也归人。`deepseek-harness` 的先例就是这么分的：系统提示词通篇英文
+// （`snapshots/web/*/system-prompt.expected.md`），工具面给模型看的诊断也是英文
+// （`tool-fs/src/error.ts` 的模块注释写着 "the stable message shown to the model"），
+// 而唯一一句语言指令出现在"系统要模型产出给人看的文字"的地方——会话标题那一路写着
+// `Use the language of the messages.`。人的那一面它另有一套本地化（`client/locale`）。
+//
+// **这一条量的是回执那一格**：正文里带着文件内容的（`read` · `grep`）只看**头一行**——
+// 案例内容是中文，那是人写的，不归这一条管；而**案例内容之外的每一个字节**都由这一条判。
+// 输入一律用 ASCII：回执里出现汉字，就只能是 harness 自己写的。
+test('⑨ 模型读到的回执里没有一个汉字（正文那几格只看头一行）', async () => {
+  const CJK = /[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/
+  const b = await bench()
+  try {
+    await b.host.writeBytes('note.txt' as RelPath, new Uint8Array(Buffer.from('这是一份中文内容\n', 'utf8')))
+    const judge = (what: string, text: string, headOnly = false): void => {
+      const part = headOnly ? (text.split('\n')[0] ?? '') : text
+      assert.ok(!CJK.test(part), `${what} 那一份里有汉字：${JSON.stringify(part.slice(0, 200))}`)
+    }
+    // **负对照：这一条自己有牙**——换成一份中文的回执，当场就该红。
+    assert.throws(() => judge('负对照', '视图里没有这个文件：x'), /那一份里有汉字/)
+    // 一 · 十二条工具各自那一种回执（成功与失败两路都走一遍）
+    const calls: readonly (readonly [string, unknown, boolean])[] = [
+      ['read', { path: 'note.txt' }, true],
+      ['read', { path: 'nope.txt' }, false],
+      ['write', { path: 'made.txt', content: 'made\n' }, false],
+      // `edit` 那一格的失败路是**抛**（`host.ts` 的 find 没找到 → `tool-threw` → 那一趟就此收场），
+      // 那不是回执，所以这一条量的是它成功那一路。
+      ['edit', { path: 'made.txt', old_string: 'made', new_string: 'made it' }, false],
+      ['read_image', { path: 'nope.png' }, false],
+      ['glob', { pattern: 'nothing/*.zzz' }, false],
+      ['grep', { pattern: 'made', path: '' }, true],
+      ['bash', { command: '/bin/sh -c "echo hi"' }, false],
+      ['todo_write', { todos: [{ content: 'one thing', status: 'pending' }] }, false],
+      ['todo_write', { todos: 'not an array' }, false],
+      ['exit_plan_mode', { plan: 'write made.txt' }, false],
+      ['exit_plan_mode', { plan: 'write made.txt', planFilePath: 'notes.md' }, false],
+      ['ask_user_question', { questions: [{ question: 'which one?' }] }, false],
+      ['ask_user_question', { questions: [] }, false],
+      ['checkpoint', { message: 'step one' }, false],
+      ['read', {}, false],
+      ['bash', {}, false],
+      ['grep', { pattern: '(' }, false],
+      ['glob', { pattern: '' }, false],
+      ['todo_write', {}, false],
+      ['checkpoint', {}, false],
+    ]
+    for (const [name, args, headOnly] of calls) {
+      const r = await face(name, args, b.host, '', true)
+      judge(`${name} ${JSON.stringify(args)}`, r.output, headOnly)
+    }
+    // 二 · 路径形状不合法那一路（`PathShapeError` 接成一条失败的结果）
+    for (const raw of ['.', '/etc/passwd', 'a//b', 'a/./b', 'a/../b', 'a\\b']) {
+      const r = await face('read', { path: raw }, b.host)
+      assert.equal(r.ok, false, `${JSON.stringify(raw)} 该拒`)
+      judge(`read ${JSON.stringify(raw)}`, r.output)
+    }
+    // 三 · 围栏那四句（拒的话与"接不上实现"那一条都在这一格里）
+    for (const raw of ['/etc/passwd', '../../escape', 'a\\b']) {
+      const got = b.roots.resolveVirtual(raw as never, '' as never)
+      assert.equal(got.ok, false, `${raw} 该被围栏拒`)
+      if (!got.ok) {
+        judge(`围栏 ${raw}`, got.error.message)
+        judge(`noFace ${raw}`, noFace('bash', got.error).output)
+      }
+    }
+    // 四 · 回执被截断时那句标记（上限那一处是常数，不给模型选）
+    judge('截断标记', capReceipt(`${'x'.repeat(9000)}\n`, 100))
+    console.log('⑨ 读数：回执 21 条（含失败路）· 路径形状 6 条 · 围栏 3 条 · 截断标记 1 条——一个汉字都没有')
   } finally {
     await b.close()
   }

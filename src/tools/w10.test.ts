@@ -158,7 +158,7 @@ function splitCapped(out: string): {
   readonly N: number
   readonly L: number
 } {
-  const m = out.match(/\n…（中段略去 (\d+) 字节 · 全文共 (\d+) 字节 (\d+) 行）…\n/)
+  const m = out.match(/\n…\((\d+) bytes omitted · (\d+) bytes and (\d+) lines in all\)…\n/)
   assert.ok(m !== null, `回执里没有那一句定死的标记：${out.slice(0, 300)}`)
   const at = out.indexOf(m![0]!)
   return {
@@ -199,7 +199,7 @@ test('① 超上限的回执：头尾逐字是原文的头尾，标记与 M · N
   assertNoHalfChar(head, '头')
   assertNoHalfChar(tail, '尾')
 
-  assert.equal(mark, `\n…（中段略去 ${M} 字节 · 全文共 ${N} 字节 ${L} 行）…\n`, '标记逐字')
+  assert.equal(mark, `\n…(${M} bytes omitted · ${N} bytes and ${L} lines in all)…\n`, '标记逐字')
   assert.equal(N, bytesOf(text), `N 该是原文的字节数 ${bytesOf(text)}`)
   assert.equal(L, text.split('\n').length - 1, 'L 该是原文的行数')
   assert.equal(M, N - bytesOf(head) - bytesOf(tail), 'M 该是「全文 − 头 − 尾」')
@@ -225,7 +225,7 @@ test('① 真实链路：`read` 与 `grep` 两条超上限的回执都带同一�
     // 标记里那两个数是**那条回执原文**的数（头那一行 + 正文），不是台子上那份 `text` 的数
     // ——`read` 的回执头本身也占字节与行。拿 `lineCount` 对原文核一遍（同一处口径）。
     const { lineCount } = await import('./receipt.ts')
-    const receiptText = `big.txt（${bytesOf(text)} 字节 · ${lineCount(text)} 行 · mode 100644）\n${text}`
+    const receiptText = `big.txt (${bytesOf(text)} bytes · ${lineCount(text)} lines · mode 100644)\n${text}`
     assert.equal(r1.N, bytesOf(receiptText), 'N 是那条回执原文的字节数')
     assert.equal(r1.L, lineCount(receiptText), 'L 是那条回执原文的行数')
     assert.ok(read.output.endsWith(text.slice(-12)), '尾就是原文的尾')
@@ -260,7 +260,7 @@ test('② 不到上限的回执逐字节原样（截断不许误伤小输出）'
     await b.host.writeBytes('small.txt' as RelPath, new TextEncoder().encode(small))
     const got = await face('read', { path: 'small.txt' }, b.host)
     assert.equal(got.ok, true)
-    assert.ok(!got.output.includes('中段略去'), `小输出的回执里不该有标记：${got.output}`)
+    assert.ok(!got.output.includes('bytes omitted'), `小输出的回执里不该有标记：${got.output}`)
     assert.ok(got.output.endsWith(small), '正文逐字节原样跟在头那一行后面')
 
     // 恰好在边界上的那一档也不许动（`<= limit` 不进截断）。
@@ -278,10 +278,10 @@ test('⑦ 负对照：把截断上限调成 0 → 判据 ② 当场红（小输�
   const small = 'a.ts 这一份很短。\n'
   const capped = capReceipt(small, 0)
   assert.notEqual(capped, small, '上限调成 0 之后，小输出必须被截——这正是判据 ② 会红的样子')
-  assert.match(capped, /中段略去 \d+ 字节 · 全文共 \d+ 字节 \d+ 行/, '标记照旧按那句话给')
+  assert.match(capped, /bytes omitted · \d+ bytes and \d+ lines in all/, '标记照旧按那句话给')
   // 上限 0 时头尾都留不下东西（`headWant = 0`）——回执就只剩标记那一句，而 M = N。
   assert.ok(!capped.includes(small), '上限 0 时原文一个字节都留不下')
-  assert.match(capped, new RegExp(`中段略去 ${bytesOf(small)} 字节 · 全文共 ${bytesOf(small)} 字节`), 'M = N（一个字节都没留）')
+  assert.match(capped, new RegExp(`${bytesOf(small)} bytes omitted · ${bytesOf(small)} bytes and`), 'M = N（一个字节都没留）')
   console.log(`⑦ 负对照读数：上限 0 → 那小段回执变成 ${bytesOf(capped)} 字节且带标记（判据 ② 会红）`)
 })
 
@@ -295,12 +295,12 @@ test('③ `bash` / `run_action` 的回执里逐字查不到「毫秒」', async 
     const ran = await exec.execute(callOf('bash', { command: '/bin/sh -c "echo hi"' }, 'c1'), h)
     assert.equal(ran.ok, true, `bash 该成：${ran.output}`)
     assert.ok(!ran.output.includes('毫秒'), `回执里还有毫秒：${ran.output}`)
-    assert.match(ran.output, /^退出码 0/, '回执头仍是「退出码 N」（截断之前拼上，永远在）')
+    assert.match(ran.output, /^exit code 0/, '回执头仍是「exit code N」（截断之前拼上，永远在）')
 
     const act = await exec.execute(callOf('run_action', { action: '/bin/sh -c "echo hi"' }, 'c2'), h)
     assert.equal(act.ok, true, `run_action 该成：${act.output}`)
     assert.ok(!act.output.includes('毫秒'), `回执里还有毫秒：${act.output}`)
-    assert.match(act.output, /^动作 \/bin\/sh -c "echo hi" 退出码 0/, '回执头照旧')
+    assert.match(act.output, /^action \/bin\/sh -c "echo hi" exit code 0/, '回执头照旧')
     console.log(`③ 读数：bash「${ran.output.trim()}」· run_action「${act.output.trim()}」——都没有毫秒`)
   } finally {
     await b.close()
@@ -326,7 +326,8 @@ test('④ `exit_plan_mode` / `ask_user_question` 的回执里指的命令在命�
       assert.match(out, /fugue round go/, `${name} 的回执该指得出放行那条命令（round go）：${out}`)
       // 回执里提到的每一条 `fugue ...` 命令，都要在命令面那份用法里找得到（**不另抄一份名单**）。
       for (const m of out.matchAll(/`(fugue [^`]+)`/g)) {
-        const words = m[1]!.split(/\s+/).slice(1)
+        // 尖括号里是占位符（回执那一句是英文，用法那一份是中文），要查的是**子命令真的存在**。
+        const words = m[1]!.split(/\s+/).slice(1).filter((w) => !w.includes('<') && !w.includes('>'))
         assert.ok(
           words.every((w) => !w.startsWith('-') && USAGE.includes(w)),
           `${name} 指的命令「${m[1]}」在命令面那份用法里找不到：${words.join(' · ')}`,

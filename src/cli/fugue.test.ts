@@ -283,7 +283,7 @@ test('路径走出工作区：拒在围栏上，文案带指路', async () => {
     ] as [string, Run][]) {
       assert.equal(r.code, 1, `${what} ${p} 该拒：${r.stderr}`)
       assert.match(r.stderr, /^\[boundary: /, `${what} ${p} 报的是围栏那句话：${r.stderr}`)
-      assert.match(r.stderr, /走申请（§ 15\.3\.b）/, `${what} ${p} 带指路：${r.stderr}`)
+      assert.match(r.stderr, /goes through an application \(§ 15\.3\.b\)/, `${what} ${p} 带指路：${r.stderr}`)
     }
   }
   // 围栏不误伤：根之上不许走，**根之内可以走**（`a.txt` 与 `./a.txt` 是同一条路径）。

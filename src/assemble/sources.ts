@@ -283,7 +283,7 @@ export function turnText(turn: Turn): string {
   if (turn.text !== undefined && turn.text !== '') lines.push(`Model: ${turn.text}`)
   turn.results.forEach((r, i) => {
     const name = turn.calls[i]?.name ?? '?'
-    lines.push(`${r.isError ? 'Tool (failed)' : 'Tool'} ${name} (call ${i + 1})：\n${r.output}`)
+    lines.push(`${r.isError ? 'Tool (failed)' : 'Tool'} ${name} (call ${i + 1}):\n${r.output}`)
   })
   return lines.join('\n')
 }

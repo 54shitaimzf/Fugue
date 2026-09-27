@@ -20,7 +20,7 @@ import type { Denied, DenyKind, Result } from './contract.ts'
 import { resolveRaw, toPhysical } from './paths.ts'
 
 /** 拒绝文案里那句指路（架构 § 8.4 纪律 2 的原句）。**文案是形状的一部分**：拒绝要给出去处。 */
-const APPLY = '需要访问工作区之外，走申请（§ 15.3.b）。'
+const APPLY = 'reaching outside the workspace goes through an application (§ 15.3.b).'
 
 function refusal(
   kind: DenyKind,
@@ -45,7 +45,7 @@ export function deny(kind: DenyKind, raw: string, at: string, detail: string): D
         raw,
         at,
         detail,
-        `[boundary: 视图内的路径是相对的]  ${raw} —— ${detail}。工作区内请用 read；${APPLY}`,
+        `[boundary: paths inside the view are relative]  ${raw} — ${detail}. Use read inside the workspace; ${APPLY}`,
       )
     case 'escape':
       return refusal(
@@ -53,7 +53,7 @@ export function deny(kind: DenyKind, raw: string, at: string, detail: string): D
         raw,
         at,
         detail,
-        `[boundary: 路径在工作区外]  ${raw} —— ${detail}。工作区内请用 read；${APPLY}`,
+        `[boundary: path is outside the workspace]  ${raw} — ${detail}. Use read inside the workspace; ${APPLY}`,
       )
     case 'through-symlink':
       return refusal(
@@ -61,8 +61,8 @@ export function deny(kind: DenyKind, raw: string, at: string, detail: string): D
         raw,
         at,
         detail,
-        `[boundary: 路径穿过了软链]  ${raw} —— ${at} 是一个软链，而视图里的路径不跟着软链走。` +
-          '要看它指向的东西，先把那份东西取进工作区（§ 8.14 的合并）。',
+        `[boundary: path crosses a symlink]  ${raw} — ${at} is a symlink, and paths in the view do not follow symlinks.` +
+          ' To look at what it points to, bring that thing into the workspace first (the merge in § 8.14).',
       )
     case 'not-a-path':
       return refusal(
@@ -70,8 +70,8 @@ export function deny(kind: DenyKind, raw: string, at: string, detail: string): D
         raw,
         at,
         detail,
-        `[boundary: 这不是视图内的路径]  ${raw} —— ${detail}。` +
-          '视图内的路径用 / 分段，没有空段、. 段与反斜杠。',
+        `[boundary: not a path inside the view]  ${raw} — ${detail}.` +
+          ' Paths inside the view are /-separated: no empty segment, no . segment, no backslash.',
       )
   }
 }
@@ -107,12 +107,12 @@ export function resolveVirtual(
       // 这一段在真实树上还不存在（或它下面是文件、走不过去）——底下没有软链可穿，放行。
       if (code === 'ENOENT' || code === 'ENOTDIR') return { ok: true, value: rel }
       // 看不出来是什么就不放行：这一关是"可达集相等"的凭据，凭据不齐时不发。
-      return { ok: false, error: deny('not-a-path', raw, prefix, `lstat 失败（${code ?? '未知'}）`) }
+      return { ok: false, error: deny('not-a-path', raw, prefix, `lstat failed (${code ?? 'unknown'})`) }
     }
     if (isLink) {
       return {
         ok: false,
-        error: deny('through-symlink', raw, prefix, `${prefix} 是一个软链`),
+        error: deny('through-symlink', raw, prefix, `${prefix} is a symlink`),
       }
     }
   }

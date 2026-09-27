@@ -153,10 +153,10 @@ test('② 围栏：.. 穿越 · 绝对路径 · 逃逸软链 → Denied（lstat 
 
   // 拒绝文案指路，不筑墙（§ 8.4 纪律 2）
   const out = denied('/etc/passwd')
-  assert.match(out.message, /工作区外|视图内的路径是相对的/)
-  assert.match(out.message, /走申请（§ 15\.3\.b）/)
+  assert.match(out.message, /outside the workspace|paths inside the view are relative/)
+  assert.match(out.message, /goes through an application \(§ 15\.3\.b\)/)
   assert.equal(out.raw, '/etc/passwd')
-  assert.match(denied('esc/passwd').message, /软链/)
+  assert.match(denied('esc/passwd').message, /symlink/)
 })
 
 test('③ 落点探测：9p / drvfs 拒绝启动并说出原因（E1 是硬要求）', (t) => {

@@ -273,17 +273,17 @@ export function parseArgs(raw: string): { readonly ok: true; readonly value: Rec
   try {
     value = JSON.parse(trimmed)
   } catch (err) {
-    return { ok: false, why: `参数不是一段 JSON：${(err as Error).message}` }
+    return { ok: false, why: `arguments are not JSON: ${(err as Error).message}` }
   }
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return { ok: false, why: '参数得是一个 JSON 对象（键值对），收到的是别的形状。' }
+    return { ok: false, why: 'arguments must be a JSON object (key/value pairs); this is something else.' }
   }
   return { ok: true, value: value as Record<string, unknown> }
 }
 
 /** 少一个必填参数时那句统一的话（目录里凡是必填的都走它，文案不各写一份）。 */
 function missing(tool: string, name: string): FaceResult {
-  return no(`${tool} 少了必填参数 ${name}——模型这一次给的对象里没有它。`)
+  return no(`${tool} is missing required argument ${name} — the object you passed does not carry it.`)
 }
 
 const utf8Of = (b: Uint8Array): string => Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString('utf8')
@@ -305,8 +305,8 @@ async function guardPath(f: () => Promise<FaceResult>): Promise<FaceResult> {
   } catch (err) {
     if (!(err instanceof PathShapeError)) throw err
     return no(
-      `${err.message}——那几栏要指向一条具体的文件（视图内的相对路径）。` +
-        '要看工作区里有哪些路径用 glob：pattern 给 `**/*` 就是全都要。',
+      `${err.message} — those fields must point at one concrete file (a relative path inside the view).` +
+        ' To see which paths the workspace has, use glob: pattern `**/*` asks for all of them.',
     )
   }
 }
@@ -323,13 +323,13 @@ const readFace: ToolFn = async (args, host) => {
   const path = text(args, 'path')
   if (path === null) return missing('read', 'path')
   const got = await host.readBytes(path)
-  if (got === null) return no(`视图里没有 ${path}（读不到就是没有——这一层不区分"不存在"与"读不了"）。`)
+  if (got === null) return no(`no ${path} in the view (unreadable reads as absent — this layer does not tell the two apart).`)
   const body = utf8Of(got.bytes)
   // **行数走 `receipt.ts` 那一处**：这一行里的「L 行」与截断标记里的「共 L 行」必须是同一个数
   // ——两处各算一次，两个数就迟早不一样（施工当场撞到过：头里 401 行、标记里 400 行）。
   const lines = lineCount(body)
   return ok(
-    `${path}（${got.bytes.byteLength} 字节 · ${lines} 行 · mode ${got.mode.toString(8)}）\n${body}`,
+    `${path} (${got.bytes.byteLength} bytes · ${lines} lines · mode ${got.mode.toString(8)})\n${body}`,
   )
 }
 
@@ -340,7 +340,7 @@ const writeFace: ToolFn = async (args, host) => {
   if (content === null) return missing('write', 'content')
   const { rev } = await host.writeBytes(path, bytesOf(content))
   // **不带修订号**：rev 是架构内部的坐标，模型不需要看（C 区那一侧同样不许出现环境标识）。
-  return ok(`写了 ${path}（${Buffer.byteLength(content, 'utf8')} 字节）。`)
+  return ok(`wrote ${path} (${Buffer.byteLength(content, 'utf8')} bytes).`)
 }
 
 const editFace: ToolFn = async (args, host) => {
@@ -354,18 +354,18 @@ const editFace: ToolFn = async (args, host) => {
   if (replace === null) return missing('edit', 'new_string')
   const raw: EditRaw = { kind: 'replace', find, replace, all: flag(args, 'replace_all') }
   const got = await host.edit(path, raw)
-  if (!got.changed) return ok(`${path} 没有变化（归一之后与现值相同），视图还是 rev ${got.rev}。`)
-  return ok(`${path} 替换了${raw.all ? '每一处' : '一段'}。`)
+  if (!got.changed) return ok(`${path} unchanged (normalises to the current value); the view is still rev ${got.rev}.`)
+  return ok(`${path}: replaced ${raw.all ? 'every occurrence' : 'one occurrence'}.`)
 }
 
 const readImageFace: ToolFn = async (args, host) => {
   const path = text(args, 'path')
   if (path === null) return missing('read_image', 'path')
   const got = await host.readBytes(path)
-  if (got === null) return no(`视图里没有 ${path}。`)
+  if (got === null) return no(`no ${path} in the view.`)
   // **这一版不判像素，只报它是什么。** 真解码要一个图像库，而"运行时依赖不引入"是硬约束
   // （PLAN § 6）——所以这一格今天兑现的是"能把它原样取出来并说清多大"，不是"能看懂它"。
-  return ok(`${path}：${got.bytes.byteLength} 字节的图（这一版只取字节 · 不判像素）。`)
+  return ok(`${path}: an image of ${got.bytes.byteLength} bytes (this version takes bytes only — it does not read pixels).`)
 }
 
 /**
@@ -379,7 +379,7 @@ const globFace: ToolFn = async (args, host) => {
   const all = await host.walk()
   const re = globToRe(pattern)
   const hit = all.filter((p) => (dir === '' || p.startsWith(dir + '/')) && re.test(p))
-  return ok(hit.length === 0 ? `没有匹配 ${pattern} 的路径。` : `${hit.length} 条：\n${hit.join('\n')}`)
+  return ok(hit.length === 0 ? `no path matches ${pattern}.` : `${hit.length} paths:\n${hit.join('\n')}`)
 }
 
 const grepFace: ToolFn = async (args, host, ctx) => {
@@ -390,7 +390,7 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   try {
     re = new RegExp(pattern)
   } catch (err) {
-    return no(`这不是一条正则：${(err as Error).message}`)
+    return no(`that is not a regular expression: ${(err as Error).message}`)
   }
   const all = await host.walk()
   const hits: string[] = []
@@ -404,7 +404,7 @@ const grepFace: ToolFn = async (args, host, ctx) => {
         if (re.test(line)) hits.push(`${path}:${i + 1}:${line}`)
       })
   }
-  return ok(hits.length === 0 ? `没有匹配 ${pattern} 的行。` : `${hits.length} 行：\n${hits.join('\n')}`)
+  return ok(hits.length === 0 ? `no line matches ${pattern}.` : `${hits.length} lines:\n${hits.join('\n')}`)
 }
 
 // ── 执行类那两个 ───────────────────────────────────────────────────────────────
@@ -420,7 +420,7 @@ const bashFace: ToolFn = async (args, host, ctx) => {
   const res = await host.run({ command, cwd, timeoutMs })
   // **回执里不带毫秒**（PLAN § 5.17 处二）：它是环境噪声，与 W6 拿掉的修订号同一类——
   // 模型不需要知道这一步花了多久，而它进 C 区之后就永远留在后面每一步的视野里。
-  const head = `退出码 ${res.exit}${res.denied ? ' · 被沙箱拒过' : ''}`
+  const head = `exit code ${res.exit}${res.denied ? ' · refused by the sandbox' : ''}`
   const body = [res.stdout === '' ? '' : `stdout:\n${res.stdout}`, res.stderr === '' ? '' : `stderr:\n${res.stderr}`]
     .filter((s) => s !== '')
     .join('\n')
@@ -442,7 +442,7 @@ const runActionFace: ToolFn = async (args, host, ctx) => {
   const cwd = typeof args['cwd'] === 'string' ? (args['cwd'] as string) : ctx.cwd
   const res = await host.runAction({ action, args: rest, cwd })
   // 与 `bash` 同一条：回执里不带毫秒。
-  const head = `动作 ${action} 退出码 ${res.exit}`
+  const head = `action ${action} exit code ${res.exit}`
   const body = [res.stdout, res.stderr].filter((s) => s !== '').join('\n')
   return { ok: res.exit === 0, output: body === '' ? head : `${head}\n${body}` }
 }
@@ -457,16 +457,16 @@ function todoLine(t: TodoItem): string {
 const todoWriteFace: ToolFn = async (args, host) => {
   const raw = arg(args, 'todos')
   if (raw === undefined || raw === null) return missing('todo_write', 'todos')
-  if (!Array.isArray(raw)) return no('todo_write 的 todos 得是一个数组——这一次给的不是一个数组。')
+  if (!Array.isArray(raw)) return no('todo_write todos must be an array — this is not one.')
   const todos: TodoItem[] = []
   for (const one of raw) {
-    if (one === null || typeof one !== 'object' || Array.isArray(one)) return no('待办里有一条不是一个对象。')
+    if (one === null || typeof one !== 'object' || Array.isArray(one)) return no('one todo entry is not an object.')
     const row = one as Record<string, unknown>
     const content = typeof row['content'] === 'string' ? (row['content'] as string) : null
     const status = row['status']
-    if (content === null) return no('待办里有一条没给 content——每一条都要说清"这件事要做什么"。')
+    if (content === null) return no('one todo entry has no content — every entry has to say what the item is.')
     if (status !== 'pending' && status !== 'in_progress' && status !== 'completed') {
-      return no(`待办里有一条 status 不是那三种（pending · in_progress · completed）：${String(status)}`)
+      return no(`one todo entry has a status outside the three (pending · in_progress · completed): ${String(status)}`)
     }
     todos.push({
       content,
@@ -475,26 +475,26 @@ const todoWriteFace: ToolFn = async (args, host) => {
     })
   }
   const r = await host.setTodos(todos)
-  return ok(`记下了 ${r.count} 条待办（整体覆盖上一次那一份）：\n${todos.map(todoLine).join('\n')}`)
+  return ok(`todos recorded: ${r.count} (this whole list replaces the previous one):\n${todos.map(todoLine).join('\n')}`)
 }
 
 const askUserQuestionFace: ToolFn = async (args, host, ctx) => {
   const raw = arg(args, 'questions')
   if (raw === undefined || raw === null) return missing('ask_user_question', 'questions')
-  if (!Array.isArray(raw)) return no('ask_user_question 的 questions 得是一个数组——这一次给的不是一个数组。')
-  if (raw.length === 0) return no('一个问题都没问：查得到的先自己查，能自己定的按"最干净、最可扩展"定下来。')
+  if (!Array.isArray(raw)) return no('ask_user_question questions must be an array — this is not one.')
+  if (raw.length === 0) return no('no question asked: look up what you can look up, and settle what you can settle yourself by "cleanest and most extensible".')
   if (raw.length > MAX_ASKS) {
     return no(
-      `一次最多问 ${MAX_ASKS} 个（这一次给了 ${raw.length} 个）——人一次能答的是有限的。` +
-        '留最要紧的那几个，其余的按"最干净、最可扩展"自己定下来，把定下来的那一条写进计划里。',
+      `at most ${MAX_ASKS} questions per call (this one gave ${raw.length}) — a person can only answer so many at a time.` +
+        ' Keep the most important ones and settle the rest yourself by "cleanest and most extensible", writing what you settled into the plan.',
     )
   }
   const asks: AskItem[] = []
   for (const one of raw) {
-    if (one === null || typeof one !== 'object' || Array.isArray(one)) return no('问题里有一条不是一个对象。')
+    if (one === null || typeof one !== 'object' || Array.isArray(one)) return no('one question is not an object.')
     const row = one as Record<string, unknown>
     const question = typeof row['question'] === 'string' ? (row['question'] as string) : null
-    if (question === null || question === '') return no('问题里有一条没写问什么（question）——空着的问题人没法答。')
+    if (question === null || question === '') return no('one question has no question text — an empty question cannot be answered.')
     const options = Array.isArray(row['options'])
       ? (row['options'] as unknown[]).map((o) => {
           const r = o as Record<string, unknown>
@@ -512,7 +512,7 @@ const askUserQuestionFace: ToolFn = async (args, host, ctx) => {
     })
   }
   if (!ctx.holder) {
-    return no('这不是你这一格的事：你拿到的是一份契约，照它做完这一步就行——要问人的时候把问题带回持轮者那一格。')
+    return no('this is not your cell\'s job: you hold a contract, so do that one step — when something needs a human, carry the question back to the holder cell.')
   }
   await host.askUser(asks)
   return {
@@ -522,9 +522,9 @@ const askUserQuestionFace: ToolFn = async (args, host, ctx) => {
     // 而"答完接着走"是 `fugue say <一句话>`：那句话进这一趟的尾端（C 区第一条），立刻带着它再跑
     // 一趟持轮者，答完就改这一版草案、重判、仍停在门口（架构 § 15.1.a 的"问与答"）。
     output:
-      `问了 ${asks.length} 个问题，落进日志了。**这一轮停在门口**——` +
-      '人的答案用 `fugue say <一句话>` 接上去（那一趟带着这句话再跑一遍，改的是这份草案）；' +
-      '放行仍然是 `fugue round go`。',
+      `asked ${asks.length} questions, and they are in the log. **This round stops at the door** — ` +
+      'the human\'s answer goes in with `fugue say <one sentence>` (that pass takes the sentence along, and what it changes is this draft); ' +
+      'letting it through is still `fugue round go`.',
   }
 }
 
@@ -535,15 +535,15 @@ const exitPlanModeFace: ToolFn = async (args, host, ctx) => {
   // 子 agent 调它：**不是错误，是角色不对**。它手里是一份契约，不是一份计划——所以回一句
   // 指得出出路的话（架构 § 8.4 纪律 2），不落事件、也不停。
   if (!ctx.holder) {
-    return no('这不是你这一格的事：你拿到的是一份契约，照它做完这一步就行——计划是持轮者在预备态里的事。')
+    return no('this is not your cell\'s job: you hold a contract, so do that one step — the plan is the holder\'s business in the first state.')
   }
   // **自报的那一条路径必须就是这一趟那一份**（S9 那条缺口的第二半）：`round plan` 读回来的
   // 是 `draftPathOf(round)` 那一条，模型报一个别处写的路径只会让那一栏与真源分家——而分家
   // 不报错，只表现为"草案不在视图里"。路径只有一个来源，所以这一栏是核对，不是第二个真源。
   if (file !== null && ctx.planPath !== undefined && file !== ctx.planPath) {
     const message =
-      `planFilePath 要就是这一趟那一份：${ctx.planPath}——拿到的是 ${file}。` +
-      '草案只有那一份，写别处的不算：那份文件写没写，由它自己的内容判，不由这一栏判。'
+      `planFilePath has to be this pass\'s own: ${ctx.planPath} — this one gave ${file}.` +
+      ' There is only one draft and one written elsewhere does not count: whether that file was written is judged by its own content, not by this field.'
     await host.deny(refuse('plan-path', message, file))
     return no(message)
   }
@@ -554,8 +554,8 @@ const exitPlanModeFace: ToolFn = async (args, host, ctx) => {
     // 与 `ask_user_question` 同一条：**门由人开**——`round plan` 停在门口，`fugue round go`
     // 才是发契约的那一下（架构 § 15.1.a）。这一趟只把计划落进日志。
     output:
-      '预备态到这儿为止：计划已经落进日志了。**这一轮停在门口**——' +
-      '人过一遍之后 `fugue round go` 放行，契约才发出去、往下走。',
+      'the first state ends here: the plan is in the log. **This round stops at the door** — ' +
+      'after a human reads it, `fugue round go` lets it through, and only then do the contracts go out.',
   }
 }
 
@@ -567,7 +567,7 @@ const checkpointFace: ToolFn = async (args, host) => {
   // 把"实现读的是另一个名字"这件事盖住了——每一次提交都叫同一个名字，而且不报错。
   if (msg === null) return missing('checkpoint', 'message')
   const { commit } = await host.checkpoint(msg)
-  return ok(`提交了：${commit}——${msg}`)
+  return ok(`committed: ${commit} — ${msg}`)
 }
 
 /**
@@ -652,6 +652,6 @@ export function faceOf(tool: string): ToolFn | null {
  * 它要说清两件事，因为它们是两件事：能力表里有没有这一格，以及这一格接上了没有。
  */
 export function noFace(tool: string, c: Capability | Denied): FaceResult {
-  const where = 'denied' in c ? `能力表里没有这一格：${c.message}` : `能力表里有它（${c.layer} 层 · 身份 ${c.capability}）`
-  return no(`${tool} 这一条今天没有接上实现——${where}。已经接上的是：${Object.keys(IMPLEMENTED).join(' · ')}。`)
+  const where = 'denied' in c ? `the capability table has no such row: ${c.message}` : `the capability table has it (${c.layer} layer · identity ${c.capability})`
+  return no(`${tool} has no implementation wired today — ${where}. Wired today: ${Object.keys(IMPLEMENTED).join(' · ')}.`)
 }

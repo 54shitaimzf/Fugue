@@ -77,22 +77,22 @@ export type Parsed =
 
 export function resolveRaw(raw: string, cwd: RelPath): Parsed {
   const base = assertRelPath(cwd)
-  if (raw.startsWith('/')) return { ok: false, kind: 'absolute', detail: '它以 / 开头' }
+  if (raw.startsWith('/')) return { ok: false, kind: 'absolute', detail: 'it starts with /' }
   let text = raw
   while (text.startsWith('./')) text = text.slice(2)
   while (text.length > 1 && text.endsWith('/')) text = text.slice(0, -1)
   if (text === '' || text === '.') return { ok: true, rel: base }
   const segs = base === '' ? [] : base.split('/')
   for (const s of text.split('/')) {
-    if (s === '') return { ok: false, kind: 'not-a-path', detail: '里面有一个空段' }
+    if (s === '') return { ok: false, kind: 'not-a-path', detail: 'it has an empty segment' }
     if (s === '.') continue
     if (s === '..') {
-      if (segs.length === 0) return { ok: false, kind: 'escape', detail: '它走到了视图的根之上' }
+      if (segs.length === 0) return { ok: false, kind: 'escape', detail: 'it climbs above the view root' }
       segs.pop()
       continue
     }
-    if (s.includes('\\')) return { ok: false, kind: 'not-a-path', detail: '里面有一个反斜杠' }
-    if (s.includes('\0')) return { ok: false, kind: 'not-a-path', detail: '里面有一个空字节' }
+    if (s.includes('\\')) return { ok: false, kind: 'not-a-path', detail: 'it has a backslash' }
+    if (s.includes('\0')) return { ok: false, kind: 'not-a-path', detail: 'it has a NUL byte' }
     segs.push(s)
   }
   return { ok: true, rel: segs.join('/') }

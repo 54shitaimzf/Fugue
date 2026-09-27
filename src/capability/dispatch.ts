@@ -192,7 +192,7 @@ async function fenceArgs(
   if (fence === undefined) {
     return {
       ok: false,
-      message: `${name} 要过路径围栏（架构 § 8.9 第二条推论），而这一档没有接上围栏——没有围栏就不发这一步。`,
+      message: `${name} has to pass the path fence (the second corollary in § 8.9), and this tier has no fence wired — without a fence this step is not issued.`,
     }
   }
   for (const key of PATH_ARGS[name] ?? []) {
@@ -234,7 +234,7 @@ export async function dispatch(
   const parsed = parseArgs(req.arguments)
   if (!parsed.ok) {
     return {
-      result: { ok: false, output: `${req.name} 的参数读不了：${parsed.why}` },
+      result: { ok: false, output: `cannot read ${req.name} arguments: ${parsed.why}` },
       capability: c,
       applied: [],
       denied: false,
@@ -267,7 +267,7 @@ export async function dispatch(
       return {
         result: {
           ok: false,
-          output: `${req.name} 落在执行层，要先物化（架构 § 8.9 第一条推论），而这一档没有接上物化。`,
+          output: `${req.name} sits in the execution layer and has to be materialised first (the first corollary in § 8.9), and this tier has no materialisation wired.`,
         },
         capability: c,
         applied,
@@ -365,7 +365,7 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
       // 表里 `fence: false` 那一格是"这一格压根不过围栏"。
       // 它同时是"**那一份归一后的参数能不能用**"那一栏：视图层那些格子（`c.layer !== 'execute'`）
       // 上面这一支整个不走，`fencedArgs` 停在空壳上——把它当"已过围栏的那一份"递给 `dispatch`，
-      // 参数就当场丢了（实测：模型写 `a.ts`，摊到工具面变成"少了必填参数 path"）。
+      // 参数就当场丢了（实测：模型写 `a.ts`，摊到工具面变成"missing required argument path"）。
       let fenced = false
       if (running && !('denied' in c) && c.fence && parsed !== null && parsed.ok) {
         fenced = true
@@ -412,7 +412,7 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
           : execNote === null
           ? await dispatch(call, h, deps, true, fenced ? fencedArgs : undefined)
           : {
-              result: { ok: false, output: `${call.name} 要先物化（架构 § 8.9 第一条推论），而这一趟没铺起来：${execNote}` },
+              result: { ok: false, output: `${call.name} has to be materialised first (the first corollary in § 8.9), and this pass did not lay the tree: ${execNote}` },
               capability: c,
               applied: ['materialize'],
               denied: true,

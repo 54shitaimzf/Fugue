@@ -141,7 +141,7 @@ export type LogEvent =
    * 契约一个都不发——发契约是 `round go` 那一档的事（架构 § 15.1.a）。
    *
    * 形状与 `holder/todos` · `round/intent` 同一路（`digest` + 正文）。**只有持轮者落它**：
-   * 子 agent 那一份是契约，不是计划，所以它调这一条只得到一句"这不是你这一格的事"。
+   * 子 agent 那一份是契约，不是计划，所以它调这一条只得到一句"not your cell's job"。
    */
   | { t: 'holder/plan'; agent: AgentId; digest: string; body: string }
   /**

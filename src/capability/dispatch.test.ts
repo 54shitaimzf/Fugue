@@ -359,8 +359,8 @@ test('④ 越界的 bash：一次 run 都没有 · 视图一个字节没变 · �
     // （它一旦被叫到就会真起一个进程；这一份测试里没有哪一处会替它拦下来）。
 
     // 拒的话里带着指路（架构 § 8.4 纪律 2）：说清在哪只能读、要出去该走哪条路。
-    assert.match(out.result.output, /工作区外/, `拒的话是：${out.result.output}`)
-    assert.match(out.result.output, /工作区内请用 read/)
+    assert.match(out.result.output, /path is outside the workspace/, `拒的话是：${out.result.output}`)
+    assert.match(out.result.output, /Use read inside the workspace/)
 
     const rows = await eventsOf(root)
     console.log('EVENTS ' + JSON.stringify(rows.map((e) => [e.t, e.cwd ?? null])))
@@ -676,7 +676,7 @@ test('⑦ `exit_plan_mode`：自报的路径不等于这一趟那一份 → 当�
     // 话与下面那条 `bound/deny`（"模型看见了"与"日志里有一次拒"是同一件事的两个面）。
     assert.equal(bad.denied, false, '工具面自己拒的那一档不置 denied（四条推论与围栏才置）')
     assert.match(bad.result.output, /\.fugue\/plan\/r1\.md/, '拒的话里要给准确路径')
-    assert.match(bad.result.output, /草案只有那一份/, bad.result.output)
+    assert.match(bad.result.output, /only one draft and one written elsewhere does not count/, bad.result.output)
     assert.equal(host.plans.length, 0, '被拒的那一趟不该落 holder/plan')
     assert.equal(host.denies.length, 1, '宿主那一道拒口收到一次')
     assert.equal(host.denies[0]!.rule, 'plan-path', `由头那一栏是：${host.denies[0]!.rule}`)

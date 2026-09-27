@@ -7,7 +7,7 @@
 // **四个口定死在 PLAN § 5.17 那一段里，这一份就是它们的实现**：
 //
 //   · 上限与比例：单条回执 8 KiB；头 4 KiB · 尾 4 KiB，中段略去。
-//   · 标记逐字：`\n…（中段略去 M 字节 · 全文共 N 字节 L 行）…\n`，头与尾之间就夹这一句；
+//   · 标记逐字：`\n…(M bytes omitted · N bytes and L lines in all)…\n`，头与尾之间就夹这一句；
 //     M · N · L 按**原文**计。
 //   · UTF-8 边界：切点落在多字节序列中间就**回退到上一个完整字符**——半个汉字不许出现在回执里。
 //   · 切在**回执那一层**：文本工具统一走一个 `capReceipt(text)`。host 的字节层不懂文本，
@@ -105,6 +105,6 @@ export function capReceipt(text: string, limit: number = MAX_RECEIPT_BYTES): str
   const head = bytes.subarray(0, cut)
   const tail = bytes.subarray(from)
   const omitted = n - head.byteLength - tail.byteLength
-  const mark = `\n…（中段略去 ${omitted} 字节 · 全文共 ${n} 字节 ${lineCount(text)} 行）…\n`
+  const mark = `\n…(${omitted} bytes omitted · ${n} bytes and ${lineCount(text)} lines in all)…\n`
   return Buffer.concat([head, Buffer.from(mark, 'utf8'), tail]).toString('utf8')
 }
