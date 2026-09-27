@@ -35,9 +35,18 @@
 # "放行成功"顶替），**剩下的缺口只有一条**：那条从日志那批契约起跑的命令。
 #
 # `--live` 那一支：同一串路换真模型跑一遍（每一步真发一次调用）。那一支的断言是**不变量**
-# （每条路都收得住并进判 · 版本那一栏印得出 · 退出码 0/1 之内），不是夹具档那些定值。
-# **这一支今天没取证**（它要花真调用）：上面那些读数全是夹具档的。它与 `tools/live-round.sh`
-# 的关系是**超集**（那边跑的是同一串路、覆盖面更窄），所以跟着那一档一起跑就够——不专门为它花钱。
+# （每条路都收得住并进判 · 退出码 0/1 之内 · **版本那一栏跟着日志里的落地条数走**），不是夹具档
+# 那些定值。它与 `tools/live-round.sh` 的关系是**超集**（那边跑的是同一串路、覆盖面更窄）。
+#
+# **这一支已取证**（`sh tools/probe-live-s9.sh`，三次真档 · `PASS 11 · FAIL 0`），而它量出来的
+# 第一件事是一条**缺口**：持轮者拿到的前缀里**没有一处说草案写哪儿 · 什么形状**。那一次
+# `--dump-wire` 的实录：`system` 只有 89 字节（项目方针 + `{"entries":[]}`），两条 user 消息就是
+# 目标那 16 个字节与一个空的 C 区——全仓 `grep .fugue/plan` 只出现在命令行帮助与代码注释里。
+# 于是真模型三次都写不出草案：空仓库那两次是探路（`bash ls -la`）→ `bash` 被拒（预备态没有可执行
+# 的树）→ `ask_user_question`（"这份 notes.md 想要的是什么？"），而**"有工具叫停就到这儿为止"**
+# （`runtime/step.ts` 那一档，与模型自己说完同归"收敛"）；靶子里有内容那一次是把目标当交付物，
+# 把 `notes.md` 写在了仓库根上。三次都按「构造器不猜」退回。**所以 ③ 那一支不断言"版本那一栏
+# 印得出"**——它按落地条数分岔，两条都要在（那一段里）。
 #
 # 用法：sh tools/walkthrough-s9.sh [--live]。退出码 0 且 FAIL 0 才算走通。KEEP=1 留下现场。
 set -u
@@ -363,6 +372,7 @@ check "② 草案住视图（真实工作树上没有那一份）" "无" "$(node
 # ③ declared：模型调 `exit_plan_mode` 交卷（一步）。打印里那一版是**第 2 版**——第 1 版是讨论态
 # 落下的那一段理解，草案是第 2 版（同一轮同一条链：架构 § 15.1.a）。
 printf '{"kind":"tool","name":"exit_plan_mode","args":{"plan":"拆成一格：写一份 notes.md","planFilePath":".fugue/plan/r1.md"}}\n' > "$T/spec-3/call-0001.json"
+L3=$(logcount 'holder/distill')
 if [ "$LIVE" = yes ]; then
   liveone round plan '写一份 notes.md' --live --max-steps 4
 else
@@ -373,7 +383,16 @@ sed 's/^/  | /' "$OUTF"
 if [ "$LIVE" = yes ]; then
   check "③ live：收得住" "1" "$([ "$RC" -le 1 ] && printf 1 || printf 0)"
   has "$OUTF" '收工：' "③ live：那一趟报出了收工那一句"
-  has "$OUTF" '版本：第' "③ live：版本那一栏印得出来"
+  # **版本那一栏跟着日志走**（真档那一支的主断言）：落了地就印得出「版本：第 N 版」，没落地就
+  # 印得出没落地的理由。真档今天走的是**没落地**那一条——前缀里没有一处说草案写哪儿（见头注）。
+  L3N=$(logcount 'holder/distill')
+  if [ "$L3N" -gt "$L3" ]; then
+    has "$OUTF" '版本：第' "③ live：落了地（holder/distill $L3 → $L3N），版本那一栏印得出来"
+  elif grep -q '退回' "$OUTF"; then
+    ok "③ live：没落地（holder/distill 还是 $L3 条），印的是没落地的理由（退回）"
+  else
+    bad "③ live：没落地，却没印出理由：既没有「版本：第」也没有「退回」"
+  fi
 else
   check "③ 退出码" "0" "$RC"
   has "$OUTF" '收工：declared' "③ 收法（模型交卷）"
