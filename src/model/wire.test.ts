@@ -541,3 +541,85 @@ test('⑦ 思考：收得到（与实录里那些分片逐字节相同）· 回�
       `anthropic ${String(Buffer.byteLength(new TextDecoder().decode(anthropicWireOf().bytes(unsigned))))} 字节`,
   )
 })
+
+// ── ⑧ 上游自己说"这一趟没走完" ────────────────────────────────────────────────
+
+/**
+ * 两档上游的"没走完"：Chat Completions 那条线的 `insufficient_system_resource` 与 `aborted`，
+ * Messages 那条线的 `pause_turn`。
+ *
+ * **它们原先在这里当场抛**（`没有这一种 finish_reason` → `WireError`），而抛出去之后 `checkEvents`
+ * 一步都不跑：这一趟的 `usage` 整条丢掉，账上只剩一句"这一趟没走完"——**钱那一栏因此成了下界**。
+ * 而它们其实是**完整的**响应（`finish_reason` 就在那一行里），所以现在记下来：`stop` 有着落 ·
+ * 用量照记 · 上游那个原话进 `rawStop`。判据是"上游到底说的是哪一个"这句话不许丢。
+ *
+ * **负对照**：一个真的不认识的词照旧当场抛——"记下来"不是"什么都收"。
+ */
+test('⑧ 上游那两档"没走完"记成 `incomplete`（不是当场抛）：用量照记 · 原话进 rawStop · 不认识的词照旧拒', async () => {
+  const o = openaiWireOf()
+  const a = anthropicWireOf()
+  const openai = [
+    'data: {"id":"c1","object":"chat.completion.chunk","model":"deepseek-flash","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}',
+    '',
+    'data: {"id":"c1","object":"chat.completion.chunk","model":"deepseek-flash","choices":[{"index":0,"delta":{"content":"说到一半"},"finish_reason":null}]}',
+    '',
+    'data: {"id":"c1","object":"chat.completion.chunk","model":"deepseek-flash","choices":[{"index":0,"delta":{},"finish_reason":"insufficient_system_resource"}]}',
+    '',
+    'data: {"id":"c1","object":"chat.completion.chunk","model":"deepseek-flash","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":7,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":100}}',
+    '',
+    'data: [DONE]',
+    '',
+    '',
+  ].join('\n')
+  const oCall = checkEvents(await eventsOf(openai, o, 3))
+  assert.equal(oCall.stop, 'incomplete', `上游说没走完，我们却判成了 ${String(oCall.stop)}`)
+  assert.equal(oCall.rawStop, 'insufficient_system_resource')
+  assert.equal(oCall.text, '说到一半')
+  // **这就是这一格的全部意义**：用量没丢（抛掉的话这里一个数都没有）。
+  assert.equal(oCall.usage?.outputTokens, 7, '当场抛的话这一趟的用量整条丢掉')
+  assert.equal(oCall.usage?.inputTokens, 100)
+
+  // `aborted` 走同一个值（我们这边的动作是同一件），原话分开留着。
+  const aborted = openai.replace('insufficient_system_resource', 'aborted')
+  const aCall = checkEvents(await eventsOf(aborted, o, 5))
+  assert.equal(aCall.stop, 'incomplete')
+  assert.equal(aCall.rawStop, 'aborted')
+
+  // Messages 那条线的 `pause_turn`：带 `usage` 的 `message_delta` 里那一个词。
+  const messages = [
+    'event: message_start',
+    'data: {"type":"message_start","message":{"id":"m1","type":"message","role":"assistant","model":"deepseek-v4-flash","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}',
+    '',
+    'event: content_block_start',
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+    '',
+    'event: content_block_delta',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"说到一半"}}',
+    '',
+    'event: content_block_stop',
+    'data: {"type":"content_block_stop","index":0}',
+    '',
+    'event: message_delta',
+    'data: {"type":"message_delta","delta":{"stop_reason":"pause_turn","stop_sequence":null},"usage":{"output_tokens":7}}',
+    '',
+    'event: message_stop',
+    'data: {"type":"message_stop"}',
+    '',
+    '',
+  ].join('\n')
+  const pCall = checkEvents(await eventsOf(messages, a, 1))
+  assert.equal(pCall.stop, 'incomplete')
+  assert.equal(pCall.rawStop, 'pause_turn')
+  assert.equal(pCall.usage?.outputTokens, 7, 'Messages 那条线的用量也要留住')
+
+  // 负对照：**真的不认识的那个词照旧当场拒**（"记下来"不是"什么都收"）。
+  await assert.rejects(
+    () => eventsOf(openai.replace('insufficient_system_resource', 'weird_reason'), o, 9),
+    /没有这一种 finish_reason：weird_reason/,
+  )
+  console.log(
+    `⑧ 读数：openai insufficient_system_resource → ${String(oCall.stop)}（${String(oCall.rawStop)}）· ` +
+      `用量 input ${String(oCall.usage?.inputTokens)} / output ${String(oCall.usage?.outputTokens)} · ` +
+      `anthropic pause_turn → ${String(pCall.stop)}（${String(pCall.rawStop)}）`,
+  )
+})

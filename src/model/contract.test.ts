@@ -536,10 +536,13 @@ test('② 一串事件积得出一次完整调用：工具调用三段拼成一�
   assert.equal(usageCount({ ...(merged.usage as Usage), cacheReadTokens: 5 }), 4)
   assert.ok(JSON.stringify(merged.usage).includes('"cacheReadTokens":null'), '没读数的那一项在序列化里也要看得见')
 
-  // 五种结束原因各积得出来，且 `stopped()` 与 `checkEvents` 同一份答案。
+  // 六种结束原因各积得出来，且 `stopped()` 与 `checkEvents` 同一份答案。
   const seen: StopReason[] = STOP_REASONS.map((reason) => stopped([{ t: 'stop', reason }]))
   assert.deepEqual(seen, [...STOP_REASONS])
-  assert.deepEqual(STOP_REASONS.length, 5)
+  assert.deepEqual(STOP_REASONS.length, 6)
+  // 前五种是"走完了、因为什么走的"，第六种是**上游自己说没走完**（`insufficient_system_resource`
+  // / `aborted` / `pause_turn` 归到它，原话留在 `rawStop` 上）——值域按动作分，不按措辞分。
+  assert.equal(STOP_REASONS[5], 'incomplete')
   // 交错：文本与两条工具调用混着来，顺序按 index 各自收。
   const interleaved = checkEvents([
     { t: 'delta', text: 'A' },

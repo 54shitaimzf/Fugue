@@ -284,7 +284,7 @@ test('② C 区只追加：相邻两步的 hash(A+B) 不变，C 只是一串只�
 
 // ── ③ 三种停因分得开 ─────────────────────────────────────────────────────────
 
-test('③ 三种 StopReason（调用工具 · 自然停 · 预算耗尽）分得开，不混成"结束了"', async () => {
+test('③ 六种 StopReason 分得开（三档 StepOutcome：continue / done / failed），不混成"结束了"', async () => {
   await withRoot(async (root, log) => {
     const cases: { readonly stop: string; readonly kind: StepOutcome['kind']; readonly why: string | null }[] = [
       { stop: 'tool-calls', kind: 'continue', why: null },
@@ -292,6 +292,9 @@ test('③ 三种 StopReason（调用工具 · 自然停 · 预算耗尽）分得
       { stop: 'max-tokens', kind: 'failed', why: 'max-tokens' },
       { stop: 'stop-sequence', kind: 'failed', why: 'stop-sequence' },
       { stop: 'refusal', kind: 'failed', why: 'refusal' },
+      // **上游自己说"这一趟没走完"**（序 27 起）：它归 `failed`，而"上游到底说的是哪一个"进那一句
+      // 错话（我们在这一档做的动作是同一件，要不要再来一次取决于原话）。
+      { stop: 'incomplete', kind: 'failed', why: 'incomplete' },
     ]
     const readings: string[] = []
     for (const one of cases) {
@@ -307,6 +310,11 @@ test('③ 三种 StopReason（调用工具 · 自然停 · 预算耗尽）分得
         const err = (r.outcome as { error: HarnessError }).error
         assert.ok(err instanceof HarnessError, `${one.stop} 的 failed 没带 HarnessError`)
         assert.equal(err.why, one.why)
+        if (one.stop === 'incomplete') {
+          // 原话必须进那一句（这一条脚本给的是 `raw-incomplete`）：只说"没走完"，读的人不知道
+          // 要不要过一会儿再来一次。
+          assert.match(err.message, /上游说这一趟没走完（raw-incomplete）/, `那一句错话里没有原话：${err.message}`)
+        }
       } else {
         // 那两档的用量是**那四个数**（不是 0 顶出来的）。
         assert.equal((r.outcome as { usage: { cacheReadTokens: number | null } }).usage?.cacheReadTokens, 24000)

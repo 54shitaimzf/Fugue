@@ -22,10 +22,12 @@
 // "没有密钥"而失败——除非真的要发一次真请求（PLAN § 5.8 的口径一）。
 //
 // **三档 `StepOutcome` 是"为什么停"**（架构那一份的形状，逐字）：`continue` · `done` · `failed`。
-// 它们的判据是**调用的收尾原因**（`B1` 的 `StopReason` 五种），所以 `B4` 的断言 ③ 才成立：
+// 它们的判据是**调用的收尾原因**（`B1` 的 `StopReason` 六种），所以 `B4` 的断言 ③ 才成立：
 //
 //   `tool-calls` → `continue`（它要调工具）· `end-turn` → `done`（它说完了）·
-//   `max-tokens` / `stop-sequence` / `refusal` → `failed`（它没能说完，而**不是"结束了"**）
+//   `max-tokens` / `stop-sequence` / `refusal` / `incomplete` → `failed`（它没能说完，
+//   而**不是"结束了"**）——最后一档是**上游自己说"这一趟没走完"**（它忙不过来 / 被打断了 /
+//   那一趟太长停了），原话进那一句错话，因为"要不要过一会儿再来一次"取决于原话。
 import type { Log } from '../log/events.ts'
 import type { AgentId, BranchId, ContractId, LogSeq, StepId, WriterId } from '../terms.ts'
 import type { ModelCall, ModelEvent, StopReason, Thinking, ThinkingLevel, Turn, Usage } from '../model/contract.ts'
@@ -290,8 +292,14 @@ function turnOf(
   }
 }
 
-/** 收尾原因 → 三档。**这一处就是"为什么停"的判据**（架构 § 14.2 的 `StepOutcome`）。 */
-function outcomeOf(stop: StopReason, usage: Usage | null, said: string): StepOutcome {
+/**
+ * 收尾原因 → 三档。**这一处就是"为什么停"的判据**（架构 § 14.2 的 `StepOutcome`）。
+ *
+ * `raw` 是给 `incomplete` 那一档用的：**上游到底说的是哪一个**（`insufficient_system_resource` ·
+ * `aborted` · `pause_turn`）在那一句话里要看得出来——我们这边的动作是同一件（这一趟不算数），
+ * 而"要不要过一会儿再来一次"取决于原话，所以原话不能只留在事件的 `rawStop` 上。
+ */
+function outcomeOf(stop: StopReason, usage: Usage | null, said: string, raw: string | null = null): StepOutcome {
   switch (stop) {
     case 'tool-calls':
       return { kind: 'continue', usage }
@@ -303,6 +311,16 @@ function outcomeOf(stop: StopReason, usage: Usage | null, said: string): StepOut
       return { kind: 'failed', error: new HarnessError('stop-sequence', `撞上了停止串（\`stop-sequence\`）：${said.slice(0, 120)}`) }
     case 'refusal':
       return { kind: 'failed', error: new HarnessError('refusal', `它拒了（\`refusal\`）：${said.slice(0, 120)}`) }
+    // **上游自己说"这一趟没走完"**：这不是它的话说完了，也不是我们的预算用完了——所以这一档
+    // 不许当 `done`。原话进那一句（`raw === null` 时也说得出"它没给原话"）。
+    case 'incomplete':
+      return {
+        kind: 'failed',
+        error: new HarnessError(
+          'incomplete',
+          `上游说这一趟没走完（${raw ?? '它没给原话'}）：这一趟不算数，要再来一次是一次**新的调用**`,
+        ),
+      }
   }
 }
 
@@ -448,7 +466,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
 
     // ── 6. 下一状态：C 区那个积累段**只追加**（架构 § 8.11 的验证性质）。
     // **有工具叫停就到这儿为止**（停在门口那一档）：它是"收敛"，与模型自己说完同一档。
-    const outcome = halted ? { kind: 'done' as const, usage } : outcomeOf(call.stop, usage, said)
+    const outcome = halted ? { kind: 'done' as const, usage } : outcomeOf(call.stop, usage, said, call.rawStop)
     // 这一步什么都没发生（没说话、也没调工具）——不追加一个空的 `Turn`：空的一步会让
     // `上一步结果` 变成空串，而"这一步无事发生"与"上一步的结果丢了"是两件事。
     // **想过也算发生过**：只想不说、也没伸手的一步，它的思考照样要留在轮次里——带工具时

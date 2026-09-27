@@ -81,6 +81,12 @@ const STOP_OF: Readonly<Record<string, StopReason>> = {
   stop: 'end-turn',
   length: 'max-tokens',
   content_filter: 'refusal',
+  // **上游自己说"这一趟没走完"的两档**（官方那张表里就这两个）。它们原先在这里当场抛
+  // （`没有这一种 finish_reason` → `WireError`）——一抛，`checkEvents` 就不跑，于是**这一趟的
+  // 用量整条丢掉**，而账上只剩一句"这一趟没走完"，钱那一栏成了下界。它们是一条**完整的**
+  // 响应（`finish_reason` 就在那儿），所以记下来：`stop` 有着落 · 用量照记 · 原话进 `rawStop`。
+  insufficient_system_resource: 'incomplete',
+  aborted: 'incomplete',
 }
 
 /**

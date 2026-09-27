@@ -98,6 +98,10 @@ const STOP_OF: Readonly<Record<string, StopReason>> = {
   max_tokens: 'max-tokens',
   stop_sequence: 'stop-sequence',
   refusal: 'refusal',
+  // `pause_turn`：这条线说"这一趟太长，我停在这儿了"（官方那一页的建议是把这一次的回应原样带回去
+  // 接着走）。我们这一版的循环没有"接着走"这一档，所以它归 `incomplete`——**与原话一起**留着，
+  // 将来要支持"续跑"时，判据是 `rawStop === 'pause_turn'` 这一条读数。
+  pause_turn: 'incomplete',
 }
 
 /** 声明里那一栏 → 一个真档位。没写就是 `off`（这条线上不写就是不开，两边一致）。 */

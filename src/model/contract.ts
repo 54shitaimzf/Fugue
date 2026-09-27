@@ -563,7 +563,17 @@ export interface ToolCall {
 }
 
 /**
- * 一次调用为什么结束。**五种，不合成"结束了"**（PLAN § 5.8 的 `B4` 断言 ③ 要它们分得开）。
+ * 一次调用为什么结束。**六种，不合成"结束了"**（PLAN § 5.8 的 `B4` 断言 ③ 要它们分得开）。
+ *
+ * 前五种是"这一趟走完了，它是因为什么走的"；第六种 `incomplete` 是**上游自己说"这一趟没走完"**
+ * ——官方那两张 `finish_reason` / `stop_reason` 表里各有这样的档（Chat Completions 那条线是
+ * `insufficient_system_resource` 与 `aborted`，Messages 那条线是 `pause_turn`）。
+ *
+ * **为什么它们合成一个值，而 `rawStop` 分开记**：这一栏是**循环的判据**（`continue` / `done` /
+ * `failed` 三档），而这三档对"上游忙不过来"与"被打断了"做的事是同一件——**这一趟不算数**。
+ * 上游那个原话（它到底说的是哪一个）在 `rawStop` 上逐字留着，所以分得开这件事没有丢，
+ * 丢的是"我们这边多三个只差一个字符串的枚举值"。这与架构 § 14.2 的三档同一条纪律：
+ * 值域按**动作**分，不按上游的措辞分。
  */
 export type StopReason =
   | 'tool-calls'
@@ -571,9 +581,17 @@ export type StopReason =
   | 'max-tokens'
   | 'stop-sequence'
   | 'refusal'
+  | 'incomplete'
 
-/** 五种结束原因在盘上的名字，一处。 */
-export const STOP_REASONS: readonly StopReason[] = ['tool-calls', 'end-turn', 'max-tokens', 'stop-sequence', 'refusal']
+/** 六种结束原因在盘上的名字，一处。 */
+export const STOP_REASONS: readonly StopReason[] = [
+  'tool-calls',
+  'end-turn',
+  'max-tokens',
+  'stop-sequence',
+  'refusal',
+  'incomplete',
+]
 
 /**
  * 发给模型的一个请求。四个字段，**一个都不多**（PLAN § 5.8 的 `B1` 断言 ①）：
