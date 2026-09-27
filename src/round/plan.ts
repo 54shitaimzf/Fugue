@@ -20,7 +20,7 @@
 // § 15.1.a："落地不是不可逆的一刻，派发才是"）。于是"这一趟跑完了"与"这一轮派发了"是两件事。
 import type { CommitId, RelPath, RoundId } from '../terms.ts'
 import type { AgentId } from '../terms.ts'
-import type { Log, LogReader, LogSeq } from '../log/events.ts'
+import type { Log, LogSeq } from '../log/events.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { View } from '../view/contract.ts'
 import type { AgentHandle, CallModel, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
@@ -44,9 +44,8 @@ import type { GateVerdict } from '../contract/gate.ts'
 import { gateOf } from '../contract/gate.ts'
 import type { SeedReading } from './seed.ts'
 import { seedRulerOf } from './seed.ts'
-// **处境重放只有一处**：放行那一趟（`round go`）与这一趟读的是同一条链。
-import { roundStateOf } from './dispatch.ts'
-import { lastOf, roundFactsOf } from './versions.ts'
+import { landingOf, lastOf, roundFactsOf } from './versions.ts'
+import type { DistillVersion, RoundFacts } from './versions.ts'
 
 /** 这一层自己的失败：底钉不住 · 视图打不开。**草案不成立不是它**——那是门的一份读数（`gate.problems`）。 */
 export class PlanError extends Error {}
@@ -83,6 +82,11 @@ export interface PlanDeps {
    * `holder/distill` 都落在它上面。给第二张口就是"同一个 writer 的序号被两个进程领到"。
    */
   readonly log: Log
+  /**
+   * **这一轮的读数**（`roundFactsOf` 那一次读的产出）。给了它，这一趟就不再自己读日志——命令行
+   * 那一层读一次递下来，于是「一趟命令读一遍」成立。不给就自己读一遍（直接调这一份的单测照旧）。
+   */
+  readonly facts?: RoundFacts
   readonly round: RoundId
   /** 轮级意图那一句（`round plan <目标>`）。**只写一次**（架构 § 15.1 纪律 2）。 */
   readonly goal: string
@@ -174,6 +178,13 @@ export interface PlanResult {
   readonly stopped: string
   /** 草案文件的原文（视图里那一份，逐字节）。没写出来就是 `null`。 */
   readonly draftText: string | null
+  /**
+   * **这一趟落下的那一版**（`holder/distill` 那一格）。没落就是 `null`。
+   *
+   * 命令行拿它把那一版接回**开跑时读的那份读数**上（`withVersion`）——印版本那一栏因此不需要在
+   * 写完之后再读一遍日志（读一次与读两次之差就在这一栏上）。
+   */
+  readonly landing: DistillVersion | null
   /**
    * 判出来的那一份：键域 · 值域 · 跨字段 · 绑定 · 预检（`contract/gate.ts` 一处）。
    *
@@ -392,21 +403,11 @@ export async function holderPass(deps: {
  * 拆分没有事前判据（架构 § 8.12 自己写着"拆得太粗与拆得太细都没有事前判据"），所以规模与耦合
  * 只印出来、照发；那一问归 `round go` 那一次批。
  */
-/**
- * 这一轮**最后一条** `holder/distill` 的指纹（一条都没有就是 `null`）。
- *
- * 它给「新那一版记着从哪一版改出来的」用（事件那一栏的 `against`）。按轮次选：同一份日志
- * 里住着好几轮，按「最后一条」选会把上一轮的尾当成本轮的上一版。
- *
- * **版本取回那一格（C5.a）落在这一处**：那条链只有一个读口（`round/versions.ts`），这一份是它的
- * 一个投影——把链尾那一版的指纹取出来，不再自己读一遍全量。
- */
-export async function lastDistillDigestOf(log: LogReader, round: RoundId): Promise<string | null> {
-  return lastOf(await roundFactsOf(log, round))?.digest ?? null
-}
-
 export async function planRound(deps: PlanDeps): Promise<PlanResult> {
   const { base, log, round, goal } = deps
+  // **这一轮的读数：一遍**（给了就用给的：`PlanDeps.facts`）——处境与「上一版是哪一版」都是它的
+  // 投影，两处各读一遍读出来的是两个时刻的快照，而中间那一段正是这一趟在写。
+  const facts = deps.facts ?? (await roundFactsOf(log, round))
   // **底由调用方钉住**（`pinnedBase`）。这一份不去读第二次 HEAD：视图已经铺在那个提交上了，
   // 再读一次的结果可能已经不是它——而两处不一致的症状只是"视图里少了一条路径"。
   if (base === '') throw new PlanError('钉住的底是空的：轮次的底是 `pinnedBase()` 读出来的那个提交')
@@ -415,7 +416,7 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
 
   // 一 · 轮次的处境**从日志重放出来**，不假定 `Idle`。同一轮里再跑一趟预备态（人喊停那一档、
   // 或者改完草案再判一遍）不该造出第二条 `Idle → Planning`——那种日志会让重放出来的处境是假的。
-  let state: RoundState = await roundStateOf(log, round)
+  let state: RoundState = facts.state
   const move = async (on: Cause, ctx: StepContext = {}): Promise<void> => {
     const from = state
     state = step(from, on, ctx)
@@ -455,19 +456,21 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
   // 正文进日志。视图是调用方给的**那一份**：持轮者写它的那一下与这里读它的这一下是同一个对象。
   const bytes = await deps.view.read(draftPath)
   const draftText = bytes === null ? null : new TextDecoder().decode(bytes)
+  // **这一趟落下的那一版**：`at` 与 `against` 由 `landingOf` 一处定（与读侧同一条口径）。
+  let landing: DistillVersion | null = null
   if (draftText !== null) {
-    // **上一版是哪一版**：读日志里这一轮最后那一条（不是「上一趟跑了什么」——人直接改草案
-    // 那一档也走同一条链）。`judgeOnly` 那一档落的是同一份正文，于是 `digest` 相同而
+    // **上一版是哪一版**：开跑时读的那一份读数里链尾那一版（不是「上一趟跑了什么」——人直接改
+    // 草案那一档也走同一条链）。`judgeOnly` 那一档落的是同一份正文，于是 `digest` 相同而
     // `against` 指回上一版：「又落了一遍同一版」在链上也看得见。
-    const against = await lastDistillDigestOf(log, round)
+    landing = landingOf(facts, digestOf(draftText), draftText)
     seqs.push(
       await log.append('round', {
         t: 'holder/distill',
         round,
         agent: 'round' as AgentId,
-        digest: digestOf(draftText),
-        ...(against === null ? {} : { against }),
-        body: draftText,
+        digest: landing.digest,
+        ...(landing.against === null ? {} : { against: landing.against }),
+        body: landing.body,
       }),
     )
   }
@@ -501,6 +504,7 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
     steps,
     stopped,
     draftText,
+    landing,
     gate,
     seedRead: ruler.reading,
     occupancy,

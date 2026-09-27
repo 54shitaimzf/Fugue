@@ -43,7 +43,19 @@ import type { DraftSection } from '../contract/draft.ts'
 import { estimateTokensOfText } from '../runtime/budget.ts'
 import { seedTextOf, seedTokensOf } from '../contract/build.ts'
 import { holderFace, occupancyOf, planRound } from './plan.ts'
+import { roundFactsOf } from './versions.ts'
 import type { PlanResult } from './plan.ts'
+
+/** 计数版的读侧：`readByWriter` 被调几次就是「读了几遍日志」（其余几栏照旧）。 */
+function countingLog(log: LogHandle, counter: { n: number }): LogHandle {
+  return {
+    ...log,
+    readByWriter: (w, from) => {
+      counter.n += 1
+      return log.readByWriter(w, from)
+    },
+  }
+}
 
 const KEEP = process.env.KEEP === '1'
 const dirs: string[] = []
@@ -200,7 +212,16 @@ async function wiringOf(
 async function plan(
   b: Bench,
   sections: readonly Record<string, unknown>[],
-  opts: { readonly declare?: boolean; readonly judge?: boolean; readonly path?: RelPath; readonly decl?: ModelDecl } = {},
+  opts: {
+    readonly declare?: boolean
+    readonly judge?: boolean
+    readonly path?: RelPath
+    readonly decl?: ModelDecl
+    /** 不给这一栏就读台子那一份；给了就量「读了几遍」（`countingLog`）。 */
+    readonly counter?: { n: number }
+    /** 这一轮的读数（`roundFactsOf`）：给了它，这一趟就不该再去读日志。 */
+    readonly facts?: Awaited<ReturnType<typeof roundFactsOf>>
+  } = {},
 ): Promise<PlanResult> {
   const { handle, sub } = holderOf(b)
   // **一份视图，两处用**（写它的那一份与判它那一份是同一个对象）：调用点那一侧按 `base` 记着。
@@ -225,7 +246,7 @@ async function plan(
   return await planRound({
     base: b.base,
     view: await viewOf(b.base),
-    log: b.log,
+    log: opts.counter === undefined ? b.log : countingLog(b.log, opts.counter),
     round: ROUND,
     goal: '把解析器拆出来',
     handle,
@@ -239,6 +260,7 @@ async function plan(
     // 绑好的动作表：这一份台子把 `ok` 绑上、不声明产出（一条只跑退出码的断言）。
     actions: { ok: [] as readonly RelPath[] },
     ...(opts.judge === true ? { judgeOnly: true } : {}),
+    ...(opts.facts === undefined ? {} : { facts: opts.facts }),
     occupancy: {
       decl,
       base: sub,
@@ -519,6 +541,26 @@ test('⑨ 声明的上限接进 seed 那一条：一份 8 000 的声明把种子
     assert.equal(ok.held, true, `1 000 000 那一档该停在门口：${ok.gate.problems.join(' / ')}`)
     assert.equal(ok.gate.built?.seedLimit, 904_000)
     console.log(`⑨ 读数：8 000 的声明 → 上限 0（${bad.gate.problems[0]}）· 1 000 000 的声明 → 上限 ${ok.gate.built?.seedLimit}`)
+  } finally {
+    await b.log.close()
+    await b.truth.close()
+  }
+})
+
+test('⑩ 一趟预备态只读一遍轮次日志；给了那一份读数就一遍都不读', async () => {
+  const b = await bench()
+  try {
+    const c1 = { n: 0 }
+    const r1 = await plan(b, [section()], { declare: true, counter: c1 })
+    assert.equal(c1.n, 1, `不给读数时该只读一遍轮次日志，实际 ${c1.n} 遍`)
+    // 同一份读数递进去：这一趟**一遍都不该读**（它读的是调用方给的那一份）。
+    const facts = await roundFactsOf(b.log, ROUND)
+    const c2 = { n: 0 }
+    const r2 = await plan(b, [section()], { declare: true, counter: c2, facts })
+    assert.equal(c2.n, 0, `给了读数还去读日志：${c2.n} 遍`)
+    assert.equal(r2.draftText, r1.draftText, '给了读数读出来的草案与不给时不同')
+    assert.equal(r2.landing?.at, 2, `这一趟落下的该是链上第 2 格，实际 ${String(r2.landing?.at)}`)
+    console.log(`⑩ 读数：一趟预备态读 ${c1.n} 遍轮次日志（不给读数）· ${c2.n} 遍（给了那一份读数）`)
   } finally {
     await b.log.close()
     await b.truth.close()

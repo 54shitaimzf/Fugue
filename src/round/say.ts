@@ -28,9 +28,10 @@ import type { ToolEntry } from '../tools/catalog.ts'
 import { applyEdit } from '../view/edit.ts'
 import { overDistillLimit } from '../runtime/budget.ts'
 import { digestOf } from '../runtime/restart.ts'
-import { roundStateOf } from './dispatch.ts'
-import { holderPass, lastDistillDigestOf } from './plan.ts'
+import { holderPass } from './plan.ts'
 import type { HolderExit, PlanResult } from './plan.ts'
+import { landingOf, lastOf, roundFactsOf } from './versions.ts'
+import type { DistillVersion, RoundFacts } from './versions.ts'
 import type { RoundState } from './machine.ts'
 
 /** 这一层自己的失败：这一轮不在能说话的那两个处境里 · 没给一句话 · 预备态那一趟没给跑法。 */
@@ -110,6 +111,11 @@ export interface SayDeps {
   /** 持轮者那一份视图。写会话记录 · 读会话记录用的是**同一个对象**（一处开两份的症状是"记录不在视图里"）。 */
   readonly view: View
   readonly log: Log
+  /**
+   * **这一轮的读数**（`roundFactsOf` 那一次读的产出）。给了它，这一趟就不再自己读日志——命令行
+   * 那一层读一次递下来，于是「一趟命令读一遍」成立。不给就自己读一遍（直接调这一份的单测照旧）。
+   */
+  readonly facts?: RoundFacts
   readonly truth: Truth
   readonly writer: WriterId
   readonly head: CommitId
@@ -149,6 +155,14 @@ export interface SayResult {
   readonly recent: string
   /** 这一趟落下的那一条 `holder/distill` 的正文（讨论态：修正后的理解；预备态：草案那一版）。 */
   readonly distill: string | null
+  /**
+   * **这一趟落下的那一版**（`holder/distill` 那一格）：讨论态是那段话 · 预备态是草案那一版；
+   * 这一趟什么都没落就是 `null`。
+   *
+   * 命令行拿它把那一版接回**开跑时读的那份读数**上（`withVersion`）——印版本那一栏因此不需要在
+   * 写完之后再读一遍日志。
+   */
+  readonly landing: DistillVersion | null
   /** 报出来的异常读数（凝聚越线那一类）。**不裁剪 · 不拒**——产物照旧进日志。 */
   readonly notes: readonly string[]
   readonly steps: number
@@ -170,8 +184,11 @@ export async function sayRound(deps: SayDeps): Promise<SayResult> {
   if (text === '') {
     throw new SayError('说什么？给一句非空的话——那句话是这一趟的输入（架构 § 15.1.a 的"问与答"）。')
   }
-  const state = await roundStateOf(deps.log, deps.round)
-  if (state === 'Idle') return await discuss({ ...deps, text })
+  // **这一轮的读数：一遍**（给了就用给的：`SayDeps.facts`）——处境是它的一个投影，讨论态落下
+  // 那一版时要的「上一版」也是。
+  const facts = deps.facts ?? (await roundFactsOf(deps.log, deps.round))
+  const state = facts.state
+  if (state === 'Idle') return await discuss({ ...deps, text }, facts)
   if (state === 'Planning') return await prepare({ ...deps, text })
   throw new SayError(
     `这一轮的处境是 ${state}：说话只在 Idle（讨论态）与 Planning（预备态）两处。` +
@@ -180,7 +197,7 @@ export async function sayRound(deps: SayDeps): Promise<SayResult> {
 }
 
 /** 讨论态：那句话落进这场对话（累积），这一趟的产物是**修正后的理解**。 */
-async function discuss(deps: SayDeps): Promise<SayResult> {
+async function discuss(deps: SayDeps, facts: RoundFacts): Promise<SayResult> {
   const sessionPath = sessionPathOf(deps.round)
   const before = await textAt(deps.view, sessionPath)
   // 一 · **人说的那一句由接口写进去**（架构 § 15.1.a）。落进环境的东西在这一刻就在了——这一趟
@@ -206,21 +223,23 @@ async function discuss(deps: SayDeps): Promise<SayResult> {
   if (readOver !== null) notes.push(`这一趟读到的凝聚理解越了线（照发，不裁剪）：${readOver}`)
   const said = pass.said.trim()
   const seqs: LogSeq[] = []
+  // **这一趟落下的那一版**（没说话就是 `null`）：`at` 与 `against` 由 `landingOf` 一处定。
+  let landing: DistillVersion | null = null
   let records = recordsOf(opened).records.length
   if (said === '') {
     notes.push('这一趟没有落下新的凝聚理解：它一句话都没说出来（半截流 · 一步就失败那一类），所以 holder/distill 这一趟没落。')
   } else {
     // **这一版从哪一版改出来的**：与预备态那一条是**同一条链**（同一轮里只有一条），于是
     // 「讨论里改了一次理解」与「预备态里改了一次草案」在链上接得起来。
-    const against = await lastDistillDigestOf(deps.log, deps.round)
+    landing = landingOf(facts, digestOf(said), said)
     seqs.push(
       await deps.log.append('round', {
         t: 'holder/distill',
         round: deps.round,
         agent: 'round' as AgentId,
-        digest: digestOf(said),
-        ...(against === null ? {} : { against }),
-        body: said,
+        digest: landing.digest,
+        ...(landing.against === null ? {} : { against: landing.against }),
+        body: landing.body,
       }),
     )
     await writeAt(deps, sessionPath, recordOf(opened, '持轮者', said))
@@ -239,6 +258,7 @@ async function discuss(deps: SayDeps): Promise<SayResult> {
     badLines: recordsOf(opened).bad.length,
     recent,
     distill: said === '' ? null : said,
+    landing,
     notes,
     steps: pass.steps,
     exit: pass.exit,
@@ -273,6 +293,7 @@ async function prepare(deps: SayDeps): Promise<SayResult> {
     badLines: read.bad.length,
     recent,
     distill: plan.draftText,
+    landing: plan.landing,
     notes,
     steps: plan.steps,
     exit: plan.exit,

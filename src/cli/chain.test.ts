@@ -1019,3 +1019,24 @@ test('C5.b · `--json` 那一栏与人面印的是同一张读数：号 · 落�
       ` · 重落那一档两边都是第 ${j2.version.version} 版 / 第 ${j2.version.landing} 次落地 / 逐字节相同`,
   )
 })
+
+test('一趟命令读一遍：命令行那一层只有三处 `roundFactsOf`（`round plan` · `say` · `round go` 各一处）', () => {
+  // **为什么量这一条结构**：轮次那一层的三个入口收了 `facts` 就不再读日志（`plan.test.ts` ⑩ ·
+  // `say.test.ts` ⑥ · `dispatch.test.ts` ⑤ 量的是它），而"命令行读了几遍"这一头**没有注入缝**
+  // ——每条命令一个真进程、一次真加载。所以量它的来源：三处读，一处一条命令，每一处都是
+  // 「读一次、递下去」。**多出来的那一处就是又一趟读**：那时要么把读数递下去，要么把这一条改掉。
+  const source = readFileSync(fileURLToPath(new URL('./fugue.ts', import.meta.url)), 'utf8')
+  const sites = source
+    .split('\n')
+    .map((line, i) => [i + 1, line] as const)
+    .filter(([, line]) => line.includes('roundFactsOf('))
+  assert.equal(sites.length, 3, `命令行那一层读了 ${sites.length} 遍轮次日志（该是三处：round plan · say · round go）`)
+  for (const [at, line] of sites) {
+    assert.match(
+      line,
+      /const facts = await roundFactsOf\(ctx\.log, round\)/,
+      `第 ${at} 行那一处不是「读一次、递下去」的形状：${line.trim()}`,
+    )
+  }
+  console.log(`读数：命令行那一层 roundFactsOf( 共 ${sites.length} 处（第 ${sites.map(([at]) => at).join(' · ')} 行），一处一条命令`)
+})

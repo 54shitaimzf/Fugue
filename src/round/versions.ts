@@ -6,12 +6,18 @@
 // 那一版草案/理解的正文是哪一份 · 链上第几版是什么内容。它不写、不判、不认识视图——所以预备态 ·
 // 讨论态 · 放行那一趟与命令行的读数能共用同一份。
 //
-// **这就是 C5.a 那一条**：`roundStateOf`（`round/dispatch.ts`）· `loggedOf`（同处）·
-// `lastDistillOf`（`cli/fugue.ts`）· `lastDistillDigestOf`（`round/plan.ts`）原先各读一遍全量，
-// 四处读的是同一份日志上的同一条历史。这里合成一次读，四处变成它的投影。
+// **这就是 C5.a 那一条**：「这一轮的处境」「钉住的底与意图」「当下那一版」「放过的那几批」原先
+// 是四处各读一遍全量（`roundStateOf` · `loggedOf` · `lastDistillDigestOf` · `approvalsOf` 各自读的是
+// 同一份日志上的同一条历史）。这里合成**一处读法**，那四处变成它的投影。
 //
 // **为什么非合成不可**：分几次读出来的是**几个时刻**的快照——中间落了一条，几样就对不上了
 // （预备态那一趟在写 · 讨论态那一趟也在写）。一次读出来的是一份自洽的读数。
+//
+// **一趟命令读一遍**（递下去那一栏的用法）：命令体开跑时读一次 `roundFactsOf`，把这一份**递下去**
+// ——`PlanDeps.facts` · `SayDeps.facts` · `DispatchDeps.facts` 给了它，轮次那一层的三个入口就不再
+// 自己读（给了就不读 · 不给照旧自己读一遍，所以直接调那三个入口的单测一条都没改）。**它量得出来**：
+// `plan.test.ts` ⑩ · `say.test.ts` ⑥ · `dispatch.test.ts` ⑤ 拿一个计数版的读侧量「不给 = 1 遍 ·
+// 给了 = 0 遍」。
 //
 // **按轮次号逐条比，不按"最后一条"选。** 同一份日志里住着好几轮：第二轮起草之后回头放行第一轮，
 // "最后一条 `holder/distill`"给的是错的草案。轮级事件带轮次号（架构 § 15.1.a），就是为这一处。
@@ -57,6 +63,19 @@ export interface RoundFacts {
   readonly goal: string
   /** 逐版，按落地次序（第一版在头）。**含重落同一版的那些**。 */
   readonly versions: readonly DistillVersion[]
+  /**
+   * **这一份日志里放过的那几批**（`round/approve`，按发生次序）。
+   *
+   * **跨轮**：同号的那一批可能落在别的轮里——它是给人看的读数（「这一批与哪一批同形」），不作数
+   * （架构 § 15.1.a）。它收在同一遍读里，于是「一趟命令读一遍」是结构上成立的，而不是靠自觉。
+   */
+  readonly approvals: readonly ApprovedBatch[]
+}
+
+/** 日志里放过的一批：属于哪一轮 + 批号（拆分的形状）。 */
+export interface ApprovedBatch {
+  readonly round: RoundId
+  readonly fingerprint: string
 }
 
 /**
@@ -70,6 +89,7 @@ export async function roundFactsOf(log: LogReader, round: RoundId): Promise<Roun
   let base: CommitId | null = null
   let goal = ''
   const versions: DistillVersion[] = []
+  const approvals: ApprovedBatch[] = []
   for await (const e of log.readByWriter('round' as WriterId)) {
     if (e.t === 'round/state') {
       if (e.round === round) state = e.to
@@ -83,9 +103,12 @@ export async function roundFactsOf(log: LogReader, round: RoundId): Promise<Roun
     }
     if (e.t === 'holder/distill' && e.round === round) {
       versions.push({ at: versions.length + 1, digest: e.digest, against: e.against ?? null, body: e.body })
+      continue
     }
+    // 放过的那几批照收（**不按轮次筛**：同号的那一批可能在别的轮里）。
+    if (e.t === 'round/approve') approvals.push({ round: e.round, fingerprint: e.fingerprint })
   }
-  return { round, state, base, goal, versions }
+  return { round, state, base, goal, versions, approvals }
 }
 
 /**
@@ -102,6 +125,22 @@ function goalOf(body: string): string {
 /** 最后一次落地。**它就是当下那一版**（讨论态是理解 · 预备态是草案）；一次都没落过就是 `null`。 */
 export function lastOf(facts: RoundFacts): DistillVersion | null {
   return facts.versions.length === 0 ? null : (facts.versions[facts.versions.length - 1] ?? null)
+}
+
+/**
+ * **这一趟落下的那一版**（纯函数：不认识日志、不认识视图）。`at` 与 `against` 只有这一处定——
+ * 落事件那一处（`planRound` · `sayRound`）照着它落，命令行照着它把那一版接回链上印版本那一栏。
+ *
+ * `against` 是**上一条落地**那一版的指纹（重落那一趟就是自己）：读侧（`roundFactsOf`）与写侧
+ * 各写一遍的话，「又落了一遍同一版」这件事会在两处长得不一样。
+ */
+export function landingOf(facts: RoundFacts, digest: string, body: string): DistillVersion {
+  return { at: facts.versions.length + 1, digest, against: lastOf(facts)?.digest ?? null, body }
+}
+
+/** 把那一版接回链上（`landingOf` 的下一半）：写完之后命令行印的那张读数从这一份出来。 */
+export function withVersion(facts: RoundFacts, v: DistillVersion): RoundFacts {
+  return { ...facts, versions: [...facts.versions, v] }
 }
 
 /**

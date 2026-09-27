@@ -158,7 +158,7 @@ function outputsOf(
  * 交付物 · 断言 · `seed`，**按构造次序**。
  *
  * **它不作数。** 编号相同不代表可以照上次放行（架构 § 15.1.a：新的一批一律停在门口等人点头）。
- * 它是给人看的一个名字（`round/approve` 记它 · `approvalsOf` 读回来对照），所以**不需要抗碰撞**：
+ * 它是给人看的一个名字（`round/approve` 记它 · `RoundFacts.approvals` 读回来对照），所以**不需要抗碰撞**：
  * 这里用 FNV-1a 64 位——这一份拿不到任何 IO，也就不引 `node:crypto`。
  */
 export function fingerprintOf(built: Built): string {

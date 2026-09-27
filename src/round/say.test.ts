@@ -41,10 +41,22 @@ import { refHeadOf } from './head.ts'
 import { draftPathOf } from '../contract/draft.ts'
 import type { DraftSection } from '../contract/draft.ts'
 import { roundStateOf } from './dispatch.ts'
+import { roundFactsOf } from './versions.ts'
 import { planRound } from './plan.ts'
 import { RECENT_COUNT, SayError, recentOf, recordOf, recordsOf, sayRound, sessionPathOf } from './say.ts'
 import type { SayDeps } from './say.ts'
 import type { PlanResult } from './plan.ts'
+
+/** 计数版的读侧：`readByWriter` 被调几次就是「读了几遍日志」（其余几栏照旧）。 */
+function countingLog(log: LogHandle, counter: { n: number }): LogHandle {
+  return {
+    ...log,
+    readByWriter: (w, from) => {
+      counter.n += 1
+      return log.readByWriter(w, from)
+    },
+  }
+}
 
 const KEEP = process.env.KEEP === '1'
 const dirs: string[] = []
@@ -198,6 +210,10 @@ function sayDeps(
     readonly call: CallModel
     readonly goal?: string
     readonly distill?: string
+    /** 不给就读台子那一份；给了就量「读了几遍」（`countingLog`）。 */
+    readonly log?: LogHandle
+    /** 这一轮的读数（`roundFactsOf`）：给了它，这一趟就不该再去读日志。 */
+    readonly facts?: Awaited<ReturnType<typeof roundFactsOf>>
   },
 ): SayDeps {
   const goal = opts.goal ?? ''
@@ -231,7 +247,7 @@ function sayDeps(
     round: ROUND,
     text: opts.text,
     view: b.view,
-    log: b.log,
+    log: opts.log ?? b.log,
     truth: b.truth,
     writer: 'round' as WriterId,
     head: b.head,
@@ -242,6 +258,7 @@ function sayDeps(
     execute: b.execute,
     tools: CATALOG,
     maxSteps: 8,
+    ...(opts.facts === undefined ? {} : { facts: opts.facts }),
   }
 }
 
@@ -489,4 +506,26 @@ test('⑤ 处境不对就拒：已经在跑的那一轮不吃这一句话 · 空
   assert.equal(existsSync(join(b.root, '.fugue', 'session', `${ROUND}.jsonl`)), false, '拒了却落了一条记录')
   await assert.rejects(() => sayRound(sayDeps(b, { text: '   ', call: spy.call })), /说什么/)
   console.log('⑤ 读数：Merging 那一档当场拒（0 次调用 · 0 条记录）· 空话也拒')
+})
+
+test('⑥ 一趟说话只读一遍轮次日志；给了那一份读数就一遍都不读', async () => {
+  const b = await bench()
+  try {
+    const said = '理解更新：这一轮先把第一节拆出来。'
+    const c1 = { n: 0 }
+    const r1 = await sayRound(sayDeps(b, { text: '第一节也要拆', call: spyModel([sayStep(said)]).call, log: countingLog(b.log, c1) }))
+    assert.equal(c1.n, 1, `不给读数时该只读一遍轮次日志，实际 ${c1.n} 遍`)
+    assert.equal(r1.distill, said)
+    // 同一份读数递进去：这一趟**一遍都不该读**。
+    const facts = await roundFactsOf(b.log, ROUND)
+    const c2 = { n: 0 }
+    const r2 = await sayRound(
+      sayDeps(b, { text: '再改一点', call: spyModel([sayStep('理解更新：改成两格。')]).call, log: countingLog(b.log, c2), facts }),
+    )
+    assert.equal(c2.n, 0, `给了读数还去读日志：${c2.n} 遍`)
+    assert.equal(r2.landing?.at, 2, `这一趟落下的该是链上第 2 格，实际 ${String(r2.landing?.at)}`)
+    console.log(`⑥ 读数：一趟说话读 ${c1.n} 遍轮次日志（不给读数）· ${c2.n} 遍（给了那一份读数）`)
+  } finally {
+    for (const one of benches.splice(0)) await one.close()
+  }
 })

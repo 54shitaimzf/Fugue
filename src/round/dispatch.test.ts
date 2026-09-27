@@ -24,11 +24,24 @@ import { test } from 'node:test'
 import type { AgentId, CommitId, RelPath, RoundId, WriterId } from '../terms.ts'
 import type { LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
+import type { LogHandle } from '../log/log.ts'
 import { createRoots } from '../roots/roots.ts'
 import { openTruth } from '../truth/truth.ts'
 import { identFor } from '../identity.ts'
 import { fingerprintOf } from '../contract/gate.ts'
 import { dispatchRound, roundStateOf } from './dispatch.ts'
+import { roundFactsOf } from './versions.ts'
+
+/** 计数版的读侧：`readByWriter` 被调几次就是「读了几遍日志」（其余几栏照旧）。 */
+function countingLog(log: LogHandle, counter: { n: number }): LogHandle {
+  return {
+    ...log,
+    readByWriter: (w, from) => {
+      counter.n += 1
+      return log.readByWriter(w, from)
+    },
+  }
+}
 
 /** 测试自己起 git 时用同一套隔离：用户级配置不该决定测试的读数。 */
 const GIT_ENV: NodeJS.ProcessEnv = {
@@ -284,6 +297,28 @@ test('④ 判不成器一个字节都不落；这一轮还没落地那一档也�
     assert.equal(await roundStateOf(b.log, ROUND), 'Planning', '判不成器却动了处境')
     assert.deepEqual(branchesOf(b.root), ['refs/heads/main', 'refs/heads/master'], '判不成器却起了分支')
     console.log(`④ 读数：Idle 那一档 → 指出先跑 round plan · 缺键那一档 → 报出「第 1 节缺一个键：deliverables」· 日志与分支一个字节没动`)
+  } finally {
+    await b.close()
+  }
+})
+
+test('⑤ 放行那一趟只读一遍轮次日志；给了那一份读数就一遍都不读', async () => {
+  const b = await bench()
+  try {
+    const draft = draftText()
+    // 第一轮：**把读数递进去**——这一趟一遍都不该读日志。
+    await atGate(b, ROUND, draft)
+    const c1 = { n: 0 }
+    const facts = await roundFactsOf(b.log, ROUND)
+    const r1 = await dispatchRound(goDeps(b, ROUND, { log: countingLog(b.log, c1), facts }))
+    assert.equal(c1.n, 0, `给了读数还去读日志：${c1.n} 遍`)
+    assert.equal(r1.base, b.base)
+    // 第二轮（同一份日志里的另一轮）：**不给读数**——自己读，且只读一遍。
+    await atGate(b, ROUND2, draft)
+    const c2 = { n: 0 }
+    const r2 = await dispatchRound(goDeps(b, ROUND2, { log: countingLog(b.log, c2) }))
+    assert.equal(c2.n, 1, `不给读数时该只读一遍轮次日志，实际 ${c2.n} 遍`)
+    console.log(`⑤ 读数：一趟放行读 ${c1.n} 遍轮次日志（给了那一份读数）· ${c2.n} 遍（不给）`)
   } finally {
     await b.close()
   }

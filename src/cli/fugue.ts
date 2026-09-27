@@ -85,8 +85,8 @@ import { createToolHost } from '../tools/host.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
 import { refHeadOf } from '../round/head.ts'
 import { RoundStartError, startRound } from '../round/start.ts'
-import { approvalsOf, dispatchRound } from '../round/dispatch.ts'
-import { lastOf, latestFaceOf, roundFactsOf } from '../round/versions.ts'
+import { dispatchRound } from '../round/dispatch.ts'
+import { lastOf, latestFaceOf, roundFactsOf, withVersion } from '../round/versions.ts'
 import type { VersionFace } from '../round/versions.ts'
 import { fingerprintOf } from '../contract/gate.ts'
 import { PlanError, planRound, pinnedBase } from '../round/plan.ts'
@@ -1406,6 +1406,10 @@ async function roundPlan(
 
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   try {
+    // **这一趟的那份读数：一遍**（`round/versions.ts`）。开跑时读一次、往下递——接线的「凝聚理解」
+    // 那一栏 · 轮次那一层的处境与「上一版是哪一版」 · 放过的那几批 · 写完之后印的版本那一栏，
+    // 全是它的投影（`PlanDeps.facts` 那条缝）。
+    const facts = await roundFactsOf(ctx.log, round)
     // 持轮者那一格的接线（视图 · 工具面 · 句柄 · 怎么调模型）：一处，`fugue say` 的两个状态
     // 走的是同一份（见 `holderWiringOf`）。
     const w = await holderWiringOf({
@@ -1416,8 +1420,8 @@ async function roundPlan(
       wire,
       judge,
       goal,
-      // **凝聚理解**（架构 § 15.1.a 的 B 区那一段）：链尾那一版的正文（`round/versions.ts`）。
-      distill: lastOf(await roundFactsOf(ctx.log, round))?.body ?? '',
+      // **凝聚理解**（架构 § 15.1.a 的 B 区那一段）：链尾那一版的正文（同一份读数）。
+      distill: lastOf(facts)?.body ?? '',
     })
     const { base, view, execute, decl, call, tools, baseState } = w
     // 这一趟的句柄：**C 区第一条是空的**（这一趟没有人的话——那是 `fugue say` 那一格），
@@ -1428,6 +1432,7 @@ async function roundPlan(
       base,
       view,
       log: ctx.log,
+      facts,
       round,
       goal,
       // **同上一个分配器**：门判出来的那一批契约的身份，就是放行那一下要发的那些（门只认契约集合）。
@@ -1457,12 +1462,13 @@ async function roundPlan(
     const fingerprint = built === null ? null : fingerprintOf(built)
     // **同号不是凭证**（架构 § 15.1.a）：日志里放过的那几批里"与这一批同形"的那一个只是给人看的
     // 读数——它换不来放行，新的一批照样停在门口。
-    const earlier = fingerprint === null ? [] : await approvalsOf(ctx.log)
+    const earlier = fingerprint === null ? [] : facts.approvals
     const same = earlier.find((x) => x.fingerprint === fingerprint) ?? null
     // **版本那一栏：一次读，两个渲染器**（PLAN § 5.12 的 C5.b「与 `--json` 那两栏同源」）——下面
-    // 机器面那几栏与人面那几行出自同一张 `VersionFace`。**这一趟没写出草案时那一栏是空的**（判据
-    // 与人面印那一处逐字相同：人面不印的处境，机器面也不该报一个旧的号）。
-    const version = r.draftText === null ? null : await latestFaceOf(await roundFactsOf(ctx.log, round))
+    // 机器面那几栏与人面那几行出自同一张 `VersionFace`。**这一趟没写出草案时那一栏是空的**
+    // （`landing` 为空；判据与人面印那一处逐字相同：人面不印的处境，机器面也不该报一个旧的号）。
+    // **写完之后不再读一遍**：把这一趟落下的那一版接回开跑时那份读数上（`withVersion`）。
+    const version = r.landing === null ? null : latestFaceOf(withVersion(facts, r.landing))
     if (json) {
       emitJson({
         round: r.round,
@@ -1619,6 +1625,7 @@ async function sayCommand(
       text,
       view: w.view,
       log: ctx.log,
+      facts,
       truth: ctx.truth,
       writer: ctx.writer,
       head: w.head,
@@ -1636,6 +1643,7 @@ async function sayCommand(
           base: w.base,
           view: w.view,
           log: ctx.log,
+          facts,
           round,
           goal: over.goal,
           identityFor: (n: number) => identFor(round, n),
@@ -1657,10 +1665,9 @@ async function sayCommand(
         }),
     })
     // **版本那一栏：一次读，两个渲染器**（同上）。**这一趟落了东西才有这一栏**：讨论态那一趟落的
-    // 是一段话（`r.distill`）、预备态那一趟改的是那份草案（`r.plan.draftText`）——两态各自那一条
-    // 判据与下面人面印的那一处**是同一个**（不然机器面会在"这一趟什么都没落"时报一个旧的号）。
-    const landed = r.where === '讨论态' ? r.distill !== null : r.plan?.draftText != null
-    const version = landed ? await latestFaceOf(await roundFactsOf(ctx.log, round)) : null
+    // 是一段话、预备态那一趟改的是那份草案——两态收在同一栏 `landing` 里（`sayRound` 一处给），
+    // 所以机器面不会在"这一趟什么都没落"时报一个旧的号。**写完之后不再读一遍**（`withVersion`）。
+    const version = r.landing === null ? null : latestFaceOf(withVersion(facts, r.landing))
     if (json) {
       emitJson({
         round: r.round,
@@ -1767,12 +1774,14 @@ async function roundGo(root: string, flags: Map<string, string | true>, args: st
 
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   try {
-    // **先把放过的那几批读出来**：这一笔写进去之后它就与这一批混在一起了（`approvalsOf` 读全部）。
-    const earlier = await approvalsOf(ctx.log)
+    // **这一趟的那份读数：一遍**（含放过的那几批——这一笔写进去之后它就与这一批混在一起了）。
+    const facts = await roundFactsOf(ctx.log, round)
+    const earlier = facts.approvals
     const r = await dispatchRound({
       roots: ctx.roots,
       truth: ctx.truth,
       log: ctx.log,
+      facts,
       round,
       // **与判那一趟同一个分配器**（`round plan` 那一趟用的是同一个 `identFor`）。
       identityFor: (n: number) => identFor(round, n),

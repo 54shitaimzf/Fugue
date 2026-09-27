@@ -14,7 +14,7 @@
 //
 // **编号不作数。** `round/approve` 记着这一批的编号（`fingerprintOf`：拆分的形状），而它**不是
 // 放行的凭证**：新的一批一律停在门口等人点头，哪怕与上一批同一个编号（架构 § 15.1.a）。编号的
-// 用处只有一个——读日志的人一眼看得出"这一批与哪一批同形"（`approvalsOf`）。
+// 用处只有一个——读日志的人一眼看得出"这一批与哪一批同形"（`RoundFacts.approvals`）。
 //
 // **再跑一次不重复触发。** 放行只在 `Planning` 那一处走：这一批发过之后处境已经不在门口，
 // 第二次 `round go` 当场拒，**一个字节都不落**——不是静默成功，也不是发第二条契约。
@@ -38,6 +38,7 @@ import { step } from './machine.ts'
 import type { SeedReading } from './seed.ts'
 import { seedRulerAt } from './seed.ts'
 import { lastOf, roundFactsOf } from './versions.ts'
+import type { RoundFacts } from './versions.ts'
 
 /** 这一层自己的失败：判不成器 · 这一轮不在门口 · 分支不是空的 · 物化没地方落。**说出是哪一步。** */
 export class RoundStartError extends Error {}
@@ -182,15 +183,6 @@ export async function roundStateOf(log: LogReader, round: RoundId): Promise<Roun
   return (await roundFactsOf(log, round)).state
 }
 
-/** 日志里那几笔放行，按发生次序。**读数**：给人看"这一批与哪一批同形"——它不作数。 */
-export async function approvalsOf(log: Log): Promise<readonly { readonly round: RoundId; readonly fingerprint: string }[]> {
-  const out: { round: RoundId; fingerprint: string }[] = []
-  for await (const e of log.readByWriter('round')) {
-    if (e.t === 'round/approve') out.push({ round: e.round, fingerprint: e.fingerprint })
-  }
-  return out
-}
-
 /** 这一轮在日志里留下的那三样：钉住的底 · 轮级意图那一句 · 那一份草案的正文。 */
 export interface LoggedRecord {
   readonly base: CommitId | null
@@ -211,11 +203,16 @@ export async function loggedOf(log: LogReader, round: RoundId): Promise<LoggedRe
   return { base: f.base, goal: f.goal, draft: lastOf(f)?.body ?? null }
 }
 
-/** 放行那一趟要的几样。**草案 · 底 · 意图都从日志里读**，其余由调用方注入。 */
+/** 放行那一趟要的几样。**草案 · 底 · 意图从那一份读数来**（`facts`，不给就自己读一遍），其余由调用方注入。 */
 export interface DispatchDeps {
   readonly roots: Roots
   readonly truth: Truth
   readonly log: Log
+  /**
+   * **这一轮的读数**（`roundFactsOf` 那一次读的产出）。给了它，这一趟就不再自己读日志——命令行
+   * 那一层读一次递下来，于是「一趟命令读一遍」成立。不给就自己读一遍（直接调这一份的单测照旧）。
+   */
+  readonly facts?: RoundFacts
   readonly round: RoundId
   /**
    * 第 `n` 个 agent 的身份（从 0 起 · 构造次序）。**必须与判那一趟同一个分配器**，
@@ -252,9 +249,11 @@ export interface Dispatched extends Issued {
 export async function dispatchRound(deps: DispatchDeps): Promise<Dispatched> {
   const { log, round, truth } = deps
 
-  // 一 · 处境。**放行只在门口走一次**：这一批发过之后处境已经不在 `Planning`，第二次当场拒
-  //（不是静默成功，也不是发第二条契约）。
-  const state = await roundStateOf(log, round)
+  // 一 · 这一轮的读数**读一遍**（给了就用给的：`DispatchDeps.facts`）。处境是它的一个投影。
+  const facts = deps.facts ?? (await roundFactsOf(log, round))
+  // **放行只在门口走一次**：这一批发过之后处境已经不在 `Planning`，第二次当场拒（不是静默成功，
+  // 也不是发第二条契约）。
+  const state = facts.state
   if (state !== 'Planning') {
     const why =
       state === 'Idle'
@@ -263,8 +262,8 @@ export async function dispatchRound(deps: DispatchDeps): Promise<Dispatched> {
     throw new RoundStartError(`这一轮的处境是 ${state}：${why}（放行只在 Planning 那一处走）。`)
   }
 
-  // 二 · 从日志里读回这一轮的那三样。
-  const at = await loggedOf(log, round)
+  // 二 · 这一轮的那三样（同一份读数：钉住的底 · 意图那一句 · 那一份草案）。
+  const at = { base: facts.base, goal: facts.goal, draft: lastOf(facts)?.body ?? null }
   if (at.base === null) {
     throw new RoundStartError(
       `日志里找不到第 ${round} 轮钉住的底：` +
