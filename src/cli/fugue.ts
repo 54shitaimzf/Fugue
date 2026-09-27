@@ -1375,7 +1375,13 @@ async function holderWiringOf(o: {
   const goalText =
     o.draftPath === undefined
       ? o.goal
-      : holderGoalText(o.goal, o.draftPath, Object.keys(actionsTableOf(o.doc)).sort(), o.wire.maxSteps)
+      : holderGoalText(
+          o.goal,
+          o.draftPath,
+          Object.keys(actionsTableOf(o.doc)).sort(),
+          o.wire.maxSteps,
+          actionCommandsOf(o.doc),
+        )
   const base = await pinnedBase(o.ctx.truth)
   const view = await loadView(o.ctx.log, 'round' as WriterId, { lower: lowerAt(o.ctx.truth, base) })
   const head = await refHeadOf(o.ctx.log, 'round' as WriterId, base)
@@ -2260,6 +2266,20 @@ function writeSetLine(c: {
 function actionsTableOf(doc: ConfigDoc): Readonly<Record<string, readonly RelPath[]>> {
   const out: Record<string, readonly RelPath[]> = {}
   for (const name of actionNames(doc)) out[name] = readBinding(doc, name).outputs as readonly RelPath[]
+  return out
+}
+
+/**
+ * 绑好的动作**跑什么**：名字 → `argv` 拼起来。**与 `actionsTableOf` 同一个来源**（`readBinding`
+ * 一处读），用处只有一个——产物说明里那一句动作，名字后面括号里那个命令。
+ *
+ * 为什么要印出来：`assertions.action` 只能从这几个里挑，而"只给名字"那一版真档烧掉过一整趟的
+ * 预算——那一趟为了弄清哪个动作核哪一处，去找工作区的配置（它猜 `*.json` / `*.yaml` /
+ * `*.toml`，而那一份叫 `.fugue/config`），8 步里四步花在找它上，一次都没伸手写草案。
+ */
+function actionCommandsOf(doc: ConfigDoc): Readonly<Record<string, string>> {
+  const out: Record<string, string> = {}
+  for (const name of actionNames(doc)) out[name] = readBinding(doc, name).argv.join(' ')
   return out
 }
 

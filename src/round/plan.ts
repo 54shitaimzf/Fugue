@@ -314,8 +314,13 @@ export function holderGoalText(
   draftPath: RelPath,
   actionNames: readonly string[] = [],
   maxSteps?: number,
+  /**
+   * 绑好的动作**跑什么**（名字 → `argv` 拼起来）。与名字同一个来源（工作区配置那一份绑定），
+   * 所以那一句既可以念名字、也可以念命令；不给就只念名字（夹具与单测那一档）。
+   */
+  actionCommands: Readonly<Record<string, string>> = {},
 ): string {
-  return `${goal}\n\n${holderClosingRuleLines(maxSteps).join('\n')}\n\n${draftRuleTextOf(draftPath, actionNames)}`
+  return `${goal}\n\n${holderClosingRuleLines(maxSteps).join('\n')}\n\n${draftRuleTextOf(draftPath, actionNames, actionCommands)}`
 }
 
 /**

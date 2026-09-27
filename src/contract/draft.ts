@@ -160,10 +160,25 @@ export function draftPathOf(round: string): RelPath {
  *     判值域用的就是那两份（架构 § 8.12「构造器不猜、不补」）。抄一份的后果是提示词与判据
  *     各说各话，而它一个错都不报——症状只有一个：模型老是写不中。
  */
-export function draftRuleTextOf(draftPath: RelPath, actionNames: readonly string[] = []): string {
+export function draftRuleTextOf(
+  draftPath: RelPath,
+  actionNames: readonly string[] = [],
+  actionCommands: Readonly<Record<string, string>> = {},
+): string {
   const lines = DRAFT_KINDS.map(
     (k) => `  ${k}：${DRAFT_FIELDS[k].map((f) => `${f}：${FIELD_RULES[f]?.shape ?? '（没有一句形状）'}`).join(' · ')}`,
   )
+  // **它跑的什么也要印出来。** `assertions.action` 只能从这几个里挑，而"只给名字"那一版真档
+  // 照出过一次后果：那一趟为了弄清哪个动作核哪一处，去找工作区的配置——它猜的是 `*.json` /
+  // `*.yaml` / `*.toml`，`.fugue/config` 不在猜法里，8 步里烧掉四步，一次都没伸手写草案，
+  // 最后停在步数上界（`--dump-wire` 实录）。名字与命令都从**工作区那一份绑定**念
+  // （`readBinding` 的 `argv`）：提示词与跑的时候同源，所以漂移不了。
+  const shown = actionNames.map((n) => {
+    const cmd = actionCommands[n]
+    // **不给命令就与原来那一版逐字相同**（`name`）：夹具与单测那一档不该因为这一栏变字节。
+    return cmd === undefined || cmd === '' ? n : `${n}（${cmd}）`
+  })
+  const withCommand = actionNames.some((n) => (actionCommands[n] ?? '') !== '')
   return (
     `这一趟要把拆分写进 \`${draftPath}\`：一个任务一节，每节一个标 \`json\` 的围栏块；` +
     '块里按那一节的 kind 给这几个键，值要写成那个形状：\n' +
@@ -172,16 +187,21 @@ export function draftRuleTextOf(draftPath: RelPath, actionNames: readonly string
     // `assertions` 里那个 `action` **只能从工作区绑好的动作里挑**（PLAN § 5.10 的 C1 ⑦：不猜、
     // 不补、不替它挑）。而"绑好了哪几个"是**工作区的事实**，模型无从得知——所以由调用方给进来。
     // 真档那一趟它就是最后那一处：草案的键与值都对，退回来的唯一一句是"指向一个没绑的动作"。
-    `assertions 里那个 action 只能从工作区绑好的动作里挑：${
-      actionNames.length === 0 ? '（今天一条都没绑——先用 fugue config set actions.<名字> 绑一个）' : actionNames.join(' · ')
+    `assertions 里那个 action 只能从工作区绑好的动作里挑${withCommand ? '（名字后面括号里是它跑什么）' : ''}：${
+      actionNames.length === 0 ? '（今天一条都没绑——先用 fugue config set actions.<名字> 绑一个）' : shown.join(' · ')
     }。\n` +
     '块外那些话留着——"为什么这么拆"那一句就是它。写别的路径不算这一趟的产物。'
   )
 }
 
 /** 「工作总目标」那一段的正文：人的意图那一句 + **末尾**那一句产物说明（近因：末处说什么，它做什么）。 */
-export function goalWithDraftRule(goal: string, draftPath: RelPath, actionNames: readonly string[] = []): string {
-  return `${goal}\n\n${draftRuleTextOf(draftPath, actionNames)}`
+export function goalWithDraftRule(
+  goal: string,
+  draftPath: RelPath,
+  actionNames: readonly string[] = [],
+  actionCommands: Readonly<Record<string, string>> = {},
+): string {
+  return `${goal}\n\n${draftRuleTextOf(draftPath, actionNames, actionCommands)}`
 }
 
 /** 一个围栏块：语言那一栏与正文。**不标语言的不算节**（它多半是示意）。 */
