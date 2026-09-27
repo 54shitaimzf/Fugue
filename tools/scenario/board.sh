@@ -7,6 +7,9 @@
 #   sh tools/scenario/board.sh --live --runs 3            # 真档：每一案连跑 3 趟，逐趟判已知答案
 #   sh tools/scenario/board.sh --live --runs 5 --gate-only    # 只跑到门口：门退回率多样本（一趟 ≈ 一次持轮者那一趟）
 #   sh tools/scenario/board.sh --live --case "改码 · 单文件（最小的一案，反复采样用）"
+#   sh tools/scenario/board.sh --live --runs 1 --case "改码 · 记账库" --dump-wire
+#       # 实录那一档：`round plan` 与 `round work` 各落一份 `--dump-wire`（诊断"这一格那几步
+#       #   到底干了什么"用；落点 `$OUT/run/<案>-<趟>/{wire-plan,wire}`，在工作区之外）
 #   sh tools/scenario/board.sh --live --runs 3 --gate-only --max-steps 16
 #       # 覆盖出题那一栏的上界：量的是"这一趟自然几步收工"（**不是拿它把判据弄绿**——
 #       #   § 5.9.2 那条纪律管的是后者：连续几趟停在"到了你给的上界"是协议或提示的问题）。
@@ -29,6 +32,10 @@ LIVE=no
 MODE=run
 RUNS=1
 GATE_ONLY=no
+# **实录那一档**（取证用）：给了它，`round plan` 与 `round work` 各带 `--dump-wire`，
+# 落点在 `$OUT/run/<案>-<趟>/{wire-plan,wire}`。诊断"这一格那几步到底干了什么"要它
+# （落点在工作区之外：**落进 `<root>` 会被下一轮的 fork 当成漂移**，`dumpWireDir` 那一道守卫）。
+DUMP=no
 ONECASE=
 # 空 = 用出题那一栏给的那个上界（缺省就是这样；覆盖只在我显式给了 `--max-steps` 时发生）。
 MAXOVERRIDE=
@@ -40,6 +47,7 @@ while [ $# -gt 0 ]; do
     --stub) LIVE=no ;;
     --runs) RUNS=$2; shift ;;
     --gate-only) GATE_ONLY=yes ;;
+    --dump-wire) DUMP=yes ;;
     --case) ONECASE=$2; shift ;;
     # 出题那一栏的上界（`meta.json` 的 `maxSteps`）在这里可以被**覆盖一次**：量"自然几步收工"用。
     # 覆盖之后**处处读的都是它**（`run_one` 从 `meta.json` 现读），所以台账与真调用不可能分家。
@@ -150,6 +158,13 @@ run_one() { # run_one <案名> <case-N> <趟>
   GOAL=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).goal)' "$OUT/decl/$cn/meta.json")
   HASSPLIT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).split ? "yes" : "no")' "$OUT/decl/$cn/meta.json")
   GATE=—
+  # 实录那一档的两个落点：**plan 与 work 分开**（同一个目录会让两段的 call-0001 互相覆盖）。
+  WD=""
+  PD=""
+  if [ "$DUMP" = yes ]; then
+    WD="--dump-wire $D/wire"
+    PD="--dump-wire $D/wire-plan"
+  fi
   # **只到门口这一档跳过人拆那一案**：那一档不经门（`round run` 直接从配置里读拆分），量不到①。
   if [ "$GATE_ONLY" = yes ] && [ "$HASSPLIT" = yes ]; then
     printf '（%s 第 %s 趟：人拆那一档不经门，"只到门口"这一档跳过它）\n' "$name" "$run"
@@ -163,7 +178,7 @@ run_one() { # run_one <案名> <case-N> <趟>
     fi
   else
     if [ "$LIVE" = yes ]; then
-      FX "$W" round plan "$GOAL" --live --max-steps "$MAX" > "$D/plan.out" 2> "$D/plan.err"
+      FX "$W" round plan "$GOAL" --live --max-steps "$MAX" $PD > "$D/plan.out" 2> "$D/plan.err"
     else
       # **打桩档一次调用都不发。** 持轮者那一趟没有打桩那一档（`--wire-in` 与 `--judge` 之外都会
       # 真发调用：`round plan` 缺省就是真网络），所以这一档走人喊停那条路——`--judge` 一步都不跑，
@@ -182,7 +197,7 @@ run_one() { # run_one <案名> <case-N> <趟>
       fi
       FX "$W" --json round go > "$D/go.json" 2> "$D/go.err"
       if [ "$LIVE" = yes ]; then
-        FX "$W" --json --report --metrics round work --live --max-steps "$MAX" > "$D/work.json" 2> "$D/work.err"
+        FX "$W" --json --report --metrics round work --live --max-steps "$MAX" $WD > "$D/work.json" 2> "$D/work.err"
       else
         FX "$W" --json --report --metrics round work --max-steps "$MAX" > "$D/work.json" 2> "$D/work.err"
       fi
