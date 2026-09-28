@@ -199,6 +199,8 @@ test('① 停在门口时一个契约都不发；放行那一下逐条发 · 批
     // 分支定在**同一个底**上。
     assert.equal(await b.truth.resolve(`refs/heads/${AGENT}` as never), b.base, '分支的底不是钉住的那一个')
     assert.equal(await roundStateOf(b.log, ROUND), 'Working')
+    // 这一趟放行的是哪一轮：命令行那一层印的第一个栏就是它（漏了就是 `undefined`）。
+    assert.equal(r.round, ROUND, '放行那一趟没把轮次号交回来')
     console.log(
       `① 读数：停着时 contract/issue 0 条 · 放行 ${r.built.contracts.length} 条（${r.built.contracts[0]?.id}）· ` +
         `批号 ${r.fingerprint} · 分支 ${branchesOf(b.root).length - 2} 条定在 ${r.base.slice(0, 7)} · 处境 Working`,

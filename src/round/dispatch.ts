@@ -231,6 +231,15 @@ export interface DispatchDeps {
 
 /** 放行的产出：门那一趟的读数 + 发出去之后的落地结果 + 这一批的编号。 */
 export interface Dispatched extends Issued {
+  /**
+   * 这一趟放行的是哪一轮。**它与 `round/approve` 里那一栏是同一个值**。
+   *
+   * 它原先不在这一份里（`Issued` 那三样是从"发出去"那一头看的），而命令行那一层读的是
+   * `r.round`——于是 `round go` 人面那一行的第一栏印的是 `undefined`、`--json` 那一份里干脆
+   * 没有这个键（没有编译步骤，少一栏不会当场红：`dispatch.test.ts` ① 与 `chain.test.ts` 的 C4
+   * 各有一条断言盯着它）。
+   */
+  readonly round: RoundId
   readonly base: CommitId
   readonly built: Built
   readonly precheck: PrecheckResult
@@ -301,5 +310,5 @@ export async function dispatchRound(deps: DispatchDeps): Promise<Dispatched> {
   })
   const issued = await issueAndStart(built, at.base, state, deps)
 
-  return { ...issued, base: at.base, built, precheck: gate.precheck, seedRead: ruler.reading, fingerprint }
+  return { ...issued, round, base: at.base, built, precheck: gate.precheck, seedRead: ruler.reading, fingerprint }
 }

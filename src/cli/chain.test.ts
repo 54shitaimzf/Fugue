@@ -709,11 +709,14 @@ test('C4 · round go：不放行一个契约都不发 · 放行逐条发 · 同�
   const go = fugue(root, '--json', 'round', 'go')
   assert.equal(go.code, 0, `round go 退了 ${go.code}：${go.stderr}`)
   const gj = JSON.parse(go.stdout) as {
+    round: string
     base: string
     fingerprint: string
     contracts: unknown[]
     trail: { from: string; on: string; to: string }[]
   }
+  // **轮次那一栏**：人面那一行的第一栏就是它（`--json` 漏了它的时候那一栏印的是 `undefined`）。
+  assert.equal(gj.round, 'r1', `round go --json 没给出轮次号：${go.stdout.slice(0, 200)}`)
   assert.equal(gj.fingerprint, pj.fingerprint, '放行那一趟算出来的批号与判那一趟不同——那不是同一批')
   assert.deepEqual(
     gj.trail.map((t) => `${t.from} ──${t.on}──> ${t.to}`),
