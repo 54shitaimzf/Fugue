@@ -305,9 +305,12 @@ function accountOf(root: string): readonly string[] {
 
 test('⑤ 按了 g 与手敲 round go 落下的账逐字节相同（负对照：界面自己往账上写 → 当场不同）', async () => {
   const gate = gatedRoot()
-  const hand = `${gate}-hand`
-  const byKey = `${gate}-key`
-  const naive = `${gate}-naive`
+  // 三个孪生放在一个**登记过**的目录里：`tmpDir` 那张清理表是按目录收的（`test/helpers/tmp.ts`
+  // 头上那段说的就是这件事——平铺着建就会攒在 `/tmp` 里，谁也不去看）。
+  const box = tmpDir('fugue-keys-twins-')
+  const hand = join(box, 'hand')
+  const byKey = join(box, 'key')
+  const naive = join(box, 'naive')
   for (const t of [hand, byKey, naive]) cpSync(gate, t, { recursive: true })
   assert.deepEqual(accountOf(hand), accountOf(byKey), '拷出来的两半一开始就该是同一份账')
 
