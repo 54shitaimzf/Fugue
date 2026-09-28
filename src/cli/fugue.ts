@@ -133,6 +133,10 @@ import type { StatusRow } from '../probe/status.ts'
 import { follow, readNew } from '../probe/watch.ts'
 import { openTui, tuiModeOf } from '../ui/follow.ts'
 import { openTerm } from '../ui/term.ts'
+import { keysHintOf, openKeys } from '../ui/keys.ts'
+import type { KeySource } from '../ui/keys.ts'
+import { openGo } from '../ui/go.ts'
+import type { GoLauncher } from '../ui/go.ts'
 
 export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 
@@ -152,9 +156,11 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              一趟之内仍是 (seq, writer) 的全序
   tui [--once] [--follow]    同一读面的第二档渲染：底部一块恒定 K 行的面板（处境 + 读数）擦掉重画，
                              永久行（轮次转移 · 契约 · 每一格干完没有 · 边界拦下什么）按到达序追加进
-                             本终端的历史。**可附着**：自己不起轮次、不取锁、不写一个字节——一轮正在
-                             跑时照样读。TTY 那一档不给 --follow 也是跟着；Ctrl-C 收走面板退出（码 0）。
+                             本终端的历史。**可附着**：自己不起轮次、不取锁、自己的账一个字节都不写
+                             ——门槛上按 g 起的是**一条命令**（fugue round go 那个子进程写账）。
+                             TTY 那一档不给 --follow 也是跟着；退出收走面板（码 0：人喊停不是失败）。
                              加 --metrics / --report 与 status 那两栏同名同义。
+                             按键（只在 TTY 那一档）：${keysHintOf()}
                              --once 印一遍永久行就退；不是 TTY（管道 · CI）也是这一档，**一个字节的
                              ANSI 都不写**；$TERM 是 dumb 或认不出来同样退到这一档
   read <path>                读一个路径；默认吐原始字节
@@ -755,6 +761,12 @@ async function watchCmd(
  *
  * TTY 那一档不给 `--follow` 也是跟着的（面板就是为这个）；管道那一档不给就是把账上有的印一遍就停
  * ——两档的缺省不一样，各自都写在上面这一句里。
+ *
+ * **`UI4` · 门那儿按一下**（PLAN § 5.19 第五段那一行 · 架构 § 9.8「人的每个状态动作都是一条命令」）：
+ * 只在面板那一档收按键（`ui/keys.ts`），按 `g` 起一次 `fugue round go`（`ui/go.ts`）——**界面不写
+ * 日志、不持写句柄**，账由那个子进程写；它吐出来的行与收尾那一下走 `tui.note()`（写在面板上方）。
+ * `q`/`Ctrl-C`/`Ctrl-D` 退出（**raw mode 下 `SIGINT` 不再由终端发出来**，所以那三个字节就在键表里）；
+ * 那一趟还跑着时第一次按是等它收尾、第二次是硬退。`?` 把按键那一行重印一遍。
  */
 async function tuiCmd(root: string, flags: Map<string, string | true>): Promise<number> {
   const bad = unknownFlagsOf('tui', flags, TUI_FLAGS)
@@ -788,13 +800,83 @@ async function tuiCmd(root: string, flags: Map<string, string | true>): Promise<
   // resize：**只重画**，不重读（宽度变了账没变）；新的那一块落在哪由 `ui/term.ts` 那一档决定。
   const onWin = (): void => tui.redraw()
   if (mode === 'panel') process.on('SIGWINCH', onWin)
+
+  // ── `UI4` · 门那儿按一下（只在"面板"那一档）──────────────────────────────────────────
+  // 按 `g` 起的是**一条命令**（`ui/go.ts` 的 `openGo` → 一个子进程），账由那个子进程写。界面手里
+  // 没有写句柄这件事在**类型上**就成立：`openTui` 收的 `log` 只有 `readMerged` 那一半。
+  let keys: KeySource | null = null
+  let go: GoLauncher | null = null
+  /** 按过退出、而那一趟还跑着：等它收尾再退（不打断一轮正在跑的——账要完整）。 */
+  let leaving = false
+  if (mode === 'panel') {
+    go = openGo({
+      root,
+      // 子进程吐出来的行、与它收尾那一下，都**走注记**（写在面板上方）：直接写 `stdout` 会在
+      // 终端历史里插进半块面板。
+      onLine: (line) => tui.note(line),
+      onDone: (r) => {
+        if (r.why !== null) tui.note(`这一趟起不来：${r.why}（手敲一遍看看：${go?.argv.join(' ') ?? ''}）`)
+        else if (r.code !== 0) tui.note(`那一趟 \`round go\` 退了 ${r.code ?? '（信号）'}`)
+        if (leaving) ac.abort()
+      },
+    })
+    keys = openKeys({
+      input: process.stdin,
+      onAction: (a) => {
+        if (a === 'help') {
+          tui.note(keysHintOf())
+          return
+        }
+        if (a === 'quit') {
+          if (go?.running === true) {
+            // 第一次：等它收尾。第二次：硬退——**说清代价**（那一趟的输出接不上了，它自己那份账
+            // 照写：写到哪算哪，重放得回来）。
+            if (!leaving) {
+              leaving = true
+              tui.note('那一趟 `round go` 还在跑：等它收尾就退出（账要完整）。再按一次是硬退')
+              return
+            }
+            tui.note('硬退：那一趟的输出接不上了（它自己的账照写，写到哪算哪）')
+          }
+          ac.abort()
+          return
+        }
+        // `go`：跑着的时候按不起了第二次（同一条命令不叠第二次）。
+        if (go === null || go.running) return
+        tui.note(`按了 g：起一次 \`round go\`（${go.argv.join(' ')}）`)
+        go.press()
+      },
+    })
+    // 第一件事：把按键那一行印出来（写在面板上方；翻上去了按 `?` 再印一次）。
+    // **stdin 不是终端就不印它**（`stdout` 是终端而 `stdin` 不是：面板照画，可按键收不到）——
+    // 印一行"按 g 放行"而按下去没反应，是这一档最坏的一种体验。
+    tui.note(keys.raw ? keysHintOf() : 'stdin 不是终端：这一档不收按键（放行还是手敲 fugue round go）')
+  }
+  // **每一条退出路径都要把终端还原回去**（计划 § 5.19 里 DECSTBM 那笔账在 raw mode 上是同一笔：
+  // 漏一条，那台终端就得人 `reset`）。四路：正常退 · `Ctrl-C`（raw mode 下走按键那一头）·
+  // `SIGTERM`/`SIGHUP` · 崩了（`exit` 那一钩，最后一次同步地把 raw mode 关掉）。
+  const onTerm = (): void => ac.abort()
+  if (mode === 'panel') {
+    process.on('SIGTERM', onTerm)
+    process.on('SIGHUP', onTerm)
+    process.once('exit', () => {
+      keys?.close()
+      term.close()
+    })
+  }
   // 读账在 `try` 里：读炸了也要走到 `finally` 去把日志口与面板收干净。
   try {
     await tui.counts
     return 0
   } finally {
     process.removeListener('SIGINT', onSig)
-    if (mode === 'panel') process.removeListener('SIGWINCH', onWin)
+    if (mode === 'panel') {
+      process.removeListener('SIGWINCH', onWin)
+      process.removeListener('SIGTERM', onTerm)
+      process.removeListener('SIGHUP', onTerm)
+    }
+    // **raw mode 先还原、面板再收走**：两条都幂等，正常退那一路与 `exit` 那一钩都走到这里。
+    keys?.close()
     term.close()
     await log.close()
   }

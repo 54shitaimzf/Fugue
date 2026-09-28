@@ -20,6 +20,11 @@
 // 几十遍（`UI2` 实测一次启动 31 次重画 · 394 次清行，而屏幕上一个字节的差别都没有）。所以第一趟走
 // `readNew`（`follow` 里面就是它），之后从 `first.cursors` 接着跟随。
 //
+// **注记那一层**（`note()`）：按键提示 · 起的那条命令的输出 · 它的退出码走这里。它与永久行同一档
+// ——写在面板上方、**只写一次**——但**不是账上的一行**（账上有什么由 `probe/` 那两处说了算），
+// 所以它不参与"已经写出去的那几条不许被回头改"那条牙。面板在屏幕底部，界面自己的话总得有个去处：
+// 直接往 `stdout` 写会插进半块面板。
+//
 // **代价如实记在这里**：每一帧都从"累起来的那些行"重折一遍（`readingsOf` 加永久行那一栏），而跟随
 // 每一趟本来就重读全量（`watch.ts` 头上那条）——两者同一档代价。要改成增量折，那是另一格的事：
 // 折法只有一处真源（`probe/status.ts`），这一份不另写一份。
@@ -149,6 +154,11 @@ export interface TuiCounts {
   readonly draws: number
   /** 只印永久行那一档印出去的行数；面板那一档恒为 0。 */
   readonly lines: number
+  /**
+   * 界面自己写进历史的那几行（按键提示 · 按下去起的那条命令的输出 · 它收尾的退出码）。
+   * **它不是账上的一行**——账上有什么由 `probe/` 那两处说了算，而这一栏数的是这一档自己说的话。
+   */
+  readonly notes: number
 }
 
 export interface TuiOptions {
@@ -174,6 +184,15 @@ export interface Tui {
   readonly session: TuiSession
   /** 这一档跑完的那一下（`lines-once` 读一趟就 resolve）。 */
   readonly counts: Promise<TuiCounts>
+  /**
+   * 往终端历史里写一行**界面自己的话**：按键提示 · 按下去那条命令的输出 · 它收尾的退出码。
+   *
+   * **它不是账上的一行**（账上有什么由 `probe/` 那两处说了算），所以它进不了任何一栏，也不参与
+   * `fresh()` 那条"已经写出去的那几条不许被回头改"的牙——它只写一次，写完就算了。
+   * 为什么要有它：面板在屏幕底部，"按下去了"这件事总得有个回声；而界面直接往 `stdout` 写会在
+   * 终端历史里插进半块面板（`ui/term.ts` 里那块地方是它自己在摆的）。
+   */
+  note(line: string): void
   /** 重画（`SIGWINCH` 那一档）：**不重读**——账没变，变的是地方。只印永久行那一档什么也不做。 */
   redraw(): void
 }
@@ -184,19 +203,24 @@ export interface Tui {
  */
 export function openTui(o: TuiOptions): Tui {
   const session = openSession({ readings: o.readings, phase: o.phase, table: o.table })
-  const c = { rows: 0, permanent: 0, draws: 0, lines: 0 }
+  const c = { rows: 0, permanent: 0, draws: 0, lines: 0, notes: 0 }
+  /** 界面自己写的那几行（还没落到历史里的）：与永久行同一档、都写在面板上方，**都只写一次**。 */
+  const notes: string[] = []
+  const takeNotes = (): readonly string[] => (notes.length === 0 ? [] : notes.splice(0, notes.length))
   const sync = (): void => {
     c.rows = session.rows.length
     c.permanent = session.permanent().length
   }
   /** 画一次：面板那一档交给终端（擦与摆由 `ui/term.ts` 那一档说了算），只印永久行那一档走 `emit`。 */
   const paint = (): void => {
+    // 次序：**账上那些行在前、界面自己的话在后**（`note` 说的是"刚刚按了一下"，它总发生在已经
+    // 读到的那些行之后）。两条轨各管各的：`fresh()` 那条"前缀不许改"的牙只盯账上那一串。
+    const fresh = [...session.fresh(), ...takeNotes()]
     if (o.mode === 'panel') {
       c.draws += 1
-      o.term.draw(session.fresh(), (size) => session.frame(size))
+      o.term.draw(fresh, (size) => session.frame(size))
       return
     }
-    const fresh = session.fresh()
     c.lines += fresh.length
     for (const line of fresh) o.emit(line)
   }
@@ -219,10 +243,19 @@ export function openTui(o: TuiOptions): Tui {
   return {
     session,
     counts,
+    note(line: string): void {
+      if (line === '') return
+      notes.push(line)
+      c.notes += 1
+      // 立刻画一次：**按下去了这件事要当场看得见**（等下一次账动可能很久，而"按了没反应"是这一档
+      // 最坏的一种体验）。没按过键时这一档一次都不会被调到。
+      paint()
+    },
     redraw(): void {
       if (o.mode !== 'panel') return
       c.draws += 1
-      o.term.draw([], (size) => session.frame(size))
+      // resize 也把还没写出去的注记带上：账不重读，但这句话还没落到历史里。
+      o.term.draw(takeNotes(), (size) => session.frame(size))
     },
   }
 }
