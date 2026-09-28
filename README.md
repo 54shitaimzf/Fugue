@@ -9,9 +9,9 @@
 
 [![test](https://github.com/54shitaimzf/fugue/actions/workflows/test.yml/badge.svg)](https://github.com/54shitaimzf/fugue/actions/workflows/test.yml)
 
-本地优先的编码 agent：真源只有 git 对象库与一份只追加的事件账
+住在终端里的编码 agent：先跟你说清，再自己拆活 · 自己干 · 自己验；全过才动你的工作树
 
-**给它一句话，它自己拆活、自己干、自己验；全过才动你的工作树，没过就一个字节都不动。**
+**说清再动手，全过才落地。没过，你的工作树一个字节都不动。**
 
 ## 目录
 
