@@ -10,6 +10,7 @@ import type { StatusRow } from '../../probe/status.ts'
 import { follow, readNew } from '../../probe/watch.ts'
 import { openTui, tuiModeOf } from '../../ui/follow.ts'
 import { openTerm } from '../../ui/term.ts'
+import { degradeNote } from '../../ui/term.ts'
 import { keysHintOf, openKeys } from '../../ui/keys.ts'
 import type { KeySource } from '../../ui/keys.ts'
 import { openGo } from '../../ui/go.ts'
@@ -155,6 +156,11 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // 四条地板收成**一张表**（`ui/follow.ts` 的 `tuiModeOf`）：真终端 → 面板；`--once` / 不是 TTY /
   // `$TERM` 认不出来 → 只印永久行那一档（面板一次都不画，一个字节的 ANSI 都不写）。
   const mode = tuiModeOf({ ansi: term.ansi, once: flags.has('once'), follow: flags.has('follow') })
+  // **降级说一声**（U10a）：真终端而 `$TERM` 认不出来——面板那一档整个没了，人得知道
+  // 为什么。`--once` 不说：那一档本来就不画面板，没有"退"这回事（判据在 `degradeNote`，
+  // 与 `ansiOf` 同一张表）。
+  const degrade = degradeNote(process.env.TERM, process.stdout.isTTY)
+  if (degrade !== null && !flags.has('once')) process.stderr.write(`${degrade}\n`)
   const ac = new AbortController()
   const onSig = (): void => ac.abort()
   process.on('SIGINT', onSig)

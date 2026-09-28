@@ -91,6 +91,19 @@ export function ansiOf(term: string | undefined): boolean {
   return KNOWN_TERM.some((k) => t.startsWith(k))
 }
 
+/**
+ * **降级说一声**（U10a）：真终端而 `$TERM` 是**认不出来的**值时，该说的那句话；其余场合
+ * `null`（不说）。**只此一档说**：不是 TTY（管道 · CI）不说——那一档退到永久行是常态，
+ * 不是意外；`''` · `dumb` · 没设不说——那是**声明过的没有**，不是认不出；`--once` 那一档
+ * 由调用方跳过（本来就不画面板，没有"退"这回事）。判据与 `ansiOf` 同一张表。
+ */
+export function degradeNote(term: string | undefined, isTTY: boolean | undefined): string | null {
+  if (isTTY !== true) return null
+  if (typeof term !== 'string' || term === '' || term.toLowerCase() === 'dumb') return null
+  if (ansiOf(term)) return null
+  return `$TERM=${term} 认不出来，退到只印永久行那一档（不画面板——KNOWN_TERM 之外都退，退一档比画错好）`
+}
+
 /** 这一份只用到输出那一头的三个栏（`process.stdout` 就是它）。 */
 export interface TermOut {
   write(s: string): unknown

@@ -21,7 +21,7 @@ import type { StatusRow } from '../probe/status.ts'
 import { statusOf } from '../probe/status.ts'
 import { frameOf, widthOf } from './frame.ts'
 import { permanentLinesOf } from './stream.ts'
-import { CLEAR_LINE, FALLBACK_COLUMNS, K, ansiOf, deleteLinesOf, openTerm, upOf } from './term.ts'
+import { CLEAR_LINE, FALLBACK_COLUMNS, K, ansiOf, deleteLinesOf, degradeNote, openTerm, upOf } from './term.ts'
 import type { TermOut } from './term.ts'
 
 /** 一个假的 sink：**写出去的每一次 `write` 就是一条读数**（一次 write = 一个动作）。 */
@@ -196,4 +196,19 @@ test('⑥ 收尾：画过 → 上移 K 行 + 删 K 行；没画过 → 一个字
   term.close()
   assert.deepEqual([...f.written], [upOf(3), deleteLinesOf(3)], '收尾该是"上移 K 行 + 删掉 K 行"')
   console.log(`⑥ 读数：没画过 0 字节 · 画过 → ${JSON.stringify(f.written)}`)
+})
+
+test('⑦ 降级说一声（U10a）：只有「真终端 + 认不出的 $TERM」那一档有那句话', () => {
+  // 有那句话的一档：真终端、非空非 dumb、且不在 KNOWN_TERM 表上。
+  const note = degradeNote('fugue-term', true)
+  assert.ok(note !== null, '真终端 + 认不出 → 该有那句话')
+  assert.ok(note.includes('$TERM=fugue-term'), `话里要带那个值：${note}`)
+  assert.ok(note.includes('只印永久行'), `话要说清退到哪一档：${note}`)
+  // 不说的四档：不是 TTY（管道 · CI）· 没设 · '' 与 dumb（声明过的没有）· 认得出。
+  assert.equal(degradeNote('fugue-term', false), null, '不是 TTY 不说——那一档退到永久行是常态')
+  assert.equal(degradeNote(undefined, true), null, 'TERM 没设不说')
+  assert.equal(degradeNote('', true), null, '空串不说')
+  assert.equal(degradeNote('dumb', true), null, 'dumb 是声明过的没有，不是认不出')
+  assert.equal(degradeNote('xterm-256color', true), null, '认得出就没有降级')
+  console.log(`⑦ 读数：说的一档 1 种 · 不说的四档（非 TTY · 没设 · 空/dumb · 认得出）各 0 字节`)
 })
