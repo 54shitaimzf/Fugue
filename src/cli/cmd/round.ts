@@ -1566,7 +1566,7 @@ function writeSetLine(c: {
  * `assertions` 的候选就是工作区配置）。读它的是 `readBinding` 一处，所以“这个名字合不合形状”
  * 的判据只有一份——报出来的话就是那一份说的（不猜、不补、不替它挑）。
  */
-function actionsTableOf(doc: ConfigDoc): Readonly<Record<string, readonly RelPath[]>> {
+export function actionsTableOf(doc: ConfigDoc): Readonly<Record<string, readonly RelPath[]>> {
   const out: Record<string, readonly RelPath[]> = {}
   for (const name of actionNames(doc)) out[name] = readBinding(doc, name).outputs as readonly RelPath[]
   return out
@@ -1580,7 +1580,7 @@ function actionsTableOf(doc: ConfigDoc): Readonly<Record<string, readonly RelPat
  * 预算——那一趟为了弄清哪个动作核哪一处，去找工作区的配置（它猜 `*.json` / `*.yaml` /
  * `*.toml`，而那一份叫 `.fugue/config`），8 步里四步花在找它上，一次都没伸手写草案。
  */
-function actionCommandsOf(doc: ConfigDoc): Readonly<Record<string, string>> {
+export function actionCommandsOf(doc: ConfigDoc): Readonly<Record<string, string>> {
   const out: Record<string, string> = {}
   for (const name of actionNames(doc)) out[name] = readBinding(doc, name).argv.join(' ')
   return out

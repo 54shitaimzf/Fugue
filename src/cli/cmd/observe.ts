@@ -3,7 +3,7 @@
 // **全是纯读**：不建视图、不取锁、不追加——所以它们排在建视图那一组之前。
 import type { LogEvent } from '../../log/events.ts'
 import { openLog } from '../../log/log.ts'
-import type { LogPos } from '../../terms.ts'
+import type { LogPos, RelPath } from '../../terms.ts'
 import { phaseOf } from '../../model/price.ts'
 import { readings, readingsLines } from '../../probe/status.ts'
 import type { StatusRow } from '../../probe/status.ts'
@@ -18,9 +18,15 @@ import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmi
 import type { Editor } from '../../ui/input.ts'
 import { acceptOf, candidatesOf, clampSel, completeOf, moveSel, pathsOf, queryOf, rowsTextOf, specsOf } from '../../ui/menu.ts'
 import type { MenuRow, MenuSource } from '../../ui/menu.ts'
+import { GATE_KEEP, GATE_VIEW, gateFaceOf, gateRowsOf, lineOf, pressGate, stepAt } from '../../ui/gate.ts'
+import type { GateFace, GateOption, GateView } from '../../ui/gate.ts'
+import { pendingOf } from '../../round/dispatch.ts'
+import { identFor } from '../../identity.ts'
+import { getConfig, readConfig } from '../../config.ts'
 import { FLAGS_OF } from '../flags.ts'
 import { GO_LINE, openRun } from '../../ui/run.ts'
 import type { RunLauncher } from '../../ui/run.ts'
+import { actionCommandsOf, actionsTableOf } from './round.ts'
 import { emitJson, emitLine, usageFail } from '../shared.ts'
 
 export function emit(pos: LogPos, e: LogEvent, json: boolean): void {
@@ -160,6 +166,13 @@ export async function watchCmd(
  * （`queryOf`）——把那个记号删掉，面板自己就关了。选中一条**不是执行**：它只换掉这一行字，发不发
  * 仍然归 `Enter` → `ui/run.ts` 那一格（`T3`：一行字 → argv → 子进程）。**打字是缺省路**（表里没
  * 吃掉的可打印字符走 `insert`），表里那几条可打印字符的绑定只在行里没字时是动作。
+ *
+ * **`T6` · 门口那一批**：账停在门口时，面板最下面多出那一块——预览（按类型分派）· 队列行（还有
+ * 几份 · 第几份）· 三档（`y` 放行 · `n` 拒 · `Esc` 中止）。那一批**从账上重算**（`pendingOf`：与
+ * `round go` 是同一个函数），折成界面那一份（`gateFaceOf`）。**"界面不留第二份真相"在这一格也是
+ * 同一条**：没有一个"允许"这样的状态，也没有"允许过"这样的记忆——记忆只在账上（`round/approve`），
+ * 界面这一头只有"这一刻账上停在门口的是哪一批"，账一往前动就重算。`y`/`n` 那两档**不是全局键**：
+ * 只在门口那一块开着、且输入行空着的时候是动作，别处它们就是人打的字。
  */
 export async function tuiCmd(root: string, flags: Map<string, string | true>): Promise<number> {
   // `--json` 不在 tui 的开关表里（机器读的那一份是 `status --json`），但**错误那一面照样认它**：
@@ -203,12 +216,71 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     candidatesOf({ specs, keys: keyRows(), paths: panel?.paths ?? [], line: ed.draft.text, source })
   /** 提示符：`»` 是命令、`>` 是话（模式是从行推出来的，不是另存的一个开关）。 */
   const promptOf = (): string => (modeOf(ed.draft) === 'Command' ? '» ' : '> ')
+  // ── `T6` · 门口那一批：**从账上重算**（与 `round go` 同一个函数），折成界面那一份 ──────────────
+  // 三样输入与 `round go` 那一趟逐样对上：轮次号与绑好的动作表来自工作区配置，身份分配器是同一个
+  // （`identFor`——门只认契约集合，而集合里带着身份，两边换一个就发错一批而且不报错）。
+  let round = 'r1'
+  let actionsTable: Readonly<Record<string, readonly RelPath[]>> = {}
+  let commands: Readonly<Record<string, string>> = {}
+  let configWhy: string | null = null
+  try {
+    const doc = await readConfig(root)
+    const raw = getConfig(doc, 'round.id')
+    if (typeof raw === 'string' && raw !== '') round = raw
+    actionsTable = actionsTableOf(doc)
+    commands = actionCommandsOf(doc)
+  } catch (err) {
+    // 配置读不出来**不是退出的理由**（这一档是观察窗）：门口那一块不画，说一句为什么。
+    configWhy = err instanceof Error ? err.message : String(err)
+  }
+  /** 上一次算出来的那一批（`编号:份数`）：一样就不重画（账每动一行都算，值当的只有那几次）。 */
+  let lastGate: string | null = null
+  /**
+   * 重算门口那一批。**只在账真的往前动了那两族事件时走**（`round/*` 与 `holder/*`：处境 · 意图 ·
+   * 草案 · 放行都在这两族里）；`llm/call` 那些一行一行的高频事件不重算——一趟读全量日志是 O(行数)，
+   * 拿它去乘每一行就等于把跟随这一档拖垮。
+   */
+  const refreshGate = async (): Promise<void> => {
+    if (configWhy !== null) return
+    let next: GateFace | null = null
+    try {
+      const v = await pendingOf({ log, round, identityFor: (n: number) => identFor(round, n), actions: actionsTable })
+      if (v.kind === 'held') {
+        next = gateFaceOf(
+          {
+            round: v.pending.round,
+            fingerprint: v.pending.fingerprint,
+            same: [...v.pending.same],
+            contracts: [...v.pending.built.contracts],
+          },
+          commands,
+        )
+      }
+    } catch {
+      // 账读到一半炸了（日志被换掉 · 权限变了）：门口那一块收掉——读账那一头自己会报。
+      next = null
+    }
+    const key = next === null ? null : `${next.fingerprint}:${next.cards.length}`
+    if (key === lastGate) return
+    lastGate = key
+    gate = next
+    gateHidden = false
+    // **批次换了就把选中那一份与举手那一栏都归零**：上一批举过的手不许带到这一批上。
+    gateView = GATE_VIEW
+    tui.redraw()
+  }
   const view = (): ViewInput => {
     if (!showInput) return {}
     // 宽度减一：终端上写满一整行会**自动换行**，那一下就把"上移几行"的算术打乱了（`ui/term.ts` 头注）。
     const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: term.columns - 1 })
+    // 门口那一块：**它在面板那一栏的最下面**（输入行还在它下面）。收起来那一档一个字节都不占。
+    const gatePart =
+      gate === null || gateHidden
+        ? {}
+        : { gate: { rows: gateRowsOf({ face: gate, view: gateView, columns: term.columns - 1 }), keep: GATE_KEEP } }
     return {
       ...(panel === null ? {} : { menu: { rows: rowsTextOf(rowsOf(panel.source)), sel: panel.sel } }),
+      ...gatePart,
       input: { rows: frame.rows, caret: frame.caret },
     }
   }
@@ -218,6 +290,11 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     emit: emitLine,
     mode,
     view,
+    // 账往前动一条就问一次（`T6`）：门口那一批要不要重算——重算只在 `round/*` 与 `holder/*` 那两族
+    // 上走（见 `refreshGate`），所以这里只排一件事，不在这一趟里读账。
+    onAdvance: (rows) => {
+      if (rows.some((r) => r.e.t.startsWith('round/') || r.e.t.startsWith('holder/'))) void refreshGate()
+    },
     readings: { metrics: flags.has('metrics'), report: flags.has('report') },
     phase,
     intervalMs: interval,
@@ -240,6 +317,16 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
    * "现在几点"）。
    */
   let armedAt: number | null = null
+  /**
+   * 门口那一批（`T6`）那一块。**它不是授权**：界面手里没有一个"允许"这样的状态，也没有"允许过"
+   * 这样的记忆——记忆只在账上（`round/approve`），这里存的是"这一刻账上停在门口的是哪一批"。
+   * 账一往前动（`round/*` 或 `holder/*`）就重算一遍（`refreshGate`）。
+   */
+  let gate: GateFace | null = null
+  /** 界面自己那两样（选中第几份 · 举过手没有）。**纯视图状态**，一个字节都不进账。 */
+  let gateView: GateView = GATE_VIEW
+  /** 按过 `Esc` 把那一块收起来了没有（账再动一次它自己回来）。 */
+  let gateHidden = false
   if (mode === 'panel') {
     /** 起一次弹层：选中项从头一条起（候选变了以后 `settle` 会把它夹回来）。 */
     const openPanel = (source: MenuSource): void => {
@@ -282,6 +369,29 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       tui.note('打断了那一趟（SIGINT）：它自己那份账照写，写到哪算哪')
       settle()
     }
+    /**
+     * 门口那一批那一档**真生效**（二段确认的第二下）。放行 = 起一次 `fugue round go`（`ui/gate.ts`
+     * 的 `lineOf`：**与 `g` 那一键同一条命令**——界面里没有第二条放行路径）；拒 = **什么都不跑**
+     * （一个字节都不落，门照旧停着等人）。
+     */
+    const takeGate = (option: GateOption): void => {
+      const line = lineOf(option)
+      if (line === '') {
+        tui.note(
+          `拒了门口那一批（${gate?.cards.length ?? 0} 份）：一个字节都没落——门照旧停着，要改就 /say 一句再判一次`,
+        )
+        settle()
+        return
+      }
+      if (go === null || go.running) {
+        tui.note('那一趟还在跑：这一下先没发出去（排队是 T7 那一格的事）')
+        settle()
+        return
+      }
+      tui.note(`按了 ${option === 'approve' ? 'y' : 'n'}：起一次 \`${line}\`（${go.argvOf(line).argv.join(' ')}）`)
+      go.press(line)
+      settle()
+    }
     go = openRun({
       root,
       // 子进程吐出来的行、与它收尾那一下，都**走注记**（写在面板上方）：直接写 `stdout` 会在
@@ -297,6 +407,34 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       input: process.stdin,
       out: process.stdout,
       onAction: (d) => {
+        // ⓪ **门口那一批那两档**（`T6`）：开关是"门口那一块开着没有 **且** 输入行空着没有"——不是
+        // `actsOnEmpty` 判的"行里有没有字"（那一条判的是键入的处境，而 `y` / `n` 是可打印的，门口
+        // 那一块关着的时候它们就是人打的字）。二段确认的判据只有一处（`ui/gate.ts` 的 `pressGate`）：
+        // 按一下只举手，再按同一个键或 `Enter` 才生效。
+        if (d.action === 'approve' || d.action === 'reject') {
+          const option: GateOption = d.action === 'approve' ? 'approve' : 'reject'
+          if (gate !== null && !gateHidden && ed.draft.text === '') {
+            const press = pressGate(gateView, option)
+            gateView = press.view
+            if (press.t === 'arm') {
+              const label = option === 'approve' ? '放行' : '拒'
+              tui.note(
+                `举了手：再按一次 \`${option === 'approve' ? 'y' : 'n'}\`（或 Enter）就${label}这一批` +
+                  `（${gate.cards.length} 份 · 批号 ${gate.fingerprint}）`,
+              )
+              settle()
+              return
+            }
+            takeGate(option)
+            return
+          }
+          // 门口那一块关着（或者行里有字）：**它就是个字**。
+          if (d.key !== undefined) {
+            ed = applyIntent(ed, { t: 'insert', text: d.key })
+            settle()
+          }
+          return
+        }
         // ① **行里已经有字的时候，表里那几条绑定要分两种去处**：按的是可打印字符就让位成那个字
         // （`q` 就是 `q`，不然 `/round go` 里那个 `g` 会把这一行当场发出去），按的是控制字符就丢掉
         // ——`Ctrl-D` 要是也当字打进去，输入行里会多一个看不见的字节，而"行里没字"这个前提恰好被它
@@ -320,6 +458,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
         if (d.action === 'cancel' || d.action === 'interrupt' || d.action === 'quit') {
           if (d.action === 'cancel') {
             const step = escStepOf({
+              // **门口那一块是 `Esc` 链最外那一级**（`T6`）：它开着（且行是空的）就只收它。
+              atGate: gate !== null && !gateHidden,
               overlays: panel === null ? 0 : 1,
               running: go?.running === true,
               // 排队那一级要到 `T7` 才有队列可丢——**级在那儿，够不够得着是另一回事**（这里恒 0
@@ -328,6 +468,13 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
               line: ed.draft.text,
               searching: ed.search !== null,
             })
+            if (step === 'gate') {
+              gateView = { ...gateView, armed: null }
+              gateHidden = true
+              tui.note('收起了门口那一块（账再动一次它自己回来；要放行还得按 y）')
+              settle()
+              return
+            }
             if (step === 'overlay') {
               panel = null
               settle()
@@ -396,6 +543,14 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
         // ⑥ `Enter`：弹层开着就是"认下选中那一条"（**只换掉这一行字，不执行**）；关着就把这一行
         // 发出去（`T3` 那一格：一行字 → argv → 子进程，账由那个子进程写）。
         if (d.action === 'submit') {
+          // 门口那一块举着手的时候，`Enter` 是**那一档的确认键**（§ 5.19 五："同一个键或 `Enter`
+          // 再按一次才生效"）；没举手时它照旧是提交（`pressGate` 给 'none'，一个副作用都没有）。
+          if (gate !== null && !gateHidden && gateView.armed !== null) {
+            const press = pressGate(gateView, 'confirm')
+            gateView = press.view
+            if (press.t === 'do') takeGate(press.option)
+            return
+          }
           if (panel !== null) {
             const rows = rowsOf(panel.source)
             const picked = rows[clampSel(rows.length, panel.sel)]
@@ -440,7 +595,21 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
           settle()
           return
         }
-        // ⑧ 弹层开着时 `↑`/`↓` 是选项（表里那两行的说明写的就是这个），关着时是输入历史。
+        // ⑧ `↑`/`↓`：**门口那一块开着且行是空的时候**在那一批里走（`index/total` 就是它）；弹层开着
+        // 时是选项（表里那两行的说明写的就是这个）；都没有时是输入历史。
+        if (
+          (d.action === 'historyOlder' || d.action === 'historyNewer') &&
+          gate !== null &&
+          !gateHidden &&
+          ed.draft.text === ''
+        ) {
+          gateView = {
+            ...gateView,
+            at: stepAt(gate.cards.length, gateView.at, d.action === 'historyOlder' ? -1 : 1),
+          }
+          settle()
+          return
+        }
         if ((d.action === 'historyOlder' || d.action === 'historyNewer') && panel !== null) {
           const n = rowsOf(panel.source).length
           panel = { ...panel, sel: moveSel(n, panel.sel, d.action === 'historyOlder' ? -1 : 1) }

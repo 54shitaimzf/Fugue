@@ -22,12 +22,13 @@ import { TABLE, WIRED, actionsOf, decoderOf, fallsToText } from './keymap.ts'
 
 /** 一处处境。**缺省是"全空"**，各档只写它要动的那一样（这一份量的是"处境 → 那一个动作"）。 */
 function at(over: Partial<Situation> = {}): Situation {
-  return { overlays: 0, running: false, queued: 0, line: '', searching: false, ...over }
+  return { overlays: 0, running: false, queued: 0, line: '', searching: false, atGate: false, ...over }
 }
 
 // ── ① `Esc` 五级 ─────────────────────────────────────────────────────────────
-test('① `Esc` 五级各一条：上头那一级够得着时，下头那几级的下手对象一个都不许被碰', () => {
+test('① `Esc` 六级各一条（最外那一级是门口那一块）：上头那一级够得着时，下头那几级的下手对象一个都不许被碰', () => {
   const levels: readonly (readonly [string, Situation, EscStep])[] = [
+    ['门口那一块开着（弹层也开着 · 还跑着 · 排着队）', at({ atGate: true, overlays: 1, running: true, queued: 3 }), 'gate'],
     ['弹层开着（还跑着 · 排着队 · 行里有字 · 反查也开着）', at({ overlays: 1, running: true, queued: 3, line: 'x', searching: true }), 'overlay'],
     ['没弹层 · 跑着（排着队 · 行里有字）', at({ running: true, queued: 3, line: 'x' }), 'break'],
     ['没跑 · 排着队（行里有字）', at({ queued: 3, line: 'x' }), 'dropQueue'],
@@ -39,6 +40,12 @@ test('① `Esc` 五级各一条：上头那一级够得着时，下头那几级�
     assert.equal(escStepOf(s), want, `${what} → 该走「${want}」这一级`)
   }
   // 每一级一处反向的钉：**上头够得着的时候，下头那几级的对象一个都不许被动**。
+  assert.notEqual(escStepOf(at({ atGate: true, overlays: 1 })), 'overlay', '门口那一块开着时 `Esc` 只收那一块，弹层这一下不动')
+  assert.equal(
+    escStepOf(at({ atGate: true, line: 'x' })),
+    'clearLine',
+    '**门口那一块开着而行里有字**：`Esc` 先归输入行（人手里那件事比收一块提示更急）',
+  )
   assert.notEqual(escStepOf(at({ overlays: 1, running: true })), 'break', '弹层开着时 `Esc` 不许去打断在途的那一趟')
   assert.notEqual(escStepOf(at({ running: true, line: 'x' })), 'clearLine', '跑着的时候 `Esc` 不许吃掉输入行里那行字')
   assert.notEqual(escStepOf(at({ queued: 2, line: 'x' })), 'clearLine', '还有排队草稿时先丢草稿，不清输入行')
@@ -50,11 +57,17 @@ test('① `Esc` 五级各一条：上头那一级够得着时，下头那几级�
     'overlay',
     '堆满也是最高那一级说了算',
   )
+  assert.equal(
+    escStepOf(at({ atGate: true, overlays: 2, running: true, queued: 9, searching: true })),
+    'gate',
+    '门口那一块是最外那一级：它开着就只收它（行是空的）',
+  )
   // `queued` 只在那一个位置起作用——次序里它既不许越到 `running` 前头，也不许落到 `line` 后头。
   assert.equal(escStepOf(at({ queued: 1, running: true })), 'break', '排队不许越过在途')
   assert.equal(escStepOf(at({ queued: 1, line: 'x' })), 'dropQueue', '排队在输入行前头')
   console.log(
-    `① 读数：五级 ${levels.map(([w, , v]) => `${w}→${v}`).join(' · ')} · 反向的钉 6 处（每一级一处 + 排队那两处的位置）`,
+    `① 读数：六级 ${levels.map(([w, , v]) => `${w}→${v}`).join(' · ')} · 反向的钉 9 处（每一级一处 + ` +
+      '门口那一块那两处 + 排队那两处的位置）',
   )
 })
 

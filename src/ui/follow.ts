@@ -145,6 +145,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(o.phase === undefined ? {} : { phase: o.phase }),
       // 界面自己那几样（输入行 · 候选那一层）**每帧现问**：它们不是读源，是这一档自己的视图状态。
       ...(v?.menu === undefined ? {} : { menu: v.menu }),
+      ...(v?.gate === undefined ? {} : { gate: v.gate }),
       permanent: permanent(),
       width: size.columns,
       height: size.height,
@@ -207,6 +208,11 @@ export interface TuiOptions {
   readonly signal?: AbortSignal
   /** 界面自己那几样（输入行 · 候选那一层，`T4`）——一路递给会话，折帧时现问。 */
   readonly view?: (() => ViewInput) | undefined
+  /**
+   * 账往前动了一条时问一次（`T6`：门口那一批要不要重算）。**同步**——它只许"排一件事"，不许在
+   * 这一趟里读账（读账那一头是异步的，而这一头跟着每一行走）。第一趟读齐的那一批也算一条。
+   */
+  readonly onAdvance?: ((rows: readonly StatusRow[]) => void) | undefined
 }
 
 /** 接上的那一档：一个句柄，两样东西——这一档累起来的行，与"跑完了"那一下。 */
@@ -261,6 +267,8 @@ export function openTui(o: TuiOptions): Tui {
     session.push(first.rows)
     sync()
     paint()
+    // **第一趟那一批也算"往前动了"**：界面开着的时候门口已经停着一批，这一条是它唯一的触发点。
+    if (first.rows.length > 0) o.onAdvance?.(first.rows)
     if (o.mode === 'lines-once') return { ...c }
     // 之后跟着走：新到的行一条一条地来（`follow` 每一趟读全量、按每个 writer 的游标筛掉看过的），
     // 一到一条就重画一次——那正是"看着它跑"要的东西。
@@ -268,6 +276,7 @@ export function openTui(o: TuiOptions): Tui {
       session.push([row])
       sync()
       paint()
+      o.onAdvance?.([row])
     }
     return { ...c }
   })()

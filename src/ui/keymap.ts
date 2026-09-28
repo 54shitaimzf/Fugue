@@ -61,6 +61,13 @@ export type UiAction =
   | 'focus'
   | 'mention'
   | 'go'
+  /**
+   * 门口那一批那两档（`T6`）：**开关是"门口那一块开着没有"，不是"行里有没有字"**——而后者才是
+   * `actsOnEmpty` 那一份判的东西。所以这两条不进那一份的名单：分发处那一头先问"门口那一块开着
+   * 没有"（`cli/cmd/observe.ts` 的 ⓪），关着的时候它们就是人打的字（`y` / `n` 是可打印的）。
+   */
+  | 'approve'
+  | 'reject'
   | 'help'
   // **不是一条键**：可打印字符的缺省路（带着那几个字）——表里没有它这一行，它不是绑定，是"没被
   // 表吃掉的那个字节"的去处。
@@ -292,6 +299,20 @@ export const TABLE: readonly Binding[] = [
     by: 'T2',
   },
   {
+    action: 'approve',
+    keys: ['y'],
+    hint: '放行',
+    note: '门口那一批：放行它（起一次 `fugue round go`）；**再按一次 `y` 或 Enter 才生效**——只在门口那一块开着、且输入行空着的时候是动作，别处它就是那个字',
+    by: 'T6',
+  },
+  {
+    action: 'reject',
+    keys: ['n'],
+    hint: '拒',
+    note: '门口那一批：拒它——**一个字节都不落**，门照旧停着等人；再按一次 `n` 或 Enter 才生效（同上）',
+    by: 'T6',
+  },
+  {
     action: 'help',
     keys: ['?'],
     hint: '重印这一行',
@@ -375,7 +396,7 @@ export function fallsToText(a: UiAction, key: string | undefined, text: string, 
  * 每落一格把它的名字加进来——这一份是**进度**，不是口味（`T2` 那一条断言的牙就在这儿：目录与
  * 分发同一张表，而"这一格接上了没有"也只有一个地方说）。
  */
-export const WIRED: readonly Stage[] = ['T2', 'T3', 'T4', 'T5']
+export const WIRED: readonly Stage[] = ['T2', 'T3', 'T4', 'T5', 'T6']
 
 /** 大段粘贴那一对记号（终端发出来的那一对）：`decoderOf` 用它把原文整段交给 `insert`。 */
 export const PASTE_ON = '\u001b[200~'

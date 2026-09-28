@@ -92,6 +92,8 @@ export interface FrameInput {
    * 装不下时 `windowOf` 把选中的那一条留在窗里，并把上下还剩几条说出来。不给时一列都不占。
    */
   readonly menu?: MenuInput | undefined
+  /** 读源六（`T6`）：**门口那一批那一块**（底部队列行 + 预览 + 三档）。见 `GateInput`。 */
+  readonly gate?: GateInput | undefined
   readonly width: number
   readonly height: number
 }
@@ -404,6 +406,18 @@ export interface MenuInput {
   readonly sel: number
 }
 
+/**
+ * 门口那一块那几行（`ui/gate.ts` 算好的原文）与**装不下也要留住的条数**（`T6`）。
+ *
+ * 它排在内容那一栏的**最下面**（比候选还下面——候选是打字时的一层，而门口那一块是"要人点头"的
+ * 一件事）。装不下时**先让位的是预览**（头几行），末 `keep` 行留住：那两行是人要按的东西（队列行 ·
+ * 选项行）。不给时一列都不占——`T6` 之前逐字节相同。
+ */
+export interface GateInput {
+  readonly rows: readonly string[]
+  readonly keep: number
+}
+
 /** 候选那一层开的一个窗：印第 `from` 条起的 `count` 条，`summary` 说还要不要补一行"还有几条"。 */
 export interface MenuWindow {
   readonly from: number
@@ -496,13 +510,23 @@ export function frameOf(o: FrameInput): Frame {
       if (w.summary) menuBody.push(`… 还有 ${w.above + w.below} 条（↑↓ 翻，选中第 ${at + 1} 条）`)
     }
   }
-  // 内容那一栏至少留一行（这一屏再矮，也不让候选把框撑破）；先让位的是那句"还有几条"。
-  while (menuBody.length > 0 && budget - menuBody.length < 1) menuBody.pop()
-  const bodyBudget = Math.max(1, budget - menuBody.length)
+  // 门口那一块（`T6`）先占住它那几行，再轮到候选，最后才是内容那一栏（装不下时**从后往前让位**，
+  // 而门口那一块自己先让位的是**预览**——头几行；末 `keep` 行留住：那是人要按的东西）。一块都没有
+  // （`gate` 不给）时下面这几步与从前逐字节相同（`gateBody` 是空的 · `keep` 是 0）。
+  const gateAll = o.gate?.rows ?? []
+  const keep = Math.max(0, Math.min(o.gate?.keep ?? 0, gateAll.length))
+  let gateBody = [...gateAll]
+  while (gateBody.length > keep && budget - 1 - gateBody.length < 0) gateBody = gateBody.slice(1)
+  while (menuBody.length > 0 && budget - 1 - gateBody.length - menuBody.length < 0) menuBody.pop()
+  while (gateBody.length > keep && budget - 1 - gateBody.length - menuBody.length < 0) gateBody = gateBody.slice(1)
+  while (menuBody.length > 0 && budget - gateBody.length < 1) menuBody.pop()
+  while (gateBody.length > 0 && budget - gateBody.length < 1) gateBody = gateBody.slice(1)
+  const bodyBudget = Math.max(1, budget - menuBody.length - gateBody.length)
   const shown = rows.length <= bodyBudget ? rows : rows.slice(0, Math.max(0, bodyBudget - 1))
   const dropped = rows.length - shown.length
   if (dropped > 0) shown.push({ l: `… 还有 ${dropped} 行没印（这一屏 ${height} 行）`, r: '' })
   for (const one of menuBody) shown.push({ l: one, r: '', full: true })
+  for (const one of gateBody) shown.push({ l: one, r: '', full: true })
 
   const lines: string[] = []
   lines.push(`┌${bar(left, '处境')}${two ? `┬${bar(right, '读数')}` : ''}┐`)
