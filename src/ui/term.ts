@@ -57,6 +57,18 @@
 // 字节流与逐笔那一版**逐字节相同**，变的只是笔数（`term.test.ts` ①拿"每次绘制恰一笔 + 拼接等于
 // 原件"钉住）。
 //
+// **行级 diff（U8）：未变的行掠过去，变了的行才重写。** 重画的那一帧里大多数行没动（账没到的
+// 那几秒里面板几乎不变——那正是"每帧几十行 × 每秒五帧"把慢链路打满的第四条根因）。这一层记着
+// 上一帧行（`lastRegion`：面板 + 输入行），逐行比对：未变 `\r` + 下移一行掠过（`\x1b[1B`），
+// 变了才 `\r\x1b[2K` + 重写；**帧一个字节都没变时，那帧里的 `CLEAR_LINE` 数是零**。保险丝只有
+// 一条：宽度或高度变过走全量（与"另起一块"同一条判据）；输入行行数变了也对不齐，同样走全量——
+// 全量那一趟把上一帧多出来的行**擦成空行**（行数变少不留残影）。掠过与重写的**光标算术相同**
+// （每行以 `\r` 起头、末尾恒回 caret 列），所以下一帧的"上移多少"不知道这一帧走了哪条路。
+//
+// **每行以 `\r` 起头**（U8 顺手修掉的一个错位）：上一帧结束时光标停在输入行的 caret 列，`up()`
+// 只上移不改列——行首没有 `\r` 的话，下一帧第一行从 caret 列写起，整块错位。首帧同理（进程
+// 启动时光标在 shell 提示符后面的哪一列，这一层量不到）。`\r` 在每一行开头把列归零，几何就闭合了。
+//
 // 那一条 escape 写在**第一次画**的时候（不是 `openTerm` 的时候）：`--once` 与不是 TTY 那两档一次都
 // 不画，而人要把永久行留在真历史里——那两档不该进 alt screen。
 //
@@ -281,6 +293,11 @@ export function openTerm(o: TermOptions): Term {
   let cursorRow = height
   /** 上一次画出去的区域一共几行（面板 + 输入那几行）——`close()` 收走这一块靠它。 */
   let regionRows = height
+  /**
+   * 上一帧的**区域行**（面板 + 输入行，U8）：行级 diff 的比对底稿。首帧之前 · 矮帧 · 收尾之后是
+   * `null`——那些场合没有可比的上一帧，走全量。
+   */
+  let lastRegion: readonly string[] | null = null
   return {
     ansi,
     height,
@@ -303,9 +320,10 @@ export function openTerm(o: TermOptions): Term {
       if (!ansi || (rowsKnown && (rowsSeen as number) - 1 < MIN_HEIGHT)) {
         // 只印永久行：不是 TTY / `$TERM` 认不出那一档是常态；矮终端那一帧（U6）是**临时的地板**——
         // 行数够了的下一帧自动回到面板那一档。两种场合都不写一个字节的 ANSI：矮那一帧屏幕顶
-        // 紧挨着历史，`CLEAR_LINE` 会把历史吃掉一行。
+        // 紧挨着历史，`CLEAR_LINE` 会把历史吃掉一行。矮帧过后那一块漂到哪儿量不到：上一帧行作废。
         if (permanent.length > 0) out.write(permanent.map((line) => `${line}\n`).join(''))
         drawn = false
+        lastRegion = null
         return
       }
       const buf: string[] = []
@@ -319,22 +337,66 @@ export function openTerm(o: TermOptions): Term {
       const asked = render({ columns, height: h })
       const spec: Panel = Array.isArray(asked) ? { rows: asked } : asked
       const rows = panelOf(spec.rows, h, columns)
-      // 上移只在"上一次画过、而且宽度和高度都没变过"时做——宽度变过不猜重排；高度变过那一块
-      // 的大小变了，上移回去也对不上新面板顶。
-      if (drawn && columns === drawnColumns && h === drawnHeight) buf.push(upOf(cursorRow))
-      for (const line of permanent) buf.push(`${CLEAR_LINE}${line}\n`)
-      for (const row of rows) buf.push(`${CLEAR_LINE}${row}\n`)
       const input = spec.input
       const body = input === undefined ? [] : input.rows
-      for (let i = 0; i < body.length; i += 1) {
-        const one = body[i] as string
-        // 最后一行**不带换行**：光标停在它上面（这是这一块区域唯一有光标的地方），退到该在的那一列。
-        if (i === body.length - 1) {
-          buf.push(`\r${CLEAR_LINE}${one}`)
-          const back = widthOf(one) - (input as PanelInput).caret.col
+      const region = [...rows, ...body]
+      // 上移只在"上一次画过、而且宽度和高度都没变过"时做——宽度变过不猜重排；高度变过那一块
+      // 的大小变了，上移回去也对不上新面板顶。
+      const steady = drawn && columns === drawnColumns && h === drawnHeight
+      // 行级 diff（U8）：与上一帧行数对得上才逐行比——掠过未变行、重写变行，两条路的光标算术相同。
+      // **带新永久行的帧不比**：永久行写在面板顶上，那一写把面板整体平移了几行，"屏幕上那行已是
+      // 该内容"的前提失效（平移后掠过判断会对错行）——那一帧本来就要写字节，不差面板这几行。
+      const diffable = steady && permanent.length === 0 && lastRegion !== null && lastRegion.length === region.length
+      // 上一帧的输入行比这一帧多出来的那几行（全量那一趟要擦成空行，行数变少不留残影）；宽度/高度
+      // 变过的那一趟 `steady` 是假，不擦（旧块整体留给终端重排，另起一块）。
+      const stale = steady && lastRegion !== null ? Math.max(0, lastRegion.length - region.length) : 0
+      if (steady) buf.push(upOf(cursorRow))
+      for (const line of permanent) buf.push(`\r${CLEAR_LINE}${line}\n`)
+      if (diffable) {
+        for (let i = 0; i < region.length; i += 1) {
+          const one = region[i] as string
+          const last = i === region.length - 1
+          if (one === lastRegion![i]) {
+            // 掠过：回到行首、下移一行。最后一行输入行不掠到下一行——光标要停回它上面。
+            buf.push(last && input !== undefined ? '\r' : '\r\x1b[1B')
+          } else {
+            buf.push(`\r${CLEAR_LINE}${one}${last && input !== undefined ? '' : '\n'}`)
+          }
+        }
+        // 末尾光标恒回 caret：掠过那条路走完光标还停在最后一行输入行的行首，补那一下退列（重写
+        // 那条路在写的时候已经退过）。无输入行的帧光标停在区域下一行行首（与全量那一版相同）。
+        if (input !== undefined && body.length > 0) {
+          const one = body[body.length - 1] as string
+          const back = widthOf(one) - input.caret.col
           if (back > 0) buf.push(leftOf(back))
-        } else {
-          buf.push(`\r${CLEAR_LINE}${one}\n`)
+        }
+      } else {
+        for (const row of rows) buf.push(`\r${CLEAR_LINE}${row}\n`)
+        for (let i = 0; i < body.length; i += 1) {
+          const one = body[i] as string
+          // 最后一行**不带换行**：光标停在它上面（这是这一块区域唯一有光标的地方），退到该在的那一列。
+          if (i === body.length - 1) {
+            buf.push(`\r${CLEAR_LINE}${one}`)
+            const back = widthOf(one) - (input as PanelInput).caret.col
+            if (back > 0) buf.push(leftOf(back))
+          } else {
+            buf.push(`\r${CLEAR_LINE}${one}\n`)
+          }
+        }
+        // 上一帧多出来的那几行（输入行变少了）**擦成空行**——它们就在新区域的下方 · 旧区域的尾巴上，
+        // 逐条「下移一行、清行」，末了上移回光标该在的那一行：帧结束的光标位置与没有残行的帧
+        // 一模一样（下一帧的上移与收尾的删行都不用知道这一帧擦过几行）。
+        if (stale > 0) {
+          if (input !== undefined && body.length > 0) {
+            for (let j = 0; j < stale; j += 1) buf.push(`\n\r${CLEAR_LINE}`)
+            buf.push(upOf(stale))
+            const back = widthOf(body[body.length - 1] as string) - input.caret.col
+            if (back > 0) buf.push(leftOf(back))
+          } else {
+            // 无输入行：面板末行的 `\n` 已把光标放到待擦的第一行上，不用先下移。
+            for (let j = 0; j < stale; j += 1) buf.push(`\r${CLEAR_LINE}${j < stale - 1 ? '\n' : ''}`)
+            buf.push(upOf(stale - 1))
+          }
         }
       }
       if (buf.length > 0) out.write(buf.join(''))
@@ -344,6 +406,7 @@ export function openTerm(o: TermOptions): Term {
       drawnColumns = columns
       drawnHeight = h
       drawnRows = rowsSeen
+      lastRegion = region
     },
     close(): void {
       // alt screen 那一笔先记下来、就地归位（**只写一次**）：`finally` 与 `exit` 那一钩都会调到这一
@@ -359,6 +422,7 @@ export function openTerm(o: TermOptions): Term {
         if (!(typeof now === 'number' && now > 0 && now !== drawnColumns) && nowRows === drawnRows) {
           buf.push(upOf(cursorRow), deleteLinesOf(regionRows))
           drawn = false
+          lastRegion = null
         }
       }
       // **出来那一笔在三处出口都会写到**（面板删不删是另一码事）：进去过就必须出来，少写它那台终端

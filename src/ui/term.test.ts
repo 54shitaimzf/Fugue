@@ -21,6 +21,10 @@
 //      进在第一次画、出在收尾最后一笔 · 每一条退出路径都写到出来那一条（**宽度变过那一档也写**，
 //      它只是不删面板）· `close()` 幂等（崩那一档 `finally` 与 `exit` 那一钩都会调）·
 //      **负对照**：不给 `--full` 时一个 alt 序列都不出现，管道那一档给了 `--full` 也不写一个字节。
+//   ⑪ **行级 diff**（U8）：`screenOf` 把字节流应用到 string[] 屏幕模型上（跳过认不得的 CSI）——
+//      每一帧之后**屏幕可见与 panelOf 的答案全等**（掠过与重写两条路都过同一把尺）· 帧一个字节
+//      没变时那帧的 `CLEAR_LINE` 数是零 · 输入行变少的那一趟把多出来的行擦成空行（不留残影）·
+//      caret 列非 0 的下一帧不错位（每行 `\r` 起头把列算术闭合——U8 顺手修掉的那个错位）。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
@@ -86,8 +90,8 @@ test('① 一帧的字节：逐字节等于原件，而且**一次绘制恰一�
   term.draw(['P1', 'P2'], () => ['R1', 'R2'])
   const blank = ' '.repeat(20)
   const five =
-    `${CLEAR_LINE}P1\n${CLEAR_LINE}P2\n` +
-    `${CLEAR_LINE}R1${' '.repeat(18)}\n${CLEAR_LINE}R2${' '.repeat(18)}\n${CLEAR_LINE}${blank}\n`
+    `\r${CLEAR_LINE}P1\n\r${CLEAR_LINE}P2\n` +
+    `\r${CLEAR_LINE}R1${' '.repeat(18)}\n\r${CLEAR_LINE}R2${' '.repeat(18)}\n\r${CLEAR_LINE}${blank}\n`
   assert.equal(f.written.length, 1, `一帧该恰一笔 write（U3），实得 ${f.written.length} 笔`)
   assert.equal(f.written[0], five, '那一块摆出来的字节与原件不逐字相同')
 
@@ -145,7 +149,10 @@ test('③ 区域是恒定 K 行：上移的数是 K，而且永久行只写一�
   term.draw([], () => ['新的一行'])
   assert.equal(f.written.length, 1, '重画也是一笔（U3）')
   assert.ok(f.written[0]?.startsWith(upOf(K)) === true, `重画该上移 K(${K}) 行起头，实得 ${JSON.stringify(f.written[0])}`)
-  assert.equal(writtenRows(f).length, K, '重画只写面板那 K 行')
+  // U8 之后重画帧走行级 diff：变了的 3 行重写、其余 9 行掠过——**上移的数仍是 K**（区域没变，
+  // 只是没变的行不再一个字节一个字节重写）。
+  assert.equal(writtenRows(f).length, 3, `重画帧只重写变了的那 3 行（9 行面板空着没变），实得 ${writtenRows(f).length}`)
+  assert.equal(streamOf(f).split('\x1b[1B').length - 1, K - 3, `其余 ${K - 3} 行该掠过（${K - 3} 个下移）`)
   assert.equal(streamOf(f).includes('第一条永久行'), false, '重画把永久行又写了一遍——历史该是追加的，不是重画的')
   // 而第一次那一份里它只出现一次。
   assert.equal(first.split('第一条永久行').length - 1, 1, '永久行写了两遍')
@@ -244,20 +251,22 @@ test('⑧ 输入行：逐字写出去 · 光标退到该在的那一列 · 上�
   const panel = frameOf({ snapshot: SNAPSHOT, permanent: PERMANENT, width: 20, height: K }).lines
   const out = fakeOut({ columns: 20 })
   const t = openTerm({ out, term: 'xterm-256color' })
-  // 负对照：不给输入行时与从前逐字节相同（K 行面板 + 一次 `upOf(K)` 的重画）。
+  // 负对照（U8 之后缩到**首帧**：重画帧走行级 diff 不再全量，「与从前逐字节相同」只对首帧成立）。
   t.draw(PERMANENT, () => panel)
-  t.draw([], () => panel)
-  assert.ok(
-    streamOf(out).endsWith(upOf(K) + panel.map((r) => `${CLEAR_LINE}${r}\n`).join('')),
-    '没有输入行那一档与从前一样',
+  assert.equal(out.written.length, 1, '首帧也是一笔（U3）')
+  assert.equal(
+    out.written[0],
+    PERMANENT.map((p) => `\r${CLEAR_LINE}${p}\n`).join('') + panel.map((r) => `\r${CLEAR_LINE}${r}\n`).join(''),
+    '首帧的字节：永久行 + 面板逐行「\\r + 清行 + 行 + 换行」（每行 \\r 起头，U8）',
   )
+  t.draw([], () => panel)
   // 有输入行：面板那 K 行之后接着写输入行那两行，**最后一行不带换行**，再往左退到光标列。
   const out2 = fakeOut({ columns: 20 })
   const t2 = openTerm({ out: out2, term: 'xterm-256color' })
   t2.draw([], () => ({ rows: panel, input: { rows: ['» /log', '  --root'], caret: { row: 1, col: 2 } } }))
   assert.ok(
     streamOf(out2).endsWith(
-      `${CLEAR_LINE}${panel[panel.length - 1] as string}\n` +
+      `\r${CLEAR_LINE}${panel[panel.length - 1] as string}\n` +
         '\r' + CLEAR_LINE + '» /log\n' +
         '\r' + CLEAR_LINE + '  --root' +
         leftOf(widthOf('  --root') - 2),
@@ -307,7 +316,7 @@ test('⑩ 行数也量（U6）：rows=8 期望 12 → 夹到 7 行；rows=3 → 
   f.rows = 24
   t.draw([], () => ['b'])
   assert.equal(writtenRows(f).length, 12, `rows=24 期望 12 → 12 行，拿到 ${writtenRows(f).length}`)
-  assert.ok(f.written[0]?.startsWith(CLEAR_LINE) === true, '矮那一帧之后回来该另起一块（第一笔是清行，不是上移）')
+  assert.ok(f.written[0]?.startsWith(`\r${CLEAR_LINE}`) === true, '矮那一帧之后回来该另起一块（第一笔是回车+清行，不是上移）')
   // 期望每一帧现问：`heightOf` 给多大（装得下时）就画多高。
   const g = fakeOut({ columns: 80 })
   g.rows = 40
@@ -390,5 +399,136 @@ test('⑨ 整屏 --full：两档只差 ALT_ON/ALT_OFF 两笔 · 每一条退出�
   console.log(
     `⑨ 读数：不整屏 ${off.f.written.length} 笔 · 整屏 ${on.f.written.length} 笔（一帧一笔，只差 ALT_ON/ALT_OFF）· ` +
       `崩那条路第二次 close() 0 笔 · 宽度变过那一档只剩 1 笔 ALT_OFF · 没画过 0 笔 · 管道 0 个转义字节`,
+  )
+})
+
+// ── ⑪ 行级 diff（U8）：屏幕模拟器 —— 字节流应用到 string[] 模型，可见内容与 panelOf 全等 ──
+/**
+ * 屏幕模拟器（⑪ 的那把尺）：把字节流应用到 `rows × columns` 的屏幕模型上，还回**此刻看得见的
+ * 那几行**。只认这一份会写的几条（`\r` · `\n`（ONLCR：下一行行首）· 上移/下移/左退 · `2K` 清行 ·
+ * 删行）；认不得的 CSI（alt screen 那对）整段跳过。光标从**屏幕底行**起——真进程是在 shell
+ * 提示符后面起画的（`fugue tui` 敲下去那一行），不是从屏幕顶。
+ */
+function screenOf(stream: string, rows: number, columns: number): string[] {
+  const screen: string[] = Array.from({ length: rows }, () => '')
+  let row = rows - 1
+  let col = 0
+  const isParam = (ch: string): boolean => (ch >= '0' && ch <= '9') || ch === '?'
+  for (let i = 0; i < stream.length; ) {
+    const ch = stream[i] as string
+    if (ch === '\r') {
+      col = 0
+      i += 1
+    } else if (ch === '\n') {
+      row += 1
+      col = 0
+      if (row === rows) {
+        screen.shift()
+        screen.push('')
+        row = rows - 1
+      }
+      i += 1
+    } else if (ch === '\x1b') {
+      // CSI（`\x1b[` + 参数 + 结尾字母）手动扫：参数到第一个不在 [0-9?] 的字符为止。
+      if (stream[i + 1] !== '[') {
+        i += 1
+        continue
+      }
+      let j = i + 2
+      while (j < stream.length && isParam(stream[j] as string)) j += 1
+      const param = stream.slice(i + 2, j)
+      const n = param === '' || param.includes('?') ? 1 : parseInt(param, 10) || 1
+      const c = stream[j] as string
+      if (c === 'A') row = Math.max(0, row - n)
+      else if (c === 'B') row = Math.min(rows - 1, row + n)
+      else if (c === 'D') col = Math.max(0, col - n)
+      else if (c === 'K') screen[row] = ''
+      else if (c === 'M') {
+        screen.splice(row, n)
+        for (let k = 0; k < n; k += 1) screen.push('')
+      }
+      i = j + 1
+    } else {
+      const line = screen[row] as string
+      screen[row] = line.padEnd(col, ' ') + ch
+      col += 1
+      i += 1
+    }
+  }
+  return screen
+}
+
+test('⑪ 行级 diff（U8）：可见与 panelOf 全等 · 帧未变零 CLEAR_LINE · 输入行变少擦残影 · caret 列非 0 不错位', () => {
+  const COLS = 40
+  const ROWS = 24
+  const H = 8
+  const f = fakeOut({ columns: COLS, rows: ROWS })
+  const t = openTerm({ out: f, term: 'xterm-256color', heightOf: () => H })
+  /** 一块面板：第 3 行（i=2）是要变的那个位，其余恒定。 */
+  const panel = (mark: string): string[] =>
+    Array.from({ length: H }, (_, i) => (i === 2 ? mark : `p${i}`).padEnd(COLS, '.'))
+  const input2 = { rows: ['» /log', '  --tail'], caret: { row: 1, col: 4 } }
+  /** 全流应用之后的屏幕，底部那 10 行（8 面板 + 2 输入）trimEnd——那就是人看得见的那一块。 */
+  const bottom = (): string[] => screenOf(streamOf(f), ROWS, COLS).slice(-10).map((r) => r.trimEnd())
+  // 字节断言用**增量**（这一帧写了什么），可见断言用**全流**（屏幕此刻长什么样）——模拟器只认全流。
+  let mark = streamOf(f).length
+  const frame = (): string => {
+    const all = streamOf(f)
+    const one = all.slice(mark)
+    mark = all.length
+    return one
+  }
+
+  // 第一帧（首帧全量，golden 在 ⑧）。
+  t.draw([], () => ({ rows: panel('AAA'), input: input2 }))
+  frame()
+  assert.deepEqual(bottom(), [...panel('AAA'), '» /log', '  --tail'], '首帧之后的可见内容')
+
+  // 第二帧：面板第 3 行变了 → 恰那一行重写、其余掠过；可见仍与 panelOf 全等。
+  t.draw([], () => ({ rows: panel('BBB'), input: input2 }))
+  const second = frame()
+  assert.deepEqual(bottom(), [...panel('BBB'), '» /log', '  --tail'], '变了一行的那一帧，可见内容')
+  assert.equal(second, f.written.at(-1), '一帧一笔（U3）：这一帧的增量恰是最后一笔')
+  assert.ok(second.startsWith(upOf(9)) === true, `重画该上移 9 行（8 面板 + 2 输入 − 1）起头：${JSON.stringify(second)}`)
+  assert.equal(second.split(CLEAR_LINE).length - 1, 1, `变了的那一行才重写（恰 1 个 CLEAR_LINE），实得 ${second.split(CLEAR_LINE).length - 1}`)
+  assert.equal(second.split('\x1b[1B').length - 1, 8, `其余 9 行掠过（8 个下移——最后一行输入行只回车不下移），实得 ${second.split('\x1b[1B').length - 1}`)
+  assert.equal(second.includes('p0'), false, '掠过的行不重写：面板第一行的内容一个字节都没写出去')
+  assert.ok(second.includes(leftOf(widthOf('  --tail') - 4)), '光标仍退回 caret 列（末尾恒回 caret）')
+
+  // 第三帧：一个字节都没变 → 那帧里 CLEAR_LINE 数是零，屏幕也不动。
+  t.draw([], () => ({ rows: panel('BBB'), input: input2 }))
+  const third = frame()
+  assert.equal(third.split(CLEAR_LINE).length - 1, 0, `帧未变还清行了：${JSON.stringify(third)}`)
+  assert.deepEqual(bottom(), [...panel('BBB'), '» /log', '  --tail'], '帧未变，可见内容不动')
+
+  // 第四帧：光标停在 caret 列 4（非 0）之后再画，带一条永久行——不错位（每行 \\r 起头的功劳）。
+  t.draw(['一条永久行'], () => ({ rows: panel('CCC'), input: input2 }))
+  frame()
+  assert.deepEqual(bottom(), [...panel('CCC'), '» /log', '  --tail'], 'caret 列非 0 的下一帧不错位')
+  assert.ok(screenOf(streamOf(f), ROWS, COLS).some((r) => r.includes('一条永久行')), '永久行进历史')
+
+  // 第五帧：输入行 2 行 → 1 行 → 全量重写 + 多出来的那一行擦成空行（不留残影）。区域画在上一帧
+  // 面板顶起的位置（不必然贴屏幕底），所以从「p0 那一行」起数 9 行。
+  t.draw([], () => ({ rows: panel('CCC'), input: { rows: ['» /log'], caret: { row: 0, col: 6 } } }))
+  frame()
+  const lines = screenOf(streamOf(f), ROWS, COLS)
+  const top = lines.findIndex((r) => r.startsWith('p0'))
+  assert.ok(top >= 0, '面板第一行找得到（区域还在屏幕上）')
+  assert.deepEqual(
+    lines.slice(top, top + 9).map((r) => r.trimEnd()),
+    [...panel('CCC'), '» /log'],
+    '输入行变少的那一帧，可见内容（9 行 = 8 面板 + 1 输入）',
+  )
+  assert.equal((lines[top + 9] as string).trim(), '', '上一帧多出来的那行输入行该被擦成空行')
+
+  // 收尾：面板那一块删得掉（up + delete 走得通），屏幕上不再有面板行。
+  t.close()
+  assert.equal(frame(), f.written.at(-1), 'close 也是一笔（U3）')
+  const after = screenOf(streamOf(f), ROWS, COLS).map((r) => r.trimEnd())
+  assert.equal(after.some((r) => r.includes('p0') || r.includes('» /log')), false, '面板与输入行该从屏幕上收走')
+  assert.ok(after.some((r) => r.includes('一条永久行')), '永久行留在历史里')
+  console.log(
+    `⑪ 读数：变 1 行的那帧 ${second.length} 字节（1 个 CLEAR_LINE · 8 个掠过）· 帧未变那帧 ` +
+      `${third.length} 字节（0 个 CLEAR_LINE）· 输入行 2→1 擦掉残影 · close 收走面板`,
   )
 })
