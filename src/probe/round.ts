@@ -92,14 +92,36 @@ export async function computeMerged(
   return { metric, count, how: METRIC_HOW[metric] }
 }
 
-/** 三个数一次算齐。**同一份日志上的三次遍历**——它们的和不是任何东西，所以不求和。 */
+/**
+ * 三个数一次算齐——**收一个"再来一遍"的函数**（跑完那一档：那一趟刚落的账就是这一份日志）。
+ *
+ * 读一次、折三遍：三个数读的是同一串事件，各自一遍而已（它们的和不是任何东西，所以不求和）。
+ */
 export async function computeAll(
   merged: () => AsyncIterable<{ readonly pos: { readonly writer: string }; readonly e: LogEvent }>,
   range: Range,
 ): Promise<readonly MetricReading[]> {
-  const out: MetricReading[] = []
-  for (const m of METRICS) out.push(await computeMerged(merged(), range, m))
-  return out
+  const rows: { readonly e: LogEvent }[] = []
+  for await (const r of merged()) rows.push(r)
+  return countsOf(rows, range)
+}
+
+/**
+ * 三个数从**已经读好的行**里折出来。**折法只有这一处**：`computeAll`（流那一档，跑完用）与
+ * `status --report`（行那一档，读账用）都走这里——于是"同一份账的两处读法"不会变成两份写法
+ * （序 32 的那一条断言）。
+ */
+export function countsOf(rows: readonly { readonly e: LogEvent }[], range: Range): readonly MetricReading[] {
+  return METRICS.map((metric) => {
+    let count = 0
+    for (const { e } of rows) count += countOf(e, metric, range)
+    return { metric, count, how: METRIC_HOW[metric] }
+  })
+}
+
+/** 三条读数印成人读的几行（`判据\t数\t怎么数出来的`）。**渲染只有这一处**：`reportOf` 与 `status` 同一句。 */
+export function linesOfReadings(readings: readonly MetricReading[]): readonly string[] {
+  return readings.map((r) => `${r.metric}\t${r.count}\t${r.how}`)
 }
 
 /** 一份报告：那三个数，加一段能直接印出来的话。 */
@@ -136,7 +158,7 @@ export function reportOf(
   attributionLines: readonly string[] = [],
   callLines: readonly string[] = [],
 ): RoundReport {
-  const lines = readings.map((r) => `${r.metric}\t${r.count}\t${r.how}`)
+  const lines = linesOfReadings(readings)
   return { range, readings, lines, attributionLines, callLines, allPositive: readings.every((r) => r.count > 0) }
 }
 

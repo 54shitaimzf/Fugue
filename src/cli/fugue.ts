@@ -119,7 +119,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { computeAll, reportOf } from '../probe/round.ts'
 import { computeAllMetrics, computeAttribution, lineOf, lineOfAttribution } from '../probe/metrics.ts'
-import { callLinesOf, linesOf, rowsOf, snapshot } from '../probe/status.ts'
+import { METRICS_HEAD, REPORT_HEAD, callLinesOf, linesOf, readings, readingsLines, rowsOf } from '../probe/status.ts'
 import { phaseOf } from '../model/price.ts'
 import type { StatusRow } from '../probe/status.ts'
 import { follow, readNew } from '../probe/watch.ts'
@@ -132,7 +132,9 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              状态机那一份图）· 每一格走到哪儿（调用 · 步数 · 工具调用 · 动作 ·
                              拒与被挡 · 停因）· 用量与条数（从日志重算，不采集）。**纯读**：
                              不开账本、不取锁、不新增事件——所以它落在哪一趟之后都不会让那一趟
-                             取的基线作废（PLAN § 5.18）。今天只有 --once 这一档：跟随是下面那一条
+                             取的基线作废（PLAN § 5.18）。今天只有 --once 这一档：跟随是下面那一条。
+                             加 --metrics 印八元指标 · 加 --report 印打回三数——两栏与 round run
+                             那两栏同一个来源、同一个渲染（序 32）
   watch [--follow]           顺着 NDJSON 账读：不给 --follow 就把账上有的念一遍就停，给了就一直
                              跟着（--interval <毫秒>，缺省 200；Ctrl-C 停，退出码 0）。**每个
                              writer 一个游标**——晚出现的那个 agent 的日志口第一条就是 seq=1，
@@ -605,7 +607,7 @@ function emit(pos: LogPos, e: LogEvent, json: boolean): void {
  */
 const LOG_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help']
 const WATCH_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help', 'follow', 'interval']
-const STATUS_FLAGS: readonly string[] = ['root', 'json', 'help', 'once']
+const STATUS_FLAGS: readonly string[] = ['root', 'json', 'help', 'once', 'metrics', 'report']
 
 /**
  * **认不得的开关当场拒**（退 2），不静默收下。
@@ -634,6 +636,11 @@ function unknownFlagsOf(
  *
  * 纯读两头都占了：开日志口**不带 `write`**（不取锁、不追加）、不建视图、不碰真源。`--once` 是
  * 今天唯一的一档——跟随是另一条命令（`watch --follow`），两条各自只说一件事，不在这里合流。
+ *
+ * **序 32 给它加了两个开关**：`--metrics`（八元指标）与 `--report`（打回三数），与 `round run` /
+ * `round work` 上同名同义——同一个来源（`probe/metrics.ts` · `probe/round.ts` 那两处折法）、
+ * 同一个渲染（`readingsLines`）。于是 `--json` 那一份对象去掉 `width` / `height` 就是 TUI 的输入
+ * 契约（`ui/frame.ts` 的 `FrameInput`）：命令面与第一个渲染器读的是同一份，不许有两份。
  */
 async function statusCmd(
   root: string,
@@ -644,13 +651,16 @@ async function statusCmd(
   if (bad !== null) return usageFail(`${bad}；一次快照就加 --once，跟随是另一条命令：watch --follow`)
   const log = openLog(root)
   try {
-    const s = await snapshot(log)
+    // 钱那一栏要一个档：**读的时候按当时的钟算**（官方价目分峰谷两档）。
+    const phase = phaseOf(new Date())
+    const r = await readings(log, { metrics: flags.has('metrics'), report: flags.has('report') })
     if (json) {
-      emitJson(s)
+      // **没要的那一栏不出现**（不是空数组）：`JSON.stringify` 丢掉没定义的键，于是这一份对象
+      // 去掉 `width` / `height` 就是 `FrameInput`。
+      emitJson(r)
       return 0
     }
-    // 钱那一栏要一个档：**读的时候按当时的钟算**（官方价目分峰谷两档）。
-    for (const line of linesOf(s, { phase: phaseOf(new Date()) })) emitLine(line)
+    for (const line of readingsLines(r, { phase })) emitLine(line)
     return 0
   } finally {
     await log.close()
@@ -1302,7 +1312,7 @@ function emitRunFace(o: {
     // **停因**：一行一格。它只在真驱动那一档有内容（打桩那一档 `stops` 是空的）。
     for (const s of stops) emitLine(`  停因：${s.agent} ${s.steps} 步 · ${s.stopped}`)
     if (flags.has('report')) {
-      emitLine('打回读数（从日志重算，不采集）：')
+      emitLine(REPORT_HEAD)
       for (const l of report.lines) emitLine(`  ${l}`)
       emitLine('归因三处对照（闸四：命中落在哪一段；三行恒在，缺的写「没有读数」）：')
       for (const l of report.attributionLines) emitLine(`  ${l}`)
@@ -1311,7 +1321,7 @@ function emitRunFace(o: {
       for (const l of report.callLines) emitLine(`  ${l}`)
     }
     if (metrics !== null) {
-      emitLine('八元指标（从日志重算，不采集；分子与分母一起印）：')
+      emitLine(METRICS_HEAD)
       for (const m of metrics) emitLine(`  ${lineOf(m)}`)
     }
     if (!run.report.ok) {

@@ -22,6 +22,8 @@
 //   ⑨ **逐趟账**（`--report` 那一栏 · PLAN § 5.9 的 `G5`）：每一条 `llm/call` 一行，末行是合计；
 //      半截的流（`stop` 为 `null`）印「这一趟没走完」；没量到的印「未量到」；**没给峰谷档就说
 //      钱没印**（少印要说）；给了档则逐趟与合计各一笔钱——合计那个数与 `costOf` 同源
+//   ⑩ **序 32 的那个出口**（`status --once --metrics --report`）：那两栏与跑完那一档**同一个数 ·
+//      同一个渲染**；没要的那一栏不出现（不是空数组）；账动两边一起动
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -31,8 +33,21 @@ import { join } from 'node:path'
 import type { LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import type { AgentId, RoundId } from '../terms.ts'
-import { computeMerged } from './round.ts'
-import { callLinesOf, causeOf, linesOf, routeOf, snapshot, statusOf } from './status.ts'
+import { computeAll, computeMerged, linesOfReadings } from './round.ts'
+import { computeAllMetrics, lineOf } from './metrics.ts'
+import {
+  METRICS_HEAD,
+  REPORT_HEAD,
+  callLinesOf,
+  causeOf,
+  linesOf,
+  readings,
+  readingsLines,
+  routeOf,
+  rowsOf,
+  snapshot,
+  statusOf,
+} from './status.ts'
 import type { StatusRow } from './status.ts'
 import { follow, readNew } from './watch.ts'
 
@@ -410,4 +425,133 @@ test('⑨ 逐趟账：每一条 `llm/call` 一行 + 合计；半截的流与"没
   assert.match(none[0] as string, /合计 调用 0 · .*——这一份日志里一次调用都还没有/)
   console.log(`⑨ 读数：${bare[0] as string}`)
   console.log(`⑨ 读数：${priced[2] as string}`)
+})
+
+// ── ⑩ 序 32：读面在命令上的那个出口（`status --once --metrics --report`）──────────────────
+//
+// 由头：八元指标与打回三数原先只挂在 `round run` / `round work` 的 `--report --metrics` 上——
+// **跑完才有，跑着读不到**，而 TUI 与第二个渲染器（另一个宿主 · 另一门语言 · 原生窗口）读的正是
+// "跑着"的那一份。这一格把出口加在 `status` 上：`--json` 那一份对象去掉 `width` / `height` 就是
+// `ui/frame.ts` 的 `FrameInput`——命令面与渲染器的输入契约是同一份。
+//
+// 四条：前两条是主张，后两条是负对照。
+//   一 · **两处读法同一个数**：跑完那一档走 `computeAll` / `computeAllMetrics`，读账那一档走
+//        `readings()`，逐项相同；而快照那一份就是 `statusOf` 折出来的那一份（形状一个字段没动）。
+//   二 · **文字面逐字相同**：`readingsLines()` 那两块，就是跑完那一档印的那两块——表头是同一个
+//        常数（`REPORT_HEAD` / `METRICS_HEAD`），行是同一个 `linesOfReadings` / `lineOf`。
+//   三 · **没要的那一栏不出现**（不是空数组）："没算"与"算出来是空"要分得开（`B1` 那条）。
+//   四 · **账动两边一起动**：往同一份账里再落一条回边与一次内核拒，两处的 `rejects` / `denied`
+//        一起 +1；而 `report` 那三个数还与 `statusOf` 自己那三栏（`rounds[].rejects` · `conflicts` ·
+//        逐格 `denies`）对得上——那是账上第二处独立折法，两边改掉一处就红。
+test('⑩ 出口：`status` 那两栏与 `round run` 那两栏同一个数、同一个渲染；没要的栏不出现', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'status-'))
+  try {
+    const log = openLog(dir, { sync: 'each' })
+    const r1 = 'r1' as RoundId
+    const A = 'agent/r1/1' as AgentId
+    const B = 'agent/r1/2' as AgentId
+    /** 一份**真跑一趟**会落下来的账：每一族的形状照 `src/log/events.ts` 逐字。 */
+    const script: [string, LogEvent][] = [
+      ['round', { t: 'round/intent', round: r1, base: 'b0' as never, digest: 'd0', body: '{"goal":"写一份 notes.md"}' }],
+      ...FULL.map(([from, to]): [string, LogEvent] => ['round', { t: 'round/state', round: r1, from: from as never, to: to as never }]),
+      ['round', { t: 'contract/issue', round: r1, contract: 'c1' as never, owner: A, paths: ['src/a.ts'] as never[], body: '{}' }],
+      ['round', { t: 'merge/attempt', round: r1, branches: [A] as never[], conflicts: 2 }],
+      // **交接落在 A 的第一条上**：交错那一份是 (seq, writer) 的全序（`log.ts` 的 `readMerged`），
+      // 而「交接在继任者第一次调用之前」要在这个次序上成立——`handoff-yield` 量的就是它。
+      [A, { t: 'agent/handoff', agent: A, successor: B, contract: 'c2' as never, digest: 'd2', body: '{}' }],
+      [A, { t: 'prefix/assemble', agent: A, zoneAHash: 'a1', zoneBHash: 'b1', zoneCHash: 'c1' }],
+      [A, call(A, '0', 1, 0)],
+      [A, call(A, '1', 0, 1920)],
+      [A, { t: 'run/start', agent: A, step: '0' as never, action: 'bash', argv0: '/bin/sh', argv: ['/bin/sh', '-c', 'grep -n 数完了 notes.md'] }],
+      [A, { t: 'run/end', agent: A, step: '0' as never, exit: 1, ms: 3, denied: true }],
+      [A, { t: 'mat/fork', agent: A, base: 'b0' as never, strategy: 'copy' as never, paths: ['src/a.ts'] as never[], hashes: ['h1'], ms: 7 }],
+      [A, { t: 'mat/reclaim', agent: A, declared: ['src/a.ts'] as never[], changed: ['src/a.ts'] as never[] }],
+      [A, { t: 'view/write', agent: A, path: 'src/a.ts' as never, rev: 1 as never, blob: 'bl1' as never, mode: 420 }],
+      [B, call(B, '0', 1, 4864)],
+      [B, { t: 'view/write', agent: B, path: 'src/b.ts' as never, rev: 1 as never, blob: 'bl2' as never, mode: 420 }],
+      [B, { t: 'agent/stop', agent: B, steps: 1, stopped: '收敛', handoffs: 0 }],
+    ]
+    for (const [w, e] of script) await log.append(w as never, e)
+
+    // 一 · 两处读法：跑完那一档（`round run` 那条路）⇄ 读账那一档（`status` 那条路）。
+    const viaRun = {
+      report: await computeAll(() => log.readMerged(), {}),
+      metrics: await computeAllMetrics(() => log.readMerged(), {}),
+    }
+    const viaStatus = await readings(log, { metrics: true, report: true })
+    const rep = viaStatus.report ?? []
+    const met = viaStatus.metrics ?? []
+    assert.deepEqual(viaStatus.snapshot, statusOf(await rowsOf(() => log.readMerged())), '快照那一份一个字段没动')
+    assert.deepEqual(rep, viaRun.report, `打回那三个数：${JSON.stringify(rep)}`)
+    assert.deepEqual(met, viaRun.metrics, `八元指标：${JSON.stringify(met)}`)
+
+    // **把数钉住**：这一份账上的八条值逐条写死——**值与分子分母都写**，因为 `B7` 那条契约就是
+    // "分母与分子都要印得出来"，而只钉 `value` 钉不住一处分子（`value` 是另算的）。上面那两条比的是
+    // 「两处读法同源」，这一条管的是**那个源本身有没有被动过**：改掉 `metricsOf` 的一处折法当场红。
+    const f = (m: (typeof met)[number]): string => `${m.metric}=${m.value}（${m.numerator}/${m.denominator}）`
+    assert.deepEqual(
+      met.map(f),
+      [
+        'zero-tool-call-rate=0.3333333333333333（1/3）',
+        'detour-rate=1（1/1）',
+        'prefix-hit-rate=0.6666666666666666（2/3）',
+        'prefix-versions=1（1/1）',
+        'materialize-precision=1（1/1）',
+        'ensure-latency=7（1/1）',
+        'git-calls-per-round=3（3/1）',
+        'handoff-yield=1（1/1）',
+      ],
+      `八元那八条：${met.map(f).join(' · ')}`,
+    )
+
+    // 二 · 文字面：跑完那一档印的那两块（表头 + 行），与 `readingsLines()` 那两块逐字相同。表头与
+    // 行都是一处取值处，所以这一条钉的是**次序与归属**：快照那几行在前，两块在后，一块不多一块不少。
+    const runBlocks = [
+      REPORT_HEAD,
+      ...linesOfReadings(viaRun.report).map((l) => `  ${l}`),
+      METRICS_HEAD,
+      ...viaRun.metrics.map((m) => `  ${lineOf(m)}`),
+    ]
+    const mine = readingsLines(viaStatus, { phase: 'off-peak' })
+    assert.deepEqual(mine.slice(mine.indexOf(REPORT_HEAD)), runBlocks, `文字面：\n${mine.join('\n')}`)
+
+    // 三 · 负对照：没要的那一栏**不出现**（不是空数组），而 `--json` 那一份就是它。
+    const bare = await readings(log)
+    assert.deepEqual(Object.keys(bare), ['snapshot'], `没给开关时那一份对象：${JSON.stringify(bare)}`)
+    assert.equal(Object.hasOwn(bare, 'metrics'), false)
+    assert.equal(Object.hasOwn(bare, 'report'), false)
+    assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(bare)) as object), ['snapshot'], 'JSON 那一档是同一份')
+    const onlyReport = (await readings(log, { report: true })) as Record<string, unknown>
+    assert.deepEqual(Object.keys(onlyReport).sort(), ['report', 'snapshot'], '只要一栏时另一栏也不出现')
+
+    // 四 · 负对照：账动，两边一起动；而三个数与 `statusOf` 自己那三栏对得上（账上第二处独立折法）。
+    const pick = (rs: readonly { readonly metric: string; readonly count: number }[], m: string): number | undefined =>
+      rs.find((r) => r.metric === m)?.count
+    assert.deepEqual(
+      { rejects: pick(rep, 'rejects'), conflicts: pick(rep, 'conflicts'), denied: pick(rep, 'denied') },
+      { rejects: 1, conflicts: 2, denied: 1 },
+    )
+    assert.equal(viaStatus.snapshot.rounds[0]?.rejects, 1, 'statusOf 自己那一栏：打回')
+    assert.equal(viaStatus.snapshot.conflicts, 2, 'statusOf 自己那一栏：冲突')
+    assert.equal(viaStatus.snapshot.agents.reduce((n, a) => n + a.denies, 0), 1, 'statusOf 自己那一栏：内核拒')
+
+    await log.append('round' as never, { t: 'round/state', round: r1, from: 'Verifying', to: 'Working' })
+    await log.append(A as never, { t: 'run/end', agent: A, step: '1' as never, exit: 1, ms: 2, denied: true })
+    const afterRun = await computeAll(() => log.readMerged(), {})
+    const afterStatus = await readings(log, { report: true })
+    assert.equal(pick(afterRun, 'rejects'), 2, '账上多一条回边：跑完那一档跟着动')
+    assert.equal(pick(afterRun, 'denied'), 2, '账上多一次内核拒：跑完那一档跟着动')
+    assert.equal(pick(afterStatus.report ?? [], 'rejects'), 2, '读账那一档也动')
+    assert.equal(afterStatus.snapshot.rounds[0]?.rejects, 2, 'statusOf 那一栏也动')
+    assert.equal(afterStatus.snapshot.agents.reduce((n, a) => n + a.denies, 0), 2)
+
+    console.log(`⑩ 读数：打回 ${viaRun.report.map((r) => `${r.metric} ${r.count}`).join(' · ')}`)
+    console.log(
+      `⑩ 读数：八元 ${viaRun.metrics.map((m) => `${m.metric}=${m.value === null ? '算不出来' : m.value}`).join(' · ')}`,
+    )
+    console.log('⑩ 负对照：账上多一条回边 + 一次内核拒 → 两处 rejects 1→2 · denied 1→2；没要的栏不出现')
+    await log.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

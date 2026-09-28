@@ -23,12 +23,22 @@
 // `from`/`to` 是一步：核得出单边就印那一条边，核不出就用 BFS 把图上那几步找回来印成"跳步"，
 // 图上根本走不通的记进 `unrouted`（**读面不许因为一条奇怪的账就整份读不出来**）。
 // 要"每一步都落一条事件"是一个**写面**的改动（会动前缀账、会让 W10 那条基线作废），不在这里做。
+//
+// **序 32 给它加了一个出口**（PLAN § 5.12 那一格）：八元指标与打回三数原先只挂在 `round run` /
+// `round work` 的 `--report --metrics` 上——**跑完才有，跑着读不到**——而 TUI 与第二个渲染器读的
+// 正是"跑着"的那一份。`readings()` 就是那个出口：一遍读齐三栏，`--json` 吐出去的那一份去掉
+// `width` / `height` 就是 `ui/frame.ts` 的 `FrameInput`（命令面与渲染器同一个输入契约）。
+// 三栏各自的折法一处都没另立：快照是这一份自己的 `statusOf`，另两栏借 `probe/round.ts` 与
+// `probe/metrics.ts` 那两处。
 import type { Log, LogEvent } from '../log/events.ts'
 import { costOf, formatUsd, matchModels, moneyText } from '../model/price.ts'
 import type { Billable, Phase } from '../model/price.ts'
 import { EDGES, STATES, abortEdges } from '../round/machine.ts'
 import type { Cause, Edge } from '../round/machine.ts'
-import { rejectsIn } from './round.ts'
+import { countsOf, rejectsIn, linesOfReadings } from './round.ts'
+import type { MetricReading } from './round.ts'
+import { lineOf, metricsOf } from './metrics.ts'
+import type { MetricValue } from './metrics.ts'
 import type { AgentId, RoundId, RoundState } from '../terms.ts'
 
 /** 交错的读侧那一份形状（`probe/metrics.ts` 的 `MergedRow` 逐字，两处共用同一条读法）。 */
@@ -490,6 +500,52 @@ export async function snapshot(log: Pick<Log, 'readMerged'>): Promise<StatusSnap
   return statusOf(await rowsOf(() => log.readMerged()))
 }
 
+/**
+ * **序 32 的那个出口**：这一刻的处境，加那两份从账上重算的读数。
+ *
+ * `status --once --metrics --report --json` 吐的就是这一份，而**去掉 `width` / `height` 就是
+ * `ui/frame.ts` 的 `FrameInput`**——TUI 的输入契约与命令面的 JSON 是同一份，不许有两份
+ * （PLAN § 5.19 第五段）。第二个渲染器（另一个宿主 · 另一门语言 · 原生窗口）的入场券也在这里：
+ * 没有它，那三份折叠只得被重写一遍。
+ *
+ * **快照那一份的形状一个字段都不动**：`StatusSnapshot` 是 `status --once` 的全部输出，八元与打回
+ * 三数是**外套**在它上面的两栏，各自走各自那一处的折法（`metricsOf` · `countsOf`），这里不另立。
+ *
+ * **没要的那一栏不出现**（不是空数组）："没算"与"算出来是空"要分得开（`B1` 那条）。
+ */
+export interface StatusReadings {
+  /** 读源一：那一刻的处境。**恒在**——不给那两个开关也读它。 */
+  readonly snapshot: StatusSnapshot
+  /** 读源二：八元指标。**给了 `--metrics` 才有这一栏**。 */
+  readonly metrics?: readonly MetricValue[]
+  /** 读源三：打回那三个数。**给了 `--report` 才有这一栏**。 */
+  readonly report?: readonly MetricReading[]
+}
+
+/** 那两个开关（与 `round run` / `round work` 上同名同义）。 */
+export interface ReadingsOptions {
+  readonly metrics?: boolean
+  readonly report?: boolean
+}
+
+/**
+ * 读一次账，折出要的那几栏。**一遍读齐**：三份读数读的是同一串事件（架构 § 8.15 那条验证性质
+ * 要求重放是确定的），所以这里不重复读日志——也不走 `snapshot(log)` 那一份单读一遍。
+ *
+ * 范围是**全部**（不按轮次筛）：`status` 读的是"这一刻的处境"，而处境是整份账的函数。
+ */
+export async function readings(log: Pick<Log, 'readMerged'>, opts: ReadingsOptions = {}): Promise<StatusReadings> {
+  const rows = await rowsOf(() => log.readMerged())
+  const out: {
+    snapshot: StatusSnapshot
+    metrics?: readonly MetricValue[]
+    report?: readonly MetricReading[]
+  } = { snapshot: statusOf(rows) }
+  if (opts.metrics === true) out.metrics = metricsOf(rows, {})
+  if (opts.report === true) out.report = countsOf(rows, {})
+  return out
+}
+
 /** 交错那一份读侧 → 一整份行。**两处共用**：`snapshot` 要它折快照，`callLinesOf` 要它逐趟列。 */
 export async function rowsOf(read: () => AsyncIterable<StatusRow>): Promise<StatusRow[]> {
   const rows: StatusRow[] = []
@@ -627,5 +683,23 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions = {}): readonly st
       ? '事件 0 条'
       : `事件 ${s.events} 条 · 最近 ${s.last.t}（writer=${s.last.writer} seq=${s.last.seq}）`,
   )
+  return out
+}
+
+/** 打回读数那一块的表头。**一处取值处**：`status` 与跑完那一档印的是同一句。 */
+export const REPORT_HEAD = '打回读数（从日志重算，不采集）：'
+
+/** 八元指标那一块的表头。同上——两处读法逐字相同，靠的就是这两个常数。 */
+export const METRICS_HEAD = '八元指标（从日志重算，不采集；分子与分母一起印）：'
+
+/**
+ * `status` 那一份的文字面：快照那几行，加**要了的**那两栏。**一处渲染**——命令面因此只有一行
+ * `emitLine`，而"两处读法逐字相同"这句话在文字面上也立得住（表头是上面那两个常数，行是
+ * `linesOfReadings` 与 `lineOf` 那两处）。
+ */
+export function readingsLines(r: StatusReadings, opts: LinesOptions = {}): readonly string[] {
+  const out = [...linesOf(r.snapshot, opts)]
+  if (r.report !== undefined) out.push(REPORT_HEAD, ...linesOfReadings(r.report).map((l) => `  ${l}`))
+  if (r.metrics !== undefined) out.push(METRICS_HEAD, ...r.metrics.map((m) => `  ${lineOf(m)}`))
   return out
 }
