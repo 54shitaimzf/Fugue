@@ -20,6 +20,7 @@
 
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { widthOf } from './glyph.ts'
 
 /**
  * 候选从哪儿来。**三个来源**（PLAN § 5.19 二那条"一张表喂三处"与第九节 `T4` 那一行在两处各说了
@@ -212,9 +213,11 @@ export function completeOf(o: {
 
 /** 候选那几行印出来什么样：名字那一列按本屏最长的那一条对齐，说明跟在后面。 */
 export function rowsTextOf(rows: readonly MenuRow[]): readonly string[] {
+  // 对齐量的是**显示宽度**（`widthOf`，U13），不是 code unit 数——名字里带中文的那几条按
+  // 字符数补空格会窄掉一截，说明那一列就斜了。
   let w = 0
-  for (const r of rows) w = Math.max(w, r.name.length)
-  return rows.map((r) => (r.note === '' ? r.name : `${r.name}${' '.repeat(w - r.name.length + 2)}${r.note}`))
+  for (const r of rows) w = Math.max(w, widthOf(r.name))
+  return rows.map((r) => (r.note === '' ? r.name : `${r.name}${' '.repeat(w - widthOf(r.name) + 2)}${r.note}`))
 }
 
 /** 路径那一档的边界：**深度与条数都有界**（一个 `@` 不该把整棵树读进内存里）。 */

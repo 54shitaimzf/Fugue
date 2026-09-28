@@ -39,6 +39,7 @@ import {
   rowsTextOf,
   specsOf,
 } from './menu.ts'
+import { widthOf } from './glyph.ts'
 import { K } from './term.ts'
 
 /** 那一刻的账（空账：这一份量的是候选与面板，不是读数）。 */
@@ -68,6 +69,18 @@ test('① 菜单里的命令集合与 `FLAGS_OF` 的键集合逐字相同（负�
   for (let i = 0; i < keys.length; i += 1) {
     assert.ok((text[i] as string).startsWith(keys[i] as string), `第 ${i + 1} 行不是 ${keys[i]}`)
   }
+  // 对齐量的是显示宽度（U13）：名字里带中文的那条与纯英文的那条，说明那一列**起在同一列上**——
+  // 按 code unit 数补空格的话，两字的名字比六字母的短 4 列（中文一字两列），那一列就斜了。
+  const mixed = rowsTextOf([
+    { name: '中文命令', note: '说明一', kind: 'cmd' },
+    { name: 'abcdef', note: '说明二', kind: 'cmd' },
+  ])
+  const colOf = (s: string, note: string): number => widthOf(s.slice(0, s.indexOf(note)))
+  assert.equal(
+    colOf(mixed[0] as string, '说明一'),
+    colOf(mixed[1] as string, '说明二'),
+    `说明该起在同一显示列（量的是宽度，不是字符数）：${JSON.stringify(mixed)}`,
+  )
   // **负对照**：手抄一份"看着像那么回事"的目录（上一版那种写法）与表当场对不上——那把尺的牙。
   const handWritten = ['log', 'status', 'watch', 'tui', 'doctor']
   assert.notDeepEqual(handWritten, keys, '手抄那一份与表对不上')
