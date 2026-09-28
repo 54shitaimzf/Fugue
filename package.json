@@ -1,9 +1,15 @@
 {
   "name": "fugue",
+  "version": "0.1.0",
   "private": true,
+  "description": "本地优先的编码 agent：真源只有 git 对象库与一份只追加的事件账",
   "type": "module",
+  "license": "MIT",
   "engines": {
     "node": ">=22.6"
+  },
+  "bin": {
+    "fugue": "bin/fugue"
   },
   "scripts": {
     "test": "node tools/test-entry.js"

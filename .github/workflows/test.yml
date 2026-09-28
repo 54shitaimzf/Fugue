@@ -1,0 +1,21 @@
+# 唯一的流水线：跑那个验收入口。**没有安装步骤**——这个仓库没有依赖。
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # CI 上没有人：提交类判据要真提交，先把身份给 git。
+      - run: |
+          git config --global user.name 'fugue-ci'
+          git config --global user.email 'fugue-ci@localhost'
+      - run: node --version && git --version
+      - run: node tools/test-entry.js
