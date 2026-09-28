@@ -7,7 +7,7 @@
   </picture>
 </p>
 
-[![test](https://github.com/54shitaimzf/Fugue/actions/workflows/test.yml/badge.svg)](https://github.com/54shitaimzf/Fugue/actions/workflows/test.yml)
+[![test](https://github.com/54shitaimzf/Fugue/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/54shitaimzf/Fugue/actions/workflows/test.yml?query=branch%3Amain)
 
 住在终端里的编码 agent：先跟你说清，再自己拆活 · 自己干 · 自己验；全过才动你的工作树
 
