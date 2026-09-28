@@ -150,6 +150,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       // 自己的视图状态。
       ...(v?.menu === undefined ? {} : { menu: v.menu }),
       ...(v?.nav === undefined ? {} : { nav: v.nav }),
+      ...(v?.read === undefined ? {} : { read: v.read }),
       ...(v?.bottom === undefined ? {} : { bottom: v.bottom }),
       permanent: permanent(),
       width: size.columns,

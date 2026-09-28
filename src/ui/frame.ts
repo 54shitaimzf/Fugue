@@ -96,6 +96,14 @@ export interface FrameInput {
   readonly bottom?: BottomInput | undefined
   /** 读源七（`T8`）：**树那几个节点**（排在内容那一栏的最上面）。见 `NavInput`。 */
   readonly nav?: NavInput | undefined
+  /**
+   * 读源八（`T9`）：**阅读面**那几行（`ui/read.ts` 的 `facesOf` 算好的原文）与看到第几行起。
+   *
+   * 它排在内容那一栏的**最下面**——挨着账尾、盖住底下那几行读数（人按了"我要看这一份东西"，
+   * 那一刻要看的就是它）。装不下时最后一行说"下面还有 N 行"。不给时一个字节都不占
+   * （`T9` 之前那一帧逐字节相同）。
+   */
+  readonly read?: ReadInput | undefined
   readonly width: number
   readonly height: number
 }
@@ -426,6 +434,17 @@ export interface NavInput {
   readonly sel: number
 }
 
+/**
+ * 阅读面那一栏（`T9`）：**算好的原文**与看到第几行起（`top`，0 = 标题那一行）。
+ *
+ * 它是**一栏整幅**的（不像候选那一层带 `▸` 选中标记）：人在这里是"读"，不是在"选"。装不下时
+ * 只印得下多少印多少，末行说还剩几行——**少印要说出来**（`frame.ts` 那一条纪律）。
+ */
+export interface ReadInput {
+  readonly rows: readonly string[]
+  readonly top: number
+}
+
 /** 候选那一层开的一个窗：印第 `from` 条起的 `count` 条，`summary` 说还要不要补一行"还有几条"。 */
 export interface MenuWindow {
   readonly from: number
@@ -518,10 +537,26 @@ export function frameOf(o: FrameInput): Frame {
       if (w.summary) menuBody.push(`… 还有 ${w.above + w.below} 条（↑↓ 翻，选中第 ${at + 1} 条）`)
     }
   }
+  // 阅读面那一栏（`T9`）**开着的时候整块地方给它**：树与内容那一栏都不印——那一刻人要看的就是
+  // 这一份东西（"看一眼就走"），而 K 是恒定的（`ui/term.ts` 的行数账），挤在一起两边都读不下去。
+  // 每一条变更都带着账上的坐标（`<writer> <seq> · `），所以"读的是哪一格"在这一栏里仍然看得见。
+  const readAll = o.read?.rows ?? []
+  const readingOn = readAll.length > 0
+  const readBody: string[] = []
+  if (readingOn) {
+    // 从 `top` 那一行起印；装不下时**末行换成"下面还有几行"**（不截中间那一截）。
+    const top = Math.max(0, Math.min(o.read?.top ?? 0, Math.max(0, readAll.length - 1)))
+    const count = Math.min(readAll.length - top, Math.max(1, budget))
+    for (let i = top; i < top + count; i += 1) readBody.push(readAll[i] as string)
+    const below = readAll.length - (top + count)
+    if (below > 0) readBody[readBody.length - 1] = `… 下面还有 ${below} 行（↑↓ 翻 · Esc 收起）`
+  }
+  budget -= readBody.length
+
   // 树那一栏（`T8`）**排在内容那一栏的最上面**（它是导航：主线为根 · agent 缩进一级）。它最多占四行
   // ——装不下时 `windowOf` 把选中那一个留在窗里，并把还剩几个说出来；预算先从这里扣（一栏都没有时
-  // 下面这几步与从前逐字节相同）。
-  const navAll = o.nav?.rows ?? []
+  // 下面这几步与从前逐字节相同）。**阅读面开着就不印它**（地方让给正文）。
+  const navAll = readingOn ? [] : (o.nav?.rows ?? [])
   const navCap = navAll.length === 0 ? 0 : Math.max(1, Math.min(4, budget - 2))
   const navWin = navAll.length === 0 ? null : windowOf(navAll.length, o.nav?.sel ?? 0, navCap)
   const navBody: string[] = []
@@ -543,14 +578,16 @@ export function frameOf(o: FrameInput): Frame {
   while (menuBody.length > 0 && budget - gateBody.length < 1) menuBody.pop()
   while (gateBody.length > 0 && budget - gateBody.length < 1) gateBody = gateBody.slice(1)
   const bodyBudget = Math.max(1, budget - menuBody.length - gateBody.length)
-  const content = rows.length <= bodyBudget ? rows : rows.slice(0, Math.max(0, bodyBudget - 1))
-  const dropped = rows.length - content.length
+  // 阅读面开着：内容那一栏一个字节都不印（地方整块给了正文，见上面那一段）。
+  const content = readingOn ? [] : rows.length <= bodyBudget ? rows : rows.slice(0, Math.max(0, bodyBudget - 1))
+  const dropped = readingOn ? 0 : rows.length - content.length
   // 树那一栏在最上面，然后才是内容那一栏（它的每一行都是横贯整栏的）。
   const shown: { readonly l: string; readonly r: string; readonly full?: boolean }[] = [
     ...navBody.map((l) => ({ l, r: '', full: true })),
     ...content,
   ]
   if (dropped > 0) shown.push({ l: `… 还有 ${dropped} 行没印（这一屏 ${height} 行）`, r: '' })
+  for (const one of readBody) shown.push({ l: one, r: '', full: true })
   for (const one of menuBody) shown.push({ l: one, r: '', full: true })
   for (const one of gateBody) shown.push({ l: one, r: '', full: true })
 

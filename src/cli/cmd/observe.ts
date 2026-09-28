@@ -23,6 +23,8 @@ import type { GateFace, GateOption, GateView } from '../../ui/gate.ts'
 import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from '../../ui/queue.ts'
 import { altAt, clampNav, navNodesOf, navRowsOf, stepNav, writerAt } from '../../ui/nav.ts'
 import type { NavNode } from '../../ui/nav.ts'
+import { EMPTY_READ, faceRowsOf, facesOf, firstFace, readStateOf, stepFace } from '../../ui/read.ts'
+import type { ReadFaceName, ReadState } from '../../ui/read.ts'
 import type { QueueState } from '../../ui/queue.ts'
 import { pendingOf } from '../../round/dispatch.ts'
 import { identFor } from '../../identity.ts'
@@ -301,10 +303,22 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     // 树那一栏（`T8`，排在最上面）与"切到哪一格"（`focus`：`null` = 整份账）。
     const navRows = navRowsOf(navNodes, navAt, term.columns - 1)
     const navPart = navRows.length === 0 ? {} : { nav: { rows: navRows, sel: navAt } }
+    // 阅读面那一栏（`T9`，排在内容那一栏最下面）：**开着才占地方**。三面是从 `readState` 排的版
+    // （`facesOf` 不再折一次），看到第几行由 `reading.top` 说了算。
+    const readPart =
+      reading === null
+        ? {}
+        : ((): { read: { rows: readonly string[]; top: number } } => {
+            const faces = facesOf(readState)
+            const rows = faceRowsOf(faces, reading.face ?? firstFace(faces))
+            const top = Math.max(0, Math.min(reading.top, Math.max(0, rows.length - 1)))
+            return rows.length === 0 ? {} : { read: { rows, top } }
+          })()
     return {
       ...navPart,
       ...(panel === null ? {} : { menu: { rows: rowsTextOf(rowsOf(panel.source)), sel: panel.sel } }),
       ...bottomPart,
+      ...readPart,
       focus: writerAt(navNodes, navAt),
       input: { rows: frame.rows, caret: frame.caret },
     }
@@ -327,6 +341,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
         navAt = clampNav(nodes.length, navAt)
         tui.redraw()
       }
+      // 阅读面（`T9`）：**接着上一次那一份只折尾部**（新来的那几条）——这一趟是每条行都要走的，
+      // 从头折整份账就等于把跟随这一档拖垮（`readStateOf` 那一头的前缀判据管着"接得上"）。
+      refreshRead()
       // 门口那一批（`T6`）：只在 `round/*` 与 `holder/*` 那两族上重算（一趟读全量日志是 O(行数)，
       // 拿它去乘 `llm/call` 那些高频行就等于把跟随这一档拖垮）。
       if (rows.some((r) => r.e.t.startsWith('round/') || r.e.t.startsWith('holder/'))) void refreshGate()
@@ -339,6 +356,16 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // resize：**只重画**，不重读（宽度变了账没变）；新的那一块落在哪由 `ui/term.ts` 那一档决定。
   const onWin = (): void => tui.redraw()
   if (mode === 'panel') process.on('SIGWINCH', onWin)
+
+  /** 这一刻树上选的是哪一格（`null` = 整份账）。阅读面读的就是它。 */
+  const focusNow = (): string | null => writerAt(navNodes, navAt)
+  /**
+   * 折一次阅读面（`T9`）。**接着上一次那一份只折尾部**；切了格（`agent` 变了）或前缀被顶掉时
+   * `readStateOf` 自己从头折——两种情形它都答得对，所以调用点不必先判是哪一种。
+   */
+  function refreshRead(): void {
+    readState = readStateOf(tui.session.rows, { agent: focusNow(), prev: readState })
+  }
 
   // ── `UI4` · 门那儿按一下（只在"面板"那一档）──────────────────────────────────────────
   // 按 `g` 起的是**一条命令**（`ui/run.ts` 的 `openRun` → 一个子进程），账由那个子进程写。界面手里
@@ -374,6 +401,15 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
    */
   let navNodes: readonly NavNode[] = []
   let navAt = 0
+  /**
+   * 阅读面（`T9`）：**折到哪儿了** + 现在看第几面 + 看到第几行起。
+   *
+   * 那份状态是**从账折出来的**（`ui/read.ts` 的 `readStateOf`）——界面这一头没有第二份"这一格动过
+   * 哪些路径"的清单。**只折尾部**：账往前动一条就接着折一条（`prev` 就是上一次那一份），于是跟随
+   * 那一趟不必每来一条行都把整份账重折一遍（`readStateOf` 那一头的前缀判据管着"接得上"）。
+   */
+  let readState: ReadState = EMPTY_READ
+  let reading: { face: ReadFaceName; top: number } | null = null
   /**
    * 跑完一趟要不要**自动**接着起下一条（`T7`）。缺省要；**被 `Esc` / `Ctrl-C` 打断之后不要**——
    * 人刚说了停，排队那几条停在那儿等他（`Enter` 起下一条 · `Esc` 丢掉）。起新的一条时又回到"要"。
@@ -544,7 +580,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
             const step = escStepOf({
               // **门口那一块是 `Esc` 链最外那一级**（`T6`）：它开着（且行是空的）就只收它。
               atGate: gate !== null && !gateHidden,
-              overlays: panel === null ? 0 : 1,
+              // 弹层栈有几层：候选那一层与阅读面（`T9`）各算一层——`Esc` 只关最上面那一层。
+              overlays: (panel === null ? 0 : 1) + (reading === null ? 0 : 1),
               running: go?.running === true,
               // 排队那几条（`T7`）：一条都没有时这一级够不着（次序不变——在途那一趟压着它）。
               queued: queue.items.length,
@@ -559,7 +596,10 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
               return
             }
             if (step === 'overlay') {
-              panel = null
+              // 弹层是一条栈：**最上面那一层先关**（阅读面是"我要看这一份东西"，
+              // 它开着的时候压着候选那一层）。
+              if (reading !== null) reading = null
+              else panel = null
               settle()
               return
             }
@@ -633,6 +673,40 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
           openPanel(src)
           settle()
           return
+        }
+        // ⑥ `Ctrl-R`（`T9`）：**阅读面**——开与关都在这一下上（看一眼就走）。开着的时候 `Tab` 换一面 ·
+        // `↑`/`↓` 翻 · `Esc` 收起（走上面取消链那一级）。读的是**账**（`readState` 从行折出来），
+        // 界面这一头没有第二份"这一格动过哪些路径"的清单。
+        if (d.action === 'read') {
+          if (reading === null) {
+            refreshRead()
+            const faces = facesOf(readState)
+            reading = { face: firstFace(faces), top: 0 }
+            tui.note(`阅读面 · ${faces[reading.face]?.title ?? ''}（Tab 换一面 · ↑↓ 翻 · Esc 收起）`)
+          } else {
+            reading = null
+          }
+          settle()
+          return
+        }
+        // ⑥之二 阅读面开着时那三下：`Tab` 换一面 · `↑`/`↓` 翻（一屏一行地翻——这是"读"，
+        // 不是"选"）。别的键照旧走它们自己的路（打字还是打字）。
+        if (reading !== null) {
+          if (d.action === 'complete') {
+            const faces = facesOf(readState)
+            reading = { face: stepFace(faces, reading.face, 1), top: 0 }
+            tui.note(`阅读面换一面 · ${faces[reading.face]?.title ?? ''}`)
+            settle()
+            return
+          }
+          if (d.action === 'historyOlder' || d.action === 'historyNewer') {
+            const rows = faceRowsOf(facesOf(readState), reading.face)
+            const last = Math.max(0, rows.length - 1)
+            const top = reading.top + (d.action === 'historyOlder' ? -1 : 1)
+            reading = { ...reading, top: Math.max(0, Math.min(top, last)) }
+            settle()
+            return
+          }
         }
         // ⑥ `Enter`：弹层开着就是"认下选中那一条"（**只换掉这一行字，不执行**）；关着就把这一行
         // 发出去（`T3` 那一格：一行字 → argv → 子进程，账由那个子进程写）。
@@ -711,6 +785,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
           // （主线 → 各 agent → 主线）。两处不让：弹层开着时 `↑`/`↓` 是选项那一档，这一下不抢它。
           if (panel === null && navNodes.length > 1) {
             navAt = stepNav(navNodes.length, navAt, 1)
+            // 换了一格：阅读面跟着换成那一格的（`readStateOf` 按 `agent` 判 `prev` 还能不能用）。
+            refreshRead()
             tui.note(`切到 ${navNodes[navAt]?.label ?? ''}（${navAt + 1}/${navNodes.length}）`)
           }
           settle()
@@ -743,6 +819,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
           const at = altAt(navNodes, d.n)
           if (at !== null) {
             navAt = at
+            refreshRead()
             tui.note(`切到 ${navNodes[at]?.label ?? ''}（${at + 1}/${navNodes.length}）`)
             settle()
             return

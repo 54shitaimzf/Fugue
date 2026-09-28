@@ -17,6 +17,8 @@
 //   ⑦ **候选那一层开的窗**（`windowOf`，`T4` 的 `/` 菜单与 `Ctrl-P` 面板用它）：装得下就全印 · 装不下
 //      时**选中的那一条一定在窗里**（贴着头或贴着尾）· 上下各还剩几条数得出来 · 只剩一行可印时不留
 //      "还有几条"那一句（那一行留给候选）。
+//   ⑧ **阅读面那一栏**（`T9` 的 `ReadInput`）：给 `top` 就从那一行起印 · 装不下时末行说"下面还有几行"
+//      （**不截中间**）· 不给它时整帧与从前逐字节相同（这一栏是加出来的，不是改出来的）。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
@@ -302,4 +304,40 @@ test('⑦ `windowOf`：装得下就全印 · 选中的一定在窗里 · 上下�
     '⑦ 读数：30 条候选在 4 行预算里 → 印 3 条 + 一句"还有 27 条"· 选中第 1/2/15/16/29/30 条时都在窗里 · ' +
       '预算 1 行时不留那句话（那一行留给候选）',
   )
+})
+
+// ── ⑧ 阅读面那一栏（`T9`）────────────────────────────────────────────────────
+test('⑧ 阅读面那一栏：整块地方给它（树与内容都让位）· 从 `top` 起印 · 装不下就说"下面还有几行" · 不给它时逐字节与从前相同', () => {
+  const base = { snapshot: snapshotOf(), metrics: METRICS, report: REPORT, width: 80, height: 19 }
+  const rows = ['标题 · 三面之一', '第一行', '第二行', '第三行', '第四行', '第五行']
+
+  // **不给 `read` 时**（`T9` 之前那一档）：整帧与从前逐字节相同——这一栏是加出来的，不是改出来的。
+  const none = frameOf(base)
+  const emptyRead = frameOf({ ...base, read: { rows: [], top: 0 } })
+  assert.deepEqual([...emptyRead.lines], [...none.lines], '给一个空的阅读面与不给，逐字节相同（一个字节都不占）')
+
+  // 从第 0 行起：标题在头一行，**处境与读数那两栏让位**（整块地方给正文）。
+  const all = frameOf({ ...base, read: { rows, top: 0 } })
+  const shown = all.lines.filter((l) => l.includes('│标题 · 三面之一'))
+  assert.equal(shown.length, 1, '标题在（阅读面那一栏是横贯整栏的）')
+  assert.ok(all.lines.some((l) => l.includes('第一行')), '第二行也在')
+  assert.ok(!all.lines.some((l) => l.includes('轮次 r1 · 状态')), '内容那一栏不印了（地方整块给正文）')
+  assert.ok(!all.lines.some((l) => l.includes('主线（round）') || l.includes('格 agent/r1/1')), '树那几行也不印了')
+
+  // `top = 2`：头两行不印了（那正是"翻下去"的意思）。
+  const scrolled = frameOf({ ...base, read: { rows, top: 2 } })
+  assert.ok(!scrolled.lines.some((l) => l.includes('标题 · 三面之一')), '翻下去之后标题不在屏上')
+  assert.ok(scrolled.lines.some((l) => l.includes('第二行')), '`top` 那一行起印')
+  assert.ok(!scrolled.lines.some((l) => l.includes('第一行')), '前两行都不印')
+
+  // 装不下：末行说还剩几行——**少的要说出来**，而且不是从中间挖掉一块。
+  const many = Array.from({ length: 60 }, (_, i) => `第 ${i + 1} 行正文`)
+  const cut = frameOf({ ...base, read: { rows: ['标题', ...many], top: 0 } })
+  const tailLine = cut.lines.find((l) => l.includes('下面还有'))
+  assert.ok(tailLine !== undefined, '装不下时末行要说还剩几行')
+  console.log(
+    `⑧ 读数：${rows.length} 行全装得下（内容与树都让位）· \`top=2\` 起印第二行 · 61 行时末行「${tailLine?.replace(/[│ ]+$/, '').trim()}」`,
+  )
+  assert.ok(cut.lines.some((l) => l.includes('第 1 行正文')), '头一行仍在（不是从中间挖掉一块）')
+  for (const l of cut.lines) assert.equal(widthOf(l), 80, `每一行都该是 80 列：${JSON.stringify(l)}`)
 })

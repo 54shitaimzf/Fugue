@@ -54,7 +54,14 @@ test('① 表：每个动作一条键 · 表里不写字节 · 没有两个动�
   }
   assert.equal(new Set(all).size, all.length, `两个动作抢了同一个字节：${all.length} 个字节里只有 ${new Set(all).size} 个不同`)
   assert.deepEqual(KEYMAP.problems, [], `缺省那一份就有问题：${JSON.stringify(KEYMAP.problems)}`)
-  for (const b of TABLE) assert.ok(['T2', 'T3', 'T4', 'T5', 'T6', 'T8'].includes(b.by), `不认识的 by：${b.by}`)
+  // `by` 必须是**认得的那几格**（`T7` 那一格一个键都没加，所以不在这一串里）。
+  const STAGES = ['T2', 'T3', 'T4', 'T5', 'T6', 'T8', 'T9']
+  for (const b of TABLE) assert.ok(STAGES.includes(b.by), `不认识的 by：${b.by}`)
+  assert.deepEqual(
+    [...new Set(TABLE.map((b) => b.by))].sort(),
+    STAGES.filter((s) => TABLE.some((b) => b.by === s)).sort(),
+    '表里用到的 `by` 与那一串认得的一一对上',
+  )
   const ready = TABLE.filter((b) => b.by === 'T2')
   console.log(
     `① 读数：动作 ${TABLE.length} 个 · 键名 ${TABLE.reduce((n, b) => n + b.keys.length, 0)} 个 · ` +

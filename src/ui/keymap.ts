@@ -59,6 +59,12 @@ export type UiAction =
   | 'panel'
   | 'complete'
   | 'focus'
+  /**
+   * 阅读面那一格（`T9`）：**开与关都在这一条上**（开着再按一下就收起——与 `Ctrl-P` 那种"再按一下
+   * 换一个来源"的做法不同：阅读面是"我要看这一份东西"，看一眼就走）。开着之后 `Tab` 在三面之间
+   * 轮换 · `↑`/`↓` 翻 · `Esc` 收起。
+   */
+  | 'read'
   | 'mention'
   | 'go'
   /**
@@ -74,7 +80,7 @@ export type UiAction =
   | 'insert'
 
 /** 哪一格把这个动作接上（`T2` 就是这一格）。 */
-export type Stage = 'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'T8'
+export type Stage = 'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'T8' | 'T9'
 
 /** 表里的一行。 */
 export interface Binding {
@@ -285,6 +291,13 @@ export const TABLE: readonly Binding[] = [
     by: 'T8',
   },
   {
+    action: 'read',
+    keys: ['Ctrl-R'],
+    hint: '阅读面',
+    note: '读这一格：diff · 契约正文 · 事件流（`Tab` 换面 · `↑`/`↓` 翻 · `Esc` 收起；读的是账，不是第二份数据）',
+    by: 'T9',
+  },
+  {
     action: 'mention',
     keys: ['@'],
     hint: '引用路径',
@@ -396,7 +409,7 @@ export function fallsToText(a: UiAction, key: string | undefined, text: string, 
  * 每落一格把它的名字加进来——这一份是**进度**，不是口味（`T2` 那一条断言的牙就在这儿：目录与
  * 分发同一张表，而"这一格接上了没有"也只有一个地方说）。
  */
-export const WIRED: readonly Stage[] = ['T2', 'T3', 'T4', 'T5', 'T6', 'T8']
+export const WIRED: readonly Stage[] = ['T2', 'T3', 'T4', 'T5', 'T6', 'T8', 'T9']
 
 /** 大段粘贴那一对记号（终端发出来的那一对）：`decoderOf` 用它把原文整段交给 `insert`。 */
 export const PASTE_ON = '\u001b[200~'
