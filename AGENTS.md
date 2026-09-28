@@ -16,6 +16,8 @@
   不要在 `/mnt/c` 里建仓库——那是 drvfs，小文件创建慢约 180 倍（架构 § 15.7）。
 - Windows 侧可以直接看：`\\wsl.localhost\ubuntu-noble\home\ubuntu\fugue`。
   **读得到，写不进**——9p 不支持硬链接，原子写入直接 `ENOTSUP`。
+- 沙箱那几条判据要 `bwrap`（挂载层）与内核的 Landlock（第二层）：本机上 `bwrap` 在 `/usr/bin/bwrap`。
+  少了 `bwrap`，`src/execute/degraded.test.ts` ④ 那句「这台机器上 bwrap 在」当场红——CI 上由那条流水线补上。
 
 ## 验收
 
@@ -107,7 +109,7 @@ ZZEOF
 | `src/ui/` | TUI：排版（纯函数）· 终端 · 跟随 · 按键 |
 | `tools/` | **取证用的，不是产品的一部分**：走查 · 探针 · 基准 |
 
-**CI 只有一条**（`.github/workflows/test.yml`）：`ubuntu-latest` · node 24 · 跑 `node tools/test-entry.js`。它没有安装步骤——这个仓库没有依赖。推之前先在本地跑一遍同一入口。
+**CI 只有一条**（`.github/workflows/test.yml`）：`ubuntu-latest` · node 24 · 跑 `node tools/test-entry.js`。仓库侧没有依赖，也就没有安装步骤；那条流水线里唯一一步安装装的是 **runner 的环境**——`bubblewrap`（镜像不带它）+ 放开 24.04 的无特权 userns 限制，少了它 `src/execute/degraded.test.ts` ④ 会红。推之前先在本地跑一遍同一入口。
 
 **一条能跑的命令 + 一条会失败的断言 + 它兑现的架构条款**：三样一起进提交信息（`git log -1 --format=%B` 看全文）。
 

@@ -1,4 +1,5 @@
-# 唯一的流水线：跑那个验收入口。**没有安装步骤**——这个仓库没有依赖。
+# 唯一的流水线：跑那个验收入口。**仓库侧没有依赖，也就没有安装步骤**——下面那一步补的是
+# runner 的环境，不是本仓库的依赖。
 name: test
 
 on:
@@ -17,5 +18,12 @@ jobs:
       - run: |
           git config --global user.name 'fugue-ci'
           git config --global user.email 'fugue-ci@localhost'
-      - run: node --version && git --version
+      # 沙箱那几条判据要 `bwrap`（挂载层），而 runner 镜像不带它——`ubuntu-latest` 是 24.04，
+      # 那份镜像的 apt 表里没有 bubblewrap；24.04 又默认挡住无特权 userns，两层都要摆平。
+      # 少了任何一样，`src/execute/degraded.test.ts` ④ 那句"这台机器上 bwrap 在"当场红。
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: node --version && git --version && bwrap --version
       - run: node tools/test-entry.js
