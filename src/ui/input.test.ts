@@ -175,7 +175,41 @@ test('⑥ 历史与反查：上下翻 · 拿行里那几个字查', () => {
   assert.equal(s.search, null, 'Esc 先退反查')
   assert.equal(s.draft.text, 'round go', '退反查之后行里还是找到的那一条')
   assert.deepEqual(applyIntent(emptyEditor(), { t: 'search' }), emptyEditor(), '没历史时反查什么都不做')
-  console.log(`⑥ 读数：历史 ${e.history.length} 条 · 反查 "round" 命中 round status → round go · 退反查行里留着 round go`)
+  // 命中之后 `↑`/`↓` 从命中处接着翻（U12：`at` 接住历史下标，不再断链甩回末尾）。
+  let c = withText(e, 'config')
+  c = applyIntent(c, { t: 'search' })
+  assert.equal(c.draft.text, 'config set a b', '反查 "config" 命中第 1 条')
+  c = applyIntent(c, { t: 'historyOlder' })
+  assert.equal(c.draft.text, 'round go', '命中之后 ↑ → 更早的第 0 条（从命中处接着翻，不是甩回末尾）')
+  c = applyIntent(c, { t: 'historyNewer' })
+  assert.equal(c.draft.text, 'config set a b', '↓ → 回命中那一条')
+  console.log(`⑥ 读数：历史 ${e.history.length} 条 · 反查 "round" 命中 round status → round go · 退反查行里留着 round go · 命中后 ↑↓ 从命中处接（U12）`)
+})
+
+// ── ⑨ 翻历史保栈（U11）：打字 → ↑ → ↓ → Ctrl-Z 恢复打的那一行 ──────────────────
+test('⑨ 翻历史保栈（U11）：打字 → ↑ → ↓ 回手里的行 → Ctrl-Z 退得动 · kill 环与 yank 照常', () => {
+  let e = emptyEditor()
+  for (const line of ['round go', 'round status']) e = rememberSubmit(e, line)
+  e = applyIntent(e, { t: 'insert', text: '打到一' })
+  e = applyIntent(e, { t: 'insert', text: '半' })
+  // 翻一趟历史再翻回来：手里的行回来了，撤销栈没被清——Ctrl-Z 还退得动打字那一步。
+  let up = applyIntent(e, { t: 'historyOlder' })
+  assert.equal(up.draft.text, 'round status', '↑ 给最近一条')
+  up = applyIntent(up, { t: 'historyNewer' })
+  assert.equal(up.draft.text, '打到一半', '↓ 回手里那一行')
+  const undo = applyIntent(up, { t: 'undo' })
+  assert.equal(undo.draft.text, '打到一', 'Ctrl-Z 退回打字过程（翻历史没把撤销栈清掉，U11）')
+  // kill 环：光标挪到「打到」后面砍掉「一半」→ 翻一趟历史 → 环里的节数不变，yank 粘得回来。
+  let k = applyIntent(applyIntent(e, { t: 'left' }), { t: 'left' })
+  k = applyIntent(k, { t: 'killToEnd' })
+  const rings = k.draft.killed.length
+  assert.ok(rings > 0, '砍过东西，kill 环里有货（前置）')
+  let kp = applyIntent(k, { t: 'historyOlder' })
+  kp = applyIntent(kp, { t: 'historyNewer' })
+  assert.equal(kp.draft.killed.length, rings, '翻一趟历史，kill 环没被清（U11）')
+  const yank = applyIntent(kp, { t: 'yank' })
+  assert.equal(yank.draft.text, '打到一半', '翻历史之后 yank 把砍掉的粘回来')
+  console.log(`⑨ 读数：↑↓ 一趟 → Ctrl-Z 回「打到一」· kill 环 ${rings} 节没丢 · yank 粘回「一半」`)
 })
 
 test('⑦ 纯 · 视图状态 · 显示里没有裸控制字符', () => {

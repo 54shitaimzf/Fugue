@@ -380,9 +380,19 @@ function caretTo(d: Draft, at: number): Draft {
   return clamped === d.caret ? d : { ...d, caret: clamped }
 }
 
-/** 装上历史里那一条（或翻回手里那一行）：**替换整行，但不进撤销栈**（历史不是改写）。 */
+/**
+ * 装上历史里那一条（或翻回手里那一行）：**替换整行，但不进撤销栈**（历史不是改写）。
+ * kill/undo/redo 三个栈**照旧带着**（U11）：翻历史不是把打过的东西扔掉——翻回来之后 `Ctrl-Z`
+ * 该回到翻之前的那一行，kill 环也照旧。`folded` 清空：旧折位对新行的位置没有意义（显示那一层
+ * 按新行重折）。
+ */
 function loadLine(e: Editor, text: string, keep: { readonly at: number | null; readonly stash: string | null }): Editor {
-  return { ...e, ...keep, draft: { ...EMPTY_DRAFT, text, caret: text.length } }
+  const d = e.draft
+  return {
+    ...e,
+    ...keep,
+    draft: { text, caret: text.length, folded: [], killed: d.killed, undo: d.undo, redo: d.redo },
+  }
 }
 
 function historyStep(e: Editor, dir: -1 | 1): Editor {
@@ -405,7 +415,9 @@ function searchStep(e: Editor): Editor {
   for (let i = from; i >= 0; i -= 1) {
     const line = e.history[i] as string
     if (q === '' || line.includes(q)) {
-      return { ...loadLine(e, line, { at: null, stash: e.stash ?? e.draft.text }), search: { q, at: i } }
+      // `at: i`（U12）：命中那一条就是历史里的第 i 条——`↑`/`↓` 从这里接着翻（at 断了的话，
+      // 命中之后按 `↑` 会跳回整条历史的末尾，人就从命中处被甩出去了）。
+      return { ...loadLine(e, line, { at: i, stash: e.stash ?? e.draft.text }), search: { q, at: i } }
     }
   }
   return e
