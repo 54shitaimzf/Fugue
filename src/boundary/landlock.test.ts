@@ -6,8 +6,9 @@
 //      产物照回收。
 //      **负对照**：第二层也拿掉（两层都不在）→ 同一趟把那些字真写进树里，回收报出来
 //      （`undeclared` 一栏）——**X4 的读数原样**。两个读数的差别就是这一层在不在。
-//   ② **ABI 用系统调用探，不读 `/sys`**：这一门里 `/sys/kernel/security/lsm` 读不到（WSL 的
-//      `securityfs` 没挂），而层照样在场——按文件探会得到假阴性（架构 § 8.8 那条）。
+//   ② **ABI 用系统调用探，不读 `/sys`**：把 `/sys` 那一扇门自己关上（`bwrap --tmpfs /sys`）再问
+//      一次，答案不变，而层照样在场——按文件探会得到假阴性（架构 § 8.8 那条）。WSL 里 `securityfs`
+//      本来就没挂，CI 的 runner 上挂着；所以这一条的条件是**造出来的**，不是"读读看读不到"。
 //   ③ **可写集含 `/dev/null` 那一类**：不含它时任何一次重定向都翻车（直接问包装器，两个读数），
 //      而命令面那一档给的就是含它的那一份。
 //
@@ -128,6 +129,32 @@ function shim(...names: string[]): string {
 
 const pathWith = (dir: string): string => `${dir}:${process.env.PATH ?? ''}`
 
+/**
+ * 把 `/sys` 遮掉再问一次探针（`bwrap --tmpfs /sys`）——**条件是造出来的**。
+ *
+ * WSL 里 `securityfs` 本来就没挂、那个文件读不到，CI 的 runner 上挂着：那一条要是写成"读读看
+ * 读不到"，它就只在一种宿主上成立。这里用挂载层把那扇门关上（同一个探针 · 同一个内核 · `/sys`
+ * 里空无一物），并在同一门里确认那个文件确实读不到了。
+ *
+ * `null` = 这一台起不了 `bwrap`：那一档有自己的断言（Y6 ① 与 `degraded.test.ts`），这里只是
+ * 造不出这个条件，如实降成一条 diagnostic，不静默地把断言吞掉。
+ */
+function probeWithoutSys(bin: string): { out: string; err: string } | null {
+  const r = spawnSync(
+    'bwrap',
+    [
+      '--dev-bind', '/', '/',
+      '--tmpfs', '/sys',
+      '--', 'sh', '-c',
+      'if [ -r /sys/kernel/security/lsm ]; then echo SYS-READABLE; fi; exec "$0" --probe',
+      bin,
+    ],
+    { encoding: 'utf8', timeout: 20_000 },
+  )
+  if (r.error !== undefined && r.error !== null) return null
+  return { out: r.stdout ?? '', err: r.stderr ?? '' }
+}
+
 after(() => {
   for (const root of MADE) {
     fugue(root, '--agent', AGENT, 'dispose')
@@ -196,7 +223,7 @@ test('Y6 ① 负对照 · 两层都不在：同一趟写得进树里，回收报
   assert.equal(fugue(root, '--agent', AGENT, 'read', 'junk.txt').code, 1, '照旧进不来视图')
 })
 
-test('Y6 ② · ABI 用系统调用探：这一门里 `/sys` 那条路不通，而层照样在场', () => {
+test('Y6 ② · ABI 用系统调用探：把 `/sys` 遮掉，探针照样报出 ABI', (t) => {
   const root = fixture()
   const roots = createRoots(root)
   const p = JSON.parse(fugue(root, '--agent', AGENT, '--json', 'policy').out.trim()) as {
@@ -209,15 +236,25 @@ test('Y6 ② · ABI 用系统调用探：这一门里 `/sys` 那条路不通，�
   assert.match(probed.note, /Landlock ABI \d+（系统调用探到的）/, 'ABI 是探出来的，原话在 note 里')
   console.log(`  ${probed.note}`)
 
-  // **按文件探会得到假阴性**：这一门里那个文件读不到（WSL 的 `securityfs` 没挂）。
+  // **按文件探会得到假阴性**：那个文件读不读得到是**宿主事实**（WSL 里 `securityfs` 没挂，
+  // CI 的 runner 上挂着），所以不拿它当断言——把那个条件自己造出来，再问同一个探针一次。
   let sysReadable = true
   try {
     readFileSync('/sys/kernel/security/lsm', 'utf8')
   } catch {
     sysReadable = false
   }
-  console.log(`  /sys/kernel/security/lsm 读得到吗：${sysReadable ? '读得到' : '读不到（securityfs 没挂）'}`)
-  assert.equal(sysReadable, false, '这一门里读不到——按文件探就会把这一层误报成"缺"')
+  console.log(
+    `  /sys/kernel/security/lsm 这一门宿主上读得到吗：${sysReadable ? '读得到' : '读不到（securityfs 没挂）'}`,
+  )
+  const masked = probeWithoutSys(probed.bin)
+  if (masked === null) {
+    t.diagnostic('这一台起不了 bwrap，遮不住 /sys：这一条只走到"探针自己报出 ABI"')
+  } else {
+    assert.doesNotMatch(masked.out, /SYS-READABLE/, '遮住之后那个文件读不到了——这就是"按文件探"的条件')
+    console.log(`  遮掉 /sys 之后再问一次：${masked.out.trim()}`)
+    assert.match(masked.out, /ABI=\d+/, `遮住 /sys 之后探针照样报 ABI：${masked.out.trim()} ${masked.err.trim()}`)
+  }
 
   // 探的是**真跑一次**，不是"文件在就算在"：把 `cc` 拿走、工作区里又没编过 → 这一层如实缺。
   const fresh = fixture()

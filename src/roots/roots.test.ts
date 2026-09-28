@@ -214,7 +214,7 @@ test('③ 落点探测：9p / drvfs 拒绝启动并说出原因（E1 是硬要�
   }
 })
 
-/** `/proc/self/mounts` 里的跨边界落点（fstype 认得出的那几种），按出现顺序。 */
+/** `/proc/self/mounts` 里的跨边界落点：**fstype 点名 + `statfs` 认账**，按出现顺序。 */
 function crossBoundaryMounts(): string[] {
   const CROSS = ['9p', 'virtiofs', 'cifs', 'smb3', 'smbfs', 'nfs', 'nfs4']
   let text: string
@@ -231,6 +231,11 @@ function crossBoundaryMounts(): string[] {
     if (!CROSS.includes(type) && !type.startsWith('fuse')) continue
     const at = cols[1].replace(/\\(\d{3})/g, (_, o: string) => String.fromCharCode(Number.parseInt(o, 8)))
     if (!existsSync(at)) continue
+    // **fstype 那一栏不够**：`fuse` 这一支里还有 `fusectl` 那一类控制面——CI 的 runner 上就有
+    // `/sys/fs/fuse/connections`（statfs 报 `0x65735543`），它不是"跨一道边界"的那一档，判据表里
+    // 也没有它。候选按 `statfs` 再过一遍：收进来的必须是判据表认成 `cross-boundary` 的那几条
+    // （本机 WSL 上先撞到的是 9p，所以这个误收一直等到 CI 上才露出来）。
+    if (probeHost(at)?.class !== 'cross-boundary') continue
     out.push(at)
   }
   return out

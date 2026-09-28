@@ -2,7 +2,8 @@
 //
 //   ① 三条"落不到策略里"的情形各被拒，且拒的话**指出是哪一条**：可写落点（`cache`）落在树外 ·
 //      动作声明的 `outputs` 带 `..` · 清单里一条不存在的路径。三条都**在起进程之前**拒——日志里
-//      一条 `run/start` 都不该有。
+//      一条 `run/start` 都不该有。**外加软链那一条**（宿主根上 `/bin` → `usr/bin` 那一类，形状
+//      那一栏人改不了）：靶子落在只读根外时，同一个口子也在启动前拒，并指到只读根那份清单上。
 //   ② 正例照常启动：声明规规矩矩的那一个照跑，产物落在声明目录、产出照收进视图。
 //   ③ 负对照：**把检查短路**（直接拿 `confine()` 起），那两条照跑——写出树外的那个文件真落在
 //      宿主上别处，清单里那条不存在的路径报的是 bwrap 那句"源找不到"。这两处读数就是"没有这一
@@ -165,7 +166,7 @@ function runEvents(root: string): string[] {
     .filter((t) => t.startsWith('run/'))
 }
 
-test('Y4 ① · 三条"落不到策略里"各被拒、指出是哪一条，且都拒在起进程之前', () => {
+test('Y4 ① · 三条"落不到策略里"各被拒、指出是哪一条，且都拒在起进程之前（外加软链那一条）', () => {
   const m = fixture()
 
   // 一 · 可写落点落在树外：`cache: ["../x"]`。
@@ -189,9 +190,16 @@ test('Y4 ① · 三条"落不到策略里"各被拒、指出是哪一条，且�
   // **三条都拒在起进程之前**：日志里一条 `run/start` 都没有。
   assert.deepEqual(runEvents(m.root), [], '拒绝启动就是一行日志都不落')
 
-  // 清掉那一栏，回到正例。
-  assert.equal(fugue(m.root, 'config', 'set', 'boundary.reach', '["/usr"]').code, 0)
-  assert.equal(fugue(m.root, 'run', 'good').code, 1, '只留 /usr：软链指不到清单里去，也要拒')
+  // 四 · **软链指不到清单里去**（PLAN § 5.5 尾上那条口径：`checkReach()` 在启动前拒）。
+  // 宿主根上那四条软链（`/bin` `/sbin` `/lib` `/lib64` → `usr/…`）是**形状**那一栏，人改不了；
+  // 只留 `/etc` 时它们的靶子就落在清单外。判据是路径覆盖，与哪一门宿主无关——这里不看 `/usr`
+  // 之外还有没有 `node`（那是另一件事，读数是"清单少一条 → 当场起不来"，见 `reach.ts` 头注）。
+  assert.equal(fugue(m.root, 'config', 'set', 'boundary.reach', '["/etc"]').code, 0)
+  const a4 = fugue(m.root, '--agent', AGENT, 'run', 'good')
+  assert.equal(a4.code, 1, a4.err)
+  assert.match(a4.err, /清单里这条软链指不到清单里去：\/bin → \/usr\/bin/, '拒的话要点出是哪一条软链')
+  assert.match(a4.err, /把 \/usr\/bin 那一处并进 boundary\.reach/, '并说清改哪儿')
+  assert.deepEqual(runEvents(m.root), [], '软链那一条也拒在起进程之前')
 })
 
 test('Y4 ② · 正例照常启动：声明规矩的那一个照跑，产物落声明目录、产出照收', () => {
