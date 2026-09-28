@@ -10,6 +10,9 @@
 // **`ModelId` 仍住 `src/assemble/contract.ts`，不搬。** 它是装配那边的键（`AssembleInput.model`），
 // 搬过来会让 `assemble/` 依赖 `model/`，而装配是纯函数那一层（架构 § 13.4 的 P1）：它不该
 // 认识提供方。这里 import 它，方向是单向的。
+// **（U3 修订，2026-09：这个词的定义已从 `assemble/contract.ts` 再下沉到 `terms.ts`——底座的
+// 事件联合要它，而底座不许上仰任何一侧；两处都只是引它，「assemble 不依赖 model」那条方向与
+// 理由原样成立。）**
 //
 // **两份表·一条记录。** 装配要的只是四个字段（名字 · 系统提示词的更新方式 · 上限 · 调用配置），
 // 提供方那三样（`provider` · `wire` · `model`）它一个字都不读。所以前缀那一侧看到的是
@@ -20,8 +23,15 @@
 // **路径**；取值那一步是 `authOf()`，它**只在真要出网时被调用**。于是装配 · 重放 · 夹具档
 // 一条断言都不碰凭据（PLAN § 5.8 的口径一），"沙箱里看得见的环境"（架构 § 14.4）也仍是闭的。
 import { readFileSync } from 'node:fs'
-import type { ModelId } from '../assemble/contract.ts'
+import type { ModelId, StopReason, ThinkingLevel } from '../terms.ts'
 import { protocolNames } from '../assemble/protocol.ts'
+
+/**
+ * `StopReason` 与 `ThinkingLevel` 的**类型**也住 `terms.ts`（U3）——事件联合直接引它们；
+ * 这一份仍是**值域表**（`STOP_REASONS` · `THINKING_LEVELS`）的持有者，并把两个词转发给
+ * 原有的消费者（引这里与引 terms 是同一个词）。
+ */
+export type { StopReason, ThinkingLevel }
 
 /** 提供方那边的一个模型名（发给它的 `model` 字段）。与 `ModelId` 不是一回事：那是我们这边的键。 */
 export type WireModel = string
@@ -215,8 +225,8 @@ export const DEFAULT_CALL: Readonly<{ temperature?: number; maxTokens?: number }
  * 思考的四档。**名字用上游那一套**（`reasoning_effort` 的取值）：`off` 是关，其余三档原样发。
  * 它比温度多一条约束：**必须写出来**——两条线对"没写"的解释是相反的（Chat Completions 那条线
  * 上思考默认是开的，Anthropic 那条线上不写就是不开），所以"要不要想"不能靠缺省。
+ * 类型住 `terms.ts`（U3），这一份持有值域表。
  */
-export type ThinkingLevel = 'off' | 'low' | 'high' | 'max'
 export const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'high', 'max']
 
 /**
@@ -582,15 +592,7 @@ export interface ToolCall {
  * 丢的是"我们这边多三个只差一个字符串的枚举值"。这与架构 § 14.2 的三档同一条纪律：
  * 值域按**动作**分，不按上游的措辞分。
  */
-export type StopReason =
-  | 'tool-calls'
-  | 'end-turn'
-  | 'max-tokens'
-  | 'stop-sequence'
-  | 'refusal'
-  | 'incomplete'
-
-/** 六种结束原因在盘上的名字，一处。 */
+/** 六种结束原因（**类型住 `terms.ts`，U3**；这一份持有值域表）。 */
 export const STOP_REASONS: readonly StopReason[] = [
   'tool-calls',
   'end-turn',

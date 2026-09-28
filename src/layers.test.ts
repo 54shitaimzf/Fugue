@@ -72,19 +72,14 @@ const RULES: readonly Rule[] = [
 
 /**
  * 在册例外（2026-09 评审起的账）。每消掉一条，随那个单元的提交把这一行划走：
- *   · U1（binding 归位）与 U2（坐标下沉 roots）已消——内核→boundary 那几条随各自提交划走，
- *     R3 自此是**无条件禁令**；
- *   · U3（事件词汇进 terms）消 log/events 那条；
- *   · probe 借 machine 与 tools/host 引 truth 句柄类型是文档背书的长期选择，**保留**。
+ *   · U1（binding 归位）· U2（坐标下沉 roots）· U3（事件词汇进 terms）都已消——
+ *     R1 与 R3 自此都是**无条件禁令**；
+ *   · 留在册的两条是文档背书的长期选择（probe 借 machine 单一真源 · tools/host 是组合点）。
  */
 const EXCEPTIONS: readonly Exception[] = [
   {
-    key: 'log/events.ts -> model/contract.ts',
-    note: 'U3 消（type 级）：三词进 terms，底座词汇自足',
-  },
-  {
     key: 'probe/status.ts -> round/machine.ts',
-    note: '保留：文档背书的单一真源（status.ts 头注），不是欠账',
+    note: '保留：文档背书的单一真源（status.ts 头注「不在这里另立一张边表」），不是欠账',
   },
   {
     key: 'tools/host.ts -> truth/contract.ts',
@@ -115,6 +110,10 @@ function edgesOf(file: string): Edge[] {
   const from = relative(SRC, file)
   const out: Edge[] = []
   for (const line of readFileSync(file, 'utf8').split('\n')) {
+    // 注释行不算 import：注释里引用旧路径（「原先那条 from '…' 是悬空的」那一类考古说明）
+    // 是正文，不是依赖——数进去会把已经消掉的边又画回图上。
+    const t = line.trim()
+    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) continue
     const m = FROM_SPEC.test(line) ? line.match(FROM_SPEC) : null
     if (m === null) continue
     const to = relative(SRC, resolve(dirname(file), m[1] as string))

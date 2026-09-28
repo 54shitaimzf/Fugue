@@ -44,7 +44,7 @@ import { sourcesFor, turnText } from '../assemble/sources.ts'
 import { promptCacheFor } from '../model/contract.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
-import type { ModelId } from './contract.ts'
+import type { ModelId } from '../terms.ts'
 
 /**
  * 一个 agent 在这一步手里有什么。**它不认识沙箱、不认识策略**（架构 § 14.2）。

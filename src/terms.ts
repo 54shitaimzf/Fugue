@@ -89,3 +89,27 @@ export type AssertionVerdict = 'pass' | 'fail' | 'unrunnable'
 
 /** 一条断言的判决：值域见 `AssertionVerdict`，形状见 `contract/types.ts`。 */
 export type AssertionResult = { readonly assertion: string; readonly verdict: AssertionVerdict }
+
+/**
+ * 模型那一侧的三个词（U3，2026-09 评审计划）：**事件词汇要它们，所以住这一份**——`llm/call`
+ * 带 `model: ModelId` 与 `thinking: ThinkingLevel`，收尾带 `reason: StopReason`，而底座的事件
+ * 联合（`log/events.ts`）不许上仰 model 或 assemble。**值域表**（`STOP_REASONS` ·
+ * `THINKING_LEVELS` · 模型目录）仍住 `model/contract.ts`——词是共享的，表是有归属的。
+ *
+ * `ModelId` 原住 `assemble/contract.ts`（装配那边的键，那里注明「不搬去 model」）；搬来 terms
+ * 不动那条书面决定的**理由**（不让 assemble 依赖 model），原处改为转发，方向照旧单向。
+ */
+/** 模型目录里的那个名字（架构 § 10.2 的模型 · § 8.11 表外的"调用配置"）。 */
+export type ModelId = Branded<'ModelId'>
+
+/** 一次模型调用的六种结束原因（值域表 `STOP_REASONS` 住 `model/contract.ts`）。 */
+export type StopReason =
+  | 'tool-calls'
+  | 'end-turn'
+  | 'max-tokens'
+  | 'stop-sequence'
+  | 'refusal'
+  | 'incomplete'
+
+/** 思考的四档（名字用上游那一套；"必须写出来"那条约束见 `model/contract.ts`）。 */
+export type ThinkingLevel = 'off' | 'low' | 'high' | 'max'

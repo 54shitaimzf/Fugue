@@ -22,10 +22,14 @@
 // 的顺序拼前缀。`protocol.ts` 在载入时核一次"两份声明的段的域 == 区表的域"，错了当场炸——
 // **这条不变量跨两个文件，而它一旦破了，前缀缓存静默失效**（多一段少一段都只是字节不同，
 // 没有别的报错）。
-import type { AgentId, RoundId, RelPath } from '../terms.ts'
+import type { AgentId, ModelId, RoundId, RelPath } from '../terms.ts'
 
-/** 模型目录里的那个名字（架构 § 10.2 的模型 · § 8.11 表外的"调用配置"）。 */
-export type ModelId = string & { readonly __brand: 'ModelId' }
+/**
+ * 模型目录里的那个名字（架构 § 10.2 的模型 · § 8.11 表外的"调用配置"）。**定义住 `terms.ts`
+ * （U3：底座的事件词汇要它），这一份转发**——消费者引这里或引 terms 是同一个词，而装配
+ * 不依赖 model 那条方向照旧。
+ */
+export type { ModelId }
 
 /** 一段的渲染规则。值域落在这一层：先只有实现的那几个（§ 8.11 的 `renderers`）。 */
 export type RendererId = 'text' | 'file-block' | 'list' | 'json'

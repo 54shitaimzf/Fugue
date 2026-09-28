@@ -3,7 +3,9 @@
 // 这张联合是**消息的模式**，不是 M0 的解释对象。M0 不读 `t`，也不读任何载荷字段；
 // 它只做一件事——按 § 9.2 的信封写下去，再原样读回来。因此下面引用的类型即使改了
 // 值域（例如两处未决项定下来），M0 的实现一行都不用动。
-import type { ModelId, StopReason, ThinkingLevel } from '../model/contract.ts'
+// （U3，2026-09：`ModelId` · `StopReason` · `ThinkingLevel` 三词改自 `terms.ts`——原先那条
+// `from '../model/contract.ts'` 是悬空的（model/contract 从未导出过 `ModelId`，type 级
+// 引用在直跑下被整体擦掉，tsc 下必炸）；底座词汇自此自足，不认识 model 那一侧。）
 import type {
   AgentId,
   AssertionResult,
@@ -15,6 +17,7 @@ import type {
   ForkStrategy,
   LogPos,
   LogSeq,
+  ModelId,
   NetMode,
   PolicyLayer,
   PolicyMode,
@@ -24,6 +27,8 @@ import type {
   SignalId,
   SignalKind,
   StepId,
+  StopReason,
+  ThinkingLevel,
   ViewRev,
   WriterId,
 } from '../terms.ts'
