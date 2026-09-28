@@ -6,6 +6,8 @@
 #   sh tools/live-round.sh tools/live-w11.json                       # 打桩档（不出网 · 不花钱）
 #   sh tools/live-round.sh tools/live-w11.json --live                # 真档（要凭据 · 花钱）
 #   sh tools/live-round.sh tools/live-w11.json --live --max-steps 4  # 压小上界
+#   sh tools/live-round.sh tools/live-w11.json --live --no-handoff --max-steps 1 --big-policy 4400000
+#                                                                    # 地板②那句「为什么停」（0 次调用）
 #   sh tools/live-round.sh tools/live-w11.json --break-a-zone        # 破坏对照：A 区改一个字节
 #   sh tools/live-round.sh tools/live-w11.json --wire-in <目录>       # 回放档：把录下来的响应喂回去
 #
@@ -13,6 +15,13 @@
 #   `--break-a-zone` 往 `<工作区>/AGENTS.md` 尾部加一个字节——A 区第一个段（「项目方针」，
 #     `src/assemble/contract.ts:69`）就是它的字节，于是这一趟的 A 区与前一趟差一个字节。
 #     用来验"第 0 步那处命中确实落在前缀上"（PLAN § 5.9.1：命中掉不下去，说明命中的不是前缀）。
+#   `--big-policy <字节数>` 把同一个段**撑大**到这么多字节（ASCII 的 `a`，提交之前撑，于是盘上与
+#     底那一棵树逐字节相同）。**地板②那句「为什么停」的量法**：`used` 是这一步的上下文（三区 +
+#     工具目录 + `seed`），这一个是它里面人自己写得动的那一块——撑到 4.4 MB（≈1.1 M token）就越过
+#     `limit - handoffMargin`（1 048 576 - 16 000），于是判决落在**第一次调用之前**：账上落
+#     `agent/stop` 与那句话，`llm/call` 0 条、钱 0（PLAN § 5.9.4 的 `B13` ② · § 5.12 尾那条）。
+#     配 `--no-handoff` 用（那一档才是"用完就停"）。
+#   `--no-handoff` 透给 `round run`：到了触发点不交接（用完就停那一档）。
 #   `--wire-in <目录>` 走回放那一档（不出网 · 不读凭据 · 要 `<目录>` 是某趟 `--dump-wire` 的落点），
 #     两个开关一起给时以回放为准（`round run` 自己就拒 `--live` 与 `--wire-in` 同时给）。
 #
@@ -38,6 +47,8 @@ LIVE=no
 MAXOVERRIDE=
 WIREIN=
 BREAK=no
+BIGPOLICY=
+NOHANDOFF=no
 WS=/tmp/live-w11
 OUT=/tmp/live-w11-out
 while [ $# -gt 0 ]; do
@@ -46,6 +57,8 @@ while [ $# -gt 0 ]; do
     --max-steps) MAXOVERRIDE=$2; shift ;;
     --wire-in) WIREIN=$2; shift ;;
     --break-a-zone) BREAK=yes ;;
+    --big-policy) BIGPOLICY=$2; shift ;;
+    --no-handoff) NOHANDOFF=yes ;;
     --work) WS=$2; shift ;;
     --out) OUT=$2; shift ;;
     *) echo "不认这个开关：$1"; exit 2 ;;
@@ -80,6 +93,10 @@ if [ "$BREAK" = yes ]; then
   # 这个字节进得了 A 区、进不了任何断言——它只用来把"第 0 步命中"打掉。
   printf ' ' >> "$WS/AGENTS.md" || exit 9
 fi
+if [ -n "$BIGPOLICY" ]; then
+  # **在提交之前撑**（提交之后撑会撞上 S7 的漂移检：盘上与底那一棵树不同，物化前就被拒）。
+  head -c "$BIGPOLICY" /dev/zero | tr '\0' 'a' >> "$WS/AGENTS.md" || exit 9
+fi
 GOAL=$(sed -n 1p "$OUT/scenario.txt")
 SPLIT=$(sed -n 2p "$OUT/scenario.txt")
 ASSERT=$(sed -n 3p "$OUT/scenario.txt")
@@ -107,7 +124,7 @@ node "$CLI" --root "$WS" config set round.split "$SPLIT" >> "$OUT/config.log" 2>
   echo "工作区 $WS · 读数 $OUT · 主线 $BASE"
   echo "目标：$GOAL"
   echo "格数：$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).length))' "$SPLIT")"
-  echo "上界：--max-steps $MAXSTEPS（档：$LIVE$([ -n "$WIREIN" ] && echo " · 回放 $WIREIN")$([ "$BREAK" = yes ] && echo " · A 区已改一个字节")）"
+  echo "上界：--max-steps $MAXSTEPS（档：$LIVE$([ -n "$WIREIN" ] && echo " · 回放 $WIREIN")$([ "$BREAK" = yes ] && echo " · A 区已改一个字节")$([ -n "$BIGPOLICY" ] && echo " · 项目方针撑到 $BIGPOLICY 字节")$([ "$NOHANDOFF" = yes ] && echo " · --no-handoff")）"
   echo
   echo "=== status --once（起头那一刻）==="
   node "$CLI" --root "$WS" status --once
@@ -120,12 +137,14 @@ sleep 1
 
 LIVEFLAG=
 if [ "$LIVE" = yes ]; then LIVEFLAG=--live; fi
+NOHANDOFFFLAG=
+if [ "$NOHANDOFF" = yes ]; then NOHANDOFFFLAG=--no-handoff; fi
 WIREFLAG=
 if [ -n "$WIREIN" ]; then WIREFLAG="--wire-in $WIREIN"; fi
 KEY=""
 if [ "$LIVE" = yes ]; then KEY=$(cat /home/ubuntu/.fugue/credentials/deepseek.key); fi
 DEEPSEEK_API_KEY="$KEY" node "$CLI" --root "$WS" round run "$GOAL" \
-  $LIVEFLAG $WIREFLAG --max-steps "$MAXSTEPS" --report --metrics --dump-wire "$OUT/wire" > "$OUT/run.log" 2>&1
+  $LIVEFLAG $WIREFLAG $NOHANDOFFFLAG --max-steps "$MAXSTEPS" --report --metrics --dump-wire "$OUT/wire" > "$OUT/run.log" 2>&1
 RUNEXIT=$?
 
 # **先等一趟轮询再收跟随者**：跟随是"再看一眼"，而收尾那一条（`round/state` 的最后一次转移）
