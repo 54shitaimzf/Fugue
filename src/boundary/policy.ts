@@ -22,7 +22,7 @@
 // 落回 § 15.7 的 E4：树可写是那一档的事实。
 import { join } from 'node:path'
 import type { ConfigDoc } from '../config.ts'
-import { declaredDirs, type ActionBinding } from '../execute/binding.ts'
+import { declaredDirs, type ActionBinding } from './binding.ts'
 import { cacheLayoutOf, probeBwrap } from './confine.ts'
 import { probeLandlock } from './landlock.ts'
 import type { Roots } from '../roots/contract.ts'

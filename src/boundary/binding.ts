@@ -1,3 +1,7 @@
+// 归位（U1，2026-09 评审计划）：自 `src/execute/binding.ts` 移入本目录——工作区配置里
+// `actions.*` 的解释属边界侧（§ 15.3.a），并解开 `policy ↔ binding` 那个文件环
+// （boundary/policy 引本份的 declaredDirs · 本份原先反向引 boundary 的 confine/policy）。
+//
 // 动作绑定：工作区配置里的 `actions.<名字>`（架构 § 15.3.a 那一句话的落地）。
 //
 // **它是这一站唯一一处新接口，也是人唯一要手写的东西。** 形状按设计预期批过（PLAN § 5.4 尾）：
@@ -14,8 +18,8 @@
 // 是照旧递进去的**：宿主环境不清洗（凭据那一类在 S5 的 `Policy` 与 S6 的 `envRealize` 手里），
 // 这一站只保证表里这几项在子进程里是本 agent 的坐标。
 import { join } from 'node:path'
-import { XDG_DIR } from '../boundary/confine.ts'
-import type { Policy } from '../boundary/policy.ts'
+import { XDG_DIR } from './confine.ts'
+import type { Policy } from './policy.ts'
 import type { ConfigDoc } from '../config.ts'
 import { getConfig } from '../config.ts'
 import type { ActionName, AgentId, NetMode } from '../terms.ts'
@@ -166,7 +170,7 @@ export function portRangeOf(doc: ConfigDoc): string {
  * N 个 agent 的端口两两不同——这就是"端口"那一项隔离的全部机制（不靠命名空间）。
  */
 export function portSlice(range: string, index: number): { port: number; ports: string } {
-  const m = /^(\d+)-(\d+)$/.exec(range.trim())
+  const m = range.trim().match(/^(\d+)-(\d+)$/)
   if (m === null) throw new BindingError(`端口池要写成 a-b，如 ${DEFAULT_PORTS}：${JSON.stringify(range)}`)
   const lo = Number(m[1])
   const hi = Number(m[2])

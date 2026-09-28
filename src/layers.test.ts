@@ -72,20 +72,12 @@ const RULES: readonly Rule[] = [
 
 /**
  * 在册例外（2026-09 评审起的账）。每消掉一条，随那个单元的提交把这一行划走：
- *   · U1（binding 归位 boundary）消前两条；
- *   · U2（坐标词汇下沉 roots）消第三条；
- *   · U3（事件词汇进 terms）消第四条；
- *   · probe 借 machine 是文档背书的长期选择，**保留**（status.ts 头注「不另立边表」）。
+ *   · U1（binding 归位 boundary）已消——execute→boundary 那两条随 b6bf849 后的 U1 提交划走；
+ *   · U2（坐标词汇下沉 roots）消 reclaim 那条；
+ *   · U3（事件词汇进 terms）消 log/events 那条；
+ *   · probe 借 machine 与 tools/host 引 truth 句柄类型是文档背书的长期选择，**保留**。
  */
 const EXCEPTIONS: readonly Exception[] = [
-  {
-    key: 'execute/binding.ts -> boundary/confine.ts',
-    note: 'U1 消：binding 是工作区配置解释（§ 15.3.a），归边界侧',
-  },
-  {
-    key: 'execute/binding.ts -> boundary/policy.ts',
-    note: 'U1 消（type 级，与上一条同一个环）',
-  },
   {
     key: 'execute/reclaim.ts -> boundary/confine.ts',
     note: 'U2 消：cacheLayoutOf/XDG_DIR 是纯布局计算，下沉 roots',
