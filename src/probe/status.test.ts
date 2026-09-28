@@ -287,9 +287,11 @@ test('⑥ follow 到点就停；两条读面都是纯读（日志逐字节不变
 
     const ac = new AbortController()
     const got: string[] = []
-    for await (const r of follow(openLog(dir), { intervalMs: 5, signal: ac.signal })) {
-      got.push(`${r.pos.writer}/${r.pos.seq}`)
-      if (got.length === 3) ac.abort()
+    for await (const batch of follow(openLog(dir), { intervalMs: 5, signal: ac.signal })) {
+      for (const r of batch) {
+        got.push(`${r.pos.writer}/${r.pos.seq}`)
+        if (got.length === 3) ac.abort()
+      }
     }
     assert.deepEqual(got, ['round/1', 'round/2', 'round/3'])
 

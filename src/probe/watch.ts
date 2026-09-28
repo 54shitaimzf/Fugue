@@ -82,24 +82,29 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * 跟着读：**一趟一趟地看**，新行按读到它们的次序吐出去。
+ * 跟着读：**一趟一趟地看**，每一趟把**新到的那些行作为一批**吐出去（一趟一批，U4）。
  *
  * 次序那一句要说明白：**它是"到达序"，不是 `(seq, writer)` 的全序。** 全序那一份读法是
  * `fugue log`（一次读齐、按 `(seq, writer)` 排）；跟随是"现在有什么就说什么"，晚出现的那个
  * writer 的 `seq = 1` 一定排在已经念过的 `seq = 5` 之后——**这不是乱序，是实时**。
- * 一趟之内的行按 `readMerged` 排好（所以同一趟里的次序仍然是全序）。
+ * 一趟之内的行按 `readMerged` 排好（所以同一趟里的次序仍然是全序），趟与趟之间是到达序。
+ *
+ * **空趟不吐**：一趟什么新行都没有，就没有东西可说——那一趟只睡 `interval` 再看一眼。
+ * 有新行的趟立即再看下一趟（与从前逐条那一档同一条节奏）。为什么按批：摆的那一头
+ * （`ui/follow.ts`）一趟只画一帧——同趟到的几条对屏幕来说是同一瞬间，逐条画几十遍
+ * 而字节一个不差，是白烧（`UI2` 实测一次启动 31 次重画 · 394 次清行）。
  */
 export async function* follow(
   log: Pick<Log, 'readMerged'>,
   opts: FollowOptions = {},
-): AsyncGenerator<StatusRow> {
+): AsyncGenerator<readonly StatusRow[], void, unknown> {
   const interval = opts.intervalMs ?? 200
   let cursors: Cursors = opts.from ?? {}
   for (;;) {
     if (opts.signal?.aborted === true) return
     const p = await readNew(log, cursors)
     cursors = p.cursors
-    for (const row of p.rows) yield row
+    if (p.rows.length > 0) yield p.rows
     if (p.rows.length > 0) continue
     await sleep(interval, opts.signal)
   }

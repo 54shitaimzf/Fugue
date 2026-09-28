@@ -11,7 +11,7 @@
 //   ③ **负对照 · "从 seq N 接着读"**：自己写一个那样的跟随器（游标是一个数，不是每个 writer 一个）
 //      → 晚出现的那个 writer 整段漏掉、两条 `agent/r1/1` 一条都读不到，当场看得出差别。
 //   ④ **每一帧都是"那一刻"的答案**：第 i 帧逐字节等于"到那一刻为止读到的那些行"一次性折出来的
-//      那一帧（第一片是一批一帧，之后一条一帧）。
+//      那一帧（一片一帧：每趟读齐一片、一趟一画）。
 //   ⑤ **第一趟读齐、只画一次**：账上已经有的那些不是一条画一帧（`UI2` 实测过一次启动 31 次重画）。
 //   ⑥ **地板**：`tuiModeOf` 那张表 · 只印永久行那一档面板一次都不画、`redraw()` 一个字节都不写。
 //   ⑦ **历史不许被回头改**：已经写出去的那几条变了（换掉分法那一张表）→ `newLinesOf` 当场抛。
@@ -241,22 +241,14 @@ function frameAt(rows: readonly StatusRow[]): Frame {
   return frameOf({ ...readingsOf(rows), permanent: permanentLinesOf(rows), width: 80, height: K })
 }
 
-/** 跟随那一档画帧的那几步：**第一片一次画完**（第一趟读齐），之后一条一画。 */
+/** 跟随那一档画帧的那几步：**一片一帧**（每趟读齐一片、一趟一画，U4）。 */
 function stepsOf(chapters: readonly (readonly StatusRow[])[]): StatusRow[][] {
   const steps: StatusRow[][] = []
   let acc: StatusRow[] = []
-  chapters.forEach((ch, i) => {
-    const rows = mergedOf(ch)
-    if (i === 0) {
-      acc = [...acc, ...rows]
-      steps.push([...acc])
-      return
-    }
-    for (const r of rows) {
-      acc = [...acc, r]
-      steps.push([...acc])
-    }
-  })
+  for (const ch of chapters) {
+    acc = [...acc, ...mergedOf(ch)]
+    steps.push([...acc])
+  }
   return steps
 }
 
@@ -350,14 +342,14 @@ test('③ 负对照 · "从 seq N 接着读"：晚出现的那个 writer 整段�
   )
 })
 
-test('④ 每一帧都是"那一刻"的答案（第一片一批一帧，之后一条一帧）', async () => {
+test('④ 每一帧都是"那一刻"的答案（一片一帧：每趟读齐一片、一趟一画）', async () => {
   const chapters = tailChapters()
   const r = await runFollow({ chapters })
   const steps = stepsOf(chapters)
   assert.equal(
     r.records.length,
     steps.length,
-    `画了 ${r.records.length} 帧，按"第一片一批、之后一条一帧"该是 ${steps.length} 帧`,
+    `画了 ${r.records.length} 帧，按"一片一帧"（U4）该是 ${steps.length} 帧`,
   )
   steps.forEach((rows, i) => {
     const rec = r.records[i] as Recorded
@@ -365,8 +357,8 @@ test('④ 每一帧都是"那一刻"的答案（第一片一批一帧，之后�
   })
   assert.equal(r.counts.draws, r.records.length, '画了几次那一栏与记下来的帧数对不上')
   console.log(
-    `④ 读数：${r.records.length} 帧逐帧逐字节对得上（第一片 ${(chapters[0] as StatusRow[]).length} 条一批 · ` +
-      `之后 ${r.records.length - 1} 条各一帧）`,
+    `④ 读数：${r.records.length} 帧逐帧逐字节对得上（${chapters.length} 片各一帧：` +
+      `${chapters.map((ch) => (ch as readonly StatusRow[]).length).join(' + ')} 条）`,
   )
 })
 
@@ -393,7 +385,7 @@ test('⑤ 第一趟读齐、只画一次：账上已经有的那些不是一条�
   assert.equal((r.records[0] as Recorded).permanent.length, 5)
   console.log(
     `⑤ 读数：7 条一次读齐 → 画 ${r.counts.draws} 帧 · 一帧里写出去 ${(r.records[0] as Recorded).permanent.length} 条永久行` +
-      `（只进瞬态区那两条一条都不进历史）· 每一条都让面板重画一次那一档见④`,
+      `（只进瞬态区那两条一条都不进历史）· 每一趟重画一次那一档见④`,
   )
 })
 

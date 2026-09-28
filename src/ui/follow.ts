@@ -24,9 +24,9 @@
 // 永久行重排一遍，而已经写进终端历史的那几行收不回来（只能改成"每帧只画一块、不追加进
 // 历史"），"实时"这一条跟着丢掉。
 //
-// **第一趟读齐、只画一次。** `follow()` 从零起会把账上已经有的几十条一条一条吐出来，面板就跟着画
-// 几十遍（`UI2` 实测一次启动 31 次重画 · 394 次清行，而屏幕上一个字节的差别都没有）。所以第一趟走
-// `readNew`（`follow` 里面就是它），之后从 `first.cursors` 接着跟随。
+// **第一趟读齐、只画一次；之后一趟一批、一画（U4）。** `follow()` 从零起把账上已经有的几十条
+// **作为一批**吐出来（`UI2` 实测过逐条那一档一次启动 31 次重画 · 394 次清行，而屏幕上一个字节的
+// 差别都没有）；之后每一趟的新行也是一批——同趟到的几条对屏幕来说是同一瞬间。
 //
 // **注记那一层**（`note()`）：按键提示 · 起的那条命令的输出 · 它的退出码走这里。它与永久行同一档
 // ——写在面板上方、**只写一次**——但**不是账上的一行**（账上有什么由 `probe/` 那两处说了算），
@@ -276,13 +276,14 @@ export function openTui(o: TuiOptions): Tui {
     // **第一趟那一批也算"往前动了"**：界面开着的时候门口已经停着一批，这一条是它唯一的触发点。
     if (first.rows.length > 0) o.onAdvance?.(first.rows)
     if (o.mode === 'lines-once') return { ...c }
-    // 之后跟着走：新到的行一条一条地来（`follow` 每一趟读全量、按每个 writer 的游标筛掉看过的），
-    // 一到一条就重画一次——那正是"看着它跑"要的东西。
-    for await (const row of follow(o.log, { intervalMs: o.intervalMs ?? 200, signal: o.signal, from: first.cursors })) {
-      session.push([row])
+    // 之后跟着走：新到的行**一趟一批**地来（`follow` 每一趟读全量、按每个 writer 的游标筛掉看过的，
+    // 一趟一批地吐，U4）——一批进账、一趟一画。同一趟到的几条对屏幕来说是同一瞬间；逐条画几十遍
+    // 而字节一个不差，是白烧（`UI2` 实测一次启动 31 次重画 · 394 次清行）。
+    for await (const batch of follow(o.log, { intervalMs: o.intervalMs ?? 200, signal: o.signal, from: first.cursors })) {
+      session.push(batch)
       sync()
       paint()
-      o.onAdvance?.([row])
+      o.onAdvance?.(batch)
     }
     return { ...c }
   })()

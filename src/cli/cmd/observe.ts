@@ -130,7 +130,10 @@ export async function watchCmd(
       for (const row of p.rows) print(row)
       return 0
     }
-    for await (const row of follow(log, { intervalMs, signal: ac.signal })) print(row)
+    // 一趟一批（U4）：印出去的字节与逐条那一档逐字相同——变的是跟随器吐的形状，不是印的内容。
+    for await (const batch of follow(log, { intervalMs, signal: ac.signal })) {
+      for (const row of batch) print(row)
+    }
     return 0
   } finally {
     process.removeListener('SIGINT', onSig)
