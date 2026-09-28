@@ -10,7 +10,7 @@
 // 写者一侧的三步顺序是：先落 blob · 再追加日志 · 最后改内存视图。本模块是中间那
 // 一步，也是唯一需要保证顺序的一步；另外两步归 M1 与 M2。
 import type { FileHandle } from 'node:fs/promises'
-import { mkdir, open, readFile, readdir } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { assertIdent } from '../identity.ts'
 import { decodeLine, encodeEvent } from './envelope.ts'
@@ -122,7 +122,7 @@ function parseWriterText(w: WriterId, text: string): Row[] {
   return rows
 }
 
-async function readWriter(root: string, w: WriterId): Promise<Row[]> {
+async function readWriterUncached(root: string, w: WriterId): Promise<Row[]> {
   let text: string
   try {
     text = await readFile(logFileOf(root, w), 'utf8')
@@ -198,6 +198,35 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
   // **拿不到就当场抛**——不等一个不知道多久的持者（`hold.ts` 的头一段）。
   const hold: Hold | null = opts.write === undefined ? null : holdWriter(root, opts.write)
 
+  /**
+   * **句柄内的解析记忆**（U5）。`readMerged` 每一趟对每份日志全量 `readFile` + 逐行
+   * `JSON.parse`（`watch.ts` 头上那句「每一趟读全量」如实写的代价）；跟随档一个会话成千趟
+   * 静默轮询，全部花在重读上。缓存的键是 `(mtimeMs, size)` **双要素，只认两个都没变**：
+   * 追加只改 size（mtime 可能落在同一毫秒里），`utimes` 只改 mtime——每个方向都由另一半
+   * 逼它失效。缓存放这条句柄的闭包里，**不进 `Log` 的方法面**（§ 8.1 三个方法一个不增）；
+   * 写者档不特殊对待：`append` 落盘后 size 变了，缓存自然失效、重读。stat 与 readFile
+   * 之间又被追加的最坏情形是缓存的键偏旧——下一趟 stat 一对就失效，多读一次，不出错读。
+   */
+  const parsed = new Map<WriterId, { mtimeMs: number; size: number; rows: Row[] }>()
+  async function readWriter(w: WriterId): Promise<Row[]> {
+    const file = logFileOf(root, w)
+    let st
+    try {
+      st = await stat(file)
+    } catch (err) {
+      if ((err as { code?: string }).code === 'ENOENT') {
+        parsed.delete(w)
+        return []
+      }
+      throw err
+    }
+    const hit = parsed.get(w)
+    if (hit !== undefined && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.rows
+    const rows = await readWriterUncached(root, w)
+    parsed.set(w, { mtimeMs: st.mtimeMs, size: st.size, rows })
+    return rows
+  }
+
   async function state(w: WriterId): Promise<WriterState> {
     const hit = writers.get(w)
     if (hit) return hit
@@ -248,7 +277,7 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
   }
 
   async function* readByWriter(w: WriterId, fromSeq: LogSeq = 0): AsyncGenerator<LogEvent> {
-    for (const row of await readWriter(root, w)) {
+    for (const row of await readWriter(w)) {
       if (row.pos.seq > fromSeq) yield row.e
     }
   }
@@ -260,7 +289,7 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
   async function* readMerged(fromSeq: LogSeq = 0): AsyncGenerator<{ pos: LogPos; e: LogEvent }> {
     const lists: Row[][] = []
     for (const w of await listWriters(root)) {
-      lists.push((await readWriter(root, w)).filter((r) => r.pos.seq > fromSeq))
+      lists.push((await readWriter(w)).filter((r) => r.pos.seq > fromSeq))
     }
     const idx = lists.map(() => 0)
     for (;;) {
