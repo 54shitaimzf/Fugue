@@ -3,7 +3,16 @@
 name: test
 
 on:
+  # **标签不跑**：一个标签指向的提交，它在主分支上已经跑过一遍——再跑一遍只是多一条记录，
+  # 而 `v0.1.0` 那次标签推上去触发的 run 是红的，留在 Actions 里容易让人以为这个仓库现在是红的。
+  #
+  # **`branches: ['**']` 这一行不能删**：GitHub 的规矩是"只定义 tags-ignore、没定义 branches 时，
+  # 分支上的 push 也不再触发"（文档原话：If you define only tags/tags-ignore or only
+  # branches/branches-ignore, the workflow won't run for events affecting the undefined Git ref）。
+  # 两个都写才是"分支照跑、标签一个不跑"；删掉 branches 那一行不会报错，只会让流水线**静默地**不再跑。
   push:
+    branches: ['**']
+    tags-ignore: ['**']
   pull_request:
 
 jobs:

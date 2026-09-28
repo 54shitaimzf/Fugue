@@ -109,7 +109,7 @@ ZZEOF
 | `src/ui/` | TUI：排版（纯函数）· 终端 · 跟随 · 按键 |
 | `tools/` | **取证用的，不是产品的一部分**：走查 · 探针 · 基准 |
 
-**CI 只有一条**（`.github/workflows/test.yml`）：`ubuntu-latest` · node 24 · 跑 `node tools/test-entry.js`。仓库侧没有依赖，也就没有安装步骤；那条流水线里唯一一步安装装的是 **runner 的环境**——`bubblewrap`（镜像不带它）+ 放开 24.04 的无特权 userns 限制，少了它 `src/execute/degraded.test.ts` ④ 会红。推之前先在本地跑一遍同一入口。
+**CI 只有一条**（`.github/workflows/test.yml`）：`ubuntu-latest` · node 24 · 跑 `node tools/test-entry.js`。**触发面是分支的 push 与 PR，标签一个都不跑**（`branches: ['**']` 与 `tags-ignore: ['**']` 两条缺一不可——只写 `tags-ignore` 会让分支的 push 也静默地不再跑）。仓库侧没有依赖，也就没有安装步骤；那条流水线里唯一一步安装装的是 **runner 的环境**——`bubblewrap`（镜像不带它）+ 放开 24.04 的无特权 userns 限制，少了它 `src/execute/degraded.test.ts` ④ 会红。推之前先在本地跑一遍同一入口。
 
 **一条能跑的命令 + 一条会失败的断言 + 它兑现的架构条款**：三样一起进提交信息（`git log -1 --format=%B` 看全文）。
 
