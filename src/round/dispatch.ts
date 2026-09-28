@@ -249,6 +249,119 @@ export interface Dispatched extends Issued {
 }
 
 /**
+ * **门口那一批的读法**（PLAN § 5.19 的 `T6`）：`round go` 与界面上那一行队列读的是这一份。
+ *
+ * 为什么值得单独一个口：门上那一批契约**不是存下来的，是重算出来的**（这一份开头那一段）。于是
+ * "队列行印的那批契约与 `round go` 真发出去的是同一批"这句话，只有两处走同一个函数才成立——各自
+ * 写一遍的话，两处迟早按不同的输入算出两批不同的东西，而用户看到的是"我批的与它发的不是同一批"。
+ *
+ * 三个出口：
+ *
+ *   · `none` —— **门口什么都没有**（这一轮没落地 · 已经发过了 · 钉住的底找不到）。`why` 是给人
+ *     看的一整句，放行那一趟直接把它当错误抛出来、一字不改（**同一句话只说一遍**）；
+ *   · `broken` —— 在门口，而这一批**造不出来**（草案缺键 · 断言指向没绑的动作 · 种子超限）。每一处
+ *     报得出位置，一个字节都不落；
+ *   · `held` —— 停在门口，`pending.built` 就是人这一次要点头的**那一批契约值**。
+ *
+ * **`truth` 给不给是两档，不是两种答案**：给了就按**轮次钉住的那个底**量种子（放行那一趟），不给
+ * 就按路径估（观察者那一档：界面只读账，不开真源）。两档的**契约集合相同**，只有种子读数可能差
+ * ——差在哪由 `seedRead.from` 说出来（`'given'` = 这一份没量）。
+ */
+export interface PendingDeps {
+  readonly log: LogReader
+  readonly round: RoundId
+  /** 第 `n` 个 agent 的身份。**必须与判那一趟同一个分配器**，否则算出来的不是人批的那一批。 */
+  readonly identityFor: (n: number) => Identity
+  /** 这一轮的读数（给了就不再读日志：一趟命令读一遍）。 */
+  readonly facts?: RoundFacts
+  readonly actions?: Readonly<Record<string, readonly RelPath[]>>
+  /** 种子的那一棵树（`seedRulerAt` 在它上面取内容）。**不给就按路径估**（观察者那一档）。 */
+  readonly truth?: Truth
+  readonly seedTokens?: (paths: readonly RelPath[]) => number
+  readonly seedLimit?: number
+  readonly modelLimit?: number
+}
+
+/** 门口那一批：**放行那一趟要发的就是这个对象**。 */
+export interface Pending {
+  readonly round: RoundId
+  readonly base: CommitId
+  readonly goal: string
+  readonly built: Built
+  readonly precheck: PrecheckResult
+  /** 这一批的编号（拆分的形状）。**一个名字，不是放行的凭证**——见这一份开头那一段。 */
+  readonly fingerprint: string
+  /** 种子的量法读数。`from !== 'tree'` 就是"这一份没量"。 */
+  readonly seedRead: SeedReading
+  /** 账上放过的那几批里**与这一批同号**的那几轮（给人看的一个读数，换不来放行）。 */
+  readonly same: readonly RoundId[]
+}
+
+/** 门口那一批的三种出口。 */
+export type PendingVerdict =
+  | { readonly kind: 'none'; readonly why: string }
+  | { readonly kind: 'broken'; readonly problems: readonly string[] }
+  | { readonly kind: 'held'; readonly pending: Pending }
+
+export async function pendingOf(deps: PendingDeps): Promise<PendingVerdict> {
+  const { log, round } = deps
+  const facts = deps.facts ?? (await roundFactsOf(log, round))
+  const state = facts.state
+  // **放行只在门口走一次**：这一批发过之后处境已经不在 `Planning`，第二次当场拒（不是静默成功，
+  // 也不是发第二条契约）。
+  if (state !== 'Planning') {
+    const why =
+      state === 'Idle'
+        ? '这一轮还没落地：先跑 `fugue round plan <目标>`（人写好了草案那一档加 --judge），再来放行'
+        : '这一批已经发过了——放行只在门口走一次，第二次一个字节都不落'
+    return { kind: 'none', why: `这一轮的处境是 ${state}：${why}（放行只在 Planning 那一处走）。` }
+  }
+  // 这一轮的那三样（同一份读数：钉住的底 · 意图那一句 · 那一份草案）。
+  const at = { base: facts.base, goal: facts.goal, draft: lastOf(facts)?.body ?? null }
+  if (at.base === null) {
+    return {
+      kind: 'none',
+      why:
+        `日志里找不到第 ${round} 轮钉住的底：` +
+        '轮次开始时落的那一条 `round/intent` 记着它（架构 § 8.14 的 C7 前半），没有它就算不出人批的是哪一批。',
+    }
+  }
+  // 判。**与判那一趟同一个函数**（门只认契约集合）：同一份草案 · 同一个分配器 · 同一个底。
+  // 种子那一份的树是**轮次钉住的那个底**——初次派发量的就是这一批要拿到的内容。
+  const ruler = deps.truth === undefined ? null : seedRulerAt(deps.truth, at.base)
+  const gate = await gateOf(
+    { from: 'draft', goal: at.goal, text: at.draft, where: draftPathOf(round) },
+    {
+      round,
+      base: at.base,
+      identityFor: deps.identityFor,
+      ...(deps.actions === undefined ? {} : { actions: deps.actions }),
+      ...(ruler === null ? {} : { seedRuler: ruler as SeedMeasurer }),
+      ...(deps.seedTokens === undefined ? {} : { seedTokens: deps.seedTokens }),
+      ...(deps.seedLimit === undefined ? {} : { seedLimit: deps.seedLimit }),
+      ...(deps.modelLimit === undefined ? {} : { modelLimit: deps.modelLimit }),
+    },
+  )
+  if (!gate.held || gate.built === null || gate.precheck === null) {
+    return { kind: 'broken', problems: gate.problems }
+  }
+  const fingerprint = fingerprintOf(gate.built)
+  return {
+    kind: 'held',
+    pending: {
+      round,
+      base: at.base,
+      goal: at.goal,
+      built: gate.built,
+      precheck: gate.precheck,
+      fingerprint,
+      seedRead: ruler === null ? { from: 'given', loaded: 0, missing: [] } : ruler.reading,
+      same: facts.approvals.filter((x) => x.fingerprint === fingerprint).map((x) => x.round),
+    },
+  }
+}
+
+/**
  * 放行：**把门上那一批契约发出去**（`round go` 那一趟）。
  *
  * 四段的次序与 `round plan` 那一趟逐段对上，只差最后一步：处境 → 从日志读回那三样 → 判
@@ -260,46 +373,27 @@ export async function dispatchRound(deps: DispatchDeps): Promise<Dispatched> {
 
   // 一 · 这一轮的读数**读一遍**（给了就用给的：`DispatchDeps.facts`）。处境是它的一个投影。
   const facts = deps.facts ?? (await roundFactsOf(log, round))
-  // **放行只在门口走一次**：这一批发过之后处境已经不在 `Planning`，第二次当场拒（不是静默成功，
-  // 也不是发第二条契约）。
   const state = facts.state
-  if (state !== 'Planning') {
-    const why =
-      state === 'Idle'
-        ? '这一轮还没落地：先跑 `fugue round plan <目标>`（人写好了草案那一档加 --judge），再来放行'
-        : '这一批已经发过了——放行只在门口走一次，第二次一个字节都不落'
-    throw new RoundStartError(`这一轮的处境是 ${state}：${why}（放行只在 Planning 那一处走）。`)
-  }
 
-  // 二 · 这一轮的那三样（同一份读数：钉住的底 · 意图那一句 · 那一份草案）。
-  const at = { base: facts.base, goal: facts.goal, draft: lastOf(facts)?.body ?? null }
-  if (at.base === null) {
-    throw new RoundStartError(
-      `日志里找不到第 ${round} 轮钉住的底：` +
-        '轮次开始时落的那一条 `round/intent` 记着它（架构 § 8.14 的 C7 前半），没有它就算不出人批的是哪一批。',
-    )
+  // 二 · 门上那一批：**只有一处读法**（`pendingOf`——界面上那一行队列读的是同一个函数）。不在门口
+  // 当场拒、造不出来也当场拒，两句话都由那一份给（**同一句话只说一遍**）。
+  const verdict = await pendingOf({
+    log,
+    round,
+    facts,
+    identityFor: deps.identityFor,
+    truth,
+    ...(deps.actions === undefined ? {} : { actions: deps.actions }),
+    ...(deps.seedLimit === undefined ? {} : { seedLimit: deps.seedLimit }),
+    ...(deps.modelLimit === undefined ? {} : { modelLimit: deps.modelLimit }),
+  })
+  if (verdict.kind === 'none') throw new RoundStartError(verdict.why)
+  if (verdict.kind === 'broken') {
+    throw new RoundStartError(`这一批放不出去（构造器不猜、不补）：\n  ${verdict.problems.join('\n  ')}`)
   }
-
-  // 三 · 判。**与判那一趟同一个函数**（门只认契约集合）：同一份草案 · 同一个分配器 · 同一个底。
-  // 种子那一份的树是**轮次钉住的那个底**（`seedRulerAt`）——初次派发量的就是这一批要拿到的内容。
-  const ruler = seedRulerAt(truth, at.base)
-  const gate = await gateOf(
-    { from: 'draft', goal: at.goal, text: at.draft, where: draftPathOf(round) },
-    {
-      round,
-      base: at.base,
-      identityFor: deps.identityFor,
-      ...(deps.actions === undefined ? {} : { actions: deps.actions }),
-      seedRuler: ruler as SeedMeasurer,
-      ...(deps.seedLimit === undefined ? {} : { seedLimit: deps.seedLimit }),
-      ...(deps.modelLimit === undefined ? {} : { modelLimit: deps.modelLimit }),
-    },
-  )
-  if (!gate.held || gate.built === null || gate.precheck === null) {
-    throw new RoundStartError(`这一批放不出去（构造器不猜、不补）：\n  ${gate.problems.join('\n  ')}`)
-  }
-  const built = gate.built
-  const fingerprint = fingerprintOf(built)
+  const { pending } = verdict
+  const built = pending.built
+  const fingerprint = pending.fingerprint
 
   // 四 · 落那一笔放行，然后发。**顺序反了的话，读日志的人会先看见契约、后看见谁批的。**
   await log.append('round', {
@@ -308,7 +402,15 @@ export async function dispatchRound(deps: DispatchDeps): Promise<Dispatched> {
     fingerprint,
     contracts: built.contracts.map((c) => c.id as ContractId),
   })
-  const issued = await issueAndStart(built, at.base, state, deps)
+  const issued = await issueAndStart(built, pending.base, state, deps)
 
-  return { ...issued, round, base: at.base, built, precheck: gate.precheck, seedRead: ruler.reading, fingerprint }
+  return {
+    ...issued,
+    round,
+    base: pending.base,
+    built,
+    precheck: pending.precheck,
+    seedRead: pending.seedRead,
+    fingerprint,
+  }
 }

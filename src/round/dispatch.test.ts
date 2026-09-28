@@ -13,6 +13,9 @@
 //      **同号**（`fingerprintOf` 只算拆分的形状），而它不会照上次放行——照旧停在门口等人再点一
 //      次头。负对照：契约的 `id` 带着轮次号（两份不同），所以"同号"这件事不是身份带来的
 //   ④ **判不成器一个字节都不落**（草案缺一个键 · 这一轮还没落地两档各自的话）
+//   ⑤ **一趟放行读几遍轮次日志**（给了那一份读数就不读）· **⑥ 门口那一批只有一处读法**：界面上
+//      那一行队列（不给树那一档）与放行那一趟读的是同一个函数——两处算出来的契约逐字节相同，
+//      而换一个身份分配器就当场不同（门只认契约集合，而集合里带着身份）。
 //
 // 板子与 `round/start.test.ts` 同一套（真 git 仓库 · 真对象库 · 真日志）；不联网。
 import assert from 'node:assert/strict'
@@ -21,7 +24,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import type { AgentId, CommitId, RelPath, RoundId, WriterId } from '../terms.ts'
+import type { AgentId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../terms.ts'
 import type { LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import type { LogHandle } from '../log/log.ts'
@@ -29,7 +32,7 @@ import { createRoots } from '../roots/roots.ts'
 import { openTruth } from '../truth/truth.ts'
 import { identFor } from '../identity.ts'
 import { fingerprintOf } from '../contract/gate.ts'
-import { dispatchRound, roundStateOf } from './dispatch.ts'
+import { dispatchRound, pendingOf, roundStateOf } from './dispatch.ts'
 import { roundFactsOf } from './versions.ts'
 
 /** 计数版的读侧：`readByWriter` 被调几次就是「读了几遍日志」（其余几栏照旧）。 */
@@ -321,6 +324,89 @@ test('⑤ 放行那一趟只读一遍轮次日志；给了那一份读数就一�
     const r2 = await dispatchRound(goDeps(b, ROUND2, { log: countingLog(b.log, c2) }))
     assert.equal(c2.n, 1, `不给读数时该只读一遍轮次日志，实际 ${c2.n} 遍`)
     console.log(`⑤ 读数：一趟放行读 ${c1.n} 遍轮次日志（给了那一份读数）· ${c2.n} 遍（不给）`)
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ⑥ 门口那一批只有一处读法（`T6` 的队列行与放行读同一份）──────────────────────────
+//
+// 门上那一批契约**不是存下来的，是重算出来的**。于是"界面印的那批契约与 `round go` 真发出去的
+// 是同一批"这句话，只有两处走同一个函数（`pendingOf`）才成立。这一条量的就是它：同一份日志，从
+// 队列行那一档（只读账、不给树）与放行那一档（给树）各算一次，再与 `round go` 真落下的那一批
+// 对。负对照是**换一个身份分配器**——门只认契约集合，而集合里带着身份。
+test('⑥ 队列行印的那批契约与 `round go` 真发出去的是同一批（逐字节）', async () => {
+  const b = await bench()
+  try {
+    await atGate(b, ROUND, draftText())
+    const alloc = (r: RoundId) => (n: number) => identFor(r, n)
+    const queue = { log: b.log, round: ROUND, identityFor: alloc(ROUND), actions: { test: [] as readonly RelPath[] } }
+
+    // 一 · **队列行那一档**：只读账，不给树（观察者不开真源）。
+    const seen = await pendingOf(queue)
+    assert.equal(
+      seen.kind,
+      'held',
+      `门该停着：${seen.kind === 'none' ? seen.why : seen.kind === 'broken' ? seen.problems.join(' · ') : ''}`,
+    )
+    if (seen.kind !== 'held') return
+    assert.ok(seen.pending.built.contracts.length > 0, '这一批该有契约')
+    assert.equal(seen.pending.seedRead.from, 'given', '观察者不给树：那一条读数说的是"这一份没量"')
+    assert.deepEqual(seen.pending.same, [], '还没放过：与这一批同号的那几轮是空的')
+
+    // 二 · **两档不是两种答案**：同一份日志，把树给上（放行那一档）——契约集合一字不差，只有种子
+    //     那一条读数从 `given` 换成 `tree`（"给不给树"影响的是读数，不是这一批是谁）。
+    const withTree = await pendingOf({ ...queue, truth: b.truth })
+    assert.equal(withTree.kind, 'held')
+    if (withTree.kind !== 'held') return
+    assert.equal(
+      JSON.stringify(withTree.pending.built.contracts),
+      JSON.stringify(seen.pending.built.contracts),
+      '给不给树算出来的契约不同——那"同一批"这句话就不成立了',
+    )
+    assert.equal(withTree.pending.seedRead.from, 'tree', '给了树就真在钉住的底上取内容')
+    assert.equal(withTree.pending.fingerprint, seen.pending.fingerprint, '批号也该是同一个')
+
+    // 三 · **负对照**：换一个身份分配器（`r2` 那一套）→ 同一份草案算出另一批 agent。界面与放行
+    //     必须用同一个分配器，不然"我批的"与"它发的"当场不是一批（而这一步不会报错，只会发错）。
+    const wrong = await pendingOf({ ...queue, identityFor: alloc(ROUND2) })
+    assert.equal(wrong.kind, 'held')
+    if (wrong.kind !== 'held') return
+    assert.notDeepEqual(
+      wrong.pending.built.contracts.map((c) => c.agent),
+      seen.pending.built.contracts.map((c) => c.agent),
+      '换一个分配器还是同一批 agent——那这条负对照没有牙',
+    )
+
+    // 四 · **放行那一头**：真发。发出去的那一批就是队列行印的那一批。
+    const r = await dispatchRound(goDeps(b))
+    const approvals = (await events(b)).filter((e) => e.t === 'round/approve')
+    assert.equal(approvals.length, 1, `round/approve 该恰好一条：${approvals.length}`)
+    const ids = (approvals[0] as { contracts: readonly ContractId[] }).contracts
+    assert.deepEqual(
+      seen.pending.built.contracts.map((c) => c.id),
+      [...ids],
+      '队列行印的那批契约与 `round/approve` 记下的那一批不同',
+    )
+    assert.equal(
+      JSON.stringify(seen.pending.built.contracts),
+      JSON.stringify(r.built.contracts),
+      '两份契约值的字节不同（id 一样不代表写入面 · 交付物 · 断言 · seed 一样）',
+    )
+    assert.equal(seen.pending.fingerprint, r.fingerprint, '批号该是同一个（同一个 `fingerprintOf`）')
+    assert.equal(seen.pending.base, r.base, '底该是同一个（轮次钉住的那一个）')
+
+    // 五 · 发过之后**门口什么都没有**：队列行那一档说得出"发过了"，而不是照旧画一批已经发出去的。
+    const after = await pendingOf(queue)
+    assert.equal(after.kind, 'none', '发过之后门口该是空的')
+    if (after.kind !== 'none') return
+    assert.ok(after.why.includes('已经发过'), `那一句该说清"发过了"：${after.why}`)
+    console.log(
+      `⑥ 读数：队列行那一批 ${seen.pending.built.contracts.length} 份（批号 ${seen.pending.fingerprint}）· ` +
+        `与放行落下的 ${ids.length} 份逐字节相同 · 给树与不给树两份契约一字不差（种子读数 given → tree）· ` +
+        `换分配器那份 agent ${wrong.pending.built.contracts.map((c) => c.agent).join(' · ')} 与它不同 · ` +
+        '发过之后门口是空的',
+    )
   } finally {
     await b.close()
   }
