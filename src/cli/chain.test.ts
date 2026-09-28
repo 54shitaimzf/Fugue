@@ -1071,7 +1071,8 @@ test('一趟命令读一遍：命令行那一层只有三处 `roundFactsOf`（`r
   // `say.test.ts` ⑥ · `dispatch.test.ts` ⑤ 量的是它），而"命令行读了几遍"这一头**没有注入缝**
   // ——每条命令一个真进程、一次真加载。所以量它的来源：三处读，一处一条命令，每一处都是
   // 「读一次、递下去」。**多出来的那一处就是又一趟读**：那时要么把读数递下去，要么把这一条改掉。
-  const source = readFileSync(fileURLToPath(new URL('./fugue.ts', import.meta.url)), 'utf8')
+  // U4d 起 round 那一组住在 `./cmd/round.ts`（fugue.ts 只剩分发），扫描对象跟着搬。
+  const source = readFileSync(fileURLToPath(new URL('./cmd/round.ts', import.meta.url)), 'utf8')
   const sites = source
     .split('\n')
     .map((line, i) => [i + 1, line] as const)
