@@ -23,6 +23,7 @@
 // **这一份不是"前端状态"**：它手里只有"人正在打的那一行"。处境（`Idle`/`Running`/`Gate`）·
 // 排队 · 授权都在账上，这一份连它们的名字都不认识（PLAN § 5.19 三那张表的三轴里，只有焦点与
 // 输入模式落在这一份，而输入模式还是推出来的）。
+import type { UiAction } from './keymap.ts'
 import { clustersOf, cutAt, widthOf } from './frame.ts'
 
 /** 折叠阈值：粘进来的东西超过其中任意一条就折起来（显示成一块牌子，`Ctrl-O` 展开）。 */
@@ -123,6 +124,8 @@ export type Intent =
   | { readonly t: 'search' }
   | { readonly t: 'toggleFold' }
   | { readonly t: 'cancel' }
+  // **整行换成另一串字**（菜单选中 · `Tab` 补全那两处）：它是"人改了这一行"，所以进撤销栈。
+  | { readonly t: 'setLine'; readonly text: string }
 
 /** 折叠块在显示里的样子。 */
 export function chipOf(f: Fold): string {
@@ -607,7 +610,67 @@ export function applyIntent(e: Editor, it: Intent): Editor {
       return { ...e, unfolded: !e.unfolded }
     case 'cancel':
       return cancelAt(e)
+    case 'setLine':
+      // 补全与菜单选中都是**换掉这一整行**（不是插一段）：光标跟着到行尾，折叠块清掉（换来的那一行
+      // 是命令名或路径，没有"原样粘进来的那一段"）。
+      return withDraft(e, edited(d, { text: it.text, caret: it.text.length, folded: [] }))
     default:
       return e
+  }
+}
+
+/**
+ * 表里那个动作 id → 这一份认的编辑动作（`ui/keymap.ts` 的 `UiAction`）。**只翻编辑那几样**：
+ * `submit` · `cancel` · 退出 · 菜单 · 补全 · 导航要看的不止这一行字，由调用方接（`null`）。
+ *
+ * `newline` 在这里翻成"插一个换行"——`Ctrl-J`/`Alt-Enter` 与 `Enter` 的分别就在这一格（表里那一行
+ * 说的就是"换行，不提交"）。
+ */
+export function intentOf(a: UiAction, text = ''): Intent | null {
+  switch (a) {
+    case 'insert':
+      return { t: 'insert', text }
+    case 'newline':
+      return { t: 'insert', text: '\n' }
+    case 'backspace':
+      return { t: 'backspace' }
+    case 'delete':
+      return { t: 'delete' }
+    case 'left':
+      return { t: 'left' }
+    case 'right':
+      return { t: 'right' }
+    case 'wordLeft':
+      return { t: 'wordLeft' }
+    case 'wordRight':
+      return { t: 'wordRight' }
+    case 'home':
+      return { t: 'home' }
+    case 'end':
+      return { t: 'end' }
+    case 'killToStart':
+      return { t: 'killToStart' }
+    case 'killToEnd':
+      return { t: 'killToEnd' }
+    case 'killWord':
+      return { t: 'killWord' }
+    case 'yank':
+      return { t: 'yank' }
+    case 'undo':
+      return { t: 'undo' }
+    case 'redo':
+      return { t: 'redo' }
+    case 'historyOlder':
+      return { t: 'historyOlder' }
+    case 'historyNewer':
+      return { t: 'historyNewer' }
+    case 'search':
+      return { t: 'search' }
+    case 'toggleFold':
+      return { t: 'toggleFold' }
+    case 'cancel':
+      return { t: 'cancel' }
+    default:
+      return null
   }
 }

@@ -10,8 +10,14 @@ import type { StatusRow } from '../../probe/status.ts'
 import { follow, readNew } from '../../probe/watch.ts'
 import { openTui, tuiModeOf } from '../../ui/follow.ts'
 import { degradeNote, openTerm } from '../../ui/term.ts'
-import { hintLineOf, openKeys } from '../../ui/keymap.ts'
+import type { ViewInput } from '../../ui/term.ts'
+import { KEYMAP, actsOnEmpty, helpRowsOf, hintLimitOf, hintLineOf, openKeys } from '../../ui/keymap.ts'
 import type { KeySource } from '../../ui/keymap.ts'
+import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmit, submitOf } from '../../ui/input.ts'
+import type { Editor } from '../../ui/input.ts'
+import { acceptOf, candidatesOf, clampSel, completeOf, moveSel, pathsOf, queryOf, rowsTextOf, specsOf } from '../../ui/menu.ts'
+import type { MenuRow, MenuSource } from '../../ui/menu.ts'
+import { FLAGS_OF } from '../flags.ts'
 import { GO_LINE, openRun } from '../../ui/run.ts'
 import type { RunLauncher } from '../../ui/run.ts'
 import { emitJson, emitLine, usageFail } from '../shared.ts'
@@ -139,6 +145,16 @@ export async function watchCmd(
  * 日志、不持写句柄**，账由那个子进程写；它吐出来的行与收尾那一下走 `tui.note()`（写在面板上方）。
  * `q`/`Ctrl-C`/`Ctrl-D` 退出（**raw mode 下 `SIGINT` 不再由终端发出来**，所以那三个字节就在键表里）；
  * 那一趟还跑着时第一次按是等它收尾、第二次是硬退。`?` 把按键那一行重印一遍。
+ *
+ * **`T4` · 输入行与弹层**：底部那块地方在面板**下面**多一行（块）输入行——模型是 `ui/input.ts`，
+ * 接线在这一份。三个入口开同一套候选（`ui/menu.ts`）：`/` 是命令（**从 `cli/flags.ts` 的
+ * `FLAGS_OF` 推**，与分发处读同一份）、`Ctrl-P` 是键表（提示行 · 帮助面板 · 这一屏，第三处渲染）、
+ * `@` 是工作区里的路径。
+ *
+ * **界面不留第二份真相**：输入模式是从行首那个 `/` 推的（`modeOf`）· 面板在筛什么也是从行里推的
+ * （`queryOf`）——把那个记号删掉，面板自己就关了。选中一条**不是执行**：它只换掉这一行字，发不发
+ * 仍然归 `Enter` → `ui/run.ts` 那一格（`T3`：一行字 → argv → 子进程）。**打字是缺省路**（表里没
+ * 吃掉的可打印字符走 `insert`），表里那几条可打印字符的绑定只在行里没字时是动作。
  */
 export async function tuiCmd(root: string, flags: Map<string, string | true>): Promise<number> {
   // `--json` 不在 tui 的开关表里（机器读的那一份是 `status --json`），但**错误那一面照样认它**：
@@ -165,11 +181,38 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   const onSig = (): void => ac.abort()
   process.on('SIGINT', onSig)
   // 接上那一档：读账 → 折帧 → 摆到那一块地方，一路跟着（`ui/follow.ts`）。
+  // ── `T4` · 界面自己那几样（**纯视图状态**：进程一退就没了）──────────────────────────────
+  // 次序上它们得先立起来：`openTui` 每折一帧都要问它们（`view` 那个闭包）。**这一份里没有第二份
+  // 真相**：输入模式从行首那个 `/` 推（`modeOf`）、弹层在筛什么也从行里推（`queryOf`）——于是
+  // "面板在筛什么"与"行里有什么"永远不打架。
+  let ed: Editor = emptyEditor()
+  /** 弹层（这一格只有一层：菜单/面板/路径）。`null` = 没有弹层。 */
+  let panel: { readonly source: MenuSource; readonly sel: number; readonly paths: readonly string[] } | null = null
+  /** 输入行画不画：`stdin` 不是终端就不画（画一个收不到按键的提示符，比不画坏得多）。 */
+  let showInput = false
+  /** 命令面那一张表（**分发处读的是同一份**：`cli/flags.ts` 的 `FLAGS_OF`）。 */
+  const specs = specsOf(FLAGS_OF)
+  /** 键表那一档的候选：提示行 · 帮助面板 · 这一屏，三处同一张表（`ui/keymap.ts`）。 */
+  const keyRows = (): readonly MenuRow[] => helpRowsOf().map((name) => ({ name, note: '', kind: 'key' as const }))
+  const rowsOf = (source: MenuSource): readonly MenuRow[] =>
+    candidatesOf({ specs, keys: keyRows(), paths: panel?.paths ?? [], line: ed.draft.text, source })
+  /** 提示符：`»` 是命令、`>` 是话（模式是从行推出来的，不是另存的一个开关）。 */
+  const promptOf = (): string => (modeOf(ed.draft) === 'Command' ? '» ' : '> ')
+  const view = (): ViewInput => {
+    if (!showInput) return {}
+    // 宽度减一：终端上写满一整行会**自动换行**，那一下就把"上移几行"的算术打乱了（`ui/term.ts` 头注）。
+    const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: term.columns - 1 })
+    return {
+      ...(panel === null ? {} : { menu: { rows: rowsTextOf(rowsOf(panel.source)), sel: panel.sel } }),
+      input: { rows: frame.rows, caret: frame.caret },
+    }
+  }
   const tui = openTui({
     log,
     term,
     emit: emitLine,
     mode,
+    view,
     readings: { metrics: flags.has('metrics'), report: flags.has('report') },
     phase,
     intervalMs: interval,
@@ -187,25 +230,54 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   /** 按过退出、而那一趟还跑着：等它收尾再退（不打断一轮正在跑的——账要完整）。 */
   let leaving = false
   if (mode === 'panel') {
+    /** 起一次弹层：选中项从头一条起（候选变了以后 `settle` 会把它夹回来）。 */
+    const openPanel = (source: MenuSource): void => {
+      // 路径那一档的候选**开的时候走一遍**（`@` 不该在每一次重画时把树重读一遍）；命令与键表是
+      // 静态的，每次都现推——它们本来就只有一处真源。
+      panel = { source, sel: 0, paths: source === 'path' ? pathsOf(process.cwd()) : [] }
+    }
+    /**
+     * 每一下按完都走这里：**弹层跟着输入行走**——查询词没了（`@` 被删掉）就自己关掉，候选少了就把
+     * 选中那个下标夹回来，然后重画一帧（输入行与弹层都在那一帧里）。
+     */
+    const settle = (): void => {
+      if (panel !== null) {
+        panel =
+          queryOf(ed.draft.text, panel.source) === null
+            ? null
+            : { ...panel, sel: clampSel(rowsOf(panel.source).length, panel.sel) }
+      }
+      tui.redraw()
+    }
     go = openRun({
       root,
       // 子进程吐出来的行、与它收尾那一下，都**走注记**（写在面板上方）：直接写 `stdout` 会在
       // 终端历史里插进半块面板。
       onLine: (line) => tui.note(line),
       onDone: (r) => {
-        if (r.why !== null) tui.note(`这一趟起不来：${r.why}（手敲一遍看看：${go?.argv.join(' ') ?? ''}）`)
-        else if (r.code !== 0) tui.note(`那一趟 \`round go\` 退了 ${r.code ?? '（信号）'}`)
+        if (r.why !== null) tui.note(`这一趟起不来：${r.why}（手敲一遍看看：${go?.last.join(' ') ?? ''}）`)
+        else if (r.code !== 0) tui.note(`那一趟退了 ${r.code ?? '（信号）'}（账照写：写到哪算哪）`)
         if (leaving) ac.abort()
       },
     })
     keys = openKeys({
       input: process.stdin,
+      out: process.stdout,
       onAction: (d) => {
+        // ① **可打印字符的那几条绑定**（`q`/`Q` · `g`/`G` · `?` · `/` · `@`）：只在**行里没字的地方**
+        // 是动作，别处它就是那个字——不然 `/round go` 里那个 `g` 会把这一行当场发出去。判据在
+        // `ui/keymap.ts` 的 `actsOnEmpty`，喂它的只有这一处。
+        if (!actsOnEmpty(d.action, ed.draft.text, ed.draft.caret) && d.key !== undefined) {
+          ed = applyIntent(ed, { t: 'insert', text: d.key })
+          settle()
+          return
+        }
+        // ② `?`：把按键那一行重印一遍（写在面板上方，只写一次）。
         if (d.action === 'help') {
           tui.note(hintLineOf())
           return
         }
-        // `interrupt`（`Ctrl-C`）那一档的口径要等 `T5`（取消链：有在途就打断 · 3 秒内再按一次才
+        // ③ `interrupt`（`Ctrl-C`）那一档的口径要等 `T5`（取消链：有在途就打断 · 3 秒内再按一次才
         // 退）。在那之前它与退出同一条：**少一条地板比多一条近似坏得多**。
         if (d.action === 'quit' || d.action === 'interrupt') {
           if (go?.running === true) {
@@ -213,7 +285,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
             // 照写：写到哪算哪，重放得回来）。
             if (!leaving) {
               leaving = true
-              tui.note('那一趟 `round go` 还在跑：等它收尾就退出（账要完整）。再按一次是硬退')
+              tui.note('那一趟还在跑：等它收尾就退出（账要完整）。再按一次是硬退')
               return
             }
             tui.note('硬退：那一趟的输出接不上了（它自己的账照写，写到哪算哪）')
@@ -221,17 +293,111 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
           ac.abort()
           return
         }
-        // `go`：跑着的时候按不起了第二次（同一条命令不叠第二次）。别的动作（编辑行 · 菜单 ·
-        // 面板 · 导航）还没接线，安静丢掉——与"认不出来的字节丢掉"同一条。
-        if (d.action !== 'go' || go === null || go.running) return
-        tui.note(`按了 g：起一次 \`${GO_LINE}\`（${go.argvOf(GO_LINE).argv.join(' ')}）`)
-        go.press(GO_LINE)
+        // ④ `g`：放行门口那一批（起一次 `fugue round go`）。跑着的时候按不起了第二次（同一条命令
+        // 不叠第二个进程）——排队与打断是 `T7` 的事。
+        if (d.action === 'go') {
+          if (go === null || go.running) return
+          tui.note(`按了 g：起一次 \`${GO_LINE}\`（${go.argvOf(GO_LINE).argv.join(' ')}）`)
+          go.press(GO_LINE)
+          return
+        }
+        // ⑤ 三个入口（`/` · `Ctrl-P` · `@`）开同一套候选表，**看的是这一行现在是什么**（来源从行里
+        // 推，不另存一个开关）：命令行 → 命令那一张（`FLAGS_OF`，与分发处读同一份）· 别处 → 键表 ·
+        // `@` → 工作区里的路径。`/` 与 `@` 先把那个记号打进这一行——记号在，那个来源才在。
+        if (d.action === 'menu' || d.action === 'panel' || d.action === 'mention') {
+          if (d.action === 'menu') ed = applyIntent(ed, { t: 'insert', text: '/' })
+          if (d.action === 'mention') ed = applyIntent(ed, { t: 'insert', text: '@' })
+          const src: MenuSource =
+            d.action === 'mention' ? 'path' : d.action === 'menu' || ed.draft.text.startsWith('/') ? 'cmd' : 'keys'
+          openPanel(src)
+          settle()
+          return
+        }
+        // ⑥ `Enter`：弹层开着就是"认下选中那一条"（**只换掉这一行字，不执行**）；关着就把这一行
+        // 发出去（`T3` 那一格：一行字 → argv → 子进程，账由那个子进程写）。
+        if (d.action === 'submit') {
+          if (panel !== null) {
+            const rows = rowsOf(panel.source)
+            const picked = rows[clampSel(rows.length, panel.sel)]
+            if (picked !== undefined) {
+              const next = acceptOf(ed.draft.text, panel.source, picked)
+              if (next !== null) ed = applyIntent(ed, { t: 'setLine', text: next })
+            }
+            panel = null
+            settle()
+            return
+          }
+          const line = submitOf(ed)
+          if (line === '') {
+            settle()
+            return
+          }
+          // 模式**在这一行还是原样的时候**取：交出去之后手里就换成新的一行了。
+          const lineMode = modeOf(ed.draft)
+          ed = rememberSubmit(ed, line)
+          if (go === null || go.running) {
+            tui.note('那一趟还在跑：这一行先没发出去（排队是 `T7` 那一格的事）')
+            settle()
+            return
+          }
+          const cut = go.argvOf(line, lineMode)
+          if (cut.why !== null) {
+            tui.note(`这一行起不了：${cut.why}`)
+            settle()
+            return
+          }
+          tui.note(`发了这一行：\`${line}\`（${cut.argv.join(' ')}）`)
+          go.press(line, lineMode)
+          settle()
+          return
+        }
+        // ⑦ `Tab`：补全（候选从行推：命令那一档补命令名，别处补手里那个词）。补不动就什么都不做
+        // ——在各面板之间轮换是 `T8` 的事。
+        if (d.action === 'complete') {
+          const source: MenuSource = panel?.source ?? (ed.draft.text.startsWith('/') ? 'cmd' : 'keys')
+          const next = completeOf({ rows: rowsOf(source), line: ed.draft.text, source })
+          if (next !== null) ed = applyIntent(ed, { t: 'setLine', text: next })
+          settle()
+          return
+        }
+        // ⑧ `Esc`：**有弹层就只关弹层**（"一键多义必须有序"那把尺子在这里第一次落地；五级的整条链
+        // 是 `T5`），没有才轮到输入行自己（先退反查、再清空这一行）。
+        if (d.action === 'cancel') {
+          if (panel !== null) {
+            panel = null
+            settle()
+            return
+          }
+          ed = applyIntent(ed, { t: 'cancel' })
+          settle()
+          return
+        }
+        // ⑨ 弹层开着时 `↑`/`↓` 是选项（表里那两行的说明写的就是这个），关着时是输入历史。
+        if ((d.action === 'historyOlder' || d.action === 'historyNewer') && panel !== null) {
+          const n = rowsOf(panel.source).length
+          panel = { ...panel, sel: moveSel(n, panel.sel, d.action === 'historyOlder' ? -1 : 1) }
+          settle()
+          return
+        }
+        // ⑩ 剩下的编辑动作（`ui/input.ts` 认的那些）一律进输入行；别的（`focus` 那一档导航）还没
+        // 接线，安静丢掉——与"认不出来的字节丢掉"同一条。
+        const it = intentOf(d.action, d.text ?? '')
+        if (it === null) return
+        ed = applyIntent(ed, it)
+        settle()
       },
     })
     // 第一件事：把按键那一行印出来（写在面板上方；翻上去了按 `?` 再印一次）。
     // **stdin 不是终端就不印它**（`stdout` 是终端而 `stdin` 不是：面板照画，可按键收不到）——
     // 印一行"按 g 放行"而按下去没反应，是这一档最坏的一种体验。
-    tui.note(keys.raw ? hintLineOf() : 'stdin 不是终端：这一档不收按键（放行还是手敲 fugue round go）')
+    showInput = keys.raw
+    // 按键那一行**按屏幕宽度取前几条**（28 条接线的动作整行印出来 438 列，终端会折成五行）；
+    // 剩下的那一句说清还有几条、去哪儿看全部（`Ctrl-P` 那一屏）。
+    tui.note(
+      keys.raw
+        ? hintLineOf(KEYMAP, hintLimitOf(term.columns))
+        : 'stdin 不是终端：这一档不收按键（输入行与弹层都在等按键，画出来是骗人）',
+    )
   }
   // **每一条退出路径都要把终端还原回去**（计划 § 5.19 里 DECSTBM 那笔账在 raw mode 上是同一笔：
   // 漏一条，那台终端就得人 `reset`）。四路：正常退 · `Ctrl-C`（raw mode 下走按键那一头）·

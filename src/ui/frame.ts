@@ -85,6 +85,13 @@ export interface FrameInput {
    * "最近 <事件>（writer seq）· 事件 N 条"。
    */
   readonly permanent?: readonly string[]
+  /**
+   * 读源五（**临时那一层**）：面板的候选行（`ui/menu.ts` 算好的原文）与选中项落在第几条。
+   *
+   * 它排在内容那一栏的**最下面**（挨着账尾）——面板是临时的一层，永久行与读数都不为它让位到看不见；
+   * 装不下时 `windowOf` 把选中的那一条留在窗里，并把上下还剩几条说出来。不给时一列都不占。
+   */
+  readonly menu?: MenuInput | undefined
   readonly width: number
   readonly height: number
 }
@@ -391,6 +398,38 @@ function bar(w: number, label?: string): string {
   return `─ ${label} ` + '─'.repeat(w - widthOf(label) - 3)
 }
 
+/** 候选那一层那几行（`ui/menu.ts` 算好的原文）与选中项落在第几条（`T4`）。 */
+export interface MenuInput {
+  readonly rows: readonly string[]
+  readonly sel: number
+}
+
+/** 候选那一层开的一个窗：印第 `from` 条起的 `count` 条，`summary` 说还要不要补一行"还有几条"。 */
+export interface MenuWindow {
+  readonly from: number
+  readonly count: number
+  readonly above: number
+  readonly below: number
+  readonly summary: boolean
+}
+
+/**
+ * 在 `budget` 行里给 `n` 条候选开一个窗，**选中的那一条一定在窗里**（偏到边上就贴着边走）。装不下时
+ * 留一行说"还有几条"（`summary`），于是印出去的候选行数 + 那一样 ≤ `budget`。
+ */
+export function windowOf(n: number, sel: number, budget: number): MenuWindow {
+  const total = Math.max(0, n)
+  const b = Math.max(1, budget)
+  const at = Math.max(0, Math.min(total - 1, sel))
+  if (total <= b) return { from: 0, count: total, above: 0, below: 0, summary: false }
+  if (b === 1) return { from: at, count: 1, above: at, below: total - at - 1, summary: false }
+  const count = b - 1
+  const from = Math.max(0, Math.min(total - count, at - Math.floor(count / 2)))
+  const above = from
+  const below = total - from - count
+  return { from, count, above, below, summary: above + below > 0 }
+}
+
 /**
  * 一帧。**纯函数**：进去的那几样决定出来的那几行，别的一处都不看。
  *
@@ -419,7 +458,7 @@ export function frameOf(o: FrameInput): Frame {
 
   // 内容那一栏：**先把每一行折进它那一栏的列宽**，再一行对一行（右边短的那些补空）；
   // 单栏那一档先把左栏印完再印右栏（同一个框，只是没有中间那根竖线）。
-  const rows: { readonly l: string; readonly r: string }[] = []
+  const rows: { readonly l: string; readonly r: string; readonly full?: boolean }[] = []
   if (two) {
     const l2 = body.left.flatMap((one) => wrap(one, left))
     const r2 = body.right.flatMap((one) => wrap(one, right))
@@ -440,13 +479,39 @@ export function frameOf(o: FrameInput): Frame {
     budget = height - 2
   }
 
-  const shown = rows.length <= budget ? rows : rows.slice(0, Math.max(0, budget - 1))
+  // 候选那一层（`/` 菜单 · `Ctrl-P` 面板）**从内容那一栏的最下面切一块**（最多一半）：面板开开关关，
+  // 上面那几行读数一个字节都不动；它自己装不下时把选中的那一条留在窗里，并把还剩几条说出来。
+  const menuAll = o.menu === undefined ? null : o.menu.rows
+  const menuCap = menuAll === null ? 0 : Math.max(1, Math.min(Math.floor(budget / 2), Math.max(1, menuAll.length)))
+  const win = menuAll === null || menuAll.length === 0 ? null : windowOf(menuAll.length, o.menu?.sel ?? 0, menuCap)
+  const menuBody: string[] = []
+  if (menuAll !== null) {
+    if (menuAll.length === 0) menuBody.push('（没有匹配的）')
+    else {
+      const w = win as MenuWindow
+      const at = Math.max(0, Math.min(menuAll.length - 1, o.menu?.sel ?? 0))
+      for (let i = w.from; i < w.from + w.count; i += 1) {
+        menuBody.push(`${i === at ? '▸' : ' '} ${menuAll[i] as string}`)
+      }
+      if (w.summary) menuBody.push(`… 还有 ${w.above + w.below} 条（↑↓ 翻，选中第 ${at + 1} 条）`)
+    }
+  }
+  // 内容那一栏至少留一行（这一屏再矮，也不让候选把框撑破）；先让位的是那句"还有几条"。
+  while (menuBody.length > 0 && budget - menuBody.length < 1) menuBody.pop()
+  const bodyBudget = Math.max(1, budget - menuBody.length)
+  const shown = rows.length <= bodyBudget ? rows : rows.slice(0, Math.max(0, bodyBudget - 1))
   const dropped = rows.length - shown.length
   if (dropped > 0) shown.push({ l: `… 还有 ${dropped} 行没印（这一屏 ${height} 行）`, r: '' })
+  for (const one of menuBody) shown.push({ l: one, r: '', full: true })
 
   const lines: string[] = []
   lines.push(`┌${bar(left, '处境')}${two ? `┬${bar(right, '读数')}` : ''}┐`)
   for (const one of shown) {
+    // 候选那一层**横贯整栏**（它是临时的一层，不参与左右两栏的分工）。
+    if (one.full === true) {
+      lines.push(`│${cell(one.l, inner)}│`)
+      continue
+    }
     lines.push(`│${cell(one.l, left)}${two ? `│${cell(one.r, right)}` : ''}│`)
   }
   if (withFooter) {

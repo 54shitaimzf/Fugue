@@ -9,10 +9,20 @@
 // **区域的形状**（唯一会错的地方，所以写清楚）：面板占恒定 `height` 行，每行**恰好 `columns` 列**
 // （`panelOf` 先截后补）——1 逻辑行 = 1 物理行，所以"上移 K 行"永远落回面板顶上。一次重画：
 //
-//   · 上移 K 行（`\x1b[KA`）→ 光标到面板顶；
+//   · 上移「上一次画完时光标停的那一行」（0 = 面板顶）→ 光标到面板顶；
 //   · 新到的永久行**从面板顶写下去**（一条一行）——面板因此被顶下去 n 行；
 //   · 面板那 K 行接着往下写（`\x1b[2K` 逐行清 + 重写）；
-//   · 光标停在面板**下面那一行**——这是不变量：下一次上移 K 行仍然落在面板顶上。
+//   · 输入行那几行写在面板**下面**（`Panel.input`；逐行清 + 重写，最后一行不带换行）；
+//   · 光标停在**最后一行输入行**上——不变量：下一次上移「上一次停的那一行」仍然落在面板顶上。
+//
+// **输入行是 `T4` 加进来的**（在那之前这一块区域只有 K 行面板）。它那几行**不计进 K**：K 是面板的
+// 高度，输入行是它下面另起的一行块。于是"上移多少"从一个常数变成一个记下来的数（`cursorRow`），
+// 收走这一块也从"删 K 行"变成"删这一块一共几行"（`regionRows`）。两条都只在有输入行时与从前不同
+// ——`term.test.ts` 拿"没有输入行时逐字节不变"钉住这件事。
+//
+// **输入行不长出去**：调用方给的每一行宽度 ≤ `columns` − 1（`ui/input.ts` 的 `inputFrameOf` 就是按
+// "量到的列宽减一"折的），所以一行输入行就是一个物理行，`\x1b[KA` 那条算术不会被终端的自动换行
+// 打乱。光标那一下是在写完那一行之后**往左退**到光标列（显示宽度算，不是 code unit）。
 //
 // **永久行只写一次。** 它们在面板上方，重画时只有面板那 K 行被擦改：终端历史里那一串是干净的
 // 流水（翻得回去 · 搜索 · 连 `| tee` 出去都没有转义序列）。
@@ -30,7 +40,8 @@
 //
 // **退出**：`close()` 把面板那 K 行删掉（`\x1b[KM`），终端历史里只剩永久行；没画过、或宽度变过
 // （重排之后不知道那 K 行落在哪）就一个字节都不写。
-import { panelOf } from './frame.ts'
+import type { MenuInput } from './frame.ts'
+import { panelOf, widthOf } from './frame.ts'
 
 /** 底部那块区域的**恒定**行数（PLAN § 5.19：K 取 12；画出框的下限是 5，12 够放处境那几行）。 */
 export const K = 12
@@ -41,6 +52,11 @@ export const FALLBACK_COLUMNS = 80
 /** 上移 `n` 行。 */
 export function upOf(n: number): string {
   return `\x1b[${n}A`
+}
+
+/** 光标往左退 `n` 列（输入行那一下：写完那一行，退到光标该在的列）。 */
+export function leftOf(n: number): string {
+  return `\x1b[${n}D`
 }
 
 /** 擦掉整行（光标不动）——"重画"就是它加一次重写。 */
@@ -113,8 +129,30 @@ export interface TermOut {
   readonly columns?: number | undefined
 }
 
-/** 面板那一块：给一个尺寸，还回那几行（**渲染在调用方**，这一份只量尺寸）。 */
-export type RenderPanel = (size: { readonly columns: number; readonly height: number }) => readonly string[]
+/** 输入行那几行：已经带提示符，每行宽度 ≤ `columns` − 1（所以一行就是一个物理行）。 */
+export interface PanelInput {
+  readonly rows: readonly string[]
+  /** 光标在第 `row` 行第 `col` 列（显示列，0 基）。**最后一行就是光标停的那一行。** */
+  readonly caret: { readonly row: number; readonly col: number }
+}
+
+/** 面板那一块：`rows` 是那个框（补到正好 `height` 行），`input` 是它下面那几行输入行（不给就没有）。 */
+export interface Panel {
+  readonly rows: readonly string[]
+  readonly input?: PanelInput | undefined
+}
+
+/** 界面自己那几样（`T4`）：候选那一层与输入行。**纯视图状态**（授权 · 排队 · 处境一律落在账上）。 */
+export interface ViewInput {
+  readonly menu?: MenuInput | undefined
+  readonly input?: PanelInput | undefined
+}
+
+/** 面板那一块：给一个尺寸，还回那几行（**渲染在调用方**，这一份只量尺寸）。阵列是"没有输入行"那一档。 */
+export type RenderPanel = (size: {
+  readonly columns: number
+  readonly height: number
+}) => readonly string[] | Panel
 
 export interface TermOptions {
   readonly out: TermOut
@@ -133,7 +171,7 @@ export interface Term {
   readonly height: number
   /** 上一次量到的列宽（量不到就是兜的那个 80）。 */
   readonly columns: number
-  /** 摆一块：让开旧的那一块 → 写永久行 → 把面板补到 K 行写在它下面。 */
+  /** 摆一块：让开旧的那一块 → 写永久行 → 把面板补到 K 行写在它下面 → 有输入行就写在再下面。 */
   draw(permanent: readonly string[], render: RenderPanel): void
   /** 收走底部那一块（终端历史里只剩永久行）。 */
   close(): void
@@ -151,6 +189,10 @@ export function openTerm(o: TermOptions): Term {
   let columns = FALLBACK_COLUMNS
   let drawn = false
   let drawnColumns = 0
+  /** 上一次画完时光标停在区域第几行（0 = 面板顶）——下一次"上移多少"靠它。 */
+  let cursorRow = height
+  /** 上一次画出去的区域一共几行（面板 K + 输入那几行）——`close()` 收走这一块靠它。 */
+  let regionRows = height
   return {
     ansi,
     height,
@@ -166,11 +208,28 @@ export function openTerm(o: TermOptions): Term {
         return
       }
       // 面板先算好：**尺寸是刚刚量到的那一个**（渲染与摆是同一把尺，所以 1 逻辑行 = 1 物理行）。
-      const rows = panelOf(render({ columns, height }), height, columns)
+      const asked = render({ columns, height })
+      const spec: Panel = Array.isArray(asked) ? { rows: asked } : asked
+      const rows = panelOf(spec.rows, height, columns)
       // 上移只在"上一次画过、而且宽度没变过"时做——宽度变过就不猜重排。
-      if (drawn && columns === drawnColumns) out.write(upOf(height))
+      if (drawn && columns === drawnColumns) out.write(upOf(cursorRow))
       for (const line of permanent) out.write(`${CLEAR_LINE}${line}\n`)
       for (const row of rows) out.write(`${CLEAR_LINE}${row}\n`)
+      const input = spec.input
+      const body = input === undefined ? [] : input.rows
+      for (let i = 0; i < body.length; i += 1) {
+        const one = body[i] as string
+        // 最后一行**不带换行**：光标停在它上面（这是这一块区域唯一有光标的地方），退到该在的那一列。
+        if (i === body.length - 1) {
+          out.write(`\r${CLEAR_LINE}${one}`)
+          const back = widthOf(one) - (input as PanelInput).caret.col
+          if (back > 0) out.write(leftOf(back))
+        } else {
+          out.write(`\r${CLEAR_LINE}${one}\n`)
+        }
+      }
+      cursorRow = body.length === 0 ? height : height + body.length - 1
+      regionRows = height + body.length
       drawn = true
       drawnColumns = columns
     },
@@ -181,8 +240,8 @@ export function openTerm(o: TermOptions): Term {
       // 落回面板顶这条不变量在没重排时是成立的。
       const now = measure()
       if (typeof now === 'number' && now > 0 && now !== drawnColumns) return
-      out.write(upOf(height))
-      out.write(deleteLinesOf(height))
+      out.write(upOf(cursorRow))
+      out.write(deleteLinesOf(regionRows))
       drawn = false
     },
   }

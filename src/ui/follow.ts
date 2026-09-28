@@ -48,7 +48,7 @@ import type { FrameInput } from './frame.ts'
 import { frameOf } from './frame.ts'
 import type { FamilyTable } from './stream.ts'
 import { permanentLinesOf } from './stream.ts'
-import type { Term } from './term.ts'
+import type { Panel, Term, ViewInput } from './term.ts'
 
 /**
  * 那一档（`PLAN § 5.19` 的四条地板收成这一张表）：**面板**（真终端）· **只印永久行**（管道 · CI ·
@@ -76,6 +76,13 @@ export interface SessionOptions {
   readonly phase?: Phase
   /** 事件族那一张分法表。**它是入参**（`ui/stream.ts`）：换一张表，历史那一栏就跟着换。 */
   readonly table?: FamilyTable
+  /**
+   * 那一刻**界面自己那几样**（输入行 · 候选那一层，`T4`）：每次折帧现问一次。
+   *
+   * **纯视图状态**——授权 · 排队 · 处境一律落在账上（PLAN § 5.19 一 · 3"界面不留第二份真相"），
+   * 这一份里进得来的一律是"进程一退就没了"的那几样。不给就与从前逐字节相同。
+   */
+  readonly view?: (() => ViewInput) | undefined
 }
 
 /**
@@ -95,6 +102,11 @@ export interface TuiSession {
   fresh(): readonly string[]
   /** 那一刻的一帧（尺寸是入参——这一份不问终端）。 */
   frame(size: { readonly columns: number; readonly height: number }): readonly string[]
+  /**
+   * 那一刻的**一整块**（尺寸是入参）：面板那几行 + 它下面那几行输入行（`T4`）。终端那一头拿的是它。
+   * 有输入行时**总行数才多出来**——终端那一档按"上一次停在哪一行"让位（`ui/term.ts` 头注）。
+   */
+  panel(size: { readonly columns: number; readonly height: number }): Panel
 }
 
 /**
@@ -124,6 +136,21 @@ export function openSession(o: SessionOptions = {}): TuiSession {
   let rows: StatusRow[] = []
   let shown: readonly string[] = []
   const permanent = (): readonly string[] => permanentLinesOf(rows, o.table)
+  /** 那一刻的面板那几行。**纯函数**：这一档累起来的行 + 界面自己那几样（现问一次）。 */
+  const frameAt = (size: { readonly columns: number; readonly height: number }): readonly string[] => {
+    const v = o.view?.()
+    const input: FrameInput = {
+      // 三份读数与 `status --once` 同一个入口（`readingsOf`）——命令面与这一档读的是同一份。
+      ...readingsOf(rows, o.readings),
+      ...(o.phase === undefined ? {} : { phase: o.phase }),
+      // 界面自己那几样（输入行 · 候选那一层）**每帧现问**：它们不是读源，是这一档自己的视图状态。
+      ...(v?.menu === undefined ? {} : { menu: v.menu }),
+      permanent: permanent(),
+      width: size.columns,
+      height: size.height,
+    }
+    return frameOf(input).lines
+  }
   return {
     get rows(): readonly StatusRow[] {
       return rows
@@ -138,16 +165,10 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       shown = all
       return out
     },
-    frame(size: { readonly columns: number; readonly height: number }): readonly string[] {
-      const input: FrameInput = {
-        // 三份读数与 `status --once` 同一个入口（`readingsOf`）——命令面与这一档读的是同一份。
-        ...readingsOf(rows, o.readings),
-        ...(o.phase === undefined ? {} : { phase: o.phase }),
-        permanent: permanent(),
-        width: size.columns,
-        height: size.height,
-      }
-      return frameOf(input).lines
+    frame: frameAt,
+    panel(size: { readonly columns: number; readonly height: number }): Panel {
+      const v = o.view?.()
+      return { rows: frameAt(size), ...(v?.input === undefined ? {} : { input: v.input }) }
     },
   }
 }
@@ -184,6 +205,8 @@ export interface TuiOptions {
   readonly intervalMs?: number
   /** 停下来的信号（`Ctrl-C` 那一档把它拨一下）。 */
   readonly signal?: AbortSignal
+  /** 界面自己那几样（输入行 · 候选那一层，`T4`）——一路递给会话，折帧时现问。 */
+  readonly view?: (() => ViewInput) | undefined
 }
 
 /** 接上的那一档：一个句柄，两样东西——这一档累起来的行，与"跑完了"那一下。 */
@@ -210,7 +233,7 @@ export interface Tui {
  * （那三样都是调用方的：`cli/fugue.ts` 的 `tui`）。
  */
 export function openTui(o: TuiOptions): Tui {
-  const session = openSession({ readings: o.readings, phase: o.phase, table: o.table })
+  const session = openSession({ readings: o.readings, phase: o.phase, table: o.table, view: o.view })
   const c = { rows: 0, permanent: 0, draws: 0, lines: 0, notes: 0 }
   /** 界面自己写的那几行（还没落到历史里的）：与永久行同一档、都写在面板上方，**都只写一次**。 */
   const notes: string[] = []
@@ -226,7 +249,7 @@ export function openTui(o: TuiOptions): Tui {
     const fresh = [...session.fresh(), ...takeNotes()]
     if (o.mode === 'panel') {
       c.draws += 1
-      o.term.draw(fresh, (size) => session.frame(size))
+      o.term.draw(fresh, (size) => session.panel(size))
       return
     }
     c.lines += fresh.length
@@ -263,7 +286,7 @@ export function openTui(o: TuiOptions): Tui {
       if (o.mode !== 'panel') return
       c.draws += 1
       // resize 也把还没写出去的注记带上：账不重读，但这句话还没落到历史里。
-      o.term.draw(takeNotes(), (size) => session.frame(size))
+      o.term.draw(takeNotes(), (size) => session.panel(size))
     },
   }
 }

@@ -160,6 +160,11 @@ export interface RunLauncher {
   /** 还跑着没有。 */
   readonly running: boolean
   /**
+   * **上一次真要起的那一条命令的 argv**（还没有就是空表）。`argvOf` 是"先看不跑"，这个是"真按下去了
+   * 的那一条"——"这一趟起不来，手敲一遍看看"那句注记要的就是它（起不来时没有进程，可 argv 有）。
+   */
+  readonly last: readonly string[]
+  /**
    * 起一行。**跑着的时候起不动**（返回 `false`：同一条命令不叠第二个进程）；**认不出来的行也
    * 起不动**（返回 `false`，为什么由 `argvOf` 那一份说）。
    */
@@ -176,6 +181,7 @@ export function openRun(o: RunOptions): RunLauncher {
   const self = o.self ?? selfArgvOf()
   const run = o.spawn ?? spawnChild
   let running = false
+  let last: readonly string[] = []
   const argvOf = (line: string, mode?: LineMode): LineArgv => lineArgvOf({ self, root: o.root, line, mode })
   /** 一条流：按 `\n` 切成行。**多字节字符可能被拆在两个块里**，所以解码器是流式的。 */
   const eat = async (stream: AsyncIterable<Uint8Array> | null): Promise<void> => {
@@ -200,10 +206,14 @@ export function openRun(o: RunOptions): RunLauncher {
     get running(): boolean {
       return running
     },
+    get last(): readonly string[] {
+      return last
+    },
     press(line: string, mode?: LineMode): boolean {
       if (running) return false
       const cut = argvOf(line, mode)
       if (cut.why !== null) return false
+      last = cut.argv
       running = true
       const kid = run(cut.argv[0] as string, cut.argv.slice(1))
       // 两条流都收干净（收尾顺序与子进程的死活无关：先等它死，再等两条流读完），然后才报收尾。

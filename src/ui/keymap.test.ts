@@ -12,19 +12,28 @@
 //      再喂一个字节还会触发动作**）· `close()` 幂等 · 不是 TTY 就一个字节都不读（`on` 一次都不调）。
 //   （起命令那一半与"账逐字节相同"那两条搬到 `run.test.ts` 去了：`ui/go.ts` 那一格泛化成了
 //   `ui/run.ts`——按键 → 动作 → 起命令这一条路在那里量。）
-//   ④ **三处渲染与表逐字相同、条数也是从表里数出来的**：提示行 · 帮助面板 · 菜单三个渲染器吐出来
-//      的每一个键串都能在表里唯一找到那一条；**负对照**：另写一份手抄的目录（同类里那种漂了 5 条
-//      的两张表）与表比，**当场对不上**。
+//   ④ **两处渲染与表逐字相同、条数也是从表里数出来的**：提示行 · 帮助面板（`Ctrl-P` 那一屏就是
+//      它，`T4` 接上的）吐出来的每一个键串都能在表里唯一找到那一条；**负对照**：另写一份手抄的目录
+//      （同类里那种漂了 5 条的两张表）与表比，**当场对不上**。
+//
+//      （`T2` 那会儿这里数的是"三处"：第三处是个叫 `menuRowsOf` 的渲染器，喂的是 `/` 菜单的候选。
+//      `T4` 落地时那条路定成了"`/` 菜单列的是**命令**（`cli/flags.ts` 的 `FLAGS_OF`）"，
+//      `menuRowsOf` 于是没有第二个消费者——删了。键表这一张的消费者还是一处不少：提示行 ·
+//      `Ctrl-P` 那一屏 · 真分发。）
 //   ⑤ **覆盖**（`config set ui.keys.<动作> <键串>`）：改了那一条的字节 · 别的动作不动 · 认不出来的
 //      键名与抢同一个字节**都报出来**（那一条照缺省走，不静默变成"按不出来"）。
-//   ⑥ **提示行与帮助面板的形状**：提示行只印已经接线的（`T2`）那几条——没接线的动作一个都不许
-//      出现 · `limit` 那一档把剩下的写成"还有 N 条"（N 从表里数）· 帮助面板列全部、键那一列
-//      **逐行对齐**（列宽是算出来的，不是写死的）。
+//   ⑥ **提示行与帮助面板的形状**：提示行只印已经落地的（`by` 在 `WIRED` 里）那几条——没接线的动作
+//      一个都不许出现 · `limit` 那一档把剩下的写成"还有 N 条"（N 从表里数）· 帮助面板列全部、
+//      键那一列**逐行对齐**（列宽是算出来的，不是写死的）。
+//   ⑦ **打字与粘贴**（`T4` 把输入行接上线时补的）：表里没吃掉的可打印字符走 `insert`（带着那个
+//      字），认不出来的控制字符**一个都不出**；可打印字符的那几条绑定只在**行里没字的地方**算动作
+//      （`actsOnEmpty`：`/round go` 里那个 `g` 要是也当动作，这一行会当场被发出去）；bracketed
+//      paste 那一对记号之间**一个字节都不解释**（里面的换行不是 `Enter`），记号只到一半就攒着。
 import assert from 'node:assert/strict'
 import { widthOf } from './frame.ts'
 import test from 'node:test'
 import type { KeyInput, UiAction } from './keymap.ts'
-import { ESC_WAIT_MS, KEYMAP, TABLE, actionsOf, bytesOfKey, decodeOf, decoderOf, escapeAt, escapeTruncatedAt, helpRowsOf, hintLineOf, keyLabelOf, keymapOf, menuRowsOf, openKeys } from './keymap.ts'
+import { ESC_WAIT_MS, KEYMAP, TABLE, WIRED, actionsOf, actsOnEmpty, bytesOfKey, decodeOf, decoderOf, escapeAt, escapeTruncatedAt, helpRowsOf, hintLimitOf, hintLineOf, keyLabelOf, keymapOf, openKeys, PASTE_OFF, PASTE_ON } from './keymap.ts'
 
 /** 品牌类型那一栏（`RoundId` 一类）：这一份里那些值是拿来喂接口的，不是账上真发生过的。 */
 const brand = (v: string): never => v as never
@@ -62,7 +71,7 @@ test('② 解码：字母 · 控制字符 · 一串好几个 · 序列整段吃�
     ['\u0003', ['interrupt']],
     ['\u0004', ['quit']],
     ['?', ['help']],
-    ['h', []],
+    ['h', ['insert']],
     ['\r', ['submit']],
     ['\n', ['newline']],
     ['\t', ['complete']],
@@ -81,7 +90,7 @@ test('② 解码：字母 · 控制字符 · 一串好几个 · 序列整段吃�
     ['\u001b7', ['focus']],
     ['gq', ['go', 'quit']],
     ['gg', ['go', 'go']],
-    ['x\n中 5', ['newline']],
+    ['x\n中 5', ['insert', 'newline', 'insert', 'insert', 'insert']],
     ['\u001b[1;5A', []],
     ['\u001b[27;5;103~', []],
     ['\u001b[<0;12;3M', []],
@@ -110,16 +119,16 @@ test('② 解码：字母 · 控制字符 · 一串好几个 · 序列整段吃�
   const dec = decoderOf()
   assert.deepEqual(dec.feed('\u001b'), [], '半截先不出动作')
   assert.equal(dec.pending, '\u001b', '半截攒着')
-  assert.deepEqual(dec.feed('[A'), [{ action: 'historyOlder' }], '凑齐了才出动作')
+  assert.deepEqual(dec.feed('[A'), [{ action: 'historyOlder', key: '\u001b[A' }], '凑齐了才出动作')
   assert.equal(dec.pending, '', '凑齐之后不剩半截')
   // 负对照：攒着的那半截不许被当成"按了一下 Esc"——不攒的那一版在这里会多出来一个 cancel。
   const dec2 = decoderOf()
   dec2.feed('\u001b')
-  assert.deepEqual(dec2.feed('[A'), [{ action: 'historyOlder' }], '只有方向键那一个动作，没有多出来的 cancel')
+  assert.deepEqual(dec2.feed('[A'), [{ action: 'historyOlder', key: '\u001b[A' }], '只有方向键那一个动作，没有多出来的 cancel')
   // 真按了一下 Esc：等够 `ESC_WAIT_MS` 之后 `flush()` 才把它交出来。
   const dec3 = decoderOf()
   assert.deepEqual(dec3.feed('\u001b'), [])
-  assert.deepEqual(dec3.flush(), [{ action: 'cancel' }], '等够时间才当"按了一下 Esc"')
+  assert.deepEqual(dec3.flush(), [{ action: 'cancel', key: '\u001b' }], '等够时间才当"按了一下 Esc"')
   assert.deepEqual(dec3.flush(), [], 'flush 幂等')
   // `Alt-1…9` 那一条键名翻出九个字节（表里写的是人能读的那一个范围）。
   assert.equal(bytesOfKey('Alt-1…9').length, 9, '范围键名翻出九个')
@@ -191,7 +200,7 @@ test('③ raw mode：开 · 关的时候归位并摘监听（摘了就不再触�
 // ── ④ 三处渲染：与表逐字相同，条数也是从表里数出来的 ─────────────────────────
 test('④ 三处渲染：键串逐字来自表 · 条数是数出来的 · 负对照是手抄一份目录', () => {
   const labels = new Set(TABLE.map((b) => keyLabelOf(b)))
-  const ready = TABLE.filter((b) => b.by === 'T2')
+  const ready = TABLE.filter((b) => WIRED.includes(b.by))
   // 提示行：`按键 ` 之后一节一节，每节的第一个字之前就是键串（表里那条断言保证键串里没有空格）。
   const hint = hintLineOf()
   const hintKeys = hint.replace(/^按键 /, '').split(' · ').map((one) => one.slice(0, one.indexOf(' ')))
@@ -205,22 +214,14 @@ test('④ 三处渲染：键串逐字来自表 · 条数是数出来的 · 负�
     TABLE.map((b) => keyLabelOf(b)),
     '帮助面板每一行开头那一串与表逐字相同、次序也相同',
   )
-  // 菜单候选：同一张表推出来的。
-  const menu = menuRowsOf()
-  assert.equal(menu.length, TABLE.length, '菜单候选的条数 = 表的条数')
-  assert.deepEqual(
-    menu.map((r) => r.slice(0, r.indexOf('  '))),
-    TABLE.map((b) => keyLabelOf(b)),
-    '菜单每一行的键串与表逐字相同',
-  )
   // **负对照**：手抄一份目录（同类里那家"帮助目录与真分发两张互不相干的表"，实测漂了 5 条：
   // `?` · `l` · `v` · `g` · `G` 早就换了前缀）。它与表对不上——这就是这条断言那把尺的牙。
   const handWritten = ['g', 'q', '?', 'l', 'v', 'G']
   const drifted = handWritten.filter((k) => !labels.has(k))
   assert.ok(drifted.length >= 3, `手抄那一份与表只差 ${drifted.length} 条，这把尺太钝：${handWritten.join(' ')}`)
   console.log(
-    `④ 读数：提示行 ${hintKeys.length} 条 · 帮助面板 ${help.length} 行 · 菜单 ${menu.length} 条，` +
-      `三处的键串与表逐字相同；手抄那一份漂了 ${drifted.length} 条（${drifted.join(' ')}）`,
+    `④ 读数：提示行 ${hintKeys.length} 条 · 帮助面板 ${help.length} 行（Ctrl-P 那一屏就是它），` +
+      `两处的键串与表逐字相同；手抄那一份漂了 ${drifted.length} 条（${drifted.join(' ')}）`,
   )
 })
 
@@ -258,7 +259,7 @@ test('⑤ 覆盖：改一条不动别人 · 认不出来的与抢字节的都报
 
 // ── ⑥ 形状：提示行与帮助面板 ─────────────────────────────────────────────────
 test('⑥ 形状：提示行只印接上线的 · limit 那一档 · 帮助面板键列逐行对齐', () => {
-  const ready = TABLE.filter((b) => b.by === 'T2')
+  const ready = TABLE.filter((b) => WIRED.includes(b.by))
   const hint = hintLineOf()
   assert.ok(hint.startsWith('按键 '), hint)
   assert.equal(hint.split(' · ').length, ready.length, '一节一条，正好是已接线的那些')
@@ -271,6 +272,15 @@ test('⑥ 形状：提示行只印接上线的 · limit 那一档 · 帮助面�
   const cut = hintLineOf(KEYMAP, 2)
   assert.ok(cut.includes(`还有 ${ready.length - 2} 条`), `limit 那一档要说清还剩几条（N 从表里数）：${cut}`)
   assert.equal(cut.split(' · ').length, 3, '头两条 + "还有 N 条"那一句')
+  // **宽度是入参**（提示行是给屏幕看的）：宽到装得下就全印，窄了就少印几条 + 说清还剩多少。
+  assert.equal(hintLimitOf(1000), ready.length, '够宽就把接线的都印上')
+  assert.ok(hintLimitOf(80) < ready.length, '80 列装不下 28 条（实测整行 438 列）')
+  for (const columns of [80, 100, 140]) {
+    const line = hintLineOf(KEYMAP, hintLimitOf(columns))
+    assert.ok(widthOf(line) <= columns, `${columns} 列那一档印出来是 ${widthOf(line)} 列`)
+  }
+  assert.equal(hintLimitOf(20), 1, '窄到一条都放不下也要留一条（不然那一行是空的）')
+  assert.ok(hintLimitOf(80) >= 1)
   // 帮助面板：键那一列逐行对齐，列宽 = 表里最长那个键串 + 2。
   const rows = helpRowsOf()
   const w = TABLE.reduce((n, b) => Math.max(n, widthOf(keyLabelOf(b))), 0)
@@ -287,7 +297,56 @@ test('⑥ 形状：提示行只印接上线的 · limit 那一档 · 帮助面�
   const later = rows.filter((r) => r.includes('那一格接上'))
   assert.equal(later.length, TABLE.length - ready.length, '没接线的那些后面都缀了"哪一格接上"')
   console.log(
-    `⑥ 读数：提示行 ${ready.length} 条（${widthOf(hint)} 列）· limit=2（${widthOf(cut)} 列）· ` +
-      `帮助面板 ${rows.length} 行、键列 ${w + 2} 列、逐行对齐 · 没接线 ${later.length} 条缀了出处`,
+    `⑥ 读数：提示行 ${ready.length} 条（整行 ${widthOf(hint)} 列）· 按宽度取前几条：80 列 → ${hintLimitOf(80)} 条（${widthOf(hintLineOf(KEYMAP, hintLimitOf(80)))} 列）· ` +
+      `140 列 → ${hintLimitOf(140)} 条 · limit=2（${widthOf(cut)} 列）· 帮助面板 ${rows.length} 行、键列 ${w + 2} 列、逐行对齐 · 没接线 ${later.length} 条缀了出处`,
+  )
+})
+
+// ── ⑦ 打字与粘贴：可打印字符走 `insert` · 可打印的那几条绑定只在行里没字时是动作 ─────────
+test('⑦ 打字与粘贴：`insert` 带着那个字 · 控制字符一个都不出 · 记号之间不解释 · `actsOnEmpty`', () => {
+  // 打字：表里没吃掉的字走 `insert`（带着那个字与那个字节）——**加一条键不会让某个字打不进去**。
+  assert.deepEqual(decodeOf('a'), [{ action: 'insert', text: 'a', key: 'a' }])
+  assert.deepEqual(decodeOf('中文'), [
+    { action: 'insert', text: '中', key: '中' },
+    { action: 'insert', text: '文', key: '文' },
+  ])
+  // 表里吃掉的那些还是动作（`g` 是 `go`）；负对照是**控制字符**：认不出来就一个都不出。
+  assert.deepEqual(actionsOf('g'), ['go'])
+  assert.deepEqual(decodeOf('\u0000\u001c'), [], '认不出来的控制字符不许变成 insert')
+  assert.deepEqual(actionsOf('q'), ['quit'])
+  // bracketed paste：记号之间那一整段是原文，里面的换行不是 `Enter`。
+  const dec = decoderOf()
+  assert.deepEqual(
+    dec.feed(`${PASTE_ON}第一行\n第二行${PASTE_OFF}`),
+    [{ action: 'insert', text: '第一行\n第二行' }],
+    '粘进来的原文一个字节都没动（换行留着）',
+  )
+  assert.equal(dec.pending, '', '记号吃干净')
+  // 记号只到一半 → 攒着；下一块到了再一起交出去。
+  const dec2 = decoderOf()
+  assert.deepEqual(dec2.feed(`${PASTE_ON}一半`), [], '记号还没闭合就攒着')
+  assert.deepEqual(dec2.feed(`那一半${PASTE_OFF}`), [{ action: 'insert', text: '一半那一半' }], '两块拼起来还是原文')
+  // 记号前后各解析各的：粘完了接着按的键照旧是动作。
+  const dec3 = decoderOf()
+  assert.deepEqual(dec3.feed(`a${PASTE_ON}b${PASTE_OFF}G`), [
+    { action: 'insert', text: 'a', key: 'a' },
+    { action: 'insert', text: 'b' },
+    { action: 'go', key: 'G' },
+  ])
+  // `actsOnEmpty`：可打印字符的那几条绑定只在行里没字的地方算动作（不然 `/round go` 打不完）。
+  assert.equal(actsOnEmpty('go', '', 0), true, '行空 → `g` 是放行')
+  assert.equal(actsOnEmpty('go', 'x', 1), false, '行里有字 → `g` 就是那个字')
+  assert.equal(actsOnEmpty('quit', 'q', 1), false, '`q` 同上')
+  assert.equal(actsOnEmpty('help', '?', 1), false, '`?` 同上')
+  assert.equal(actsOnEmpty('menu', '', 0), true, '行空 → `/` 开菜单')
+  assert.equal(actsOnEmpty('menu', '/x', 2), false, '行里已经有字 → `/` 就是那个斜杠')
+  assert.equal(actsOnEmpty('mention', '', 0), true, '行首 → `@` 开面板')
+  assert.equal(actsOnEmpty('mention', '看 一眼 ', 5), true, '词首（前一个字是空格）→ `@` 开面板')
+  assert.equal(actsOnEmpty('mention', 'a@b', 3), false, '夹在词中间 → `@` 就是那个 `@`')
+  assert.equal(actsOnEmpty('submit', '', 0), true, '别的动作不看行里有没有字')
+  console.log(
+    '⑦ 读数：打字 2 条进 insert（`a` · `中文` 各一个字）· 控制字符 0x00/0x1c 出 0 个动作 · ' +
+      `粘贴「第一行\\n第二行」是 1 条 insert（换行留着、没被当成 Enter）· 记号切成两块也拼得回来 · ` +
+      `actsOnEmpty 10 档（行空 4 档是动作 · 行里有字 4 档让位成那个字 · 别的动作 2 档不看）`,
   )
 })

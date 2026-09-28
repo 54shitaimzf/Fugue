@@ -13,7 +13,7 @@ import { lowerFor } from '../view/lower.ts'
 import { loadView } from '../view/view.ts'
 import { readSnapshot } from '../view/snapshot.ts'
 import type { PolicyMode, RelPath, ViewRev, WriterId } from '../terms.ts'
-import { hintLineOf } from '../ui/keymap.ts'
+import { KEYMAP, hintLimitOf, hintLineOf } from '../ui/keymap.ts'
 
 /** 用法错（旗子少一个值 · 互斥的两档一起给）：`run()` 那一层把它收成退出码 2。 */
 export class UsageError extends Error {}
@@ -40,7 +40,7 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              ——门槛上按 g 起的是**一条命令**（fugue round go 那个子进程写账）。
                              TTY 那一档不给 --follow 也是跟着；退出收走面板（码 0：人喊停不是失败）。
                              加 --metrics / --report 与 status 那两栏同名同义。
-                             ${hintLineOf()}（只在 TTY 那一档）
+                             ${hintLineOf(KEYMAP, hintLimitOf(60))}（只在 TTY 那一档）
                              --once 印一遍永久行就退；不是 TTY（管道 · CI）也是这一档，**一个字节的
                              ANSI 都不写**；$TERM 是 dumb 或认不出来同样退到这一档
   read <path>                读一个路径；默认吐原始字节

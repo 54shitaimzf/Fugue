@@ -164,9 +164,13 @@ function recorder(o: { readonly columns?: number; readonly height?: number; read
     height,
     columns,
     draw(permanent, render): void {
+      // **这一份是记帧的假终端**（量的是"画了几帧、每帧几行"），不是第二份摆法：`Panel` 那一层
+      // 拆不拆由真的 `ui/term.ts` 说了算，这里只把面板那几行拿下来记着。
+      const asked = render({ columns, height })
+      const spec = Array.isArray(asked) ? { rows: asked } : asked
       records.push({
         permanent: [...permanent],
-        panel: [...panelOf(render({ columns, height }), height, columns)],
+        panel: [...panelOf(spec.rows, height, columns)],
       })
     },
     close(): void {},

@@ -14,12 +14,15 @@
 //   ⑤ **地板**：窄了收成单栏（同一个框，少中间那根竖线，内容一行不少）· 矮了截断并说出还剩
 //      几行 · 三行都不到印一句"太矮"（不静默给空帧）· 尺寸给 0 给一个空帧。
 //   ⑥ **纯**：同一份输入两次调用逐字节相同，而且进去的那一份快照一个字段都没被改。
+//   ⑦ **候选那一层开的窗**（`windowOf`，`T4` 的 `/` 菜单与 `Ctrl-P` 面板用它）：装得下就全印 · 装不下
+//      时**选中的那一条一定在窗里**（贴着头或贴着尾）· 上下各还剩几条数得出来 · 只剩一行可印时不留
+//      "还有几条"那一句（那一行留给候选）。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
 import { statusOf } from '../probe/status.ts'
-import { bodyOf, clip, footerOf, frameOf, panelOf, widthOf, wrap } from './frame.ts'
+import { bodyOf, clip, footerOf, frameOf, panelOf, widthOf, windowOf, wrap } from './frame.ts'
 
 let seq = 0
 /** 一条事件（`round` 那一份上）。**seq 每次从 0 起**：两次折用的序号于是对得上。 */
@@ -275,4 +278,28 @@ test('⑥ 纯：同一份输入两次逐字节相同，进去的那一份快照�
   assert.equal(clip('中文字', 4), '中…', '截断留一个 `…`')
   assert.deepEqual([...wrap('甲 乙 丙 丁', 5)], ['甲 乙', '丙 丁'], '折在空格处')
   console.log(`⑥ 读数：两次逐字节相同（${one.lines.length} 行）· 快照 JSON ${before.length} 字节两趟同值 · 尺子 中文abc=7 · 中文字→「中…」`)
+})
+
+// ── ⑦ 候选那一层开的窗（`T4` 的面板用它）──────────────────────────────────────
+test('⑦ `windowOf`：装得下就全印 · 选中的一定在窗里 · 上下各剩几条 · 只剩一行时不留那句话', () => {
+  assert.deepEqual(windowOf(0, 0, 3), { from: 0, count: 0, above: 0, below: 0, summary: false }, '一条都没有')
+  assert.deepEqual(windowOf(3, 1, 3), { from: 0, count: 3, above: 0, below: 0, summary: false }, '装得下就全印')
+  assert.deepEqual(windowOf(30, 15, 4), { from: 14, count: 3, above: 14, below: 13, summary: true }, '中间那一条')
+  assert.deepEqual(windowOf(30, 0, 4), { from: 0, count: 3, above: 0, below: 27, summary: true }, '贴着头（不往回滚）')
+  assert.deepEqual(windowOf(30, 29, 4), { from: 27, count: 3, above: 27, below: 0, summary: true }, '贴着尾')
+  // 选中的那一条一定在窗里（这一条是这一段的牙：翻到哪一条都看得见）。
+  for (const sel of [0, 1, 14, 15, 28, 29]) {
+    const w = windowOf(30, sel, 4)
+    assert.ok(sel >= w.from && sel < w.from + w.count, `选中第 ${sel + 1} 条时它不在窗里：${JSON.stringify(w)}`)
+  }
+  assert.deepEqual(windowOf(5, 2, 1), { from: 2, count: 1, above: 2, below: 2, summary: false }, '只剩一行可印：留给候选，不留那句话')
+  assert.equal(windowOf(5, 2, 1).count + (windowOf(5, 2, 1).summary ? 1 : 0), 1, '印出去的行数不超过给的预算')
+  for (const budget of [1, 2, 3, 8]) {
+    const w = windowOf(30, 7, budget)
+    assert.ok(w.count + (w.summary ? 1 : 0) <= budget, `预算 ${budget} 行时印多了：${JSON.stringify(w)}`)
+  }
+  console.log(
+    '⑦ 读数：30 条候选在 4 行预算里 → 印 3 条 + 一句"还有 27 条"· 选中第 1/2/15/16/29/30 条时都在窗里 · ' +
+      '预算 1 行时不留那句话（那一行留给候选）',
+  )
 })

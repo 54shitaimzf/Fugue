@@ -14,6 +14,9 @@
 //      `close()` 也不去删它；列宽量不到（`undefined`）兜 80。
 //   ⑤ **地板：不是 TTY / `$TERM` 认不出来 → 一个字节的 ANSI 都不写**（只印永久行）。
 //   ⑥ **收尾**：画过 → 上移 K 行 + 删掉 K 行；没画过 → 一个字节都不写。
+//   ⑧ **输入行**（`T4`）：面板下面那几行输入行逐字写出去 · 光标**停在最后一行**（往左退到光标列）·
+//      下一次重画按"上一次停在区域第几行"上移（不是 K）· `close()` 删掉的是"面板 + 输入行"·
+//      **负对照**：不给输入行时与从前逐字节相同（这一格不许让老的那一档变样）。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
@@ -21,7 +24,7 @@ import type { StatusRow } from '../probe/status.ts'
 import { statusOf } from '../probe/status.ts'
 import { frameOf, widthOf } from './frame.ts'
 import { permanentLinesOf } from './stream.ts'
-import { CLEAR_LINE, FALLBACK_COLUMNS, K, ansiOf, deleteLinesOf, degradeNote, openTerm, upOf } from './term.ts'
+import { CLEAR_LINE, FALLBACK_COLUMNS, K, ansiOf, deleteLinesOf, degradeNote, leftOf, openTerm, upOf } from './term.ts'
 import type { TermOut } from './term.ts'
 
 /** 一个假的 sink：**写出去的每一次 `write` 就是一条读数**（一次 write = 一个动作）。 */
@@ -211,4 +214,46 @@ test('⑦ 降级说一声（U10a）：只有「真终端 + 认不出的 $TERM」
   assert.equal(degradeNote('dumb', true), null, 'dumb 是声明过的没有，不是认不出')
   assert.equal(degradeNote('xterm-256color', true), null, '认得出就没有降级')
   console.log(`⑦ 读数：说的一档 1 种 · 不说的四档（非 TTY · 没设 · 空/dumb · 认得出）各 0 字节`)
+})
+
+// ── ⑧ 输入行：面板下面那几行，光标停在最后一行 ────────────────────────────────
+test('⑧ 输入行：逐字写出去 · 光标退到该在的那一列 · 上移按"上次停在哪一行" · 收尾删的是一整块', () => {
+  const panel = frameOf({ snapshot: SNAPSHOT, permanent: PERMANENT, width: 20, height: K }).lines
+  const out = fakeOut({ columns: 20 })
+  const t = openTerm({ out, term: 'xterm-256color' })
+  // 负对照：不给输入行时与从前逐字节相同（K 行面板 + 一次 `upOf(K)` 的重画）。
+  t.draw(PERMANENT, () => panel)
+  t.draw([], () => panel)
+  assert.deepEqual(out.written.slice(-(panel.length + 1)), [upOf(K), ...panel.map((r) => `${CLEAR_LINE}${r}\n`)], '没有输入行那一档与从前一样')
+  // 有输入行：面板那 K 行之后接着写输入行那两行，**最后一行不带换行**，再往左退到光标列。
+  const out2 = fakeOut({ columns: 20 })
+  const t2 = openTerm({ out: out2, term: 'xterm-256color' })
+  t2.draw([], () => ({ rows: panel, input: { rows: ['» /log', '  --root'], caret: { row: 1, col: 2 } } }))
+  const tail = out2.written.slice(-4)
+  assert.deepEqual(tail, [
+    `${CLEAR_LINE}${panel[panel.length - 1] as string}\n`,
+    '\r' + CLEAR_LINE + '» /log\n',
+    '\r' + CLEAR_LINE + '  --root',
+    leftOf(widthOf('  --root') - 2),
+  ], `输入行那两行写得不对：${JSON.stringify(tail)}`)
+  assert.ok(out2.written.includes(leftOf(widthOf('  --root') - 2)), '光标退到该在的那一列')
+  assert.ok(!out2.written.some((s) => s.endsWith('--root\n')), '最后一行不许带换行（光标就停在它上面）')
+  // 重画：上移的是"上一次停在哪一行"（K + 输入行数 − 1 = 13），不是 K。
+  const before = out2.written.length
+  t2.draw([], () => ({ rows: panel, input: { rows: ['» /log', '  --root'], caret: { row: 1, col: 2 } } }))
+  assert.equal(out2.written[before], upOf(K + 2 - 1), `重画该上移 ${K + 2 - 1} 行（面板 + 输入行 − 1）`)
+  // 收尾：上移同一行数 + 删掉"面板 K 行 + 输入行 2 行"。
+  const before2 = out2.written.length
+  t2.close()
+  assert.deepEqual(out2.written.slice(before2), [upOf(K + 2 - 1), deleteLinesOf(K + 2)], '收尾删的是整块（面板 + 输入行）')
+  // 没有输入行的收尾：上移 K + 删 K（与从前一样）。
+  const out3 = fakeOut({ columns: 20 })
+  const t3 = openTerm({ out: out3, term: 'xterm-256color' })
+  t3.draw([], () => panel)
+  t3.close()
+  assert.deepEqual(out3.written.slice(-2), [upOf(K), deleteLinesOf(K)], '没有输入行时收尾与从前一样')
+  console.log(
+    `⑧ 读数：输入行 2 行逐字写出去 · 光标退 ${widthOf('  --root') - 2} 列到第 3 列 · ` +
+      `重画上移 ${K + 1} 行（不是 K）· 收尾删 ${K + 2} 行 · 不给输入行时逐字节与从前相同`,
+  )
 })

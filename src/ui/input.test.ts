@@ -25,6 +25,7 @@ import {
   displayOf,
   emptyEditor,
   inputFrameOf,
+  intentOf,
   modeOf,
   rememberSubmit,
   submitOf,
@@ -200,4 +201,44 @@ test('⑦ 纯 · 视图状态 · 显示里没有裸控制字符', () => {
   assert.equal(submitOf(sneaky), 'a\u001b[31mb', '原文一个字节不丢')
   assert.equal(caretColOf(sneaky.draft), widthOf(shown), '光标列按显示算（^[ 占两列）')
   console.log(`⑦ 读数：${INPUT_ROWS} 行窗口 · 上面藏 ${f.hidden.above} 行 · 0x1b 印成 "${shown}"`)
+})
+
+// ── ⑧ 表里那个动作 id → 这一份的编辑动作（`T4` 把输入行接上线时补的）──────────────────
+test('⑧ `intentOf`：编辑那几样都翻得出来 · `newline` 是插一个换行 · 别的一律 `null` · `setLine` 换整行', () => {
+  // 编辑那些动作一个不少。
+  const pairs: readonly (readonly [string, string])[] = [
+    ['backspace', 'backspace'],
+    ['left', 'left'],
+    ['wordRight', 'wordRight'],
+    ['home', 'home'],
+    ['killToEnd', 'killToEnd'],
+    ['yank', 'yank'],
+    ['undo', 'undo'],
+    ['historyOlder', 'historyOlder'],
+    ['search', 'search'],
+    ['toggleFold', 'toggleFold'],
+    ['cancel', 'cancel'],
+  ]
+  for (const [action, t] of pairs) {
+    assert.equal(intentOf(action as never)?.t, t, `${action} 该翻成 ${t}`)
+  }
+  // `insert` 带着那几个字；`newline` 是**插一个换行**（`Ctrl-J` 与 `Enter` 的分别就在这一格）。
+  assert.deepEqual(intentOf('insert', '中'), { t: 'insert', text: '中' })
+  assert.deepEqual(intentOf('newline'), { t: 'insert', text: '\n' })
+  // 界面动作一个都不翻（那些要看的不止这一行字）。
+  for (const a of ['submit', 'quit', 'go', 'help', 'menu', 'panel', 'complete', 'mention', 'focus', 'interrupt']) {
+    assert.equal(intentOf(a as never), null, `${a} 不该在这一份里`)
+  }
+  // `setLine`：整行换成另一串字（菜单选中 · 补全那两处），**进撤销栈**（它是"人改了这一行"）。
+  const before = typed('/ro')
+  const after = applyIntent(before, { t: 'setLine', text: '/round go ' })
+  assert.equal(after.draft.text, '/round go ')
+  assert.equal(after.draft.caret, '/round go '.length, '光标到行尾')
+  assert.equal(modeOf(after.draft), 'Command')
+  assert.equal(applyIntent(after, { t: 'undo' }).draft.text, '/ro', '退得回来')
+  assert.deepEqual(after.draft.folded, [], '换来的一行没有折叠块')
+  console.log(
+    `⑧ 读数：${pairs.length} 条编辑动作逐条翻对 · insert 带原文 · newline 翻成一个换行 · ` +
+      '10 条界面动作一律 null · setLine 换整行（进撤销栈、退得回来）',
+  )
 })
