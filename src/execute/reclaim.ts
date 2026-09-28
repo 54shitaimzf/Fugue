@@ -42,7 +42,7 @@ import { WORKSPACE_STATE, statOrNull } from '../materialize/diffstat.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { DirEntry, EntryMeta } from '../entries.ts'
 import type { AbsPath, AgentId, CommitId, ForkStrategy, RelPath } from '../terms.ts'
-import { cacheLayoutOf } from '../boundary/confine.ts'
+import { cacheLayoutOf } from '../roots/coords.ts'
 
 /**
  * 一次运行的声明集：**要回写视图的那一份产出**——工作区配置里 `actions.<名字>.outputs`

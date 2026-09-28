@@ -19,7 +19,8 @@ import { after, test } from 'node:test'
 import { DEFAULT_PORTS, envFor } from './binding.ts'
 import { createRoots } from '../roots/roots.ts'
 import type { Roots } from '../roots/contract.ts'
-import { cacheLayoutOf, confine } from './confine.ts'
+import { confine } from './confine.ts'
+import { cacheLayoutOf } from '../roots/coords.ts'
 import {
   AGENT,
   DECLARED,

@@ -36,7 +36,8 @@ import {
   readBinding,
 } from '../boundary/binding.ts'
 import type { ActionBinding } from '../boundary/binding.ts'
-import { cacheLayoutOf, confine, degradedArgv } from '../boundary/confine.ts'
+import { confine, degradedArgv } from '../boundary/confine.ts'
+import { cacheLayoutOf } from '../roots/coords.ts'
 import { createExecutor } from '../execute/exec.ts'
 import { ReclaimRefused, createReclaim } from '../execute/reclaim.ts'
 import type { DeclaredSet, Reclaim } from '../execute/reclaim.ts'

@@ -72,16 +72,12 @@ const RULES: readonly Rule[] = [
 
 /**
  * 在册例外（2026-09 评审起的账）。每消掉一条，随那个单元的提交把这一行划走：
- *   · U1（binding 归位 boundary）已消——execute→boundary 那两条随 b6bf849 后的 U1 提交划走；
- *   · U2（坐标词汇下沉 roots）消 reclaim 那条；
+ *   · U1（binding 归位）与 U2（坐标下沉 roots）已消——内核→boundary 那几条随各自提交划走，
+ *     R3 自此是**无条件禁令**；
  *   · U3（事件词汇进 terms）消 log/events 那条；
  *   · probe 借 machine 与 tools/host 引 truth 句柄类型是文档背书的长期选择，**保留**。
  */
 const EXCEPTIONS: readonly Exception[] = [
-  {
-    key: 'execute/reclaim.ts -> boundary/confine.ts',
-    note: 'U2 消：cacheLayoutOf/XDG_DIR 是纯布局计算，下沉 roots',
-  },
   {
     key: 'log/events.ts -> model/contract.ts',
     note: 'U3 消（type 级）：三词进 terms，底座词汇自足',

@@ -41,31 +41,16 @@ import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Roots } from '../roots/contract.ts'
-import type { AbsPath, AgentId, RelPath } from '../terms.ts'
+import type { AgentId, RelPath } from '../terms.ts'
 import type { ConfinedArgv } from '../execute/contract.ts'
 import { deviceFiles, helperPath, LANDLOCK_SANDBOX_PATH, landlockArgv, writableFor } from './landlock.ts'
 import type { Policy } from './policy.ts'
+import { cacheLayoutOf } from '../roots/coords.ts'
 
 /**
- * 本 agent 缓存目录（`cacheRoot(a)`）里的三块。**一处定义**：`confine` 的绑定源、命令面要建
- * 的目录、以及断言里读产物落在哪儿，读的都是它。
+ * `XDG_DIR` / `cacheLayoutOf`（本 agent 缓存的三块布局）已下沉 `roots/coords.ts`（U2）——
+ * 它们是纯布局计算，内核的回收那一侧也要读；住在 boundary 会让内核上仰边界。
  */
-/** `XDG_CACHE_HOME` 在缓存里的那一层目录名：**一处拼**，缓存侧与子进程侧都从它来。 */
-export const XDG_DIR = 'xdg-cache'
-
-export interface CacheLayout {
-  /** 子进程的家与缓存（沙箱档挂 `/cache`）：本 agent 的缓存目录。 */
-  readonly home: AbsPath
-  /** 子进程的 `XDG_CACHE_HOME`（沙箱档是 `/cache/xdg-cache`）。 */
-  readonly xdgCache: AbsPath
-  /** 一个声明目录的绑定源：`<cacheRoot(a)>/<rel>`（架构 § 8.6 第 2 步那一条逐字）。 */
-  readonly bound: (rel: RelPath) => AbsPath
-}
-
-export function cacheLayoutOf(roots: Roots, a: AgentId): CacheLayout {
-  const cache = roots.cacheRoot(a)
-  return { home: cache, xdgCache: join(cache, XDG_DIR), bound: (rel: RelPath) => join(cache, rel) }
-}
 
 /**
  * **`bwrap` 在不在（§ 15.7 的 E4）：每次现探，不进那份平台事实的缓存。**

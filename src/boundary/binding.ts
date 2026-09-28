@@ -18,7 +18,7 @@
 // 是照旧递进去的**：宿主环境不清洗（凭据那一类在 S5 的 `Policy` 与 S6 的 `envRealize` 手里），
 // 这一站只保证表里这几项在子进程里是本 agent 的坐标。
 import { join } from 'node:path'
-import { XDG_DIR } from './confine.ts'
+import { XDG_DIR } from '../roots/coords.ts'
 import type { Policy } from './policy.ts'
 import type { ConfigDoc } from '../config.ts'
 import { getConfig } from '../config.ts'

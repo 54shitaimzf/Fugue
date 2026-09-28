@@ -20,7 +20,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, test } from 'node:test'
 import { DEFAULT_PORTS, envFor } from './binding.ts'
-import { cacheLayoutOf } from './confine.ts'
+import { cacheLayoutOf } from '../roots/coords.ts'
 import { createRoots } from '../roots/roots.ts'
 import type { Roots } from '../roots/contract.ts'
 import {
