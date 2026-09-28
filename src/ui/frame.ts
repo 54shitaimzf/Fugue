@@ -177,44 +177,172 @@ export function panelOf(lines: readonly string[], height: number, columns: numbe
   return out
 }
 
+/** 一个**簇**：人眼算一个字的那些 code unit（基字符 + 跟在它身上的组合符号 · 变体选择符 · ZWJ 那几段）。 */
+export interface Cluster {
+  /** 簇里的原文（一个字节不改）。 */
+  readonly text: string
+  /** 在这一行里的起止（`[start, end)`，code unit 偏移）。 */
+  readonly start: number
+  readonly end: number
+  /** 占几列。 */
+  readonly width: number
+}
+
+/** 东亚宽字符那几段（连 emoji）。**近似**：`⇒` 这类 Ambiguous 按 Unicode 缺省算一列。 */
+function isWide(c: number): boolean {
+  return (
+    (c >= 0x1100 && c <= 0x115f) ||
+    (c >= 0x2e80 && c <= 0xa4cf) ||
+    (c >= 0xac00 && c <= 0xd7a3) ||
+    (c >= 0xf900 && c <= 0xfaff) ||
+    (c >= 0xfe30 && c <= 0xfe6f) ||
+    (c >= 0xff00 && c <= 0xff60) ||
+    (c >= 0xffe0 && c <= 0xffe6) ||
+    (c >= 0x1f300 && c <= 0x1faff)
+  )
+}
+
 /**
- * 一个字符占几列。**近似**：东亚宽字符那几段算两列，其余算一列。
+ * 零宽那些段：组合符号 · 变体选择符 · 肤色修饰 · 连接符（ZWJ）。
  *
- * 为什么在这里自己写一个：这一版没有依赖（约定 § 六），而框要对齐就得知道这个数。两处已知的
- * 近似写在下面（它们是**显示**的近似，不影响任何读数）：
- *   · 组合字符（零宽）算一列——这一版的印出来那些字里没有；
- *   · `⇒`（U+21D2，`status.ts` 的跳步那一条用它）在 Unicode 里是 Ambiguous：CJK 终端可能画成
- *     两列。这一份按一列算（Unicode 缺省），所以那种终端上跳步那几行会往右错一格。
+ * **近似**：UAX #29 那张表是几百段，整张抄进来就是一份会漂的第二份真相；这里收的是终端上真会
+ * 出现的那几段（印出来的字、还有输入行里打进去的字）。表外的组合符号会被当成独立的字——多占一列。
+ * **什么条件下改主意**：真遇到表外的（那种字真落进输入行，而不只是印出来），就换
+ * `Intl.Segmenter`，或者把这张表按需要长出来——长到几十行就该单独一份文件（`ui/glyph.ts`）。
+ */
+const ZERO: readonly (readonly [number, number])[] = [
+  [0x0300, 0x036f], [0x0483, 0x0489], [0x0591, 0x05bd], [0x05bf, 0x05bf], [0x05c1, 0x05c2], [0x05c4, 0x05c5],
+  [0x05c7, 0x05c7], [0x0610, 0x061a], [0x064b, 0x065f], [0x0670, 0x0670], [0x06d6, 0x06dc], [0x06df, 0x06e4],
+  [0x06e7, 0x06e8], [0x06ea, 0x06ed], [0x0711, 0x0711], [0x0730, 0x074a], [0x07a6, 0x07b0], [0x07eb, 0x07f3],
+  [0x0816, 0x0819], [0x081b, 0x0823], [0x0825, 0x0827], [0x0829, 0x082d], [0x0859, 0x085b], [0x08d3, 0x08e1],
+  [0x08e3, 0x0903], [0x093a, 0x093c], [0x093e, 0x094f], [0x0951, 0x0957], [0x0962, 0x0963], [0x0981, 0x0983],
+  [0x09bc, 0x09bc], [0x09be, 0x09cd], [0x09d7, 0x09d7], [0x09e2, 0x09e3], [0x0a01, 0x0a03], [0x0a3c, 0x0a3c],
+  [0x0a3e, 0x0a4d], [0x0a51, 0x0a51], [0x0a70, 0x0a71], [0x0a75, 0x0a75], [0x0a81, 0x0a83], [0x0abc, 0x0abc],
+  [0x0abe, 0x0acd], [0x0ae2, 0x0ae3], [0x0b01, 0x0b03], [0x0b3c, 0x0b3c], [0x0b3e, 0x0b57], [0x0b62, 0x0b63],
+  [0x0b82, 0x0b82], [0x0bbe, 0x0bcd], [0x0bd7, 0x0bd7], [0x0c00, 0x0c04], [0x0c3e, 0x0c56], [0x0c62, 0x0c63],
+  [0x0c81, 0x0c83], [0x0cbc, 0x0cbc], [0x0cbe, 0x0cd6], [0x0ce2, 0x0ce3], [0x0d00, 0x0d03], [0x0d3b, 0x0d3c],
+  [0x0d3e, 0x0d4d], [0x0d57, 0x0d57], [0x0d62, 0x0d63], [0x0d81, 0x0d83], [0x0dca, 0x0dca], [0x0dcf, 0x0dd6],
+  [0x0dd8, 0x0ddf], [0x0df2, 0x0df3], [0x0e31, 0x0e31], [0x0e34, 0x0e3a], [0x0e47, 0x0e4e], [0x0eb1, 0x0eb1],
+  [0x0eb4, 0x0ebc], [0x0ec8, 0x0ecd], [0x0f18, 0x0f19], [0x0f35, 0x0f35], [0x0f37, 0x0f37], [0x0f39, 0x0f39],
+  [0x0f3e, 0x0f3f], [0x0f71, 0x0f84], [0x0f86, 0x0f87], [0x0f8d, 0x0f97], [0x0f99, 0x0fbc], [0x0fc6, 0x0fc6],
+  [0x102b, 0x103e], [0x1056, 0x1059], [0x105e, 0x1060], [0x1062, 0x1064], [0x1067, 0x106d], [0x1071, 0x1074],
+  [0x1082, 0x108d], [0x108f, 0x108f], [0x109a, 0x109d], [0x135d, 0x135f], [0x1712, 0x1715], [0x1732, 0x1734],
+  [0x1752, 0x1753], [0x1772, 0x1773], [0x17b4, 0x17d3], [0x17dd, 0x17dd], [0x180b, 0x180d], [0x1885, 0x1886],
+  [0x18a9, 0x18a9], [0x1920, 0x192b], [0x1930, 0x193b], [0x1a17, 0x1a1b], [0x1a55, 0x1a5e], [0x1a60, 0x1a7c],
+  [0x1a7f, 0x1a7f], [0x1ab0, 0x1aff], [0x1b00, 0x1b04], [0x1b34, 0x1b44], [0x1b6b, 0x1b73], [0x1b80, 0x1b82],
+  [0x1ba1, 0x1bad], [0x1be6, 0x1bf3], [0x1c24, 0x1c37], [0x1cd0, 0x1cd2], [0x1cd4, 0x1ce8], [0x1ced, 0x1ced],
+  [0x1cf4, 0x1cf4], [0x1cf7, 0x1cf9], [0x1dc0, 0x1dff], [0x200d, 0x200d], [0x20d0, 0x20f0], [0x2cef, 0x2cf1],
+  [0x2d7f, 0x2d7f], [0x2de0, 0x2dff], [0x302a, 0x302f], [0x3099, 0x309a], [0xa66f, 0xa672], [0xa674, 0xa67d],
+  [0xa69e, 0xa69f], [0xa6f0, 0xa6f1], [0xa802, 0xa802], [0xa806, 0xa806], [0xa80b, 0xa80b], [0xa823, 0xa827],
+  [0xa880, 0xa881], [0xa8b4, 0xa8c5], [0xa8e0, 0xa8f1], [0xa926, 0xa92d], [0xa947, 0xa953], [0xa980, 0xa983],
+  [0xa9b3, 0xa9c0], [0xa9e5, 0xa9e5], [0xaa29, 0xaa36], [0xaa43, 0xaa43], [0xaa4c, 0xaa4d], [0xaa7b, 0xaa7d],
+  [0xaab0, 0xaab0], [0xaab2, 0xaab4], [0xaab7, 0xaab8], [0xaabe, 0xaabf], [0xaac1, 0xaac1], [0xaaeb, 0xaaef],
+  [0xaaf5, 0xaaf6], [0xabe3, 0xabea], [0xabec, 0xabed], [0xfb1e, 0xfb1e], [0xfe00, 0xfe0f], [0xfe20, 0xfe2f],
+  [0x101fd, 0x101fd], [0x102e0, 0x102e0], [0x10376, 0x1037a], [0x10a01, 0x10a0f], [0x10a38, 0x10a3f],
+  [0x10ae5, 0x10ae6], [0x11000, 0x11002], [0x11038, 0x11046], [0x1107f, 0x11082], [0x110b0, 0x110ba],
+  [0x11100, 0x11102], [0x11127, 0x11134], [0x11145, 0x11146], [0x11173, 0x11173], [0x11180, 0x11182],
+  [0x111b3, 0x111c0], [0x1122c, 0x11237], [0x112df, 0x112ea], [0x11300, 0x11303], [0x1133b, 0x1134d],
+  [0x11357, 0x11357], [0x11362, 0x11374], [0x114b0, 0x114c3], [0x115af, 0x115c0], [0x16af0, 0x16af4],
+  [0x16b30, 0x16b36], [0x16f51, 0x16f92], [0x1bc9d, 0x1bc9e], [0x1d165, 0x1d169], [0x1d16d, 0x1d182],
+  [0x1d185, 0x1d18b], [0x1d1aa, 0x1d1ad], [0x1d242, 0x1d244], [0x1da00, 0x1da36], [0x1da3b, 0x1da6c],
+  [0x1da75, 0x1da75], [0x1da84, 0x1da84], [0x1da9b, 0x1daa1], [0x1daa9, 0x1daad], [0x1e000, 0x1e02a],
+  [0x1e8d0, 0x1e8d6], [0x1e944, 0x1e94a], [0x1f3fb, 0x1f3ff], [0xe0100, 0xe01ef],
+]
+
+function isZero(c: number): boolean {
+  for (const [lo, hi] of ZERO) if (c >= lo && c <= hi) return true
+  return false
+}
+
+/** 区域指示符：一对拼成一面旗（两列）。 */
+function isRegional(c: number): boolean {
+  return c >= 0x1f1e6 && c <= 0x1f1ff
+}
+
+/**
+ * 一行切成**簇**。一个簇 = 基字符 + 挂在它身上的那些（组合符号 · 变体选择符 · 肤色修饰 ·
+ * ZWJ 后面那一个，一对区域指示符算一个）。于是"左移一格"对 `e` + U+0301 是一步而不是两步，
+ * 对一串 ZWJ 连起来的 emoji（一家三口那种）也是一步。
+ *
+ * **按串记住**（`CLUSTERS`）：一帧里同一个串要被问好几次（截 · 折 · 量列宽），每帧重算是白烧。
+ * 表里存的只是纯函数对同一个输入的答案，所以这不改任何输出。
+ */
+const CLUSTERS = new Map<string, readonly Cluster[]>()
+const CLUSTERS_MAX = 512
+
+export function clustersOf(s: string): readonly Cluster[] {
+  const hit = CLUSTERS.get(s)
+  if (hit !== undefined) return hit
+  const out: Cluster[] = []
+  let i = 0
+  while (i < s.length) {
+    const start = i
+    const base = s.codePointAt(i) as number
+    i += base > 0xffff ? 2 : 1
+    let flags = isRegional(base) ? 1 : 0
+    while (i < s.length) {
+      const next = s.codePointAt(i) as number
+      if (next === 0x200d && i + 1 < s.length) {
+        i += 1
+        i += (s.codePointAt(i) as number) > 0xffff ? 2 : 1
+        continue
+      }
+      if (isZero(next)) {
+        i += next > 0xffff ? 2 : 1
+        continue
+      }
+      if (flags === 1 && isRegional(next)) {
+        i += 2
+        flags = 2
+        continue
+      }
+      break
+    }
+    const wide = isWide(base) || isRegional(base)
+    out.push({ text: s.slice(start, i), start, end: i, width: isZero(base) ? 0 : wide ? 2 : 1 })
+  }
+  if (CLUSTERS.size >= CLUSTERS_MAX) CLUSTERS.clear()
+  CLUSTERS.set(s, out)
+  return out
+}
+
+/**
+ * 一个串占几列（**显示列**）。按簇算：`e` + U+0301 是一列（组合符号零宽），`中文abc` 是七列，
+ * 一串 ZWJ 连起来的 emoji（一家三口那种）是两列。`⇒` 那类 Ambiguous 按 Unicode 缺省算一列（见 `isWide`）。
  */
 export function widthOf(s: string): number {
   let n = 0
-  for (const ch of s) {
-    const c = ch.codePointAt(0) as number
-    const wide =
-      (c >= 0x1100 && c <= 0x115f) ||
-      (c >= 0x2e80 && c <= 0xa4cf) ||
-      (c >= 0xac00 && c <= 0xd7a3) ||
-      (c >= 0xf900 && c <= 0xfaff) ||
-      (c >= 0xfe30 && c <= 0xfe6f) ||
-      (c >= 0xff00 && c <= 0xff60) ||
-      (c >= 0xffe0 && c <= 0xffe6) ||
-      (c >= 0x1f300 && c <= 0x1faff)
-    n += wide ? 2 : 1
-  }
+  for (const c of clustersOf(s)) n += c.width
   return n
 }
 
-/** 按列宽截断：切在字符边界上，末尾留下一个 `…`（它也占一列）。 */
+/**
+ * 前 `w` 列切在几个 code unit 上（**整簇**切：不会把一个字的基字符与它身上的组合符号切成两半）。
+ * 一个簇都放不下（`w` 比整簇还窄）时切一个整簇，免得调用方原地打转；`w <= 0` 切 0。
+ */
+export function cutAt(s: string, w: number): number {
+  if (w <= 0) return 0
+  let used = 0
+  let n = 0
+  for (const c of clustersOf(s)) {
+    if (used + c.width > w) break
+    used += c.width
+    n = c.end
+  }
+  if (n === 0) n = clustersOf(s)[0]?.end ?? 0
+  return n
+}
+
+/** 按列宽截断：切在**簇**边界上，末尾留下一个 `…`（它也占一列）。 */
 export function clip(s: string, w: number): string {
   if (w <= 0) return ''
   if (widthOf(s) <= w) return s
   let out = ''
   let used = 0
-  for (const ch of s) {
-    const one = widthOf(ch)
-    if (used + one > w - 1) break
-    out += ch
-    used += one
+  for (const c of clustersOf(s)) {
+    if (used + c.width > w - 1) break
+    out += c.text
+    used += c.width
   }
   return `${out}…`
 }
@@ -233,23 +361,16 @@ export function wrap(s: string, w: number): readonly string[] {
   const out: string[] = []
   let rest = s
   while (widthOf(rest) > w) {
-    let used = 0
-    let hard = 0
-    for (const ch of rest) {
-      const one = widthOf(ch)
-      if (used + one > w) break
-      used += one
-      hard += ch.length
-    }
-    // 切点：下一个字符放不下而它是个空格（或者到头了），就切在 `hard`——那正好是一个词的末尾；
-    // 放不下那个字符落在词中间时退到最后一个空格。一个字符都放不下时切一个，免得原地打转。
-    let cut = hard
-    const next = rest[hard]
+    // 切点：下一个簇放不下而它是个空格（或者到头了），就切在 `cutAt` 给的那个位置——那正好是一个
+    // 词的末尾；放不下的那个簇落在词中间时退到最后一个空格。一个簇都放不下时切一个整簇，免得
+    // 原地打转（`cutAt` 已经保证整簇切）。
+    let cut = cutAt(rest, w)
+    const next = rest[cut]
     if (next !== undefined && next !== ' ') {
-      const sp = rest.lastIndexOf(' ', hard)
+      const sp = rest.lastIndexOf(' ', cut)
       if (sp > 0) cut = sp
     }
-    if (cut <= 0) cut = (rest.codePointAt(0) ?? 0) > 0xffff ? 2 : 1
+    if (cut <= 0) cut = clustersOf(rest)[0]?.end ?? 1
     out.push(rest.slice(0, cut).trimEnd())
     rest = rest.slice(cut).trimStart()
     if (rest.startsWith('· ')) rest = rest.slice(2)
