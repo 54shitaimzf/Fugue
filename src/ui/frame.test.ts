@@ -124,31 +124,34 @@ function snapshotOf(extra: readonly StatusRow[] = []): StatusSnapshot {
 }
 
 const GOLDEN: readonly string[] = [
-  "┌─ 处境 ─────────────────────────────────────────┬─ 读数 ──────────────────────────────────────────┐",
-  "│轮次 r1 · 状态 Rebuilding · 转移 5 条 · 跳步 1 ·│契约 2 · 折叠尝试 1 · 冲突 0 · 验收 1 次（过 3 / │",
-  "│打回 1 次 · 最近一条落在这一轮                  │没过 0）                                         │",
-  "│  Idle ──land──> Planning                       │用量 调用 3 · input 3000 · cacheRead 4096 ·      │",
-  "│  Planning ──contracts-issued──> Delegated      │cacheWrite 0 · output 300 · 思考 120             │",
-  "│  Delegated ──branches-started──> Working       │detour-rate 0（0/2）                             │",
-  "│  Verifying ──verdict-fail──> Working           │prefix-hit-rate 1（3/3）                         │",
-  "│  Verifying ⇒ Rebuilding（跳步，经 verdict-pass │打回 conflicts 0 · rejects 1 · denied 0          │",
-  "│advanced）                                      │                                                 │",
-  "│格 agent/r1/1 · 调 2 次 · 2 步 · 工具调用 3 ·   │                                                 │",
-  "│动作 0 · 停：2 步 · 收敛                        │                                                 │",
-  "│格 agent/r1/2 · 调 1 次 · 1 步 · 工具调用 3 ·   │                                                 │",
-  "│动作 0 · 停：没停                               │                                                 │",
-  "├────────────────────────────────────────────────┴─────────────────────────────────────────────────┤",
+  "┌─ 处境 ───────────────────────────────┬─ 读数 ────────────────────────────────────────────────────┐",
+  "│轮次 r1 · 状态 Rebuilding · 转移 5 条 │契约 2 · 折叠尝试 1 · 冲突 0 · 验收 1 次（过 3 / 没过 0）  │",
+  "│跳步 1 · 打回 1 次 ·                  │用量 调用 3 · input 3000 · cacheRead 4096 · cacheWrite 0 · │",
+  "│最近一条落在这一轮                    │output 300 · 思考 120                                      │",
+  "│  Idle ──land──> Planning             │detour-rate 0（0/2）                                       │",
+  "│  Planning ──contracts-issued──>      │prefix-hit-rate 1（3/3）                                   │",
+  "│Delegated                             │打回 conflicts 0 · rejects 1 · denied 0                    │",
+  "│  Delegated ──branches-started──>     │                                                           │",
+  "│Working                               │                                                           │",
+  "│  Verifying ──verdict-fail──> Working │                                                           │",
+  "│  Verifying ⇒ Rebuilding（跳步，经    │                                                           │",
+  "│verdict-pass · advanced）             │                                                           │",
+  "│格 agent/r1/1 · 调 2 次 · 2 步 ·      │                                                           │",
+  "│工具调用 3 · 动作 0 · 停：2 步 · 收敛 │                                                           │",
+  "│格 agent/r1/2 · 调 1 次 · 1 步 ·      │                                                           │",
+  "│工具调用 3 · 动作 0 · 停：没停        │                                                           │",
+  "├──────────────────────────────────────┴───────────────────────────────────────────────────────────┤",
   "│最近 merge/accept（round 13）· 事件 13 条                                                         │",
-  "└────────────────────────────────────────────────┴─────────────────────────────────────────────────┘",
+  "└──────────────────────────────────────┴───────────────────────────────────────────────────────────┘",
 ]
 
 test('① 黄金帧：整帧逐字节等于那一份原文，而且每一行恰好 width 列', () => {
-  const f = frameOf({ snapshot: snapshotOf(), metrics: METRICS, report: REPORT, width: 100, height: 16 })
+  const f = frameOf({ snapshot: snapshotOf(), metrics: METRICS, report: REPORT, width: 100, height: 19 })
   assert.deepEqual([...f.lines], [...GOLDEN], '帧与黄金那一份不逐字节相同')
   const widths = f.lines.map((l) => widthOf(l))
   assert.deepEqual(widths, f.lines.map(() => 100), `每一行都该是 100 列：${widths.join(',')}`)
-  assert.deepEqual(f.columns, { left: 48, right: 49 }, '两栏的列宽')
-  assert.equal(f.lines.length, 16, '这一屏给了 16 行，装得下就该印满（含账尾）')
+  assert.deepEqual(f.columns, { left: 38, right: 59 }, '两栏的列宽（U10c：左 2/5 · 右 3/5）')
+  assert.equal(f.lines.length, 19, '这一屏给了 19 行，装得下就该印满（含账尾；左栏窄了折行多两行，高度跟着补）')
   console.log(
     `① 读数：${f.lines.length} 行 · 每行 ${f.width} 列 · 左 ${f.columns.left} / 右 ${f.columns.right}` +
       ` · 账尾「${f.footer}」· 处境 ${bodyOf({ snapshot: snapshotOf() }).left.length} 行`,

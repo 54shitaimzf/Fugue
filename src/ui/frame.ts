@@ -289,7 +289,10 @@ export function frameOf(o: FrameInput): Frame {
 
   const body = bodyOf(o)
   const two = width >= MIN_TWO_COLUMN && body.left.length > 0 && body.right.length > 0
-  const left = two ? Math.floor((width - 3) / 2) : width - 2
+  // **右栏拿大头（3/5）**（U10c）：读数那一栏是"数字 + 分子/分母"的长行（八元指标一条
+  // 就是一句），40 列那档两栏对半时它截得最狠；处境那一栏的行短（轮次 · 状态 · 边），
+  // 2/5 装得下。两根竖线加两头的框占 3 列，先扣再分。
+  const left = two ? Math.floor(((width - 3) * 2) / 5) : width - 2
   const right = two ? width - 3 - left : 0
   const inner = width - 2
 
