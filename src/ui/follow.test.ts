@@ -15,6 +15,8 @@
 //   ⑤ **第一趟读齐、只画一次**：账上已经有的那些不是一条画一帧（`UI2` 实测过一次启动 31 次重画）。
 //   ⑥ **地板**：`tuiModeOf` 那张表 · 只印永久行那一档面板一次都不画、`redraw()` 一个字节都不写。
 //   ⑦ **历史不许被回头改**：已经写出去的那几条变了（换掉分法那一张表）→ `newLinesOf` 当场抛。
+//   ⑧ **永久行那一栏只折尾部**（U5）：同一批反复问零重折 · 新到的只折新增段 · 拼起来的答案与
+//      全量折逐字相同（查表次数在一张计数表上数出来）。
 //
 // 这一份不碰真日志、不碰终端：读那一头是**一本会长的假账**（每一趟读放出一片），摆那一头是
 // `ui/term.ts` 那个接口的**记录器**（它用真的 `panelOf` 补到 K 行 × 列数，所以记下来的那几行就是
@@ -28,11 +30,12 @@ import { readNew } from '../probe/watch.ts'
 import type { Frame } from './frame.ts'
 import { frameOf, panelOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
+import type { FamilyTable } from './stream.ts'
 import { FAMILY_KIND, permanentLinesOf } from './stream.ts'
 import { K } from './term.ts'
 import type { Term } from './term.ts'
 import type { Tui, TuiCounts, TuiMode } from './follow.ts'
-import { newLinesOf, openTui, tuiModeOf } from './follow.ts'
+import { newLinesOf, openSession, openTui, tuiModeOf } from './follow.ts'
 
 /** 类型上不必较真的那几栏（品牌类型）：这些行是喂给渲染的，不是账上真发生过的。 */
 const brand = (v: string): never => v as never
@@ -433,5 +436,40 @@ test('⑦ 历史不许被回头改：已经写出去的那几条变了就当场�
   console.log(
     `⑦ 读数：all ${all.length} 条 · 挪走 round/state 之后 ${moved.length} 条 · ` +
       `已写过 3 条时再折 → 第 3 条变了、当场抛；只写过 2 条时（第 3 条还没出去）不抛`,
+  )
+})
+
+test('⑧ 永久行那一栏只折尾部（U5）：反复问不重折 · 新到的只折新增段 · 答案与全量折逐字相同', () => {
+  // 计数表：查一次分法记一次——「折了几条」在它上面数得出来。
+  let asks = 0
+  const table: FamilyTable = new Proxy(FAMILY_KIND, {
+    get(t, k) {
+      asks += 1
+      return (t as Record<string, unknown>)[k as string]
+    },
+  })
+  const s = openSession({ table })
+  const ch1 = mergedOf(tailChapters()[0] as readonly StatusRow[])
+  const ch2 = mergedOf(tailChapters()[1] as readonly StatusRow[])
+  const ch3 = mergedOf(tailChapters()[2] as readonly StatusRow[])
+  s.push(ch1)
+  assert.deepEqual([...s.permanent()], [...permanentLinesOf(ch1)], '第 1 段的答案与全量折不逐字相同')
+  const after1 = asks
+  // 再问三遍：一次都不该重折（asks 不动），答案每次都是全量那一份。
+  for (let i = 0; i < 3; i += 1) {
+    assert.deepEqual([...s.permanent()], [...permanentLinesOf(ch1)], '第 1 段的答案与全量折不逐字相同')
+  }
+  assert.equal(asks, after1, `反复问把已折的又折了一遍（asks ${after1} → ${asks}）`)
+  // 新到两段：只折新增的，前缀一次都不碰。
+  s.push(ch2)
+  s.permanent()
+  const after2 = asks
+  s.push(ch3)
+  const all = s.permanent()
+  assert.deepEqual([...all], [...permanentLinesOf([...ch1, ...ch2, ...ch3])], '拼起来的答案与全量折不逐字相同')
+  assert.ok(asks > after2, '新到的那一段该真的折了（asks 没动就是压根没折）')
+  console.log(
+    `⑧ 读数：第 1 段折 ${after1} 次查表 · 反复问 3 遍零新增 · 第 2 段 +${after2 - after1} · ` +
+      `第 3 段 +${asks - after2} · 答案与全量折逐字相同`,
   )
 })

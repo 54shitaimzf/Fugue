@@ -33,9 +33,10 @@
 // 所以它不参与"已经写出去的那几条不许被回头改"那条牙。面板在屏幕底部，界面自己的话总得有个去处：
 // 直接往 `stdout` 写会插进半块面板。
 //
-// **代价如实记在这里**：每一帧都从"累起来的那些行"重折一遍（`readingsOf` 加永久行那一栏），而跟随
-// 每一趟本来就重读全量（`watch.ts` 头上那条）——两者同一档代价。要改成增量折，那是另一格的事：
-// 折法只有一处真源（`probe/status.ts`），这一份不另写一份。
+// **代价如实记在这里**：`readingsOf` 那一段仍每帧从"累起来的那些行"全量重折（跟随每一趟本来就
+// 重读全量，两者同一档代价）；**永久行那一栏只折尾部（U5）**——`rows` 单调变长，已折的前缀是纯
+// 函数的答案，缓存它不改任何输出。`readingsOf` 要改成增量折，那是另一格的事：折法只有一处真源
+// （`probe/status.ts`），这一份不另写一份。
 //
 // **信号那一头是入参。** `Ctrl-C`（`AbortSignal`）由调用方给；`SIGWINCH` 那一档由调用方接
 // `redraw()`。这一份不注册任何信号、不碰 `process`——那样它才在 `node --test` 里跑得动。
@@ -135,7 +136,18 @@ export function newLinesOf(all: readonly string[], shown: readonly string[]): re
 export function openSession(o: SessionOptions = {}): TuiSession {
   let rows: StatusRow[] = []
   let shown: readonly string[] = []
-  const permanent = (): readonly string[] => permanentLinesOf(rows, o.table)
+  // **只折尾部（U5）**：`rows` 只在 `push` 里换成**更长**的引用（不删不改），于是「折到哪」就是
+  // 一个长度。已折的那一段是纯函数对前缀的答案，缓存它不改任何输出——问一百遍 `permanent()`
+  // 也只折新到的那几条。分法表是会话期不变的入参；真被中途换掉（没人这么用），`fresh()` 那条
+  // 前缀牙照旧当场抛——错位不会静默。
+  let folded: readonly string[] = []
+  let foldedAt = 0
+  const permanent = (): readonly string[] => {
+    if (foldedAt === rows.length) return folded
+    folded = [...folded, ...permanentLinesOf(rows.slice(foldedAt), o.table)]
+    foldedAt = rows.length
+    return folded
+  }
   /** 那一刻的面板那几行。**纯函数**：这一档累起来的行 + 界面自己那几样（现问一次）。 */
   const frameAt = (size: { readonly columns: number; readonly height: number }): readonly string[] => {
     const v = o.view?.()
