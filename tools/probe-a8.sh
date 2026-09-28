@@ -7,7 +7,7 @@
 #          这份拆分是故意这么摆的，撞出来的冲突由折叠当场报出、不静默）
 #   二 · 故意撞红的一趟（一次验收没过 + 一次动作被拒）→ 三个数逐个大于 0
 #   三 · 同一份账上算两次（`status --report`）→ 三个数逐字同值；并钉住那三支里哪几支按轮次
-#        筛、哪一支整份账数（重算，不是采集）
+#        筛、哪一支整份账数（重算，不是采集）——**范围还印在读数上**（`[本轮]` / `[整账]`）
 #
 # 用法：sh tools/probe-a8.sh。退出码 0 且 FAIL 0 才算走通。
 set -u
@@ -77,6 +77,11 @@ sed 's/^/  err| /' "$T/run1.err"
 check "断言全过那一趟的退出码" "0" "$RC1"
 has "$T/run1.out" '验收：通过' "验收那一行印出来了"
 has "$T/run1.out" '打回读数' "--report 印了三个数"
+# **范围印在读数上**：这一趟递的是 `{round}`，所以 `conflicts` 与 `rejects` 带 `[本轮]`，而
+# `denied` **仍是 `[整账]`**——`run/end` 事件里没有轮次那一栏，这一支不筛（架构 § 8.1）。
+has "$T/run1.out" '本轮] merge/attempt' "带轮次那一档：conflicts 带 [本轮]"
+has "$T/run1.out" '本轮] round/state' "带轮次那一档：rejects 带 [本轮]"
+has "$T/run1.out" '整账] run/end' "带轮次那一档：denied 仍是 [整账]（这一支不筛轮次）"
 # **只有一轮时的整份账**：`status --report` 印的是账上那三个数（不带轮次的那一档），而上面那一趟
 # `--report` 印的是**这一轮**。账上此刻只有 `r1`，所以两处该同值——那就是序 32 那条"两处出口同一份
 # 折法"（`src/probe/round.ts` 的 `countsOf`）。
@@ -164,6 +169,12 @@ console.log((rOk ? "ok   " : "FAIL ") + "   rejects 按轮次筛：整份账 " +
 console.log((dOk ? "ok   " : "FAIL ") + "   denied 不按轮次筛：整份账 " + whole.denied + " = r2 那一趟读出来的 " + two.denied + "（逐轮相加会重复计）")
 process.exit(same && cOk && rOk && dOk ? 0 : 1)
 ' "$T" && ok "重算那一条" || bad "重算那一条"
+# **同一份账的另一处出口**：这一档递的是 `{}`（整份账），所以三行都带 `[整账]`——同一个名字、两个
+# 范围，这件事在读数自己身上读得出来（命令行这一层；`status.test.ts` ⑪ 证的是折法那一层）。
+$FUGUE --root "$W" status --report > "$T/recalc.txt" 2> "$T/recalc.err" || bad "status --report（文字面）"
+has "$T/recalc.txt" '整账] merge/attempt' "整份账那一档：conflicts 带 [整账]"
+has "$T/recalc.txt" '整账] round/state' "整份账那一档：rejects 带 [整账]"
+has "$T/recalc.txt" '整账] run/end' "整份账那一档：denied 带 [整账]"
 
 echo
 echo "=== 五 · 三个数的判据指得出（三个字段各自一处定义） ==="

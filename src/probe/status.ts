@@ -532,7 +532,10 @@ export interface ReadingsOptions {
  * 读一次账，折出要的那几栏。**一遍读齐**：三份读数读的是同一串事件（架构 § 8.15 那条验证性质
  * 要求重放是确定的），所以这里不重复读日志——也不走 `snapshot(log)` 那一份单读一遍。
  *
- * 范围是**全部**（不按轮次筛）：`status` 读的是"这一刻的处境"，而处境是整份账的函数。
+ * 范围是**全部**（不按轮次筛）：`status` 读的是"这一刻的处境"，而处境是整份账的函数。**与跑完
+ * 那一档不同源**：`round run` / `round work` 递的是 `{round}`（只数这一轮），所以同一个名字在
+ * 两处印出来的数可以不一样——**这一点写在读数自己身上**（`countsOf` 那三行 `how` 开头的
+ * `[本轮]` / `[整账]`），不靠读的人记得是谁印的。
  */
 export async function readings(log: Pick<Log, 'readMerged'>, opts: ReadingsOptions = {}): Promise<StatusReadings> {
   const rows = await rowsOf(() => log.readMerged())

@@ -24,6 +24,8 @@
 //      钱没印**（少印要说）；给了档则逐趟与合计各一笔钱——合计那个数与 `costOf` 同源
 //   ⑩ **序 32 的那个出口**（`status --once --metrics --report`）：那两栏与跑完那一档**同一个数 ·
 //      同一个渲染**；没要的那一栏不出现（不是空数组）；账动两边一起动
+//   ⑪ **范围写进读数**：`conflicts` 与 `rejects` 带 `[本轮]`（递了轮次时）· `denied` 两处都是
+//      `[整账]`（`run/end` 事件里没有轮次那一栏）——⑩ 两边递的都是空范围，看不见这一层
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -34,6 +36,7 @@ import type { LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import type { AgentId, RoundId } from '../terms.ts'
 import { computeAll, computeMerged, linesOfReadings } from './round.ts'
+import type { MetricReading } from './round.ts'
 import { computeAllMetrics, lineOf } from './metrics.ts'
 import {
   METRICS_HEAD,
@@ -550,6 +553,74 @@ test('⑩ 出口：`status` 那两栏与 `round run` 那两栏同一个数、同
       `⑩ 读数：八元 ${viaRun.metrics.map((m) => `${m.metric}=${m.value === null ? '算不出来' : m.value}`).join(' · ')}`,
     )
     console.log('⑩ 负对照：账上多一条回边 + 一次内核拒 → 两处 rejects 1→2 · denied 1→2；没要的栏不出现')
+    await log.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── ⑪ 范围写进读数：三行并排，范围却不一样（⑩ 证的是折法共用，这一条证的是范围）─────────────
+//
+// 由头：`conflicts` 与 `rejects` 落在带轮次那一栏的事件上（`merge/attempt` · `round/state`），
+// `denied` 落在 `run/end` 上，而那条事件**没有轮次那一栏**（架构 § 8.1 那张表逐字）。于是命令行
+// 那两处出口递的范围不同时（`round run` 递 `{round}` · `status` 递 `{}`），同一个名字印出来的数
+// 可以不一样——⑩ 两边递的都是空范围，所以它看不见这一层。
+//
+// 这一条把范围钉在读数自己身上（`how` 开头的标签）。负对照：把 `scopeOf` 里 `denied` 那一支也
+// 按 `range.round` 走 → "`denied` 两处都是 `[整账]`" 当场红。
+test('⑪ 范围写进读数：两支按轮次筛、一支整份账，标签就在数前面', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'status-range-'))
+  try {
+    const log = openLog(dir, { sync: 'each' })
+    const r1 = 'r1' as RoundId
+    const r2 = 'r2' as RoundId
+    const A = 'agent/r1/1' as AgentId
+    const B = 'agent/r2/1' as AgentId
+    /** 两轮落在同一份账上：每轮各撞一次冲突 · 各留一次被内核拒的动作（`FULL` 里那条回边也在）。 */
+    for (const [round, who] of [
+      [r1, A],
+      [r2, B],
+    ] as readonly (readonly [RoundId, AgentId])[]) {
+      await log.append('round' as never, { t: 'round/intent', round, base: 'b0' as never, digest: 'd', body: '{}' })
+      for (const [from, to] of FULL) {
+        await log.append('round' as never, { t: 'round/state', round, from: from as never, to: to as never })
+      }
+      await log.append('round' as never, { t: 'merge/attempt', round, branches: [who] as never[], conflicts: 1 })
+      await log.append(who as never, { t: 'run/end', agent: who, step: '0' as never, exit: 1, ms: 2, denied: true })
+    }
+
+    const whole = (await readings(log, { report: true })).report ?? []
+    const one = await computeAll(() => log.readMerged(), { round: r1 })
+    const two = await computeAll(() => log.readMerged(), { round: r2 })
+    const tagged = (rs: readonly MetricReading[]): string[] => rs.map((r) => `${r.metric}${r.how.slice(0, 4)}`)
+    const count = (rs: readonly MetricReading[], m: string): number => rs.find((r) => r.metric === m)?.count ?? -1
+
+    // 一 · 标签：整份账那一档三行都 `[整账]`；带轮次那一档前两支 `[本轮]`、`denied` 仍是 `[整账]`。
+    assert.deepEqual(tagged(whole), ['conflicts[整账]', 'rejects[整账]', 'denied[整账]'], `整份账那一档：${whole.map((r) => r.how).join(' · ')}`)
+    assert.deepEqual(tagged(one), ['conflicts[本轮]', 'rejects[本轮]', 'denied[整账]'], `带轮次那一档：${one.map((r) => r.how).join(' · ')}`)
+    assert.deepEqual(tagged(two), ['conflicts[本轮]', 'rejects[本轮]', 'denied[整账]'])
+
+    // 二 · 数：前两支按轮次筛（逐轮相加 == 整份账），`denied` 不筛（三处同一个数）。
+    assert.deepEqual({ c: count(whole, 'conflicts'), r: count(whole, 'rejects') }, { c: 2, r: 2 })
+    assert.deepEqual({ c: count(one, 'conflicts'), r: count(one, 'rejects') }, { c: 1, r: 1 })
+    assert.equal(count(one, 'conflicts') + count(two, 'conflicts'), count(whole, 'conflicts'))
+    assert.equal(count(one, 'rejects') + count(two, 'rejects'), count(whole, 'rejects'))
+    assert.deepEqual(
+      { 整账: count(whole, 'denied'), r1: count(one, 'denied'), r2: count(two, 'denied') },
+      { 整账: 2, r1: 2, r2: 2 },
+      '`denied` 那一支不筛轮次：三处读出来是同一个数',
+    )
+
+    // 三 · 文字面：范围不同 → 两处印出来的行**不逐字相同**（⑩ 那一条说的是折法共用，不是这个）。
+    assert.equal(linesOfReadings(whole).length, 3)
+    assert.notDeepEqual(linesOfReadings(one), linesOfReadings(whole), '两处的文字面不该逐字相同——范围不一样')
+
+    console.log(`⑪ 读数：整份账 ${tagged(whole).join(' · ')}`)
+    console.log(`⑪ 读数：带轮次 ${tagged(one).join(' · ')}`)
+    console.log(
+      `⑪ 读数：conflicts 整账 ${count(whole, 'conflicts')} = r1 ${count(one, 'conflicts')} + r2 ${count(two, 'conflicts')} · rejects 整账 ${count(whole, 'rejects')} = r1 ${count(one, 'rejects')} + r2 ${count(two, 'rejects')} · denied 三处都是 ${count(whole, 'denied')}`,
+    )
+    console.log('⑪ 负对照：把 `scopeOf` 里 `denied` 那一支也按 `range.round` 走 → "denied 仍是 [整账]" 当场红')
     await log.close()
   } finally {
     rmSync(dir, { recursive: true, force: true })

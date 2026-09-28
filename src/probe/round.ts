@@ -34,7 +34,7 @@ export const METRICS: readonly Metric[] = ['conflicts', 'rejects', 'denied']
 export interface MetricReading {
   readonly metric: Metric
   readonly count: number
-  /** 数了哪几条事件（人读的一句话）。 */
+  /** 数了哪几条事件 · **这一处数的是哪一段**（开头那个 `[本轮]` / `[整账]`，人读的一句话）。 */
   readonly how: string
 }
 
@@ -48,10 +48,27 @@ export const METRIC_HOW: Readonly<Record<Metric, string>> = {
 /**
  * 一个轮次的范围。**不给就是全部**——`roundId` 只用来筛 `round/state` · `merge/attempt` ·
  * `merge/accept` 那几条带轮次号的事件；`run/end` 不带轮次号（§ 8.1 那张表逐字），所以按轮筛
- * 的时候它数的是**全部**，这一点如实写在读数里，不假装筛过。
+ * 的时候它数的是**全部**——这一点如实写在读数里（`how` 开头那个 `[整账]` 标签），不假装筛过。
  */
 export interface Range {
   readonly round?: RoundId
+}
+
+/**
+ * 这一条读数数的是**哪一段**：`[本轮]` 还是 `[整账]`。
+ *
+ * **它由两件事一起定**：这一支筛不筛轮次，与调用点递没递轮次。`conflicts` 与 `rejects` 落在带轮次
+ * 那一栏的事件上（`merge/attempt` · `round/state`）→ 递了轮次就是这一轮，没递就是整账；`denied`
+ * 落在 `run/end` 上，而那条事件**没有轮次那一栏**（架构 § 8.1 那张表逐字）→ 它哪一处都是整账。
+ * **"三行并排、范围却不一样"因此是这一支的真实形状**：标签写在数的前面，读的人不必先知道是谁印的。
+ */
+function scopeOf(metric: Metric, range: Range): string {
+  return metric !== 'denied' && range.round !== undefined ? '[本轮]' : '[整账]'
+}
+
+/** 怎么数出来的那句话：**范围 + 判据**。两处出口（`countsOf` · `computeMerged`）同一个写法。 */
+function howOf(metric: Metric, range: Range): string {
+  return `${scopeOf(metric, range)} ${METRIC_HOW[metric]}`
 }
 
 /** 数一条事件贡献了几个。**三条判据的每一处都在这里，一眼看得完。** */
@@ -89,7 +106,7 @@ export async function computeMerged(
 ): Promise<MetricReading> {
   let count = 0
   for await (const { e } of merged) count += countOf(e, metric, range)
-  return { metric, count, how: METRIC_HOW[metric] }
+  return { metric, count, how: howOf(metric, range) }
 }
 
 /**
@@ -115,7 +132,7 @@ export function countsOf(rows: readonly { readonly e: LogEvent }[], range: Range
   return METRICS.map((metric) => {
     let count = 0
     for (const { e } of rows) count += countOf(e, metric, range)
-    return { metric, count, how: METRIC_HOW[metric] }
+    return { metric, count, how: howOf(metric, range) }
   })
 }
 
