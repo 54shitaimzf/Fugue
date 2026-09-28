@@ -1,0 +1,228 @@
+// TUI 的第四格：**跟随接上**。出处：PLAN § 5.19 第五段（`UI3` 那一行）· 架构 § 9.6 那张观察表
+// （`watch --follow` 那一行）· § 9.8（可附着 TUI：人的每个状态动作都是一条命令 · 界面不写日志）·
+// PLAN § 5.18 的三面表（事件面是唯一读源）。
+//
+// 这一份把**读**与**摆**接起来（`probe/watch.ts` 的 `follow()` → `ui/term.ts` 的 `draw`），中间只夹
+// 一样东西：**累起来的那些行**。于是跟随与一次性读在渲染那一头是同一段代码——面板那 K 行是"这些
+// 行"的一个纯函数（`ui/frame.ts`），跟随只决定"这些行此刻有哪些"。
+//
+// 三条不许破的性质（`follow.test.ts` 逐条量）：
+//
+//   · **不许有第二种答案**：同一批事件，跟随读到的那一帧与"一次性读齐再折"的那一帧逐字节相同。
+//     这一条有一处边界，写在 `watch.ts` 头上：新事件都长在尾部时两条路的**次序**也相同；而晚出现的
+//     那个 writer 第一条就是 `seq = 1`，到达序与全序在那里本来就不同——那一档量的是"一条都不少"；
+//   · **永久行只写一次**：每一条按到达序写出去一次，不重印、不跳过。已经印出去的那几条若被回头改
+//     （换了分法那一张表），`newLinesOf` 当场抛——不许静默把终端历史重新编号；
+//   · **地板**：不是 TTY · `$TERM` 认不出来 · `--once` → 只印永久行那一档（`tuiModeOf` 那张表），
+//     面板一次都不画，`redraw()` 一个字节都不写。
+//
+// **第一趟读齐、只画一次。** `follow()` 从零起会把账上已经有的几十条一条一条吐出来，面板就跟着画
+// 几十遍（`UI2` 实测一次启动 31 次重画 · 394 次清行，而屏幕上一个字节的差别都没有）。所以第一趟走
+// `readNew`（`follow` 里面就是它），之后从 `first.cursors` 接着跟随。
+//
+// **代价如实记在这里**：每一帧都从"累起来的那些行"重折一遍（`readingsOf` 加永久行那一栏），而跟随
+// 每一趟本来就重读全量（`watch.ts` 头上那条）——两者同一档代价。要改成增量折，那是另一格的事：
+// 折法只有一处真源（`probe/status.ts`），这一份不另写一份。
+//
+// **信号那一头是入参。** `Ctrl-C`（`AbortSignal`）由调用方给；`SIGWINCH` 那一档由调用方接
+// `redraw()`。这一份不注册任何信号、不碰 `process`——那样它才在 `node --test` 里跑得动。
+import type { Log } from '../log/events.ts'
+import type { Phase } from '../model/price.ts'
+import type { ReadingsOptions, StatusRow } from '../probe/status.ts'
+import { readingsOf } from '../probe/status.ts'
+import { follow, readNew } from '../probe/watch.ts'
+import type { FrameInput } from './frame.ts'
+import { frameOf } from './frame.ts'
+import type { FamilyTable } from './stream.ts'
+import { permanentLinesOf } from './stream.ts'
+import type { Term } from './term.ts'
+
+/**
+ * 那一档（`PLAN § 5.19` 的四条地板收成这一张表）：**面板**（真终端）· **只印永久行**（管道 · CI ·
+ * `--once` · `$TERM` 认不出来）。后两条只差"要不要一直跟着"。
+ *
+ * `--once` 与 `--follow` 说不到一起，那条用法错在命令那一层就拦下了（退 2）；这里给 `--once` 让路。
+ */
+export type TuiMode = 'panel' | 'lines-once' | 'lines-follow'
+
+export function tuiModeOf(o: {
+  readonly ansi: boolean
+  readonly once: boolean
+  readonly follow: boolean
+}): TuiMode {
+  if (o.once) return 'lines-once'
+  if (!o.ansi) return o.follow ? 'lines-follow' : 'lines-once'
+  return 'panel'
+}
+
+/** 折一帧要的那几样（与 `probe/status.ts` 的 `readingsOf` 那两个开关同名同义）。 */
+export interface SessionOptions {
+  /** 三份读数里要哪几样（`--metrics` / `--report`）。不给就只要处境那一份。 */
+  readonly readings?: ReadingsOptions
+  /** 钱那一栏的档（峰/谷）。**不给就不印钱那一栏**——账上没有时刻，这一档只能由读的人给。 */
+  readonly phase?: Phase
+  /** 事件族那一张分法表。**它是入参**（`ui/stream.ts`）：换一张表，历史那一栏就跟着换。 */
+  readonly table?: FamilyTable
+}
+
+/**
+ * 一档会话：**从开面板到收面板之间，读来的那些行累起来的那一份**。
+ *
+ * 它是这一份里唯一有状态的东西，而那个状态只有一样：**行**（`rows`）加上"哪几条永久行已经写出去
+ * 了"（`shown`）。面板与历史都是它的纯函数。
+ */
+export interface TuiSession {
+  /** 到这一刻为止读进来的行（到达序）。 */
+  readonly rows: readonly StatusRow[]
+  /** 收下新到的行（跟随一趟吐出来的那些，或第一趟读齐的那一批）。 */
+  push(more: readonly StatusRow[]): void
+  /** 到这一刻为止配得上历史的那些行的原文（全量）。 */
+  permanent(): readonly string[]
+  /** 到这一刻为止**还没写出去**的那几条（按原文次序）。**每调用一次就记下"写过了"**。 */
+  fresh(): readonly string[]
+  /** 那一刻的一帧（尺寸是入参——这一份不问终端）。 */
+  frame(size: { readonly columns: number; readonly height: number }): readonly string[]
+}
+
+/**
+ * 已经写出去的那一串 + 现在这一串 → 还没写的那几条。**前缀对不上就当场抛。**
+ *
+ * 为什么要这条牙：`fresh()` 是"接着上次那一条往下写"，而"上次那一条"在下一次折的时候**会重新算
+ * 一遍**。分法那一张表是入参（`ui/stream.ts`），换掉它就能让已经写出去的某一条变样或消失——那时
+ * 静默接着写就是把终端历史重新编号（人翻上去看到的那一串与现在的账对不上，而屏幕上不报错）。
+ * 抛出去比接着写对：这一档宁可停在原地，也不许印一份对不上的历史。
+ */
+export function newLinesOf(all: readonly string[], shown: readonly string[]): readonly string[] {
+  for (let i = 0; i < shown.length; i += 1) {
+    const had = shown[i] as string
+    const now = all[i]
+    if (now !== had) {
+      throw new Error(
+        `永久行那一栏回头改了第 ${i + 1} 条：写出去的是「${had}」，现在是「${now ?? '（没了）'}」——` +
+          '已经进终端历史的那几条收不回来，所以这一档停在原地',
+      )
+    }
+  }
+  return all.slice(shown.length)
+}
+
+/** 开一档会话。**一个句柄都不持有**：`log` 是调用方的，这里只累行、只折帧。 */
+export function openSession(o: SessionOptions = {}): TuiSession {
+  let rows: StatusRow[] = []
+  let shown: readonly string[] = []
+  const permanent = (): readonly string[] => permanentLinesOf(rows, o.table)
+  return {
+    get rows(): readonly StatusRow[] {
+      return rows
+    },
+    push(more: readonly StatusRow[]): void {
+      if (more.length > 0) rows = [...rows, ...more]
+    },
+    permanent,
+    fresh(): readonly string[] {
+      const all = permanent()
+      const out = newLinesOf(all, shown)
+      shown = all
+      return out
+    },
+    frame(size: { readonly columns: number; readonly height: number }): readonly string[] {
+      const input: FrameInput = {
+        // 三份读数与 `status --once` 同一个入口（`readingsOf`）——命令面与这一档读的是同一份。
+        ...readingsOf(rows, o.readings),
+        ...(o.phase === undefined ? {} : { phase: o.phase }),
+        permanent: permanent(),
+        width: size.columns,
+        height: size.height,
+      }
+      return frameOf(input).lines
+    },
+  }
+}
+
+/** 这一档跑完时的读数。**每一栏只说这一档真有数的那一样**（面板那一档不报行数，反之亦然）。 */
+export interface TuiCounts {
+  /** 读进来的行数（`follow` 吐出来的那些）。 */
+  readonly rows: number
+  /** 其中配得上历史的（写进终端历史 / 进面板账尾的那些）。 */
+  readonly permanent: number
+  /** 面板画了几次（含 `redraw()` 那几次）；只印永久行那一档恒为 0。 */
+  readonly draws: number
+  /** 只印永久行那一档印出去的行数；面板那一档恒为 0。 */
+  readonly lines: number
+}
+
+export interface TuiOptions {
+  /** 读源：`probe/watch.ts` 要的那一半（`readMerged`）。**这一份不新开读法**。 */
+  readonly log: Pick<Log, 'readMerged'>
+  /** 摆的那一头（`ui/term.ts`）：擦 K 行、写 K 行。 */
+  readonly term: Term
+  /** 只印永久行那一档的出口（`cli` 那一侧的 `emitLine`）。面板那一档用不到它。 */
+  readonly emit: (line: string) => void
+  readonly mode: TuiMode
+  readonly readings?: ReadingsOptions
+  readonly phase?: Phase
+  readonly table?: FamilyTable
+  /** 跟随那一趟睡多久（毫秒）。缺省 200——人眼的分辨率，而不是它的精度。 */
+  readonly intervalMs?: number
+  /** 停下来的信号（`Ctrl-C` 那一档把它拨一下）。 */
+  readonly signal?: AbortSignal
+}
+
+/** 接上的那一档：一个句柄，两样东西——这一档累起来的行，与"跑完了"那一下。 */
+export interface Tui {
+  /** 累起来的那些行（"这一帧是从什么折出来的"这句问得出来）。 */
+  readonly session: TuiSession
+  /** 这一档跑完的那一下（`lines-once` 读一趟就 resolve）。 */
+  readonly counts: Promise<TuiCounts>
+  /** 重画（`SIGWINCH` 那一档）：**不重读**——账没变，变的是地方。只印永久行那一档什么也不做。 */
+  redraw(): void
+}
+
+/**
+ * 接上：读账 → 折帧 → 摆到那一块地方，一路跟着。**它不注册信号、不碰 `process`、不关句柄**
+ * （那三样都是调用方的：`cli/fugue.ts` 的 `tui`）。
+ */
+export function openTui(o: TuiOptions): Tui {
+  const session = openSession({ readings: o.readings, phase: o.phase, table: o.table })
+  const c = { rows: 0, permanent: 0, draws: 0, lines: 0 }
+  const sync = (): void => {
+    c.rows = session.rows.length
+    c.permanent = session.permanent().length
+  }
+  /** 画一次：面板那一档交给终端（擦与摆由 `ui/term.ts` 那一档说了算），只印永久行那一档走 `emit`。 */
+  const paint = (): void => {
+    if (o.mode === 'panel') {
+      c.draws += 1
+      o.term.draw(session.fresh(), (size) => session.frame(size))
+      return
+    }
+    const fresh = session.fresh()
+    c.lines += fresh.length
+    for (const line of fresh) o.emit(line)
+  }
+  const counts = (async (): Promise<TuiCounts> => {
+    // **第一趟读齐**（`follow` 里面就是 `readNew`）：账上已经有的那些一次折一帧。
+    const first = await readNew(o.log, {})
+    session.push(first.rows)
+    sync()
+    paint()
+    if (o.mode === 'lines-once') return { ...c }
+    // 之后跟着走：新到的行一条一条地来（`follow` 每一趟读全量、按每个 writer 的游标筛掉看过的），
+    // 一到一条就重画一次——那正是"看着它跑"要的东西。
+    for await (const row of follow(o.log, { intervalMs: o.intervalMs ?? 200, signal: o.signal, from: first.cursors })) {
+      session.push([row])
+      sync()
+      paint()
+    }
+    return { ...c }
+  })()
+  return {
+    session,
+    counts,
+    redraw(): void {
+      if (o.mode !== 'panel') return
+      c.draws += 1
+      o.term.draw([], (size) => session.frame(size))
+    },
+  }
+}

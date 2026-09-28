@@ -126,14 +126,12 @@ import {
   linesOf,
   readings,
   readingsLines,
-  readingsOf,
   rowsOf,
 } from '../probe/status.ts'
 import { phaseOf } from '../model/price.ts'
-import type { StatusReadings, StatusRow } from '../probe/status.ts'
+import type { StatusRow } from '../probe/status.ts'
 import { follow, readNew } from '../probe/watch.ts'
-import { frameOf } from '../ui/frame.ts'
-import { permanentLinesOf } from '../ui/stream.ts'
+import { openTui, tuiModeOf } from '../ui/follow.ts'
 import { openTerm } from '../ui/term.ts'
 
 export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
@@ -740,10 +738,11 @@ async function watchCmd(
 }
 
 /**
- * `fugue tui`：**同一读面的第二档渲染**（PLAN § 5.19 第五段 · `UI2` 那一格 · 架构 § 9.8 的可附着
- * TUI）。它一个新读源都不开：账读一遍（`rowsOf`），同那一份行折两处——三份读数（`readingsOf`，
- * 与 `status --once` 同一个入口）与永久行那一栏（`ui/stream.ts` 的分法）；面板那几行交给
- * `ui/frame.ts`，擦与摆交给 `ui/term.ts`。**它不写日志、不取锁、不新增事件**——一轮正在跑时照样读。
+ * `fugue tui`：**同一读面的第二档渲染**（PLAN § 5.19 第五段 · `UI2`/`UI3` 那两格 · 架构 § 9.8 的可附着
+ * TUI）。它一个新读源都不开：这一份只做三件事——把开关翻成那一档（`tuiModeOf`）、开那一块地方
+ * （`openTerm`）、把信号接上。读账（`probe/watch.ts` 的 `follow()`）· 折帧（`readingsOf` 与
+ * `ui/stream.ts` 的分法）· 擦与摆（`ui/term.ts`）都在 `ui/follow.ts` 那一格里接起来。
+ * **它不写日志、不取锁、不新增事件**——一轮正在跑时照样读。
  *
  * 四档地板，各自的地板各自说得出（PLAN § 5.19）：
  *
@@ -765,62 +764,37 @@ async function tuiCmd(root: string, flags: Map<string, string | true>): Promise<
   }
   const interval = intervalOf(flags)
   if (typeof interval === 'string') return usageFail(interval)
-  const wantMetrics = flags.has('metrics')
-  const wantReport = flags.has('report')
   // 钱那一栏要一个档（与 `status --once` 同一个口径：读的时候按当时的钟算）。
   const phase = phaseOf(new Date())
   const log = openLog(root)
   const term = openTerm({ out: process.stdout })
+  // 四条地板收成**一张表**（`ui/follow.ts` 的 `tuiModeOf`）：真终端 → 面板；`--once` / 不是 TTY /
+  // `$TERM` 认不出来 → 只印永久行那一档（面板一次都不画，一个字节的 ANSI 都不写）。
+  const mode = tuiModeOf({ ansi: term.ansi, once: flags.has('once'), follow: flags.has('follow') })
   const ac = new AbortController()
   const onSig = (): void => ac.abort()
   process.on('SIGINT', onSig)
-  let rows: StatusRow[] = []
-  let shown = 0
-  /** 永久行只印/只摆**新到的**那几条（上一次那一条的下标接着数）。 */
-  const fresh = (): readonly string[] => {
-    const all = permanentLinesOf(rows)
-    const out = all.slice(shown)
-    shown = all.length
-    return out
-  }
+  // 接上那一档：读账 → 折帧 → 摆到那一块地方，一路跟着（`ui/follow.ts`）。
+  const tui = openTui({
+    log,
+    term,
+    emit: emitLine,
+    mode,
+    readings: { metrics: flags.has('metrics'), report: flags.has('report') },
+    phase,
+    intervalMs: interval,
+    signal: ac.signal,
+  })
+  // resize：**只重画**，不重读（宽度变了账没变）；新的那一块落在哪由 `ui/term.ts` 那一档决定。
+  const onWin = (): void => tui.redraw()
+  if (mode === 'panel') process.on('SIGWINCH', onWin)
   // 读账在 `try` 里：读炸了也要走到 `finally` 去把日志口与面板收干净。
-  let read: StatusReadings = readingsOf(rows, { metrics: wantMetrics, report: wantReport })
-  const panel = (size: { readonly columns: number; readonly height: number }): readonly string[] =>
-    frameOf({ ...read, phase, permanent: permanentLinesOf(rows), width: size.columns, height: size.height }).lines
-  // resize：**只重画**，不重读（宽度变了账没变）；面板落在哪由 `ui/term.ts` 那一档决定。
-  const onWin = (): void => {
-    if (term.ansi) term.draw([], panel)
-  }
-  if (term.ansi) process.on('SIGWINCH', onWin)
   try {
-    // **第一趟用 `readNew`（`follow` 里面就是它）**：账上已经有的那几十条一趟读齐、只画一次。
-    // 用 `follow` 从零起的话，那几十条会一条一条吐出来——面板跟着画几十遍（实测一次启动 31 次
-    // 重画、394 次清行），而屏幕上一个字节的差别都没有。
-    const first = await readNew(log, {})
-    rows = [...first.rows]
-    read = readingsOf(rows, { metrics: wantMetrics, report: wantReport })
-    if (!term.ansi || flags.has('once')) {
-      // 只印永久行那一档：一行 ANSI 都不写。
-      for (const line of fresh()) emitLine(line)
-      if (flags.has('once') || !flags.has('follow')) return 0
-      for await (const row of follow(log, { intervalMs: interval, signal: ac.signal, from: first.cursors })) {
-        rows = [...rows, row]
-        for (const line of fresh()) emitLine(line)
-      }
-      return 0
-    }
-    term.draw(fresh(), panel)
-    // 之后跟着走：新到的行**一条一条**地来（`follow` 每一趟读全量、按 writer 的游标筛掉看过的），
-    // 一到一条就重画一次——那正是"看着它跑"要的东西。
-    for await (const row of follow(log, { intervalMs: interval, signal: ac.signal, from: first.cursors })) {
-      rows = [...rows, row]
-      read = readingsOf(rows, { metrics: wantMetrics, report: wantReport })
-      term.draw(fresh(), panel)
-    }
+    await tui.counts
     return 0
   } finally {
     process.removeListener('SIGINT', onSig)
-    if (term.ansi) process.removeListener('SIGWINCH', onWin)
+    if (mode === 'panel') process.removeListener('SIGWINCH', onWin)
     term.close()
     await log.close()
   }
