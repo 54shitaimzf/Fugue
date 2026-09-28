@@ -10,8 +10,8 @@ import type { StatusRow } from '../../probe/status.ts'
 import { follow, readNew } from '../../probe/watch.ts'
 import { openTui, tuiModeOf } from '../../ui/follow.ts'
 import { degradeNote, openTerm } from '../../ui/term.ts'
-import { keysHintOf, openKeys } from '../../ui/keys.ts'
-import type { KeySource } from '../../ui/keys.ts'
+import { hintLineOf, openKeys } from '../../ui/keymap.ts'
+import type { KeySource } from '../../ui/keymap.ts'
 import { openGo } from '../../ui/go.ts'
 import type { GoLauncher } from '../../ui/go.ts'
 import { emitJson, emitLine, usageFail } from '../shared.ts'
@@ -134,7 +134,8 @@ export async function watchCmd(
  * ——两档的缺省不一样，各自都写在上面这一句里。
  *
  * **`UI4` · 门那儿按一下**（PLAN § 5.19 第五段那一行 · 架构 § 9.8「人的每个状态动作都是一条命令」）：
- * 只在面板那一档收按键（`ui/keys.ts`），按 `g` 起一次 `fugue round go`（`ui/go.ts`）——**界面不写
+ * 只在面板那一档收按键（`ui/keymap.ts` 那张表），按 `g` 起一次 `fugue round go`（`ui/go.ts`）——
+ * **界面不写
  * 日志、不持写句柄**，账由那个子进程写；它吐出来的行与收尾那一下走 `tui.note()`（写在面板上方）。
  * `q`/`Ctrl-C`/`Ctrl-D` 退出（**raw mode 下 `SIGINT` 不再由终端发出来**，所以那三个字节就在键表里）；
  * 那一趟还跑着时第一次按是等它收尾、第二次是硬退。`?` 把按键那一行重印一遍。
@@ -199,12 +200,14 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     })
     keys = openKeys({
       input: process.stdin,
-      onAction: (a) => {
-        if (a === 'help') {
-          tui.note(keysHintOf())
+      onAction: (d) => {
+        if (d.action === 'help') {
+          tui.note(hintLineOf())
           return
         }
-        if (a === 'quit') {
+        // `interrupt`（`Ctrl-C`）那一档的口径要等 `T5`（取消链：有在途就打断 · 3 秒内再按一次才
+        // 退）。在那之前它与退出同一条：**少一条地板比多一条近似坏得多**。
+        if (d.action === 'quit' || d.action === 'interrupt') {
           if (go?.running === true) {
             // 第一次：等它收尾。第二次：硬退——**说清代价**（那一趟的输出接不上了，它自己那份账
             // 照写：写到哪算哪，重放得回来）。
@@ -218,8 +221,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
           ac.abort()
           return
         }
-        // `go`：跑着的时候按不起了第二次（同一条命令不叠第二次）。
-        if (go === null || go.running) return
+        // `go`：跑着的时候按不起了第二次（同一条命令不叠第二次）。别的动作（编辑行 · 菜单 ·
+        // 面板 · 导航）还没接线，安静丢掉——与"认不出来的字节丢掉"同一条。
+        if (d.action !== 'go' || go === null || go.running) return
         tui.note(`按了 g：起一次 \`round go\`（${go.argv.join(' ')}）`)
         go.press()
       },
@@ -227,7 +231,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     // 第一件事：把按键那一行印出来（写在面板上方；翻上去了按 `?` 再印一次）。
     // **stdin 不是终端就不印它**（`stdout` 是终端而 `stdin` 不是：面板照画，可按键收不到）——
     // 印一行"按 g 放行"而按下去没反应，是这一档最坏的一种体验。
-    tui.note(keys.raw ? keysHintOf() : 'stdin 不是终端：这一档不收按键（放行还是手敲 fugue round go）')
+    tui.note(keys.raw ? hintLineOf() : 'stdin 不是终端：这一档不收按键（放行还是手敲 fugue round go）')
   }
   // **每一条退出路径都要把终端还原回去**（计划 § 5.19 里 DECSTBM 那笔账在 raw mode 上是同一笔：
   // 漏一条，那台终端就得人 `reset`）。四路：正常退 · `Ctrl-C`（raw mode 下走按键那一头）·

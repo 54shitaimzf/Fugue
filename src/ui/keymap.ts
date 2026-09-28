@@ -1,0 +1,677 @@
+// TUI 的第二版第二格：**键位表**——动作 id + 缺省键串 + 说明，**一处声明**，喂三处。
+//
+// 出处：PLAN § 5.19 第二版「二 · 按键」那张表 ·「四 · 取消链与退出」·「三 · 状态」那张表的三个轴 ·
+// 第九节 `T2` 那一行（"提示行 · 帮助面板 · 菜单三处渲染出来的键串与表逐字相同，条数也相同"）。
+// 上一版那一张 5 条的键表（`ui/keys.ts`）并进这一处，那个文件删了——**按键只有一处真相**。
+//
+// 为什么值得单独一格：同类里有一家把帮助目录与真分发做成两张互不相干的表，实测已经漂了 5 条
+// （`?` · `l` · `v` · `g` · `G` 早就换了前缀）。这一份的牙就是**三处渲染与分发读的是同一张表**。
+//
+// 四条口径写在这里：
+//
+//   · **表里不写字节**：写的是人能读的键名（`Ctrl-J` · `Alt-Enter` · `↑` · `Alt-1…9`），字节由
+//     `bytesOfKey` 从这些名字翻出来。人改一条键串不用懂转义，分发那一头也不用认识键名；
+//   · **动作 id 与键串两层**：分发只认动作 id（`applyIntent`/`onAction` 那一头），所以加一条键
+//     不动逻辑、换一处逻辑不动键；
+//   · **还没接线的动作不许出现在提示行里**：`by` 记着哪一格把它接上（`T2` 就是这一格）。面板那块
+//     地方是给"现在就按得动"的键留的——许诺一个按下去没反应的键，比少印几条坏得多（同类里
+//     CodeWhale 那种"目录里有、按下去没有"正是这一条要躲的）。帮助面板与菜单**列全部**，
+//     没接线的那几条后面缀着 `（T4 那一格接上）`；
+//   · **一串序列不许被当成按键**：`escapeAt` 把 `ESC` 起头的那一段整段吃掉；被切开的半截
+//     （`ESC` 单独来 · `ESC [` 还没到终字节）**攒着**（`decoderOf` 的 `pending`），攒到
+//     `ESC_WAIT_MS` 还没有下文，才当"人真按了一下 `Esc`"——`Esc` 现在是一条键了，这一条必须有。
+import { widthOf } from './frame.ts'
+
+/** 输入行与面板认的那些动作。**一个动作一个意思**（哪个字节算哪个动作由下面那张表定）。 */
+export type UiAction =
+  | 'submit'
+  | 'newline'
+  | 'cancel'
+  | 'interrupt'
+  | 'quit'
+  | 'historyOlder'
+  | 'historyNewer'
+  | 'search'
+  | 'home'
+  | 'end'
+  | 'backspace'
+  | 'delete'
+  | 'left'
+  | 'right'
+  | 'wordLeft'
+  | 'wordRight'
+  | 'killToStart'
+  | 'killWord'
+  | 'killToEnd'
+  | 'yank'
+  | 'undo'
+  | 'redo'
+  | 'toggleFold'
+  | 'menu'
+  | 'panel'
+  | 'complete'
+  | 'focus'
+  | 'mention'
+  | 'go'
+  | 'help'
+
+/** 哪一格把这个动作接上（`T2` 就是这一格）。 */
+export type Stage = 'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'T8'
+
+/** 表里的一行。 */
+export interface Binding {
+  readonly action: UiAction
+  /** 按哪几个键（人能读的写法，一个动作可以有几种写法：`Ctrl-D` 与 `q`）。 */
+  readonly keys: readonly string[]
+  /** 提示那一行里的一句（**短**：那一行是给屏幕看的，不是说明书）。 */
+  readonly hint: string
+  /** 帮助面板与菜单里的一句（人读的一句话：按下去到底干什么）。 */
+  readonly note: string
+  readonly by: Stage
+}
+
+/**
+ * **那一张表。次序就是提示行与帮助面板的次序**（先提交 · 再取消 · 再编辑 · 再导航 · 最后放行）。
+ *
+ * `interrupt` 那一行的说明如实写着"现在与退出同一条"：`T5` 接上取消链之前，`Ctrl-C` 的地板是
+ * 退出（少一条地板比多一条近似坏得多）。
+ */
+export const TABLE: readonly Binding[] = [
+  {
+    action: 'submit',
+    keys: ['Enter'],
+    hint: '提交',
+    note: '把这一行交出去：空闲就直接跑，忙就入队（排队项看得见、撤得掉）',
+    by: 'T3',
+  },
+  {
+    action: 'newline',
+    keys: ['Ctrl-J', 'Alt-Enter'],
+    hint: '换行',
+    note: '在行里换一行，不提交（多行草稿与折叠过的粘贴都从这里来）',
+    by: 'T3',
+  },
+  {
+    action: 'cancel',
+    keys: ['Esc'],
+    hint: '取消',
+    note: '取消链第一级：先关一层弹层，再打断、再丢排队草稿、再清空输入，都没有就什么都不做',
+    by: 'T5',
+  },
+  {
+    action: 'interrupt',
+    keys: ['Ctrl-C'],
+    hint: '打断',
+    note: '取消链：有在途的那一趟就打断它；3 秒内再按一次才是退出（现在这一格与退出同一条）',
+    by: 'T2',
+  },
+  {
+    action: 'quit',
+    keys: ['Ctrl-D', 'q', 'Q'],
+    hint: '退出',
+    note: '退出面板：只在输入行空着的时候（退出码 0——人喊停不是失败）',
+    by: 'T2',
+  },
+  {
+    action: 'historyOlder',
+    keys: ['↑'],
+    hint: '上一条',
+    note: '输入历史往前翻；有面板开着的时候是往上选',
+    by: 'T3',
+  },
+  {
+    action: 'historyNewer',
+    keys: ['↓'],
+    hint: '下一条',
+    note: '输入历史往后翻；翻到底回到手里原来那一行',
+    by: 'T3',
+  },
+  {
+    action: 'search',
+    keys: ['Alt-R'],
+    hint: '反查',
+    note: '拿行里已经打的那几个字在历史里反查，再按一下找更早的一条',
+    by: 'T3',
+  },
+  {
+    action: 'home',
+    keys: ['Ctrl-A', 'Home'],
+    hint: '行首',
+    note: '光标到行首',
+    by: 'T5',
+  },
+  {
+    action: 'end',
+    keys: ['Ctrl-E', 'End'],
+    hint: '行尾',
+    note: '光标到行尾',
+    by: 'T5',
+  },
+  {
+    action: 'backspace',
+    keys: ['Backspace'],
+    hint: '退格',
+    note: '删掉光标左边那一个簇（汉字与组合符号各算一个）',
+    by: 'T5',
+  },
+  {
+    action: 'delete',
+    keys: ['Delete'],
+    hint: '删一格',
+    note: '删掉光标右边那一个簇',
+    by: 'T5',
+  },
+  {
+    action: 'left',
+    keys: ['←'],
+    hint: '左移',
+    note: '光标往左一个簇',
+    by: 'T5',
+  },
+  {
+    action: 'right',
+    keys: ['→'],
+    hint: '右移',
+    note: '光标往右一个簇',
+    by: 'T5',
+  },
+  {
+    action: 'wordLeft',
+    keys: ['Alt-B', 'Ctrl-←'],
+    hint: '退一个词',
+    note: '光标往左退一个词（汉字连成一串算一个词）',
+    by: 'T5',
+  },
+  {
+    action: 'wordRight',
+    keys: ['Alt-F', 'Ctrl-→'],
+    hint: '进一个词',
+    note: '光标往右进一个词',
+    by: 'T5',
+  },
+  {
+    action: 'killToStart',
+    keys: ['Ctrl-U'],
+    hint: '清行',
+    note: '清到行首（光标已经在行首就清整行）；清掉的那一段在 kill 环里',
+    by: 'T5',
+  },
+  {
+    action: 'killWord',
+    keys: ['Ctrl-W'],
+    hint: '删一个词',
+    note: '砍掉光标左边那一个词（进 kill 环）',
+    by: 'T5',
+  },
+  {
+    action: 'killToEnd',
+    keys: ['Ctrl-K'],
+    hint: '删到行尾',
+    note: '砍掉光标右边那一段（进 kill 环）',
+    by: 'T5',
+  },
+  {
+    action: 'yank',
+    keys: ['Ctrl-Y'],
+    hint: '粘回',
+    note: '把 kill 环里最近那一段粘回光标处',
+    by: 'T5',
+  },
+  {
+    action: 'undo',
+    keys: ['Ctrl-Z'],
+    hint: '撤销',
+    note: '退一步（`Esc` 清掉的那一行也从这里回来）',
+    by: 'T5',
+  },
+  {
+    action: 'redo',
+    keys: ['Alt-Z'],
+    hint: '重做',
+    note: '把刚撤掉的那一步再做回来',
+    by: 'T5',
+  },
+  {
+    action: 'toggleFold',
+    keys: ['Ctrl-O'],
+    hint: '展开粘贴',
+    note: '把折起来的那一大段粘贴展开（原文一个字节都不改，只是显示）',
+    by: 'T3',
+  },
+  {
+    action: 'menu',
+    keys: ['/'],
+    hint: '命令菜单',
+    note: '命令行的候选表：本机的那些命令与这些键都在一张单子上',
+    by: 'T4',
+  },
+  {
+    action: 'panel',
+    keys: ['Ctrl-P'],
+    hint: '命令面板',
+    note: '命令面板：同一张候选表，键与命令两条路进同一个动作',
+    by: 'T4',
+  },
+  {
+    action: 'complete',
+    keys: ['Tab'],
+    hint: '补全',
+    note: '补全；没有可补的时候在各面板之间轮换',
+    by: 'T4',
+  },
+  {
+    action: 'focus',
+    keys: ['Alt-1…9'],
+    hint: '切到第 n 格',
+    note: '直接切到第 n 格 agent 或第 n 轮',
+    by: 'T8',
+  },
+  {
+    action: 'mention',
+    keys: ['@'],
+    hint: '引用路径',
+    note: '把工作区里的一条路径引用进这一行',
+    by: 'T4',
+  },
+  {
+    action: 'go',
+    keys: ['g', 'G'],
+    hint: '放行这一轮',
+    note: '放行：起一次 `fugue round go`（账由那个子进程写，界面一个字节都不写）',
+    by: 'T2',
+  },
+  {
+    action: 'help',
+    keys: ['?'],
+    hint: '重印这一行',
+    note: '把按键那一行重印一遍（翻上去了再按一下就回来）',
+    by: 'T2',
+  },
+]
+
+/** `Ctrl-<方向键>` 那一档：终端报的不是控制码，是带修饰的那条 CSI（xterm 的 `ESC [ 1 ; 5 D`）。 */
+const MODIFIED: Readonly<Record<string, readonly string[]>> = {
+  '←': ['\u001b[1;5D'],
+  '→': ['\u001b[1;5C'],
+  '↑': ['\u001b[1;5A'],
+  '↓': ['\u001b[1;5B'],
+  Home: ['\u001b[1;5H'],
+  End: ['\u001b[1;5F'],
+  Delete: ['\u001b[3;5~'],
+}
+
+/** 键名 → 字节。**表里只写名字，字节在这里翻**（人改配置不用懂转义）。 */
+const NAMED: Readonly<Record<string, readonly string[]>> = {
+  Enter: ['\r'],
+  Tab: ['\t'],
+  Esc: ['\u001b'],
+  Space: [' '],
+  Backspace: ['\u007f', '\b'],
+  Delete: ['\u001b[3~'],
+  Home: ['\u001b[H', '\u001b[1~'],
+  End: ['\u001b[F', '\u001b[4~'],
+  '↑': ['\u001b[A'],
+  '↓': ['\u001b[B'],
+  '←': ['\u001b[D'],
+  '→': ['\u001b[C'],
+}
+
+/** `Ctrl-<X>` 的那一半：`Ctrl-Z` 是 0x1a，`Ctrl-C` 是 0x03（raw mode 下 `SIGINT` 就是它）。 */
+function ctrlByte(name: string, byte: string): string {
+  // 终端上 `Ctrl-Enter` 与 `Enter` 是同一个字节（分不开），`Ctrl-Space` 是 NUL，`Ctrl-?` 是 DEL。
+  if (name === 'Enter') return '\r'
+  if (name === 'Space') return '\u0000'
+  if (name === '?') return '\u007f'
+  const c = byte.codePointAt(0) ?? 0
+  if (byte.length === 1 && c >= 0x40 && c <= 0x7f) return String.fromCharCode(c & 0x1f)
+  return ''
+}
+
+/**
+ * 一个键名 → 那几个字节（认不出来给空数组，**不抛**：配置里写错一个键名不该把整张表带走）。
+ * `Ctrl-J` 是 0x0a · `Alt-Enter` 是 `ESC` + `CR` · `↑` 是 `ESC [ A` · `Alt-1` 是 `ESC 1`。
+ */
+export function bytesOfKey(name: string): readonly string[] {
+  const named = NAMED[name]
+  if (named !== undefined) return named
+  const combo = /^(Ctrl|Alt)-(.+)$/.exec(name)
+  if (combo !== null) {
+    const head = combo[1] as string
+    const rest = combo[2] as string
+    const modified = head === 'Ctrl' ? MODIFIED[rest] : undefined
+    if (modified !== undefined) return modified
+    const inner = bytesOfKey(rest)
+    if (inner.length === 0) return []
+    const out: string[] = []
+    for (const x of inner) {
+      // `Alt-<字母>`：不带 Shift 是 `ESC r`、带 Shift 是 `ESC R`——两个都收（表里写的是那个字母）。
+      if (head === 'Ctrl') out.push(ctrlByte(rest, x))
+      else if (x.length === 1 && /[A-Za-z]/.test(x)) out.push(`\u001b${x.toLowerCase()}`, `\u001b${x.toUpperCase()}`)
+      else out.push(`\u001b${x}`)
+    }
+    return out.some((x) => x === '') ? [] : out
+  }
+  // 范围写法（`Alt-1…9`）：一个键名翻出九个字节——表里写一行比写九行好读，字节一个也不少。
+  const range = /^([1-9])…([1-9])$/.exec(name)
+  if (range !== null) {
+    const from = Number(range[1])
+    const to = Number(range[2])
+    const out: string[] = []
+    for (let i = from; i <= to; i += 1) out.push(String(i))
+    return out
+  }
+  if ([...name].length === 1) return [name]
+  return []
+}
+
+/** 屏幕上怎么写这一条（`keys` 拼起来：一处推出来，不另写一份）。 */
+export function keyLabelOf(b: Binding): string {
+  return b.keys.join('/')
+}
+
+/** 覆盖里认不出来的那一条（`config set ui.keys.<动作> <键串>`）：报出来，**不静默把键弄没**。 */
+export interface KeymapProblem {
+  readonly action: string
+  readonly key: string
+  readonly why: string
+}
+
+/** 分发与三处渲染读的那一份（覆盖之后）。 */
+export interface Keymap {
+  readonly rows: readonly Binding[]
+  readonly problems: readonly KeymapProblem[]
+}
+
+/**
+ * 从缺省那张表 + 一份覆盖造出分发用的那一份。覆盖的键是**动作 id**（不是键名）：
+ * `{ submit: 'Ctrl-Enter' }`。认不出来的动作 id · 认不出来的键名 · 两个动作抢同一个字节，
+ * 都落在 `problems` 里（那一条**照缺省走**，不静默变成"按不出来"）。
+ */
+export function keymapOf(over: Readonly<Record<string, string>> = {}): Keymap {
+  const problems: KeymapProblem[] = []
+  const known = new Set<string>(TABLE.map((b) => b.action))
+  for (const [action, key] of Object.entries(over)) {
+    if (!known.has(action)) problems.push({ action, key, why: '表里没有这个动作' })
+  }
+  const rows = TABLE.map((b) => {
+    const raw = over[b.action]
+    if (raw === undefined) return b
+    const keys = raw.split('·').map((x) => x.trim()).filter((x) => x !== '')
+    const bad = keys.filter((k) => bytesOfKey(k).length === 0)
+    if (keys.length === 0 || bad.length > 0) {
+      problems.push({ action: b.action, key: raw, why: `这个键名认不出来：${bad.join(' ')}（照缺省走）` })
+      return b
+    }
+    return { ...b, keys }
+  })
+  const seen = new Map<string, UiAction>()
+  for (const b of rows) {
+    for (const k of b.keys) {
+      for (const bs of bytesOfKey(k)) {
+        const had = seen.get(bs)
+        if (had === undefined) seen.set(bs, b.action)
+        else if (had !== b.action) problems.push({ action: b.action, key: k, why: `与 ${had} 抢同一个字节` })
+      }
+    }
+  }
+  return { rows, problems }
+}
+
+/** 缺省那一份（工作区没有覆盖时就是它）。 */
+export const KEYMAP: Keymap = keymapOf()
+
+/** 解出来的一个动作（`Alt-1…9` 那一档带着第几个）。 */
+export interface Decoded {
+  readonly action: UiAction
+  readonly n?: number
+}
+
+function decodedOf(action: UiAction, bytes: string): Decoded {
+  return action === 'focus' ? { action, n: Number(bytes.slice(1)) } : { action }
+}
+
+/** 字节 → 动作（一张表只在这里建一次；加一条键不会漂）。 */
+export function byteMapOf(km: Keymap = KEYMAP): ReadonlyMap<string, Decoded> {
+  const out = new Map<string, Decoded>()
+  for (const b of km.rows) {
+    for (const k of b.keys) {
+      for (const bs of bytesOfKey(k)) out.set(bs, decodedOf(b.action, bs))
+    }
+  }
+  return out
+}
+
+/**
+ * `ESC` 起头的那一段有几个字符（不是 `ESC` 起头就是 0）。
+ *
+ * 两条规矩：**CSI 的终字节是 `@` 到 `~`**（`ESC [` 之后一路吃到它）——方向键 · 鼠标报告 ·
+ * 终端报出来的组合键全落在这一条里；**`ESC` 后面跟一个普通字符是 Alt 那一档**（整两个字符吃掉），
+ * 所以 `ESC q` 不是"按了 q"。
+ */
+export function escapeAt(s: string, i: number): number {
+  if (s[i] !== '\u001b') return 0
+  const next = s[i + 1]
+  if (next === undefined) return 1
+  if (next !== '[' && next !== 'O') return 2
+  let j = i + 2
+  while (j < s.length) {
+    const c = s.charCodeAt(j)
+    if (c >= 0x40 && c <= 0x7e) return j - i + 1
+    j += 1
+  }
+  return s.length - i
+}
+
+/**
+ * `ESC` 起头那一段是不是**被切开了**（还差后面的字节才成一个键）：`ESC` 后面什么都没有 ·
+ * `ESC [` 之后还没到终字节。这两档要**攒着**（`decoderOf`），不能当成"按了一下 `Esc`"。
+ */
+export function escapeTruncatedAt(s: string, i: number): boolean {
+  if (s[i] !== '\u001b') return false
+  if (s[i + 1] === undefined) return true
+  if (s[i + 1] !== '[' && s[i + 1] !== 'O') return false
+  for (let j = i + 2; j < s.length; j += 1) {
+    const c = s.charCodeAt(j)
+    if (c >= 0x40 && c <= 0x7e) return false
+  }
+  return true
+}
+
+const codepointSize = (c: number): number => (c > 0xffff ? 2 : 1)
+
+/**
+ * 一段输入 → 那几个动作（**一个字节都不多认**）。认不出来的字节（多余的回车 · 别的字母 ·
+ * 没配过的方向键）安静丢掉：这一档不是命令行，多认一个字节就是多一种"按错了键也触发"的可能。
+ * 被切开的半截序列**这一份不留**（要留就用 `decoderOf`，`openKeys` 走的是那一条）。
+ */
+export function actionsOf(chunk: string, km: Keymap = KEYMAP): readonly UiAction[] {
+  return decodeOf(chunk, km).map((d) => d.action)
+}
+
+/** 与 `actionsOf` 同一件事，但带着 `Alt-1…9` 那个数。 */
+export function decodeOf(chunk: string, km: Keymap = KEYMAP): readonly Decoded[] {
+  const bytes = byteMapOf(km)
+  const out: Decoded[] = []
+  let i = 0
+  while (i < chunk.length) {
+    const esc = escapeAt(chunk, i)
+    if (esc > 0) {
+      if (!escapeTruncatedAt(chunk, i)) {
+        const d = bytes.get(chunk.slice(i, i + esc))
+        if (d !== undefined) out.push(d)
+      }
+      i += esc
+      continue
+    }
+    const size = codepointSize(chunk.codePointAt(i) as number)
+    const d = bytes.get(chunk.slice(i, i + size))
+    if (d !== undefined) out.push(d)
+    i += size
+  }
+  return out
+}
+
+/** 半截 `ESC` 等多久算"人真按了一下 `Esc`"（毫秒）。 */
+export const ESC_WAIT_MS = 40
+
+/** 一块一块喂进来的解码器（终端可能把一条序列切在两个 `data` 之间）。 */
+export interface Decoder {
+  /** 还没凑成一个键的那半截（空串就是没有）。 */
+  readonly pending: string
+  feed(chunk: string): readonly Decoded[]
+  /** 半截攒不成键了：最前面那一个 `ESC` 当"人按了一下 `Esc`"，剩下的接着解。 */
+  flush(): readonly Decoded[]
+}
+
+export function decoderOf(km: Keymap = KEYMAP): Decoder {
+  const bytes = byteMapOf(km)
+  let pending = ''
+  const step = (s: string): { readonly out: readonly Decoded[]; readonly rest: string } => {
+    const out: Decoded[] = []
+    let i = 0
+    while (i < s.length) {
+      const esc = escapeAt(s, i)
+      if (esc > 0) {
+        if (escapeTruncatedAt(s, i)) return { out, rest: s.slice(i) }
+        const d = bytes.get(s.slice(i, i + esc))
+        if (d !== undefined) out.push(d)
+        i += esc
+        continue
+      }
+      const size = codepointSize(s.codePointAt(i) as number)
+      const d = bytes.get(s.slice(i, i + size))
+      if (d !== undefined) out.push(d)
+      i += size
+    }
+    return { out, rest: '' }
+  }
+  return {
+    get pending(): string {
+      return pending
+    },
+    feed(chunk: string): readonly Decoded[] {
+      const r = step(pending + chunk)
+      pending = r.rest
+      return r.out
+    },
+    flush(): readonly Decoded[] {
+      if (pending === '') return []
+      const head = pending[0] as string
+      const rest = pending.slice(1)
+      pending = ''
+      const one = bytes.get(head)
+      return [...(one === undefined ? [] : [one]), ...this.feed(rest)]
+    },
+  }
+}
+
+const entryOf = (b: Binding): string => `${keyLabelOf(b)} ${b.hint}`
+
+/**
+ * 提示那一行。**由表推出来**，只印**已经接线的**那些（`by === 'T2'`）——许诺一个按下去没反应的
+ * 键，比少印几条坏得多。`limit` 是给 `--help` 与面板抬头留的：只印头几条，剩下的写成
+ * "还有 N 条"，而那个 N 也是从表里数出来的。
+ */
+export function hintLineOf(km: Keymap = KEYMAP, limit = 0): string {
+  const ready = km.rows.filter((b) => b.by === 'T2')
+  if (ready.length === 0) return '按键：这一档还没有接上线的键'
+  const shown = limit > 0 && ready.length > limit ? ready.slice(0, limit) : ready
+  const more = ready.length - shown.length
+  const tail = more > 0 ? ` · …（还有 ${more} 条，按 ? 重印看全部）` : ''
+  return `按键 ${shown.map(entryOf).join(' · ')}${tail}`
+}
+
+/**
+ * 帮助面板那些行：**一条一行**，键那一列按表里最长的那个键对齐（列宽是算出来的，不是写死的），
+ * 还没接线的动作在后面缀一句"哪一格接上"。
+ */
+export function helpRowsOf(km: Keymap = KEYMAP): readonly string[] {
+  const w = km.rows.reduce((n, b) => Math.max(n, widthOf(keyLabelOf(b))), 0)
+  return km.rows.map((b) => {
+    const pad = ' '.repeat(w - widthOf(keyLabelOf(b)) + 2)
+    const later = b.by === 'T2' ? '' : `（${b.by} 那一格接上）`
+    return `${keyLabelOf(b)}${pad}${b.note}${later}`
+  })
+}
+
+/** `/` 菜单的候选：同一张表推出来的那些行（一行的样子与提示行里那一节一样）。 */
+export function menuRowsOf(km: Keymap = KEYMAP): readonly string[] {
+  return km.rows.map((b) => `${keyLabelOf(b)}  ${b.hint}`)
+}
+
+/** 收输入的那一头（`process.stdin` 就是它）。**四个方法都是结构上的**——测试里给一个假的就能把
+ * 这一档跑起来，不用真终端（与 `ui/term.ts` 的 `TermOut` 同一个做法）。 */
+export interface KeyInput {
+  on(ev: 'data', listener: (chunk: string | Uint8Array) => void): unknown
+  removeListener(ev: 'data', listener: (chunk: string | Uint8Array) => void): unknown
+  /** 进/出 raw mode（`process.stdin.setRawMode`）。不是 TTY 的输入上没有它。 */
+  setRawMode?(raw: boolean): unknown
+  /** 是不是终端：不是就不收（管道 · CI · 重定向进来的一份输入）。 */
+  readonly isTTY?: boolean | undefined
+}
+
+/** 一个收输入的口。**`close()` 幂等**（正常退 · 信号 · `finally` 三条路都会走到它）。 */
+export interface KeySource {
+  /** raw mode 开着没有（不是 TTY 时是 `false`：一个字节都不读）。 */
+  readonly raw: boolean
+  close(): void
+}
+
+/** 攒着等下文的那一个定时器（测试里给一个假的就不真等）。 */
+export type WaitFn = (ms: number, fn: () => void) => () => void
+
+const realWait: WaitFn = (ms, fn) => {
+  const t = setTimeout(fn, ms)
+  return () => clearTimeout(t)
+}
+
+/**
+ * 收下 stdin。**它不注册信号、不碰 `process`、不认识 `UiAction` 之外的东西**——动作交出去，
+ * 拨哪一下由调用方决定（`cli/cmd/observe.ts` 的 `tui`）。
+ *
+ * 不是 TTY → 返回一个空句柄（`raw: false` · `close()` 什么也不做），**一个字节都不读**：这一条与
+ * `ui/term.ts` 那一档是同一条地板，写在两处各说各的那一半。
+ */
+export function openKeys(o: {
+  readonly input: KeyInput
+  readonly onAction: (d: Decoded) => void
+  readonly km?: Keymap
+  readonly wait?: WaitFn
+}): KeySource {
+  const input = o.input
+  const raw = input.isTTY === true && typeof input.setRawMode === 'function'
+  if (!raw) return { raw: false, close(): void {} }
+  const dec = decoderOf(o.km ?? KEYMAP)
+  const wait = o.wait ?? realWait
+  let stop: (() => void) | null = null
+  const onData = (chunk: string | Uint8Array): void => {
+    const text = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk)
+    if (stop !== null) {
+      stop()
+      stop = null
+    }
+    for (const d of dec.feed(text)) o.onAction(d)
+    if (dec.pending !== '') {
+      stop = wait(ESC_WAIT_MS, () => {
+        stop = null
+        for (const d of dec.flush()) o.onAction(d)
+      })
+    }
+  }
+  input.setRawMode?.(true)
+  input.on('data', onData)
+  let done = false
+  return {
+    raw: true,
+    close(): void {
+      if (done) return
+      done = true
+      if (stop !== null) {
+        stop()
+        stop = null
+      }
+      input.removeListener('data', onData)
+      input.setRawMode?.(false)
+    },
+  }
+}
