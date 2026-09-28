@@ -211,6 +211,22 @@ else if (cmd === 'state') {
   process.stdout.write(String(rows(args[0]).filter((r) => r.t === 'round/state' && r.from === args[1]).length))
 } else if (cmd === 'writes') {
   process.stdout.write(String(rows(args[0]).filter((r) => r.t === 'view/write' && r.path === args[1]).length))
+} else if (cmd === 'permanent') {
+  // 分法上"进历史"的那十族各有几条。**这里是把它重抄一遍**（走查不 import TS）：两边对不上的
+  // 那一天，`tui --once` 的行数与这个数当场不等——那条 check 就是这两处的对账。
+  const FAMILIES = [
+    'round/state',
+    'round/intent',
+    'contract/issue',
+    'round/approve',
+    'agent/stop',
+    'agent/handoff',
+    'merge/attempt',
+    'merge/accept',
+    'bound/deny',
+    'signal',
+  ]
+  process.stdout.write(String(rows(args[0]).filter((r) => FAMILIES.includes(r.t)).length))
 } else if (cmd === 'count') {
   // 日志里那句话出现几次（"原话不另存"那一档量的就是它——正文那一栏有没有它）。
   let n = 0
@@ -572,6 +588,21 @@ console.log("  停因：「" + (one === undefined ? "（没落）" : one.stopped
 console.log("  验收 " + j.verify.pass + "/" + j.verify.fail + " · 推进 " + JSON.stringify(j.advanced === null ? null : j.advanced.written))
 console.log("  八元指标 " + (j.metrics || []).length + " 条")
 ' "$T/floor.json"
+
+echo
+echo "=== 五之二 · 观察那一档（tui）：只印永久行 · 一行 ANSI 都不写 ==="
+$FUGUE --root "$W" tui --once > "$T/tui.out" 2> "$T/tui.err"
+RCT=$?
+printf '  rc = %s\n' "$RCT"
+sed 's/^/  err| /' "$T/tui.err"
+check "tui① --once 的退出码" "0" "$RCT"
+check "tui① 一个转义字节都不写（管道那一档不是 TTY）" "0" "$(grep -c "$(printf '\033')" "$T/tui.out" || true)"
+check "tui② 行数 = 账上进历史那十族的条数之和" "$(node "$T/s9.js" permanent "$W/.fugue/log/round.jsonl")" "$(wc -l < "$T/tui.out" | tr -d ' ')"
+has "$T/tui.out" 'Idle → Planning' "tui② 处境那条链印得出"
+check "tui② 不是抄本那一档（没有制表符 · 那一档是 fugue log）" "0" "$(grep -c "$(printf '\t')" "$T/tui.out" || true)"
+printf '  头几行：\n'
+head -5 "$T/tui.out" | sed 's/^/  | /'
+printf '  账上一共 %s 条事件 · 其中 %s 条进历史\n' "$(wc -l < "$W/.fugue/log/round.jsonl" | tr -d ' ')" "$(wc -l < "$T/tui.out" | tr -d ' ')"
 
 echo
 echo "=== 六 · 收尾：不留挂载 · 不留进程 · 不留孤儿分支 ==="

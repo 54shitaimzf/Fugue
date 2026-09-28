@@ -119,10 +119,22 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { computeAll, reportOf } from '../probe/round.ts'
 import { computeAllMetrics, computeAttribution, lineOf, lineOfAttribution } from '../probe/metrics.ts'
-import { METRICS_HEAD, REPORT_HEAD, callLinesOf, linesOf, readings, readingsLines, rowsOf } from '../probe/status.ts'
+import {
+  METRICS_HEAD,
+  REPORT_HEAD,
+  callLinesOf,
+  linesOf,
+  readings,
+  readingsLines,
+  readingsOf,
+  rowsOf,
+} from '../probe/status.ts'
 import { phaseOf } from '../model/price.ts'
-import type { StatusRow } from '../probe/status.ts'
+import type { StatusReadings, StatusRow } from '../probe/status.ts'
 import { follow, readNew } from '../probe/watch.ts'
+import { frameOf } from '../ui/frame.ts'
+import { permanentLinesOf } from '../ui/stream.ts'
+import { openTerm } from '../ui/term.ts'
 
 export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 
@@ -140,6 +152,13 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              writer 一个游标**——晚出现的那个 agent 的日志口第一条就是 seq=1，
                              "从 N 接着读"会把它整段永久漏掉。次序是**到达序**（实时），
                              一趟之内仍是 (seq, writer) 的全序
+  tui [--once] [--follow]    同一读面的第二档渲染：底部一块恒定 K 行的面板（处境 + 读数）擦掉重画，
+                             永久行（轮次转移 · 契约 · 每一格干完没有 · 边界拦下什么）按到达序追加进
+                             本终端的历史。**可附着**：自己不起轮次、不取锁、不写一个字节——一轮正在
+                             跑时照样读。TTY 那一档不给 --follow 也是跟着；Ctrl-C 收走面板退出（码 0）。
+                             加 --metrics / --report 与 status 那两栏同名同义。
+                             --once 印一遍永久行就退；不是 TTY（管道 · CI）也是这一档，**一个字节的
+                             ANSI 都不写**；$TERM 是 dumb 或认不出来同样退到这一档
   read <path>                读一个路径；默认吐原始字节
   list [dir]                 列一个目录
   stat <path>                一个路径的形状
@@ -607,6 +626,7 @@ function emit(pos: LogPos, e: LogEvent, json: boolean): void {
  */
 const LOG_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help']
 const WATCH_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help', 'follow', 'interval']
+const TUI_FLAGS: readonly string[] = ['root', 'help', 'once', 'follow', 'metrics', 'report', 'interval']
 const STATUS_FLAGS: readonly string[] = ['root', 'json', 'help', 'once', 'metrics', 'report']
 
 /**
@@ -668,6 +688,19 @@ async function statusCmd(
 }
 
 /**
+ * `--interval <毫秒>`（`watch` 与 `tui` 同一个意思：跟随那一趟睡多久）。给一个数，或者给一句
+ * 用法错的话——两处各写一遍的话，"多少算合法"这件事就漂了。
+ */
+function intervalOf(flags: Map<string, string | true>): number | string {
+  const raw = flags.get('interval')
+  if (raw === undefined) return 200
+  if (typeof raw !== 'string') return '--interval 要一个数：--interval 200'
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 1) return `--interval 要一个正整数（毫秒），拿到 ${JSON.stringify(raw)}`
+  return n
+}
+
+/**
  * `watch`：**顺着 NDJSON 账读**（PLAN § 5.18 的第 13 格）。
  *
  * 两档只有一件事不同：不给 `--follow` 就把账上有的念一遍就停；给了就一直跟着，直到人按 Ctrl-C
@@ -680,17 +713,9 @@ async function watchCmd(
 ): Promise<number> {
   const bad = unknownFlagsOf('watch', flags, WATCH_FLAGS)
   if (bad !== null) return usageFail(`${bad}；不给 --follow 就把账上有的念一遍就停`)
-  const intervalRaw = flags.get('interval')
-  let intervalMs = 200
-  if (typeof intervalRaw === 'string') {
-    const n = Number(intervalRaw)
-    if (!Number.isInteger(n) || n < 1) {
-      return usageFail(`--interval 要一个正整数（毫秒），拿到 ${JSON.stringify(intervalRaw)}`)
-    }
-    intervalMs = n
-  } else if (intervalRaw === true) {
-    return usageFail('--interval 要一个数：--interval 200')
-  }
+  const interval = intervalOf(flags)
+  if (typeof interval === 'string') return usageFail(interval)
+  const intervalMs = interval
   const only = flags.get('agent')
   const log = openLog(root)
   const ac = new AbortController()
@@ -710,6 +735,93 @@ async function watchCmd(
     return 0
   } finally {
     process.removeListener('SIGINT', onSig)
+    await log.close()
+  }
+}
+
+/**
+ * `fugue tui`：**同一读面的第二档渲染**（PLAN § 5.19 第五段 · `UI2` 那一格 · 架构 § 9.8 的可附着
+ * TUI）。它一个新读源都不开：账读一遍（`rowsOf`），同那一份行折两处——三份读数（`readingsOf`，
+ * 与 `status --once` 同一个入口）与永久行那一栏（`ui/stream.ts` 的分法）；面板那几行交给
+ * `ui/frame.ts`，擦与摆交给 `ui/term.ts`。**它不写日志、不取锁、不新增事件**——一轮正在跑时照样读。
+ *
+ * 四档地板，各自的地板各自说得出（PLAN § 5.19）：
+ *
+ *   · **真终端**：底部一块恒定 K 行的面板，跟着账重画（`follow()` 那一趟驱动，不另设定时器），
+ *     `SIGWINCH` 到了按新宽度另起一块，`Ctrl-C` 收走面板退出（**退出码 0**：人喊停不是失败）；
+ *   · **`--once`**：印一遍永久行就退（面板不画）——它自己是"瞬态区那一档"的地板；
+ *   · **不是 TTY**（管道 · CI · `node --test`）：与 `--once` 同一档，**一个字节的 ANSI 都不写**；
+ *     要一直跟着（`| tee` 那种用法）得明说 `--follow`——一条在 CI 里永不返回的命令是坑；
+ *   · **`$TERM` 是 `dumb` 或认不出来**：退到"只印永久行"那一档（`ui/term.ts` 那张表说了算）。
+ *
+ * TTY 那一档不给 `--follow` 也是跟着的（面板就是为这个）；管道那一档不给就是把账上有的印一遍就停
+ * ——两档的缺省不一样，各自都写在上面这一句里。
+ */
+async function tuiCmd(root: string, flags: Map<string, string | true>): Promise<number> {
+  const bad = unknownFlagsOf('tui', flags, TUI_FLAGS)
+  if (bad !== null) return usageFail(`${bad}；tui 是同一读面的第二档渲染——要机器读的那一份用 status --json`)
+  if (flags.has('once') && flags.has('follow')) {
+    return usageFail('--once 与 --follow 说不到一起：一个是印一遍就退，一个是一直跟着')
+  }
+  const interval = intervalOf(flags)
+  if (typeof interval === 'string') return usageFail(interval)
+  const wantMetrics = flags.has('metrics')
+  const wantReport = flags.has('report')
+  // 钱那一栏要一个档（与 `status --once` 同一个口径：读的时候按当时的钟算）。
+  const phase = phaseOf(new Date())
+  const log = openLog(root)
+  const term = openTerm({ out: process.stdout })
+  const ac = new AbortController()
+  const onSig = (): void => ac.abort()
+  process.on('SIGINT', onSig)
+  let rows: StatusRow[] = []
+  let shown = 0
+  /** 永久行只印/只摆**新到的**那几条（上一次那一条的下标接着数）。 */
+  const fresh = (): readonly string[] => {
+    const all = permanentLinesOf(rows)
+    const out = all.slice(shown)
+    shown = all.length
+    return out
+  }
+  // 读账在 `try` 里：读炸了也要走到 `finally` 去把日志口与面板收干净。
+  let read: StatusReadings = readingsOf(rows, { metrics: wantMetrics, report: wantReport })
+  const panel = (size: { readonly columns: number; readonly height: number }): readonly string[] =>
+    frameOf({ ...read, phase, permanent: permanentLinesOf(rows), width: size.columns, height: size.height }).lines
+  // resize：**只重画**，不重读（宽度变了账没变）；面板落在哪由 `ui/term.ts` 那一档决定。
+  const onWin = (): void => {
+    if (term.ansi) term.draw([], panel)
+  }
+  if (term.ansi) process.on('SIGWINCH', onWin)
+  try {
+    // **第一趟用 `readNew`（`follow` 里面就是它）**：账上已经有的那几十条一趟读齐、只画一次。
+    // 用 `follow` 从零起的话，那几十条会一条一条吐出来——面板跟着画几十遍（实测一次启动 31 次
+    // 重画、394 次清行），而屏幕上一个字节的差别都没有。
+    const first = await readNew(log, {})
+    rows = [...first.rows]
+    read = readingsOf(rows, { metrics: wantMetrics, report: wantReport })
+    if (!term.ansi || flags.has('once')) {
+      // 只印永久行那一档：一行 ANSI 都不写。
+      for (const line of fresh()) emitLine(line)
+      if (flags.has('once') || !flags.has('follow')) return 0
+      for await (const row of follow(log, { intervalMs: interval, signal: ac.signal, from: first.cursors })) {
+        rows = [...rows, row]
+        for (const line of fresh()) emitLine(line)
+      }
+      return 0
+    }
+    term.draw(fresh(), panel)
+    // 之后跟着走：新到的行**一条一条**地来（`follow` 每一趟读全量、按 writer 的游标筛掉看过的），
+    // 一到一条就重画一次——那正是"看着它跑"要的东西。
+    for await (const row of follow(log, { intervalMs: interval, signal: ac.signal, from: first.cursors })) {
+      rows = [...rows, row]
+      read = readingsOf(rows, { metrics: wantMetrics, report: wantReport })
+      term.draw(fresh(), panel)
+    }
+    return 0
+  } finally {
+    process.removeListener('SIGINT', onSig)
+    if (term.ansi) process.removeListener('SIGWINCH', onWin)
+    term.close()
     await log.close()
   }
 }
@@ -3595,6 +3707,7 @@ async function run(argv: readonly string[]): Promise<number> {
   // 那一组之前。读面与写面在命令面上分开之后，"看一眼会不会改日志"这个问题就答完了（§ 5.18）。
   if (cmd === 'status') return await statusCmd(root, flags, json)
   if (cmd === 'watch') return await watchCmd(root, flags, json)
+  if (cmd === 'tui') return await tuiCmd(root, flags)
 
   if (cmd === 'replay') return await replay(root, flags, json)
 

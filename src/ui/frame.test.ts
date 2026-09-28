@@ -19,7 +19,7 @@ import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
 import { statusOf } from '../probe/status.ts'
-import { bodyOf, clip, footerOf, frameOf, widthOf, wrap } from './frame.ts'
+import { bodyOf, clip, footerOf, frameOf, panelOf, widthOf, wrap } from './frame.ts'
 
 let seq = 0
 /** 一条事件（`round` 那一份上）。**seq 每次从 0 起**：两次折用的序号于是对得上。 */
@@ -242,6 +242,22 @@ test('⑤ 地板：窄了收单栏 · 矮了截断并说出剩几行 · 三行�
     `⑤ 读数：40 列 → 单栏（右 0，${narrow.lines.length} 行，一处内容不少）· 8 行 → 「${(cut as string).split('│').map((x) => x.trim()).filter((x) => x !== '').join(' ｜ ')}」` +
       ` · 3 行 → 「${(tiny.lines[0] as string).replace(/^│|│$/g, '').trim()}」· 0 列 0 行 → ${frameOf({ snapshot, width: 0, height: 0 }).lines.length} 行`,
   )
+})
+
+test('⑦ 账尾那一列：给了"永久行"就印它的最后一条（没给照旧印最近一条事件）', () => {
+  const snapshot = snapshotOf()
+  const permanent = ['round 1 · 轮次 r1 · Idle → Planning', 'round 5 · 轮次 r1 · 合并接受 abcdef01… · 断言 3 条（过 3 / 没过 0）']
+  assert.equal(footerOf(snapshot), '最近 merge/accept（round 13）· 事件 13 条', '没给那一列时账尾该是最近一条事件')
+  assert.equal(footerOf(snapshot, []), footerOf(snapshot), '一条永久行都没有时照旧')
+  assert.equal(footerOf(snapshot, permanent), permanent[1], `给了那一列，账尾该是它最后一条：${footerOf(snapshot, permanent)}`)
+  const withRow = frameOf({ snapshot, permanent, width: 100, height: 16 })
+  assert.equal(withRow.footer, permanent[1], '整帧那一栏也是它')
+  assert.equal(withRow.lines.length, 16, '多这一列不该动行数')
+  assert.notEqual(withRow.footer, frameOf({ snapshot, width: 100, height: 16 }).footer, '两条路该分得开')
+  // 补到 K 行那一处（终端那一层要的）：多出来的行不写，少的那几行补空白（不是补内容）。
+  assert.deepEqual([...panelOf(['ab'], 2, 4)], ['ab  ', '    '], '补空行那一处不对')
+  assert.deepEqual([...panelOf(['ab', 'cd', 'ef'], 2, 4)], ['ab  ', 'cd  '], '多出来的行该不写')
+  console.log(`⑦ 读数：没给 → 「${footerOf(snapshot)}」· 给了 → 「${withRow.footer}」· panelOf 补空行 4 列 × 2 行`)
 })
 
 test('⑥ 纯：同一份输入两次逐字节相同，进去的那一份快照一个字段都没被改', () => {

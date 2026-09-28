@@ -78,6 +78,13 @@ export interface FrameInput {
    * 读的人给（与 `status --once` 那条同一个口径）。
    */
   readonly phase?: Phase
+  /**
+   * 读源四：**永久行那一栏**（`ui/stream.ts` 的 `permanentLinesOf(rows)`）。账尾印它最后一条的
+   * 原文——"这份账走到哪儿了"要说的是处境那条链走到哪了，不是"最近一条事件"的时刻与坐标（最近
+   * 一条多半是一条只进瞬态区的 `llm/call`，印出来只是一个坐标）。不给（或空）时账尾照旧印
+   * "最近 <事件>（writer seq）· 事件 N 条"。
+   */
+  readonly permanent?: readonly string[]
   readonly width: number
   readonly height: number
 }
@@ -141,13 +148,33 @@ export function bodyOf(o: {
 }
 
 /**
- * 账尾那一行（全账的读数，**不属于任何一栏**）：最近一条事件是什么 + 一共几条。
+ * 账尾那一行（全账的读数，**不属于任何一栏**）：**最近那条永久行的原文**；一条永久行都还没有时
+ * 才是"最近一条事件是什么 + 一共几条"。
  *
  * 次序是"最近一条"在前：这一行窄起来要从右边截（状态条那一档），先留住的是"账还在动"这个信号。
+ * 永久行那一栏由分法给（`ui/stream.ts` 那一张表），这一份只读它的最后一条——不分法、不重算。
  */
-export function footerOf(s: StatusSnapshot): string {
+export function footerOf(s: StatusSnapshot, permanent?: readonly string[]): string {
+  const last = permanent?.[permanent.length - 1]
+  if (last !== undefined) return last
   if (s.last === null) return '事件 0 条（账上还没有一条）'
   return `最近 ${s.last.t}（${s.last.writer} ${s.last.seq}）· 事件 ${s.events} 条`
+}
+
+/**
+ * 把一帧补成**正好 `height` 行、每行正好 `columns` 列**——终端那一层要的那块恒定 K 行的区域。
+ *
+ * 为什么要在这一份里做：**1 逻辑行 = 1 物理行**是"上移 K 行"唯一的前提，而它靠两件事——每行
+ * 恰好 `columns` 列（`cell` 先截后补）与行数不超过 `height`。`frameOf` 本来就保证
+ * `lines.length <= height`，这里再兜一次；**少的那几行补空白，不补内容**（"还有 N 行没印"那句
+ * 由 `frameOf` 自己说，补空行不是少印）。
+ */
+export function panelOf(lines: readonly string[], height: number, columns: number): readonly string[] {
+  const h = Math.max(0, height)
+  const w = Math.max(0, columns)
+  const out = lines.slice(0, h).map((one) => cell(one, w))
+  while (out.length < h) out.push(' '.repeat(w))
+  return out
 }
 
 /**
@@ -280,7 +307,7 @@ export function frameOf(o: FrameInput): Frame {
   }
 
   // 账尾那条状态条：**一行**，超出就从右边截（`clip` 留 `…`，说了它被截过）。
-  const footer = clip(footerOf(o.snapshot), inner)
+  const footer = clip(footerOf(o.snapshot, o.permanent), inner)
   // 框占上下两行，账尾占分隔 + 一行；装不下就先让账尾让位。
   let withFooter = rows.length + 4 <= height
   let budget = height - 2 - (withFooter ? 2 : 0)

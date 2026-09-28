@@ -538,7 +538,17 @@ export interface ReadingsOptions {
  * `[本轮]` / `[整账]`），不靠读的人记得是谁印的。
  */
 export async function readings(log: Pick<Log, 'readMerged'>, opts: ReadingsOptions = {}): Promise<StatusReadings> {
-  const rows = await rowsOf(() => log.readMerged())
+  return readingsOf(await rowsOf(() => log.readMerged()), opts)
+}
+
+/**
+ * 同一条折法，**收的是一整份行**（`readings` 读回来的就是它）。
+ *
+ * 为什么要这一个出口：TUI 每一趟读回来的那一份行要**同时**喂两处——三份读数（这一份）与永久行
+ * 那一栏（`ui/stream.ts` 的 `permanentLinesOf`）。两处各读一遍日志的话，"同一份账两条读数"这件事
+ * 就又有了第二条路（PLAN § 5.19 第五段的输入契约：命令面与渲染器读同一份）。
+ */
+export function readingsOf(rows: readonly StatusRow[], opts: ReadingsOptions = {}): StatusReadings {
   const out: {
     snapshot: StatusSnapshot
     metrics?: readonly MetricValue[]
