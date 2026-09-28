@@ -60,22 +60,34 @@ const ROWS: StatusRow[] = [
 const SNAPSHOT = statusOf(ROWS)
 const PERMANENT = permanentLinesOf(ROWS)
 
-/** 写出去的那些"清行 + 文本"里的文本（`permanent` 空着时，它们就是面板那几行）。 */
+/** 写出去的字节流（U3 之后一帧恰一笔 write）：把那些笔拼起来就是它。 */
+const streamOf = (f: Fake): string => f.written.join('')
+
+/** 字节流里那些"清行 + 文本"里的文本（`permanent` 空着时，它们就是面板那几行）。 */
 function writtenRows(f: Fake): string[] {
-  return f.written.filter((s) => s.startsWith(CLEAR_LINE) && s.endsWith('\n')).map((s) => s.slice(CLEAR_LINE.length, -1))
+  return streamOf(f)
+    .split('\n')
+    .flatMap((one) => {
+      const at = one.indexOf(CLEAR_LINE)
+      if (at < 0) return []
+      const rest = one.slice(at + CLEAR_LINE.length)
+      // 段尾可能粘着下一段的开头（`upOf` / `leftOf` 那些不带换行的笔）——只留到下一个 ESC。
+      const esc = rest.indexOf('\x1b')
+      return [esc < 0 ? rest : rest.slice(0, esc)]
+    })
 }
 
-test('① 一帧的字节：逐字节等于原件；底部那 K 行逐字等于 frameOf 的 lines', () => {
+test('① 一帧的字节：逐字节等于原件，而且**一次绘制恰一笔 write**；底部那 K 行逐字等于 frameOf 的 lines', () => {
   // 手写那一份（K=3 · 20 列）：两条永久行 + 两行面板 → 面板补到三行。
   const f = fakeOut({ columns: 20 })
   const term = openTerm({ out: f, height: 3, term: 'xterm-256color' })
   term.draw(['P1', 'P2'], () => ['R1', 'R2'])
   const blank = ' '.repeat(20)
-  assert.deepEqual(
-    [...f.written],
-    [`${CLEAR_LINE}P1\n`, `${CLEAR_LINE}P2\n`, `${CLEAR_LINE}R1${' '.repeat(18)}\n`, `${CLEAR_LINE}R2${' '.repeat(18)}\n`, `${CLEAR_LINE}${blank}\n`],
-    '那一块摆出来的字节与原件不逐字相同',
-  )
+  const five =
+    `${CLEAR_LINE}P1\n${CLEAR_LINE}P2\n` +
+    `${CLEAR_LINE}R1${' '.repeat(18)}\n${CLEAR_LINE}R2${' '.repeat(18)}\n${CLEAR_LINE}${blank}\n`
+  assert.equal(f.written.length, 1, `一帧该恰一笔 write（U3），实得 ${f.written.length} 笔`)
+  assert.equal(f.written[0], five, '那一块摆出来的字节与原件不逐字相同')
 
   // 真 `frameOf` 那一份：底部那 K 行逐字等于它的 `lines`（多出来的补空行）。
   const g = fakeOut({ columns: 100 })
@@ -98,7 +110,7 @@ test('① 一帧的字节：逐字节等于原件；底部那 K 行逐字等于 
   assert.equal(panel.length, 16, `那一块该是恒定 16 行（K），拿到 ${panel.length} 行`)
   assert.equal(frame.lines.length, 7, `这一份小账画出来该是 7 行（右栏放宽到 59 列后，原先折的那行放得下了），实得 ${frame.lines.length} 行`)
   assert.deepEqual(asked, { columns: 100, height: 16 }, '渲染拿到的尺寸不是终端量到的那一份')
-  console.log(`① 读数：手写那一份 5 条 write（2 永久行 + 3 行面板）· frameOf 那一份 ${panel.length} 行逐字相同 · 渲染拿到的尺寸 ${JSON.stringify(asked)}`)
+  console.log(`① 读数：手写那一份 1 笔 write（2 永久行 + 3 行面板拼在里头，U3）· frameOf 那一份 ${panel.length} 行逐字相同 · 渲染拿到的尺寸 ${JSON.stringify(asked)}`)
 })
 
 test('② 每一行的显示宽度恰好等于终端列数（不截就物理占两行，K 当场错位）', () => {
@@ -125,16 +137,17 @@ test('③ 区域是恒定 K 行：上移的数是 K，而且永久行只写一�
   const f = fakeOut({ columns: 40 })
   const term = openTerm({ out: f, height: K, term: 'xterm-256color' })
   term.draw(['第一条永久行'], () => ['只给三行', '第二行', '第三行'])
-  const first = [...f.written]
+  const first = f.written.join('')
   assert.equal(writtenRows(f).length, K + 1, `第一次该写 1 条永久行 + K 行面板，拿到 ${writtenRows(f).length} 行`)
   f.written.length = 0
   term.draw([], () => ['新的一行'])
-  assert.equal(f.written[0], upOf(K), `重画该上移 K(${K}) 行，实得 ${JSON.stringify(f.written[0])}`)
+  assert.equal(f.written.length, 1, '重画也是一笔（U3）')
+  assert.ok(f.written[0]?.startsWith(upOf(K)) === true, `重画该上移 K(${K}) 行起头，实得 ${JSON.stringify(f.written[0])}`)
   assert.equal(writtenRows(f).length, K, '重画只写面板那 K 行')
-  assert.equal(f.written.join('').includes('第一条永久行'), false, '重画把永久行又写了一遍——历史该是追加的，不是重画的')
+  assert.equal(streamOf(f).includes('第一条永久行'), false, '重画把永久行又写了一遍——历史该是追加的，不是重画的')
   // 而第一次那一份里它只出现一次。
-  assert.equal(first.join('').split('第一条永久行').length - 1, 1, '永久行写了两遍')
-  console.log(`③ 读数：区域 ${K} 行恒定（第一次 ${K + 1} 行含 1 条永久行）· 重画第一条 write 是 ${JSON.stringify(f.written[0])} · 永久行只出现 1 次`)
+  assert.equal(first.split('第一条永久行').length - 1, 1, '永久行写了两遍')
+  console.log(`③ 读数：区域 ${K} 行恒定（第一次 ${K + 1} 行含 1 条永久行）· 重画那一笔以 ${JSON.stringify(upOf(K))} 起头 · 永久行只出现 1 次`)
 })
 
 test('④ resize：宽度一变就不上移（重排量不到），另起一块；量不到列宽兜 80', () => {
@@ -143,16 +156,17 @@ test('④ resize：宽度一变就不上移（重排量不到），另起一块�
   term.draw([], () => ['a'])
   f.written.length = 0
   term.draw([], () => ['b'])
-  assert.equal(f.written[0], upOf(3), '宽度没变时该上移')
+  assert.ok(f.written[0]?.startsWith(upOf(3)) === true, '宽度没变时该上移')
   f.written.length = 0
   f.columns = 40
   term.draw([], () => ['c'])
-  assert.equal(f.written.some((s) => s.endsWith('A')), false, `宽度变过还上移了：${JSON.stringify(f.written)}`)
+  assert.equal(streamOf(f).includes('A'), false, `宽度变过还上移了：${JSON.stringify(f.written)}`)
   assert.deepEqual(writtenRows(f).map((r) => widthOf(r)), [40, 40, 40], '新那一块该按新宽度画')
   // 按新宽度画过一块：那一块落在哪是知道的 → 收得掉。
   f.written.length = 0
   term.close()
-  assert.deepEqual([...f.written], [upOf(3), deleteLinesOf(3)], '按新宽度画过之后，close() 该收得掉那一块')
+  assert.equal(f.written.length, 1, 'close() 也是一笔（U3）')
+  assert.equal(f.written[0], upOf(3) + deleteLinesOf(3), '按新宽度画过之后，close() 该收得掉那一块')
   // 反过来：画过一块 80 列的，然后终端变成 40 列、**没有再画** → 重排之后它落在哪量不到 → 不动它。
   const h = fakeOut({ columns: 80 })
   const t3 = openTerm({ out: h, height: 3, term: 'xterm-256color' })
@@ -182,8 +196,9 @@ test('⑤ 地板：不是 TTY / $TERM 认不出来 → 一个字节的 ANSI 都�
     term.draw(['第一条', '第二条'], () => ['面板这一行'])
     term.close()
     assert.equal(term.ansi, false, `${why}：该退到只印永久行那一档`)
-    assert.deepEqual([...f.written], ['第一条\n', '第二条\n'], `${why}：那一档只许印永久行`)
-    assert.equal(f.written.join('').includes('\x1b'), false, `${why}：写了一个字节的 ANSI`)
+    assert.equal(f.written.length, 1, `${why}：那一档也是一笔`)
+    assert.equal(f.written[0], '第一条\n第二条\n', `${why}：那一档只许印永久行`)
+    assert.equal(streamOf(f).includes('\x1b'), false, `${why}：写了一个字节的 ANSI`)
   }
   for (const t of ['xterm-256color', 'screen.xterm', 'tmux-256color', 'linux', 'alacritty', 'st-256color']) {
     assert.equal(ansiOf(t), true, `${t} 该认得出来`)
@@ -202,8 +217,9 @@ test('⑥ 收尾：画过 → 上移 K 行 + 删 K 行；没画过 → 一个字
   term.draw(['一条永久行'], () => ['a'])
   f.written.length = 0
   term.close()
-  assert.deepEqual([...f.written], [upOf(3), deleteLinesOf(3)], '收尾该是"上移 K 行 + 删掉 K 行"')
-  console.log(`⑥ 读数：没画过 0 字节 · 画过 → ${JSON.stringify(f.written)}`)
+  assert.equal(f.written.length, 1, '收尾也是一笔（U3）')
+  assert.equal(f.written[0], upOf(3) + deleteLinesOf(3), '收尾该是"上移 K 行 + 删掉 K 行"')
+  console.log(`⑥ 读数：没画过 0 字节 · 画过 → 一笔 ${JSON.stringify(f.written[0])}`)
 })
 
 test('⑦ 降级说一声（U10a）：只有「真终端 + 认不出的 $TERM」那一档有那句话', () => {
@@ -229,34 +245,40 @@ test('⑧ 输入行：逐字写出去 · 光标退到该在的那一列 · 上�
   // 负对照：不给输入行时与从前逐字节相同（K 行面板 + 一次 `upOf(K)` 的重画）。
   t.draw(PERMANENT, () => panel)
   t.draw([], () => panel)
-  assert.deepEqual(out.written.slice(-(panel.length + 1)), [upOf(K), ...panel.map((r) => `${CLEAR_LINE}${r}\n`)], '没有输入行那一档与从前一样')
+  assert.ok(
+    streamOf(out).endsWith(upOf(K) + panel.map((r) => `${CLEAR_LINE}${r}\n`).join('')),
+    '没有输入行那一档与从前一样',
+  )
   // 有输入行：面板那 K 行之后接着写输入行那两行，**最后一行不带换行**，再往左退到光标列。
   const out2 = fakeOut({ columns: 20 })
   const t2 = openTerm({ out: out2, term: 'xterm-256color' })
   t2.draw([], () => ({ rows: panel, input: { rows: ['» /log', '  --root'], caret: { row: 1, col: 2 } } }))
-  const tail = out2.written.slice(-4)
-  assert.deepEqual(tail, [
-    `${CLEAR_LINE}${panel[panel.length - 1] as string}\n`,
-    '\r' + CLEAR_LINE + '» /log\n',
-    '\r' + CLEAR_LINE + '  --root',
-    leftOf(widthOf('  --root') - 2),
-  ], `输入行那两行写得不对：${JSON.stringify(tail)}`)
-  assert.ok(out2.written.includes(leftOf(widthOf('  --root') - 2)), '光标退到该在的那一列')
-  assert.ok(!out2.written.some((s) => s.endsWith('--root\n')), '最后一行不许带换行（光标就停在它上面）')
+  assert.ok(
+    streamOf(out2).endsWith(
+      `${CLEAR_LINE}${panel[panel.length - 1] as string}\n` +
+        '\r' + CLEAR_LINE + '» /log\n' +
+        '\r' + CLEAR_LINE + '  --root' +
+        leftOf(widthOf('  --root') - 2),
+    ),
+    `输入行那两行写得不对：${JSON.stringify(streamOf(out2))}`,
+  )
+  assert.ok(streamOf(out2).includes(leftOf(widthOf('  --root') - 2)), '光标退到该在的那一列')
+  assert.ok(!streamOf(out2).includes('--root\n'), '最后一行不许带换行（光标就停在它上面）')
   // 重画：上移的是"上一次停在哪一行"（K + 输入行数 − 1 = 13），不是 K。
-  const before = out2.written.length
+  const before = streamOf(out2).length
   t2.draw([], () => ({ rows: panel, input: { rows: ['» /log', '  --root'], caret: { row: 1, col: 2 } } }))
-  assert.equal(out2.written[before], upOf(K + 2 - 1), `重画该上移 ${K + 2 - 1} 行（面板 + 输入行 − 1）`)
+  assert.equal(out2.written.length, 2, '两次 draw 就是两笔（U3）')
+  assert.ok(streamOf(out2).slice(before).startsWith(upOf(K + 2 - 1)), `重画该上移 ${K + 2 - 1} 行（面板 + 输入行 − 1）`)
   // 收尾：上移同一行数 + 删掉"面板 K 行 + 输入行 2 行"。
-  const before2 = out2.written.length
+  const before2 = streamOf(out2).length
   t2.close()
-  assert.deepEqual(out2.written.slice(before2), [upOf(K + 2 - 1), deleteLinesOf(K + 2)], '收尾删的是整块（面板 + 输入行）')
+  assert.equal(streamOf(out2).slice(before2), upOf(K + 2 - 1) + deleteLinesOf(K + 2), '收尾删的是整块（面板 + 输入行）')
   // 没有输入行的收尾：上移 K + 删 K（与从前一样）。
   const out3 = fakeOut({ columns: 20 })
   const t3 = openTerm({ out: out3, term: 'xterm-256color' })
   t3.draw([], () => panel)
   t3.close()
-  assert.deepEqual(out3.written.slice(-2), [upOf(K), deleteLinesOf(K)], '没有输入行时收尾与从前一样')
+  assert.ok(streamOf(out3).endsWith(upOf(K) + deleteLinesOf(K)), '没有输入行时收尾与从前一样')
   console.log(
     `⑧ 读数：输入行 2 行逐字写出去 · 光标退 ${widthOf('  --root') - 2} 列到第 3 列 · ` +
       `重画上移 ${K + 1} 行（不是 K）· 收尾删 ${K + 2} 行 · 不给输入行时逐字节与从前相同`,
@@ -281,23 +303,23 @@ test('⑨ 整屏 --full：两档只差 ALT_ON/ALT_OFF 两笔 · 每一条退出�
   const on = play(true)
   // **负对照**：不给 `--full` 那一档一个 alt 序列都不出现（缺省关是关得干净的）。
   assert.equal(off.t.alt, false, '缺省那一档不该进 alt screen')
-  assert.equal(off.f.written.join('').includes('\x1b[?1049'), false, `缺省那一档写进了 alt 序列：${JSON.stringify(off.f.written)}`)
+  assert.equal(streamOf(off.f).includes('\x1b[?1049'), false, `缺省那一档写进了 alt 序列：${JSON.stringify(off.f.written)}`)
   // 两档之间**只差那两笔**——这一条就是"渲染层一行不动"在字节上的意思。
-  assert.deepEqual(
-    on.f.written.filter((s) => s !== ALT_ON && s !== ALT_OFF),
-    [...off.f.written],
+  assert.equal(
+    streamOf(on.f).replaceAll(ALT_ON, '').replaceAll(ALT_OFF, ''),
+    streamOf(off.f),
     '整屏那一档除了那两个 escape 之外多写（或少写）了字节',
   )
-  assert.equal(on.f.written[0], ALT_ON, '进 alt screen 那一笔该在第一次画的最前面')
-  assert.equal(on.f.written[on.f.written.length - 1], ALT_OFF, '出来那一笔该是收尾的最后一笔')
-  assert.equal(on.f.written.filter((s) => s === ALT_ON).length, 1, `ALT_ON 写了不止一次：${JSON.stringify(on.f.written)}`)
-  assert.equal(on.f.written.filter((s) => s === ALT_OFF).length, 1, 'ALT_OFF 写了不止一次')
+  assert.ok(streamOf(on.f).startsWith(ALT_ON), '进 alt screen 那一笔该在第一次画的最前面')
+  assert.ok(streamOf(on.f).endsWith(ALT_OFF), '出来那一笔该是收尾的最后一笔')
+  assert.equal(streamOf(on.f).split(ALT_ON).length - 1, 1, `ALT_ON 写了不止一次：${JSON.stringify(on.f.written)}`)
+  assert.equal(streamOf(on.f).split(ALT_OFF).length - 1, 1, 'ALT_OFF 写了不止一次')
   assert.equal(on.t.alt, false, 'close() 之后该记成"已经出来了"')
 
   // **崩那一档**：`finally` 与 `exit` 那一钩都会调 `close()`——第二次一个字节都不许再写。
-  const after = on.f.written.length
+  const after = streamOf(on.f).length
   on.t.close()
-  assert.deepEqual(on.f.written.slice(after), [], 'close() 第二次还写了字节（崩那一档就是两边都调）')
+  assert.equal(streamOf(on.f).length, after, 'close() 第二次还写了字节（崩那一档就是两边都调）')
 
   // **宽度变过那一档**：重排量不到，面板那一笔省掉——**出来那一笔一个字节都不许省**。
   const g = fakeOut({ columns: 80 })
@@ -306,7 +328,8 @@ test('⑨ 整屏 --full：两档只差 ALT_ON/ALT_OFF 两笔 · 每一条退出�
   g.written.length = 0
   g.columns = 40
   t3.close()
-  assert.deepEqual([...g.written], [ALT_OFF], `宽度变过那一档该只剩 ALT_OFF：${JSON.stringify(g.written)}`)
+  assert.equal(g.written.length, 1, '只剩的那一笔也该是一笔（U3）')
+  assert.equal(g.written[0], ALT_OFF, `宽度变过那一档该只剩 ALT_OFF：${JSON.stringify(g.written)}`)
 
   // **没画过那一档**（`--once` 那种：一次都不画）与**管道那一档**：连 alt screen 都不进。
   const h = fakeOut({ columns: 80 })
@@ -317,9 +340,10 @@ test('⑨ 整屏 --full：两档只差 ALT_ON/ALT_OFF 两笔 · 每一条退出�
   const t5 = openTerm({ out: p, term: 'xterm-256color', full: true })
   t5.draw(['一条永久行'], () => ['面板这一行'])
   t5.close()
-  assert.deepEqual([...p.written], ['一条永久行\n'], '`--full` 也改不了地板：管道那一档一个字节的 ANSI 都不写')
+  assert.equal(p.written.length, 1, '管道那一档那一帧也是一笔')
+  assert.equal(p.written[0], '一条永久行\n', '`--full` 也改不了地板：管道那一档一个字节的 ANSI 都不写')
   console.log(
-    `⑨ 读数：不整屏 ${off.f.written.length} 笔 · 整屏 ${on.f.written.length} 笔（只差 ALT_ON/ALT_OFF）· ` +
+    `⑨ 读数：不整屏 ${off.f.written.length} 笔 · 整屏 ${on.f.written.length} 笔（一帧一笔，只差 ALT_ON/ALT_OFF）· ` +
       `崩那条路第二次 close() 0 笔 · 宽度变过那一档只剩 1 笔 ALT_OFF · 没画过 0 笔 · 管道 0 个转义字节`,
   )
 })

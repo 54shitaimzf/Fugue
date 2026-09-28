@@ -44,6 +44,11 @@
 // screen 就没有终端历史可翻——永久行落在那一块里，与人一起消失。**所以缺省关**（PLAN § 5.19 第二版
 // 一 · 取舍第一条：同类里三家把它做成可选或缺省关）。
 //
+// **一帧一笔（U3）**：`draw` 把那一帧的所有片段拼成一个串、`out.write` 恰一次（`close` 同理）。
+// 逐行小 write 在慢链路（ssh · mux 那一头）上是撕裂与闪跳的主因——一帧之内终端先看见半帧。
+// 字节流与逐笔那一版**逐字节相同**，变的只是笔数（`term.test.ts` ①拿"每次绘制恰一笔 + 拼接等于
+// 原件"钉住）。
+//
 // 那一条 escape 写在**第一次画**的时候（不是 `openTerm` 的时候）：`--once` 与不是 TTY 那两档一次都
 // 不画，而人要把永久行留在真历史里——那两档不该进 alt screen。
 //
@@ -262,14 +267,15 @@ export function openTerm(o: TermOptions): Term {
       const seen = measure()
       columns = typeof seen === 'number' && seen > 0 ? seen : FALLBACK_COLUMNS
       if (!ansi) {
-        // 只印永久行那一档：面板整块不画，一个字节的 ANSI 都不写。
-        for (const line of permanent) out.write(`${line}\n`)
+        // 只印永久行那一档：面板整块不画，一个字节的 ANSI 都不写。一帧仍是一笔（空的那一帧不写）。
+        if (permanent.length > 0) out.write(permanent.map((line) => `${line}\n`).join(''))
         return
       }
+      const buf: string[] = []
       // 整屏那一档：**第一次画的时候进 alt screen**（不是 `openTerm` 的时候——`--once` / 不是 TTY
       // 那两档一次都不画，也就不该把永久行从真历史里挪走）。写在永久行前面：那一块屏是空的。
       if (wantAlt && !alt) {
-        out.write(ALT_ON)
+        buf.push(ALT_ON)
         alt = true
       }
       // 面板先算好：**尺寸是刚刚量到的那一个**（渲染与摆是同一把尺，所以 1 逻辑行 = 1 物理行）。
@@ -277,22 +283,23 @@ export function openTerm(o: TermOptions): Term {
       const spec: Panel = Array.isArray(asked) ? { rows: asked } : asked
       const rows = panelOf(spec.rows, height, columns)
       // 上移只在"上一次画过、而且宽度没变过"时做——宽度变过就不猜重排。
-      if (drawn && columns === drawnColumns) out.write(upOf(cursorRow))
-      for (const line of permanent) out.write(`${CLEAR_LINE}${line}\n`)
-      for (const row of rows) out.write(`${CLEAR_LINE}${row}\n`)
+      if (drawn && columns === drawnColumns) buf.push(upOf(cursorRow))
+      for (const line of permanent) buf.push(`${CLEAR_LINE}${line}\n`)
+      for (const row of rows) buf.push(`${CLEAR_LINE}${row}\n`)
       const input = spec.input
       const body = input === undefined ? [] : input.rows
       for (let i = 0; i < body.length; i += 1) {
         const one = body[i] as string
         // 最后一行**不带换行**：光标停在它上面（这是这一块区域唯一有光标的地方），退到该在的那一列。
         if (i === body.length - 1) {
-          out.write(`\r${CLEAR_LINE}${one}`)
+          buf.push(`\r${CLEAR_LINE}${one}`)
           const back = widthOf(one) - (input as PanelInput).caret.col
-          if (back > 0) out.write(leftOf(back))
+          if (back > 0) buf.push(leftOf(back))
         } else {
-          out.write(`\r${CLEAR_LINE}${one}\n`)
+          buf.push(`\r${CLEAR_LINE}${one}\n`)
         }
       }
+      if (buf.length > 0) out.write(buf.join(''))
       cursorRow = body.length === 0 ? height : height + body.length - 1
       regionRows = height + body.length
       drawn = true
@@ -303,20 +310,21 @@ export function openTerm(o: TermOptions): Term {
       // 处，崩那一档走的就是后一条——第二次进来时 `alt` 已经是假，一个字节都不再写。
       const leave = alt
       alt = false
+      const buf: string[] = []
       // 面板那一块：画过、且宽度没变过才去删它。**现量一次**：宽度变过之后终端会把面板那几行重排，
       // 重排之后它占几个物理行这一层量不到，所以那一档不去删（宁可留一块旧的，也不去吃历史）。量不到
       // 列宽时按"没变"办——上移 K 行落回面板顶这条不变量在没重排时是成立的。
       if (ansi && drawn) {
         const now = measure()
         if (!(typeof now === 'number' && now > 0 && now !== drawnColumns)) {
-          out.write(upOf(cursorRow))
-          out.write(deleteLinesOf(regionRows))
+          buf.push(upOf(cursorRow), deleteLinesOf(regionRows))
           drawn = false
         }
       }
-      // **出来那一笔在三处出口都会走到**（面板删不删是另一码事）：进去过就必须出来，少写它那台终端
+      // **出来那一笔在三处出口都会写到**（面板删不删是另一码事）：进去过就必须出来，少写它那台终端
       // 就停在另一块屏上——`T10` 那条断言要抓的正是这一条。
-      if (leave) out.write(ALT_OFF)
+      if (leave) buf.push(ALT_OFF)
+      if (buf.length > 0) out.write(buf.join(''))
     },
   }
 }
