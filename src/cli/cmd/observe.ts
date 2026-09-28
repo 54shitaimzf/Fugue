@@ -12,8 +12,8 @@ import { openTui, tuiModeOf } from '../../ui/follow.ts'
 import { degradeNote, openTerm } from '../../ui/term.ts'
 import { hintLineOf, openKeys } from '../../ui/keymap.ts'
 import type { KeySource } from '../../ui/keymap.ts'
-import { openGo } from '../../ui/go.ts'
-import type { GoLauncher } from '../../ui/go.ts'
+import { GO_LINE, openRun } from '../../ui/run.ts'
+import type { RunLauncher } from '../../ui/run.ts'
 import { emitJson, emitLine, usageFail } from '../shared.ts'
 
 export function emit(pos: LogPos, e: LogEvent, json: boolean): void {
@@ -134,7 +134,7 @@ export async function watchCmd(
  * ——两档的缺省不一样，各自都写在上面这一句里。
  *
  * **`UI4` · 门那儿按一下**（PLAN § 5.19 第五段那一行 · 架构 § 9.8「人的每个状态动作都是一条命令」）：
- * 只在面板那一档收按键（`ui/keymap.ts` 那张表），按 `g` 起一次 `fugue round go`（`ui/go.ts`）——
+ * 只在面板那一档收按键（`ui/keymap.ts` 那张表），按 `g` 起一次 `fugue round go`（`ui/run.ts`）——
  * **界面不写
  * 日志、不持写句柄**，账由那个子进程写；它吐出来的行与收尾那一下走 `tui.note()`（写在面板上方）。
  * `q`/`Ctrl-C`/`Ctrl-D` 退出（**raw mode 下 `SIGINT` 不再由终端发出来**，所以那三个字节就在键表里）；
@@ -180,14 +180,14 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   if (mode === 'panel') process.on('SIGWINCH', onWin)
 
   // ── `UI4` · 门那儿按一下（只在"面板"那一档）──────────────────────────────────────────
-  // 按 `g` 起的是**一条命令**（`ui/go.ts` 的 `openGo` → 一个子进程），账由那个子进程写。界面手里
+  // 按 `g` 起的是**一条命令**（`ui/run.ts` 的 `openRun` → 一个子进程），账由那个子进程写。界面手里
   // 没有写句柄这件事在**类型上**就成立：`openTui` 收的 `log` 只有 `readMerged` 那一半。
   let keys: KeySource | null = null
-  let go: GoLauncher | null = null
+  let go: RunLauncher | null = null
   /** 按过退出、而那一趟还跑着：等它收尾再退（不打断一轮正在跑的——账要完整）。 */
   let leaving = false
   if (mode === 'panel') {
-    go = openGo({
+    go = openRun({
       root,
       // 子进程吐出来的行、与它收尾那一下，都**走注记**（写在面板上方）：直接写 `stdout` 会在
       // 终端历史里插进半块面板。
@@ -224,8 +224,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
         // `go`：跑着的时候按不起了第二次（同一条命令不叠第二次）。别的动作（编辑行 · 菜单 ·
         // 面板 · 导航）还没接线，安静丢掉——与"认不出来的字节丢掉"同一条。
         if (d.action !== 'go' || go === null || go.running) return
-        tui.note(`按了 g：起一次 \`round go\`（${go.argv.join(' ')}）`)
-        go.press()
+        tui.note(`按了 g：起一次 \`${GO_LINE}\`（${go.argvOf(GO_LINE).argv.join(' ')}）`)
+        go.press(GO_LINE)
       },
     })
     // 第一件事：把按键那一行印出来（写在面板上方；翻上去了按 `?` 再印一次）。
