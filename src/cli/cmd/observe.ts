@@ -8,10 +8,11 @@ import { phaseOf } from '../../model/price.ts'
 import { readings, readingsLines } from '../../probe/status.ts'
 import type { StatusRow } from '../../probe/status.ts'
 import { follow, readNew } from '../../probe/watch.ts'
+import { ctrlCStepOf, escStepOf, quitStepOf, stillArmed } from '../../ui/cancel.ts'
 import { openTui, tuiModeOf } from '../../ui/follow.ts'
 import { degradeNote, openTerm } from '../../ui/term.ts'
 import type { ViewInput } from '../../ui/term.ts'
-import { KEYMAP, actsOnEmpty, helpRowsOf, hintLimitOf, hintLineOf, openKeys } from '../../ui/keymap.ts'
+import { KEYMAP, fallsToText, helpRowsOf, hintLimitOf, hintLineOf, openKeys } from '../../ui/keymap.ts'
 import type { KeySource } from '../../ui/keymap.ts'
 import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmit, submitOf } from '../../ui/input.ts'
 import type { Editor } from '../../ui/input.ts'
@@ -141,10 +142,14 @@ export async function watchCmd(
  *
  * **`UI4` · 门那儿按一下**（PLAN § 5.19 第五段那一行 · 架构 § 9.8「人的每个状态动作都是一条命令」）：
  * 只在面板那一档收按键（`ui/keymap.ts` 那张表），按 `g` 起一次 `fugue round go`（`ui/run.ts`）——
- * **界面不写
- * 日志、不持写句柄**，账由那个子进程写；它吐出来的行与收尾那一下走 `tui.note()`（写在面板上方）。
- * `q`/`Ctrl-C`/`Ctrl-D` 退出（**raw mode 下 `SIGINT` 不再由终端发出来**，所以那三个字节就在键表里）；
- * 那一趟还跑着时第一次按是等它收尾、第二次是硬退。`?` 把按键那一行重印一遍。
+ * **界面不写日志、不持写句柄**，账由那个子进程写；它吐出来的行与收尾那一下走 `tui.note()`（写在
+ * 面板上方）。`?` 把按键那一行重印一遍。
+ *
+ * **退出与取消是两条写死次序的链**（`T5` · 判据在 `ui/cancel.ts`，这一份只照着做）：`Esc` 五级
+ * ——关一层弹层 → 打断在途的那一趟 → 丢排队草稿 → 清空输入 → 什么都不做；`Ctrl-C` 三层——有在途
+ * 就打断 · 空闲时按一下只举手、3 秒内再按一次才退。`Ctrl-D`/`q`/`Q` 才是"退出"，且**只在输入行
+ * 空着的时候**（raw mode 下 `SIGINT` 不再由终端发出来，所以这些字节都在键表里）；那一趟还跑着时
+ * 第一次按是等它收尾、第二次是硬退。
  *
  * **`T4` · 输入行与弹层**：底部那块地方在面板**下面**多一行（块）输入行——模型是 `ui/input.ts`，
  * 接线在这一份。三个入口开同一套候选（`ui/menu.ts`）：`/` 是命令（**从 `cli/flags.ts` 的
@@ -229,6 +234,12 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   let go: RunLauncher | null = null
   /** 按过退出、而那一趟还跑着：等它收尾再退（不打断一轮正在跑的——账要完整）。 */
   let leaving = false
+  /**
+   * `Ctrl-C` 上一次"举手"的时刻（`T5`：空闲时按它只举手，3 秒内再按一次才退）。**钟只在调用方
+   * 读**：`ui/cancel.ts` 那一份不碰钟，于是"3 秒"那一档在测试里不用真等（`stillArmed` 收的是
+   * "现在几点"）。
+   */
+  let armedAt: number | null = null
   if (mode === 'panel') {
     /** 起一次弹层：选中项从头一条起（候选变了以后 `settle` 会把它夹回来）。 */
     const openPanel = (source: MenuSource): void => {
@@ -249,6 +260,28 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       }
       tui.redraw()
     }
+    /**
+     * 退出那一下（`Ctrl-D`/`q`/`Q`，且输入行空着——判据在 `ui/cancel.ts` 的 `quitStepOf`）。
+     * **跑着的时候第一次按是"等它收尾"、第二次才是硬退**（"退出必须两次"）：账要完整，一轮正在跑的
+     * 不替人打断——要打断有它自己的两下（`Esc` 与 `Ctrl-C`）。
+     */
+    const leave = (): void => {
+      if (go?.running === true) {
+        if (!leaving) {
+          leaving = true
+          tui.note('那一趟还在跑：等它收尾就退出（账要完整）。再按一次是硬退，或者 Esc / Ctrl-C 打断它')
+          return
+        }
+        tui.note('硬退：那一趟的输出接不上了（它自己的账照写，写到哪算哪）')
+      }
+      ac.abort()
+    }
+    /** `Esc` 第二级与 `Ctrl-C` 第一级都走这一下：把信号递给在途的那一趟（同一句话只说一遍）。 */
+    const breakRun = (): void => {
+      go?.stop('SIGINT')
+      tui.note('打断了那一趟（SIGINT）：它自己那份账照写，写到哪算哪')
+      settle()
+    }
     go = openRun({
       root,
       // 子进程吐出来的行、与它收尾那一下，都**走注记**（写在面板上方）：直接写 `stdout` 会在
@@ -264,11 +297,12 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       input: process.stdin,
       out: process.stdout,
       onAction: (d) => {
-        // ① **可打印字符的那几条绑定**（`q`/`Q` · `g`/`G` · `?` · `/` · `@`）：只在**行里没字的地方**
-        // 是动作，别处它就是那个字——不然 `/round go` 里那个 `g` 会把这一行当场发出去。判据在
-        // `ui/keymap.ts` 的 `actsOnEmpty`，喂它的只有这一处。
-        if (!actsOnEmpty(d.action, ed.draft.text, ed.draft.caret) && d.key !== undefined) {
-          ed = applyIntent(ed, { t: 'insert', text: d.key })
+        // ① **行里已经有字的时候，表里那几条绑定要分两种去处**：按的是可打印字符就让位成那个字
+        // （`q` 就是 `q`，不然 `/round go` 里那个 `g` 会把这一行当场发出去），按的是控制字符就丢掉
+        // ——`Ctrl-D` 要是也当字打进去，输入行里会多一个看不见的字节，而"行里没字"这个前提恰好被它
+        // 自己毁掉（判据在 `ui/keymap.ts` 的 `fallsToText`，喂它的只有这一处）。
+        if (fallsToText(d.action, d.key, ed.draft.text, ed.draft.caret)) {
+          ed = applyIntent(ed, { t: 'insert', text: d.key as string })
           settle()
           return
         }
@@ -277,20 +311,66 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
           tui.note(hintLineOf())
           return
         }
-        // ③ `interrupt`（`Ctrl-C`）那一档的口径要等 `T5`（取消链：有在途就打断 · 3 秒内再按一次才
-        // 退）。在那之前它与退出同一条：**少一条地板比多一条近似坏得多**。
-        if (d.action === 'quit' || d.action === 'interrupt') {
-          if (go?.running === true) {
-            // 第一次：等它收尾。第二次：硬退——**说清代价**（那一趟的输出接不上了，它自己那份账
-            // 照写：写到哪算哪，重放得回来）。
-            if (!leaving) {
-              leaving = true
-              tui.note('那一趟还在跑：等它收尾就退出（账要完整）。再按一次是硬退')
+        // ③ **取消与退出那一组**（`ui/cancel.ts` 那两条链 + 退出那一条——判据全在那一份里，这一份
+        // 只把"那一刻的处境"喂进去、照着出来的那一个动作做）。
+        //
+        // `Esc` 五级（`escStepOf`）：关一层弹层 → 打断在途的那一趟 → 丢排队草稿 → 清空输入 → 什么都
+        // 不做。级与级之间没有商量：上头那一级够得着，下头那几级这一下就不动（"这一次 `Esc` 到底关
+        // 了什么"是这类界面最常被骂的一处，所以每一级各有一条反向的钉，见 `cancel.test.ts` ①）。
+        if (d.action === 'cancel' || d.action === 'interrupt' || d.action === 'quit') {
+          if (d.action === 'cancel') {
+            const step = escStepOf({
+              overlays: panel === null ? 0 : 1,
+              running: go?.running === true,
+              // 排队那一级要到 `T7` 才有队列可丢——**级在那儿，够不够得着是另一回事**（这里恒 0
+              // 就是"这一级现在还够不着"，不是"没这一级"）。
+              queued: 0,
+              line: ed.draft.text,
+              searching: ed.search !== null,
+            })
+            if (step === 'overlay') {
+              panel = null
+              settle()
               return
             }
-            tui.note('硬退：那一趟的输出接不上了（它自己的账照写，写到哪算哪）')
+            if (step === 'break') {
+              breakRun()
+              return
+            }
+            if (step === 'dropQueue') return
+            if (step === 'clearLine') {
+              // 输入行那一层自己有两小级（先退反查、再清空这一行），都在 `ui/input.ts` 的 `cancelAt`。
+              ed = applyIntent(ed, { t: 'cancel' })
+              settle()
+              return
+            }
+            return
           }
-          ac.abort()
+          // `Ctrl-C`（`ctrlCStepOf`）：有在途就打断它；空闲时按一下只举手、3 秒内再按一次才是退出。
+          // **打断那一下不举手**：在途的时候按它说的是"把这一趟停下来"，不是"我要走了"。
+          if (d.action === 'interrupt') {
+            const step = ctrlCStepOf({ running: go?.running === true, armed: stillArmed(Date.now(), armedAt) })
+            if (step === 'break') {
+              breakRun()
+              return
+            }
+            if (step === 'quit') {
+              leave()
+              return
+            }
+            armedAt = Date.now()
+            tui.note('再按一次 Ctrl-C 就退出（3 秒内）')
+            return
+          }
+          // `Ctrl-D`/`q`/`Q`：**只在输入行空着的时候退**（`quitStepOf`）；行里有字时什么都不做——说
+          // 一句为什么，不然按下去看着像没反应（这一句只有 `Ctrl-D` 打得出：`q` 行里有字时让位成人
+          // 打的字，上面 ① 那一档就把它收走了）。
+          if (quitStepOf({ line: ed.draft.text }) === 'none') {
+            tui.note('输入行里还有字：先清掉它（Esc）或者把它发出去，再按 Ctrl-D 退出')
+            settle()
+            return
+          }
+          leave()
           return
         }
         // ④ `g`：放行门口那一批（起一次 `fugue round go`）。跑着的时候按不起了第二次（同一条命令
@@ -360,26 +440,14 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
           settle()
           return
         }
-        // ⑧ `Esc`：**有弹层就只关弹层**（"一键多义必须有序"那把尺子在这里第一次落地；五级的整条链
-        // 是 `T5`），没有才轮到输入行自己（先退反查、再清空这一行）。
-        if (d.action === 'cancel') {
-          if (panel !== null) {
-            panel = null
-            settle()
-            return
-          }
-          ed = applyIntent(ed, { t: 'cancel' })
-          settle()
-          return
-        }
-        // ⑨ 弹层开着时 `↑`/`↓` 是选项（表里那两行的说明写的就是这个），关着时是输入历史。
+        // ⑧ 弹层开着时 `↑`/`↓` 是选项（表里那两行的说明写的就是这个），关着时是输入历史。
         if ((d.action === 'historyOlder' || d.action === 'historyNewer') && panel !== null) {
           const n = rowsOf(panel.source).length
           panel = { ...panel, sel: moveSel(n, panel.sel, d.action === 'historyOlder' ? -1 : 1) }
           settle()
           return
         }
-        // ⑩ 剩下的编辑动作（`ui/input.ts` 认的那些）一律进输入行；别的（`focus` 那一档导航）还没
+        // ⑨ 剩下的编辑动作（`ui/input.ts` 认的那些）一律进输入行；别的（`focus` 那一档导航）还没
         // 接线，安静丢掉——与"认不出来的字节丢掉"同一条。
         const it = intentOf(d.action, d.text ?? '')
         if (it === null) return

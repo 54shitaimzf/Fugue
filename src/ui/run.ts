@@ -115,11 +115,16 @@ export interface RunOutcome {
   readonly why: string | null
 }
 
-/** 一个起好了的子进程（这一份只用到这三样）。 */
+/** 一个起好了的子进程（这一份只用到这四样）。 */
 export interface Spawned {
   readonly out: AsyncIterable<Uint8Array> | null
   readonly err: AsyncIterable<Uint8Array> | null
   readonly done: Promise<RunOutcome>
+  /**
+   * 请它停下（`T5` 取消链的第二级）。给的是信号名，缺省那一下是 `SIGINT`（先礼后兵那一下）。
+   * **不抛**：它已经死了再叫一次会 `ESRCH`，而"目的已经达到"不是错。
+   */
+  stop(signal: string): void
 }
 
 export type SpawnFn = (file: string, args: readonly string[]) => Spawned
@@ -135,6 +140,14 @@ export const spawnChild: SpawnFn = (file, args) => {
       c.once('error', (err: Error) => res({ code: null, why: err.message }))
       c.once('close', (code: number | null) => res({ code, why: null }))
     }),
+    // 信号发给**这一个子进程**（不是进程组）："打不断就补一刀"与"那一组都得停"是 `T7` 那一格的事。
+    stop: (signal: string) => {
+      try {
+        c.kill(signal)
+      } catch {
+        // 已经不在了 · 信号名认不出来：都算"请过了"（目的达到，不是错）。
+      }
+    },
   }
 }
 
@@ -169,6 +182,14 @@ export interface RunLauncher {
    * 起不动**（返回 `false`，为什么由 `argvOf` 那一份说）。
    */
   press(line: string, mode?: LineMode): boolean
+  /**
+   * 请正在跑的那一趟停下（`T5` 取消链的第二级）。**没在跑就什么都不做**（返回 `false`）——调用方
+   * 于是不用自己先判 `running`（那一判与这一判要是在两处，迟早漂）。返回值是"真请了没"。
+   *
+   * 请了不等于停了：它什么时候真死由它自己定，收尾照旧走 `onDone`（被信号杀掉的那一趟退出码是
+   * `null`）。在它死之前 `running` 一直是 `true`——**不许这一趟还在死、下一趟就起来**。
+   */
+  stop(signal?: string): boolean
 }
 
 /**
@@ -182,6 +203,8 @@ export function openRun(o: RunOptions): RunLauncher {
   const run = o.spawn ?? spawnChild
   let running = false
   let last: readonly string[] = []
+  /** 现在这一趟（没在跑就是 `null`）。`stop()` 从它这里把信号递下去。 */
+  let kid: Spawned | null = null
   const argvOf = (line: string, mode?: LineMode): LineArgv => lineArgvOf({ self, root: o.root, line, mode })
   /** 一条流：按 `\n` 切成行。**多字节字符可能被拆在两个块里**，所以解码器是流式的。 */
   const eat = async (stream: AsyncIterable<Uint8Array> | null): Promise<void> => {
@@ -215,17 +238,28 @@ export function openRun(o: RunOptions): RunLauncher {
       if (cut.why !== null) return false
       last = cut.argv
       running = true
-      const kid = run(cut.argv[0] as string, cut.argv.slice(1))
+      const spawned = run(cut.argv[0] as string, cut.argv.slice(1))
+      kid = spawned
       // 两条流都收干净（收尾顺序与子进程的死活无关：先等它死，再等两条流读完），然后才报收尾。
-      const drained = Promise.all([eat(kid.out), eat(kid.err)]).then(
+      const drained = Promise.all([eat(spawned.out), eat(spawned.err)]).then(
         () => undefined,
         () => undefined,
       )
-      void kid.done.then(async (r) => {
+      void spawned.done.then(async (r) => {
         await drained
+        kid = null
         running = false
         o.onDone?.(r)
       })
+      return true
+    },
+    /**
+     * 请它停下：**只在真跑着的时候**发信号（没在跑返回 `false`，于是调用方不必自己先判 `running`）。
+     * 缺省那一档是 `SIGINT`——先礼后兵的那一下（"打不断就补一刀"是 `T7` 那一格）。
+     */
+    stop(signal?: string): boolean {
+      if (!running || kid === null) return false
+      kid.stop(signal ?? 'SIGINT')
       return true
     },
   }

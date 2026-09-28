@@ -1,7 +1,7 @@
 // TUI 的第二版第三格：**起命令**（PLAN § 5.19 第二版「二 · 按键」·「六 · 提交的四种去向」· 架构
 // § 9.8「人的每个状态动作都是一条命令」）。跑法：cd ~/fugue && node --test src/ui/run.test.ts
 //
-// 这一份量的三样：
+// 这一份量的四样：
 //
 //   ① **一行字 → argv**：输入行敲的那一行与手敲的 `fugue --root <dir> <命令> <参数…>` **逐字相同** ·
 //      不过 shell（`$HOME` 不展开 · `;` 不分成两条 · 引号里那个空格不进切分）· `Say` 那一档整句
@@ -13,6 +13,8 @@
 //      `round go`、一半给界面那一行字（真 `openRun` → 真子进程），两份账逐字节相同；**负对照**：
 //      界面自己往账上写一条 `round/approve` 的那一版，账与手敲的那一版不同（而且契约一条都没发
 //      出去）——这一条就是"界面不写日志、不持写句柄"那把尺的牙。
+//   ④ **请它停下**（`T5` 取消链第二级）：没在跑的时候一个信号都不发 · 跑着的时候信号递到子进程
+//      手里 · **请了不等于停了**（`running` 要等它真死）· 被信号杀掉的那一趟收尾是"退出码没有"。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -93,6 +95,9 @@ function scripted(o: {
       out: o.out === undefined ? null : from(o.out),
       err: o.err === undefined ? null : from(o.err),
       done: Promise.resolve({ code: o.code === undefined ? 0 : o.code, why: o.why ?? null }),
+      // 这一档的进程**一按就收尾**（`done` 当场 resolve），所以停不住它——量 `stop()` 的那一档是
+      // 下面 `held()`（`done` 捏在测试手里）。
+      stop: () => {},
     }
   }
   return { spawn, calls }
@@ -286,5 +291,77 @@ test('③ 界面那一行字与手敲 round go 落下的账逐字节相同（负
   console.log(
     `③ 读数：手敲那一趟账 ${a.length} 条（${types(a).join(' ')}）· 界面那一行 ${b.length} 条 · 两串逐字节相同；` +
       `界面自己写一条 round/approve 的那一版 ${c.length} 条、契约 0 条——与手敲那一版不同`,
+  )
+})
+
+// ── ④ 请它停下（`T5` 取消链第二级）────────────────────────────────────────────
+//
+// 链那一头（`ui/cancel.ts` 的 `escStepOf`/`ctrlCStepOf`）说"这一下该打断"之后，落地的那一下就是
+// `RunLauncher.stop()`。这一条量的就是它：**没在跑的时候一个信号都不许发出去**——不然"弹层开着时
+// `Esc` 只关弹层"那把尺在链那一头是对的、在这一头就漏了；跑着的时候信号递到子进程手里；
+// **请了不等于停了**（`running` 要等它真死——不许这一趟还在死、下一趟就起来）。
+function held(): {
+  readonly spawn: SpawnFn
+  readonly calls: string[]
+  readonly signals: string[]
+  readonly finish: (o?: { readonly code?: number | null; readonly why?: string }) => void
+} {
+  const calls: string[] = []
+  const signals: string[] = []
+  let res: (r: RunOutcome) => void = () => {}
+  const spawn: SpawnFn = (file, args) => {
+    calls.push(`${file} ${args.join(' ')}`)
+    const done = new Promise<RunOutcome>((r) => {
+      res = r
+    })
+    return { out: null, err: null, done, stop: (signal: string) => signals.push(signal) }
+  }
+  return {
+    spawn,
+    calls,
+    signals,
+    finish: (o = {}) => res({ code: o.code === undefined ? null : o.code, why: o.why ?? null }),
+  }
+}
+
+test('④ 请它停下：没在跑就一个信号都不发 · 跑着时递到子进程 · 请了不等于停了 · 收尾是"被信号杀掉"那一档', async () => {
+  const h = held()
+  let finished: RunOutcome | null = null
+  let settle: () => void = () => {}
+  const done = new Promise<void>((r) => {
+    settle = r
+  })
+  const run = openRun({
+    root: '/tmp/r',
+    self: ['node', '/x/fugue.ts'],
+    spawn: h.spawn,
+    onLine: () => {},
+    onDone: (r) => {
+      finished = r
+      settle()
+    },
+  })
+  // 空闲那一下：什么都没发生。这一条是"弹层开着时 `Esc` 只关弹层"在**这一头**的牙——链说 overlay，
+  // 这一头就不该冒出信号来。
+  assert.equal(run.stop(), false, '没在跑：什么都不做（返回 false，于是调用方不必自己先判 running）')
+  assert.deepEqual(h.signals, [], '没在跑的那一下一个信号都不许发出去')
+  assert.deepEqual(h.calls, [], '没在跑的那一下也不该起进程')
+  assert.equal(run.press(GO_LINE), true, '这一行该起得来')
+  assert.equal(run.running, true)
+  assert.equal(run.stop(), true, '跑着：请了')
+  assert.deepEqual(h.signals, ['SIGINT'], '缺省那一下是 SIGINT（先礼后兵的那一下）')
+  assert.equal(run.stop('SIGKILL'), true, '再请一次还是请得动（幂等：不抛）')
+  assert.deepEqual(h.signals, ['SIGINT', 'SIGKILL'], `两下都递到子进程手里了：${h.signals.join(' · ')}`)
+  assert.equal(run.running, true, '**请了不等于停了**：它还没死之前 `running` 一直是 true')
+  assert.equal(run.press(GO_LINE), false, '还在死的那一趟压着，第二次起不动')
+  h.finish({ code: null })
+  await done
+  assert.deepEqual(finished, { code: null, why: null }, '被信号杀掉：退出码是"没有"（不是 0）')
+  assert.equal(run.running, false, '真死了之后才落到"没在跑"')
+  assert.equal(run.stop(), false, '已经死了：又是"没在跑"')
+  assert.deepEqual(h.signals, ['SIGINT', 'SIGKILL'], '死了之后又请的那一下没有多出信号')
+  console.log(
+    `④ 读数：空闲 stop 0 个信号 0 次进程 · 跑着时 SIGINT 与 SIGKILL 各递 1 次 · 请过之后 running 仍是 true` +
+      `（第二次 press 起不动）· 收尾 ${JSON.stringify(finished)} 之后 stop 又从 false 起算`,
   )
 })

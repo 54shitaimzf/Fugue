@@ -84,8 +84,8 @@ export interface Binding {
 /**
  * **那一张表。次序就是提示行与帮助面板的次序**（先提交 · 再取消 · 再编辑 · 再导航 · 最后放行）。
  *
- * `interrupt` 那一行的说明如实写着"现在与退出同一条"：`T5` 接上取消链之前，`Ctrl-C` 的地板是
- * 退出（少一条地板比多一条近似坏得多）。
+ * `interrupt` 与 `quit` 那两行到 `T5` 才真接上（取消链在 `ui/cancel.ts`）：在那之前 `Ctrl-C` 与
+ * `Ctrl-D` 的地板都是退出（少一条地板比多一条近似坏得多）。
  */
 export const TABLE: readonly Binding[] = [
   {
@@ -113,15 +113,15 @@ export const TABLE: readonly Binding[] = [
     action: 'interrupt',
     keys: ['Ctrl-C'],
     hint: '打断',
-    note: '取消链：有在途的那一趟就打断它；3 秒内再按一次才是退出（现在这一格与退出同一条）',
-    by: 'T2',
+    note: '取消链：有在途的那一趟就打断它；空闲时按一下只举手，3 秒内再按一次才是退出',
+    by: 'T5',
   },
   {
     action: 'quit',
     keys: ['Ctrl-D', 'q', 'Q'],
     hint: '退出',
     note: '退出面板：只在输入行空着的时候（退出码 0——人喊停不是失败）',
-    by: 'T2',
+    by: 'T5',
   },
   {
     action: 'historyOlder',
@@ -333,14 +333,16 @@ function isPrintable(cp: number): boolean {
 }
 
 /**
- * **只在行里没字的地方算动作**的那几条：`q`/`Q` · `g`/`G` · `?` · `/` · `@` 都是可打印字符。
+ * **只在行里没字的地方算动作**的那几条。两种：`q`/`Q` · `g`/`G` · `?` · `/` · `@` 是**可打印
+ * 字符**，`Ctrl-D`（`quit`）是**控制字符**。
  *
- * 判据（`cli/cmd/observe.ts` 的 `actsHere` 是它唯一的用处）：
+ * 判据（`cli/cmd/observe.ts` 分发处那一条闸是它唯一的用处）：
  *   · `/`：行是空的（这一下按下去了，这一行才成为一条命令行）；
  *   · `@`：光标在行首，或者前一个字是空格（**词首**——夹在一句话中间的那个 `@` 就是个 `@`）；
- *   · `q`/`g`/`?`：行是空的。
+ *   · `q`/`g`/`?`/`Ctrl-D`：行是空的。
  *
- * 别处它们就是那个字。这一条不是偏好：不这么定，`/round go` 里那个 `g` 会把这一行当场发出去。
+ * 行里有字的时候它们的去处**两种不一样**：可打印的让位成那个字 · 控制字符丢掉（`fallsToText` 说
+ * 得出为什么）。这一条不是偏好：不这么定，`/round go` 里那个 `g` 会把这一行当场发出去。
  */
 export function actsOnEmpty(a: UiAction, text: string, caret: number): boolean {
   if (a === 'mention') return caret === 0 || text[caret - 1] === ' '
@@ -349,11 +351,31 @@ export function actsOnEmpty(a: UiAction, text: string, caret: number): boolean {
 }
 
 /**
+ * 这一下按的是不是**该让位成那个字**（`T5` 补的一条）。
+ *
+ * 行里已经有字的时候，"只在行里没字的地方算动作"的那几条绑定要分出两种去处：
+ *
+ *   · **按的是可打印字符**（`q`/`Q` · `g`/`G` · `?` · `/` · `@`）→ 让位成那个字（`insert`）。
+ *     不这么定，`/round go` 里那个 `g` 会把这一行当场发出去——一条命令都打不完；
+ *   · **按的是控制字符**（`Ctrl-D` 的 `quit` · `Esc` 的 `cancel`）→ **丢掉**（与"表里没这个键"
+ *     同一条口径）。它们要是也"让位成那个字"，输入行里会多出一个看不见的字节，而"行里没字"这个
+ *     前提恰好被它自己毁掉——`T5` 的 `quitStepOf` 于是永远够不着（`cancel.test.ts` ③ 的负对照
+ *     量的就是它）。
+ *
+ * 判据收在一处：`cli/cmd/observe.ts` 分发处那一条闸读它，别处谁都不许再写一遍。
+ */
+export function fallsToText(a: UiAction, key: string | undefined, text: string, caret: number): boolean {
+  if (key === undefined || actsOnEmpty(a, text, caret)) return false
+  const cp = key.codePointAt(0)
+  return cp !== undefined && isPrintable(cp)
+}
+
+/**
  * **已经落了地的那几格**：提示行只印 `by` 在这里头的那些，帮助面板给其余的缀上一句"哪一格接上"。
  * 每落一格把它的名字加进来——这一份是**进度**，不是口味（`T2` 那一条断言的牙就在这儿：目录与
  * 分发同一张表，而"这一格接上了没有"也只有一个地方说）。
  */
-export const WIRED: readonly Stage[] = ['T2', 'T3', 'T4']
+export const WIRED: readonly Stage[] = ['T2', 'T3', 'T4', 'T5']
 
 /** 大段粘贴那一对记号（终端发出来的那一对）：`decoderOf` 用它把原文整段交给 `insert`。 */
 export const PASTE_ON = '\u001b[200~'

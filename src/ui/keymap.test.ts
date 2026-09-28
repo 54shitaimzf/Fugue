@@ -33,7 +33,7 @@ import assert from 'node:assert/strict'
 import { widthOf } from './frame.ts'
 import test from 'node:test'
 import type { KeyInput, UiAction } from './keymap.ts'
-import { ESC_WAIT_MS, KEYMAP, TABLE, WIRED, actionsOf, actsOnEmpty, bytesOfKey, decodeOf, decoderOf, escapeAt, escapeTruncatedAt, helpRowsOf, hintLimitOf, hintLineOf, keyLabelOf, keymapOf, openKeys, PASTE_OFF, PASTE_ON } from './keymap.ts'
+import { ESC_WAIT_MS, KEYMAP, TABLE, WIRED, actionsOf, actsOnEmpty, bytesOfKey, decodeOf, decoderOf, escapeAt, escapeTruncatedAt, fallsToText, helpRowsOf, hintLimitOf, hintLineOf, keyLabelOf, keymapOf, openKeys, PASTE_OFF, PASTE_ON } from './keymap.ts'
 
 /** 品牌类型那一栏（`RoundId` 一类）：这一份里那些值是拿来喂接口的，不是账上真发生过的。 */
 const brand = (v: string): never => v as never
@@ -344,9 +344,23 @@ test('⑦ 打字与粘贴：`insert` 带着那个字 · 控制字符一个都不
   assert.equal(actsOnEmpty('mention', '看 一眼 ', 5), true, '词首（前一个字是空格）→ `@` 开面板')
   assert.equal(actsOnEmpty('mention', 'a@b', 3), false, '夹在词中间 → `@` 就是那个 `@`')
   assert.equal(actsOnEmpty('submit', '', 0), true, '别的动作不看行里有没有字')
+  // `fallsToText`（`T5`）：行里有字的时候，上面那几条绑定的去处**分两种**——可打印的让位成那个
+  // 字，控制字符丢掉。**负对照就是 `Ctrl-D`**：它要是也让位，输入行里会多出一个看不见的字节，而
+  // "行里没字"这个前提恰好被它自己毁掉（`ui/cancel.ts` 的 `quitStepOf` 于是永远够不着）。
+  assert.equal(fallsToText('go', 'g', 'x', 1), true, '行里有字 · `g` 让位成那个字')
+  assert.equal(fallsToText('go', 'g', '', 0), false, '行空 → 这一下是动作，不让位')
+  assert.equal(fallsToText('quit', 'q', 'x', 1), true, '`q` 同上')
+  assert.equal(fallsToText('menu', '/', '/x', 2), true, '`/` 同上')
+  assert.equal(fallsToText('mention', '@', 'a@b', 3), true, '`@` 同上')
+  assert.equal(fallsToText('quit', '\u0004', 'x', 1), false, '**负对照**：`Ctrl-D`（0x04）不许进输入行')
+  assert.equal(fallsToText('cancel', '\u001b', 'x', 1), false, '`Esc`（0x1b）同上')
+  assert.equal(fallsToText('quit', 'q', '', 0), false, '行空 → `q` 是动作（退出那一下）')
+  assert.equal(fallsToText('insert', 'a', 'x', 1), false, '`insert` 不是绑定，谈不上让位')
+  assert.equal(fallsToText('home', undefined, 'x', 1), false, '没有那个字节：没得让位')
   console.log(
     '⑦ 读数：打字 2 条进 insert（`a` · `中文` 各一个字）· 控制字符 0x00/0x1c 出 0 个动作 · ' +
       `粘贴「第一行\\n第二行」是 1 条 insert（换行留着、没被当成 Enter）· 记号切成两块也拼得回来 · ` +
-      `actsOnEmpty 10 档（行空 4 档是动作 · 行里有字 4 档让位成那个字 · 别的动作 2 档不看）`,
+      `actsOnEmpty 10 档（行空 4 档是动作 · 行里有字 4 档让位成那个字 · 别的动作 2 档不看）· ` +
+      `fallsToText 10 档（可打印的让位 4 档 · 控制字符丢掉 2 档 · 行空不算让位 2 档 · 别的 2 档）`,
   )
 })
