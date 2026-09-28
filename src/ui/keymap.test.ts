@@ -230,6 +230,18 @@ test('⑧ 流式解码（U9）：「中」拆两块 → 还是一个「中」，
   console.log(`⑧ 读数：「中」拆两块 / 「中文」拆三块都拼得回来，0 个 U+FFFD`)
 })
 
+// ── ⑪ 翻页那四个键（U14）：字节翻得出来，动作认得对 ───────────────────────────
+test('⑪ 翻页键（U14）：PgUp/PgDn/Ctrl-Home/Ctrl-End 四个字节 → 四个动作', () => {
+  assert.deepEqual(decodeOf('\u001b[5~'), [{ action: 'pageUp', key: '\u001b[5~' }], 'ESC[5~ 该是 PgUp')
+  assert.deepEqual(decodeOf('\u001b[6~'), [{ action: 'pageDown', key: '\u001b[6~' }], 'ESC[6~ 该是 PgDn')
+  assert.deepEqual(decodeOf('\u001b[1;5H'), [{ action: 'jumpFirst', key: '\u001b[1;5H' }], 'Ctrl-Home 该是跳到头')
+  assert.deepEqual(decodeOf('\u001b[1;5F'), [{ action: 'jumpLast', key: '\u001b[1;5F' }], 'Ctrl-End 该是跳到尾')
+  // 行首/行尾（Ctrl-A/Ctrl-E 与裸 Home/End）不被抢：翻页那四个键各是各的字节。
+  assert.deepEqual(actionsOf('\u001b[H'), ['home'], '裸 Home 还是行首（Ctrl-A 那一条）')
+  assert.deepEqual(actionsOf('\u001b[F'), ['end'], '裸 End 还是行尾（Ctrl-E 那一条）')
+  console.log(`⑪ 读数：ESC[5~ / ESC[6~ / ESC[1;5H / ESC[1;5F → pageUp / pageDown / jumpFirst / jumpLast · 裸 Home/End 不被抢`)
+})
+
 // ── ⑨ CSI 残包丢弃（U10）：flush 只出首字节的动作，续字节整段丢弃 ───────────────
 test('⑨ CSI 残包丢弃（U10）：半截 ESC[ 到点冲掉 → 只有那一下 Esc，`[` 不进输入行', () => {
   // 半截 `ESC [` 攒着（等不到终字节）→ flush：首字节 `ESC` 是 Esc 那条键，其余（`[`）丢弃。

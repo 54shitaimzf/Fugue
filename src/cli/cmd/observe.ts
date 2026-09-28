@@ -19,7 +19,7 @@ import type { ViewInput } from '../../ui/term.ts'
  * 画得下多大是那一头的事。
  */
 const OVERLAY_WANT = 24
-import { KEYMAP, fallsToText, helpRowsOf, hintLimitOf, hintLineOf, openKeys } from '../../ui/keymap.ts'
+import { KEYMAP, PAGE_STEP, fallsToText, helpRowsOf, hintLimitOf, hintLineOf, openKeys } from '../../ui/keymap.ts'
 import type { KeySource } from '../../ui/keymap.ts'
 import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmit, submitOf } from '../../ui/input.ts'
 import type { Editor } from '../../ui/input.ts'
@@ -30,7 +30,7 @@ import type { GateFace, GateOption, GateView } from '../../ui/gate.ts'
 import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from '../../ui/queue.ts'
 import { altAt, clampNav, navNodesOf, navRowsOf, stepNav, writerAt } from '../../ui/nav.ts'
 import type { NavNode } from '../../ui/nav.ts'
-import { EMPTY_READ, faceRowsOf, facesOf, firstFace, readStateOf, stepFace } from '../../ui/read.ts'
+import { EMPTY_READ, faceRowsOf, facesOf, firstFace, readStateOf, stepFace, stepTop } from '../../ui/read.ts'
 import type { ReadFaceName, ReadState } from '../../ui/read.ts'
 import type { QueueState } from '../../ui/queue.ts'
 import { pendingOf } from '../../round/dispatch.ts'
@@ -725,13 +725,34 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
             return
           }
           if (d.action === 'historyOlder' || d.action === 'historyNewer') {
-            const rows = faceRowsOf(facesOf(readState), reading.face)
-            const last = Math.max(0, rows.length - 1)
-            const top = reading.top + (d.action === 'historyOlder' ? -1 : 1)
-            reading = { ...reading, top: Math.max(0, Math.min(top, last)) }
+            reading = { ...reading, top: stepTop(faceRowsOf(facesOf(readState), reading.face).length, reading.top, d.action === 'historyOlder' ? -1 : 1) }
             settle()
             return
           }
+        }
+        // ⑥之三 翻页（U14）：`PgUp`/`PgDn` 翻半屏（`PAGE_STEP`），`Ctrl-Home`/`Ctrl-End` 跳首尾。
+        // **谁开着翻谁**：阅读面 → `top`；门口那一批 → `at`（半批）；候选 → `sel`（半页）。都没开
+        // 就安静丢掉——翻页键不是全局滚动（没有"正在翻的东西"时按它，什么都不要动）。
+        if (d.action === 'pageUp' || d.action === 'pageDown' || d.action === 'jumpFirst' || d.action === 'jumpLast') {
+          const back = d.action === 'pageUp' || d.action === 'jumpFirst'
+          if (reading !== null) {
+            const n = faceRowsOf(facesOf(readState), reading.face).length
+            // 跳首尾用一个够大的数一步到头（`stepTop` 夹得住）。
+            const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -PAGE_STEP : PAGE_STEP
+            reading = { ...reading, top: stepTop(n, reading.top, delta) }
+          } else if (gate !== null && !gateHidden && ed.draft.text === '') {
+            // 半批：那一批的一半（一批至少翻一格）。
+            const n = gate.cards.length
+            const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -Math.max(1, Math.floor(n / 2)) : Math.max(1, Math.floor(n / 2))
+            gateView = { ...gateView, at: stepAt(n, gateView.at, delta) }
+          } else if (panel !== null) {
+            // 候选翻半页（`PAGE_STEP`），跳首尾直接落端点；夹住不环形（翻页不是轮换）。
+            const n = rowsOf(panel.source).length
+            const sel = d.action === 'jumpFirst' ? 0 : d.action === 'jumpLast' ? Math.max(0, n - 1) : clampSel(n, panel.sel + (back ? -PAGE_STEP : PAGE_STEP))
+            panel = { ...panel, sel }
+          }
+          settle()
+          return
         }
         // ⑥ `Enter`：弹层开着就是"认下选中那一条"（**只换掉这一行字，不执行**）；关着就把这一行
         // 发出去（`T3` 那一格：一行字 → argv → 子进程，账由那个子进程写）。

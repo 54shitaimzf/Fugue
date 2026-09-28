@@ -37,6 +37,7 @@ import {
   prefixOk,
   readStateOf,
   stepFace,
+  stepTop,
 } from './read.ts'
 
 const A = 'agent/r1/1' as AgentId
@@ -251,4 +252,24 @@ test('⑤ 契约正文那一面：账上那一条说得出的那几栏（写入�
   assert.equal(empty.diff, null, '一条变更都没有：那一面是 `null`（不是空的一行）')
   assert.equal(empty.contract, null, '一份契约都没有：那一面是 `null`')
   assert.equal(firstFace(empty), 'stream', '都没有就看事件流')
+})
+
+// ── ⑥ 翻到哪一行（U14）：`stepTop` 夹住、到头停，翻页与跳首尾共用它 ──────────────
+test('⑥ 翻到哪一行（U14）：±1 / ±PAGE_STEP / 跳首尾都夹住，到头停住不绕回', () => {
+  // 30 行的正文：↑↓ ±1。
+  assert.equal(stepTop(30, 10, 1), 11, '↓ 一行')
+  assert.equal(stepTop(30, 10, -1), 9, '↑ 一行')
+  // PgUp/PgDn ±PAGE_STEP。
+  assert.equal(stepTop(30, 10, 4), 14, 'PgDn 半屏')
+  assert.equal(stepTop(30, 10, -4), 6, 'PgUp 半屏')
+  // Ctrl-Home/Ctrl-End：分发处给一个够大的数，`stepTop` 夹到端点。
+  assert.equal(stepTop(30, 10, -30), 0, '跳到头')
+  assert.equal(stepTop(30, 10, 30), 29, '跳到尾')
+  // 到头停住（不绕回）：头再往上、尾再往下都是原地。
+  assert.equal(stepTop(30, 0, -4), 0, '头上再翻还是头')
+  assert.equal(stepTop(30, 29, 4), 29, '尾上再翻还是尾')
+  // 越界的 top 先夹回来（分发处给的 top 永远在界内，这一条是它自己的牙）。
+  assert.equal(stepTop(30, 99, 0), 29, '越界的 top 夹回末行')
+  assert.equal(stepTop(0, 5, 4), 0, '一页都没有时给 0')
+  console.log(`⑥ 读数：±1 · ±4 · 跳首尾 夹住到头停 · 越界 top 夹回`)
 })

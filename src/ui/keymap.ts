@@ -42,6 +42,11 @@ export type UiAction =
   | 'search'
   | 'home'
   | 'end'
+  /** 翻页（U14）：`PgUp`/`PgDn` 半屏（阅读面 · 门口批次 · 候选三处，谁开着翻谁）；`Ctrl-Home`/`Ctrl-End` 跳首尾。 */
+  | 'pageUp'
+  | 'pageDown'
+  | 'jumpFirst'
+  | 'jumpLast'
   | 'backspace'
   | 'delete'
   | 'left'
@@ -156,6 +161,34 @@ export const TABLE: readonly Binding[] = [
     hint: '反查',
     note: '拿行里已经打的那几个字在历史里反查，再按一下找更早的一条',
     by: 'T4',
+  },
+  {
+    action: 'pageUp',
+    keys: ['PgUp'],
+    hint: '上翻半屏',
+    note: '翻页（阅读面 · 门口那一批 · 候选三处，谁开着翻谁）；都没开就什么都不做',
+    by: 'T9',
+  },
+  {
+    action: 'pageDown',
+    keys: ['PgDn'],
+    hint: '下翻半屏',
+    note: '翻页（阅读面 · 门口那一批 · 候选三处，谁开着翻谁）；都没开就什么都不做',
+    by: 'T9',
+  },
+  {
+    action: 'jumpFirst',
+    keys: ['Ctrl-Home'],
+    hint: '跳到头',
+    note: '跳到正在翻的那一份的头一行（阅读面 · 门口那一批 · 候选）',
+    by: 'T9',
+  },
+  {
+    action: 'jumpLast',
+    keys: ['Ctrl-End'],
+    hint: '跳到尾',
+    note: '跳到正在翻的那一份的末一行（阅读面 · 门口那一批 · 候选）',
+    by: 'T9',
   },
   {
     action: 'home',
@@ -359,6 +392,8 @@ const NAMED: Readonly<Record<string, readonly string[]>> = {
   '↓': ['\u001b[B'],
   '←': ['\u001b[D'],
   '→': ['\u001b[C'],
+  PgUp: ['\u001b[5~'],
+  PgDn: ['\u001b[6~'],
 }
 
 /** 可打印 = 空格以上、`DEL` 以下（表里没吃掉的那些字走 `insert`）。 */
@@ -627,6 +662,9 @@ export function decodeOf(chunk: string, km: Keymap = KEYMAP): readonly Decoded[]
 
 /** 半截 `ESC` 等多久算"人真按了一下 `Esc`"（毫秒）。 */
 export const ESC_WAIT_MS = 40
+
+/** `PgUp`/`PgDn` 一页翻多少行（U14）：内容那一栏约 8 行（PLAN § 5.19「K 取 12」那笔账），半屏就是 4。 */
+export const PAGE_STEP = 4
 
 /** 粘贴的另一半记号（`ESC[201~`）等多久（毫秒）：到点还没来就退出粘贴态，攒着的照交（U10）。 */
 export const PASTE_WAIT_MS = 1000

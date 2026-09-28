@@ -444,6 +444,17 @@ export function stepFace(faces: ReadFaces, name: ReadFaceName, delta: number): R
   return list[next] as ReadFaceName
 }
 
+/**
+ * 那一面从第几行看起（U14）：`↑`/`↓` 是 ±1，`PgUp`/`PgDn` 是 ±`PAGE_STEP`，`Ctrl-Home`/`Ctrl-End`
+ * 用一个够大的数一步到头。**夹住，到头停**——正文是一串有头有尾的东西，翻过头绕回来会让人以为
+ * 自己没动（与门口 `stepAt` 同一条口径）。
+ */
+export function stepTop(length: number, top: number, delta: number): number {
+  const last = Math.max(0, length - 1)
+  const now = Math.max(0, Math.min(top, last))
+  return Math.max(0, Math.min(now + delta, last))
+}
+
 /** 打开阅读面时先看哪一面：有 diff 就看 diff，没有就看事件流。 */
 export function firstFace(faces: ReadFaces): ReadFaceName {
   return faces.diff !== null ? 'diff' : 'stream'
