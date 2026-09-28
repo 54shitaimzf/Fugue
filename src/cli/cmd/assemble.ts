@@ -48,7 +48,7 @@ export async function assembleCmd(
   const abs = resolve(root)
   const name = args[0]
   if (name === undefined || name === '') {
-    return usageFail(`assemble 需要 <protocol>：${Object.keys(PROTOCOLS).join(' 或 ')}`)
+    return usageFail(`assemble 需要 <protocol>：${Object.keys(PROTOCOLS).join(' 或 ')}`, json)
   }
   const who = flags.get('agent')
   const against = flags.get('against')
@@ -111,7 +111,7 @@ export async function assembleCmd(
     return violations.length === 0 ? 0 : 1
   } catch (err) {
     if (err instanceof SourceError || err instanceof ConfigError || err instanceof Error) {
-      return fail(err.message)
+      return fail(err.message, json)
     }
     throw err
   }

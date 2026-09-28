@@ -14,7 +14,7 @@ import { keysHintOf, openKeys } from '../../ui/keys.ts'
 import type { KeySource } from '../../ui/keys.ts'
 import { openGo } from '../../ui/go.ts'
 import type { GoLauncher } from '../../ui/go.ts'
-import { emitFail, emitJson, emitLine } from '../shared.ts'
+import { emitJson, emitLine, usageFail } from '../shared.ts'
 
 export function emit(pos: LogPos, e: LogEvent, json: boolean): void {
   if (json) {
@@ -76,10 +76,7 @@ export async function statusCmd(
 ): Promise<number> {
   const bad = unknownFlagsOf('status', flags, STATUS_FLAGS)
   if (bad !== null) {
-    return emitFail(
-      { code: 2, message: `${bad}；一次快照就加 --once，跟随是另一条命令：watch --follow`, hint: '跑 fugue --help 看整张表' },
-      json,
-    )
+    return usageFail(`${bad}；一次快照就加 --once，跟随是另一条命令：watch --follow`, json)
   }
   const log = openLog(root)
   try {
@@ -125,10 +122,10 @@ export async function watchCmd(
 ): Promise<number> {
   const bad = unknownFlagsOf('watch', flags, WATCH_FLAGS)
   if (bad !== null) {
-    return emitFail({ code: 2, message: `${bad}；不给 --follow 就把账上有的念一遍就停`, hint: '跑 fugue --help 看整张表' }, json)
+    return usageFail(`${bad}；不给 --follow 就把账上有的念一遍就停`, json)
   }
   const interval = intervalOf(flags)
-  if (typeof interval === 'string') return emitFail({ code: 2, message: interval, hint: '跑 fugue --help 看整张表' }, json)
+  if (typeof interval === 'string') return usageFail(interval, json)
   const intervalMs = interval
   const only = flags.get('agent')
   const log = openLog(root)
@@ -184,19 +181,13 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   const json = flags.has('json')
   const bad = unknownFlagsOf('tui', flags, TUI_FLAGS)
   if (bad !== null) {
-    return emitFail(
-      { code: 2, message: `${bad}；tui 是同一读面的第二档渲染——要机器读的那一份用 status --json`, hint: '跑 fugue --help 看整张表' },
-      json,
-    )
+    return usageFail(`${bad}；tui 是同一读面的第二档渲染——要机器读的那一份用 status --json`, json)
   }
   if (flags.has('once') && flags.has('follow')) {
-    return emitFail(
-      { code: 2, message: '--once 与 --follow 说不到一起：一个是印一遍就退，一个是一直跟着', hint: '跑 fugue --help 看整张表' },
-      json,
-    )
+    return usageFail('--once 与 --follow 说不到一起：一个是印一遍就退，一个是一直跟着', json)
   }
   const interval = intervalOf(flags)
-  if (typeof interval === 'string') return emitFail({ code: 2, message: interval, hint: '跑 fugue --help 看整张表' }, json)
+  if (typeof interval === 'string') return usageFail(interval, json)
   // 钱那一栏要一个档（与 `status --once` 同一个口径：读的时候按当时的钟算）。
   const phase = phaseOf(new Date())
   const log = openLog(root)

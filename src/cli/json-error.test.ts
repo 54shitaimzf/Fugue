@@ -24,26 +24,33 @@ interface Face {
   stderr: string
 }
 
-/** 跑一条命令，收下它写出的两股与返回的码；两股 `write` 调完即还原。 */
+/**
+ * 跑一条命令，收下它写出的两股与返回的码。
+ *
+ * **换的是 `process.stdout` / `process.stderr` 这两个对象，不是它们的 `write`**：
+ * `node --test` 的子进程在引导期就拿住了真流的引用（事件走它们），给 `write` 打补丁会
+ * 连 runner 的报告一起吞——实测 `--test` 下只剩末两条被计入。CLI 的 `emitFail` 是调用期
+ * 才查 `process.stderr`，所以只有它看得见替身；调完还原。
+ */
 async function run(root: string, ...args: string[]): Promise<Face> {
-  const so = process.stdout.write
-  const se = process.stderr.write
+  const realOut = process.stdout
+  const realErr = process.stderr
   const out: string[] = []
   const err: string[] = []
-  process.stdout.write = (chunk => {
-    out.push(String(chunk))
-    return true
-  }) as unknown as typeof so
-  process.stderr.write = (chunk => {
-    err.push(String(chunk))
-    return true
-  }) as unknown as typeof se
+  const sink = (sink_: string[]): { write: (c: unknown) => boolean } => ({
+    write: (c) => {
+      sink_.push(String(c))
+      return true
+    },
+  })
+  Object.defineProperty(process, 'stdout', { value: sink(out), configurable: true })
+  Object.defineProperty(process, 'stderr', { value: sink(err), configurable: true })
   try {
     const code = await main(['--root', root, ...args])
     return { code, stdout: out.join(''), stderr: err.join('') }
   } finally {
-    process.stdout.write = so
-    process.stderr.write = se
+    Object.defineProperty(process, 'stdout', { value: realOut, configurable: true })
+    Object.defineProperty(process, 'stderr', { value: realErr, configurable: true })
   }
 }
 
@@ -102,4 +109,40 @@ test('④ 人读那一面逐字照旧：不给 --json，用法错仍是一句错
   assert.equal(r.stdout, '', 'stdout 纪律对人面同样成立')
   // 人面的 stderr 里不能混进一行 JSON——两种脸不许出现在同一面。
   assert.ok(!r.stderr.includes('{"code"'), '人读那一面不该出现 JSON 行')
+})
+
+test('⑤ 全量 retrofit：四组各抽一条——view(commit 缺 -m) · materialize(fork 缺 base) · config(键不在) · round(run 缺目标)', async () => {
+  const root = tmpDir('fugue-json-err-')
+
+  const v = await jsonErrorOf(root, 'commit')
+  assert.equal(v.run.code, 2)
+  assert.equal(v.parsed.code, 2)
+  assert.ok(v.parsed.message.includes('-m'), `view 组那条说到缺的东西：${v.parsed.message}`)
+  assert.ok(v.parsed.hint!.includes('--help'))
+
+  const m = await jsonErrorOf(root, 'fork')
+  assert.equal(m.run.code, 2)
+  assert.equal(m.parsed.code, 2)
+  assert.ok(m.parsed.message.includes('fork'), `materialize 组那条说到缺的东西：${m.parsed.message}`)
+
+  const c = await jsonErrorOf(root, 'config', 'get', 'nope.key')
+  assert.equal(c.run.code, 1, '键不在是「做不成」（1），不是「敲错了」（2）')
+  assert.equal(c.parsed.code, 1)
+  assert.ok(c.parsed.message.includes('nope.key'), `config 组那条说到那条键：${c.parsed.message}`)
+  assert.equal(c.parsed.hint, undefined, '做不成的那一档没有 USAGE 可指——hint 不出现，不是空串')
+
+  const r = await jsonErrorOf(root, 'round', 'run')
+  assert.equal(r.run.code, 2)
+  assert.equal(r.parsed.code, 2)
+  assert.ok(r.parsed.message.includes('round run'), `round 组那条说到哪条命令：${r.parsed.message}`)
+})
+
+test('⑥ 深处抛的 UsageError 也走同一张脸：write 缺 <path> 从 viewCmd 抛到 main 的捕获层', async () => {
+  const root = tmpDir('fugue-json-err-')
+  const { parsed, run: r } = await jsonErrorOf(root, 'write')
+  assert.equal(r.code, 2, '深处抛的用法错在 main 捕获层翻成 2')
+  assert.equal(parsed.code, 2)
+  assert.ok(parsed.message.includes('write'), `message 说到那条命令：${parsed.message}`)
+  assert.ok(parsed.hint!.includes('--help'))
+  assert.equal(r.stdout, '')
 })

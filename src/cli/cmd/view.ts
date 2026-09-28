@@ -67,14 +67,14 @@ export async function viewCmd(
 
   switch (cmd) {
     case 'read': {
-      if (!need(1)) return usageFail('read 需要 <path>')
+      if (!need(1)) return usageFail('read 需要 <path>', json)
       const ctx = await openCtx(root, flags)
       try {
         const fenced = fence(ctx.roots, args[0])
-        if (!fenced.ok) return fail(fenced.message)
+        if (!fenced.ok) return fail(fenced.message, json)
         const rel = fenced.rel
         const bytes = await ctx.view.read(rel)
-        if (bytes === null) return fail(`read：${args[0]} 不是可读的路径（目录 · gitlink · 或者不存在）`)
+        if (bytes === null) return fail(`read：${args[0]} 不是可读的路径（目录 · gitlink · 或者不存在）`, json)
         if (json) {
           const meta = await ctx.view.stat(rel)
           emitJson({ path: args[0], size: bytes.length, ...meta })
@@ -91,7 +91,7 @@ export async function viewCmd(
       const ctx = await openCtx(root, flags)
       try {
         const fenced = fence(ctx.roots, args[0] ?? '')
-        if (!fenced.ok) return fail(fenced.message)
+        if (!fenced.ok) return fail(fenced.message, json)
         const rel = fenced.rel
         const rows = await ctx.view.list(rel)
         if (json) emitJson(rows)
@@ -103,14 +103,14 @@ export async function viewCmd(
     }
 
     case 'stat': {
-      if (!need(1)) return usageFail('stat 需要 <path>')
+      if (!need(1)) return usageFail('stat 需要 <path>', json)
       const ctx = await openCtx(root, flags)
       try {
         const fenced = fence(ctx.roots, args[0])
-        if (!fenced.ok) return fail(fenced.message)
+        if (!fenced.ok) return fail(fenced.message, json)
         const rel = fenced.rel
         const meta = await ctx.view.stat(rel)
-        if (meta === null) return fail(`stat：${args[0]} 不存在`)
+        if (meta === null) return fail(`stat：${args[0]} 不存在`, json)
         if (json) emitJson({ path: args[0], ...meta })
         else emitLine(`${meta.kind}\t${meta.mode.toString(8)}\t${meta.size}\t${meta.id}`)
         return 0
@@ -124,7 +124,7 @@ export async function viewCmd(
       let since: ViewRev | undefined
       if (typeof sinceRaw === 'string') {
         since = Number(sinceRaw)
-        if (!Number.isInteger(since) || since < 0) return usageFail('--since 要一个非负整数修订号')
+        if (!Number.isInteger(since) || since < 0) return usageFail('--since 要一个非负整数修订号', json)
       }
       const ctx = await openCtx(root, flags, { history: true })
       try {
@@ -161,7 +161,7 @@ export async function viewCmd(
       // 一份无状态的 `Roots`，`openCtx` 收同一份（第四个数），所以那两处说的是同一个根。
       const roots = createRoots(resolve(root))
       const delta = await deltaFrom(roots, cmd, args, flags)
-      if (typeof delta === 'string') return fail(delta)
+      if (typeof delta === 'string') return fail(delta, json)
       const ctx = await openCtx(root, flags, { write: true }, roots)
       try {
         const res = await applyEdit(
@@ -182,7 +182,7 @@ export async function viewCmd(
     }
 
     default:
-      return usageFail(`未知命令：${cmd}`)
+      return usageFail(`未知命令：${cmd}`, json)
   }
 }
 
@@ -211,7 +211,7 @@ async function commit(ctx: Ctx, msg: string, json: boolean): Promise<number> {
 /** `fugue commit -m <msg>`：外壳（`-m` 校验 + 开写档上下文）与 `commit` 那一步，原先是 `run()` 里的一个 case。 */
 export async function commitCmd(root: string, flags: Map<string, string | true>, json: boolean): Promise<number> {
   const msg = flags.get('m')
-  if (typeof msg !== 'string' || msg === '') return usageFail('commit 需要 -m <msg>')
+  if (typeof msg !== 'string' || msg === '') return usageFail('commit 需要 -m <msg>', json)
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   try {
     return await commit(ctx, msg, json)
@@ -235,7 +235,7 @@ export async function branchCmd(
   json: boolean,
 ): Promise<number> {
   const base = args[0]
-  if (base === undefined || base === '') return usageFail('branch 需要 <base>：一个提交')
+  if (base === undefined || base === '') return usageFail('branch 需要 <base>：一个提交', json)
   const abs = resolve(root)
   const writer = writerOf(flags)
   const truth = openTruth(abs)
@@ -244,7 +244,7 @@ export async function branchCmd(
     try {
       commit = await truth.resolve(base)
     } catch (err) {
-      return fail(`branch：${base} 不是这个工作区里一个能用的提交\n  ${(err as Error).message}`)
+      return fail(`branch：${base} 不是这个工作区里一个能用的提交\n  ${(err as Error).message}`, json)
     }
     const res = await branchAt(truth, writer, commit)
     if (json) emitJson({ agent: agentFor(writer), ref: res.ref, base: res.base, moved: res.moved })
@@ -259,7 +259,7 @@ export async function branchCmd(
     }
     return 0
   } catch (err) {
-    if (err instanceof BranchRefused) return fail(err.why)
+    if (err instanceof BranchRefused) return fail(err.why, json)
     throw err
   } finally {
     await truth.close()
@@ -281,7 +281,7 @@ export async function replay(
   let upToRev: ViewRev | undefined
   if (typeof toRaw === 'string') {
     const n = Number(toRaw)
-    if (!Number.isInteger(n) || n < 0) return usageFail('--to 要一个非负整数修订号')
+    if (!Number.isInteger(n) || n < 0) return usageFail('--to 要一个非负整数修订号', json)
     upToRev = n
   }
   const only = flags.get('agent')
@@ -445,7 +445,7 @@ async function verify(
   }
   if (json) emitJson({ ok: bad === 0, agents: reports })
   else if (bad === 0) emitLine(`${writers.length} 个视图全部一致`)
-  if (bad !== 0) return fail(`${bad} 个视图没有通过重放比对`)
+  if (bad !== 0) return fail(`${bad} 个视图没有通过重放比对`, json)
   return 0
 }
 

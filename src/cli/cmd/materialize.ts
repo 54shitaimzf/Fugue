@@ -51,16 +51,16 @@ export function diffStatCmd(root: string, flags: Map<string, string | true>, arg
   try {
     dir = where === undefined ? createRoots(resolve(root)).mergedRoot(agentFor(writerOf(flags))) : resolve(where)
   } catch (err) {
-    return fail((err as Error).message)
+    return fail((err as Error).message, json)
   }
   if (!existsSync(dir) || !statSync(dir).isDirectory()) {
-    if (where !== undefined) return fail(`不是一棵能扫的树：${dir}`)
-    return fail(`物化的合并树还没铺：${dir}\n先 fugue fork <base> 铺一棵（§ 8.5）。`)
+    if (where !== undefined) return fail(`不是一棵能扫的树：${dir}`, json)
+    return fail(`物化的合并树还没铺：${dir}\n先 fugue fork <base> 铺一棵（§ 8.5）。`, json)
   }
 
   const baseFlag = flags.get('baseline')
   const saveFlag = flags.get('save')
-  if (baseFlag === true || saveFlag === true) return usageFail('--baseline 与 --save 都要一个文件名')
+  if (baseFlag === true || saveFlag === true) return usageFail('--baseline 与 --save 都要一个文件名', json)
   const baseFile = typeof baseFlag === 'string' ? resolve(baseFlag) : undefined
   const saveFile = typeof saveFlag === 'string' ? resolve(saveFlag) : undefined
   // **别把尺子放进树里**：基线自己也是一份新文件，留在被扫的树里，下一轮它会被报成
@@ -70,7 +70,7 @@ export function diffStatCmd(root: string, flags: Map<string, string | true>, arg
     ['--save', saveFile],
   ] as const) {
     if (file !== undefined && insideTree(dir, file)) {
-      return fail(`${what} 指向被扫的树里：${file}\n基线是尺子，不是树的一部分——把它挪到 ${dir} 之外。`)
+      return fail(`${what} 指向被扫的树里：${file}\n基线是尺子，不是树的一部分——把它挪到 ${dir} 之外。`, json)
     }
   }
 
@@ -82,8 +82,8 @@ export function diffStatCmd(root: string, flags: Map<string, string | true>, arg
     now = scanTree(dir, { skip: WORKSPACE_STATE })
     if (saveFile !== undefined) storeTreeStat(saveFile, now)
   } catch (err) {
-    if (err instanceof TreeStatError) return fail(err.message)
-    return fail(`扫不动 ${dir}：${(err as Error).message}`)
+    if (err instanceof TreeStatError) return fail(err.message, json)
+    return fail(`扫不动 ${dir}：${(err as Error).message}`, json)
   }
   // 过程走 stderr（§ 9.8 的 stdout 纪律）。
   if (saveFile !== undefined) process.stderr.write(`快照存到 ${saveFile}\n`)
@@ -131,10 +131,10 @@ export async function forkCmd(
   json: boolean,
 ): Promise<number> {
   const base = args[0]
-  if (base === undefined || base === '') return usageFail('fork 需要 <base>：一个提交')
+  if (base === undefined || base === '') return usageFail('fork 需要 <base>：一个提交', json)
   const want = flags.get('strategy')
   if (typeof want === 'string' && !(STRATEGIES as readonly string[]).includes(want)) {
-    return usageFail(`--strategy 只认 ${STRATEGIES.join(' · ')}；不给就按策略表探着退档`)
+    return usageFail(`--strategy 只认 ${STRATEGIES.join(' · ')}；不给就按策略表探着退档`, json)
   }
   const roRaw = flags.get('ro')
   const readOnly =
@@ -152,12 +152,12 @@ export async function forkCmd(
     try {
       commit = await truth.resolve(base)
     } catch (err) {
-      return fail(`fork：${base} 不是这个工作区里一个能用的提交——<base> 要指向一棵树\n  ${(err as Error).message}`)
+      return fail(`fork：${base} 不是这个工作区里一个能用的提交——<base> 要指向一棵树\n  ${(err as Error).message}`, json)
     }
     // **视图的底与物化的底必须是同一个提交**（§ 4）：物化的底是真实工作树，视图的底是本 agent
     // 的分支头。不一致时症状是静默的，所以拦在落地之前——这一趟只读了 ref，盘上还什么都没动。
     const disagree = forkBaseRefusal(writer, commit, await baseFor(truth, writer))
-    if (disagree !== null) return fail(disagree)
+    if (disagree !== null) return fail(disagree, json)
 
     const res = await fork({ roots: createRoots(abs), log, root: abs }, agent, commit, {
       ...DEFAULT_MATERIALIZE,
@@ -188,8 +188,8 @@ export async function forkCmd(
     }
     return 0
   } catch (err) {
-    if (err instanceof ForkRefused) return fail(err.why)
-    if (err instanceof MountError || err instanceof LayError) return fail(err.message)
+    if (err instanceof ForkRefused) return fail(err.why, json)
+    if (err instanceof MountError || err instanceof LayError) return fail(err.message, json)
     throw err
   } finally {
     await log.close()
@@ -308,7 +308,7 @@ export async function verifyMatCmd(root: string, flags: Map<string, string | tru
     }
     return res.ok ? 0 : 1
   } catch (err) {
-    if (err instanceof VerifyRefused) return fail(err.why)
+    if (err instanceof VerifyRefused) return fail(err.why, json)
     throw err
   } finally {
     await ctx.close()
@@ -345,7 +345,7 @@ export async function disposeCmd(root: string, flags: Map<string, string | true>
     }
     return res.left.length === 0 ? 0 : 1
   } catch (err) {
-    if (err instanceof MountError) return fail(err.message)
+    if (err instanceof MountError) return fail(err.message, json)
     throw err
   } finally {
     hold.release()
@@ -380,7 +380,7 @@ export async function ensureCmd(
   let want: ViewRev | undefined
   if (typeof toRaw === 'string') {
     const n = Number(toRaw)
-    if (!Number.isInteger(n) || n < 0) return usageFail('--to 要一个非负整数修订号')
+    if (!Number.isInteger(n) || n < 0) return usageFail('--to 要一个非负整数修订号', json)
     want = n
   }
   const abs = resolve(root)
@@ -402,6 +402,7 @@ export async function ensureCmd(
     if (!ctx.view.revs.includes(upTo)) {
       return fail(
         `ensure：rev ${upTo} 不是一个修订点\n可用的有 ${ctx.view.revs.join(' · ')}（fugue revs 列的就是它们）`,
+        json,
       )
     }
     const res = await landOnce(ctx, abs, agent, st, upTo)
@@ -435,8 +436,8 @@ export async function ensureCmd(
     }
     return 0
   } catch (err) {
-    if (err instanceof EnsureRefused) return fail(err.why)
-    if (err instanceof MountError || err instanceof LandError) return fail(err.message)
+    if (err instanceof EnsureRefused) return fail(err.why, json)
+    if (err instanceof MountError || err instanceof LandError) return fail(err.message, json)
     throw err
   } finally {
     await ctx.close()

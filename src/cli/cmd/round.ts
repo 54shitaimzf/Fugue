@@ -144,10 +144,10 @@ export async function roundCmd(
 ): Promise<number> {
   const verb = args[0]
   if (verb !== 'new') {
-    return usageFail(`round 的子命令是 new · plan · go · run · work：拿到的是 ${verb === undefined ? '（空）' : verb}`)
+    return usageFail(`round 的子命令是 new · plan · go · run · work：拿到的是 ${verb === undefined ? '（空）' : verb}`, json)
   }
   const goal = args[1]
-  if (goal === undefined || goal === '') return usageFail('round new 需要 <目标>：轮级意图的那一句')
+  if (goal === undefined || goal === '') return usageFail('round new 需要 <目标>：轮级意图的那一句', json)
 
   let split: SplitAssignment[]
   let doc: ConfigDoc
@@ -155,14 +155,15 @@ export async function roundCmd(
     doc = await readConfig(root)
     split = readSplit(doc, flags.get('split'))
   } catch (err) {
-    if (err instanceof RoundStartError) return fail(err.message)
-    if (err instanceof ConfigError) return fail(err.message)
+    if (err instanceof RoundStartError) return fail(err.message, json)
+    if (err instanceof ConfigError) return fail(err.message, json)
     throw err
   }
   if (split.length === 0) {
     return usageFail(
       '这一轮一份拆分草案都没有：配置里的 round.split 是空的\n' +
         `加一份：fugue --root ${root} config set round.split '[{"goal":"…","ownedPaths":["src/a.ts"],"assertions":[{"action":"test","name":"测试全过"}]}]'`,
+      json,
     )
   }
 
@@ -242,7 +243,7 @@ export async function roundCmd(
     }
     return 0
   } catch (err) {
-    if (err instanceof RoundStartError) return fail(err.message)
+    if (err instanceof RoundStartError) return fail(err.message, json)
     throw err
   } finally {
     await ctx.close()
@@ -268,7 +269,7 @@ export async function roundRun(
   json: boolean,
 ): Promise<number> {
   const goal = args[0]
-  if (goal === undefined || goal === '') return usageFail('round run 需要 <目标>：轮级意图的那一句')
+  if (goal === undefined || goal === '') return usageFail('round run 需要 <目标>：轮级意图的那一句', json)
 
   let doc: ConfigDoc
   let split: SplitAssignment[]
@@ -278,15 +279,16 @@ export async function roundRun(
     split = readSplit(doc, flags.get('split'))
     assertions = readAssertions(doc)
   } catch (err) {
-    if (err instanceof RoundStartError) return fail(err.message)
-    if (err instanceof ConfigError) return fail(err.message)
+    if (err instanceof RoundStartError) return fail(err.message, json)
+    if (err instanceof ConfigError) return fail(err.message, json)
     throw err
   }
-  if (split.length === 0) return usageFail('这一轮一份拆分草案都没有：配置里的 round.split 是空的')
+  if (split.length === 0) return usageFail('这一轮一份拆分草案都没有：配置里的 round.split 是空的', json)
   if (assertions.length === 0) {
     return usageFail(
       '一条断言都没有：零条会让「打回率低」这句话没有分母（PLAN § 5.7 的地板第二档）\n' +
         `加一条：fugue --root ${root} config set round.assertions '[{"name":"测试全过","argv":["/bin/sh","-c","true"]}]'`,
+      json,
     )
   }
 
@@ -490,7 +492,7 @@ export async function roundRun(
     let deniedAction: { agent: AgentId; exit: number; denied: boolean; note: string } | null = null
     if (deny) {
       const agent = agents[0]
-      if (agent === undefined) return usageFail('--deny：这一轮一个 agent 都没有')
+      if (agent === undefined) return usageFail('--deny：这一轮一个 agent 都没有', json)
       const r = await refuseOneWrite(ctx.truth, started.base, 'round-deny-')
       deniedAction = { agent, exit: r.exit, denied: r.denied, note: r.note }
       // **口用持轮者已经开着的那个**（`agentLogOf` 那一份缓存）。这一轮里这个 agent 的口是持轮者
@@ -522,8 +524,8 @@ export async function roundRun(
 
     return emitRunFace({ json, flags, run: started, stops, deniedAction, report, attribution: [...attribution], metrics })
   } catch (err) {
-    if (err instanceof RoundRunError) return fail(`${err.at}：${err.message}`)
-    if (err instanceof RoundStartError) return fail(err.message)
+    if (err instanceof RoundRunError) return fail(`${err.at}：${err.message}`, json)
+    if (err instanceof RoundStartError) return fail(err.message, json)
     throw err
   } finally {
     // **agent 那几个口由调用方关**（`runRound` 只借不还）。
@@ -763,18 +765,18 @@ export async function roundPlan(
   json: boolean,
 ): Promise<number> {
   const goal = args[0]
-  if (goal === undefined || goal === '') return usageFail('round plan 需要 <目标>：轮级意图的那一句')
+  if (goal === undefined || goal === '') return usageFail('round plan 需要 <目标>：轮级意图的那一句', json)
   const judge = flags.has('judge')
   const wire = wireFlagsOf(root, flags)
   if (judge && (wire.live || wire.wireIn !== undefined)) {
-    return usageFail('--judge 不跑模型：它与 --live / --wire-in 不能一起给（那两档要发真调用，而这一档一步都不走）')
+    return usageFail('--judge 不跑模型：它与 --live / --wire-in 不能一起给（那两档要发真调用，而这一档一步都不走）', json)
   }
 
   let doc: ConfigDoc
   try {
     doc = await readConfig(root)
   } catch (err) {
-    if (err instanceof ConfigError) return fail(err.message)
+    if (err instanceof ConfigError) return fail(err.message, json)
     throw err
   }
   const rawRound = getConfig(doc, 'round.id')
@@ -943,8 +945,8 @@ export async function roundPlan(
     // **退回那一档是退出码 1**（不是用法错：这一趟真的跑了，只是草案不成立）。
     return r.held ? 0 : 1
   } catch (err) {
-    if (err instanceof PlanError) return fail(err.message)
-    if (err instanceof ConfigError) return fail(err.message)
+    if (err instanceof PlanError) return fail(err.message, json)
+    if (err instanceof ConfigError) return fail(err.message, json)
     throw err
   } finally {
     await ctx.close()
@@ -969,13 +971,13 @@ export async function sayCommand(
 ): Promise<number> {
   // **一句话可以是几个词**：命令行按空白分词，`fugue say 把解析器 拆成两格` 到这里是三个参数。
   const text = args.join(' ').trim()
-  if (text === '') return usageFail('say 需要 <一句话>：那句话是这一趟的输入（架构 § 15.1.a 的"问与答"）')
+  if (text === '') return usageFail('say 需要 <一句话>：那句话是这一趟的输入（架构 § 15.1.a 的"问与答"）', json)
   const wire = wireFlagsOf(root, flags)
   let doc: ConfigDoc
   try {
     doc = await readConfig(root)
   } catch (err) {
-    if (err instanceof ConfigError) return fail(err.message)
+    if (err instanceof ConfigError) return fail(err.message, json)
     throw err
   }
   const rawRound = getConfig(doc, 'round.id')
@@ -1117,9 +1119,9 @@ export async function sayCommand(
     if (r.where === '讨论态') return r.distill === null ? 1 : 0
     return r.plan?.held === true ? 0 : 1
   } catch (err) {
-    if (err instanceof SayError) return fail(err.message)
-    if (err instanceof PlanError) return fail(err.message)
-    if (err instanceof ConfigError) return fail(err.message)
+    if (err instanceof SayError) return fail(err.message, json)
+    if (err instanceof PlanError) return fail(err.message, json)
+    if (err instanceof ConfigError) return fail(err.message, json)
     throw err
   } finally {
     await ctx.close()
@@ -1143,13 +1145,13 @@ export async function sayCommand(
  */
 export async function roundWork(root: string, flags: Map<string, string | true>, args: string[], json: boolean): Promise<number> {
   if (args.length > 0) {
-    return usageFail(`round work 不带位置参数：拿到的是 ${args.join(' ')}（目标那一句在 round plan 那一趟给）`)
+    return usageFail(`round work 不带位置参数：拿到的是 ${args.join(' ')}（目标那一句在 round plan 那一趟给）`, json)
   }
   let doc: ConfigDoc
   try {
     doc = await readConfig(root)
   } catch (err) {
-    if (err instanceof ConfigError) return fail(err.message)
+    if (err instanceof ConfigError) return fail(err.message, json)
     throw err
   }
   const rawRound = getConfig(doc, 'round.id')
@@ -1231,10 +1233,10 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
     }
     return emitRunFace({ json, flags, run, stops, deniedAction: null, report, attribution: [...attribution], metrics })
   } catch (err) {
-    if (err instanceof RoundWorkError) return fail(err.message)
-    if (err instanceof RoundRunError) return fail(`${err.at}：${err.message}`)
-    if (err instanceof RoundStartError) return fail(err.message)
-    if (err instanceof BindingError) return fail(err.message)
+    if (err instanceof RoundWorkError) return fail(err.message, json)
+    if (err instanceof RoundRunError) return fail(`${err.at}：${err.message}`, json)
+    if (err instanceof RoundStartError) return fail(err.message, json)
+    if (err instanceof BindingError) return fail(err.message, json)
     throw err
   } finally {
     await closeAgentLogs()
@@ -1299,13 +1301,13 @@ function stubOfIssued(ctx: Ctx): Stub {
  */
 export async function roundGo(root: string, flags: Map<string, string | true>, args: string[], json: boolean): Promise<number> {
   if (args.length > 0) {
-    return usageFail(`round go 不带位置参数：拿到的是 ${args.join(' ')}（目标那一句在 round plan 那一趟给）`)
+    return usageFail(`round go 不带位置参数：拿到的是 ${args.join(' ')}（目标那一句在 round plan 那一趟给）`, json)
   }
   let doc: ConfigDoc
   try {
     doc = await readConfig(root)
   } catch (err) {
-    if (err instanceof ConfigError) return fail(err.message)
+    if (err instanceof ConfigError) return fail(err.message, json)
     throw err
   }
   const rawRound = getConfig(doc, 'round.id')
@@ -1382,7 +1384,7 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
     }
     return 0
   } catch (err) {
-    if (err instanceof RoundStartError) return fail(err.message)
+    if (err instanceof RoundStartError) return fail(err.message, json)
     throw err
   } finally {
     await ctx.close()

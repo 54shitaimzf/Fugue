@@ -27,9 +27,9 @@ export async function config(root: string, args: string[], json: boolean): Promi
     }
     if (verb === 'get') {
       const key = args[1]
-      if (key === undefined) return usageFail('config get 需要 <key>')
+      if (key === undefined) return usageFail('config get 需要 <key>', json)
       const value = getConfig(await readConfig(root), key)
-      if (value === undefined) return fail(`config get：没有这条键 —— ${key}`)
+      if (value === undefined) return fail(`config get：没有这条键 —— ${key}`, json)
       // 人这一面：字符串吐原样（好接管道），别的吐 JSON。`--json` 那一面一律是 JSON。
       if (json) emitJson(value)
       else emitLine(typeof value === 'string' ? value : JSON.stringify(value))
@@ -38,7 +38,7 @@ export async function config(root: string, args: string[], json: boolean): Promi
     if (verb === 'set') {
       const key = args[1]
       const raw = args[2]
-      if (key === undefined || raw === undefined) return usageFail('config set 需要 <key> <value>')
+      if (key === undefined || raw === undefined) return usageFail('config set 需要 <key> <value>', json)
       const doc = await readConfig(root)
       const old = getConfig(doc, key)
       const value = parseConfigValue(raw)
@@ -53,9 +53,9 @@ export async function config(root: string, args: string[], json: boolean): Promi
       }
       return 0
     }
-    return usageFail(`config 需要 show|get|set，收到：${verb ?? '(空)'}`)
+    return usageFail(`config 需要 show|get|set，收到：${verb ?? '(空)'}`, json)
   } catch (err) {
-    if (err instanceof ConfigError) return fail(err.message)
+    if (err instanceof ConfigError) return fail(err.message, json)
     throw err
   }
 }
@@ -77,7 +77,7 @@ export async function policyCmd(
 ): Promise<number> {
   const mode = modeOf(flags)
   if (mode === null) {
-    return usageFail(`--mode 取 read-only 或 workspace-write：${JSON.stringify(flags.get('mode'))}`)
+    return usageFail(`--mode 取 read-only 或 workspace-write：${JSON.stringify(flags.get('mode'))}`, json)
   }
   const abs = resolve(root)
   const agent = agentFor(writerOf(flags))
@@ -105,7 +105,7 @@ export async function policyCmd(
     return 0
   } catch (err) {
     if (err instanceof ConfigError || err instanceof BindingError || err instanceof PolicyError) {
-      return fail(err.message)
+      return fail(err.message, json)
     }
     throw err
   }

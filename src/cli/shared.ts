@@ -318,14 +318,14 @@ export function emitLine(s: string): void {
   process.stdout.write(s + '\n')
 }
 
-export function fail(msg: string): number {
-  process.stderr.write(msg + '\n')
-  return 1
+/** 「做不成」（1）：§ 9.8 退出码行。`json` 面一行 `{code:1, message}`（U7 全量接线）。 */
+export function fail(msg: string, json = false): number {
+  return emitFail({ code: 1, message: msg }, json)
 }
 
-export function usageFail(msg: string): number {
-  process.stderr.write(`${msg}\n\n${USAGE}`)
-  return 2
+/** 「敲错了」（2）：整张 USAGE 只进人面。`json` 面一行 `{code:2, message, hint}`（U7 全量接线）。 */
+export function usageFail(msg: string, json = false): number {
+  return emitFail({ code: 2, message: msg, hint: '跑 fugue --help 看整张表' }, json)
 }
 
 /**

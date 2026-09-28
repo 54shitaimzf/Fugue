@@ -66,7 +66,7 @@ export async function runCmd(
   json: boolean,
 ): Promise<number> {
   const name = args[0]
-  if (name === undefined || name === '') return usageFail('run 需要 <action>')
+  if (name === undefined || name === '') return usageFail('run 需要 <action>', json)
   const stepRaw = flags.get('step')
   // 这一站没有轮次（S7 才有）：默认 `-`，读日志时一眼看得出"这不是某一轮里的那一步"。
   const step: StepId = typeof stepRaw === 'string' ? stepRaw : '-'
@@ -74,7 +74,7 @@ export async function runCmd(
   // 命令行上那一档（架构 § 8.8 的 `Policy.mode`）：**敲错了是 2**，与"这一趟跑不成"（1）分开。
   const mode = modeOf(flags)
   if (mode === null) {
-    return usageFail(`--mode 取 read-only 或 workspace-write：${JSON.stringify(flags.get('mode'))}`)
+    return usageFail(`--mode 取 read-only 或 workspace-write：${JSON.stringify(flags.get('mode'))}`, json)
   }
 
   const abs = resolve(root)
@@ -89,7 +89,7 @@ export async function runCmd(
     range = portRangeOf(doc)
   } catch (err) {
     // 配置错是「做不成」（1），不是「敲错了」（2）：命令行的形状是对的，缺的是工作区那一份。
-    if (err instanceof ConfigError || err instanceof BindingError) return fail(err.message)
+    if (err instanceof ConfigError || err instanceof BindingError) return fail(err.message, json)
     throw err
   }
 
@@ -113,7 +113,7 @@ export async function runCmd(
   try {
     policy = resolvePolicy({ roots, agent, doc, mode, binding, probed })
   } catch (err) {
-    if (err instanceof PolicyError) return fail(err.message)
+    if (err instanceof PolicyError) return fail(err.message, json)
     throw err
   }
 
@@ -121,7 +121,7 @@ export async function runCmd(
   // 那一条在宿主上不成立 · 软链指不到清单里——都在这里拒。**它排在物化之前**：这一层报的是
   // "哪一栏写错了"，而再往后报的是 bwrap 的话（"源找不到"），指向的是错的地方。
   const checked = checkReach({ roots, policy, declared: bind })
-  if (!checked.ok) return fail(checked.error.message)
+  if (!checked.ok) return fail(checked.error.message, json)
 
   const ctx = await openCtx(abs, flags, { snapUpTo: st.rev, write: true })
   try {
@@ -139,7 +139,7 @@ export async function runCmd(
 
     const landed = await landOnce(ctx, abs, agent, st, ctx.view.rev, bind)
     const mounts = checkMountPoints(landed.merged, bind)
-    if (!mounts.ok) return fail(mounts.error.message)
+    if (!mounts.ok) return fail(mounts.error.message, json)
     // **这一趟走哪一档**由上面那一份策略值说了算（架构 § 8.8）：在场的层里有挂载层 `bwrap` 就是
     // 沙箱档；只有第二层（Landlock）时它接过"写得动什么"那一维（Y6）；两层都不在才是 § 15.7 的
     // E4 退化档——树可写、回收兜底。**这条读数现探**（`probeLayers`），不从
@@ -169,7 +169,7 @@ export async function runCmd(
     try {
       declared = reclaim.declare(agent, binding.outputs)
     } catch (err) {
-      if (err instanceof ReclaimRefused) return fail(err.message)
+      if (err instanceof ReclaimRefused) return fail(err.message, json)
       throw err
     }
     const env = envFor({ agent, binding, injections, portIndex, range, policy })
@@ -277,9 +277,9 @@ export async function runCmd(
     }
     return res.exit === 0 ? 0 : 1
   } catch (err) {
-    if (err instanceof EnsureRefused) return fail(err.why)
-    if (err instanceof MountError || err instanceof LandError) return fail(err.message)
-    if (err instanceof BindingError || err instanceof ReclaimRefused) return fail(err.message)
+    if (err instanceof EnsureRefused) return fail(err.why, json)
+    if (err instanceof MountError || err instanceof LandError) return fail(err.message, json)
+    if (err instanceof BindingError || err instanceof ReclaimRefused) return fail(err.message, json)
     throw err
   } finally {
     await ctx.close()

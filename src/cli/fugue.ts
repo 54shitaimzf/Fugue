@@ -35,12 +35,15 @@ import { roundCmd, roundGo, roundPlan, roundRun, roundWork, sayCommand } from '.
  * "我敲错了"与"我敲对了，只是这件事没成"。
  */
 export async function main(argv: readonly string[]): Promise<number> {
+  // 错误面跟着 `--json` 走（§ 9.8「错误」行）：深处的 UsageError（`parseOctal` · 视图那一层的
+  // 路径检查）与 LogHeldError 在这里翻成退出码，也要翻成同一张脸——argv 这里就有，读一次。
+  const json = parseArgv(argv).flags.has('json')
   try {
     return await run(argv)
   } catch (err) {
-    if (err instanceof UsageError) return usageFail(err.message)
+    if (err instanceof UsageError) return usageFail(err.message, json)
     // 同一个 agent 的另一个写者正写着：这是「做不成」（1），不是「敲错了」（2）。
-    if (err instanceof LogHeldError) return fail(err.message)
+    if (err instanceof LogHeldError) return fail(err.message, json)
     throw err
   }
 }
@@ -57,11 +60,11 @@ async function run(argv: readonly string[]): Promise<number> {
     process.stdout.write(USAGE)
     return 0
   }
-  if (cmd === undefined) return usageFail('需要一个命令')
+  if (cmd === undefined) return usageFail('需要一个命令', json)
   // `--` 只对执行那一行有意义（`fugue run <action> -- k=v…`）。别的命令收到它就说不清，
   // 所以拒绝，而不是把后面那几段悄悄咽下去。
   if (rest.length > 0 && cmd !== 'run') {
-    return usageFail(`\`--\` 之后的东西只有 run 收（这次给的是 ${cmd}）：只有 run 往子进程里注入 k=v`)
+    return usageFail(`\`--\` 之后的东西只有 run 收（这次给的是 ${cmd}）：只有 run 往子进程里注入 k=v`, json)
   }
 
   // 落点先探（架构 § 15.7 的 E1）。**E1 是硬要求，所以这里是拒绝启动，不是降级运行**：
@@ -71,15 +74,13 @@ async function run(argv: readonly string[]): Promise<number> {
   try {
     assertHost(root)
   } catch (err) {
-    if (err instanceof HostError) return fail(err.message)
+    if (err instanceof HostError) return fail(err.message, json)
     throw err
   }
 
   if (cmd === 'log') {
     const bad = unknownFlagsOf('log', flags, LOG_FLAGS)
-    if (bad !== null) {
-      return emitFail({ code: 2, message: `${bad}；log 是抄本——不渲染、不筛选`, hint: '跑 fugue --help 看整张表' }, json)
-    }
+    if (bad !== null) return usageFail(`${bad}；log 是抄本——不渲染、不筛选`, json)
     const only = flags.get('agent')
     const log = openLog(root)
     try {
@@ -154,7 +155,7 @@ async function run(argv: readonly string[]): Promise<number> {
       return await viewCmd(cmd, root, flags, args, json)
 
     default:
-      return usageFail(`未知命令：${cmd}`)
+      return usageFail(`未知命令：${cmd}`, json)
   }
 }
 
@@ -170,15 +171,22 @@ if (isMain) {
   main(process.argv.slice(2))
     .then((code) => process.exit(code))
     .catch((err: unknown) => {
+      // 兜底那一层的脸也跟着 `--json` 走（§ 9.8「错误」行）：走到这里的错（日志损坏 · 意外
+      // 抛出）此前只有人读的那一面。日志目录那一行人面上照旧两行；`--json` 那一面一行，
+      // 目录并进 message 的第二段（`subject` 那一栏留给「说到的那个东西」，不装路径拼接）。
+      const json = parseArgv(process.argv.slice(2)).flags.has('json')
       if (err instanceof LogCorruptError) {
         // 日志在哪，由 `--root` 说了算——壳让人在任何目录里敲这条命令，而"我在哪"与
         // "它的日志在哪"是两件事。默认值仍是 cwd（`run` 里那一句）。
         const asked = parseArgv(process.argv.slice(2)).flags.get('root')
-        process.stderr.write(`日志损坏，拒绝加载 —— ${err.message}\n`)
-        process.stderr.write(`日志目录：${logDir(typeof asked === 'string' ? asked : process.cwd())}\n`)
-      } else {
-        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`)
+        const dir = logDir(typeof asked === 'string' ? asked : process.cwd())
+        process.exit(
+          emitFail(
+            { code: 1, message: `日志损坏，拒绝加载 —— ${err.message}\n日志目录：${dir}` },
+            json,
+          ),
+        )
       }
-      process.exit(1)
+      process.exit(emitFail({ code: 1, message: err instanceof Error ? err.message : String(err) }, json))
     })
 }
