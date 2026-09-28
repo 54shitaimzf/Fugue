@@ -10,8 +10,15 @@ import type { StatusRow } from '../../probe/status.ts'
 import { follow, readNew } from '../../probe/watch.ts'
 import { ctrlCStepOf, escStepOf, quitStepOf, stillArmed } from '../../ui/cancel.ts'
 import { openTui, tuiModeOf } from '../../ui/follow.ts'
-import { degradeNote, openTerm } from '../../ui/term.ts'
+import { K, degradeNote, openTerm } from '../../ui/term.ts'
 import type { ViewInput } from '../../ui/term.ts'
+
+/**
+ * 弹层（菜单 · 阅读面）开着时的期望高度（U6，人拍的「弹层打开时长高」）：候选与正文要装得下
+ * 几行。它仍要夹进终端行数（`ui/term.ts` 那一层量得到行数就夹）——想要多大是这一头的事，
+ * 画得下多大是那一头的事。
+ */
+const OVERLAY_WANT = 24
 import { KEYMAP, fallsToText, helpRowsOf, hintLimitOf, hintLineOf, openKeys } from '../../ui/keymap.ts'
 import type { KeySource } from '../../ui/keymap.ts'
 import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmit, submitOf } from '../../ui/input.ts'
@@ -211,7 +218,13 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   const log = openLog(root)
   // `--full`（`T10`）：整屏那一档交给终端层（多两个 escape · 排版一行不动）。它不是第五档地板——
   // 画不出来的那几档它自动哑掉（`ui/term.ts` 里 `ansi && full` 那一处判据）。
-  const term = openTerm({ out: process.stdout, full: flags.has('full') })
+  // **期望高度每一帧现问（U6）**：弹层（`panel` · `reading`，在下面才声明）开着时给 `OVERLAY_WANT`，
+  // 关了回到缺省 `K`。这一问只在 `draw` 里被调到，那时它们早就立起来了。
+  const term = openTerm({
+    out: process.stdout,
+    full: flags.has('full'),
+    heightOf: () => (panel !== null || reading !== null ? OVERLAY_WANT : K),
+  })
   // 四条地板收成**一张表**（`ui/follow.ts` 的 `tuiModeOf`）：真终端 → 面板；`--once` / 不是 TTY /
   // `$TERM` 认不出来 → 只印永久行那一档（面板一次都不画，一个字节的 ANSI 都不写）。
   const mode = tuiModeOf({ ansi: term.ansi, once: flags.has('once'), follow: flags.has('follow') })

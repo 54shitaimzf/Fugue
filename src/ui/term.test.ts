@@ -37,9 +37,10 @@ interface Fake extends TermOut {
   readonly written: string[]
   isTTY?: boolean | undefined
   columns?: number | undefined
+  rows?: number | undefined
 }
 
-function fakeOut(o: { columns?: number; isTTY?: boolean; term?: string } = {}): Fake {
+function fakeOut(o: { columns?: number; isTTY?: boolean; term?: string; rows?: number } = {}): Fake {
   const f: Fake = {
     written: [],
     isTTY: o.isTTY ?? true,
@@ -49,6 +50,7 @@ function fakeOut(o: { columns?: number; isTTY?: boolean; term?: string } = {}): 
     },
   }
   if (o.columns !== undefined) f.columns = o.columns
+  if (o.rows !== undefined) f.rows = o.rows
   return f
 }
 
@@ -282,6 +284,49 @@ test('⑧ 输入行：逐字写出去 · 光标退到该在的那一列 · 上�
   console.log(
     `⑧ 读数：输入行 2 行逐字写出去 · 光标退 ${widthOf('  --root') - 2} 列到第 3 列 · ` +
       `重画上移 ${K + 1} 行（不是 K）· 收尾删 ${K + 2} 行 · 不给输入行时逐字节与从前相同`,
+  )
+})
+
+// ── ⑩ 行数也量（U6）：期望夹进行数 · 矮到画不出框只印永久行 · 行数够了自动回来 ───────
+test('⑩ 行数也量（U6）：rows=8 期望 12 → 夹到 7 行；rows=3 → 只印永久行零 ANSI；回来另起一块', () => {
+  const f = fakeOut({ columns: 80 })
+  f.rows = 8
+  const t = openTerm({ out: f, term: 'xterm-256color' })
+  t.draw([], () => ['a'])
+  assert.equal(writtenRows(f).length, 7, `rows=8 期望 12 该夹到 7 行（留一行），拿到 ${writtenRows(f).length}`)
+  // 矮到画不出框：rows=3 → 夹到 2，比 MIN_HEIGHT 还小 → 只印永久行，一个 ANSI 都不写
+  // （矮那一帧屏幕顶紧挨着历史，`CLEAR_LINE` 会把历史吃掉一行）。
+  f.written.length = 0
+  f.rows = 3
+  t.draw(['一条永久行'], () => ['a'])
+  assert.equal(f.written.length, 1, '矮那一帧该只印永久行')
+  assert.equal(f.written[0], '一条永久行\n')
+  assert.equal(streamOf(f).includes('\x1b'), false, '矮那一帧一个字节的 ANSI 都不写')
+  // 行数回来了：面板自动回来，而且**另起一块**（矮那一帧把 drawn 清了，无上移）。
+  f.written.length = 0
+  f.rows = 24
+  t.draw([], () => ['b'])
+  assert.equal(writtenRows(f).length, 12, `rows=24 期望 12 → 12 行，拿到 ${writtenRows(f).length}`)
+  assert.ok(f.written[0]?.startsWith(CLEAR_LINE) === true, '矮那一帧之后回来该另起一块（第一笔是清行，不是上移）')
+  // 期望每一帧现问：`heightOf` 给多大（装得下时）就画多高。
+  const g = fakeOut({ columns: 80 })
+  g.rows = 40
+  const t2 = openTerm({ out: g, term: 'xterm-256color', heightOf: () => 24 })
+  t2.draw([], () => ['c'])
+  assert.equal(writtenRows(g).length, 24, `heightOf 给 24（rows=40 装得下）该画 24 行，拿到 ${writtenRows(g).length}`)
+  // 量不到行数（`rows` 一直 undefined）→ 不夹，与 U6 之前逐字节相同（①~⑨ 走的就是这一档）。
+  const h = fakeOut({ columns: 80 })
+  const t3 = openTerm({ out: h, term: 'xterm-256color' })
+  t3.draw([], () => ['d'])
+  assert.equal(writtenRows(h).length, 12, '量不到行数该按期望画（K=12）')
+  // 行数变过（宽度没变）之后 close：不删面板——量不到那一块落在哪。
+  g.written.length = 0
+  g.rows = 30
+  t2.close()
+  assert.deepEqual([...g.written], [], '行数变过 close 不该删面板')
+  console.log(
+    `⑩ 读数：rows=8 → 7 行 · rows=3 → 只印永久行（0 个 ANSI）· 回到 24 另起一块 12 行 · ` +
+      `heightOf=24（rows=40）→ 24 行 · 量不到行数 → 12 行（与从前相同）· 行数变过 close 0 字节`,
   )
 })
 

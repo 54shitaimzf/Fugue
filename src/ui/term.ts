@@ -44,6 +44,14 @@
 // screen 就没有终端历史可翻——永久行落在那一块里，与人一起消失。**所以缺省关**（PLAN § 5.19 第二版
 // 一 · 取舍第一条：同类里三家把它做成可选或缺省关）。
 //
+// **行数也量（U6）：期望高度夹进终端行数。** `K` 是**期望**，不是死的：实际画的高度是
+// `clamp(期望, 1, 行数 − 1)`——终端矮了面板跟着矮，不再顶穿屏幕顶（那正是刷屏五根因的第一条：
+// 区域比终端高时上移被屏幕顶钳住，每帧滚一屏）。期望是**每帧现问**的（`heightOf`）：弹层（菜单 ·
+// 阅读面）开着时调用方给更大的数。终端按行数连框都放不下的那一帧（面板最少 `MIN_HEIGHT` 行）
+// **只印永久行**、一个字节的 ANSI 都不写——行数够了下一帧自动回来（`drawn` 没置过，回来时另起
+// 一块）。行数与宽度一样是**那次画的记忆**：上一次用的高度变了就不上移（残的那一块留给终端
+// 重排，与宽度变同一条路），收尾时行数变过也不删面板（量不到它落在哪）。
+//
 // **一帧一笔（U3）**：`draw` 把那一帧的所有片段拼成一个串、`out.write` 恰一次（`close` 同理）。
 // 逐行小 write 在慢链路（ssh · mux 那一头）上是撕裂与闪跳的主因——一帧之内终端先看见半帧。
 // 字节流与逐笔那一版**逐字节相同**，变的只是笔数（`term.test.ts` ①拿"每次绘制恰一笔 + 拼接等于
@@ -56,10 +64,10 @@
 // （重排之后不知道那 K 行落在哪）就一个字节都不写。**alt screen 那一条是例外**：进去过就一定要出来
 // ——少写它，那台终端就停在另一块屏上，而 `--full` 缺省关的时候一个字节都不会写（两档各归各的）。
 import type { BottomInput, MenuInput, NavInput, ReadInput } from './frame.ts'
-import { panelOf } from './frame.ts'
+import { MIN_HEIGHT, panelOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
 
-/** 底部那块区域的**恒定**行数（PLAN § 5.19：K 取 12；画出框的下限是 5，12 够放处境那几行）。 */
+/** 底部那块区域的**缺省**期望行数（PLAN § 5.19：K 取 12；画出框的下限是 5，12 够放处境那几行）。实际画的高度是它夹进终端行数的那一个（U6）。 */
 export const K = 12
 
 /** 量不到列宽时兜的列数（PLAN § 5.19：`columns === undefined` 兜 80）。 */
@@ -145,13 +153,15 @@ export function degradeNote(term: string | undefined, isTTY: boolean | undefined
   return `$TERM=${term} 认不出来，退到只印永久行那一档（不画面板——KNOWN_TERM 之外都退，退一档比画错好）`
 }
 
-/** 这一份只用到输出那一头的三个栏（`process.stdout` 就是它）。 */
+/** 这一份只用到输出那一头的几个栏（`process.stdout` 就是它）。 */
 export interface TermOut {
   write(s: string): unknown
   /** `process.stdout.isTTY`：不是 TTY 就不写一个字节的 ANSI。 */
   readonly isTTY?: boolean | undefined
   /** 终端此刻几列（量不到是 `undefined`）。 */
   readonly columns?: number | undefined
+  /** 终端此刻几行（量不到是 `undefined`）——矮终端那一档要它（U6）。 */
+  readonly rows?: number | undefined
 }
 
 /** 输入行那几行：已经带提示符，每行宽度 ≤ `columns` − 1（所以一行就是一个物理行）。 */
@@ -205,8 +215,19 @@ export interface TermOptions {
   readonly out: TermOut
   /** 这一台终端叫什么（`process.env.TERM`）。缺省读环境。 */
   readonly term?: string | undefined
-  /** 区域高度 K。缺省 `K`。 */
+  /** 期望高度（缺省 `K`）。实际画的高度是它夹进终端行数的那一个（U6）。 */
   readonly height?: number
+  /**
+   * 量行数那一处（缺省读 `out.rows`，与 `columnsOf` 同形）：真终端上就是它，resize 那一档要一个
+   * 会变的数。量不到（`undefined`）就不夹——那一档与从前逐字节相同（U6 之前的行为）。
+   */
+  readonly rowsOf?: () => number | undefined
+  /**
+   * 期望高度那一问（**每帧现问**，U6）：弹层（菜单 · 阅读面）开着时调用方给更大的数，关了回到
+   * 缺省。缺省就是 `height ?? K`。给的这个数仍要夹进终端行数——想要多大是调用方的事，画得下
+   * 多大是这一层的事。
+   */
+  readonly heightOf?: () => number
   /** 量列宽那一处（缺省读 `out.columns`）：真终端上就是它，resize 那一档要一个会变的数。 */
   readonly columnsOf?: () => number | undefined
   /**
@@ -219,7 +240,7 @@ export interface TermOptions {
 export interface Term {
   /** 走不走 ANSI：不是 TTY，或 `$TERM` 认不出来时是 `false`（那一档只印永久行）。 */
   readonly ansi: boolean
-  /** 区域高度（恒定 K 行）。 */
+  /** 期望高度（`heightOf` 缺省那一档的值；实际画的高度每一帧夹进终端行数，U6）。 */
   readonly height: number
   /** 上一次量到的列宽（量不到就是兜的那个 80）。 */
   readonly columns: number
@@ -241,7 +262,9 @@ export interface Term {
 export function openTerm(o: TermOptions): Term {
   const out = o.out
   const height = o.height ?? K
+  const wantOf = o.heightOf ?? ((): number => height)
   const measure = o.columnsOf ?? ((): number | undefined => out.columns)
+  const measureRows = o.rowsOf ?? ((): number | undefined => out.rows)
   const ansi = out.isTTY === true && ansiOf(o.term ?? process.env.TERM)
   /** 这一档要不要整屏（`--full` 且写得出 ANSI）：两样缺一样，那一个字节都不写。 */
   const wantAlt = ansi && o.full === true
@@ -250,9 +273,13 @@ export function openTerm(o: TermOptions): Term {
   let columns = FALLBACK_COLUMNS
   let drawn = false
   let drawnColumns = 0
+  /** 上一次那一帧实际画的高度——高度变了就不上移（残的那一块留给终端重排，与宽度变同一条路）。 */
+  let drawnHeight = 0
+  /** 上一次画的时候终端有几行——close 现量一次，行数变了就不删面板（量不到它落在哪）。 */
+  let drawnRows: number | undefined = undefined
   /** 上一次画完时光标停在区域第几行（0 = 面板顶）——下一次"上移多少"靠它。 */
   let cursorRow = height
-  /** 上一次画出去的区域一共几行（面板 K + 输入那几行）——`close()` 收走这一块靠它。 */
+  /** 上一次画出去的区域一共几行（面板 + 输入那几行）——`close()` 收走这一块靠它。 */
   let regionRows = height
   return {
     ansi,
@@ -266,9 +293,19 @@ export function openTerm(o: TermOptions): Term {
     draw(permanent: readonly string[], render: RenderPanel): void {
       const seen = measure()
       columns = typeof seen === 'number' && seen > 0 ? seen : FALLBACK_COLUMNS
-      if (!ansi) {
-        // 只印永久行那一档：面板整块不画，一个字节的 ANSI 都不写。一帧仍是一笔（空的那一帧不写）。
+      // **夹紧（U6）**：期望夹进终端行数（留一行），量不到行数就不夹（那一档与从前逐字节相同）。
+      const rowsSeen = measureRows()
+      const rowsKnown = typeof rowsSeen === 'number' && rowsSeen > 0
+      const cap = rowsKnown ? (rowsSeen as number) - 1 : Number.POSITIVE_INFINITY
+      const h = Math.max(1, Math.min(wantOf(), cap))
+      // 矮档：量得到行数、而按行数画面板连框都放不下（面板最少 `MIN_HEIGHT` 行）→ 只印永久行。
+      // 判据是**终端**矮，不是夹出来的那个数小——调用方硬要一个 3 行的机械档（测试里那一类）照样画。
+      if (!ansi || (rowsKnown && (rowsSeen as number) - 1 < MIN_HEIGHT)) {
+        // 只印永久行：不是 TTY / `$TERM` 认不出那一档是常态；矮终端那一帧（U6）是**临时的地板**——
+        // 行数够了的下一帧自动回到面板那一档。两种场合都不写一个字节的 ANSI：矮那一帧屏幕顶
+        // 紧挨着历史，`CLEAR_LINE` 会把历史吃掉一行。
         if (permanent.length > 0) out.write(permanent.map((line) => `${line}\n`).join(''))
+        drawn = false
         return
       }
       const buf: string[] = []
@@ -279,11 +316,12 @@ export function openTerm(o: TermOptions): Term {
         alt = true
       }
       // 面板先算好：**尺寸是刚刚量到的那一个**（渲染与摆是同一把尺，所以 1 逻辑行 = 1 物理行）。
-      const asked = render({ columns, height })
+      const asked = render({ columns, height: h })
       const spec: Panel = Array.isArray(asked) ? { rows: asked } : asked
-      const rows = panelOf(spec.rows, height, columns)
-      // 上移只在"上一次画过、而且宽度没变过"时做——宽度变过就不猜重排。
-      if (drawn && columns === drawnColumns) buf.push(upOf(cursorRow))
+      const rows = panelOf(spec.rows, h, columns)
+      // 上移只在"上一次画过、而且宽度和高度都没变过"时做——宽度变过不猜重排；高度变过那一块
+      // 的大小变了，上移回去也对不上新面板顶。
+      if (drawn && columns === drawnColumns && h === drawnHeight) buf.push(upOf(cursorRow))
       for (const line of permanent) buf.push(`${CLEAR_LINE}${line}\n`)
       for (const row of rows) buf.push(`${CLEAR_LINE}${row}\n`)
       const input = spec.input
@@ -300,10 +338,12 @@ export function openTerm(o: TermOptions): Term {
         }
       }
       if (buf.length > 0) out.write(buf.join(''))
-      cursorRow = body.length === 0 ? height : height + body.length - 1
-      regionRows = height + body.length
+      cursorRow = body.length === 0 ? h : h + body.length - 1
+      regionRows = h + body.length
       drawn = true
       drawnColumns = columns
+      drawnHeight = h
+      drawnRows = rowsSeen
     },
     close(): void {
       // alt screen 那一笔先记下来、就地归位（**只写一次**）：`finally` 与 `exit` 那一钩都会调到这一
@@ -311,12 +351,12 @@ export function openTerm(o: TermOptions): Term {
       const leave = alt
       alt = false
       const buf: string[] = []
-      // 面板那一块：画过、且宽度没变过才去删它。**现量一次**：宽度变过之后终端会把面板那几行重排，
-      // 重排之后它占几个物理行这一层量不到，所以那一档不去删（宁可留一块旧的，也不去吃历史）。量不到
-      // 列宽时按"没变"办——上移 K 行落回面板顶这条不变量在没重排时是成立的。
+      // 面板那一块：画过、且宽度和行数都没变过才去删它。宽度变过之后终端会把面板那几行重排、行数
+      // 变过之后屏幕顶截到哪儿量不到——那一档不去删（宁可留一块旧的，也不去吃历史）。
       if (ansi && drawn) {
         const now = measure()
-        if (!(typeof now === 'number' && now > 0 && now !== drawnColumns)) {
+        const nowRows = measureRows()
+        if (!(typeof now === 'number' && now > 0 && now !== drawnColumns) && nowRows === drawnRows) {
           buf.push(upOf(cursorRow), deleteLinesOf(regionRows))
           drawn = false
         }
