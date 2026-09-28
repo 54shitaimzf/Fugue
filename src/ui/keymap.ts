@@ -628,13 +628,20 @@ export function decodeOf(chunk: string, km: Keymap = KEYMAP): readonly Decoded[]
 /** 半截 `ESC` 等多久算"人真按了一下 `Esc`"（毫秒）。 */
 export const ESC_WAIT_MS = 40
 
+/** 粘贴的另一半记号（`ESC[201~`）等多久（毫秒）：到点还没来就退出粘贴态，攒着的照交（U10）。 */
+export const PASTE_WAIT_MS = 1000
+
 /** 一块一块喂进来的解码器（终端可能把一条序列切在两个 `data` 之间）。 */
 export interface Decoder {
   /** 还没凑成一个键的那半截（空串就是没有）。 */
   readonly pending: string
+  /** 粘贴记号开了一半（`ESC[200~` 到了、`ESC[201~` 还没到）。 */
+  readonly pasting: boolean
   feed(chunk: string): readonly Decoded[]
-  /** 半截攒不成键了：最前面那一个 `ESC` 当"人按了一下 `Esc`"，剩下的接着解。 */
+  /** 半截攒不成键了：最前面那一个 `ESC` 当"人按了一下 `Esc`"，**其余整段丢弃**。 */
   flush(): readonly Decoded[]
+  /** 粘贴超时：退出粘贴态，把攒到的那一段当原文交出去（`insert`）。 */
+  bailPaste(): readonly Decoded[]
 }
 
 export function decoderOf(km: Keymap = KEYMAP): Decoder {
@@ -668,6 +675,9 @@ export function decoderOf(km: Keymap = KEYMAP): Decoder {
   return {
     get pending(): string {
       return pending
+    },
+    get pasting(): boolean {
+      return paste !== null
     },
     feed(chunk: string): readonly Decoded[] {
       // **大段粘贴**（`ESC[200~` … `ESC[201~`）：记号之间那一整段是**原文**，一个字节都不解释——
@@ -704,10 +714,17 @@ export function decoderOf(km: Keymap = KEYMAP): Decoder {
     flush(): readonly Decoded[] {
       if (pending === '') return []
       const head = pending[0] as string
-      const rest = pending.slice(1)
       pending = ''
       const one = bytes.get(head)
-      return [...(one === undefined ? [] : [one]), ...this.feed(rest)]
+      // **其余整段丢弃**（U10）：攒在半截里的 `ESC [` 续字节不是人按的键——回灌解一遍会把 `[` 之
+      // 类当字打进行里（残包在慢链路上成对出现时，输入行里会多出几个没人打过的字符）。
+      return one === undefined ? [] : [one]
+    },
+    bailPaste(): readonly Decoded[] {
+      if (paste === null) return []
+      const text = paste
+      paste = null
+      return [{ action: 'insert', text }]
     },
   }
 }
@@ -805,14 +822,31 @@ export function openKeys(o: {
   if (!raw) return { raw: false, close(): void {} }
   const dec = decoderOf(o.km ?? KEYMAP)
   const wait = o.wait ?? realWait
+  // **流式解码（U9）**：一个闭包里的 `TextDecoder` 带 `{ stream: true }` 喂到底——多字节字符
+  // 被拆在两个 chunk 里时（慢链路上常事）第二个块接着解，不出替换符。此前每个 chunk 新开一个
+  // decoder，残在块尾的那几个字节当场变成 U+FFFD 印进行里。
+  const utf8 = new TextDecoder()
   let stop: (() => void) | null = null
+  // 粘贴的另一半记号没来的那一档（U10）：记号开了一半，超时（`PASTE_WAIT_MS`）就把攒着的当原文
+  // 交出去、退出粘贴态——不然粘贴那一段永远卡在缓冲里，后面按的每一个键一个动作都不出。
+  let bailStop: (() => void) | null = null
   const onData = (chunk: string | Uint8Array): void => {
-    const text = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk)
+    const text = typeof chunk === 'string' ? chunk : utf8.decode(chunk, { stream: true })
     if (stop !== null) {
       stop()
       stop = null
     }
+    if (bailStop !== null) {
+      bailStop()
+      bailStop = null
+    }
     for (const d of dec.feed(text)) o.onAction(d)
+    if (dec.pasting) {
+      bailStop = wait(PASTE_WAIT_MS, () => {
+        bailStop = null
+        for (const d of dec.bailPaste()) o.onAction(d)
+      })
+    }
     if (dec.pending !== '') {
       stop = wait(ESC_WAIT_MS, () => {
         stop = null
@@ -834,6 +868,10 @@ export function openKeys(o: {
       if (stop !== null) {
         stop()
         stop = null
+      }
+      if (bailStop !== null) {
+        bailStop()
+        bailStop = null
       }
       input.removeListener('data', onData)
       input.setRawMode?.(false)

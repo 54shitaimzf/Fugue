@@ -33,7 +33,8 @@ import assert from 'node:assert/strict'
 import { widthOf } from './glyph.ts'
 import test from 'node:test'
 import type { KeyInput, UiAction } from './keymap.ts'
-import { ESC_WAIT_MS, KEYMAP, TABLE, WIRED, actionsOf, actsOnEmpty, bytesOfKey, decodeOf, decoderOf, escapeAt, escapeTruncatedAt, fallsToText, helpRowsOf, hintLimitOf, hintLineOf, keyLabelOf, keymapOf, openKeys, PASTE_OFF, PASTE_ON } from './keymap.ts'
+import { ESC_WAIT_MS, KEYMAP, PASTE_WAIT_MS, TABLE, WIRED, actionsOf, actsOnEmpty, bytesOfKey, decodeOf, decoderOf, escapeAt, escapeTruncatedAt, fallsToText, helpRowsOf, hintLimitOf, hintLineOf, keyLabelOf, keymapOf, openKeys, PASTE_OFF, PASTE_ON } from './keymap.ts'
+import type { WaitFn } from './keymap.ts'
 
 /** 品牌类型那一栏（`RoundId` 一类）：这一份里那些值是拿来喂接口的，不是账上真发生过的。 */
 const brand = (v: string): never => v as never
@@ -147,7 +148,7 @@ test('② 解码：字母 · 控制字符 · 一串好几个 · 序列整段吃�
 // ── ③ raw mode 的开与关 ───────────────────────────────────────────────────────
 interface FakeInput extends KeyInput {
   readonly calls: string[]
-  feed(s: string): void
+  feed(s: string | Uint8Array): void
 }
 
 function fakeInput(o: { readonly tty: boolean } = { tty: true }): FakeInput {
@@ -202,6 +203,98 @@ test('③ raw mode：开 · 关的时候归位并摘监听（摘了就不再触�
   quiet.close()
   assert.deepEqual(got, ['go', 'interrupt'], '不是 TTY 的那一档认了按键')
   console.log(`③ 读数：TTY 上 ${input.calls.filter((c) => c === 'on' || c === 'off').length} 次监听调动 · 关掉之后再喂一个字节 0 个动作 · 不是 TTY ${piped.calls.length} 次调用`)
+})
+
+// ── ⑧ 流式解码（U9）：多字节字符拆在两个 chunk 里也不出替换符 ───────────────────
+test('⑧ 流式解码（U9）：「中」拆两块 → 还是一个「中」，一个 U+FFFD 都不出', () => {
+  const got: UiAction[] = []
+  const texts: string[] = []
+  const input = fakeInput()
+  const keys = openKeys({ input, onAction: (d) => { got.push(d.action); if (d.action === 'insert') texts.push(d.text) } })
+  // 「中」的 UTF-8 是 e4 b8 ad：第一块只到 e4 b8（半个字），第二块补上 ad——慢链路上常这么拆。
+  input.feed(new Uint8Array([0xe4, 0xb8]))
+  assert.deepEqual(got, [], '半个字先攒着（不是动作）')
+  input.feed(new Uint8Array([0xad]))
+  assert.deepEqual(got, ['insert'], '补上后半个字节，字出来了')
+  assert.deepEqual(texts, ['中'], `该恰好是一个「中」，实得 ${JSON.stringify(texts)}`)
+  // 一个块里两个字各拆一半（e4 b8 | ad e6 96 | 87 = 中文）也拼得回来。
+  const got2: string[] = []
+  const input2 = fakeInput()
+  const keys2 = openKeys({ input: input2, onAction: (d) => { if (d.action === 'insert') got2.push(d.text) } })
+  input2.feed(new Uint8Array([0xe4, 0xb8]))
+  input2.feed(new Uint8Array([0xad, 0xe6, 0x96]))
+  input2.feed(new Uint8Array([0x87]))
+  assert.deepEqual(got2, ['中', '文'], `两字跨三块该拼回「中文」，实得 ${JSON.stringify(got2)}`)
+  keys.close()
+  keys2.close()
+  console.log(`⑧ 读数：「中」拆两块 / 「中文」拆三块都拼得回来，0 个 U+FFFD`)
+})
+
+// ── ⑨ CSI 残包丢弃（U10）：flush 只出首字节的动作，续字节整段丢弃 ───────────────
+test('⑨ CSI 残包丢弃（U10）：半截 ESC[ 到点冲掉 → 只有那一下 Esc，`[` 不进输入行', () => {
+  // 半截 `ESC [` 攒着（等不到终字节）→ flush：首字节 `ESC` 是 Esc 那条键，其余（`[`）丢弃。
+  const dec = decoderOf()
+  assert.deepEqual(dec.feed('\u001b['), [], '半截先攒着')
+  assert.equal(dec.pending, '\u001b[', '攒的正是那半截')
+  assert.deepEqual(dec.flush(), [{ action: 'cancel', key: '\u001b' }], '到点冲掉：只有 Esc 那一下')
+  assert.equal(dec.pending, '', '冲掉之后不剩')
+  // 后续的字节照常解（残包不毒化后面的输入）。
+  assert.deepEqual(dec.feed('g'), [{ action: 'go', key: 'g' }], '冲掉之后接着解')
+  // 负对照：真正按了一下 Esc（半截里只有 ESC 一个字节）→ 同样只有那一下。
+  const dec2 = decoderOf()
+  dec2.feed('\u001b')
+  assert.deepEqual(dec2.flush(), [{ action: 'cancel', key: '\u001b' }], '单 ESC 也是那一下')
+  console.log(`⑨ 读数：ESC[ 残包冲掉 → 恰一个 cancel，续字节 0 个进输入行`)
+})
+
+// ── ⑩ 粘贴超时（U10）：另一半记号等 PASTE_WAIT_MS 没来 → 攒着的照交、退出粘贴态 ──
+test('⑩ 粘贴超时（U10）：记号开了一半等 1000ms → 那段当原文交出去，后面的键照常是动作', () => {
+  /** 手动时钟：wait 收下 (ms, fn)，测试自己决定什么时候到点。 */
+  const alarms: { readonly ms: number; fire(): void; off(): void }[] = []
+  const wait: WaitFn = (ms, fn) => {
+    let done = false
+    const one = {
+      ms,
+      fire(): void {
+        if (done) return
+        done = true
+        fn()
+      },
+      off(): void {
+        done = true
+      },
+    }
+    alarms.push(one)
+    return one.off
+  }
+  const got: UiAction[] = []
+  const texts: string[] = []
+  const input = fakeInput()
+  const keys = openKeys({
+    input,
+    wait,
+    onAction: (d) => {
+      got.push(d.action)
+      if (d.action === 'insert') texts.push(d.text)
+    },
+  })
+  input.feed(`${PASTE_ON}粘到一半`)
+  assert.deepEqual(got, [], '记号没闭合，先攒着')
+  const pasteAlarm = alarms[alarms.length - 1]
+  assert.ok(pasteAlarm !== undefined && pasteAlarm.ms === PASTE_WAIT_MS, `该起一个 ${PASTE_WAIT_MS}ms 的闹钟`)
+  // 超时到点：攒着的那段当原文交出去（insert），粘贴态退出。
+  pasteAlarm.fire()
+  assert.deepEqual(got, ['insert'], '到点交出那一段')
+  assert.deepEqual(texts, ['粘到一半'], '交的正是攒着的那段原文')
+  // 退出之后，后面按的键照常是动作（不再被吸进粘贴缓冲）。
+  input.feed('g')
+  assert.deepEqual(got, ['insert', 'go'], '退出粘贴态之后键照常是动作')
+  // 正常闭合的那一档不受影响（超时闹钟在记号闭合时被摘掉）。
+  alarms.length = 0
+  input.feed(`${PASTE_ON}完整${PASTE_OFF}`)
+  assert.deepEqual(texts, ['粘到一半', '完整'], '记号闭合的照旧整段交出')
+  keys.close()
+  console.log(`⑩ 读数：等 ${PASTE_WAIT_MS}ms → 攒着的「粘到一半」整段交出 · 之后 g 照常是 go · 闭合档照旧`)
 })
 
 // ── ④ 三处渲染：与表逐字相同，条数也是从表里数出来的 ─────────────────────────
