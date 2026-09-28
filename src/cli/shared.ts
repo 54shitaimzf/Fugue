@@ -329,6 +329,35 @@ export function usageFail(msg: string): number {
 }
 
 /**
+ * § 9.8 契约表「错误」行（U6）：`{ code, message, hint, subject }`——`--json` 那一面
+ * stderr 写**一行 JSON**，`hint` 指向正确的替代能力（§ 24 纪律 5）。
+ *
+ * **人读那一面逐字照旧**：message 走 stderr；用法错（code 2）把整张 USAGE 跟在后面——
+ * 与 `usageFail` 印的字节相同。**USAGE 全文不进 JSON**——机器要的是 `code` 与 `hint`，
+ * 不是一张表，所以用法错的 `hint` 给「跑 fugue --help」；`subject` 是这句错说到的那个
+ * 东西（一条开关 · 一条路径），没说到就不出现。stdout 一个字节不写（stdout 纪律那一行），
+ * 退出码就是 `code`（0/1/2/3 四档不动）。
+ */
+export function emitFail(
+  o: { code: number; message: string; hint?: string; subject?: string },
+  json: boolean,
+): number {
+  if (json) {
+    process.stderr.write(
+      JSON.stringify({
+        code: o.code,
+        message: o.message,
+        ...(o.hint === undefined ? {} : { hint: o.hint }),
+        ...(o.subject === undefined ? {} : { subject: o.subject }),
+      }) + '\n',
+    )
+    return o.code
+  }
+  process.stderr.write(o.code === 2 ? `${o.message}\n\n${USAGE}` : `${o.message}\n`)
+  return o.code
+}
+
+/**
  * 原始输入 → 视图内的路径，或者**围栏那句给人看的话**（`Denied.message` 里带着指路）。
  *
  * **命令行的文件工具都走这里**（架构 § 8.4 硬纪律 1 的"唯一入口"）。视图那一步的路径检查（`throw

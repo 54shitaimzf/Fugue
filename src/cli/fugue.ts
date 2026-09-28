@@ -17,7 +17,7 @@ import { LogHeldError } from '../log/hold.ts'
 import { LogCorruptError, logDir, openLog } from '../log/log.ts'
 import type { WriterId } from '../terms.ts'
 import { HostError, assertHost } from '../roots/host.ts'
-import { USAGE, UsageError, fail, parseArgv, usageFail } from './shared.ts'
+import { USAGE, UsageError, emitFail, fail, parseArgv, usageFail } from './shared.ts'
 export { USAGE } from './shared.ts'
 export { driverSupport } from './cmd/round.ts'
 import { branchCmd, commitCmd, replay, viewCmd } from './cmd/view.ts'
@@ -77,7 +77,9 @@ async function run(argv: readonly string[]): Promise<number> {
 
   if (cmd === 'log') {
     const bad = unknownFlagsOf('log', flags, LOG_FLAGS)
-    if (bad !== null) return usageFail(`${bad}；log 是抄本——不渲染、不筛选`)
+    if (bad !== null) {
+      return emitFail({ code: 2, message: `${bad}；log 是抄本——不渲染、不筛选`, hint: '跑 fugue --help 看整张表' }, json)
+    }
     const only = flags.get('agent')
     const log = openLog(root)
     try {
