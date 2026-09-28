@@ -27,36 +27,8 @@ export function emit(pos: LogPos, e: LogEvent, json: boolean): void {
   process.stdout.write(`${pos.writer}\t${pos.seq}\t${t}\t${brief}\n`)
 }
 
-/**
- * 观察那三条命令认的开关（`log` · `watch` · `status`）。**各给各的**：不给它们共用一张大表——
- * 那样子命令会收下不属于自己的开关，而"收下"与"用上"在读数上分不开。
- */
-export const LOG_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help']
-const WATCH_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help', 'follow', 'interval']
-const TUI_FLAGS: readonly string[] = ['root', 'help', 'once', 'follow', 'metrics', 'report', 'interval']
-const STATUS_FLAGS: readonly string[] = ['root', 'json', 'help', 'once', 'metrics', 'report']
-
-/**
- * **认不得的开关当场拒**（退 2），不静默收下。
- *
- * 为什么这一族要拒：写错的开关被咽下去之后，人看到的是"命令跑了、什么都没变"——那与"这个开关
- * 今天没用"在读数上分不开（`log --grep x` 找不到东西，与"日志里没有匹配"也是同一张脸）。用法
- * 错是 2，做不成是 1，两者不许混（架构 § 9.8）：收下一个不认识的开关属于**命令行不成立**。
- *
- * 报的话里把**这一条命令认的那几个**印出来：拒一条命令时，人要知道的是"那该怎么办"。
- */
-export function unknownFlagsOf(
-  cmd: string,
-  flags: Map<string, string | true>,
-  allowed: readonly string[],
-): string | null {
-  const bad = [...flags.keys()].filter((k) => !allowed.includes(k))
-  if (bad.length === 0) return null
-  return (
-    `${cmd} 不认这几个开关：${bad.map((k) => '--' + k).join(' · ')}——这一条命令认的是 ` +
-    allowed.map((k) => '--' + k).join(' · ')
-  )
-}
+// 观察组的四张开关表（LOG/WATCH/TUI/STATUS_FLAGS）与 `unknownFlagsOf` 自 U8 起收进
+// `fugue.ts` 的 FLAGS_OF（全命令族一张张声明过的表，分发处统一过）——这一组不再各查各的。
 
 /**
  * `status --once`：**把账重放一次，给人看这一刻的处境**（PLAN § 5.18 的第 12 格）。
@@ -74,10 +46,6 @@ export async function statusCmd(
   flags: Map<string, string | true>,
   json: boolean,
 ): Promise<number> {
-  const bad = unknownFlagsOf('status', flags, STATUS_FLAGS)
-  if (bad !== null) {
-    return usageFail(`${bad}；一次快照就加 --once，跟随是另一条命令：watch --follow`, json)
-  }
   const log = openLog(root)
   try {
     // 钱那一栏要一个档：**读的时候按当时的钟算**（官方价目分峰谷两档）。
@@ -120,10 +88,6 @@ export async function watchCmd(
   flags: Map<string, string | true>,
   json: boolean,
 ): Promise<number> {
-  const bad = unknownFlagsOf('watch', flags, WATCH_FLAGS)
-  if (bad !== null) {
-    return usageFail(`${bad}；不给 --follow 就把账上有的念一遍就停`, json)
-  }
   const interval = intervalOf(flags)
   if (typeof interval === 'string') return usageFail(interval, json)
   const intervalMs = interval
@@ -176,13 +140,9 @@ export async function watchCmd(
  * 那一趟还跑着时第一次按是等它收尾、第二次是硬退。`?` 把按键那一行重印一遍。
  */
 export async function tuiCmd(root: string, flags: Map<string, string | true>): Promise<number> {
-  // `--json` 不在 TUI_FLAGS 里（机器读的那一份是 `status --json`），但**错误那一面照样认它**：
-  // 脚本敲 `fugue --json tui` 撞上开关表时，该拿到的是一行 JSON（§ 9.8 的错误行），不是一张人表。
+  // `--json` 不在 tui 的开关表里（机器读的那一份是 `status --json`），但**错误那一面照样认它**：
+  // 脚本敲 `fugue --json tui` 撞上开关表时（分发处拒），该拿到的是一行 JSON（§ 9.8 的错误行）。
   const json = flags.has('json')
-  const bad = unknownFlagsOf('tui', flags, TUI_FLAGS)
-  if (bad !== null) {
-    return usageFail(`${bad}；tui 是同一读面的第二档渲染——要机器读的那一份用 status --json`, json)
-  }
   if (flags.has('once') && flags.has('follow')) {
     return usageFail('--once 与 --follow 说不到一起：一个是印一遍就退，一个是一直跟着', json)
   }

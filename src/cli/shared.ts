@@ -491,6 +491,28 @@ export async function readStdin(): Promise<Uint8Array> {
   return Buffer.concat(chunks)
 }
 
+/**
+ * **认不得的开关当场拒**（退 2），不静默收下（§ 9.8「认得的开关才收」）。
+ *
+ * 为什么这一族要拒：写错的开关被咽下去之后，人看到的是"命令跑了、什么都没变"——那与"这个开关
+ * 今天没用"在读数上分不开（`log --grep x` 找不到东西，与"日志里没有匹配"也是同一张脸）。用法
+ * 错是 2，做不成是 1，两者不许混（架构 § 9.8）：收下一个不认识的开关属于**命令行不成立**。
+ *
+ * 报的话里把**这一条命令认的那几个**印出来：拒一条命令时，人要知道的是"那该怎么办"。
+ */
+export function unknownFlagsOf(
+  cmd: string,
+  flags: Map<string, string | true>,
+  allowed: readonly string[],
+): string | null {
+  const bad = [...flags.keys()].filter((k) => !allowed.includes(k))
+  if (bad.length === 0) return null
+  return (
+    `${cmd} 不认这几个开关：${bad.map((k) => '--' + k).join(' · ')}——这一条命令认的是 ` +
+    allowed.map((k) => '--' + k).join(' · ')
+  )
+}
+
 export function parseOctal(raw: string): number {
   const text = raw.trim().replace(/^0o?/, '')
   if (!/^[0-7]{3,4}$/.test(text)) throw new UsageError(`模式要八进制三位或四位：${raw}`)

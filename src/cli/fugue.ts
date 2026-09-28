@@ -17,16 +17,64 @@ import { LogHeldError } from '../log/hold.ts'
 import { LogCorruptError, logDir, openLog } from '../log/log.ts'
 import type { WriterId } from '../terms.ts'
 import { HostError, assertHost } from '../roots/host.ts'
-import { USAGE, UsageError, emitFail, fail, parseArgv, usageFail } from './shared.ts'
+import { USAGE, UsageError, emitFail, fail, parseArgv, unknownFlagsOf, usageFail } from './shared.ts'
 export { USAGE } from './shared.ts'
 export { driverSupport } from './cmd/round.ts'
 import { branchCmd, commitCmd, replay, viewCmd } from './cmd/view.ts'
-import { LOG_FLAGS, emit, statusCmd, tuiCmd, unknownFlagsOf, watchCmd } from './cmd/observe.ts'
+import { emit, statusCmd, tuiCmd, watchCmd } from './cmd/observe.ts'
 import { config, policyCmd } from './cmd/config.ts'
 import { diffStatCmd, disposeCmd, ensureCmd, forkCmd, verifyMatCmd } from './cmd/materialize.ts'
 import { runCmd } from './cmd/execute.ts'
 import { assembleCmd } from './cmd/assemble.ts'
 import { roundCmd, roundGo, roundPlan, roundRun, roundWork, sayCommand } from './cmd/round.ts'
+
+/** 视图上那九条无开关的命令共用的底表（`write` · `diff` · `commit` 等各有自己的加项）。 */
+const VIEW_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help']
+
+/** 一张开关表：`flags` 是这条命令认得的全部开关；`note` 是拒的时候跟在后面那句指路。 */
+interface FlagTable {
+  readonly flags: readonly string[]
+  readonly note?: string
+}
+
+/**
+ * 每条命令一张**声明过的开关表**（§ 9.8「认得的开关才收」，U8 自 `log`/`status`/`watch`/`tui`
+ * 那四张扩到全命令族；原先其余命令对表外开关是静默忽略）。`round` 按子命令一张——子命令
+ * 之间不共用：与观察那四张同一条道理，"收下"与"用上"在读数上分不开。
+ */
+const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
+  log: { flags: ['root', 'agent', 'json', 'help'], note: 'log 是抄本——不渲染、不筛选' },
+  status: { flags: ['root', 'json', 'help', 'once', 'metrics', 'report'], note: '一次快照就加 --once，跟随是另一条命令：watch --follow' },
+  watch: { flags: ['root', 'agent', 'json', 'help', 'follow', 'interval'], note: '不给 --follow 就把账上有的念一遍就停' },
+  tui: { flags: ['root', 'help', 'once', 'follow', 'metrics', 'report', 'interval'], note: 'tui 是同一读面的第二档渲染——要机器读的那一份用 status --json' },
+  read: { flags: VIEW_FLAGS },
+  list: { flags: VIEW_FLAGS },
+  stat: { flags: VIEW_FLAGS },
+  remove: { flags: VIEW_FLAGS },
+  rename: { flags: VIEW_FLAGS },
+  chmod: { flags: VIEW_FLAGS },
+  revs: { flags: VIEW_FLAGS },
+  branch: { flags: VIEW_FLAGS },
+  'verify-mat': { flags: VIEW_FLAGS },
+  dispose: { flags: VIEW_FLAGS },
+  write: { flags: ['root', 'agent', 'json', 'help', 'from', 'stdin'] },
+  diff: { flags: ['root', 'agent', 'json', 'help', 'since'] },
+  commit: { flags: ['root', 'agent', 'json', 'help', 'm'] },
+  replay: { flags: ['root', 'agent', 'json', 'help', 'to', 'verify'] },
+  'diff-stat': { flags: ['root', 'agent', 'json', 'help', 'baseline', 'save'] },
+  fork: { flags: ['root', 'agent', 'json', 'help', 'strategy', 'ro', 'no-preserve-mtime'] },
+  ensure: { flags: ['root', 'agent', 'json', 'help', 'to'] },
+  run: { flags: ['root', 'agent', 'json', 'help', 'step', 'mode'] },
+  policy: { flags: ['root', 'agent', 'json', 'help', 'mode'] },
+  config: { flags: ['root', 'json', 'help'] },
+  assemble: { flags: ['root', 'agent', 'json', 'help', 'against'] },
+  say: { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'max-steps', 'credential', 'dump-wire'] },
+  'round new': { flags: ['root', 'agent', 'json', 'help', 'materialize', 'split'] },
+  'round plan': { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'judge', 'max-steps', 'credential', 'dump-wire'] },
+  'round go': { flags: ['root', 'agent', 'json', 'help', 'materialize'] },
+  'round run': { flags: ['root', 'agent', 'json', 'help', 'split', 'fail', 'deny', 'retry', 'materialize', 'report', 'metrics', 'live', 'wire-in', 'max-steps', 'credential', 'dump-wire', 'no-handoff', 'strict-merge-gate', 'poke', 'poke-exact'] },
+  'round work': { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'retry', 'report', 'metrics', 'max-steps', 'credential', 'dump-wire'] },
+}
 
 /**
  * 最外面那一层只做一件事：**把用法错翻成退出码 2**（§ 9.8 的退出码行）。
@@ -78,9 +126,20 @@ async function run(argv: readonly string[]): Promise<number> {
     throw err
   }
 
+  // 每条命令一张**声明过的开关表**（§ 9.8「认得的开关才收」，U8 从三条读命令扩到全命令族）：
+  // 表外的开关退 2——写错的开关被咽下去之后，人看到的是"命令跑了、什么都没变"，那与
+  // "这个开关今天没用"是同一张脸。`round` 按子命令一张；表里没有的键（未知命令 · round
+  // 的未知子命令）落到下面的分发去说它自己的话。
+  const flagKey = cmd === 'round' ? `round ${positional[1] ?? ''}` : cmd
+  const table = FLAGS_OF[flagKey]
+  if (table !== undefined) {
+    const bad = unknownFlagsOf(flagKey, flags, table.flags)
+    if (bad !== null) {
+      return usageFail(bad + (table.note === undefined ? '' : `；${table.note}`), json)
+    }
+  }
+
   if (cmd === 'log') {
-    const bad = unknownFlagsOf('log', flags, LOG_FLAGS)
-    if (bad !== null) return usageFail(`${bad}；log 是抄本——不渲染、不筛选`, json)
     const only = flags.get('agent')
     const log = openLog(root)
     try {

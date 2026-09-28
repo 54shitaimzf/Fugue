@@ -146,3 +146,45 @@ test('⑥ 深处抛的 UsageError 也走同一张脸：write 缺 <path> 从 view
   assert.ok(parsed.hint!.includes('--help'))
   assert.equal(r.stdout, '')
 })
+
+test('⑦ 全命令族开关表：每族一条 bogus 开关都退 2（原先静默忽略——U8 的行为变化本体）', async () => {
+  const root = tmpDir('fugue-json-err-')
+  // 一族一条：视图 · 物化 · 执行 · 配置/策略 · 轮次（子命令各一张）· 说话 · 装配 · 观察。
+  for (const argv of [
+    ['read', '--nope'],
+    ['fork', '--nope'],
+    ['ensure', '--nope'],
+    ['run', '--nope'],
+    ['policy', '--nope'],
+    ['config', 'show', '--nope'],
+    ['round', 'new', '--nope'],
+    ['round', 'run', '--nope'],
+    ['round', 'plan', '--nope'],
+    ['say', '--nope'],
+    ['assemble', '--nope'],
+    ['watch', '--nope'],
+  ] as const) {
+    const { parsed, run: r } = await jsonErrorOf(root, ...argv)
+    assert.equal(r.code, 2, `${argv.join(' ')} 该退 2（表外的开关不当场收下）`)
+    assert.equal(parsed.code, 2)
+    assert.ok(
+      parsed.message.includes('--nope') && parsed.message.includes('--root'),
+      `${argv.join(' ')} 的 message 要说到认不得的开关与认得的开关：${parsed.message}`,
+    )
+  }
+})
+
+test('⑧ 合法开关不误伤：带自己开关的命令照常退 0（表收紧不许把正路一起拦掉）', async () => {
+  const root = tmpDir('fugue-json-err-')
+  // 都挑不需要真源（.git 对象库）的纯读命令：开关过表只是第一关，别把真源那关混进来。
+  for (const argv of [
+    ['log'],
+    ['status', '--once'],
+    ['watch'],
+    ['tui', '--once'],
+    ['config', 'show'],
+  ] as const) {
+    const r = await run(root, ...argv)
+    assert.equal(r.code, 0, `${argv.join(' ')} 带的都是表内开关，该退 0：${r.stderr}`)
+  }
+})
