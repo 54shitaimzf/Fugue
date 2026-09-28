@@ -29,6 +29,15 @@ import { resolve } from 'node:path'
 /** `g` 那一键按下去发的那一条命令（`ui/keymap.ts` 那张表里那一行的说明说的就是它）。 */
 export const GO_LINE = 'round go'
 
+/**
+ * 先礼后兵那一刀等多久（毫秒）：`SIGINT` 之后这么久那一趟还没收尾，就补一发 `SIGKILL`（发给那一组）。
+ *
+ * 为什么要有界：`SIGINT` 是**请求**——一个卡在系统调用里、或者自己把 `SIGINT` 关掉的子进程可以永远
+ * 不理它，而界面那一头已经跟人说了"打断了"。有界的那一刀让那句话兑现（`T7` 那一行："`SIGINT` 起、
+ * 有界升级 `SIGKILL`（进程组）"）。**常数写在一处**：觉得长或短改它，不动结构。
+ */
+export const KILL_AFTER_MS = 2000
+
 /** 输入模式那一轴（PLAN § 5.19 三）：行首是 `/` 就是命令，否则是话。 */
 export type LineMode = 'Command' | 'Say'
 
@@ -129,9 +138,15 @@ export interface Spawned {
 
 export type SpawnFn = (file: string, args: readonly string[]) => Spawned
 
-/** 真子进程那一档：stdout 与 stderr 收成管道，stdin 不接（按键归界面）。 */
+/**
+ * 真子进程那一档：stdout 与 stderr 收成管道，stdin 不接（按键归界面）。
+ *
+ * **它自己是一个进程组**（`detached: true`）：`fugue round go` 下面还会起动作（`run_action` 那几条
+ * 命令），而"打断这一趟"要打断的是**整棵子树**——只杀父进程会留下举着那几条命令的孤儿（`T7` 那条
+ * 断言量的就是它）。`detached` 在这里**不是**为了脱离终端（stdio 全是管道），是为了拿到自己的组号。
+ */
 export const spawnChild: SpawnFn = (file, args) => {
-  const c = spawn(file, [...args], { stdio: ['ignore', 'pipe', 'pipe'] })
+  const c = spawn(file, [...args], { stdio: ['ignore', 'pipe', 'pipe'], detached: true })
   return {
     out: (c.stdout ?? null) as unknown as AsyncIterable<Uint8Array> | null,
     err: (c.stderr ?? null) as unknown as AsyncIterable<Uint8Array> | null,
@@ -140,8 +155,20 @@ export const spawnChild: SpawnFn = (file, args) => {
       c.once('error', (err: Error) => res({ code: null, why: err.message }))
       c.once('close', (code: number | null) => res({ code, why: null }))
     }),
-    // 信号发给**这一个子进程**（不是进程组）："打不断就补一刀"与"那一组都得停"是 `T7` 那一格的事。
+    /**
+     * 信号发给**那一组**（`-pid`：`detached` 给了它自己的组号）。组号打不通（组已经没了 · 没权限）
+     * 就退到"只发给那一个进程"——**退化档**：少杀几个孤儿，不是"停不下来"。
+     */
     stop: (signal: string) => {
+      const pid = c.pid
+      if (pid !== undefined) {
+        try {
+          process.kill(-pid, signal)
+          return
+        } catch {
+          // 落到下面那一档去（那一档也不抛）。
+        }
+      }
       try {
         c.kill(signal)
       } catch {
@@ -157,6 +184,8 @@ export interface RunOptions {
   readonly self?: readonly string[]
   /** 起子进程那一处（缺省 `spawnChild`）。**测试用它换成一个假的，跑起来不用真起进程。** */
   readonly spawn?: SpawnFn
+  /** 先礼后兵那一刀等多久（缺省 `KILL_AFTER_MS`）。**测试给一个短的**，不必真等两秒。 */
+  readonly killAfterMs?: number
   /**
    * 子进程吐出来的行（一条一行；空行丢掉）。**stdout 与 stderr 各是一条流：两条流之间的先后不承诺**
    * ——两个管道没有共同次序（`run.test.ts` ② 钉的是每一条流自己的次序）。
@@ -188,6 +217,9 @@ export interface RunLauncher {
    *
    * 请了不等于停了：它什么时候真死由它自己定，收尾照旧走 `onDone`（被信号杀掉的那一趟退出码是
    * `null`）。在它死之前 `running` 一直是 `true`——**不许这一趟还在死、下一趟就起来**。
+   *
+   * **先礼后兵**（`T7`）：给的是 `SIGINT`（缺省）时，`KILL_AFTER_MS` 之内那一趟没死就补一发
+   * `SIGKILL`；它自己死了那一刀就不发。给别的信号就直接发，不排那一刀。
    */
   stop(signal?: string): boolean
 }
@@ -201,6 +233,7 @@ export interface RunLauncher {
 export function openRun(o: RunOptions): RunLauncher {
   const self = o.self ?? selfArgvOf()
   const run = o.spawn ?? spawnChild
+  const killAfterMs = o.killAfterMs ?? KILL_AFTER_MS
   let running = false
   let last: readonly string[] = []
   /** 现在这一趟（没在跑就是 `null`）。`stop()` 从它这里把信号递下去。 */
@@ -255,11 +288,22 @@ export function openRun(o: RunOptions): RunLauncher {
     },
     /**
      * 请它停下：**只在真跑着的时候**发信号（没在跑返回 `false`，于是调用方不必自己先判 `running`）。
-     * 缺省那一档是 `SIGINT`——先礼后兵的那一下（"打不断就补一刀"是 `T7` 那一格）。
+     * 缺省那一档是 `SIGINT`——先礼后兵；**礼之后有界地补一刀**：`KILL_AFTER_MS` 之内那一趟还没收尾
+     * 就发 `SIGKILL`（发给那一组）。它自己死了那一刀就不发（`done` 到了 `running` 就落下去）。
      */
     stop(signal?: string): boolean {
       if (!running || kid === null) return false
-      kid.stop(signal ?? 'SIGINT')
+      const sig = signal ?? 'SIGINT'
+      const target = kid
+      target.stop(sig)
+      if (sig === 'SIGINT') {
+        const timer = setTimeout(() => {
+          // **还在跑的是同一趟**才补那一刀：它已经收尾了就不许再往一个可能已被复用的 pid 上发。
+          if (kid === target && running) target.stop('SIGKILL')
+        }, killAfterMs)
+        // **定时器不许把这一档吊住**：`unref` 之后它不阻止进程退出。
+        timer.unref?.()
+      }
       return true
     },
   }

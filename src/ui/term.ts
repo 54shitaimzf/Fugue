@@ -40,7 +40,7 @@
 //
 // **退出**：`close()` 把面板那 K 行删掉（`\x1b[KM`），终端历史里只剩永久行；没画过、或宽度变过
 // （重排之后不知道那 K 行落在哪）就一个字节都不写。
-import type { GateInput, MenuInput } from './frame.ts'
+import type { BottomInput, MenuInput } from './frame.ts'
 import { panelOf, widthOf } from './frame.ts'
 
 /** 底部那块区域的**恒定**行数（PLAN § 5.19：K 取 12；画出框的下限是 5，12 够放处境那几行）。 */
@@ -145,8 +145,11 @@ export interface Panel {
 /** 界面自己那几样（`T4`）：候选那一层与输入行。**纯视图状态**（授权 · 排队 · 处境一律落在账上）。 */
 export interface ViewInput {
   readonly menu?: MenuInput | undefined
-  /** 门口那一块（`T6`）：底部队列行 + 预览 + 三档。**它在面板那一栏的最下面**（不是输入行那一栏）。 */
-  readonly gate?: GateInput | undefined
+  /**
+   * 面板最下面那一栏（`T6` 的门口那一块 · `T7` 的排队行）：**它是面板那一栏的最下面**，不是输入行
+   * 那一栏（输入行还在它下面）。
+   */
+  readonly bottom?: BottomInput | undefined
   readonly input?: PanelInput | undefined
 }
 

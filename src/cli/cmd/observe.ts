@@ -20,6 +20,8 @@ import { acceptOf, candidatesOf, clampSel, completeOf, moveSel, pathsOf, queryOf
 import type { MenuRow, MenuSource } from '../../ui/menu.ts'
 import { GATE_KEEP, GATE_VIEW, gateFaceOf, gateRowsOf, lineOf, pressGate, stepAt } from '../../ui/gate.ts'
 import type { GateFace, GateOption, GateView } from '../../ui/gate.ts'
+import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from '../../ui/queue.ts'
+import type { QueueState } from '../../ui/queue.ts'
 import { pendingOf } from '../../round/dispatch.ts'
 import { identFor } from '../../identity.ts'
 import { getConfig, readConfig } from '../../config.ts'
@@ -173,6 +175,10 @@ export async function watchCmd(
  * 同一条**：没有一个"允许"这样的状态，也没有"允许过"这样的记忆——记忆只在账上（`round/approve`），
  * 界面这一头只有"这一刻账上停在门口的是哪一批"，账一往前动就重算。`y`/`n` 那两档**不是全局键**：
  * 只在门口那一块开着、且输入行空着的时候是动作，别处它们就是人打的字。
+ *
+ * **`T7` · 排队**：忙的时候打的那几条**入队**（可见：排队那一行说得出条数与下一条；可撤：`Esc`
+ * 第三级一条一条地丢），跑完一趟取一条起。**排队是界面自己的草稿队列，不是账**——账上只有"这一趟
+ * 起过什么"，没有"还等着跑什么"（§ 5.19 六：这一版不做"改当前那一趟"，那要子进程收得下 stdin）。
  */
 export async function tuiCmd(root: string, flags: Map<string, string | true>): Promise<number> {
   // `--json` 不在 tui 的开关表里（机器读的那一份是 `status --json`），但**错误那一面照样认它**：
@@ -273,14 +279,21 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     if (!showInput) return {}
     // 宽度减一：终端上写满一整行会**自动换行**，那一下就把"上移几行"的算术打乱了（`ui/term.ts` 头注）。
     const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: term.columns - 1 })
-    // 门口那一块：**它在面板那一栏的最下面**（输入行还在它下面）。收起来那一档一个字节都不占。
-    const gatePart =
-      gate === null || gateHidden
+    // 最下面那一栏：**门口那一块**（`T6`）与**排队那一行**（`T7`），都在面板那一栏的最下面（输入行
+    // 还在它们下面）。两样都没有时一个字节都不占。
+    const gateOn = gate !== null && !gateHidden
+    const queueOn = queue.items.length > 0
+    const bottomRows = [
+      ...(gateOn ? gateRowsOf({ face: gate as GateFace, view: gateView, columns: term.columns - 1 }) : []),
+      ...(queueOn ? [queueRowOf(queue, term.columns - 1)] : []),
+    ]
+    const bottomPart =
+      bottomRows.length === 0
         ? {}
-        : { gate: { rows: gateRowsOf({ face: gate, view: gateView, columns: term.columns - 1 }), keep: GATE_KEEP } }
+        : { bottom: { rows: bottomRows, keep: (gateOn ? GATE_KEEP : 0) + (queueOn ? 1 : 0) } }
     return {
       ...(panel === null ? {} : { menu: { rows: rowsTextOf(rowsOf(panel.source)), sel: panel.sel } }),
-      ...gatePart,
+      ...bottomPart,
       input: { rows: frame.rows, caret: frame.caret },
     }
   }
@@ -327,6 +340,16 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   let gateView: GateView = GATE_VIEW
   /** 按过 `Esc` 把那一块收起来了没有（账再动一次它自己回来）。 */
   let gateHidden = false
+  /**
+   * 排队那几条（`T7`）。**界面自己的草稿队列，不是账**：账上只有"这一趟起过什么"，没有"还等着跑
+   * 什么"——所以它进程一退就没了，也不该有第二个读者。忙的时候打的那几条进这里，跑完一趟取一条。
+   */
+  let queue: QueueState = EMPTY_QUEUE
+  /**
+   * 跑完一趟要不要**自动**接着起下一条（`T7`）。缺省要；**被 `Esc` / `Ctrl-C` 打断之后不要**——
+   * 人刚说了停，排队那几条停在那儿等他（`Enter` 起下一条 · `Esc` 丢掉）。起新的一条时又回到"要"。
+   */
+  let advanceQueue = true
   if (mode === 'panel') {
     /** 起一次弹层：选中项从头一条起（候选变了以后 `settle` 会把它夹回来）。 */
     const openPanel = (source: MenuSource): void => {
@@ -366,8 +389,32 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     /** `Esc` 第二级与 `Ctrl-C` 第一级都走这一下：把信号递给在途的那一趟（同一句话只说一遍）。 */
     const breakRun = (): void => {
       go?.stop('SIGINT')
-      tui.note('打断了那一趟（SIGINT）：它自己那份账照写，写到哪算哪')
+      // **打断之后不自动接着起下一条**（`T7`）：人刚说了停，排队那几条就停在那儿等人（`Enter`
+      // 起下一条 · `Esc` 丢掉）。不这么定的话，`Esc` 链第三级（丢排队草稿）**永远够不着**——
+      // 一趟被打断、`onDone` 立刻起下一条，队列那一栏就又回到"跑着"了。
+      advanceQueue = false
+      tui.note('打断了那一趟（SIGINT）：它自己那份账照写，写到哪算哪。排队那几条停着等你（Enter 起下一条）')
       settle()
+    }
+    /**
+     * 起排队里队头那一条（有货 · 没在跑才起得动）。返回"起了没"。
+     *
+     * 起不动（这一档还没开 · 正在跑）就**什么都不做**——排队那几条照旧在队里，不许悄悄吞掉。
+     */
+    const startNext = (): boolean => {
+      if (go === null || go.running) return false
+      const taken = shiftOf(queue)
+      if (taken.next === null) return false
+      queue = taken.q
+      const next = taken.next
+      const cut = go.argvOf(next.line, next.mode)
+      if (cut.why !== null) {
+        tui.note(`排队里那条起不了：${cut.why}（跳过它，接着看下一条）`)
+        return false
+      }
+      tui.note(`起了排队里的下一条：\`${next.line}\`（${cut.argv.join(' ')}）`)
+      go.press(next.line, next.mode)
+      return true
     }
     /**
      * 门口那一批那一档**真生效**（二段确认的第二下）。放行 = 起一次 `fugue round go`（`ui/gate.ts`
@@ -400,7 +447,15 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       onDone: (r) => {
         if (r.why !== null) tui.note(`这一趟起不来：${r.why}（手敲一遍看看：${go?.last.join(' ') ?? ''}）`)
         else if (r.code !== 0) tui.note(`那一趟退了 ${r.code ?? '（信号）'}（账照写：写到哪算哪）`)
-        if (leaving) ac.abort()
+        if (leaving) {
+          ac.abort()
+          return
+        }
+        // **跑完一趟就起排队里的下一条**（`T7`）：一条一条地起（`ui/run.ts`"一次只起一个进程"
+        // 那条不变量一个字没动，动的是"人打的第二条去哪儿"）。被 `Esc` 打断过的那一趟不起
+        // （`advanceQueue`：人刚说了停）。
+        if (advanceQueue) startNext()
+        tui.redraw()
       },
     })
     keys = openKeys({
@@ -462,9 +517,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
               atGate: gate !== null && !gateHidden,
               overlays: panel === null ? 0 : 1,
               running: go?.running === true,
-              // 排队那一级要到 `T7` 才有队列可丢——**级在那儿，够不够得着是另一回事**（这里恒 0
-              // 就是"这一级现在还够不着"，不是"没这一级"）。
-              queued: 0,
+              // 排队那几条（`T7`）：一条都没有时这一级够不着（次序不变——在途那一趟压着它）。
+              queued: queue.items.length,
               line: ed.draft.text,
               searching: ed.search !== null,
             })
@@ -484,7 +538,18 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
               breakRun()
               return
             }
-            if (step === 'dropQueue') return
+            if (step === 'dropQueue') {
+              // **丢掉最后那一条**（一路上按就一条一条地撤）：那几条是草稿，不是账——丢了就没了。
+              const before = queue.items.length
+              queue = dropLastOf(queue)
+              const done = queue.items.length === 0
+              tui.note(
+                `丢掉了排队里最后那一条（${before} → ${queue.items.length} 条）` +
+                  (done ? '；队列空了' : `；下一条：${queue.items[0]?.line ?? ''}`),
+              )
+              settle()
+              return
+            }
             if (step === 'clearLine') {
               // 输入行那一层自己有两小级（先退反查、再清空这一行），都在 `ui/input.ts` 的 `cancelAt`。
               ed = applyIntent(ed, { t: 'cancel' })
@@ -564,14 +629,30 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
           }
           const line = submitOf(ed)
           if (line === '') {
+            // **空行按下去而排队里还有货**：那是"起下一条"（`T7`）——被 `Esc` 打断之后队列停在
+            // 那儿等人，这一下就是等人那一下。
+            startNext()
             settle()
             return
           }
           // 模式**在这一行还是原样的时候**取：交出去之后手里就换成新的一行了。
           const lineMode = modeOf(ed.draft)
           ed = rememberSubmit(ed, line)
-          if (go === null || go.running) {
-            tui.note('那一趟还在跑：这一行先没发出去（排队是 `T7` 那一格的事）')
+          if (go === null || go.running || queue.items.length > 0) {
+            // **忙就入队**（§ 5.19 六："空闲 → 直接跑；忙 → 入队（可见 · 可撤）"）。那一行在上面
+            // 已经记进历史（`rememberSubmit`），于是人按 `↑` 翻得回来——队列只是"等着跑的那几条"，
+            // 而它不是账（进程一退就没了）。
+            //
+            // **排队里已经有货时，新打的那一条也进队尾**（FIFO：不许插到前面去），而"起"的是队头
+            // 那一条——不是刚打的这一条。
+            queue = enqueueOf(queue, { line, mode: lineMode })
+            if (!go.running && startNext()) {
+              settle()
+              return
+            }
+            tui.note(
+              `入队（排队 ${queue.items.length} 条，跑完一趟起一条；Enter 起下一条 · Esc 丢掉最后一条）`,
+            )
             settle()
             return
           }
@@ -582,6 +663,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
             return
           }
           tui.note(`发了这一行：\`${line}\`（${cut.argv.join(' ')}）`)
+          advanceQueue = true
           go.press(line, lineMode)
           settle()
           return

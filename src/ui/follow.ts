@@ -145,7 +145,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(o.phase === undefined ? {} : { phase: o.phase }),
       // 界面自己那几样（输入行 · 候选那一层）**每帧现问**：它们不是读源，是这一档自己的视图状态。
       ...(v?.menu === undefined ? {} : { menu: v.menu }),
-      ...(v?.gate === undefined ? {} : { gate: v.gate }),
+      ...(v?.bottom === undefined ? {} : { bottom: v.bottom }),
       permanent: permanent(),
       width: size.columns,
       height: size.height,

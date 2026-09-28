@@ -92,8 +92,8 @@ export interface FrameInput {
    * 装不下时 `windowOf` 把选中的那一条留在窗里，并把上下还剩几条说出来。不给时一列都不占。
    */
   readonly menu?: MenuInput | undefined
-  /** 读源六（`T6`）：**门口那一批那一块**（底部队列行 + 预览 + 三档）。见 `GateInput`。 */
-  readonly gate?: GateInput | undefined
+  /** 读源六（`T6`／`T7`）：**面板最下面那一栏**（门口那一块 · 排队行）。见 `BottomInput`。 */
+  readonly bottom?: BottomInput | undefined
   readonly width: number
   readonly height: number
 }
@@ -407,13 +407,13 @@ export interface MenuInput {
 }
 
 /**
- * 门口那一块那几行（`ui/gate.ts` 算好的原文）与**装不下也要留住的条数**（`T6`）。
+ * 面板最下面那一栏（**横贯整栏的那几行** + 装不下也要留住的条数）。
  *
- * 它排在内容那一栏的**最下面**（比候选还下面——候选是打字时的一层，而门口那一块是"要人点头"的
- * 一件事）。装不下时**先让位的是预览**（头几行），末 `keep` 行留住：那两行是人要按的东西（队列行 ·
- * 选项行）。不给时一列都不占——`T6` 之前逐字节相同。
+ * 住在这里的是两样（各自算好原文进来，这一份只排版）：`T6` 的**门口那一块**（底部队列行 + 预览 +
+ * 三档）与 `T7` 的**排队行**。装不下时**先让位的是预览**（头几行），末 `keep` 行留住——那几行是
+ * 人要按 · 要看的东西。不给时一列都不占（`T6` 之前逐字节相同）。
  */
-export interface GateInput {
+export interface BottomInput {
   readonly rows: readonly string[]
   readonly keep: number
 }
@@ -510,11 +510,11 @@ export function frameOf(o: FrameInput): Frame {
       if (w.summary) menuBody.push(`… 还有 ${w.above + w.below} 条（↑↓ 翻，选中第 ${at + 1} 条）`)
     }
   }
-  // 门口那一块（`T6`）先占住它那几行，再轮到候选，最后才是内容那一栏（装不下时**从后往前让位**，
-  // 而门口那一块自己先让位的是**预览**——头几行；末 `keep` 行留住：那是人要按的东西）。一块都没有
-  // （`gate` 不给）时下面这几步与从前逐字节相同（`gateBody` 是空的 · `keep` 是 0）。
-  const gateAll = o.gate?.rows ?? []
-  const keep = Math.max(0, Math.min(o.gate?.keep ?? 0, gateAll.length))
+  // 最下面那一栏（`T6` 的门口那一块 · `T7` 的排队行）先占住它那几行，再轮到候选，最后才是内容那一
+  // 栏（装不下时**从后往前让位**，而那一栏自己先让位的是**预览**——头几行；末 `keep` 行留住：那是
+  // 人要按 · 要看的东西）。一栏都没有（`bottom` 不给）时下面这几步与从前逐字节相同。
+  const gateAll = o.bottom?.rows ?? []
+  const keep = Math.max(0, Math.min(o.bottom?.keep ?? 0, gateAll.length))
   let gateBody = [...gateAll]
   while (gateBody.length > keep && budget - 1 - gateBody.length < 0) gateBody = gateBody.slice(1)
   while (menuBody.length > 0 && budget - 1 - gateBody.length - menuBody.length < 0) menuBody.pop()

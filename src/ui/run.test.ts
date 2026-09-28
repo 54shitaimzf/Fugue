@@ -1,7 +1,7 @@
 // TUI 的第二版第三格：**起命令**（PLAN § 5.19 第二版「二 · 按键」·「六 · 提交的四种去向」· 架构
 // § 9.8「人的每个状态动作都是一条命令」）。跑法：cd ~/fugue && node --test src/ui/run.test.ts
 //
-// 这一份量的四样：
+// 这一份量的五样：
 //
 //   ① **一行字 → argv**：输入行敲的那一行与手敲的 `fugue --root <dir> <命令> <参数…>` **逐字相同** ·
 //      不过 shell（`$HOME` 不展开 · `;` 不分成两条 · 引号里那个空格不进切分）· `Say` 那一档整句
@@ -15,6 +15,8 @@
 //      出去）——这一条就是"界面不写日志、不持写句柄"那把尺的牙。
 //   ④ **请它停下**（`T5` 取消链第二级）：没在跑的时候一个信号都不发 · 跑着的时候信号递到子进程
 //      手里 · **请了不等于停了**（`running` 要等它真死）· 被信号杀掉的那一趟收尾是"退出码没有"。
+//   ⑤ **有界地补一刀**（`T7`）：`SIGINT` 之后那一趟还没死就补一发 `SIGKILL`（同一个口递下去）；
+//      **它自己死了就不补**（负对照那一档量的是它）· 给别的信号就直接发，不排那一刀。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -363,5 +365,67 @@ test('④ 请它停下：没在跑就一个信号都不发 · 跑着时递到子
   console.log(
     `④ 读数：空闲 stop 0 个信号 0 次进程 · 跑着时 SIGINT 与 SIGKILL 各递 1 次 · 请过之后 running 仍是 true` +
       `（第二次 press 起不动）· 收尾 ${JSON.stringify(finished)} 之后 stop 又从 false 起算`,
+  )
+})
+
+// ── ⑤ 有界地补一刀（`T7`）────────────────────────────────────────────────────
+//
+// `SIGINT` 是**请求**：一个卡在系统调用里、或者自己把 `SIGINT` 关掉的子进程可以永远不理它。所以礼
+// 之后有一刀，而那一刀**有界**（`KILL_AFTER_MS`，测试里给 20 毫秒，不必真等两秒）。两条负对照：
+// 它自己收尾了就不补（不许往一个可能已被复用的 pid 上发）· 给别的信号就直接发、不排那一刀。
+test('⑤ 打断了之后有界地补一刀：`SIGINT` 之后还没死就发 `SIGKILL` · 自己死了就不发', async () => {
+  const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  // 一 · 不收尾的那一趟：礼之后那一刀到。
+  const h = held()
+  const run = openRun({
+    root: '/tmp/r',
+    self: ['node', '/x/fugue.ts'],
+    spawn: h.spawn,
+    killAfterMs: 20,
+    onLine: () => {},
+    onDone: () => {},
+  })
+  assert.equal(run.press(GO_LINE), true)
+  assert.equal(run.stop(), true)
+  assert.deepEqual(h.signals, ['SIGINT'], '礼先到')
+  await wait(60)
+  assert.deepEqual(h.signals, ['SIGINT', 'SIGKILL'], `礼之后那一刀该到：${h.signals.join(' · ')}`)
+  assert.equal(run.running, true, '它一直没收尾，于是这一档照旧是"跑着"')
+  h.finish({ code: null })
+  await wait(5)
+  assert.equal(run.running, false)
+  // 二 · **负对照**：它自己收尾了就不补那一刀。
+  const h2 = held()
+  const run2 = openRun({
+    root: '/tmp/r',
+    self: ['node', '/x/fugue.ts'],
+    spawn: h2.spawn,
+    killAfterMs: 20,
+    onLine: () => {},
+    onDone: () => {},
+  })
+  assert.equal(run2.press(GO_LINE), true)
+  assert.equal(run2.stop(), true)
+  h2.finish({ code: null })
+  await wait(60)
+  assert.deepEqual(h2.signals, ['SIGINT'], `自己死了就不许补那一刀：${h2.signals.join(' · ')}`)
+  // 三 · 给别的信号：直接发，不排那一刀（那是"兵"，不是"礼"）。
+  const h3 = held()
+  const run3 = openRun({
+    root: '/tmp/r',
+    self: ['node', '/x/fugue.ts'],
+    spawn: h3.spawn,
+    killAfterMs: 20,
+    onLine: () => {},
+    onDone: () => {},
+  })
+  assert.equal(run3.press(GO_LINE), true)
+  assert.equal(run3.stop('SIGKILL'), true)
+  await wait(60)
+  assert.deepEqual(h3.signals, ['SIGKILL'], `给兵就发兵，不排那一刀：${h3.signals.join(' · ')}`)
+  h3.finish({ code: null })
+  console.log(
+    `⑤ 读数：SIGINT 之后 20 毫秒补上 SIGKILL（${h.signals.join(' → ')}）· 自己收尾的那一趟只有 ` +
+      `${h2.signals.join(' → ')} · 直接给 SIGKILL 的那一趟是 ${h3.signals.join(' → ')}`,
   )
 })
