@@ -38,8 +38,18 @@
 // 丢掉的那一样东西，价码写在这里**——什么条件下改主意：要认的终端多了，往 `KNOWN_TERM` 里加一行；
 // 反过来，哪一台终端上这几条 escape 画错了，就从那张表里划掉（退一档比画错好）。
 //
+// **`--full`（`T10`）：整屏那一档只多两个 escape**——进来写 `\x1b[?1049h`（进 alt screen），收尾写
+// `\x1b[?1049l`（出来）。**排版那一层一行不动**：K 行面板 · 永久行的次序 · 宽度 · 那次上移，与不
+// 整屏那一档**逐字节相同**（`term.test.ts` ⑨拿"两档的字节流只差这两条"钉住）。价码如实说：进了 alt
+// screen 就没有终端历史可翻——永久行落在那一块里，与人一起消失。**所以缺省关**（PLAN § 5.19 第二版
+// 一 · 取舍第一条：同类里三家把它做成可选或缺省关）。
+//
+// 那一条 escape 写在**第一次画**的时候（不是 `openTerm` 的时候）：`--once` 与不是 TTY 那两档一次都
+// 不画，而人要把永久行留在真历史里——那两档不该进 alt screen。
+//
 // **退出**：`close()` 把面板那 K 行删掉（`\x1b[KM`），终端历史里只剩永久行；没画过、或宽度变过
-// （重排之后不知道那 K 行落在哪）就一个字节都不写。
+// （重排之后不知道那 K 行落在哪）就一个字节都不写。**alt screen 那一条是例外**：进去过就一定要出来
+// ——少写它，那台终端就停在另一块屏上，而 `--full` 缺省关的时候一个字节都不会写（两档各归各的）。
 import type { BottomInput, MenuInput, NavInput, ReadInput } from './frame.ts'
 import { panelOf, widthOf } from './frame.ts'
 
@@ -66,6 +76,15 @@ export const CLEAR_LINE = '\x1b[2K'
 export function deleteLinesOf(n: number): string {
   return `\x1b[${n}M`
 }
+
+/** 进 alt screen（`--full` 那两个 escape 的第一个）：第一次画的时候写。不进这一档就一个字节都不写。 */
+export const ALT_ON = '\x1b[?1049h'
+
+/**
+ * 出 alt screen（那两个 escape 的第二个）：**每一条退出路径都得写到它**——`close()` 的每一处出口
+ * 都写（面板删不删是另一码事：宽度变过那一档不删面板，但**一样要出来**）。
+ */
+export const ALT_OFF = '\x1b[?1049l'
 
 /**
  * 这一台终端认不认得那几条 escape。**认不出来就退**（不是"试一下"）：手写 ANSI 丢掉的那唯一样
@@ -184,6 +203,11 @@ export interface TermOptions {
   readonly height?: number
   /** 量列宽那一处（缺省读 `out.columns`）：真终端上就是它，resize 那一档要一个会变的数。 */
   readonly columnsOf?: () => number | undefined
+  /**
+   * 整屏那一档（`--full`）：多两个 escape（`ALT_ON` / `ALT_OFF`），**排版一行不动**。缺省关。
+   * 不是 TTY 或 `$TERM` 认不出来时它没有意义（那一档一个字节的 ANSI 都不写，更不进 alt screen）。
+   */
+  readonly full?: boolean | undefined
 }
 
 export interface Term {
@@ -193,6 +217,11 @@ export interface Term {
   readonly height: number
   /** 上一次量到的列宽（量不到就是兜的那个 80）。 */
   readonly columns: number
+  /**
+   * 此刻在不在 alt screen 里（`T10`）：`--full` 且画得出来（TTY · `$TERM` 认得）才有为真的那一档。
+   * `close()` 之后一定是 `false`——写没写出去那条 `ALT_OFF` 由它说了算，写一次就归位。
+   */
+  readonly alt: boolean
   /** 摆一块：让开旧的那一块 → 写永久行 → 把面板补到 K 行写在它下面 → 有输入行就写在再下面。 */
   draw(permanent: readonly string[], render: RenderPanel): void
   /** 收走底部那一块（终端历史里只剩永久行）。 */
@@ -208,6 +237,10 @@ export function openTerm(o: TermOptions): Term {
   const height = o.height ?? K
   const measure = o.columnsOf ?? ((): number | undefined => out.columns)
   const ansi = out.isTTY === true && ansiOf(o.term ?? process.env.TERM)
+  /** 这一档要不要整屏（`--full` 且写得出 ANSI）：两样缺一样，那一个字节都不写。 */
+  const wantAlt = ansi && o.full === true
+  /** 此刻在不在 alt screen 里。**只由 `draw` 置真、由 `close` 置假**——两处都不猜。 */
+  let alt = false
   let columns = FALLBACK_COLUMNS
   let drawn = false
   let drawnColumns = 0
@@ -221,6 +254,9 @@ export function openTerm(o: TermOptions): Term {
     get columns(): number {
       return columns
     },
+    get alt(): boolean {
+      return alt
+    },
     draw(permanent: readonly string[], render: RenderPanel): void {
       const seen = measure()
       columns = typeof seen === 'number' && seen > 0 ? seen : FALLBACK_COLUMNS
@@ -228,6 +264,12 @@ export function openTerm(o: TermOptions): Term {
         // 只印永久行那一档：面板整块不画，一个字节的 ANSI 都不写。
         for (const line of permanent) out.write(`${line}\n`)
         return
+      }
+      // 整屏那一档：**第一次画的时候进 alt screen**（不是 `openTerm` 的时候——`--once` / 不是 TTY
+      // 那两档一次都不画，也就不该把永久行从真历史里挪走）。写在永久行前面：那一块屏是空的。
+      if (wantAlt && !alt) {
+        out.write(ALT_ON)
+        alt = true
       }
       // 面板先算好：**尺寸是刚刚量到的那一个**（渲染与摆是同一把尺，所以 1 逻辑行 = 1 物理行）。
       const asked = render({ columns, height })
@@ -256,15 +298,24 @@ export function openTerm(o: TermOptions): Term {
       drawnColumns = columns
     },
     close(): void {
-      if (!ansi || !drawn) return
-      // **现量一次**：宽度变过之后终端会把面板那几行重排，重排之后它占几个物理行这一层量不到，
-      // 所以那一档不去删它（宁可留一块旧的，也不去吃历史）。量不到列宽时按"没变"办——上移 K 行
-      // 落回面板顶这条不变量在没重排时是成立的。
-      const now = measure()
-      if (typeof now === 'number' && now > 0 && now !== drawnColumns) return
-      out.write(upOf(cursorRow))
-      out.write(deleteLinesOf(regionRows))
-      drawn = false
+      // alt screen 那一笔先记下来、就地归位（**只写一次**）：`finally` 与 `exit` 那一钩都会调到这一
+      // 处，崩那一档走的就是后一条——第二次进来时 `alt` 已经是假，一个字节都不再写。
+      const leave = alt
+      alt = false
+      // 面板那一块：画过、且宽度没变过才去删它。**现量一次**：宽度变过之后终端会把面板那几行重排，
+      // 重排之后它占几个物理行这一层量不到，所以那一档不去删（宁可留一块旧的，也不去吃历史）。量不到
+      // 列宽时按"没变"办——上移 K 行落回面板顶这条不变量在没重排时是成立的。
+      if (ansi && drawn) {
+        const now = measure()
+        if (!(typeof now === 'number' && now > 0 && now !== drawnColumns)) {
+          out.write(upOf(cursorRow))
+          out.write(deleteLinesOf(regionRows))
+          drawn = false
+        }
+      }
+      // **出来那一笔在三处出口都会走到**（面板删不删是另一码事）：进去过就必须出来，少写它那台终端
+      // 就停在另一块屏上——`T10` 那条断言要抓的正是这一条。
+      if (leave) out.write(ALT_OFF)
     },
   }
 }

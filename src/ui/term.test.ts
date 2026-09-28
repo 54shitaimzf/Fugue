@@ -17,6 +17,10 @@
 //   ⑧ **输入行**（`T4`）：面板下面那几行输入行逐字写出去 · 光标**停在最后一行**（往左退到光标列）·
 //      下一次重画按"上一次停在区域第几行"上移（不是 K）· `close()` 删掉的是"面板 + 输入行"·
 //      **负对照**：不给输入行时与从前逐字节相同（这一格不许让老的那一档变样）。
+//   ⑨ **整屏 `--full`**（`T10`）：两档的字节流**只差 `ALT_ON` / `ALT_OFF` 这两笔**（排版一行不动）·
+//      进在第一次画、出在收尾最后一笔 · 每一条退出路径都写到出来那一条（**宽度变过那一档也写**，
+//      它只是不删面板）· `close()` 幂等（崩那一档 `finally` 与 `exit` 那一钩都会调）·
+//      **负对照**：不给 `--full` 时一个 alt 序列都不出现，管道那一档给了 `--full` 也不写一个字节。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
@@ -24,8 +28,8 @@ import type { StatusRow } from '../probe/status.ts'
 import { statusOf } from '../probe/status.ts'
 import { frameOf, widthOf } from './frame.ts'
 import { permanentLinesOf } from './stream.ts'
-import { CLEAR_LINE, FALLBACK_COLUMNS, K, ansiOf, deleteLinesOf, degradeNote, leftOf, openTerm, upOf } from './term.ts'
-import type { TermOut } from './term.ts'
+import { ALT_OFF, ALT_ON, CLEAR_LINE, FALLBACK_COLUMNS, K, ansiOf, deleteLinesOf, degradeNote, leftOf, openTerm, upOf } from './term.ts'
+import type { Term, TermOut } from './term.ts'
 
 /** 一个假的 sink：**写出去的每一次 `write` 就是一条读数**（一次 write = 一个动作）。 */
 interface Fake extends TermOut {
@@ -255,5 +259,66 @@ test('⑧ 输入行：逐字写出去 · 光标退到该在的那一列 · 上�
   console.log(
     `⑧ 读数：输入行 2 行逐字写出去 · 光标退 ${widthOf('  --root') - 2} 列到第 3 列 · ` +
       `重画上移 ${K + 1} 行（不是 K）· 收尾删 ${K + 2} 行 · 不给输入行时逐字节与从前相同`,
+  )
+})
+
+// ── ⑨ 整屏（`--full`）：多两个 escape，排版一行不动 ────────────────────────────
+test('⑨ 整屏 --full：两档只差 ALT_ON/ALT_OFF 两笔 · 每一条退出路径都写得到出来那一笔 · 幂等', () => {
+  const panel = frameOf({ snapshot: SNAPSHOT, permanent: PERMANENT, width: 40, height: K }).lines
+  /** 走一趟完整的一生（画两次 + 收尾），把写出去的字节还回来。 */
+  const play = (full: boolean): { readonly t: Term; readonly f: Fake } => {
+    const f = fakeOut({ columns: 40 })
+    const t = openTerm({ out: f, term: 'xterm-256color', full })
+    assert.equal(t.alt, false, '还没画就进 alt screen 了')
+    t.draw(PERMANENT, () => ({ rows: panel, input: { rows: ['» /log'], caret: { row: 0, col: 6 } } }))
+    assert.equal(t.alt, full, `画过之后 alt 该是 ${full}`)
+    t.draw([], () => panel)
+    t.close()
+    return { t, f }
+  }
+  const off = play(false)
+  const on = play(true)
+  // **负对照**：不给 `--full` 那一档一个 alt 序列都不出现（缺省关是关得干净的）。
+  assert.equal(off.t.alt, false, '缺省那一档不该进 alt screen')
+  assert.equal(off.f.written.join('').includes('\x1b[?1049'), false, `缺省那一档写进了 alt 序列：${JSON.stringify(off.f.written)}`)
+  // 两档之间**只差那两笔**——这一条就是"渲染层一行不动"在字节上的意思。
+  assert.deepEqual(
+    on.f.written.filter((s) => s !== ALT_ON && s !== ALT_OFF),
+    [...off.f.written],
+    '整屏那一档除了那两个 escape 之外多写（或少写）了字节',
+  )
+  assert.equal(on.f.written[0], ALT_ON, '进 alt screen 那一笔该在第一次画的最前面')
+  assert.equal(on.f.written[on.f.written.length - 1], ALT_OFF, '出来那一笔该是收尾的最后一笔')
+  assert.equal(on.f.written.filter((s) => s === ALT_ON).length, 1, `ALT_ON 写了不止一次：${JSON.stringify(on.f.written)}`)
+  assert.equal(on.f.written.filter((s) => s === ALT_OFF).length, 1, 'ALT_OFF 写了不止一次')
+  assert.equal(on.t.alt, false, 'close() 之后该记成"已经出来了"')
+
+  // **崩那一档**：`finally` 与 `exit` 那一钩都会调 `close()`——第二次一个字节都不许再写。
+  const after = on.f.written.length
+  on.t.close()
+  assert.deepEqual(on.f.written.slice(after), [], 'close() 第二次还写了字节（崩那一档就是两边都调）')
+
+  // **宽度变过那一档**：重排量不到，面板那一笔省掉——**出来那一笔一个字节都不许省**。
+  const g = fakeOut({ columns: 80 })
+  const t3 = openTerm({ out: g, term: 'xterm-256color', full: true })
+  t3.draw([], () => ['a'])
+  g.written.length = 0
+  g.columns = 40
+  t3.close()
+  assert.deepEqual([...g.written], [ALT_OFF], `宽度变过那一档该只剩 ALT_OFF：${JSON.stringify(g.written)}`)
+
+  // **没画过那一档**（`--once` 那种：一次都不画）与**管道那一档**：连 alt screen 都不进。
+  const h = fakeOut({ columns: 80 })
+  const t4 = openTerm({ out: h, term: 'xterm-256color', full: true })
+  t4.close()
+  assert.deepEqual([...h.written], [], '没画过就不该写字节（进都没进，不用出来）')
+  const p = fakeOut({ columns: 80, isTTY: false })
+  const t5 = openTerm({ out: p, term: 'xterm-256color', full: true })
+  t5.draw(['一条永久行'], () => ['面板这一行'])
+  t5.close()
+  assert.deepEqual([...p.written], ['一条永久行\n'], '`--full` 也改不了地板：管道那一档一个字节的 ANSI 都不写')
+  console.log(
+    `⑨ 读数：不整屏 ${off.f.written.length} 笔 · 整屏 ${on.f.written.length} 笔（只差 ALT_ON/ALT_OFF）· ` +
+      `崩那条路第二次 close() 0 笔 · 宽度变过那一档只剩 1 笔 ALT_OFF · 没画过 0 笔 · 管道 0 个转义字节`,
   )
 })

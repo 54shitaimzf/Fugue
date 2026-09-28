@@ -157,6 +157,11 @@ export async function watchCmd(
  * TTY 那一档不给 `--follow` 也是跟着的（面板就是为这个）；管道那一档不给就是把账上有的印一遍就停
  * ——两档的缺省不一样，各自都写在上面这一句里。
  *
+ * **`--full`（`T10`）不改这四档**：它只给"画得出来"的那一档多两个 escape（`ui/term.ts` 的 `ALT_ON` /
+ * `ALT_OFF`：进 alt screen 与出来），**排版一行不动**。缺省关，因为进了 alt screen 就没有本终端的
+ * 历史可翻（永久行跟着那一块屏一起消失）。四条退出路径都走到同一处 `term.close()`（`SIGTERM` ·
+ * `SIGHUP` 那一头 `abort` 之后走 `finally`；崩了走 `exit` 那一钩），出来那一条写在里面。
+ *
  * **`UI4` · 门那儿按一下**（PLAN § 5.19 第五段那一行 · 架构 § 9.8「人的每个状态动作都是一条命令」）：
  * 只在面板那一档收按键（`ui/keymap.ts` 那张表），按 `g` 起一次 `fugue round go`（`ui/run.ts`）——
  * **界面不写日志、不持写句柄**，账由那个子进程写；它吐出来的行与收尾那一下走 `tui.note()`（写在
@@ -201,7 +206,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // 钱那一栏要一个档（与 `status --once` 同一个口径：读的时候按当时的钟算）。
   const phase = phaseOf(new Date())
   const log = openLog(root)
-  const term = openTerm({ out: process.stdout })
+  // `--full`（`T10`）：整屏那一档交给终端层（多两个 escape · 排版一行不动）。它不是第五档地板——
+  // 画不出来的那几档它自动哑掉（`ui/term.ts` 里 `ansi && full` 那一处判据）。
+  const term = openTerm({ out: process.stdout, full: flags.has('full') })
   // 四条地板收成**一张表**（`ui/follow.ts` 的 `tuiModeOf`）：真终端 → 面板；`--once` / 不是 TTY /
   // `$TERM` 认不出来 → 只印永久行那一档（面板一次都不画，一个字节的 ANSI 都不写）。
   const mode = tuiModeOf({ ansi: term.ansi, once: flags.has('once'), follow: flags.has('follow') })
