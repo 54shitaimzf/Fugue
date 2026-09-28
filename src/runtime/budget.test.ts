@@ -136,7 +136,7 @@ test('② 那把尺与那笔账是同一个口径 · 同样字数下中文更贵
   const huge = stateWithUsed(DECL.contextLimit + 20_000)
   const stop = planBudget(askOf(prefixOf(huge), { handoff: handoffOf(4_000) }))
   assert.equal(stop.kind, 'stop', `撑爆了该停：${stop.why}`)
-  assert.match(stop.why, /还差 \d+ 写不下/, `停的话里要说清差多少：${stop.why}`)
+  assert.match(stop.why, /留给这一步的是 \d+，而这一步要的比它多 \d+/, `停的话里要说清差多少：${stop.why}`)
   assert.ok(stop.headroom < 0, `还剩多少是负的：${stop.headroom}`)
   console.log(`② 读数：ASCII 400 字节 → ${estimateTokens(ascii)} token · 汉字 400 个 → ${estimateTokens(cjk)} token · 同样 ${n} 字：中文多 ${cjkGrow} · 英文多 ${asciiGrow} · 超限那一档：${stop.why}`)
 })
@@ -186,7 +186,7 @@ test('④ 负对照：触发点设在等于上限 → 关系核对当场报出�
   // 再撑一点就撑爆：那一档是 `stop`，而"该交接"这一步再也走不到。
   const over = planBudget(askOf(prefixOf(stateWithUsed(DECL.contextLimit, broken)), { decl: broken }))
   assert.equal(over.kind, 'stop', `坏预算撑爆那一档：${over.why}`)
-  assert.match(over.why, /交接还差 \d+ 写不下/)
+  assert.match(over.why, /留给这一步的是 \d+，而这一步要的比它多 \d+/)
 })
 
 // ── ⑤ 真读数修正 ───────────────────────────────────────────────────────────────

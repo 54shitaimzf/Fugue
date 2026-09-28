@@ -202,10 +202,13 @@ export function planBudget(ask: BudgetAsk): BudgetPlan {
       raw,
       headroom,
       kind: 'stop',
-      // **地板那一档**：不静默、不裁剪后照发（架构 § 8.12 那一条）。超了多少也要说出来。
+      // **地板那一档**：不静默、不裁剪后照发（架构 § 8.12 那一条）。四项分开印，读的人当场核得动
+      // 「是哪一项凑出了那个超过量」——只报「超了」没有可核对的东西。`--no-handoff` 那一档交接
+      // 提示词是空串，那一项照印 `0`：于是「这一步自己越过了多少」一眼看得出，不用去猜差额是谁凑的。
       why:
-        `用了 ${used}${note}（触发点 ${budget.trigger}），而交接还差 ${withHandoff - limit} 写不下` +
-        `——交接余量 ${budget.handoffMargin} 也不够。到这里就停，不裁剪后照发。`,
+        `用了 ${used}${note}（触发点 ${budget.trigger}）：扣掉交接提示词 ${handoff} 与余量 ${budget.handoffMargin}，` +
+        `留给这一步的是 ${limit - handoff - budget.handoffMargin}，而这一步要的比它多 ${withHandoff - limit}` +
+        `——到这里就停，不裁剪后照发。`,
     }
   }
   return {

@@ -205,10 +205,11 @@ test('③ 地板：预算退化成"用完就停"时仍能收尾——明确报�
       handoff: handoffOf(DECL.budget.handoffMargin * 8),
     })
     assert.equal(plan.kind, 'stop', `这一份该判停：${plan.why}`)
-    // **不留白**：为什么停那句话说得出量（用了多少 · 差多少 · 触发点在哪）。
+    // **不留白**：为什么停那句话说得出量（用了多少 · 扣掉交接与余量之后留给这一步多少 · 这一步比它多多少 · 触发点在哪）。
     assert.match(plan.why, /用了 \d+/)
     assert.match(plan.why, /触发点 \d+/)
-    assert.match(plan.why, /差 \d+/)
+    assert.match(plan.why, /留给这一步的是 \d+/)
+    assert.match(plan.why, /比它多 \d+/)
     assert.match(plan.why, /不裁剪后照发/)
 
     // 到这一档时**不写交接**（写了也塞不进下一格）——所以日志里一条 `agent/handoff` 都没有。
