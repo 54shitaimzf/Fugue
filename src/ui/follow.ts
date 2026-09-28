@@ -59,6 +59,9 @@ import type { Panel, Term, ViewInput } from './term.ts'
  */
 export type TuiMode = 'panel' | 'lines-once' | 'lines-follow'
 
+/** resize 信号尾沿防抖的安静期（U7）：拖拽窗口连发的 `SIGWINCH` 只补最后一次重画。 */
+export const RESIZE_WAIT_MS = 120
+
 export function tuiModeOf(o: {
   readonly ansi: boolean
   readonly once: boolean
@@ -250,6 +253,12 @@ export interface Tui {
   note(line: string): void
   /** 重画（`SIGWINCH` 那一档）：**不重读**——账没变，变的是地方。只印永久行那一档什么也不做。 */
   redraw(): void
+  /**
+   * resize 信号那一档（`SIGWINCH`，U7）：**尾沿防抖**——拖拽窗口时终端连发一串 `SIGWINCH`（实测
+   * 几十毫秒一发），逐发重画就是"块叠块"。连按只补**最后一次**：安静 `RESIZE_WAIT_MS` 之后画一次。
+   * `redraw()` 仍是立即的那一条（程序里自己知道变了要马上画的地方走它）。
+   */
+  resize(): void
 }
 
 /**
@@ -299,6 +308,15 @@ export function openTui(o: TuiOptions): Tui {
     }
     return { ...c }
   })()
+  /** `redraw()` 的那一趟（`resize()` 的尾沿也走它）。 */
+  const redrawNow = (): void => {
+    if (o.mode !== 'panel') return
+    c.draws += 1
+    // resize 也把还没写出去的注记带上：账不重读，但这句话还没落到历史里。
+    o.term.draw(takeNotes(), (size) => session.panel(size))
+  }
+  /** resize 的尾沿那一个定时器（U7）：连发只在安静之后补一次。`unref`——跟随循环才是吊住进程的那一个。 */
+  let winTimer: ReturnType<typeof setTimeout> | null = null
   return {
     session,
     counts,
@@ -310,11 +328,15 @@ export function openTui(o: TuiOptions): Tui {
       // 最坏的一种体验）。没按过键时这一档一次都不会被调到。
       paint()
     },
-    redraw(): void {
+    redraw: redrawNow,
+    resize(): void {
       if (o.mode !== 'panel') return
-      c.draws += 1
-      // resize 也把还没写出去的注记带上：账不重读，但这句话还没落到历史里。
-      o.term.draw(takeNotes(), (size) => session.panel(size))
+      if (winTimer !== null) clearTimeout(winTimer)
+      winTimer = setTimeout(() => {
+        winTimer = null
+        redrawNow()
+      }, RESIZE_WAIT_MS)
+      winTimer.unref()
     },
   }
 }

@@ -377,7 +377,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     signal: ac.signal,
   })
   // resize：**只重画**，不重读（宽度变了账没变）；新的那一块落在哪由 `ui/term.ts` 那一档决定。
-  const onWin = (): void => tui.redraw()
+  // `SIGWINCH` 走**尾沿**（U7）：拖拽窗口时终端连发一串，逐发重画就是"块叠块"——`resize()` 里
+  // 安静 `RESIZE_WAIT_MS` 之后只补一次。
+  const onWin = (): void => tui.resize()
   if (mode === 'panel') process.on('SIGWINCH', onWin)
 
   /** 这一刻树上选的是哪一格（`null` = 整份账）。阅读面读的就是它。 */

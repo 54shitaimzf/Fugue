@@ -35,7 +35,7 @@ import { FAMILY_KIND, permanentLinesOf } from './stream.ts'
 import { K } from './term.ts'
 import type { Term } from './term.ts'
 import type { Tui, TuiCounts, TuiMode } from './follow.ts'
-import { newLinesOf, openSession, openTui, tuiModeOf } from './follow.ts'
+import { RESIZE_WAIT_MS, newLinesOf, openSession, openTui, tuiModeOf } from './follow.ts'
 
 /** 类型上不必较真的那几栏（品牌类型）：这些行是喂给渲染的，不是账上真发生过的。 */
 const brand = (v: string): never => v as never
@@ -417,6 +417,23 @@ test('⑥ 地板：只印永久行那一档面板一次都不画 · `redraw()` �
     `⑥ 读数：tuiModeOf 5 种组合 → panel · panel · lines-once · lines-once · lines-follow · ` +
       `lines-once 印 ${r.lines.length} 行 · 面板 0 帧 · redraw() 之后还是 0 帧`,
   )
+})
+
+test('⑨ resize 尾沿防抖（U7）：连按三次只补一画 · 安静期没到不画 · redraw() 仍立即', async () => {
+  const r = await runFollow({ chapters: [[at('round', 1, intent('防抖的夹具'))]] })
+  const before = r.records.length
+  r.tui.redraw()
+  assert.equal(r.records.length, before + 1, 'redraw() 是立即的那一条')
+  const settled = (): Promise<void> => new Promise((done) => setTimeout(done, 60))
+  r.tui.resize()
+  await settled()
+  r.tui.resize()
+  await settled()
+  r.tui.resize()
+  assert.equal(r.records.length, before + 1, '安静期没到不该画（还在连发）')
+  await new Promise((done) => setTimeout(done, RESIZE_WAIT_MS + 80))
+  assert.equal(r.records.length, before + 2, `连发三次只补一画（尾沿），拿到 ${r.records.length - before - 1} 画`)
+  console.log(`⑨ 读数：redraw() 立即 +1 · 60ms 间隔连按三次 → 安静 ${RESIZE_WAIT_MS}ms 后恰 +1`)
 })
 
 test('⑦ 历史不许被回头改：已经写出去的那几条变了就当场抛', () => {
