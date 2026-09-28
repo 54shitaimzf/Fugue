@@ -7,7 +7,7 @@
   </picture>
 </p>
 
-[![test](https://github.com/54shitaimzf/fugue/actions/workflows/test.yml/badge.svg)](https://github.com/54shitaimzf/fugue/actions/workflows/test.yml)
+[![test](https://github.com/54shitaimzf/Fugue/actions/workflows/test.yml/badge.svg)](https://github.com/54shitaimzf/Fugue/actions/workflows/test.yml)
 
 住在终端里的编码 agent：先跟你说清，再自己拆活 · 自己干 · 自己验；全过才动你的工作树
 
@@ -54,7 +54,7 @@
 - **git ≥ 2.38**：要用 `git merge-tree --write-tree`。
 
 ```sh
-git clone https://github.com/54shitaimzf/fugue.git ~/fugue && cd ~/fugue
+git clone https://github.com/54shitaimzf/Fugue.git ~/fugue && cd ~/fugue
 ln -s "$PWD/bin/fugue" ~/.local/bin/fugue      # 或者：npm i -g .
 fugue --help                                   # 26 条命令（round 5 条子命令 · config 3 条）
 ```
@@ -68,7 +68,7 @@ fugue --help                                   # 26 条命令（round 5 条子�
 这一趟走的是**录下来的真响应**，一条命令，谁都能跑：
 
 ```sh
-git clone https://github.com/54shitaimzf/fugue.git fugue && cd fugue
+git clone https://github.com/54shitaimzf/Fugue.git fugue && cd fugue
 sh tools/live-round.sh src/cli/__fixture__/wire-in/scenario.json \
    --wire-in src/cli/__fixture__/wire-in/wire
 ```
