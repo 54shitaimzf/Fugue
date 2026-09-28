@@ -28,7 +28,7 @@
 //   · **一串序列不许被当成按键**：`escapeAt` 把 `ESC` 起头的那一段整段吃掉；被切开的半截
 //     （`ESC` 单独来 · `ESC [` 还没到终字节）**攒着**（`decoderOf` 的 `pending`），攒到
 //     `ESC_WAIT_MS` 还没有下文，才当"人真按了一下 `Esc`"——`Esc` 现在是一条键了，这一条必须有。
-import { widthOf } from './frame.ts'
+import { widthOf } from './glyph.ts'
 
 /** 输入行与面板认的那些动作。**一个动作一个意思**（哪个字节算哪个动作由下面那张表定）。 */
 export type UiAction =

@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from './queue.ts'
 import type { QueueState } from './queue.ts'
-import { widthOf } from './frame.ts'
+import { widthOf } from './glyph.ts'
 
 const at = (lines: readonly string[]): QueueState =>
   lines.reduce((q, line) => enqueueOf(q, { line, mode: line.startsWith('/') ? 'Command' : 'Say' }), EMPTY_QUEUE)

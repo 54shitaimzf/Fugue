@@ -51,7 +51,8 @@
 // （重排之后不知道那 K 行落在哪）就一个字节都不写。**alt screen 那一条是例外**：进去过就一定要出来
 // ——少写它，那台终端就停在另一块屏上，而 `--full` 缺省关的时候一个字节都不会写（两档各归各的）。
 import type { BottomInput, MenuInput, NavInput, ReadInput } from './frame.ts'
-import { panelOf, widthOf } from './frame.ts'
+import { panelOf } from './frame.ts'
+import { widthOf } from './glyph.ts'
 
 /** 底部那块区域的**恒定**行数（PLAN § 5.19：K 取 12；画出框的下限是 5，12 够放处境那几行）。 */
 export const K = 12

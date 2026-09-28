@@ -14,7 +14,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { StatusRow } from '../probe/status.ts'
 import { NAV_INDENT, altAt, clampNav, navNodesOf, navRowsOf, stepNav, writerAt } from './nav.ts'
-import { widthOf } from './frame.ts'
+import { widthOf } from './glyph.ts'
 
 /** 一行账（这一份只用到坐标那一栏的 `writer` 与事件那一栏的 `t`）。 */
 const row = (writer: string, t: string): StatusRow => ({ pos: { seq: 1, writer }, e: { t } }) as unknown as StatusRow

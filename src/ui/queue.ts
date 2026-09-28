@@ -11,7 +11,7 @@
 // 为什么不做"改当前那一趟"（steer）：那要子进程收得下 stdin，而今天 `spawn` 的 stdin 是 `/dev/null`
 // （§ 5.19 六，人拍的）。**改主意的条件**：`round run` 收得下"中途插一句"的那一天。
 import type { LineMode } from './run.ts'
-import { clip } from './frame.ts'
+import { clip } from './glyph.ts'
 
 /** 排队的一条：**那一行原文**与它交出去时的模式（`Command` / `Say`）。 */
 export interface Queued {

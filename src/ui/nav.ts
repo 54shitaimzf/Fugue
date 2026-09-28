@@ -13,7 +13,7 @@
 // **树是推出来的，不是存下来的**：节点 = 账上出现过的 writer（主线在前、agent 按名字排），父级是轮次
 // （主线），所以只有一级缩进。界面这一头没有第二份"有哪几格"的清单——账一动，树跟着动（§ 5.19 一 · 3）。
 import type { StatusRow } from '../probe/status.ts'
-import { clip } from './frame.ts'
+import { clip } from './glyph.ts'
 
 /** 树上的一个节点。**`writer: null` = 整份账**（主线那一档）。 */
 export interface NavNode {

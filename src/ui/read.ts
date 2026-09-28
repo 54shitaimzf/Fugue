@@ -32,7 +32,7 @@
 import type { Delta } from '../delta.ts'
 import { FAMILY_KIND } from './stream.ts'
 import { permanentLinesOf } from './stream.ts'
-import { clip } from './frame.ts'
+import { clip } from './glyph.ts'
 import type { StatusRow } from '../probe/status.ts'
 
 /**

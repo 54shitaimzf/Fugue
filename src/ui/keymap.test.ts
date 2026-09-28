@@ -30,7 +30,7 @@
 //      （`actsOnEmpty`：`/round go` 里那个 `g` 要是也当动作，这一行会当场被发出去）；bracketed
 //      paste 那一对记号之间**一个字节都不解释**（里面的换行不是 `Enter`），记号只到一半就攒着。
 import assert from 'node:assert/strict'
-import { widthOf } from './frame.ts'
+import { widthOf } from './glyph.ts'
 import test from 'node:test'
 import type { KeyInput, UiAction } from './keymap.ts'
 import { ESC_WAIT_MS, KEYMAP, TABLE, WIRED, actionsOf, actsOnEmpty, bytesOfKey, decodeOf, decoderOf, escapeAt, escapeTruncatedAt, fallsToText, helpRowsOf, hintLimitOf, hintLineOf, keyLabelOf, keymapOf, openKeys, PASTE_OFF, PASTE_ON } from './keymap.ts'

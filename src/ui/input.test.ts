@@ -14,7 +14,7 @@
 //      原文里的 `\x1b` 印成 `^[`（显示改了，原文一个字节不改）。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { widthOf } from './frame.ts'
+import { widthOf } from './glyph.ts'
 import {
   EMPTY_DRAFT,
   INPUT_ROWS,

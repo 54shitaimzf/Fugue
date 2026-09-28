@@ -19,7 +19,7 @@ import test from 'node:test'
 import type { Contract } from '../contract/types.ts'
 import { GATE_KEEP, GATE_VIEW, clampAt, gateFaceOf, gateRowsOf, lineOf, optionRowOf, pressGate, previewLinesOf, queueRowOf, stepAt } from './gate.ts'
 import type { GateBatch, GateCard } from './gate.ts'
-import { widthOf } from './frame.ts'
+import { widthOf } from './glyph.ts'
 import { GO_LINE } from './run.ts'
 
 /** 品牌类型那一栏（`RelPath` 一类）：这一份里那些值是拿来喂接口的，不是账上真发生过的。 */

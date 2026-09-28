@@ -13,7 +13,7 @@
 //
 //   · **原文一个字节不丢**：折叠 · 换行记号 · 控制字符的写法都只改**显示**——`draft.text` 永远是
 //     原样那一份，`submitOf` 交出去的就是它（`input.test.ts` ③ 拿折叠过的粘贴逐字节对账）；
-//   · **光标永远落在簇边界上**：左右按**簇**走（`frame.ts` 的 `clustersOf`），列宽也按簇算
+//   · **光标永远落在簇边界上**：左右按**簇**走（`glyph.ts` 的 `clustersOf`），列宽也按簇算
 //     （`widthOf`）——汉字 · 组合符号 · emoji 不会被切成半个，也不会按 code unit 数错一格；
 //   · **零个隐藏状态**：`Editor` 就是它自己那一份值（撤到哪一步 · 在第几条历史上 · 反查查的什么
 //     都写在里面），闭包里没有"上一帧"；进来那一份一个字段都不改；
@@ -24,7 +24,7 @@
 // 排队 · 授权都在账上，这一份连它们的名字都不认识（PLAN § 5.19 三那张表的三轴里，只有焦点与
 // 输入模式落在这一份，而输入模式还是推出来的）。
 import type { UiAction } from './keymap.ts'
-import { clustersOf, cutAt, widthOf } from './frame.ts'
+import { clustersOf, cutAt, widthOf } from './glyph.ts'
 
 /** 折叠阈值：粘进来的东西超过其中任意一条就折起来（显示成一块牌子，`Ctrl-O` 展开）。 */
 export const FOLD_LINES = 4

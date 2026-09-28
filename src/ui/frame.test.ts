@@ -24,7 +24,8 @@ import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
 import { statusOf } from '../probe/status.ts'
-import { bodyOf, clip, footerOf, frameOf, panelOf, widthOf, windowOf, wrap } from './frame.ts'
+import { bodyOf, footerOf, frameOf, panelOf, windowOf } from './frame.ts'
+import { clip, widthOf, wrap } from './glyph.ts'
 
 let seq = 0
 /** 一条事件（`round` 那一份上）。**seq 每次从 0 起**：两次折用的序号于是对得上。 */

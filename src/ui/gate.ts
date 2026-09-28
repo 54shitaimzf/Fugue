@@ -25,7 +25,7 @@
 // （"面板与 `fugue diff --json` 读同一份数据"）。这一格给的是**写入面与交付物**，逐字来自契约。
 import type { Contract } from '../contract/types.ts'
 import { GO_LINE } from './run.ts'
-import { wrap } from './frame.ts'
+import { wrap } from './glyph.ts'
 
 /** 门口那一档的动作。**三个**（`a` / `p` / 升权档见头注）。 */
 export type GateOption = 'approve' | 'reject'
