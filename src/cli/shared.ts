@@ -220,6 +220,9 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              给了 <action> 就报那个动作那一趟的值（它有没有点名要网）。
                              fugue run 写进 run/confined 的是同一个 resolvePolicy() 的返回值——
                              两处读同一份，不是各自算一遍再对答案
+  doctor                     环境自检（纯读，不落盘）：node · zlib.crc32 · bwrap · landlock ·
+                             git · 落点档位，一行一项。**读得出就退 0——「缺」是读数不是失败**；
+                             statfs 问不出落点（自检跑不了）才退 1
   config show                工作区配置的全文
   config get <key>           配置里的一条；<key> 是点分路径，如 docs.trace.path
   config set <key> <value>   改一条；<value> 整份解析得了就当 JSON 值，否则当字符串

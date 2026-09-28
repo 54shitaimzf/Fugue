@@ -23,6 +23,7 @@ export { driverSupport } from './cmd/round.ts'
 import { branchCmd, commitCmd, replay, viewCmd } from './cmd/view.ts'
 import { emit, statusCmd, tuiCmd, watchCmd } from './cmd/observe.ts'
 import { config, policyCmd } from './cmd/config.ts'
+import { doctorCmd } from './cmd/doctor.ts'
 import { diffStatCmd, disposeCmd, ensureCmd, forkCmd, verifyMatCmd } from './cmd/materialize.ts'
 import { runCmd } from './cmd/execute.ts'
 import { assembleCmd } from './cmd/assemble.ts'
@@ -67,6 +68,7 @@ const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
   run: { flags: ['root', 'agent', 'json', 'help', 'step', 'mode'] },
   policy: { flags: ['root', 'agent', 'json', 'help', 'mode'] },
   config: { flags: ['root', 'json', 'help'] },
+  doctor: { flags: ['root', 'json', 'help'] },
   assemble: { flags: ['root', 'agent', 'json', 'help', 'against'] },
   say: { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'max-steps', 'credential', 'dump-wire'] },
   'round new': { flags: ['root', 'agent', 'json', 'help', 'materialize', 'split'] },
@@ -186,6 +188,9 @@ async function run(argv: readonly string[]): Promise<number> {
 
   // 策略值读的也是配置与探针，不是工作区的状态——所以它也排在视图之前（架构 § 8.8）。
   if (cmd === 'policy') return await policyCmd(root, flags, positional.slice(1), json)
+
+  // 自检纯读（U9）：读数各有归属（§ 15.7 的探针 · engines · PATH），不建视图、不读日志、不落盘。
+  if (cmd === 'doctor') return await doctorCmd(root, flags, json)
 
   // 尺子只读，也不进那份"状态"——所以它排在视图之前（§ 8.5 把 diff-stat 与 verify-mat 并列只读）。
   if (cmd === 'diff-stat') return diffStatCmd(root, flags, positional.slice(1), json)
