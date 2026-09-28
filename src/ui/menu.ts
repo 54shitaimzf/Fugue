@@ -32,7 +32,7 @@ import { join } from 'node:path'
 export type MenuSource = 'cmd' | 'keys' | 'path'
 
 /** 一条候选是哪一类（**补全与接上那一行靠它，不靠名字长什么样**）。`key` 那一类接不进去（它只是一句读）。 */
-export type MenuKind = 'cmd' | 'flag' | 'path' | 'key'
+type MenuKind = 'cmd' | 'flag' | 'path' | 'key'
 
 /** 一条候选：名字是拿去补全的，说明是给人看的。 */
 export interface MenuRow {
@@ -42,7 +42,7 @@ export interface MenuRow {
 }
 
 /** 命令面那一张表的一格（`cli/flags.ts` 的 `FLAGS_OF` 每一格就是它）。**结构对得上就收**。 */
-export interface CommandSpec {
+interface CommandSpec {
   readonly name: string
   readonly flags: readonly string[]
   readonly note?: string | undefined
@@ -86,7 +86,7 @@ export function queryOf(line: string, source: MenuSource): string | null {
 }
 
 /** 已经选定的那条命令（`q` 以 `名字 + 空格` 开头时**最长**的那一条——`round go` 赢过 `round`）。 */
-export function pickCommand(specs: readonly CommandSpec[], q: string): CommandSpec | null {
+function pickCommand(specs: readonly CommandSpec[], q: string): CommandSpec | null {
   let hit: CommandSpec | null = null
   for (const s of specs) {
     if (q.startsWith(`${s.name} `) && (hit === null || s.name.length > hit.name.length)) hit = s
@@ -98,7 +98,7 @@ export function pickCommand(specs: readonly CommandSpec[], q: string): CommandSp
  * 命令那一段的候选：**前缀**匹配（不是包含——名字是拿来补全的，包含匹配会让人补出个不想按的）。
  * 名字一个都匹配不上时进第二段：那一条命令的开关。
  */
-export function cmdRowsOf(specs: readonly CommandSpec[], q: string): readonly MenuRow[] {
+function cmdRowsOf(specs: readonly CommandSpec[], q: string): readonly MenuRow[] {
   const head = specs.filter((s) => s.name.startsWith(q))
   if (head.length > 0) {
     return head.map((s) => ({ name: s.name, note: s.note ?? `${s.flags.length} 个开关`, kind: 'cmd' as const }))
@@ -219,7 +219,7 @@ export function rowsTextOf(rows: readonly MenuRow[]): readonly string[] {
 
 /** 路径那一档的边界：**深度与条数都有界**（一个 `@` 不该把整棵树读进内存里）。 */
 export const PATHS_DEPTH = 3
-export const PATHS_MAX = 200
+const PATHS_MAX = 200
 
 /** 这几样一律不走进去（构建产物与版本库元数据不是"工作区里的一条路径"）。 */
 const SKIP: readonly string[] = ['node_modules', 'dist', 'build', '__pycache__', 'target']

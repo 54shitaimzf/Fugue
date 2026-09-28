@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Contract } from '../contract/types.ts'
-import { GATE_KEEP, GATE_VIEW, clampAt, gateFaceOf, gateRowsOf, lineOf, optionRowOf, pressGate, previewLinesOf, queueRowOf, stepAt } from './gate.ts'
+import { GATE_KEEP, GATE_VIEW, clampAt, gateFaceOf, gateRowsOf, lineOf, optionRowOf, pressGate, previewLinesOf, gateQueueRowOf, stepAt } from './gate.ts'
 import type { GateBatch, GateCard } from './gate.ts'
 import { widthOf } from './glyph.ts'
 import { GO_LINE } from './run.ts'
@@ -75,7 +75,7 @@ test('① 队列行逐字来自那一批：第 i/N 份就是第 i 份 · 下标�
   assert.equal(face.cards.length, 3, '三份契约三张卡')
   // **把三份各扫一遍**：行里那个 id 必须就是那一份的 id（负对照：随便挑一份看它对不对得上）。
   for (let at = 0; at < 3; at += 1) {
-    const row = queueRowOf(face, at)
+    const row = gateQueueRowOf(face, at)
     const id = (BATCH.contracts[at] as Contract).id
     assert.ok(row.includes(`第 ${at + 1}/3 份`), `第 ${at} 份那一行该说"第 ${at + 1}/3 份"：${row}`)
     assert.ok(row.includes(id), `那一行该带着这一份的 id（${id}）：${row}`)
@@ -93,9 +93,9 @@ test('① 队列行逐字来自那一批：第 i/N 份就是第 i 份 · 下标�
   assert.equal(stepAt(3, 0, -1), 0, '头一份再往上还是头一份（夹住，不环形）')
   assert.equal(stepAt(3, 2, 1), 2, '最后一份再往下还是最后一份')
   assert.equal(stepAt(3, 1, 1), 2)
-  assert.equal(queueRowOf(gateFaceOf({ ...BATCH, contracts: [] }), 0), '门口这一批一份契约都没有（门不会停在这样一批上——报出来）')
+  assert.equal(gateQueueRowOf(gateFaceOf({ ...BATCH, contracts: [] }), 0), '门口这一批一份契约都没有（门不会停在这样一批上——报出来）')
   console.log(`① 读数：三份各扫一遍都带自己那个 id · 夹回来的五档（-1 → 0 · 3 → 2 · 1.5 → 0 · 空批次那一句）· ` +
-    `行里的字：${queueRowOf(face, 1)}`)
+    `行里的字：${gateQueueRowOf(face, 1)}`)
 })
 
 // ── ② 二段确认 ───────────────────────────────────────────────────────────────

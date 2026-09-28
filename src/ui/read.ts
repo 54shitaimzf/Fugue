@@ -41,7 +41,7 @@ import type { StatusRow } from '../probe/status.ts'
  * `write` 这一格是 `add` 与 `modify` 合起来的：`View.diff()` 分得出那两档是因为它能拿下层比，
  * 而账上只有"在 rev N 上写了这条路径"这一个事实。
  */
-export type DeltaFace =
+type DeltaFace =
   | { readonly kind: 'write'; readonly path: string }
   | { readonly kind: 'delete'; readonly path: string }
   | { readonly kind: 'rename'; readonly from: string; readonly to: string }
@@ -64,7 +64,7 @@ export const DELTA_FACE: Readonly<Record<Delta['kind'], DeltaFace['kind']>> = {
 }
 
 /** 账上那一条行是不是 `view/*`（五族）；是就折成读面那一格，不是就 `null`。 */
-export function deltaFaceOf(row: StatusRow): DeltaFace | null {
+function deltaFaceOf(row: StatusRow): DeltaFace | null {
   const e = row.e
   switch (e.t) {
     case 'view/write':
@@ -86,7 +86,7 @@ export function deltaFaceOf(row: StatusRow): DeltaFace | null {
  * 命令面那一份那几栏。**只要这几栏**：一个 `Delta`（带字节）与 `fugue diff --json` 印出来的那一条
  * （不带字节——`deltaJson` 一个字节都不进去）都落在这个形状里。
  */
-export interface DeltaLike {
+interface DeltaLike {
   readonly kind: Delta['kind']
   readonly path?: string | undefined
   readonly from?: string | undefined
@@ -131,7 +131,7 @@ export function faceKeyOf(d: DeltaFace): string {
 }
 
 /** 契约正文那一面的一份：**账上那一条 `contract/issue` 说得出的那几栏**。 */
-export interface ContractFace {
+interface ContractFace {
   readonly round: string
   readonly id: string
   readonly agent: string
@@ -140,7 +140,7 @@ export interface ContractFace {
 }
 
 /** 还没收口的那一组（工具输出折叠的那两族）。 */
-export type OpenGroup =
+type OpenGroup =
   | { readonly kind: 'calls'; readonly agent: string; readonly n: number; readonly model: string }
   | { readonly kind: 'run'; readonly agent: string; readonly step: string; readonly action: string; readonly argv0: string }
 
@@ -201,7 +201,7 @@ export function prefixOk(prev: ReadState, list: readonly StatusRow[]): boolean {
   return last.pos.writer === prev.last.writer && last.pos.seq === prev.last.seq
 }
 
-export interface ReadOptions {
+interface ReadOptions {
   /** 只读某一格（`null` / 不给 = 整份账）——与 `status --agent <x>` 同一句口径。 */
   readonly agent?: string | null
   /** 上一次那一份：**给了就只折尾部**（`seen` 之后那几条）；换了一格就自动从头折。 */
@@ -330,13 +330,13 @@ export function readStateOf(rows: readonly StatusRow[], opts: ReadOptions = {}):
 }
 
 /** 一面（标题 + 那几行）。 */
-export interface ReadFace {
+interface ReadFace {
   readonly title: string
   readonly lines: readonly string[]
 }
 
 /** 三面。**没有的那一面是 `null`**（不是空的一行——"没有"与"有但是空的"要分得开）。 */
-export interface ReadFaces {
+interface ReadFaces {
   readonly diff: ReadFace | null
   readonly contract: ReadFace | null
   readonly stream: ReadFace
@@ -349,7 +349,7 @@ export type ReadFaceName = 'diff' | 'contract' | 'stream'
 export const READ_LIMIT = 200
 
 /** 正文那一栏折成一行之后截到多少列（全文的读法是 `fugue log`）。 */
-export const READ_BODY_COLS = 160
+const READ_BODY_COLS = 160
 
 /** 只留尾部那 `limit` 行；掐掉了就在最前面说一句（**少印要说出来**）。 */
 function tail(lines: readonly string[], limit: number): readonly string[] {

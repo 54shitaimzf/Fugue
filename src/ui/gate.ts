@@ -178,7 +178,7 @@ export function lineOf(option: GateOption): string {
 }
 
 /** 队列行：**还有几份 · 第几份 · 这一份是谁**（`index/total` 就是 § 5.19 那一条）。 */
-export function queueRowOf(face: GateFace, at: number): string {
+export function gateQueueRowOf(face: GateFace, at: number): string {
   const n = face.cards.length
   if (n === 0) return '门口这一批一份契约都没有（门不会停在这样一批上——报出来）'
   const i = clampAt(n, at)
@@ -204,5 +204,5 @@ export function gateRowsOf(o: { readonly face: GateFace; readonly view: GateView
   const card = cardAt(o.face, o.view.at)
   const head =
     card === null ? [] : previewLinesOf(card).flatMap((one) => (o.columns > 0 ? [...wrap(one, o.columns)] : [one]))
-  return [...head, queueRowOf(o.face, o.view.at), optionRowOf(o.view)]
+  return [...head, gateQueueRowOf(o.face, o.view.at), optionRowOf(o.view)]
 }
