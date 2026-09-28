@@ -9,11 +9,10 @@ import { tmpdir } from 'node:os'
 import { BindingError, actionNames, readBinding } from '../../boundary/binding.ts'
 import { ConfigError, getConfig, readConfig } from '../../config.ts'
 import type { ConfigDoc } from '../../config.ts'
-import { agentFor, identFor } from '../../identity.ts'
+import { identFor } from '../../identity.ts'
 import type { Log } from '../../log/events.ts'
 import { openLog } from '../../log/log.ts'
 import type { LogHandle } from '../../log/log.ts'
-import { createRoots } from '../../roots/roots.ts'
 import type { AgentId, BranchId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../../terms.ts'
 import type { TruthHandle } from '../../truth/truth.ts'
 import type { View } from '../../view/contract.ts'
@@ -60,7 +59,7 @@ import { computeAllMetrics, computeAttribution, lineOf, lineOfAttribution } from
 import { METRICS_HEAD, REPORT_HEAD, callLinesOf, rowsOf } from '../../probe/status.ts'
 import { phaseOf } from '../../model/price.ts'
 import type { Ctx } from '../shared.ts'
-import { UsageError, emitJson, emitLine, fail, openCtx, usageFail, writerOf } from '../shared.ts'
+import { UsageError, emitJson, emitLine, fail, openCtx, usageFail } from '../shared.ts'
 import { dumpWireDir, modelLimitOf, publishedCatalog } from './assemble.ts'
 
 /**
@@ -1546,13 +1545,6 @@ function numberOf(v: string | true | undefined, min = 1): number | undefined {
   if (v === undefined || v === true) return undefined
   const n = Number(v)
   return Number.isInteger(n) && n >= min ? n : undefined
-}
-
-/** 把一个提交铺到一个临时目录里——`--deny` 那一档要在真盘上试一次写入。 */
-async function scratchTree(truth: TruthHandle, commit: CommitId): Promise<string> {
-  const dir = mkdtempSync(join(tmpdir(), 'fugue-round-deny-'))
-  await materializeCommit(truth, commit, dir)
-  return dir
 }
 
 /** 契约要写哪儿，给那一行印出来（三种来源各自那一份）。 */

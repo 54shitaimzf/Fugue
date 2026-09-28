@@ -9,15 +9,17 @@
 //   ④ 写者档句柄自读自账：自己 append 之后自己读，走同一条失效路（`append` 不碰缓存，
 //      失效全靠 stat 的键）。
 import assert from 'node:assert/strict'
-import { mkdtempSync, statSync, utimesSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { statSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import type { LogEvent } from './events.ts'
 import { logDir, openLog } from './log.ts'
 import type { LogPos, WriterId } from '../terms.ts'
+import { tmpDir } from '../../test/helpers/tmp.ts'
 
-const tmp = (): string => mkdtempSync(join(tmpdir(), 'fugue-cache-'))
+// **建的时候登记**（`test/helpers/tmp.ts` 的 `tmpDir`）：这一个文件跑完由 `after()` 一起收。
+// 自己 `mkdtempSync` 而不登记的那一版一趟往 `/tmp` 里攒四个 `fugue-cache-*`，谁也不去看。
+const tmp = (): string => tmpDir('fugue-cache-')
 const W = (s: string): WriterId => s as WriterId
 
 const ev = (i: number): LogEvent => ({

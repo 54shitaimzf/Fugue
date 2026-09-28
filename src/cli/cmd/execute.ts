@@ -25,13 +25,12 @@ import { openLog } from '../../log/log.ts'
 import { matState } from '../../materialize/manifest.ts'
 import type { MatState } from '../../materialize/manifest.ts'
 import { LandError } from '../../materialize/land.ts'
-import { MountError } from '../../materialize/mount.ts'
+import { MountError, unmountOverlay } from '../../materialize/mount.ts'
 import { EnsureRefused } from '../../materialize/ensure.ts'
 import { createRoots } from '../../roots/roots.ts'
 import type { RelPath, StepId } from '../../terms.ts'
 import { applyEdit } from '../../view/edit.ts'
 import type { Delta } from '../../delta.ts'
-import { unmountOverlay } from '../../materialize/mount.ts'
 import {
   ConfigError,
   readConfig,

@@ -2,7 +2,7 @@
 // 自 `fugue.ts` 抽出——那一文件自此只剩分发与各命令组（`cmd/`），这一份是它们共用的地基；
 // **内容逐字未动**，只补了 `export`。语义出处仍是架构 § 9.6：单次进程 + 每次重建。
 import { resolve } from 'node:path'
-import { LogCorruptError, openLog } from '../log/log.ts'
+import { openLog } from '../log/log.ts'
 import type { LogHandle, SyncLevel } from '../log/log.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
