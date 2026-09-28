@@ -105,7 +105,18 @@ export function unclassified(known: readonly string[], table: FamilyTable = FAMI
   return known.filter((f) => table[f] === undefined)
 }
 
-/** 正文进历史那一行的长度上限（**字符**，不是列——历史那边折行归终端管）。 */
+/**
+ * 正文截断的**按族表**（U10b）：自由正文的两族放宽到 80——意图与交接信是"这一轮要干什么
+ * / 接的人该知道什么"的第一手话，40 个字符常常截在半句上；表上没有的族兜 `BODY_CHARS`（40）
+ * ——它们今天没有自由正文栏（坐标 · 散列 · 计数），40 早已够。与 `FAMILY_KIND` 同一条道理：
+ * **表是唯一分法**，渲染里不许再出现"这一族给多少"的判断。
+ */
+export const BODY_LIMIT: Readonly<Record<EventFamily, number | undefined>> = {
+  'round/intent': 80,
+  'agent/handoff': 80,
+}
+
+/** 表上没分到的那一族兜的长度（**字符**，不是列——历史那边折行归终端管）。 */
 export const BODY_CHARS = 40
 
 /** 前 `n` 个字符，截了就留一个 `…`（散列那几栏：`base` · `commit` · `fingerprint`）。 */
@@ -115,13 +126,13 @@ function head(s: string, n: number): string {
 }
 
 /**
- * 正文折成一行：空白（含换行）收成一个空格，再按 `BODY_CHARS` 截。
+ * 正文折成一行：空白（含换行）收成一个空格，再按**这一族**的 `BODY_LIMIT` 截。
  *
  * **为什么截**：一份契约的 JSON 与一封交接信都可以很长，而这一栏要的是"这一条事件是什么"，
  * 不是全文——全文的读法是 `fugue log`（抄本）与轮次那几条命令。
  */
-function excerpt(body: string): string {
-  return head(body.replace(/\s+/g, ' ').trim(), BODY_CHARS)
+function excerpt(body: string, family: EventFamily): string {
+  return head(body.replace(/\s+/g, ' ').trim(), BODY_LIMIT[family] ?? BODY_CHARS)
 }
 
 /** 写入面：**先条数，再前三条**（一份契约的路径可以几十条），多的那几条不挤进这一行。 */
@@ -146,7 +157,7 @@ function lineOf(row: StatusRow): string {
     case 'round/state':
       return `${at(row)}轮次 ${e.round} · ${e.from} → ${e.to}`
     case 'round/intent':
-      return `${at(row)}轮次 ${e.round} · 意图「${excerpt(e.body)}」· 底 ${head(e.base, 8)}`
+      return `${at(row)}轮次 ${e.round} · 意图「${excerpt(e.body, 'round/intent')}」· 底 ${head(e.base, 8)}`
     case 'contract/issue':
       return `${at(row)}轮次 ${e.round} · 契约 ${e.contract} → ${e.owner} · ${surfaceOf(e.paths)}`
     case 'round/approve':
@@ -157,7 +168,7 @@ function lineOf(row: StatusRow): string {
         (e.handoffs > 0 ? ` · 交过 ${e.handoffs} 次接` : '')
       )
     case 'agent/handoff':
-      return `${at(row)}格 ${e.agent} → ${e.successor} · 契约 ${e.contract} · 交的是「${excerpt(e.body)}」`
+      return `${at(row)}格 ${e.agent} → ${e.successor} · 契约 ${e.contract} · 交的是「${excerpt(e.body, 'agent/handoff')}」`
     case 'merge/attempt':
       return `${at(row)}轮次 ${e.round} · 合并尝试 ${e.branches.length} 条分支 · 冲突 ${e.conflicts}`
     case 'merge/accept': {

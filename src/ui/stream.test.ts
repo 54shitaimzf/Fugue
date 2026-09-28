@@ -12,7 +12,7 @@
 //      都没有（正着那趟有）；反面：把只计数的 `llm/call` 挪进"永久" → 当场抛（分法说它配得上
 //      一行历史，而渲染里没有那一行的写法）。
 //   ④ **一条事件 = 一行**：夹着只计数那几族的账 → 进历史的行逐字等于那一份原文、按到达序；
-//      正文里带换行的折成一行；太长的那一截是 `BODY_CHARS` 个字符加一个 `…`。
+//      正文里带换行的折成一行；截断**按族**（U10b：意图与交接信 80，兜 `BODY_CHARS`=40）。
 //   ⑤ **一族一行都不少**：夹具覆盖 28 族，进历史的正好那 10 族——每一行带账上的坐标
 //      `(writer, seq)` · 不是空行 · 没有 `undefined`。新增一族而这里没跟上，①与这一条都会红。
 //   ⑥ **纯**：同一份行两次逐字节相同、进去的 rows 一个字段都没被改；空账给空历史。
@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow } from '../probe/status.ts'
-import { BODY_CHARS, FAMILY_KIND, permanentLinesOf, unclassified } from './stream.ts'
+import { BODY_CHARS, BODY_LIMIT, FAMILY_KIND, permanentLinesOf, unclassified } from './stream.ts'
 import type { EventFamily, FamilyKind } from './stream.ts'
 
 /** 类型上不必较真的那几栏（品牌类型与几个值域）：这些行是喂给渲染的，不是账上真发生过的。 */
@@ -239,7 +239,7 @@ test('③ 负对照 · 挪一格：round/state 挪进"只计数"，那一趟历�
   console.log(`③ 读数：正着 ${lines.length} 行（含 Idle → Planning）· round/state 挪进只计数 → ${moved.length} 行、转移没了 · llm/call 挪进永久 → 当场抛`)
 })
 
-test('④ 一条事件一行：逐字等于那一份原文 · 按到达序 · 换行折平 · 太长的那一截是 40 个字符加一个 …', () => {
+test('④ 一条事件一行：逐字等于那一份原文 · 按到达序 · 换行折平 · 截断按族（意图与交接信 80，兜 40）', () => {
   const lines = permanentLinesOf(mix())
   assert.deepEqual([...lines], [...MIX_GOLDEN], '那一趟历史与黄金那一份不逐字节相同')
   assert.equal(lines.some((l) => l.includes('\n')), false, '有一行里带换行——终端历史里那就是两行')
@@ -248,13 +248,27 @@ test('④ 一条事件一行：逐字等于那一份原文 · 按到达序 · �
   assert.equal(lines.some((l) => l.includes('调用')), false, '一次调用进了历史')
 
   reset()
-  const long = permanentLinesOf([
-    row({ t: 'round/intent', round: brand('r1'), base: brand('c0'), digest: 'd', body: `第一行\n${'长'.repeat(60)}` }),
-  ])
-  const body = (long[0] as string).slice((long[0] as string).indexOf('「') + 1, (long[0] as string).lastIndexOf('」'))
-  assert.ok(body.endsWith('…'), `太长的那一截该留一个 …：${body}`)
-  assert.equal([...body].length, BODY_CHARS + 1, `正文那一截该是 ${BODY_CHARS} 个字符加一个 …：${body}`)
-  console.log(`④ 读数：${lines.length} 行逐字等于黄金 · 夹在中间的 llm/call 与 view/write 一条都没进 · 正文 61 字折平后截成「${body}」`)
+  /** 「」之间的那一段正文。 */
+  const bodyOf = (line: string): string => line.slice(line.indexOf('「') + 1, line.lastIndexOf('」'))
+  // 45 字：旧限（40）会截在半句上，80 那一档放得下——**不再有 …**。
+  const mid = bodyOf(
+    (permanentLinesOf([
+      row({ t: 'round/intent', round: brand('r1'), base: brand('c0'), digest: 'd', body: `第一行\n${'长'.repeat(45)}` }),
+    ])[0] as string),
+  )
+  assert.ok(!mid.endsWith('…'), `45 字在按族那一档（80）不该再截：${mid}`)
+  assert.equal([...mid].length, 49, `折平后该是「第一行 」3+1 加 45 字：${mid}`)
+  // 100 字：超出 80 那一档照截，80 个字符加一个 …。
+  const long = bodyOf(
+    (permanentLinesOf([
+      row({ t: 'round/intent', round: brand('r1'), base: brand('c0'), digest: 'd', body: '长'.repeat(100) }),
+    ])[0] as string),
+  )
+  assert.ok(long.endsWith('…'), `太长的那一截该留一个 …：${long}`)
+  assert.equal([...long].length, BODY_LIMIT['round/intent']! + 1, `正文该是 80 个字符加一个 …：${long}`)
+  assert.equal(BODY_LIMIT['round/intent'], 80)
+  assert.equal(BODY_LIMIT['agent/handoff'], 80, '交接信与意图同一档')
+  console.log(`④ 读数：${lines.length} 行逐字等于黄金 · 45 字不截（49 字全文）· 100 字截成 80+… · 兜的默认 ${BODY_CHARS}`)
 })
 
 test('⑤ 一族一行都不少：夹具覆盖 28 族、进历史的正好那 10 族', () => {
@@ -287,5 +301,5 @@ test('⑥ 纯：两次逐字节相同、进去的 rows 一个字段都没被改 
   assert.equal(JSON.stringify(rows), before, '行被这一份改过了（读面不许写）')
   assert.deepEqual([...permanentLinesOf([])], [], '账上一条都没有时该给空历史')
   assert.equal(permanentLinesOf([row(llmCall('agent/r1/1', '1'), 'agent/r1/1')]).length, 0, '只有只计数那一族时该给空历史')
-  console.log(`⑥ 读数：两次逐字节相同（${one.length} 行 · ${before.length} 字节的行两趟同值）· 空账 0 行 · 只有 llm/call 0 行 · BODY_CHARS ${BODY_CHARS}`)
+  console.log(`⑥ 读数：两次逐字节相同（${one.length} 行 · ${before.length} 字节的行两趟同值）· 空账 0 行 · 只有 llm/call 0 行 · 截断按族（80）兜 ${BODY_CHARS}`)
 })
