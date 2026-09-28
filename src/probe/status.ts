@@ -526,6 +526,14 @@ export interface StatusReadings {
 export interface ReadingsOptions {
   readonly metrics?: boolean
   readonly report?: boolean
+  /**
+   * **只读某一个 writer 的那一份**（`status --agent <x>`；`T8` 的"切过去"就是它）。口径与 `log
+   * --agent` / `watch --agent` 是同一句：**只按 writer 选一份**（架构 § 9.6 那三行）。
+   *
+   * 不给就是整份账。**"不给"与"给了 `round`"不是一回事**：处境那一条链（`round/state`）住在持轮者
+   * 那一份日志里，主线那一档要的是全部。
+   */
+  readonly agent?: string
 }
 
 /**
@@ -538,7 +546,10 @@ export interface ReadingsOptions {
  * `[本轮]` / `[整账]`），不靠读的人记得是谁印的。
  */
 export async function readings(log: Pick<Log, 'readMerged'>, opts: ReadingsOptions = {}): Promise<StatusReadings> {
-  return readingsOf(await rowsOf(() => log.readMerged()), opts)
+  const rows = await rowsOf(() => log.readMerged())
+  // **`agent` 那一档在折之前筛**（不是折完再挑印哪几行）：两处（命令面与界面）筛的是同一批行，于是
+  // `T8` 那句"切过去之后面板与 `status --agent <x> --once` 逐字相同"查得动（`status.test.ts` ⑫）。
+  return readingsOf(opts.agent === undefined ? rows : rows.filter((r) => r.pos.writer === opts.agent), opts)
 }
 
 /**

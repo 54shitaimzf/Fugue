@@ -94,6 +94,8 @@ export interface FrameInput {
   readonly menu?: MenuInput | undefined
   /** 读源六（`T6`／`T7`）：**面板最下面那一栏**（门口那一块 · 排队行）。见 `BottomInput`。 */
   readonly bottom?: BottomInput | undefined
+  /** 读源七（`T8`）：**树那几个节点**（排在内容那一栏的最上面）。见 `NavInput`。 */
+  readonly nav?: NavInput | undefined
   readonly width: number
   readonly height: number
 }
@@ -418,6 +420,12 @@ export interface BottomInput {
   readonly keep: number
 }
 
+/** 树那几个节点（`ui/nav.ts` 算好的原文）与选中项落在第几个（`T8`）。 */
+export interface NavInput {
+  readonly rows: readonly string[]
+  readonly sel: number
+}
+
 /** 候选那一层开的一个窗：印第 `from` 条起的 `count` 条，`summary` 说还要不要补一行"还有几条"。 */
 export interface MenuWindow {
   readonly from: number
@@ -510,6 +518,19 @@ export function frameOf(o: FrameInput): Frame {
       if (w.summary) menuBody.push(`… 还有 ${w.above + w.below} 条（↑↓ 翻，选中第 ${at + 1} 条）`)
     }
   }
+  // 树那一栏（`T8`）**排在内容那一栏的最上面**（它是导航：主线为根 · agent 缩进一级）。它最多占四行
+  // ——装不下时 `windowOf` 把选中那一个留在窗里，并把还剩几个说出来；预算先从这里扣（一栏都没有时
+  // 下面这几步与从前逐字节相同）。
+  const navAll = o.nav?.rows ?? []
+  const navCap = navAll.length === 0 ? 0 : Math.max(1, Math.min(4, budget - 2))
+  const navWin = navAll.length === 0 ? null : windowOf(navAll.length, o.nav?.sel ?? 0, navCap)
+  const navBody: string[] = []
+  if (navWin !== null) {
+    for (let i = navWin.from; i < navWin.from + navWin.count; i += 1) navBody.push(navAll[i] as string)
+    if (navWin.summary) navBody.push(`  … 还有 ${navWin.above + navWin.below} 个节点（Tab 循环 · Alt-1…9 直选）`)
+  }
+  budget -= navBody.length
+
   // 最下面那一栏（`T6` 的门口那一块 · `T7` 的排队行）先占住它那几行，再轮到候选，最后才是内容那一
   // 栏（装不下时**从后往前让位**，而那一栏自己先让位的是**预览**——头几行；末 `keep` 行留住：那是
   // 人要按 · 要看的东西）。一栏都没有（`bottom` 不给）时下面这几步与从前逐字节相同。
@@ -522,8 +543,13 @@ export function frameOf(o: FrameInput): Frame {
   while (menuBody.length > 0 && budget - gateBody.length < 1) menuBody.pop()
   while (gateBody.length > 0 && budget - gateBody.length < 1) gateBody = gateBody.slice(1)
   const bodyBudget = Math.max(1, budget - menuBody.length - gateBody.length)
-  const shown = rows.length <= bodyBudget ? rows : rows.slice(0, Math.max(0, bodyBudget - 1))
-  const dropped = rows.length - shown.length
+  const content = rows.length <= bodyBudget ? rows : rows.slice(0, Math.max(0, bodyBudget - 1))
+  const dropped = rows.length - content.length
+  // 树那一栏在最上面，然后才是内容那一栏（它的每一行都是横贯整栏的）。
+  const shown: { readonly l: string; readonly r: string; readonly full?: boolean }[] = [
+    ...navBody.map((l) => ({ l, r: '', full: true })),
+    ...content,
+  ]
   if (dropped > 0) shown.push({ l: `… 还有 ${dropped} 行没印（这一屏 ${height} 行）`, r: '' })
   for (const one of menuBody) shown.push({ l: one, r: '', full: true })
   for (const one of gateBody) shown.push({ l: one, r: '', full: true })

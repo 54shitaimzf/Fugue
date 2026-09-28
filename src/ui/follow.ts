@@ -139,12 +139,17 @@ export function openSession(o: SessionOptions = {}): TuiSession {
   /** 那一刻的面板那几行。**纯函数**：这一档累起来的行 + 界面自己那几样（现问一次）。 */
   const frameAt = (size: { readonly columns: number; readonly height: number }): readonly string[] => {
     const v = o.view?.()
+    // **切到某一格就只折那一份**（`T8`）：筛的是喂给折法的那一批行——与 `status --agent <x>` 筛的是
+    // 同一批（`probe/status.ts` 的 `readings` 那一档也在这儿筛）。不给焦点就是整份账。
+    const seen = v?.focus === undefined || v?.focus === null ? rows : rows.filter((r) => r.pos.writer === v.focus)
     const input: FrameInput = {
       // 三份读数与 `status --once` 同一个入口（`readingsOf`）——命令面与这一档读的是同一份。
-      ...readingsOf(rows, o.readings),
+      ...readingsOf(seen, o.readings),
       ...(o.phase === undefined ? {} : { phase: o.phase }),
-      // 界面自己那几样（输入行 · 候选那一层）**每帧现问**：它们不是读源，是这一档自己的视图状态。
+      // 界面自己那几样（输入行 · 候选那一层 · 树 · 门口那一块）**每帧现问**：它们不是读源，是这一档
+      // 自己的视图状态。
       ...(v?.menu === undefined ? {} : { menu: v.menu }),
+      ...(v?.nav === undefined ? {} : { nav: v.nav }),
       ...(v?.bottom === undefined ? {} : { bottom: v.bottom }),
       permanent: permanent(),
       width: size.columns,

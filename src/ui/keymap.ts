@@ -396,7 +396,7 @@ export function fallsToText(a: UiAction, key: string | undefined, text: string, 
  * 每落一格把它的名字加进来——这一份是**进度**，不是口味（`T2` 那一条断言的牙就在这儿：目录与
  * 分发同一张表，而"这一格接上了没有"也只有一个地方说）。
  */
-export const WIRED: readonly Stage[] = ['T2', 'T3', 'T4', 'T5', 'T6']
+export const WIRED: readonly Stage[] = ['T2', 'T3', 'T4', 'T5', 'T6', 'T8']
 
 /** 大段粘贴那一对记号（终端发出来的那一对）：`decoderOf` 用它把原文整段交给 `insert`。 */
 export const PASTE_ON = '\u001b[200~'

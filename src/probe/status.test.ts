@@ -51,6 +51,7 @@ import {
   snapshot,
   statusOf,
 } from './status.ts'
+import { readingsOf } from './status.ts'
 import type { StatusRow } from './status.ts'
 import { follow, readNew } from './watch.ts'
 
@@ -625,4 +626,47 @@ test('⑪ 范围写进读数：两支按轮次筛、一支整份账，标签就�
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+
+// ⑫ T8 那一句断言：界面那一头「切过去」与 status --agent <x> 读的是同一批行。
+//
+// 「切过去」在界面那一头就是「筛行再折」（ui/follow.ts：focus 给了就 rows.filter），命令面那一头是
+// readings(log, { agent })。两处必须是同一个口径——不然面板上印的与 status --agent <x> --once 印的
+// 是两份读数，而两边都不报错。负对照是不滤的那一份（整份账）。
+test('⑫ `--agent` 那一档与界面「切过去」读的是同一批行（T8）', async () => {
+  // 两行归主线（持轮者那一份），一行归第一格 agent。这一条量的是「两处筛的是不是同一批行」，
+  // 所以行的形状只要对得上折法就行（形状取自 dispatch.test.ts 的夹具）。
+  const lines: readonly StatusRow[] = [
+    ...chain('r1' as RoundId, [
+      ['Idle', 'Planning'],
+      ['Planning', 'Delegated'],
+    ]),
+    row(
+      { t: 'round/intent', round: 'r1' as RoundId, base: 'a'.repeat(40) as never, digest: 'd'.repeat(16), body: '{}' },
+      'agent/r1/1',
+    ),
+  ]
+  // 一个只有 readMerged 的口：命令面那一档读的正是它（probe/status.ts 的 readings）。
+  const fake = {
+    readMerged: async function* () {
+      for (const r of lines) yield r
+    },
+  }
+  const viaFlag = await readings(fake, { agent: 'agent/r1/1' })
+  const viaUi = readingsOf(
+    lines.filter((r) => r.pos.writer === 'agent/r1/1'),
+    {},
+  )
+  assert.deepEqual(viaFlag, viaUi, '命令面那一档与界面那一档不是同一份读数')
+  const whole = await readings(fake, {})
+  assert.notDeepEqual(whole, viaUi, '负对照：整份账那一档与只读那一格那一档相同——那这一条没有牙')
+  assert.notDeepEqual(viaFlag, whole, '同一句的另一种说法：滤过的那一份与整份账不同')
+  console.log(
+    '⑫ 读数：--agent 那一档与界面切过去那一档逐字段相同（' +
+      String(lines.filter((r) => r.pos.writer === 'agent/r1/1').length) +
+      ' 行那一份）· 整份账那一档（' +
+      String(lines.length) +
+      ' 行）与它不同',
+  )
 })

@@ -40,7 +40,7 @@
 //
 // **退出**：`close()` 把面板那 K 行删掉（`\x1b[KM`），终端历史里只剩永久行；没画过、或宽度变过
 // （重排之后不知道那 K 行落在哪）就一个字节都不写。
-import type { BottomInput, MenuInput } from './frame.ts'
+import type { BottomInput, MenuInput, NavInput } from './frame.ts'
 import { panelOf, widthOf } from './frame.ts'
 
 /** 底部那块区域的**恒定**行数（PLAN § 5.19：K 取 12；画出框的下限是 5，12 够放处境那几行）。 */
@@ -150,6 +150,18 @@ export interface ViewInput {
    * 那一栏（输入行还在它下面）。
    */
   readonly bottom?: BottomInput | undefined
+  /**
+   * 树那几个节点（`T8`）：**排在内容那一栏的最上面**（导航：主线为根 · agent 缩进一级）。`sel` 是选中
+   * 哪一个（`frame.ts` 那一层按它把选中的那个留在窗里）。
+   */
+  readonly nav?: NavInput | undefined
+  /**
+   * 切到哪一格（`T8`）：agent 的 writer id，`undefined` 或 `null` = **整份账**（主线那一档）。
+   *
+   * 折帧那一头**按它筛行**（`ui/follow.ts`）——不是折完再挑印哪几行，于是"切过去"与 `status --agent
+   * <x>` 读的是同一批行（`T8` 那句断言查的就是它）。
+   */
+  readonly focus?: string | null | undefined
   readonly input?: PanelInput | undefined
 }
 

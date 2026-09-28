@@ -21,6 +21,8 @@ import type { MenuRow, MenuSource } from '../../ui/menu.ts'
 import { GATE_KEEP, GATE_VIEW, gateFaceOf, gateRowsOf, lineOf, pressGate, stepAt } from '../../ui/gate.ts'
 import type { GateFace, GateOption, GateView } from '../../ui/gate.ts'
 import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from '../../ui/queue.ts'
+import { altAt, clampNav, navNodesOf, navRowsOf, stepNav, writerAt } from '../../ui/nav.ts'
+import type { NavNode } from '../../ui/nav.ts'
 import type { QueueState } from '../../ui/queue.ts'
 import { pendingOf } from '../../round/dispatch.ts'
 import { identFor } from '../../identity.ts'
@@ -65,7 +67,12 @@ export async function statusCmd(
   try {
     // 钱那一栏要一个档：**读的时候按当时的钟算**（官方价目分峰谷两档）。
     const phase = phaseOf(new Date())
-    const r = await readings(log, { metrics: flags.has('metrics'), report: flags.has('report') })
+    const only = flags.get('agent')
+    const r = await readings(log, {
+      metrics: flags.has('metrics'),
+      report: flags.has('report'),
+      ...(typeof only === 'string' ? { agent: only } : {}),
+    })
     if (json) {
       // **没要的那一栏不出现**（不是空数组）：`JSON.stringify` 丢掉没定义的键，于是这一份对象
       // 去掉 `width` / `height` 就是 `FrameInput`。
@@ -291,9 +298,14 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       bottomRows.length === 0
         ? {}
         : { bottom: { rows: bottomRows, keep: (gateOn ? GATE_KEEP : 0) + (queueOn ? 1 : 0) } }
+    // 树那一栏（`T8`，排在最上面）与"切到哪一格"（`focus`：`null` = 整份账）。
+    const navRows = navRowsOf(navNodes, navAt, term.columns - 1)
+    const navPart = navRows.length === 0 ? {} : { nav: { rows: navRows, sel: navAt } }
     return {
+      ...navPart,
       ...(panel === null ? {} : { menu: { rows: rowsTextOf(rowsOf(panel.source)), sel: panel.sel } }),
       ...bottomPart,
+      focus: writerAt(navNodes, navAt),
       input: { rows: frame.rows, caret: frame.caret },
     }
   }
@@ -306,6 +318,17 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     // 账往前动一条就问一次（`T6`）：门口那一批要不要重算——重算只在 `round/*` 与 `holder/*` 那两族
     // 上走（见 `refreshGate`），所以这里只排一件事，不在这一趟里读账。
     onAdvance: (rows) => {
+      // 树（`T8`）：节点从账推出来，账一动就跟上——**只在集合真的变了的时候重画**（跟随那一趟每条
+      // 行都要走这里，白画一次就是白烧一帧）。
+      const nodes = navNodesOf(tui.session.rows)
+      const changed = nodes.length !== navNodes.length || nodes.some((x, i) => x.id !== navNodes[i]?.id)
+      if (changed) {
+        navNodes = nodes
+        navAt = clampNav(nodes.length, navAt)
+        tui.redraw()
+      }
+      // 门口那一批（`T6`）：只在 `round/*` 与 `holder/*` 那两族上重算（一趟读全量日志是 O(行数)，
+      // 拿它去乘 `llm/call` 那些高频行就等于把跟随这一档拖垮）。
       if (rows.some((r) => r.e.t.startsWith('round/') || r.e.t.startsWith('holder/'))) void refreshGate()
     },
     readings: { metrics: flags.has('metrics'), report: flags.has('report') },
@@ -345,6 +368,12 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
    * 什么"——所以它进程一退就没了，也不该有第二个读者。忙的时候打的那几条进这里，跑完一趟取一条。
    */
   let queue: QueueState = EMPTY_QUEUE
+  /**
+   * 树上那几个节点与选中哪一个（`T8`）。**节点是从账推出来的**（`navNodesOf`：主线在前、agent 缩进
+   * 一级），账一动它就跟着动——界面这一头没有第二份"有哪几格"的清单。
+   */
+  let navNodes: readonly NavNode[] = []
+  let navAt = 0
   /**
    * 跑完一趟要不要**自动**接着起下一条（`T7`）。缺省要；**被 `Esc` / `Ctrl-C` 打断之后不要**——
    * 人刚说了停，排队那几条停在那儿等他（`Enter` 起下一条 · `Esc` 丢掉）。起新的一条时又回到"要"。
@@ -673,7 +702,17 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
         if (d.action === 'complete') {
           const source: MenuSource = panel?.source ?? (ed.draft.text.startsWith('/') ? 'cmd' : 'keys')
           const next = completeOf({ rows: rowsOf(source), line: ed.draft.text, source })
-          if (next !== null) ed = applyIntent(ed, { t: 'setLine', text: next })
+          if (next !== null) {
+            ed = applyIntent(ed, { t: 'setLine', text: next })
+            settle()
+            return
+          }
+          // **补不动就轮到"在面板之间循环"**（§ 5.19 二那张表 `Tab` 那一行的后半句）：树上的节点换一个
+          // （主线 → 各 agent → 主线）。两处不让：弹层开着时 `↑`/`↓` 是选项那一档，这一下不抢它。
+          if (panel === null && navNodes.length > 1) {
+            navAt = stepNav(navNodes.length, navAt, 1)
+            tui.note(`切到 ${navNodes[navAt]?.label ?? ''}（${navAt + 1}/${navNodes.length}）`)
+          }
           settle()
           return
         }
@@ -698,8 +737,19 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
           settle()
           return
         }
-        // ⑨ 剩下的编辑动作（`ui/input.ts` 认的那些）一律进输入行；别的（`focus` 那一档导航）还没
-        // 接线，安静丢掉——与"认不出来的字节丢掉"同一条。
+        // ⑨ `Alt-1…9`：**直选第 n 格 agent**（`T8`）。没有那么多个就安静丢掉（与"认不出来的字节丢掉"
+        // 同一条：不猜）。
+        if (d.action === 'focus' && d.n !== undefined) {
+          const at = altAt(navNodes, d.n)
+          if (at !== null) {
+            navAt = at
+            tui.note(`切到 ${navNodes[at]?.label ?? ''}（${at + 1}/${navNodes.length}）`)
+            settle()
+            return
+          }
+          return
+        }
+        // ⑩ 剩下的编辑动作（`ui/input.ts` 认的那些）一律进输入行；别的（认不出来的动作）安静丢掉。
         const it = intentOf(d.action, d.text ?? '')
         if (it === null) return
         ed = applyIntent(ed, it)
