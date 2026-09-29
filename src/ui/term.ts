@@ -276,6 +276,12 @@ export interface Term {
   /** 上一次量到的列宽（量不到就是兜的那个 80）。 */
   readonly columns: number
   /**
+   * 上一次量到的终端行数（量不到是 `undefined`）。舞台按它给面板**分账**期望高度
+   * （`ui/stage.ts` 的 `panelWantOf`：输入那块不得与显示区等高）——`draw` 里**先量再问期望**，
+   * 所以每一帧拿到的都是当时的数。
+   */
+  readonly rows: number | undefined
+  /**
    * 此刻在不在 alt screen 里（`T10`）：`--full` 且画得出来（TTY · `$TERM` 认得）才有为真的那一档。
    * `close()` 之后一定是 `false`——写没写出去那条 `ALT_OFF` 由它说了算，写一次就归位。
    */
@@ -304,6 +310,8 @@ export function openTerm(o: TermOptions): Term {
   let columns = FALLBACK_COLUMNS
   let drawn = false
   let drawnColumns = 0
+  /** 上一次量到的终端行数（`draw` 每帧先量再问期望——`rows` 那只口读它）。 */
+  let seenRows: number | undefined = undefined
   /** 上一次那一帧实际画的高度——高度变了就不上移（残的那一块留给终端重排，与宽度变同一条路）。 */
   let drawnHeight = 0
   /** 上一次画的时候终端有几行——close 现量一次，行数变了就不删面板（量不到它落在哪）。 */
@@ -323,6 +331,9 @@ export function openTerm(o: TermOptions): Term {
     get columns(): number {
       return columns
     },
+    get rows(): number | undefined {
+      return seenRows
+    },
     get alt(): boolean {
       return alt
     },
@@ -332,6 +343,8 @@ export function openTerm(o: TermOptions): Term {
       // **夹紧（U6）**：期望夹进终端行数（留一行），量不到行数就不夹（那一档与从前逐字节相同）。
       const rowsSeen = measureRows()
       const rowsKnown = typeof rowsSeen === 'number' && rowsSeen > 0
+      // 先记账再问期望（`wantOf`）：舞台的 `panelWantOf` 读 `term.rows` 按这一帧的行数分账。
+      seenRows = rowsKnown ? (rowsSeen as number) : undefined
       const cap = rowsKnown ? (rowsSeen as number) - 1 : Number.POSITIVE_INFINITY
       const h = Math.max(1, Math.min(wantOf(), cap))
       // 矮档：量得到行数、而按行数画面板连框都放不下（面板最少 `MIN_HEIGHT` 行）→ 只印永久行。

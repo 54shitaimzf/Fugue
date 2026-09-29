@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import type { StatusRow } from '../probe/status.ts'
 import { gateFaceOf, lineOf } from './gate.ts'
 import type { GateFace } from './gate.ts'
-import { openStage } from './stage.ts'
+import { openStage, panelWantOf } from './stage.ts'
 import type { LineArgv, RunLauncher } from './run.ts'
 
 /** 假的那一只手（`RunLauncher` 的四样全记下来：起了什么 · 停过没有 · argv 现推）。 */
@@ -26,7 +26,9 @@ interface Ctl {
  * 一个舞台与它的假世界：note 记行 · redraw 计数 · press/stop 记档 · 钟可拨（`tick`）·
  * `running` 与 `face` 可中途改（「那一趟跑完了」「门口停了一批」都是中途发生的事）。
  */
-function stageOf(o: { face?: GateFace | null; rows?: readonly StatusRow[]; running?: boolean } = {}): {
+function stageOf(
+  o: { face?: GateFace | null; rows?: readonly StatusRow[]; running?: boolean; termRows?: number } = {},
+): {
   stage: ReturnType<typeof openStage>
   ctl: Ctl
   tick: (ms: number) => void
@@ -65,6 +67,7 @@ function stageOf(o: { face?: GateFace | null; rows?: readonly StatusRow[]; runni
       ctl.redraws += 1
     },
     columns: () => 80,
+    termRows: () => o.termRows,
     rows: () => ctl.rows,
     pendingFace: async () => ctl.face,
     run: () => go,
@@ -179,4 +182,31 @@ test('⑤ 门关着按 y：它就是个字（进输入行），一个进程都�
   assert.equal(ctl.notes.filter((n) => n.includes('举了手') || n.includes('按了')).length, 0, '也不说门口那些话')
   const line = (stage.view().input?.rows ?? []).join(' ')
   assert.ok(line.includes('yn'), `y 与 n 都进了输入行（实得 ${JSON.stringify(line)}）`)
+})
+
+test('⑥ 面板高度按终端行数分账：输入那块不得与显示区等高（2026-09-29 的口径）', () => {
+  // 纯表：panelWantOf 在几档典型终端上的读数——缺省至多 2/5（下限 8 · 上限 K）· 弹层至多
+  // 3/5（上限 24 · 下限是缺省档 + 4）· 量不到行数不分账。
+  assert.deepEqual(
+    [24, 30, 40, 16].map((r) => panelWantOf(r, false)),
+    [9, 11, 12, 8],
+    '缺省档：24 行终端 9 行（+输入行 = 10，显示区 14——显示占大头）· 40 行及以上回到 K',
+  )
+  assert.deepEqual(
+    [24, 30, 40, 16].map((r) => panelWantOf(r, true)),
+    [13, 17, 23, 12],
+    '弹层档：至多 3/5（上限 24），下限是缺省档 + 4',
+  )
+  assert.deepEqual(
+    [panelWantOf(undefined, false), panelWantOf(undefined, true)],
+    [12, 24],
+    '量不到行数：不分账，回 K / OVERLAY_WANT（与「量不到就不夹」同一条）',
+  )
+  // 接线：24 行的终端上想要 9 行；开一层弹层（Ctrl-P 候选）长到 13；Esc 收掉回到 9。
+  const { stage } = stageOf({ termRows: 24 })
+  assert.equal(stage.heightWant(), 9, '接线：heightWant 读 deps.termRows 分账')
+  stage.onAction({ action: 'panel' })
+  assert.equal(stage.heightWant(), 13, '弹层开着走 3/5 那一档')
+  stage.onAction({ action: 'cancel' })
+  assert.equal(stage.heightWant(), 9, '收掉弹层回到缺省那一档')
 })

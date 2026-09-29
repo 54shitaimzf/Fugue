@@ -32,10 +32,37 @@ import { FLAGS_OF } from '../cli/flags.ts'
 import type { StatusRow } from '../probe/status.ts'
 
 /**
- * 弹层（菜单 · 阅读面）开着时的期望高度（U6）：候选与正文要装得下几行。它仍要夹进终端行数
+ * 弹层（菜单 · 阅读面）开着时的期望高度上限（U6）：候选与正文要装得下几行。它仍要夹进终端行数
  * （`ui/term.ts` 那一层量得到行数就夹）——想要多大是这一头的事，画得下多大是那一头的事。
  */
 const OVERLAY_WANT = 24
+
+/**
+ * 面板高度怎么按终端行数**分账**（2026-09-29 用户拍的口径：**输入那块不得与显示区等高**——固定
+ * 12 行在常见的 24 行终端上占了半屏，底下那块与上面留给输出的地方一边高，不符合直觉）：
+ *
+ *   · 缺省那档至多占终端（行数 − 1）的 **2/5**：24 行终端 → 9 行（面板 9 + 输入行 1 = 10，上面
+ *     显示区 14——显示占大头）；40 行及以上回到 `K` 那个上限（12）；
+ *   · 弹层开着那档至多占 **3/5**（上限 `OVERLAY_WANT`），下限是缺省那档 + 4——弹层要的是更大，
+ *     不是更小；
+ *   · 再矮不矮过 `PANEL_MIN`（框与账尾 4 行 + 内容 4 行）——终端真的很小时输入那块占大头是免不了
+ *     的事，如实如此；
+ *   · 量不到行数（`undefined`）就不分账，回 `K` / `OVERLAY_WANT`——与 `ui/term.ts`「量不到就
+ *     不夹」同一条。
+ *
+ * 出来的数仍是**期望**：夹进终端行数（`clamp(期望, 1, 行数 − 1)`）归 `ui/term.ts` 那一层。
+ */
+export const PANEL_SHARE = 2 / 5
+export const OVERLAY_SHARE = 3 / 5
+export const PANEL_MIN = 8
+
+/** 分账那一档的期望高度。纯函数：`stage.test.ts` ⑥ 拿几档典型终端的读数钉着它。 */
+export function panelWantOf(rows: number | undefined, overlay: boolean): number {
+  if (rows === undefined) return overlay ? OVERLAY_WANT : K
+  const base = Math.min(K, Math.max(PANEL_MIN, Math.floor((rows - 1) * PANEL_SHARE)))
+  if (!overlay) return base
+  return Math.max(base + 4, Math.min(OVERLAY_WANT, Math.floor((rows - 1) * OVERLAY_SHARE)))
+}
 
 /** 舞台要的外面那几样：全是「问一句」的函数（晚绑定——句柄建起来之前舞台先立着）。 */
 export interface StageDeps {
@@ -45,6 +72,11 @@ export interface StageDeps {
   readonly redraw: () => void
   /** 这一刻的终端列数——`term.columns`。 */
   readonly columns: () => number
+  /**
+   * 这一刻的终端行数——`term.rows`（量不到是 `undefined`）。面板高度按它分账（`panelWantOf`：
+   * 输入那块不得与显示区等高，2026-09-29 的口径）；量不到就回 `K` / `OVERLAY_WANT`。
+   */
+  readonly termRows: () => number | undefined
   /** 这一刻账上的行——`tui.session.rows`（导航树与阅读面都从它推，不另开读法）。 */
   readonly rows: () => readonly StatusRow[]
   /** 算门口那一批折成的那一面（`pendingOf` → `gateFaceOf`；配置读不出 · 没停在门口 → null）。 */
@@ -71,7 +103,10 @@ export interface Stage {
   startNext(): boolean
   /** 一趟收尾那一下（原 `openRun` 的 `onDone`：说了什么 · 要退就退 · 要接就接下一条）。 */
   onRunDone(r: RunOutcome): void
-  /** 这一刻期望的面板高度（弹层开着 → `OVERLAY_WANT`，否则 `K`；`openTerm` 的 `heightOf`）。 */
+  /**
+   * 这一刻期望的面板高度（`openTerm` 的 `heightOf`）：按终端行数分账（`panelWantOf`——缺省至多
+   * 2/5 · 弹层开着至多 3/5；量不到行数回 `K` / `OVERLAY_WANT`）。画得下多少仍归终端层夹。
+   */
   heightWant(): number
   /** stdin 是不是终端（`openKeys` 之后才知道——`view` 里输入行画不画看它）。 */
   setRaw(raw: boolean): void
@@ -679,7 +714,7 @@ export function openStage(deps: StageDeps): Stage {
     refreshGate,
     startNext,
     onRunDone,
-    heightWant: (): number => (panel !== null || reading !== null ? OVERLAY_WANT : K),
+    heightWant: (): number => panelWantOf(deps.termRows(), panel !== null || reading !== null),
     setRaw(raw: boolean): void {
       showInput = raw
     },

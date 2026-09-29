@@ -305,6 +305,7 @@ test('⑩ 行数也量（U6）：rows=8 期望 12 → 夹到 7 行；rows=3 → 
   const t = openTerm({ out: f, term: 'xterm-256color' })
   t.draw([], () => ['a'])
   assert.equal(writtenRows(f).length, 7, `rows=8 期望 12 该夹到 7 行（留一行），拿到 ${writtenRows(f).length}`)
+  assert.equal(t.rows, 8, 'rows 那只口报上一次量到的行数（舞台分账高度读它）')
   // 矮到画不出框：rows=3 → 夹到 2，比 MIN_HEIGHT 还小 → 只印永久行，一个 ANSI 都不写
   // （矮那一帧屏幕顶紧挨着历史，`CLEAR_LINE` 会把历史吃掉一行）。
   f.written.length = 0
@@ -318,6 +319,7 @@ test('⑩ 行数也量（U6）：rows=8 期望 12 → 夹到 7 行；rows=3 → 
   f.rows = 24
   t.draw([], () => ['b'])
   assert.equal(writtenRows(f).length, 12, `rows=24 期望 12 → 12 行，拿到 ${writtenRows(f).length}`)
+  assert.equal(t.rows, 24, '行数变了之后那一帧报的是新的数')
   assert.ok(f.written[0]?.startsWith(`\r${CLEAR_LINE}`) === true, '矮那一帧之后回来该另起一块（第一笔是回车+清行，不是上移）')
   // 期望每一帧现问：`heightOf` 给多大（装得下时）就画多高。
   const g = fakeOut({ columns: 80 })
@@ -330,6 +332,7 @@ test('⑩ 行数也量（U6）：rows=8 期望 12 → 夹到 7 行；rows=3 → 
   const t3 = openTerm({ out: h, term: 'xterm-256color' })
   t3.draw([], () => ['d'])
   assert.equal(writtenRows(h).length, 12, '量不到行数该按期望画（K=12）')
+  assert.equal(t3.rows, undefined, '量不到行数那只口就是 undefined（不分账）')
   // 行数变过（宽度没变）之后 close：不删面板——量不到那一块落在哪。
   g.written.length = 0
   g.rows = 30

@@ -261,6 +261,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     note: (line) => ui.tui?.note(line),
     redraw: () => ui.tui?.redraw(),
     columns: () => term.columns,
+    // 终端行数（分账面板高度那一档的输入；`rows` 那一只 dep 是「账上的行」，名字各归各）。
+    termRows: () => term.rows,
     rows: () => ui.tui?.session.rows ?? [],
     pendingFace,
     run: () => ui.go,
