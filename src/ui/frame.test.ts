@@ -342,3 +342,43 @@ test('⑧ 阅读面那一栏：整块地方给它（树与内容都让位）· �
   assert.ok(cut.lines.some((l) => l.includes('第 1 行正文')), '头一行仍在（不是从中间挖掉一块）')
   for (const l of cut.lines) assert.equal(widthOf(l), 80, `每一行都该是 80 列：${JSON.stringify(l)}`)
 })
+
+// ── ⑨ 行的角色（U20 样式层地基）─────────────────────────────────────────────
+test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账尾 footer · 正文 body · 候选与门口 overlay · 阅读面 read · 矮帧报 body', () => {
+  const base = { snapshot: snapshotOf(), metrics: METRICS, report: REPORT, width: 100, height: 19 }
+  const f = frameOf({
+    ...base,
+    menu: { rows: ['候选一', '候选二'], sel: 0 },
+    bottom: { rows: ['门口那一块 · 第 1/1 份'], keep: 1 },
+  })
+  assert.equal(f.roles.length, f.lines.length, 'roles 与 lines 平行（逐行对应）')
+  assert.equal(f.roles[0], 'border', '头一行是框线')
+  assert.equal(f.roles[f.roles.length - 1], 'border', '末行是框线')
+  assert.equal(f.roles.filter((r) => r === 'border').length, 3, '框线三行（上下两根 + 账尾那根分隔）')
+  const footAt = f.lines.findIndex((l) => l.includes(f.footer))
+  assert.ok(footAt >= 0, '账尾那一行找得到')
+  assert.equal(f.roles[footAt], 'footer', '账尾那一行报 footer')
+  const menuAt = f.lines.findIndex((l) => l.includes('候选一'))
+  assert.ok(menuAt >= 0 && f.roles[menuAt] === 'overlay', '候选那一层报 overlay')
+  const gateAt = f.lines.findIndex((l) => l.includes('门口那一块'))
+  assert.ok(gateAt >= 0 && f.roles[gateAt] === 'overlay', '门口那一块报 overlay')
+  const bodyAt = f.lines.findIndex((l) => l.includes('轮次 r1 · 状态'))
+  assert.ok(bodyAt >= 0 && f.roles[bodyAt] === 'body', '读数那一行报 body')
+
+  // 阅读面开着：正文那些行报 `read`（临时那一层的另一种）。
+  const r = frameOf({ ...base, read: { rows: ['标题', '正文一'], top: 0 } })
+  const readAt = r.lines.findIndex((l) => l.includes('正文一'))
+  assert.ok(readAt >= 0 && r.roles[readAt] === 'read', '阅读面正文报 read')
+
+  // 矮帧：那句「画不出框」报 body；空帧 roles 是空的。
+  const short = frameOf({ ...base, height: 3 })
+  assert.equal(short.lines.length, 1, '矮帧只那一行话')
+  assert.deepEqual([...short.roles], ['body'], '矮帧那一行报 body')
+  assert.deepEqual([...frameOf({ ...base, width: 0, height: 0 }).roles], [], '空帧 roles 空')
+
+  console.log(
+    `⑨ 读数：${f.lines.length} 行里 border ×${f.roles.filter((x) => x === 'border').length} · ` +
+      `footer ×${f.roles.filter((x) => x === 'footer').length} · overlay ×${f.roles.filter((x) => x === 'overlay').length} · ` +
+      '其余 body · 阅读面行报 read · 矮帧报 body',
+  )
+})

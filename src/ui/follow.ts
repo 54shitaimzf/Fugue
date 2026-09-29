@@ -167,7 +167,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
     foldedAt = rows.length
     return folded
   }
-  /** 那一刻的面板那几行。**纯函数**：这一档累起来的行 + 界面自己那几样（现问一次）。 */
+  /** 折整帧（面板要 `roles` 那一份，U20；`frame()` 那个入口只取 `lines`）。**纯函数**：这一档累起来的行 + 界面自己那几样（现问一次）。 */
   // **帧快照记忆（U16）**：三份读数是纯函数对「这一批行 · 焦点 · readings 选项」的答案。`rows`
   // 每批 `push` 换新引用，键就是它——**同一批**被问几遍（`note()` 连按 · `redraw()` · `frame()`
   // 与 `panel()` 各问一遍）都命中同一份答案，一批新到恰折一次。焦点一变（`Tab` 切格）键就换；
@@ -191,7 +191,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
     snap = { rows, focus, readings: o.readings, value }
     return value
   }
-  const frameAt = (size: { readonly columns: number; readonly height: number }): readonly string[] => {
+  const frameFullAt = (size: { readonly columns: number; readonly height: number }) => {
     const v = o.view?.()
     const input: FrameInput = {
       // 三份读数与 `status --once` 同一个入口（`readingsOf`）——命令面与这一档读的是同一份。
@@ -207,8 +207,10 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       width: size.columns,
       height: size.height,
     }
-    return frameOf(input).lines
+    return frameOf(input)
   }
+  const frameAt = (size: { readonly columns: number; readonly height: number }): readonly string[] =>
+    frameFullAt(size).lines
   return {
     get rows(): readonly StatusRow[] {
       return rows
@@ -232,7 +234,9 @@ export function openSession(o: SessionOptions = {}): TuiSession {
     frame: frameAt,
     panel(size: { readonly columns: number; readonly height: number }): Panel {
       const v = o.view?.()
-      return { rows: frameAt(size), ...(v?.input === undefined ? {} : { input: v.input }) }
+      const f = frameFullAt(size)
+      // `roles` 与 `rows` 平行（U20）：终端那一层按它查主题；排版在 `ui/frame.ts`，这里只是带话。
+      return { rows: f.lines, roles: f.roles, ...(v?.input === undefined ? {} : { input: v.input }) }
     },
   }
 }

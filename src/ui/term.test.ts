@@ -30,10 +30,11 @@ import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow } from '../probe/status.ts'
 import { statusOf } from '../probe/status.ts'
-import { frameOf } from './frame.ts'
+import { frameOf, panelOf } from './frame.ts'
+import type { LineRole } from './frame.ts'
 import { widthOf } from './glyph.ts'
 import { permanentLinesOf } from './stream.ts'
-import { ALT_OFF, ALT_ON, CLEAR_LINE, FALLBACK_COLUMNS, K, ansiOf, deleteLinesOf, degradeNote, leftOf, openTerm, upOf } from './term.ts'
+import { ALT_OFF, ALT_ON, CLEAR_LINE, FALLBACK_COLUMNS, K, STYLE_OFF, ansiOf, deleteLinesOf, degradeNote, leftOf, openTerm, upOf } from './term.ts'
 import type { Term, TermOut } from './term.ts'
 
 /** 一个假的 sink：**写出去的每一次 `write` 就是一条读数**（一次 write = 一个动作）。 */
@@ -530,5 +531,61 @@ test('⑪ 行级 diff（U8）：可见与 panelOf 全等 · 帧未变零 CLEAR_L
   console.log(
     `⑪ 读数：变 1 行的那帧 ${second.length} 字节（1 个 CLEAR_LINE · 8 个掠过）· 帧未变那帧 ` +
       `${third.length} 字节（0 个 CLEAR_LINE）· 输入行 2→1 擦掉残影 · close 收走面板`,
+  )
+})
+
+// ── ⑫ 主题地基（U20）：默认全关字节不变 · 有值恰那一种行被包 · 屏幕可见内容一个不变 ─────────
+
+test('⑫ 主题地基（U20）：缺省与空表逐字节相同 · 有值恰那一种行被包（先补宽再包裹）· 可见内容不变', () => {
+  // 一帧真排版（这一份小账画出来 7 行），`roles` 由 `frameOf` 报出——终端那一层只照它查主题。
+  const W = 100
+  const frame = frameOf({ snapshot: SNAPSHOT, permanent: PERMANENT, width: W, height: 16 })
+  assert.equal(frame.roles.length, frame.lines.length, 'roles 与 lines 平行（逐行对应）')
+  assert.ok(frame.roles.includes('border') && frame.roles.includes('footer'), '框线与账尾都报得出角色')
+
+  const drawWith = (theme: Readonly<Partial<Record<LineRole, string>>> | undefined): string => {
+    const f = fakeOut({ columns: W })
+    const t = openTerm({ out: f, height: 16, term: 'xterm-256color', ...(theme === undefined ? {} : { theme }) })
+    t.draw([], () => ({ rows: frame.lines, roles: frame.roles }))
+    return streamOf(f)
+  }
+
+  // ① 默认全关：不给 `theme` 与给一张**空表**逐字节相同——「没这回事」就是缺省档（U20 的冻结点）。
+  assert.equal(drawWith(undefined), drawWith({}), '缺省与空表 theme 的字节流不逐字节相同')
+
+  // ② 有值恰那一种行被包：`border` 给 `\x1b[2m` → 帧里恰框线那几行被 `2m…0m` 包住；整个帧等于
+  //    「`panelOf` 先补宽 · 再逐行按角色包裹」的那一份（补出来的空行没有角色，不包）。
+  const dim = '\x1b[2m'
+  const plain = drawWith(undefined)
+  const themed = drawWith({ border: dim })
+  assert.notEqual(themed, plain, '有主题的那一帧字节流该有差别')
+  const borders = frame.roles.filter((r) => r === 'border').length
+  assert.equal(themed.split(dim).length - 1, borders, `\x1b[2m 恰出现框线那么多次（该 ${borders}）`)
+  const styledRows = panelOf(frame.lines, 16, W).map((line, i) =>
+    i < frame.roles.length && frame.roles[i] === 'border' ? `${dim}${line}${STYLE_OFF}` : line,
+  )
+  assert.equal(themed, styledRows.map((r) => `\r${CLEAR_LINE}${r}\n`).join(''), '有主题那一帧 = 先补宽再逐行包裹的那一份')
+
+  // ③ 屏幕可见内容一个不变（SGR 是零宽的——模拟器跳过认不得的 CSI 之后，屏幕上没有差）。
+  assert.deepEqual(
+    screenOf(themed, 24, W).map((r) => r.trimEnd()),
+    screenOf(plain, 24, W).map((r) => r.trimEnd()),
+    '有主题那一帧的屏幕可见内容与无主题的全等',
+  )
+
+  // ④ U8 的行级 diff 不用知道主题：同一主题下画一帧**未变**的 → 0 个 CLEAR_LINE（diff 的比对
+  //    底稿记的是包裹后的串，同主题同串照旧掠过）。
+  const f2 = fakeOut({ columns: W })
+  const t2 = openTerm({ out: f2, height: 16, term: 'xterm-256color', theme: { border: dim } })
+  t2.draw([], () => ({ rows: frame.lines, roles: frame.roles }))
+  f2.written.length = 0
+  t2.draw([], () => ({ rows: frame.lines, roles: frame.roles }))
+  const again = streamOf(f2)
+  assert.equal(again.split(CLEAR_LINE).length - 1, 0, '同一主题下未变的帧 0 个 CLEAR_LINE')
+  t2.close()
+
+  console.log(
+    `⑫ 读数：7 行里框线 ${borders} 行被 2m…0m 包住（先补宽再包裹）· 可见内容与无主题全等 · ` +
+      `未变帧 ${again.length} 字节 0 个 CLEAR_LINE`,
   )
 })

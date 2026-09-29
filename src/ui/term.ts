@@ -77,6 +77,7 @@
 // ——少写它，那台终端就停在另一块屏上，而 `--full` 缺省关的时候一个字节都不会写（两档各归各的）。
 import type { BottomInput, MenuInput, NavInput, ReadInput } from './frame.ts'
 import { MIN_HEIGHT, panelOf } from './frame.ts'
+import type { LineRole } from './frame.ts'
 import { widthOf } from './glyph.ts'
 
 /** 底部那块区域的**缺省**期望行数（PLAN § 5.19：K 取 12；画出框的下限是 5，12 够放处境那几行）。实际画的高度是它夹进终端行数的那一个（U6）。 */
@@ -111,6 +112,12 @@ export const ALT_ON = '\x1b[?1049h'
  * 都写（面板删不删是另一码事：宽度变过那一档不删面板，但**一样要出来**）。
  */
 export const ALT_OFF = '\x1b[?1049l'
+
+/**
+ * 样式归位（U20 主题的那只右手）：有主题的角色包成 `sgr + 行 + STYLE_OFF`——每行自带归位，
+ * 行与行之间不互相记账（U8 的行级 diff 于是不用知道主题存在）。
+ */
+export const STYLE_OFF = '\x1b[0m'
 
 /**
  * 这一台终端认不认得那几条 escape。**认不出来就退**（不是"试一下"）：手写 ANSI 丢掉的那唯一样
@@ -186,6 +193,11 @@ export interface PanelInput {
 /** 面板那一块：`rows` 是那个框（补到正好 `height` 行），`input` 是它下面那几行输入行（不给就没有）。 */
 export interface Panel {
   readonly rows: readonly string[]
+  /**
+   * 那几行各自的角色（U20，与 `rows` 逐行对应；短出来的按 `body`）。**只在地基这一层报**——
+   * 有没有样式由 `theme` 说了算，不给 `roles` 就当全是 `body`。
+   */
+  readonly roles?: readonly LineRole[] | undefined
   readonly input?: PanelInput | undefined
 }
 
@@ -247,6 +259,13 @@ export interface TermOptions {
    * 不是 TTY 或 `$TERM` 认不出来时它没有意义（那一档一个字节的 ANSI 都不写，更不进 alt screen）。
    */
   readonly full?: boolean | undefined
+  /**
+   * 主题（U20 样式层地基）：每种行角色给一段 SGR 序列（比如 `border: '\x1b[2m'`）。**缺省空表——
+   * 字节流一个不变**；有值的角色**先补宽再包裹**（`sgr + 行 + \x1b[0m`）：SGR 是零宽的，可见宽度
+   * 仍 = 列数，于是 U8 的行级 diff 与 `close()` 的删行算术**不用知道主题存在**。永久行与输入行
+   * 不在这一层（永久行进终端历史，`| tee` 仍干净；输入行是光标算术那一行，不掺 SGR）。
+   */
+  readonly theme?: Readonly<Partial<Record<LineRole, string>>> | undefined
 }
 
 export interface Term {
@@ -336,7 +355,14 @@ export function openTerm(o: TermOptions): Term {
       // 面板先算好：**尺寸是刚刚量到的那一个**（渲染与摆是同一把尺，所以 1 逻辑行 = 1 物理行）。
       const asked = render({ columns, height: h })
       const spec: Panel = Array.isArray(asked) ? { rows: asked } : asked
-      const rows = panelOf(spec.rows, h, columns)
+      // **先补宽再包裹**（U20）：`panelOf` 把每行补到正好列数，有主题的角色在那之外再包一层
+      // `sgr…off`——SGR 零宽，可见宽度仍 = 列数。`lastRegion` 记的就是这一份（包裹后的）串，
+      // 同一主题下「变没变」的判定与无主题时一个样；主题中途换了（没人这么用）也只是整帧重写。
+      const rows = panelOf(spec.rows, h, columns).map((line, i) => {
+        const role = i < (spec.roles?.length ?? 0) ? (spec.roles as readonly LineRole[])[i] : 'body'
+        const sgr = o.theme?.[role]
+        return sgr === undefined ? line : `${sgr}${line}${STYLE_OFF}`
+      })
       const input = spec.input
       const body = input === undefined ? [] : input.rows
       const region = [...rows, ...body]

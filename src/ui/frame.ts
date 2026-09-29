@@ -65,7 +65,19 @@ export interface Frame {
   readonly footer: string
   /** 整帧：`height` 行以内，逐行等宽（显示宽度，按 `widthOf` 那把尺）。 */
   readonly lines: readonly string[]
+  /**
+   * 那几行各自是**哪一种行**（U20 样式层地基）：与 `lines` 平行、逐行对应。排版这一层只**报**角色，
+   * 不上样式——包不包 SGR 由终端那一层按 `theme` 决定，所以缺省（没有主题）时字节流一个不变。
+   */
+  readonly roles: readonly LineRole[]
 }
+
+/**
+ * 行的角色（U20）：`border` 框线 · `body` 正文（树与读数）· `footer` 账尾 · `overlay` 临时那一层
+ * （候选 · 门口那一块 · 排队）· `read` 阅读面正文。**只在地基这一层声明**——值是给终端那一层的
+ * `theme` 查的键，排版本身不知道任何样式。
+ */
+export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'read'
 
 export interface FrameInput {
   /** 读源一：那一刻的处境（`status --once` 印的那一份）。 */
@@ -279,12 +291,12 @@ export function windowOf(n: number, sel: number, budget: number): MenuWindow {
  */
 export function frameOf(o: FrameInput): Frame {
   const { width, height } = o
-  const empty: Frame = { width, height, columns: { left: 0, right: 0 }, footer: '', lines: [] }
+  const empty: Frame = { width, height, columns: { left: 0, right: 0 }, footer: '', lines: [], roles: [] }
   if (width <= 0 || height <= 0) return empty
   if (height < MIN_HEIGHT) {
     // 画不出框就说出来，不静默给一个空帧（读面那一条：少印要说）。
     const why = `（这一屏太矮：要 ${MIN_HEIGHT} 行以上才画得出框与账尾，拿到的是 ${height} 行）`
-    return { ...empty, lines: [cell(why, width)] }
+    return { ...empty, lines: [cell(why, width)], roles: ['body'] }
   }
 
   const body = bodyOf(o)
@@ -380,30 +392,38 @@ export function frameOf(o: FrameInput): Frame {
   // 阅读面开着：内容那一栏一个字节都不印（地方整块给了正文，见上面那一段）。
   const content = readingOn ? [] : rows.length <= bodyBudget ? rows : rows.slice(0, Math.max(0, bodyBudget - 1))
   const dropped = readingOn ? 0 : rows.length - content.length
-  // 树那一栏在最上面，然后才是内容那一栏（它的每一行都是横贯整栏的）。
-  const shown: { readonly l: string; readonly r: string; readonly full?: boolean }[] = [
-    ...navBody.map((l) => ({ l, r: '', full: true })),
-    ...content,
+  // 树那一栏在最上面，然后才是内容那一栏（它的每一行都是横贯整栏的）。行带着**角色**（U20）：
+  // 树与读数是正文 · 阅读面正文是 `read` · 候选与门口那一块是临时的 `overlay`。
+  const shown: { readonly l: string; readonly r: string; readonly full?: boolean; readonly role: LineRole }[] = [
+    ...navBody.map((l) => ({ l, r: '', full: true, role: 'body' as const })),
+    ...content.map((x) => ({ ...x, role: 'body' as const })),
   ]
-  if (dropped > 0) shown.push({ l: `… 还有 ${dropped} 行没印（这一屏 ${height} 行）`, r: '' })
-  for (const one of readBody) shown.push({ l: one, r: '', full: true })
-  for (const one of menuBody) shown.push({ l: one, r: '', full: true })
-  for (const one of gateBody) shown.push({ l: one, r: '', full: true })
+  if (dropped > 0) shown.push({ l: `… 还有 ${dropped} 行没印（这一屏 ${height} 行）`, r: '', role: 'body' })
+  for (const one of readBody) shown.push({ l: one, r: '', full: true, role: 'read' as const })
+  for (const one of menuBody) shown.push({ l: one, r: '', full: true, role: 'overlay' as const })
+  for (const one of gateBody) shown.push({ l: one, r: '', full: true, role: 'overlay' as const })
 
   const lines: string[] = []
+  const roles: LineRole[] = []
   lines.push(`┌${bar(left, '处境')}${two ? `┬${bar(right, '读数')}` : ''}┐`)
+  roles.push('border')
   for (const one of shown) {
     // 候选那一层**横贯整栏**（它是临时的一层，不参与左右两栏的分工）。
     if (one.full === true) {
       lines.push(`│${cell(one.l, inner)}│`)
+      roles.push(one.role)
       continue
     }
     lines.push(`│${cell(one.l, left)}${two ? `│${cell(one.r, right)}` : ''}│`)
+    roles.push(one.role)
   }
   if (withFooter) {
     lines.push(`├${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┤`)
+    roles.push('border')
     lines.push(`│${cell(footer, inner)}│`)
+    roles.push('footer')
   }
   lines.push(`└${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┘`)
-  return { width, height, columns: { left, right }, footer, lines }
+  roles.push('border')
+  return { width, height, columns: { left, right }, footer, lines, roles }
 }
