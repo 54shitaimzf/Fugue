@@ -1151,13 +1151,14 @@ test('命令面那一段链描述与缺省行为说的是同一件事：合并�
   // 对不上时，照着敲的人会以为合并前会被拒——而它缺省只报（判决进 `预检：Planning N 对 · 合并前 M
   // 对` 那一行，PLAN § 5.10 那个判决）。行为那一半在 `src/round/work.test.ts` 的 ⑤（缺省放行 ·
   // 严档 fail-closed）；这一条断的是**印给人看的那一段文字**，两半合起来才是"命令面与行为一致"。
+  // （钉的那一句 2026-09-29 随 USAGE 重写换成了大白话，断的仍是同一件事。）
   const root = tmpRoot()
   const r = fugue(root, 'round', 'run')
   assert.equal(r.code, 2, `不带目标那一趟该退 2（用法错），实际 ${r.code}：${r.stderr.slice(0, 200)}`)
   const run = r.stderr.slice(r.stderr.indexOf('round run <目标>'), r.stderr.indexOf('round work'))
   // **摊平空白再比**：那一段是按行折的，断的是"说得对不对"，不是"折在哪一列"。
   const flat = run.replace(/\s+/g, '')
-  assert.equal(flat.includes('合并前兜底预检（缺省只报不拒'), true, `链描述里没写缺省只报不拒：${run.slice(0, 240)}`)
-  assert.equal(flat.includes('合并前兜底预检（报出即拒）'), false, '链描述还在说合并前报出即拒')
+  assert.equal(flat.includes('撞上了缺省只报出来、不拦'), true, `链描述里没写缺省只报不拒：${run.slice(0, 240)}`)
+  assert.equal(flat.includes('报出即拒'), false, '链描述还在说合并前报出即拒')
   assert.equal(flat.includes('--strict-merge-gate'), true, '那一档里没写严档那个开关')
 })

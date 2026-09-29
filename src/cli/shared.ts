@@ -1,6 +1,7 @@
 // cli 的共用那一半（U4a，2026-09 评审计划）：用法说明 · 参数解析 · 两列发射 · 围栏 · 命令上下文。
 // 自 `fugue.ts` 抽出——那一文件自此只剩分发与各命令组（`cmd/`），这一份是它们共用的地基；
-// **内容逐字未动**，只补了 `export`。语义出处仍是架构 § 9.6：单次进程 + 每次重建。
+// 语义出处仍是架构 § 9.6：单次进程 + 每次重建。USAGE 的措辞 2026-09-29 重写成面向一般用户的
+// 话（命令 · 开关 · 退出码一个没变；审阅口径与出处仍在架构 § 9.6 / § 9.8）。
 import { resolve } from 'node:path'
 import { openLog } from '../log/log.ts'
 import type { LogHandle, SyncLevel } from '../log/log.ts'
@@ -20,234 +21,103 @@ export class UsageError extends Error {}
 
 export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 
+fugue 是住在终端里的编码 agent：给它一句目标，它自己拆活、自己干、自己验，全部
+通过才动你的文件。这张表只列命令；完整的上手走法在仓库的 README。
+
 命令
-  log [--agent <id>]         按 (seq, writer) 全序列出日志事件
-  status --once              把**这一刻的处境**印出来：轮次状态（从 round/state 链重放，用的是
-                             状态机那一份图）· 每一格走到哪儿（调用 · 步数 · 工具调用 · 动作 ·
-                             拒与被挡 · 停因）· 用量与条数（从日志重算，不采集）。**纯读**：
-                             不开账本、不取锁、不新增事件——所以它落在哪一趟之后都不会让那一趟
-                             取的基线作废（PLAN § 5.18）。今天只有 --once 这一档：跟随是下面那一条。
-                             加 --metrics 印八元指标 · 加 --report 印打回三数——两栏与 round run
-                             那两栏同一个来源、同一个渲染（序 32）
-  watch [--follow]           顺着 NDJSON 账读：不给 --follow 就把账上有的念一遍就停，给了就一直
-                             跟着（--interval <毫秒>，缺省 200；Ctrl-C 停，退出码 0）。**每个
-                             writer 一个游标**——晚出现的那个 agent 的日志口第一条就是 seq=1，
-                             "从 N 接着读"会把它整段永久漏掉。次序是**到达序**（实时），
-                             一趟之内仍是 (seq, writer) 的全序
+  先看它在干什么（四条 · 全是只读）
+  status --once              看这一刻的整体情况：轮次走到哪一步、每个任务干到哪儿、花了
+                             多少 token。--metrics 多一组质量指标 · --report 多一组打回统计
+  watch [--follow]           跟着看新事件。不给 --follow 就把现有的读完退出；给了就一直
+                             等新的（Ctrl-C 停）。--interval <毫秒> 调轮询间隔（缺省 200）
   tui [--once] [--follow] [--full] [--tail <n>] [--no-style]
-                             同一读面的第二档渲染：底部一块恒定 K 行的面板（处境 + 读数）擦掉重画，
-                             永久行（轮次转移 · 契约 · 每一格干完没有 · 边界拦下什么）按到达序追加进
-                             本终端的历史。**可附着**：自己不起轮次、不取锁、自己的账一个字节都不写
-                             ——门槛上按 g 起的是**一条命令**（fugue round go 那个子进程写账）。
-                             TTY 那一档不给 --follow 也是跟着；退出收走面板（码 0：人喊停不是失败）。
-                             加 --metrics / --report 与 status 那两栏同名同义。
-                             ${hintLineOf(KEYMAP, hintLimitOf(60))}（只在 TTY 那一档）
-                             --once 印一遍永久行就退；不是 TTY（管道 · CI）也是这一档，**一个字节的
-                             ANSI 都不写**；$TERM 是 dumb 或认不出来同样退到这一档
-                             --tail <n> 首趟只写尾部 n 条永久行（旧账很长时的"接着看"入口；旧账想
-                             全看用 log / watch；不给就全印）
-                             --full 整屏：进 alt screen 画，收尾出来（只多这两个 escape，排版一行
-                             不动）。**缺省关**：进了 alt screen 就没有本终端的历史可翻（永久行跟着
-                             那一块屏一起消失）
-                             缺省带一档简约样式（框线与脚注暗一档 · 弹层加粗，黑白属性不用颜色；
-                             只动面板那几行，永久行与输入行不上样式）；--no-style 或 NO_COLOR 非空
-                             退回全无样式（字节流与没有主题逐字节相同）
-  read <path>                读一个路径；默认吐原始字节
+                             交互界面：底部一块面板显示情况，输出照常往上滚，翻历史 ·
+                             搜索 · 复制都还是终端自己的。它只看不写，随时开随时关：
+                             g 放行门口那批 · ? 重印按键提示 · q 退出
+                             ${hintLineOf(KEYMAP, hintLimitOf(60))}
+                             --metrics / --report 与 status 同义；真终端上默认就跟着新事件走
+                             --once 印一遍旧事件就退（管道 · CI 里自动是这一档，不写 ANSI）
+                             --tail <n> 开始时只看最后 n 条旧事件（旧账很长时的入口）
+                             --full 用整块屏幕（默认不用：那一档退出后滚动历史就没了）
+                             默认带一点样式（框线与脚注暗一档 · 弹层加粗，不用颜色）；
+                             --no-style 或环境变量 NO_COLOR 非空时全关
+  log [--agent <id>]         把账原样列出来：一行一条事件，不做任何加工
+
+  动文件与提交（动的是 fugue 眼里的那份视图，不直接是你的工作树）
+  read <path>                读一个文件
   list [dir]                 列一个目录
-  stat <path>                一个路径的形状
+  stat <path>                看一个路径的信息
   write <path> [--from <f>|--stdin]   写一个文件
-  remove <path>              删一个路径（目录连同它下面）
+  remove <path>              删（目录连同里面的）
   rename <from> <to>         改名
-  chmod <path> <mode>        改模式；<mode> 是八进制，如 755
-                             模式只认两档：有执行位就是 100755，否则 100644。归一之后与现值
-                             相同就只说一句「没有变化」（stderr），日志与 diff 里都不出现
-  diff [--since <rev>]       自某个修订点以来的变更
-  revs                       全部可达修订点，升序；0 是 base 本身
-  commit -m <msg>            把当前视图提交成一个提交点，推进它的 ref
-  branch <base>              把本 agent 的分支头定格在 <base> 上——§ 4 的那个"分出去"。
-                             幂等：已经指着它就什么都不做；指着别处就拒绝并给出两条路。
-                             它是视图的底与物化的底对齐的那一步：fork 之前，本 agent 的
-                             分支头必须就是 <base>，否则 fork 拦在落地之前（§ 4 末段）
-  replay [--to <rev>]        从日志重建视图并报出它；--verify 逐 agent 比对两条重建路径
-  diff-stat [<dir>] [--baseline <f>] [--save <f>]
-                             全树 (mtime,size,hash) 快照对比；不给 <dir> 时扫本 agent 的合并树，
-                             基线由 --baseline 读、--save 存（三个路径都相对当前目录，不是 --root）
+  chmod <path> <mode>        改权限：<mode> 是八进制（如 755）；只认「带不带执行位」两档，
+                             没有变化就说一声，不进账
+  diff [--since <rev>]       看改了哪些文件（相对某个修订点）
+  commit -m <msg>            把当前内容定格成一个提交
+  revs                       列出全部修订点（从早到晚）
+  replay [--to <rev>]        从账重建内容；--verify 顺带校验两条重建路径算得一致
+  branch <base>              把分支头定到 <base>（fork 之前的那一步；已经在这儿就不动）
+
+  铺工作区（agent 干活的地方，随时能收走）
   fork <base> [--strategy <s>] [--ro <p1,p2>] [--no-preserve-mtime]
-                             把 base 那棵树物化出来并挂上，返回合并树（本 agent 的坐标）
-                             <base> 是一个提交，**必须就是本 agent 的分支头**（branch <base>
-                             定的那一步）。物化的底是真实工作树，视图的底是分支头，
-                             两者得是同一个提交（§ 4），所以落地之前查一次 ref——不一致就拒绝
-                             并指路。**真实工作树是不是 base 的那棵树，这一层不查**（§ 8.4：
-                             检测在合并之前）：不一致时物化树里本 agent 没碰过的路径给的是
-                             工作树的内容而不是 base 的
-                             --strategy 取 overlayfs | hardlink-ro | copy，
-                             不给就按策略表探着退档，用了哪一档写在 stderr 与 --json 里；
-                             --ro 声明哪几处子树只读（hardlink-ro 那一档只链它们）；
-                             --no-preserve-mtime 让抄出来的那几条用当下的时间戳而不是底的时间戳
-                             （§ 8.5 的 preserveMtime；它是"假失效"那半边的负对照）
-  ensure [--to <rev>]
-                             把这个 agent 到 <rev> 为止的改动落到物化树里（不给 --to 就是此刻），
-                             返回合并树；已最新就什么都不落。一次落哪些路径由日志里的 mat/*
-                             重放得来，落完追加一条 mat/sync
-  run <action> [-- k=v…]     在沙箱里跑一个声明过的动作（§ 8.6）：先物化一次，再把本 agent 的
-                             坐标注进环境（HOME · TMPDIR · XDG_CACHE_HOME · PORT · PORTS），
-                             然后 bwrap 起进程。动作写在配置里，例如
+                             把 <base> 那棵树铺成一个独立工作区。--strategy 选
+                             overlayfs / hardlink-ro / copy，不给就自动挑能用的
+  ensure [--to <rev>]        把该落的改动落到铺出来的工作区
+  diff-stat [<dir>] [--baseline <f>] [--save <f>]
+                             全树快照对比（大小与哈希），看有没有意外改动
+  run <action> [-- k=v…]     在隔离环境里跑一条配置里声明过的动作，比如
                              fugue config set actions.build '{"argv":["make"],"cache":["dist"]}'
-                             「-- k=v」注入子进程的环境变量；上面那几样盖不了（撞上就拒绝）。
-                             子进程的两股输出走 stderr。跑完把声明过的产出收回视图（§ 8.7）：
-                             cache 是绑到本 agent 缓存的声明目录——构建产物落那儿，**不回写**；
-                             outputs 是要回写视图的产出声明：收进来的那几条 fugue diff 报得出、
-                             fugue ensure 落得到盘上。一条声明若没被别的声明盖住，它自己是一条
-                             目录（不存在就预建）；被盖住时它是落在缓存里的一条路径，例如
-                             cache:["dist"] 配 outputs:["dist/app"] 收的就是那个可执行文件。
-                             声明集外的写入：默认档由内核拒（子进程非零退出、树一个字节没变），
-                             树可写那一档由回收拒并记一条 mat/reclaim。
-                             --mode <read-only|workspace-write> 选哪一档（缺省 read-only）。
-                             workspace-write 是 § 15.7 的 E4 退化档：树可写 + 回收兜底，不再有
-                             只读树那一道围栏。bwrap 不在 PATH 上时自动降一档——Landlock 那一层
-                             还在的话（Y6）它接过「写得动什么」那一维：未声明的写入当场拒，档如实
-                             报 read-only；两层都不在才是树可写 + 回收兜底。两处都如实报
-                             enforcement=partial，不静默降级。
-                             --step <id> 是这一步的署名，不给就是「-」（轮次是 S7 的事）。
-                             退出码：0 子进程成功 · 1 没成功
+                             「-- k=v」给它加环境变量。--mode read-only（默认）或
+                             workspace-write 选隔离档。声明过的产物（cache · outputs）跑完
+                             自动收回来；没声明的写入会被拦。退出码：0 成功 · 1 没成功
+  verify-mat                 核对铺出来的工作区与账对不对得上（只报不修）
+  dispose                    把铺出来的工作区收走（本来没有也成功）
+  policy [<action>]          看隔离策略：能写哪里 · 能不能联网
+
+  轮次（一句话 → 拆活 → 干 → 验 → 落地）
+  round plan <目标> [--live] [--judge] [--max-steps <n>]
+                             让它自己读项目、出计划：拆成几份活，停下来等你点头——这一步
+                             不碰你的任何文件。--live 接真模型（要凭据 · 花钱）；--judge
+                             不跑模型，直接拿手里那份计划给你判
+  round go [--materialize]   点头放行：按计划每份活开一条分支开干。放行过再按会直接
+                             拒绝、一个字节不落（不会重复发）
+  round run <目标> [--live] [--max-steps <n>] [--retry <n>] [--report] [--metrics] [--materialize]
+                             一趟跑完整个轮次：拆 → 干 → 验 → 合并。默认不联网不花钱
+                             （打桩）；--live 才接真模型。验收断言从配置读：
+                             fugue config set round.assertions '[…]'
+                             全过才写提交；没过，你的文件一个都不会动。
+                             合并之前它会把各份活要动的文件先对一遍：撞上了缺省只报
+                             出来、不拦（要拦就给 --strict-merge-gate）
+                             --max-steps <n> 每个任务最多几步（不给就是不设上界；第一次
+                             联网建议给个位数）
+                             另有几个走查开关（--fail · --deny · --poke · --dump-wire ·
+                             --no-handoff），日常用不到
+  round work [--live] [--max-steps <n>] [--retry <n>] [--report] [--metrics]
+                             接着跑：把放行出去的那批任务跑完（round go 之后用）
   round new <目标> [--materialize]
-                             开一个轮次（架构 § 8.13 的 Idle → Planning → Delegated → Working）：
-                             钉住真实工作树的 HEAD 当这一轮的底 · 把持轮者给的拆分草案造成契约
-                             （§ 8.12）· Planning 那一档跑一次写入集相交预检 · 一份一条
-                             contract/issue（契约住日志里，带正文）· N 条 refs/heads/<agent>
-                             定在同一个底上。
-                             拆分草案读配置里的 round.split（一份草案一笔）：
-                               fugue config set round.split '[{"goal":"…","ownedPaths":["src/a.ts"],
-                                 "assertions":[{"action":"test","name":"单元测试全过"}]}]'
-                             一条草案至少要有 goal · ownedPaths · assertions（零条断言会让
-                             「打回率低」这句话没有分母）。草案里没有 deliverables 就是没有
-                             交付物——那一格可以空，不是缺省。
-                             agent 名按位置发：agent/<轮次>/1 … agent/<轮次>/n——于是分支是
-                             refs/heads/agent/<轮次>/<n>（架构 § 4 那张表），物化在
-                             .fugue/mat/agent/<轮次>/<n>/，日志在 .fugue/log/agent/<轮次>/<n>.jsonl。
-                             相交时**报出来、照发**（这一站的口径，PLAN § 5.7 的口径一）：
-                             撞上了由合并那一步的冲突环接住，不静默。
-                             **物化缺省不做**（架构 § 14.1 的 deferMaterialize：走按需物化）。
-                             给 --materialize 就把 N 棵树也铺出来——那一步落的是 mat/fork 事件，
-                             每条分支一份，落在**那个 agent 自己的日志**里。
-  round plan <目标> [--live|--wire-in <目录>] [--judge] [--max-steps <n>]
-                             **预备态那一趟**：持轮者自己读 · 自己设计 · 自己拆，停在门口等人批。
-                             一个契约都不发 · 一条分支都不起 · 真实工作树一个字节不动；草案写在视图
-                             里（.fugue/plan/<轮次>.md），正文进日志（holder/distill）——盘上不落
-                             第三处。**收工三档一个判据**：模型说完了（exit_plan_mode）· Harness
-                             判它结束了（end-turn · 步数到顶）· 人喊停（--judge：这一趟不跑模型，
-                             拿手里那一份直接判）。判的是键域完整与否：完整就停在门口，不完整就
-                             退回并报出缺哪一节哪个键。每一格的预估占用（三区 + 工具目录 + seed
-                             与上限的差额）一并印出来——规模由模型定，架构只把数说出来。
-                             --live / --wire-in / --max-steps / --credential / --dump-wire 与
-                             round run 同义。
-  round go [--materialize]    **放行**：把门上那一批契约发出去（架构 § 15.1.a 四步里的"派"）。
-                              放行的是**日志里那一份草案**在**这一轮钉住的底**上重算出来的那一批
-                              （同一个身份分配器 · 同一段判据），所以人批的那一批与发出去的这一批
-                              是同一批。落一条 round/approve（批号 + 那几份契约）→ 逐条
-                              contract/issue → N 条 refs/heads/<agent> 定在同一个底上 →
-                              Planning → Delegated → Working。物化缺省不做（与 round new 同一条：
-                              给 --materialize 才铺 N 棵树）。
-                              再跑一次不重复触发：这一批已经发过了就当场拒 · **一个字节都不落**
-                              （不是静默成功，也不发第二条契约）。**新的一批一律重停**——下一个
-                              轮次拆出来的那一批哪怕与这一批同号（批号只是拆分的形状，见 round
-                              plan 印的那一行）也照样停在门口等人点头。
-  round run <目标> [--live] [--report] [--metrics] [--fail <n>] [--deny <n>] [--retry <n>] [--materialize]
-                             跑一个完整的轮次（架构 § 20 S7 的可用性那一句）：
-                             起头（钉底 · 造契约 · Planning 预检 · 发契约 · 起分支）→ 每个 agent
-                             干一格（**缺省是打桩那一档**：--live 走真网络 · --wire-in 走录下来
-                             的响应，两档同一个驱动、同一份判据）→ 合并前兜底预检（缺省只报
-                             不拒：判决印在报告那一行，严档走 --strict-merge-gate）→
-                             漂移检 → 逐路折叠（撞上冲突就物化冲突树、交给解决者、重折）→
-                             验收（跑在**物化出来的那棵树上**）
-                             → 通过才定格 + 推进（没过则真实工作树一个字节不动）。
-                             断言从工作区配置里读：round.assertions 那一栏
-                               fugue config set round.assertions '[{"name":"测试全过","argv":["/bin/sh","-c","true"]}]'
-                             每一条断言在**合并之后那棵树上**跑：argv 起真进程，退出码等于
-                             expect（缺省 0）算过。"命令不在 / 退出码 127"那一类判成**跑不起来**
-                             ——它不进打回计数，单独成一栏（架构 § 8.12 末段）。
-                             --fail <n>   让第 n 个 agent 交一个"必然失败"的提交（走查要撞红）
-                             --deny <n>   第 n 个 agent 的格子里多跑一条必然被拒的动作
-                             --retry <n>  Verifying → Working 那条回边允许走几次（缺省 1：没通过自动回一次；0 = 一遍都不重来）
-                             --report     印打回那三个数与逐趟账（从日志重算，不采集）
-                             ·            逐趟账 = 每一条 llm/call 一行 + 合计（含思考与费用）
-                             --metrics    印八元指标（**每个指标的分子与分母一起印**，从日志重算）
-                             --materialize 起头时把 N 棵树也铺出来（缺省不铺）
-                             --live        接真驱动：每一步发一次真调用（要凭据），不再是打桩那一档。
-                             整条链与打桩那一档是同一条，判据也只有一个（验收）——差的是"模型那一侧"
-                             由谁答。凭据按提供方声明里那份表取；--credential <路径> 是命令行覆盖。
-                             缺省不出网、不花钱；要喂**录下来的响应**是 --wire-in <目录>（内部档）。
-                             --max-steps <n>  **这一格最多走几步**。**不给就是不设上界**——上界是你的
-                             决策，不是我们的兜底：不设时这一格一直走到它自己收工或你喊停，而
-                             --live 下每一步都落一条 llm/call（花了多少一条条看得见）。
-                             第一次联网把它压到个位数。
-                             --no-handoff   到了预算触发点**不交接**（用完就停那一档）：
-                             B6 的缺省是"先停"（写交接提示词 · 换一个 agent 接着干），
-                             而地板那一档要能把它关掉。
-                             --dump-wire <目录>  **把每一次调用发出去与收回来的字节原样落盘**
-                             （call-0001/request.json · response.sse · meta.json · 两条
-                             sha256）。默认不落——不给这个开关时那一层根本不存在，一个字节
-                             都不写、请求体也一个字节不变。**目录必须在工作区之外**：落进
-                             <root> 会被下一轮的 fork 当成漂移（§ 8.14）。看完就删。
-                             --strict-merge-gate 合并前那一档预检恢复"报出即拒"（缺省只报
-                             不拒：相交那对数印在报告那一行，折叠照做——真冲突由折叠当场
-                             报出、走冲突环，折干净而合起来坏的由验收在推进之前拦住）
-                             --poke <路径>  **在折叠之后、物化之前手改一条路径**（模拟轮次中
-                             用户的手，用来量漂移那一档）；缺省什么都不做
-                             --poke-exact <路径> 同上，但抄的是这一趟目标树里那条路径的
-                             字节（量"两边逐字节相同 → 照合并"那一档）
-  round work [--live|--wire-in <目录>] [--max-steps <n>] [--retry <n>] [--report] [--metrics]
-                             **接着跑**：把这一轮**已经发出去的那一批契约**跑完——放行（round go）
-                             之后那一环。契约与底**从日志里读回**（contract/issue 的正文 ·
-                             round/intent 的底），一句配置都不看、一份契约都不重算：人批的是哪一批，
-                             跑的就是哪一批。处境必须是 Working（放行走完 · 格还没跑）；别的处境当场
-                             拒并指一条路。**已经交过卷的格不重跑**——那条分支已经不是底了，就取回它
-                             那个提交复用（重跑不重复烧真调用）。
-                             断言从**契约里**来，命令行从配置里绑好的动作来（actions.<名字>）：契约
-                             只带动作名（架构 § 8.12），argv 归工作区配置。
-                             --live / --wire-in / --max-steps / --credential / --dump-wire / --report
-                             / --metrics / --retry 与 round run 同义。
-  say <一句话> [--live|--wire-in <目录>] [--max-steps <n>]
-                             **答完接着走**：那句话进这一趟的尾端（C 区第一条），并且立刻带着它
-                             跑一趟持轮者——**停下来的那一处没有"等"这种状态**（命令返回时那一趟
-                             已经跑完了）。两个状态的产物不同：**讨论态**（Idle）那句话落进会话
-                             记录（.fugue/session/<轮次>.jsonl），这一趟落下修正后的理解
-                             （holder/distill），而处境不动（讨论不落地）；**预备态**（Planning）
-                             那一趟改的是那份草案（.fugue/plan/<轮次>.md），改完重判，仍然停在
-                             门口——**原话不另存**，工作区里找不到第二份。进它视野的是这场对话
-                             的投影：凝聚理解 · 最近 3 条原文。
-                             --live / --wire-in / --max-steps / --credential / --dump-wire 与
-                             round run 同义（这一趟缺省就走真模型：持轮者那一格没有打桩档）。
-  verify-mat                 核对物化：日志重放出的清单 · base 与视图之间的差异集 · 盘上落地根
-                             里那几条，三者两两相等，并报 materialize-precision（§ 8.15 的比值）。
-                             不等就退 1——**只报不修**（§ 8.5 的失败处理是删除重建）
-  dispose                    把这个 agent 的物化删干净：先卸后删，四个坐标一起（§ 8.4）。
-                             幂等——本来就没有也成功。**它是物化的退化档**：dispose 之后
-                             fork + ensure 就是一次全量重铺（§ 3）
-  policy [<action>]          把这一趟的策略值印出来（架构 § 8.8：一份策略值，两个强制点）：
-                             哪一档 · enforcement · 在场的层 · 网络那一档 · 可达集清单 · 可写落点。
-                             给了 <action> 就报那个动作那一趟的值（它有没有点名要网）。
-                             fugue run 写进 run/confined 的是同一个 resolvePolicy() 的返回值——
-                             两处读同一份，不是各自算一遍再对答案
-  doctor                     环境自检（纯读，不落盘）：node · zlib.crc32 · bwrap · landlock ·
-                             git · 落点档位，一行一项。**读得出就退 0——「缺」是读数不是失败**；
-                             statfs 问不出落点（自检跑不了）才退 1
-  config show                工作区配置的全文
-  config get <key>           配置里的一条；<key> 是点分路径，如 docs.trace.path
-  config set <key> <value>   改一条；<value> 整份解析得了就当 JSON 值，否则当字符串
+                             按你配置里的草案（round.split）直接开一个轮次
+  say <一句话> [--live] [--max-steps <n>]
+                             跟它聊一句：说你的要求或限制，它记下来并照着调计划。
+                             默认接真模型（花钱）
+
+  环境与配置
+  doctor                     环境自检：node · git · bwrap … 一项项报给你（只读；「缺」算
+                             读数不算失败）
+  config show                看全部配置
+  config get <key>           看一条（点分路径，如 round.id）
+  config set <key> <value>   改一条（值能按 JSON 解析就当 JSON，否则当字符串）
 
 选项
-  --root <dir>    工作区根，默认当前目录；日志在 <root>/.fugue/log/，对象库在 <root>/.git，
-                  配置在 <root>/.fugue/config。工作区要落在一块原生的本地文件系统上：
-                  落在 9p / drvfs 那一类跨内核的落点上时拒绝启动（架构 § 15.7 的 E1）
-  --agent <id>    操作哪个视图；未指定时取 round（主线）
-  --json          结构化输出
+  --root <dir>    工作区根，默认当前目录；账在 <root>/.fugue/，配置在 <root>/.fugue/config。
+                  要放在原生本地文件系统上（ext4 一类）；Windows 挂进来的盘（NTFS / 9p）
+                  上拒绝启动
+  --agent <id>    看哪个任务分支；默认 round（主线）
+  --json          输出 JSON（给脚本用）
   --help          这张表
 
- 一份日志一个写者进程：写命令（write · remove · rename · chmod · commit · fork · ensure ·
- run · dispose）取该 agent 的锁 <root>/.fugue/log/<agent>.lock，同一个 agent 的两条写命令因此
- 不会同时在跑——拿不到的那一条退 1 并报出持者。读命令一律不取锁；锁按 agent 分，
- 不同 agent 之间互不阻塞
+退出码：0 成了 · 1 没做成 · 2 命令敲错了。
+写命令（write · remove · rename · chmod · commit · fork · ensure · run · dispose）同一个
+agent 同时只许一条在跑，撞上了会报出是谁拿着；读命令从不加锁。
 `
 
 interface Parsed {
