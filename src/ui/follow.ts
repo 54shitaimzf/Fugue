@@ -33,16 +33,17 @@
 // 所以它不参与"已经写出去的那几条不许被回头改"那条牙。面板在屏幕底部，界面自己的话总得有个去处：
 // 直接往 `stdout` 写会插进半块面板。
 //
-// **代价如实记在这里**：`readingsOf` 那一段仍每帧从"累起来的那些行"全量重折（跟随每一趟本来就
-// 重读全量，两者同一档代价）；**永久行那一栏只折尾部（U5）**——`rows` 单调变长，已折的前缀是纯
-// 函数的答案，缓存它不改任何输出。`readingsOf` 要改成增量折，那是另一格的事：折法只有一处真源
-// （`probe/status.ts`），这一份不另写一份。
+// **代价如实记在这里**：`readingsOf` 那一段**有帧快照记忆（U16）**——三份读数是纯函数对
+// 「这一批行 + 焦点 + readings 选项」的答案，`rows` 每批换新引用，所以**同一批**被问几遍
+// （`note()` 连按 · `redraw()`）都只折一次；一批新到恰折一次。缓存不改任何输出：折法只有一处
+// 真源（`probe/status.ts` 的 `readingsOf`），这一份不另写一份。**永久行那一栏只折尾部（U5）**——
+// `rows` 单调变长，已折的前缀是纯函数的答案。`readingsOf` 要改成增量折，那是另一格的事。
 //
 // **信号那一头是入参。** `Ctrl-C`（`AbortSignal`）由调用方给；`SIGWINCH` 那一档由调用方接
 // `redraw()`。这一份不注册任何信号、不碰 `process`——那样它才在 `node --test` 里跑得动。
 import type { Log } from '../log/events.ts'
 import type { Phase } from '../model/price.ts'
-import type { ReadingsOptions, StatusRow } from '../probe/status.ts'
+import type { ReadingsOptions, StatusReadings, StatusRow } from '../probe/status.ts'
 import { readingsOf } from '../probe/status.ts'
 import { follow, readNew } from '../probe/watch.ts'
 import type { FrameInput } from './frame.ts'
@@ -93,6 +94,11 @@ export interface SessionOptions {
    * 增量。N 大过行数就是全部；不给就与从前逐字节相同（全印）。
    */
   readonly reveal?: number
+  /**
+   * 折三份读数的那一刀（U16）：**缺省 `readingsOf`**。它进得来是为了**注入计数**——帧快照记忆
+   * 的断言靠它数「同一批折了几次」。折法只有一处真源，这一份不另写一份。
+   */
+  readonly fold?: (rows: readonly StatusRow[], opts: ReadingsOptions | undefined) => StatusReadings
 }
 
 /**
@@ -162,14 +168,34 @@ export function openSession(o: SessionOptions = {}): TuiSession {
     return folded
   }
   /** 那一刻的面板那几行。**纯函数**：这一档累起来的行 + 界面自己那几样（现问一次）。 */
-  const frameAt = (size: { readonly columns: number; readonly height: number }): readonly string[] => {
-    const v = o.view?.()
+  // **帧快照记忆（U16）**：三份读数是纯函数对「这一批行 · 焦点 · readings 选项」的答案。`rows`
+  // 每批 `push` 换新引用，键就是它——**同一批**被问几遍（`note()` 连按 · `redraw()` · `frame()`
+  // 与 `panel()` 各问一遍）都命中同一份答案，一批新到恰折一次。焦点一变（`Tab` 切格）键就换；
+  // readings 选项是会话期不变量，引用一并进键——真被中途换掉（没人这么用）也只是多折一次，
+  // 不会错位。折法只有一处真源，缺省就是 `readingsOf`。
+  const fold = o.fold ?? readingsOf
+  let snap:
+    | {
+        readonly rows: readonly StatusRow[]
+        readonly focus: string | null
+        readonly readings: ReadingsOptions | undefined
+        readonly value: StatusReadings
+      }
+    | null = null
+  const readingsAt = (focus: string | null): StatusReadings => {
+    if (snap !== null && snap.rows === rows && snap.focus === focus && snap.readings === o.readings) return snap.value
     // **切到某一格就只折那一份**（`T8`）：筛的是喂给折法的那一批行——与 `status --agent <x>` 筛的是
     // 同一批（`probe/status.ts` 的 `readings` 那一档也在这儿筛）。不给焦点就是整份账。
-    const seen = v?.focus === undefined || v?.focus === null ? rows : rows.filter((r) => r.pos.writer === v.focus)
+    const seen = focus === null ? rows : rows.filter((r) => r.pos.writer === focus)
+    const value = fold(seen, o.readings)
+    snap = { rows, focus, readings: o.readings, value }
+    return value
+  }
+  const frameAt = (size: { readonly columns: number; readonly height: number }): readonly string[] => {
+    const v = o.view?.()
     const input: FrameInput = {
       // 三份读数与 `status --once` 同一个入口（`readingsOf`）——命令面与这一档读的是同一份。
-      ...readingsOf(seen, o.readings),
+      ...readingsAt(v?.focus ?? null),
       ...(o.phase === undefined ? {} : { phase: o.phase }),
       // 界面自己那几样（输入行 · 候选那一层 · 树 · 门口那一块）**每帧现问**：它们不是读源，是这一档
       // 自己的视图状态。
@@ -247,6 +273,8 @@ export interface TuiOptions {
   readonly view?: (() => ViewInput) | undefined
   /** `--tail N`（U15）：一路递给会话——首趟永久行只写尾部 N 条。 */
   readonly reveal?: number
+  /** 折三份读数的那一刀（U16）：一路递给会话——缺省 `readingsOf`，注入只为数「一批折了几次」。 */
+  readonly fold?: (rows: readonly StatusRow[], opts: ReadingsOptions | undefined) => StatusReadings
   /**
    * 账往前动了一条时问一次（`T6`：门口那一批要不要重算）。**同步**——它只许"排一件事"，不许在
    * 这一趟里读账（读账那一头是异步的，而这一头跟着每一行走）。第一趟读齐的那一批也算一条。
@@ -284,7 +312,14 @@ export interface Tui {
  * （那三样都是调用方的：`cli/fugue.ts` 的 `tui`）。
  */
 export function openTui(o: TuiOptions): Tui {
-  const session = openSession({ readings: o.readings, phase: o.phase, table: o.table, view: o.view, reveal: o.reveal })
+  const session = openSession({
+    readings: o.readings,
+    phase: o.phase,
+    table: o.table,
+    view: o.view,
+    reveal: o.reveal,
+    fold: o.fold,
+  })
   const c = { rows: 0, permanent: 0, draws: 0, lines: 0, notes: 0 }
   /** 界面自己写的那几行（还没落到历史里的）：与永久行同一档、都写在面板上方，**都只写一次**。 */
   const notes: string[] = []

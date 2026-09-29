@@ -19,6 +19,8 @@
 //      全量折逐字相同（查表次数在一张计数表上数出来）。
 //   ⑨ **--tail N**（U15）：首趟只写尾部 N 条 · 跳过的按已写出去记（不补印）· 新到的照常增量 ·
 //      N 大过行数全印 · 不给 reveal 与从前逐字节相同。
+//   ⑩ **帧快照记忆**（U16）：同批连问（含 note()×3 · frame/panel 交叉）不新增 fold · 新批恰一次 ·
+//      换焦点重折（注入计数数出来的）。
 //
 // 这一份不碰真日志、不碰终端：读那一头是**一本会长的假账**（每一趟读放出一片），摆那一头是
 // `ui/term.ts` 那个接口的**记录器**（它用真的 `panelOf` 补到 K 行 × 列数，所以记下来的那几行就是
@@ -26,7 +28,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Log, LogEvent } from '../log/events.ts'
-import type { StatusRow } from '../probe/status.ts'
+import type { ReadingsOptions, StatusReadings, StatusRow } from '../probe/status.ts'
 import { readingsOf } from '../probe/status.ts'
 import { readNew } from '../probe/watch.ts'
 import type { Frame } from './frame.ts'
@@ -523,5 +525,88 @@ test('⑨ --tail N（U15）：首趟只写尾部 N 条 · 跳过的按已写出�
   console.log(
     `⑨ 读数：5 条旧账 --tail 2 → 首趟印 ${first.length} 条 · 新到的 1 条照常增量 · ` +
       'N=99 全印 · 不给 reveal 全印',
+  )
+})
+
+test('⑩ 帧快照记忆（U16）：同批连问（含 note()×3）不新增 fold · 新批恰一次 · 换焦点重折', async () => {
+  // 注入计数：折一刀记一笔——「一批折了几次」在它上面数得出来（U16 的断言就数这个）。
+  let folds = 0
+  const counted = (rows: readonly StatusRow[], opts?: ReadingsOptions): StatusReadings => {
+    folds += 1
+    return readingsOf(rows, opts)
+  }
+
+  // openTui 那一头：三批账跑完（一批一画），folds 该恰等于批数——每批恰折一次。
+  const chapters = tailChapters()
+  const rec = recorder()
+  const ac = new AbortController()
+  const s = scripted(chapters, {
+    onRead: (n) => {
+      if (n > chapters.length) ac.abort()
+    },
+  })
+  const tui = openTui({
+    log: s.log,
+    term: rec.term,
+    emit: () => {},
+    mode: 'panel',
+    intervalMs: 1,
+    signal: ac.signal,
+    fold: counted,
+  })
+  await tui.counts
+  const afterRun = folds
+  assert.equal(afterRun, chapters.length, `${chapters.length} 批账（一批一画）该恰折 ${chapters.length} 次（拿到 ${afterRun}）`)
+  // 账停着的时候连按三下 note()：每一下都 paint()（按键要当场看得见），但那一批已经折过了——
+  // 一次都不该重折。
+  tui.note('按下去了 a')
+  tui.note('按下去了 b')
+  tui.note('按下去了 c')
+  assert.equal(folds, afterRun, `同批 note()×3 不该新增 fold（${afterRun} → ${folds}）`)
+  assert.ok(rec.records.length >= 3, 'note 那三下真的画了（records 有它们）——不是没画所以没折')
+
+  // session 那一头：frame/panel 交叉问同一批，只折一次；新批恰 +1。
+  let sFolds = 0
+  const sCounted = (rows: readonly StatusRow[], opts?: ReadingsOptions): StatusReadings => {
+    sFolds += 1
+    return readingsOf(rows, opts)
+  }
+  const size = { columns: 80, height: K }
+  const ses = openSession({ fold: sCounted })
+  const ch1 = mergedOf(chapters[0] as readonly StatusRow[])
+  const ch2 = mergedOf(chapters[1] as readonly StatusRow[])
+  ses.push(ch1)
+  ses.frame(size)
+  const afterFirst = sFolds
+  assert.equal(afterFirst, 1, '第一批折一次')
+  ses.panel(size)
+  ses.frame(size)
+  ses.frame(size)
+  assert.equal(sFolds, afterFirst, '同批 frame/panel 交叉问三遍，fold 一次不新增')
+  ses.push(ch2)
+  ses.frame(size)
+  assert.equal(sFolds, afterFirst + 1, '新到一批恰再折一次')
+
+  // 换焦点：键换了就重折（那是换答案，不是白烧）；换回也重折一次——缓存只有一格，不追历史。
+  let focus: string | null = null
+  const focused = openSession({
+    fold: sCounted,
+    view: () => (focus === null ? {} : { focus }),
+  })
+  focused.push(ch1)
+  focused.frame(size)
+  const f1 = sFolds
+  focus = 'round'
+  focused.frame(size)
+  assert.equal(sFolds, f1 + 1, '焦点一换（Tab 切格）重折——筛的是另一批行')
+  focused.frame(size)
+  assert.equal(sFolds, f1 + 1, '同一焦点连问不重折')
+  focus = null
+  focused.frame(size)
+  assert.equal(sFolds, f1 + 2, '换回整份账也重折一次（缓存一格，不追历史）')
+
+  console.log(
+    `⑩ 读数：3 批账恰折 ${afterRun} 次 · 同批 note()×3 与交叉问零新增 · 新批 +1 · ` +
+      `换焦点重折（${f1 + 1 - f1} 次/换）`,
   )
 })
