@@ -87,6 +87,12 @@ export interface SessionOptions {
    * 这一份里进得来的一律是"进程一退就没了"的那几样。不给就与从前逐字节相同。
    */
   readonly view?: (() => ViewInput) | undefined
+  /**
+   * `--tail N`（U15）：首趟永久行只写**尾部 N 条**——旧账很长时不用翻几百行才到活的那些。
+   * 被跳过的前几条按「已写出去」记（`fresh()` 那条前缀牙从预置点起照走对账），之后的新行照常
+   * 增量。N 大过行数就是全部；不给就与从前逐字节相同（全印）。
+   */
+  readonly reveal?: number
 }
 
 /**
@@ -139,6 +145,10 @@ export function newLinesOf(all: readonly string[], shown: readonly string[]): re
 export function openSession(o: SessionOptions = {}): TuiSession {
   let rows: StatusRow[] = []
   let shown: readonly string[] = []
+  // `--tail N`（U15）只管**首趟**：第一回 `fresh()` 之前 revealed 是关的，那一回把被跳过的前缀按
+  // 「已写出去」记下，之后永远走增量。预置的前缀本身就是 `permanent()` 的切片——前缀恒真，所以
+  // `newLinesOf` 那条牙从预置点起照常对账。
+  let revealed = o.reveal === undefined
   // **只折尾部（U5）**：`rows` 只在 `push` 里换成**更长**的引用（不删不改），于是「折到哪」就是
   // 一个长度。已折的那一段是纯函数对前缀的答案，缓存它不改任何输出——问一百遍 `permanent()`
   // 也只折新到的那几条。分法表是会话期不变的入参；真被中途换掉（没人这么用），`fresh()` 那条
@@ -183,6 +193,12 @@ export function openSession(o: SessionOptions = {}): TuiSession {
     permanent,
     fresh(): readonly string[] {
       const all = permanent()
+      if (!revealed) {
+        revealed = true
+        // 行数还没到 N 就是全部（slice 头比尾大给空表）；之后 reveals 关掉，增量照旧。
+        const keep = Math.max(0, all.length - (o.reveal ?? 0))
+        shown = all.slice(0, keep)
+      }
       const out = newLinesOf(all, shown)
       shown = all
       return out
@@ -229,6 +245,8 @@ export interface TuiOptions {
   readonly signal?: AbortSignal
   /** 界面自己那几样（输入行 · 候选那一层，`T4`）——一路递给会话，折帧时现问。 */
   readonly view?: (() => ViewInput) | undefined
+  /** `--tail N`（U15）：一路递给会话——首趟永久行只写尾部 N 条。 */
+  readonly reveal?: number
   /**
    * 账往前动了一条时问一次（`T6`：门口那一批要不要重算）。**同步**——它只许"排一件事"，不许在
    * 这一趟里读账（读账那一头是异步的，而这一头跟着每一行走）。第一趟读齐的那一批也算一条。
@@ -266,7 +284,7 @@ export interface Tui {
  * （那三样都是调用方的：`cli/fugue.ts` 的 `tui`）。
  */
 export function openTui(o: TuiOptions): Tui {
-  const session = openSession({ readings: o.readings, phase: o.phase, table: o.table, view: o.view })
+  const session = openSession({ readings: o.readings, phase: o.phase, table: o.table, view: o.view, reveal: o.reveal })
   const c = { rows: 0, permanent: 0, draws: 0, lines: 0, notes: 0 }
   /** 界面自己写的那几行（还没落到历史里的）：与永久行同一档、都写在面板上方，**都只写一次**。 */
   const notes: string[] = []

@@ -109,6 +109,21 @@ function intervalOf(flags: Map<string, string | true>): number | string {
 }
 
 /**
+ * `--tail N`（U15）：**首趟**永久行只写尾部 N 条——旧账几百行时不用翻半天才到活的那些；之后的
+ * 新行照常增量。不给 = 全印（与从前逐字节相同）。要一个正整数，别的都是用法错（退出码 2，
+ * 与 `--interval` 同一道门）。跳过的前几条**不折了也不印**：旧账想全看有 `fugue log` /
+ * `fugue watch`，这一档是"接着看"的入口。
+ */
+function tailOf(flags: Map<string, string | true>): number | undefined | string {
+  const raw = flags.get('tail')
+  if (raw === undefined) return undefined
+  if (typeof raw !== 'string') return '--tail 要一个数：--tail 40'
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 1) return `--tail 要一个正整数（条数），拿到 ${JSON.stringify(raw)}`
+  return n
+}
+
+/**
  * `watch`：**顺着 NDJSON 账读**（PLAN § 5.18 的第 13 格）。
  *
  * 两档只有一件事不同：不给 `--follow` 就把账上有的念一遍就停；给了就一直跟着，直到人按 Ctrl-C
@@ -213,6 +228,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   }
   const interval = intervalOf(flags)
   if (typeof interval === 'string') return usageFail(interval, json)
+  // `--tail N`（U15）：首趟只写尾部 N 条（判据在 `tailOf` 那一道门里）。
+  const tail = tailOf(flags)
+  if (typeof tail === 'string') return usageFail(tail, json)
   // 钱那一栏要一个档（与 `status --once` 同一个口径：读的时候按当时的钟算）。
   const phase = phaseOf(new Date())
   const log = openLog(root)
@@ -352,6 +370,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     emit: emitLine,
     mode,
     view,
+    // `--tail N`（U15）：首趟只写尾部 N 条——跳过的前几条按「已写出去」记，前缀牙照走。
+    reveal: tail,
     // 账往前动一条就问一次（`T6`）：门口那一批要不要重算——重算只在 `round/*` 与 `holder/*` 那两族
     // 上走（见 `refreshGate`），所以这里只排一件事，不在这一趟里读账。
     onAdvance: (rows) => {

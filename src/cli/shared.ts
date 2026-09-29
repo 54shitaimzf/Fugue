@@ -34,7 +34,7 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              writer 一个游标**——晚出现的那个 agent 的日志口第一条就是 seq=1，
                              "从 N 接着读"会把它整段永久漏掉。次序是**到达序**（实时），
                              一趟之内仍是 (seq, writer) 的全序
-  tui [--once] [--follow] [--full]
+  tui [--once] [--follow] [--full] [--tail <n>]
                              同一读面的第二档渲染：底部一块恒定 K 行的面板（处境 + 读数）擦掉重画，
                              永久行（轮次转移 · 契约 · 每一格干完没有 · 边界拦下什么）按到达序追加进
                              本终端的历史。**可附着**：自己不起轮次、不取锁、自己的账一个字节都不写
@@ -44,6 +44,8 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              ${hintLineOf(KEYMAP, hintLimitOf(60))}（只在 TTY 那一档）
                              --once 印一遍永久行就退；不是 TTY（管道 · CI）也是这一档，**一个字节的
                              ANSI 都不写**；$TERM 是 dumb 或认不出来同样退到这一档
+                             --tail <n> 首趟只写尾部 n 条永久行（旧账很长时的"接着看"入口；旧账想
+                             全看用 log / watch；不给就全印）
                              --full 整屏：进 alt screen 画，收尾出来（只多这两个 escape，排版一行
                              不动）。**缺省关**：进了 alt screen 就没有本终端的历史可翻（永久行跟着
                              那一块屏一起消失）
@@ -268,6 +270,8 @@ const VALUED: ReadonlySet<string> = new Set([
   'max-steps',
   // `--interval <毫秒>`（`watch --follow` 的轮询间隔）：同一条纪律。
   'interval',
+  // `--tail <n>`（tui 首趟只写尾部 n 条，U15）：同一条纪律——不列在这里那个数会被当成位置参数。
+  'tail',
   // `--wire-in <目录>`：**回放档**（PLAN § 5.12 序 1）。它也取一个值，同一条纪律；而它是**内部档**
   // ——不进用法说明：它要的是"录下来的那一趟"，只有取证与走查用得上。
   'wire-in',

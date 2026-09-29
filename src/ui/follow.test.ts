@@ -17,6 +17,8 @@
 //   ⑦ **历史不许被回头改**：已经写出去的那几条变了（换掉分法那一张表）→ `newLinesOf` 当场抛。
 //   ⑧ **永久行那一栏只折尾部**（U5）：同一批反复问零重折 · 新到的只折新增段 · 拼起来的答案与
 //      全量折逐字相同（查表次数在一张计数表上数出来）。
+//   ⑨ **--tail N**（U15）：首趟只写尾部 N 条 · 跳过的按已写出去记（不补印）· 新到的照常增量 ·
+//      N 大过行数全印 · 不给 reveal 与从前逐字节相同。
 //
 // 这一份不碰真日志、不碰终端：读那一头是**一本会长的假账**（每一趟读放出一片），摆那一头是
 // `ui/term.ts` 那个接口的**记录器**（它用真的 `panelOf` 补到 K 行 × 列数，所以记下来的那几行就是
@@ -488,5 +490,38 @@ test('⑧ 永久行那一栏只折尾部（U5）：反复问不重折 · 新到�
   console.log(
     `⑧ 读数：第 1 段折 ${after1} 次查表 · 反复问 3 遍零新增 · 第 2 段 +${after2 - after1} · ` +
       `第 3 段 +${asks - after2} · 答案与全量折逐字相同`,
+  )
+})
+
+test('⑨ --tail N（U15）：首趟只写尾部 N 条 · 跳过的按已写出去记 · 不给就全印', () => {
+  // 三段章 + 一条 state：折出恰 5 条永久行（llm/call 是瞬态，一条都不进历史）。
+  const rows = [...tailChapters().flat(), at('round', 4, state('Planning', 'Delegated'))]
+  const all = permanentLinesOf(rows)
+  assert.equal(all.length, 5, `这份夹具该折出恰 5 条永久行（拿到 ${all.length}）——断言语义靠它`)
+
+  // --tail 2：首趟恰印尾部 2 条（与全量折的最后一刀逐字相同），跳过的前 3 条不会补印。
+  const t = openSession({ reveal: 2 })
+  t.push(rows)
+  const first = t.fresh()
+  assert.deepEqual([...first], [...all.slice(3)], '首趟该只写尾部 2 条')
+  assert.deepEqual([...t.fresh()], [], '跳过的前 3 条按已写出去记——第二趟不补印')
+  // 账往前动一条：新折出来的照常写出（reveal 只管首趟）。
+  const more = [at('round', 5, state('Delegated', 'Merged'))]
+  t.push(more)
+  assert.deepEqual([...t.fresh()], [...permanentLinesOf(more)], '首趟之后新到的照常增量写出')
+
+  // N 大过行数：就是全部（不截断成 0）。
+  const whole = openSession({ reveal: 99 })
+  whole.push(rows)
+  assert.deepEqual([...whole.fresh()], [...all], 'N 大过行数就是全印')
+
+  // 不给 reveal：与从前逐字节相同（全印）——开关的缺省档是"没这回事"。
+  const plain = openSession()
+  plain.push(rows)
+  assert.deepEqual([...plain.fresh()], [...all], '不给 reveal 就全印')
+
+  console.log(
+    `⑨ 读数：5 条旧账 --tail 2 → 首趟印 ${first.length} 条 · 新到的 1 条照常增量 · ` +
+      'N=99 全印 · 不给 reveal 全印',
   )
 })

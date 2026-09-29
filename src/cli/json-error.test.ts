@@ -98,6 +98,14 @@ test('③ tui：--json 不在它的开关表里，但错误那一面照样认它
   assert.equal(parsed.code, 2)
   assert.ok(parsed.message.includes('--json') || parsed.message.includes('tui'), `message 说到认不得的开关：${parsed.message}`)
   assert.equal(r.stdout, '')
+
+  // --tail 的那一道门（U15）：给了不给数的，与 --interval 同一张脸——一行 JSON 退 2。
+  const bad = await jsonErrorOf(root, 'tui', '--tail', 'abc')
+  assert.equal(bad.run.code, 2, '--tail abc 是用法错（退 2），不是做不成（1）')
+  assert.equal(bad.parsed.code, 2)
+  assert.ok(bad.parsed.message.includes('--tail'), `message 要说到那个开关：${bad.parsed.message}`)
+  assert.ok(bad.parsed.hint!.includes('--help'))
+  assert.equal(bad.run.stdout, '')
 })
 
 test('④ 人读那一面逐字照旧：不给 --json，用法错仍是一句错 + 整张 USAGE', async () => {
@@ -182,6 +190,7 @@ test('⑧ 合法开关不误伤：带自己开关的命令照常退 0（表收�
     ['status', '--once'],
     ['watch'],
     ['tui', '--once'],
+    ['tui', '--once', '--tail', '2'],
     ['config', 'show'],
   ] as const) {
     const r = await run(root, ...argv)

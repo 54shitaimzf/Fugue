@@ -29,7 +29,7 @@ export const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
   },
   watch: { flags: ['root', 'agent', 'json', 'help', 'follow', 'interval'], note: '不给 --follow 就把账上有的念一遍就停' },
   tui: {
-    flags: ['root', 'help', 'once', 'follow', 'metrics', 'report', 'interval', 'full'],
+    flags: ['root', 'help', 'once', 'follow', 'metrics', 'report', 'interval', 'full', 'tail'],
     note: 'tui 是同一读面的第二档渲染——要机器读的那一份用 status --json；整屏那一档是 --full（缺省关）',
   },
   read: { flags: VIEW_FLAGS },
