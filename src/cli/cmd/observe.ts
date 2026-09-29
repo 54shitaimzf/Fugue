@@ -12,6 +12,7 @@ import { ctrlCStepOf, escStepOf, quitStepOf, stillArmed } from '../../ui/cancel.
 import { openTui, tuiModeOf } from '../../ui/follow.ts'
 import { K, degradeNote, openTerm } from '../../ui/term.ts'
 import type { ViewInput } from '../../ui/term.ts'
+import { themeOf } from '../../ui/theme.ts'
 
 /**
  * 弹层（菜单 · 阅读面）开着时的期望高度（U6，人拍的「弹层打开时长高」）：候选与正文要装得下
@@ -241,6 +242,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   const term = openTerm({
     out: process.stdout,
     full: flags.has('full'),
+    // 默认主题（U22）：框线与脚注暗一档 · 弹层加粗。两道退回门（`--no-style` · `NO_COLOR` 非空）
+    // 在 `themeOf` 里判；不是 TTY / `$TERM` 认不出来那一档本就不写 ANSI，主题谈不上。
+    theme: themeOf({ noStyle: flags.has('no-style'), noColor: process.env.NO_COLOR }),
     heightOf: () => (panel !== null || reading !== null ? OVERLAY_WANT : K),
   })
   // 四条地板收成**一张表**（`ui/follow.ts` 的 `tuiModeOf`）：真终端 → 面板；`--once` / 不是 TTY /

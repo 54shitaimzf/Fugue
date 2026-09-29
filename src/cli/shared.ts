@@ -34,7 +34,7 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              writer 一个游标**——晚出现的那个 agent 的日志口第一条就是 seq=1，
                              "从 N 接着读"会把它整段永久漏掉。次序是**到达序**（实时），
                              一趟之内仍是 (seq, writer) 的全序
-  tui [--once] [--follow] [--full] [--tail <n>]
+  tui [--once] [--follow] [--full] [--tail <n>] [--no-style]
                              同一读面的第二档渲染：底部一块恒定 K 行的面板（处境 + 读数）擦掉重画，
                              永久行（轮次转移 · 契约 · 每一格干完没有 · 边界拦下什么）按到达序追加进
                              本终端的历史。**可附着**：自己不起轮次、不取锁、自己的账一个字节都不写
@@ -49,6 +49,9 @@ export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <comm
                              --full 整屏：进 alt screen 画，收尾出来（只多这两个 escape，排版一行
                              不动）。**缺省关**：进了 alt screen 就没有本终端的历史可翻（永久行跟着
                              那一块屏一起消失）
+                             缺省带一档简约样式（框线与脚注暗一档 · 弹层加粗，黑白属性不用颜色；
+                             只动面板那几行，永久行与输入行不上样式）；--no-style 或 NO_COLOR 非空
+                             退回全无样式（字节流与没有主题逐字节相同）
   read <path>                读一个路径；默认吐原始字节
   list [dir]                 列一个目录
   stat <path>                一个路径的形状

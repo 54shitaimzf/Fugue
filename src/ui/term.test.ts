@@ -36,6 +36,7 @@ import { widthOf } from './glyph.ts'
 import { permanentLinesOf } from './stream.ts'
 import { ALT_OFF, ALT_ON, CLEAR_LINE, FALLBACK_COLUMNS, K, STYLE_OFF, ansiOf, deleteLinesOf, degradeNote, leftOf, openTerm, upOf } from './term.ts'
 import type { Term, TermOut } from './term.ts'
+import { DEFAULT_THEME } from './theme.ts'
 
 /** 一个假的 sink：**写出去的每一次 `write` 就是一条读数**（一次 write = 一个动作）。 */
 interface Fake extends TermOut {
@@ -407,8 +408,8 @@ test('⑨ 整屏 --full：两档只差 ALT_ON/ALT_OFF 两笔 · 每一条退出�
 /**
  * 屏幕模拟器（⑪ 的那把尺）：把字节流应用到 `rows × columns` 的屏幕模型上，还回**此刻看得见的
  * 那几行**。只认这一份会写的几条（`\r` · `\n`（ONLCR：下一行行首）· 上移/下移/左退 · `2K` 清行 ·
- * 删行）；认不得的 CSI（alt screen 那对）整段跳过。光标从**屏幕底行**起——真进程是在 shell
- * 提示符后面起画的（`fugue tui` 敲下去那一行），不是从屏幕顶。
+ * 删行）；认不得的 CSI（alt screen 那对 · SGR 那一族——主题的 `2m`/`1m`/`0m`，U22）整段跳过。
+ * 光标从**屏幕底行**起——真进程是在 shell 提示符后面起画的（`fugue tui` 敲下去那一行），不是从屏幕顶。
  */
 function screenOf(stream: string, rows: number, columns: number): string[] {
   const screen: string[] = Array.from({ length: rows }, () => '')
@@ -587,5 +588,57 @@ test('⑫ 主题地基（U20）：缺省与空表逐字节相同 · 有值恰那
   console.log(
     `⑫ 读数：7 行里框线 ${borders} 行被 2m…0m 包住（先补宽再包裹）· 可见内容与无主题全等 · ` +
       `未变帧 ${again.length} 字节 0 个 CLEAR_LINE`,
+  )
+})
+
+// ── ⑬ 默认主题（U22）：DEFAULT_THEME 三族被包 · 与无主题档的差恰是角色包裹 ──────────────
+
+test('⑬ 默认主题（U22）：border/footer 暗一档 · overlay 加粗 · 与无主题档的差恰是角色包裹', () => {
+  // 带弹层的一份（overlay 那一族要在场）：菜单开着——三族角色这才凑齐。
+  const W = 100
+  const frame = frameOf({
+    snapshot: SNAPSHOT,
+    permanent: PERMANENT,
+    width: W,
+    height: 16,
+    menu: { rows: ['候选一 · round go', '候选二 · log'], sel: 0 },
+  })
+  assert.ok(frame.roles.includes('overlay'), '菜单开着才有 overlay 那一族')
+
+  const drawWith = (theme: Readonly<Partial<Record<LineRole, string>>> | undefined): string => {
+    const f = fakeOut({ columns: W })
+    const t = openTerm({ out: f, height: 16, term: 'xterm-256color', ...(theme === undefined ? {} : { theme }) })
+    t.draw([], () => ({ rows: frame.lines, roles: frame.roles }))
+    return streamOf(f)
+  }
+  const plain = drawWith(undefined)
+  const themed = drawWith(DEFAULT_THEME)
+
+  // ① 与无主题档的差**恰是角色包裹**：整帧等于「panelOf 先补宽 · 再逐行按 DEFAULT_THEME 查表包裹」
+  //    ——多出来的字节只有 SGR 对，没有任何别的东西（body/read 不在表里，一行不动）。
+  const styledRows = panelOf(frame.lines, 16, W).map((line, i) => {
+    const role = i < frame.roles.length ? frame.roles[i] : 'body'
+    const sgr = DEFAULT_THEME[role]
+    return sgr === undefined ? line : `${sgr}${line}${STYLE_OFF}`
+  })
+  assert.equal(themed, styledRows.map((r) => `\r${CLEAR_LINE}${r}\n`).join(''), '默认主题那一帧 = 逐行按角色包裹的那一份')
+
+  // ② 出现次数逐族钉：`2m` 恰 border+footer 那么多次 · `1m` 恰 overlay 那么多次（一对没有多）。
+  const dimN = frame.roles.filter((r) => r === 'border' || r === 'footer').length
+  const boldN = frame.roles.filter((r) => r === 'overlay').length
+  assert.ok(dimN > 0 && boldN > 0, '三族角色都在场（这份帧画得出差别）')
+  assert.equal(themed.split('\x1b[2m').length - 1, dimN, `\\x1b[2m 恰 border+footer 那么多次（该 ${dimN}）`)
+  assert.equal(themed.split('\x1b[1m').length - 1, boldN, `\\x1b[1m 恰 overlay 那么多次（该 ${boldN}）`)
+
+  // ③ 屏幕可见内容与无主题档全等（SGR 零宽，模拟器跳过它之后屏幕上没有差）。
+  assert.deepEqual(
+    screenOf(themed, 24, W).map((r) => r.trimEnd()),
+    screenOf(plain, 24, W).map((r) => r.trimEnd()),
+    '默认主题那一帧的屏幕可见内容与无主题的全等',
+  )
+
+  console.log(
+    `⑬ 读数：${frame.lines.length} 行里 ${dimN} 行暗（border/footer）· ${boldN} 行粗（overlay）· ` +
+      `与无主题档差 ${themed.length - plain.length} 字节（全是 SGR 对）· 可见内容全等`,
   )
 })
