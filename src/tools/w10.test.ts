@@ -1,7 +1,7 @@
 // W10 的断言：视野的边界（PLAN § 5.17 的七条判据 · 架构 § 8.11 约束 3）。
 // 跑法：cd ~/fugue && node --test src/tools/w10.test.ts
 // ⑤ 那一条要跨两处工作区（事件联合在代码这一侧、计划在文档那一侧）：
-//   FUGUE_PLAN=/mnt/c/Users/Administrator/Desktop/CodeWish/PLAN.md node --test src/tools/w10.test.ts
+//   FUGUE_PLAN=/mnt/c/Users/Administrator/Desktop/CodeWish/PLAN-ARCHIVE.md node --test src/tools/w10.test.ts
 //   FUGUE_TOOLS=/mnt/c/Users/Administrator/Desktop/CodeWish/tools （那两份校验脚本在哪）
 //
 //  ① 超上限的回执：头 4 KiB 与尾 4 KiB 逐字是原文的头尾（切点回退到完整字符，半个汉字都没有）；
@@ -9,7 +9,7 @@
 //  ② 不到上限的：回执逐字节原样（截断不许误伤小输出）
 //  ③ `bash` / `run_action` 的回执里逐字查不到「毫秒」
 //  ④ `exit_plan_mode` / `ask_user_question` 的回执里提到的每一个命令，在命令面真实存在
-//  ⑤ 事件面双向对账：`tools/check-events.js` 数 `events.ts` 联合的判别名，与计划 § 5.18 那张表相符
+//  ⑤ 事件面双向对账：`tools/check-events.js` 数 `events.ts` 联合的判别名，与归档 § 5.18 那张表相符
 //  ⑥ 交接两句去系统内容：分支名 · `coord.id` · 交接步数一个都查不到（事件里那两栏照记）
 //  ⑦ **负对照**：把截断上限调成 0 → 判据 ② 当场红
 //
@@ -342,9 +342,9 @@ test('④ `exit_plan_mode` / `ask_user_question` 的回执里指的命令在命�
 
 // ── ⑤ 事件面双向对账 ──────────────────────────────────────────────────────────
 
-test('⑤ 事件联合的判别名与计划 § 5.18 那张表逐条相符（`tools/check-events.js`）', async () => {
+test('⑤ 事件联合的判别名与归档 § 5.18 那张表逐条相符（`tools/check-events.js`）', async () => {
   const tools = process.env['FUGUE_TOOLS'] ?? '/mnt/c/Users/Administrator/Desktop/CodeWish/tools'
-  const plan = process.env['FUGUE_PLAN'] ?? '/mnt/c/Users/Administrator/Desktop/CodeWish/PLAN.md'
+  const plan = process.env['FUGUE_PLAN'] ?? '/mnt/c/Users/Administrator/Desktop/CodeWish/PLAN-ARCHIVE.md'
   const { existsSync } = await import('node:fs')
   if (!existsSync(`${tools}/check-events.js`) || !existsSync(plan)) {
     console.log(`⑤ 跳过（跨工作区那两份不在：${tools}/check-events.js · ${plan}）——用 FUGUE_TOOLS / FUGUE_PLAN 指过去`)
