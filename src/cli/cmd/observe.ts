@@ -664,8 +664,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
               settle()
               return
             }
-            if (step === 'clearLine') {
-              // 输入行那一层自己有两小级（先退反查、再清空这一行），都在 `ui/input.ts` 的 `cancelAt`。
+            if (step === 'clearSearch' || step === 'clearLine') {
+              // 输入行那一层的两小级（先退反查、再清空这一行）——**次序已在 `escStepOf` 七档那一处
+              // 声明**（U19），这一份照做：`cancelAt` 在 `ui/input.ts` 只管 Editor 那一侧的变换。
               ed = applyIntent(ed, { t: 'cancel' })
               settle()
               return

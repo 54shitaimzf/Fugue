@@ -458,21 +458,16 @@ interface Piece {
   readonly text: string
 }
 
-/** `Esc` 在输入行这一层接下来该做的那一件事（`null` = 这一层没事可做，让上头的链接着走）。 */
-export function cancelTargetOf(e: Editor): 'search' | 'input' | null {
-  if (e.search !== null) return 'search'
-  return e.draft.text === '' ? null : 'input'
-}
-
 /**
- * `Esc` 在输入行这一层：**在反查就先退反查**（行里还是找到的那一条），否则**清空这一行**。
- * 清掉的那一份在撤销栈上（表里 `Ctrl-Z` 那一格说的"恢复刚清掉的草稿"就是它），也在 kill 环里。
+ * `Esc` 在输入行这一层（`clearSearch` / `clearLine` 两小级，**次序在 `ui/cancel.ts` 的 `escStepOf`
+ * 一处声明**——U19 并进去之后这一份只做 Editor 那一侧的变换）：**在反查就先退反查**（行里还是
+ * 找到的那一条），否则**清空这一行**。清掉的那一份在撤销栈上（表里 `Ctrl-Z` 那一格说的
+ * "恢复刚清掉的草稿"就是它），也在 kill 环里。
  */
 export function cancelAt(e: Editor): Editor {
-  const what = cancelTargetOf(e)
-  if (what === 'search') return { ...e, search: null }
-  if (what === 'input') return withDraft(e, killRange(e.draft, 0, e.draft.text.length))
-  return e
+  if (e.search !== null) return { ...e, search: null }
+  if (e.draft.text === '') return e
+  return withDraft(e, killRange(e.draft, 0, e.draft.text.length))
 }
 
 /** 一行 `text` 摊成显示里的那几截：一个簇一截，折叠块换成一块牌子。 */

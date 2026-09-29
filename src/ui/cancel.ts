@@ -1,5 +1,6 @@
-// TUI 的第二版第五格：**取消链**——`Esc` 六级（最外那一级是门口那一块，`T6` 加的）· `Ctrl-C` 四层
-// （3 秒那一次）· `Ctrl-D`/`q`。
+// TUI 的第二版第五格：**取消链**——`Esc` 七级（最外那一级是门口那一块，`T6` 加的；输入行那一层
+// 的两小级——先退反查再清行——U19 并进来，整条链一处声明）· `Ctrl-C` 四层（3 秒那一次）·
+// `Ctrl-D`/`q`。
 //
 // 出处：PLAN § 5.19 第二版「四 · 取消链与退出」（"`Esc` 与 `Ctrl-C` 各自是一条**写死优先级的链**，
 // 每一级可证伪。同类五家都这么做；而『这一次 `Esc` 是关菜单还是打断』正是这类界面最常被骂的一处"）·
@@ -39,12 +40,14 @@ export interface Situation {
   readonly atGate: boolean
 }
 
-/** `Esc` 这一下该做的那一件事（`none` = 六级都够不着：什么都不做）。 */
-export type EscStep = 'gate' | 'overlay' | 'break' | 'dropQueue' | 'clearLine' | 'none'
+/** `Esc` 这一下该做的那一件事（`none` = 七级都够不着：什么都不做）。 */
+export type EscStep = 'gate' | 'overlay' | 'break' | 'dropQueue' | 'clearSearch' | 'clearLine' | 'none'
 
 /**
  * `Esc` 那一链，**次序写死**（PLAN § 5.19 四）：收起门口那一块（`T6` 加的最外那一级）→ 关一层弹层
- * → 打断正在跑的那一趟 → 丢弃排队的草稿 → 清空输入 → 什么都不做。
+ * → 打断正在跑的那一趟 → 丢弃排队的草稿 → **退掉输入行自己的反查那一层**（`Alt-R` 开的那一档，
+ * 行里还是找到的那一条——U19 从 `ui/input.ts` 的 `cancelTargetOf` 并进来，两小级也在这条链上
+ * 一处声明）→ 清空输入 → 什么都不做。
  *
  * 为什么要写死而不是"看情况挑一件"：这一类界面最常被骂的一处就是"这一次 `Esc` 到底关了什么"。
  * 级与级之间没有商量——上面那一级够得着，下面那几级这一下就不动。
@@ -54,7 +57,8 @@ export function escStepOf(s: Situation): EscStep {
   if (s.overlays > 0) return 'overlay'
   if (s.running) return 'break'
   if (s.queued > 0) return 'dropQueue'
-  if (s.line !== '' || s.searching) return 'clearLine'
+  if (s.searching) return 'clearSearch'
+  if (s.line !== '') return 'clearLine'
   return 'none'
 }
 

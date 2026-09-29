@@ -25,15 +25,15 @@ function at(over: Partial<Situation> = {}): Situation {
   return { overlays: 0, running: false, queued: 0, line: '', searching: false, atGate: false, ...over }
 }
 
-// ── ① `Esc` 五级 ─────────────────────────────────────────────────────────────
-test('① `Esc` 六级各一条（最外那一级是门口那一块）：上头那一级够得着时，下头那几级的下手对象一个都不许被碰', () => {
+// ── ① `Esc` 那条链 ─────────────────────────────────────────────────────────────
+test('① `Esc` 七级各一条（最外那一级是门口那一块；输入行两小级 U19 并进来）：上头那一级够得着时，下头那几级的下手对象一个都不许被碰', () => {
   const levels: readonly (readonly [string, Situation, EscStep])[] = [
     ['门口那一块开着（弹层也开着 · 还跑着 · 排着队）', at({ atGate: true, overlays: 1, running: true, queued: 3 }), 'gate'],
     ['弹层开着（还跑着 · 排着队 · 行里有字 · 反查也开着）', at({ overlays: 1, running: true, queued: 3, line: 'x', searching: true }), 'overlay'],
     ['没弹层 · 跑着（排着队 · 行里有字）', at({ running: true, queued: 3, line: 'x' }), 'break'],
     ['没跑 · 排着队（行里有字）', at({ queued: 3, line: 'x' }), 'dropQueue'],
-    ['都没跑 · 行里有字', at({ line: 'x' }), 'clearLine'],
-    ['都没跑 · 行是空的而反查开着', at({ searching: true }), 'clearLine'],
+    ['都没跑 · 反查开着（行里还有找到的那一条）', at({ searching: true, line: '找到的' }), 'clearSearch'],
+    ['反查退了 · 行里有字', at({ line: 'x' }), 'clearLine'],
     ['全空', at(), 'none'],
   ]
   for (const [what, s, want] of levels) {
@@ -51,6 +51,10 @@ test('① `Esc` 六级各一条（最外那一级是门口那一块）：上头�
   assert.notEqual(escStepOf(at({ queued: 2, line: 'x' })), 'clearLine', '还有排队草稿时先丢草稿，不清输入行')
   assert.notEqual(escStepOf(at({ line: 'x' })), 'none', '行里有字时 `Esc` 不许什么都不做')
   assert.notEqual(escStepOf(at({ searching: true })), 'none', '反查开着时 `Esc` 不许什么都不做')
+  // 两小级各一条反向的钉（U19）：反查开着时**先退反查、不清那一行**；反查没开时才轮到清行。
+  assert.notEqual(escStepOf(at({ searching: true, line: '找到的' })), 'clearLine', '反查开着时 `Esc` 先退反查——行里那一条（找到的）不许被清')
+  assert.notEqual(escStepOf(at({ searching: false, line: 'x' })), 'clearSearch', '反查没开就轮不到那一档')
+  assert.notEqual(escStepOf(at({ searching: true, queued: 1 })), 'clearSearch', '反查在排队草稿后头：排着队时先丢草稿')
   // 次序是**写死的**（不是"看情况挑一件"）：把下头几级的东西全堆满，出来的仍是最高那一级。
   assert.equal(
     escStepOf(at({ overlays: 2, running: true, queued: 9, line: 'x', searching: true })),
@@ -66,8 +70,8 @@ test('① `Esc` 六级各一条（最外那一级是门口那一块）：上头�
   assert.equal(escStepOf(at({ queued: 1, running: true })), 'break', '排队不许越过在途')
   assert.equal(escStepOf(at({ queued: 1, line: 'x' })), 'dropQueue', '排队在输入行前头')
   console.log(
-    `① 读数：六级 ${levels.map(([w, , v]) => `${w}→${v}`).join(' · ')} · 反向的钉 9 处（每一级一处 + ` +
-      '门口那一块那两处 + 排队那两处的位置）',
+    `① 读数：七级 ${levels.map(([w, , v]) => `${w}→${v}`).join(' · ')} · 反向的钉 12 处（每一级一处 + ` +
+      '门口那一块那两处 + 排队那两处的位置 + 两小级各一条）',
   )
 })
 

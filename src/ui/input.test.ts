@@ -20,7 +20,6 @@ import {
   INPUT_ROWS,
   UNDO_DEPTH,
   applyIntent,
-  cancelTargetOf,
   caretColOf,
   displayOf,
   emptyEditor,
@@ -143,12 +142,10 @@ test('⑤ kill 环与 Esc：砍掉的粘得回来，清空的退得回来', () =
   assert.equal(c.draft.text, '', '光标在行首时 Ctrl-U 清整行（表里那一格写的是"清行"）')
   assert.equal(applyIntent(c, { t: 'yank' }).draft.text, '整行都要清掉', '粘回来是原文')
   let d = typed('草稿')
-  assert.equal(cancelTargetOf(d), 'input', '行里有字：Esc 要清空')
   d = applyIntent(d, { t: 'cancel' })
   assert.equal(d.draft.text, '', 'Esc 清空输入行')
   assert.equal(applyIntent(d, { t: 'undo' }).draft.text, '草稿', '清掉的那一行在撤销栈上（"恢复刚清掉的草稿"）')
-  assert.equal(cancelTargetOf(emptyEditor()), null, '空行上 Esc 什么都不做（让上头的链接着走）')
-  assert.deepEqual(applyIntent(emptyEditor(), { t: 'cancel' }), emptyEditor(), '空行上按 Esc 不改任何字段')
+  assert.deepEqual(applyIntent(emptyEditor(), { t: 'cancel' }), emptyEditor(), '空行上按 Esc 不改任何字段（链接着走——次序在 escStepOf 七档那一处声明）')
   console.log(`⑤ 读数：kill 环最近一格 ${JSON.stringify(c.draft.killed[c.draft.killed.length - 1])} · Esc 清空后可撤销回来`)
 })
 
