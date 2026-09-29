@@ -16,11 +16,11 @@
 //      折掉多少条在标题里说出来（折叠不是丢）；负对照：没等到 `run/end` 的那一条也印得出来
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { runCli } from '../../test/helpers/run-cli.ts'
+import { tmpDir } from '../../test/helpers/tmp.ts'
 import type { LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import { rowsOf } from '../probe/status.ts'
@@ -89,9 +89,10 @@ function script(): StatusRow[] {
 // ── ① 面板与 `fugue diff --json` 读同一份数据（真根 · 真命令） ─────────────────────────────
 
 test('① 面板那一面与 `fugue diff --json` 逐格对得上（负对照：改掉 `DELTA_FACE` 的一格当场分家）', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'read-diff-'))
-  const src = mkdtempSync(join(tmpdir(), 'read-src-'))
-  try {
+  // 临时目录走 `tmpDir`（U18：登记过、文件收尾统一删——不再自己 try/finally 删）。
+  const dir = tmpDir('fugue-read-diff-')
+  const src = tmpDir('fugue-read-src-')
+  {
     // **真源是既有的 git 对象库**（架构 § 9.1：M1 不建仓库），所以夹具自己建一个。
     const git = (...args: readonly string[]): void => {
       const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
@@ -139,9 +140,6 @@ test('① 面板那一面与 `fugue diff --json` 逐格对得上（负对照：�
     const broke = (JSON.parse(cli.stdout) as readonly never[]).map((d) => faceKeyOf(faceOfDelta(d as never, wrong) as never))
     console.log(`① 负对照：把 \`delete\` 读成 \`write\` → 命令面那 ${broke.length} 条里有 ${broke.filter((k) => k.startsWith('write\t')).length} 条「写」`)
     assert.notDeepEqual(broke, mine, '改掉一格之后还对得上，说明这条对账没在读那张表')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-    rmSync(src, { recursive: true, force: true })
   }
 })
 

@@ -30,6 +30,7 @@ import { dirname, join } from 'node:path'
 import { after, test } from 'node:test'
 import { assertWriterId } from './log/log.ts'
 import { removeTree } from './materialize/mount.ts'
+import { tmpDir } from '../test/helpers/tmp.ts'
 import { createRoots } from './roots/roots.ts'
 import type { AgentId, WriterId } from './terms.ts'
 
@@ -143,8 +144,10 @@ const NAMES: readonly (readonly [string, boolean])[] = [
 ]
 
 test('① 同一个名字在 M0 与 M3 得同一个答案（表驱动）', () => {
-  // 纯路径算术，不碰文件系统：`createRoots` 只做检查与拼接。
-  const roots = createRoots('/tmp/fugue-ident-probe')
+  // 纯路径算术，不碰文件系统：`createRoots` 只做检查与拼接。根用 `tmpDir`（U18：登记过、
+  // 文件收尾统一删——不在这儿自己挑硬路径）。
+  const base = tmpDir('fugue-ident-')
+  const roots = createRoots(base)
   for (const [name, want] of NAMES) {
     const m0 = verdict(() => assertWriterId(name as WriterId))
     const m3 = verdict(() => roots.scratchRoot(name as AgentId))
@@ -158,7 +161,7 @@ test('① 同一个名字在 M0 与 M3 得同一个答案（表驱动）', () =>
   // 带 `/` 的名字真的按段展开，而不是被当成一个"名字里带斜杠"的单段
   assert.equal(
     roots.scratchRoot(AGENT as AgentId),
-    join('/tmp/fugue-ident-probe', '.fugue', 'mat', 'agent', 'r1', '1', 'upper'),
+    join(base, '.fugue', 'mat', 'agent', 'r1', '1', 'upper'),
     'M3 那一侧按段展开',
   )
 })
