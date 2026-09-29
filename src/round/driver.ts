@@ -25,11 +25,13 @@ import type { ForkStrategy } from '../terms.ts'
 import { fork } from '../materialize/fork.ts'
 import { createReclaim } from '../execute/reclaim.ts'
 import { readConfig } from '../config.ts'
+import type { ConfigDoc } from '../config.ts'
 import { probeLayers, resolvePolicy } from '../boundary/policy.ts'
 import { cacheLayoutOf } from '../roots/coords.ts'
 import { mkdirSync } from 'node:fs'
 import type { Policy } from '../boundary/policy.ts'
 import { confine, degradedArgv } from '../boundary/confine.ts'
+import { envFor, portRangeOf } from '../boundary/binding.ts'
 import { declaredSetOf } from '../contract/types.ts'
 import { refHeadOf } from './head.ts'
 import type { RefHead } from './head.ts'
@@ -297,7 +299,6 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
    *     （本地实测：那一句进了模型的 C 区，`grep` 的读数因此变成一句假报错）。
    *     产出面仍然由契约给（`declaredSetOf` → `ownedPaths`），回写那一支读的是它。
    */
-  let policy: Policy | null = null
   /**
    * **这一趟的围栏记过没有**（每格只在第一次起子进程时记一次）。
    *
@@ -307,13 +308,17 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
    * 记一份策略值（与 `fugue run` 那条**同一个形状 · 同一个 `Policy`**），够判这一件事。
    */
   let fenceWritten = false
+  let policy: Policy | null = null
+  let policyDoc: ConfigDoc | null = null
   const policyNow = async (): Promise<Policy> => {
     if (policy === null) {
       const probed = probeLayers(roots)
+      const doc = await readConfig(roots.realRoot)
+      policyDoc = doc
       policy = resolvePolicy({
         roots,
         agent: me,
-        doc: await readConfig(roots.realRoot),
+        doc,
         // **档是 `workspace-write`：回写这条反向通道要的就是树可写。**
         // 架构 § 8.9 那条反向通道的形状是“产出经声明集回写视图”——子进程先得**写得进去**，回写才有东西可回；
         // `read-only` 那一档把整棵树按只读挂进 `/work`，于是 `bash rm` 与 `bash >` 当场撞
@@ -326,6 +331,21 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       })
     }
     return policy
+  }
+
+  /**
+   * **端口片按"日志里 writer 的次序"切**（与 `fugue run` 同一算法，见 `cli/cmd/execute.ts` 那一段）：
+   * 同一批 agent 的两次跑拿到同一片。一轮内算一次缓存住——`writers()` 是日志读数，每条命令
+   * 现算太贵，而这一轮之内 writer 集合不会变。
+   */
+  let portIndex: number | null = null
+  const portIndexOf = async (): Promise<number> => {
+    if (portIndex === null) {
+      const writers = (await log.writers()).slice().sort()
+      const at = writers.indexOf(writer)
+      portIndex = at < 0 ? writers.length : at
+    }
+    return portIndex
   }
 
 
@@ -369,6 +389,18 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     //     强制点，读者要看得见这件事（架构 § 15.7 的“如实报告，绝不夸大”）。
     const line = shellArgv(ask.command)
     const cwdRel = (ask.cwd === '' ? '' : ask.cwd) as RelPath
+    // **子进程的环境也从这里交**（P1a：架构 § 14.4 那条 envRealize 挂账的 round 侧收口）——
+    // 基线（`boundary.env` 三档，缺省 `core`）+ 本 agent 的坐标 + 端口片。这一路修之前是
+    // `spawn` 不带 env 整份继承宿主：HOME 是宿主的家、凭据键在沙箱里读得到。bash 不是
+    // "动作绑定"，那个替身只为 `envFor` 的形状（它只读 `binding.env`——坐标与网都来自策略值）。
+    const env = envFor({
+      agent: me,
+      binding: { name: 'bash', argv: line, cwd: '', outputs: [], cache: [], env: {}, net: 'none' },
+      injections: {},
+      portIndex: await portIndexOf(),
+      range: portRangeOf(policyDoc ?? {}),
+      policy: p,
+    })
     if (p.layers.includes('bwrap')) {
       return {
         // **cwd 由宿主拼**（`execWorkdir` = 执行根 + 归一后的 cwd），不从这里给：这里给的绝对
@@ -384,11 +416,12 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
           env: {},
           policy: p,
         }).argv,
+        env,
       }
     }
     if (p.layers.includes('landlock')) {
       // 第二层那一档：子进程就在宿主上跑，`spawn` 的 cwd 由宿主拼（与挂载档同一个形状）。
-      return { cwd: '', argv: degradedArgv(line, { roots, policy: p }).argv }
+      return { cwd: '', argv: degradedArgv(line, { roots, policy: p }).argv, env }
     }
     // **这一条拒也要落进日志**：它没有子进程可言，`run/end` 那条路不会替它记。
     // （原先这里读的是 `parts`——那一栏在这一份里不存在，走到这一支就是一次 `ReferenceError`；

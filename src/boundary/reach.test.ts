@@ -1,7 +1,8 @@
 // Y3 的断言（PLAN § 5.5 的 Y3 行 · 架构 § 8.8 的承重不变量 · § 23 的 U13 · § 20 S5 第二条验证）。
 //
 //   ① Y1 那六条泄漏用例（丁 那一组）**全部从"通"变"拒"**——其中「工作区配置」与「工作区日志」
-//      走的正是 `@work/.fugue/…`，靠树里挖掉那两块关掉；且 `ls /` 只剩清单那几条
+//      走的正是 `@work/.fugue/…`，靠树里挖掉那两块关掉；且 `ls /` 只剩清单那几条。P1a 起丁组
+//      多一条「宿主的环境变量」（envFor 基线化，七条全拒）
 //   ② 正对照：真构建 + 真测试在沙箱里照跑得出，产物落声明目录、`upper` 里 0 个文件
 //   ③ 负对照：从清单里抽掉 `/lib64` 与 `/etc/alternatives` 各一次 → 当场起不来，报的是那两条
 //      实测文案
@@ -234,11 +235,11 @@ function runConfined(m: Made, reach: ReachSpec, argv: readonly string[]) {
   })
 }
 
-test('Y3 ① · 六条泄漏用例全部翻成"拒"，且 `ls /` 只剩清单那几条', () => {
+test('Y3 ① · 七条泄漏用例全部翻成"拒"，且 `ls /` 只剩清单那几条', () => {
   const m = fixture()
   assert.ok(m.fx.policy.layers.includes('bwrap'), '这一趟 bwrap 在场——不在场的话下面读的不是沙箱档')
   const rows = runEscapeTable(ESCAPE_CASES, m.fx)
-  console.log('\n── Y3 ① · 全档（清单落地之后）：十九条 ──')
+  console.log('\n── Y3 ① · 全档（清单落地之后）：二十条 ──')
   for (const r of rows) console.log(`  ${formatReading(r)}`)
 
   // 整张表：该通的通着、该拒的拒着（"没问成"不算拒，它自己一栏）。
@@ -246,16 +247,17 @@ test('Y3 ① · 六条泄漏用例全部翻成"拒"，且 `ls /` 只剩清单那
   assert.deepEqual(
     wrong.map((r) => `${r.name}：期望 ${r.want}，读到 ${r.verdict ?? '（没问成）'}｜${r.message}`),
     [],
-    '十九条里该通的通、该拒的拒',
+    '二十条里该通的通、该拒的拒',
   )
 
-  // 逐条点名 Y1 那一组（组名是判据的一部分）：那六条从"通"翻成"拒"。
+  // 逐条点名 Y1 那一组（组名是判据的一部分）：那七条从"通"翻成"拒"（P1a 加的 env 那条
+  // 生下来就是拒——它问的是基线，不是清单；清单落地之前宿主环境也在整份照抄）。
   const leak = rows.filter((r) => r.group === GROUPS.leak)
-  assert.equal(leak.length, 6, '六条')
+  assert.equal(leak.length, 7, '七条')
   assert.deepEqual(
     leak.filter((r) => r.verdict !== 'deny').map((r) => `${r.name}：${r.verdict ?? '（没问成）'}`),
     [],
-    '物理侧那六条全"拒"',
+    '物理侧那七条全"拒"',
   )
 
   // `ls /`：整机换成了数得出来的十二个名字（清单那几条 + 树与两处可写落点）。

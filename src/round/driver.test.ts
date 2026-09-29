@@ -49,6 +49,10 @@ const AGENT = 'agent-1' as AgentId
 const DECL = modelDeclOf('deepseek-flash/anthropic')
 const CATALOG = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 
+// P1a 那一条读数要「宿主真的有这个键」（escape.test 同款）：round 这一路实现之前整份继承宿主
+// 环境，bash 里读得到；core 基线起读不到。node --test 每文件一个进程，进程退出即散，不恢复。
+if (process.env.DEEPSEEK_API_KEY === undefined) process.env.DEEPSEEK_API_KEY = 'driver-P1a 的探测假值'
+
 const GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   GIT_CONFIG_GLOBAL: '/dev/null',
@@ -1196,6 +1200,59 @@ test('①d `bash` 落在这一格的物化根上（不是进程自己的目录�
     // **两次调用都是相对路径**（`cwd` 那一栏是空串 = 这一格的根）：落点错的时候，这两句正是那句
     // `find .` 变成"把产品仓库列一遍"的形状。
     assert.deepEqual(starts.map((e) => e.cwd), ['', ''], '两次 bash 的 cwd 都是这一格的根')
+  } finally {
+    await b.close()
+  }
+})
+
+test('P1a · round 那一路的 bash 也过 envFor：坐标是本 agent 的、宿主的凭据键读不到', async () => {
+  // 文件顶部已往测试进程放了 DEEPSEEK_API_KEY：宿主真的有这个键，「读不到」才是 envFor 拦的，
+  // 不是键本来就不在。**这一路修之前是整份继承**——`commandFor` 只交命令行，spawn 不带 env，
+  // 宿主环境（连凭据键）原样进沙箱里的 bash，这是架构 § 14.4 那条挂账的 round 侧。
+  const b = await bench()
+  try {
+    // 探针就一句（常量参数列表，不拼任何输入）：printenv 按参数各打一行，键不在就跳过那一行
+    // ——HOME 与 PORT 是 envFor 该给的坐标与端口片，DEEPSEEK_API_KEY 在 core 基线下缺席。
+    const PROBE = 'printenv HOME PORT DEEPSEEK_API_KEY'
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      [
+        ...callOne(0, 'c1', 'bash', { command: PROBE }),
+        { t: 'usage', usage: USAGE },
+        { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+      ],
+      [
+        { t: 'delta', text: '看过了。' },
+        { t: 'usage', usage: USAGE },
+        { t: 'stop', reason: 'end-turn', raw: 'end_turn' },
+      ],
+    ]
+    const scripted = scriptedModel(scripts)
+    const asked: RuntimeRequest[] = []
+    const call: CallModel = (request, signal) => {
+      asked.push(request)
+      return scripted(request, signal)
+    }
+    const run = await runRound(depsOf(b, realDriver({}), supportOf(b, call)))
+    assertLanded(run, 'P1a env 那一趟')
+
+    const zoneC = (n: number): string => new TextDecoder().decode(asked[n]?.prefix.zoneC ?? new Uint8Array())
+    const tail = zoneC(1).slice(-400)
+    console.log(`P1a 读数：那一步的 C 区尾：${JSON.stringify(tail)}`)
+
+    // 一 · 宿主的凭据键读不到（core 基线）——打出假值来就是宿主环境还在整份进。
+    assert.ok(
+      !tail.includes('driver-P1a 的探测假值'),
+      `bash 的环境里该没有 DEEPSEEK_API_KEY——C 区尾：${tail}`,
+    )
+    // 二 · HOME 与 PORT 是 envFor 给的坐标与端口片（沙箱门 HOME=/cache，宿主门是本 agent 的
+    // 缓存路径——两门都带 cache），不是从宿主环境继承来的那份。
+    const lines = tail.split('\n')
+    const at = lines.findIndex((l, ix) => ix > 0 && /^3\d{4}$/.test(l))
+    assert.ok(at > 0, `PORT 那一行该是端口片里的号——C 区尾：${JSON.stringify(tail)}`)
+    const home = lines[at - 1] ?? ''
+    assert.ok(home.includes('cache'), `HOME 那一行该是本 agent 的坐标——C 区尾：${JSON.stringify(tail)}`)
+    assert.notEqual(home, process.env.HOME ?? '(宿主没有 HOME)', 'HOME 该是本 agent 的坐标，不是宿主那个家')
+    assert.notEqual(lines[at] ?? '', process.env.PORT ?? '', 'PORT 不是从宿主环境继承来的')
   } finally {
     await b.close()
   }

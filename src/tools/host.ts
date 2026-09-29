@@ -62,15 +62,23 @@ export interface HostActions {
   readonly head: RefHead
 }
 
+/**
+ * 一次执行要的那三样：命令行 · cwd · **子进程的环境**。`env` 不给 = 继承宿主那份（P1a 起
+ * round 那一路由调用方交一份 `envFor()` 的产物进来——宿主环境从此不整份进沙箱）。
+ */
+export interface CommandPlan {
+  readonly argv: readonly string[]
+  readonly cwd: string
+  readonly env?: Readonly<Record<string, string>>
+}
+
 export interface HostOptions {
   /**
-   * 起一个进程要什么：命令行 · cwd · 超时。**怎么关起来归调用方**（`M7` 包命令行 · `M5` 起进程）。
+   * 起一个进程要什么：命令行 · cwd · 环境 · 超时。**怎么关起来归调用方**（`M7` 包命令行 · `M5` 起进程）。
    *
    * 可以返回一个承诺：包命令行那一步要读这一格的策略值（那一层在不在场），而策略值现探。
    */
-  readonly commandFor?: (
-    ask: RunAsk,
-  ) => { readonly argv: readonly string[]; readonly cwd: string } | Promise<{ readonly argv: readonly string[]; readonly cwd: string }>
+  readonly commandFor?: (ask: RunAsk) => CommandPlan | Promise<CommandPlan>
   /** 没有它这一份宿主只能读：写与提交会改视图，而视图的每一次变更都要落日志（§ 9.3 的顺序）。 */
   readonly actions?: HostActions
   /**
@@ -342,7 +350,7 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     const timeoutMs = ask.timeoutMs
     const exec = (await execCwd()).root
     const t0 = Date.now()
-    let made: { readonly argv: readonly string[]; readonly cwd: string } | undefined
+    let made: CommandPlan | undefined
     try {
       made = await opts.commandFor?.(ask)
     } catch (err) {
@@ -357,7 +365,13 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     let exit = 1
     let timedOut = false
     await new Promise<void>((done) => {
-      const child = spawn(argv[0] ?? '/bin/sh', argv.slice(1), { cwd: workdir, stdio: ['ignore', 'pipe', 'pipe'] })
+      // **env 给了就用它**（P1a 起 round 那一路交的是 envFor 的产物：基线 + 坐标 + 注入）；
+      // 不给（`undefined`）就继承宿主那份——宿主路径上没人交它，行为不变。
+      const child = spawn(argv[0] ?? '/bin/sh', argv.slice(1), {
+        cwd: workdir,
+        env: made?.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
       let timer: NodeJS.Timeout | null = null
       child.stdout.setEncoding('utf8')
       child.stderr.setEncoding('utf8')

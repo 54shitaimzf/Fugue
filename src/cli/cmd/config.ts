@@ -95,6 +95,8 @@ export async function policyCmd(
       process.stdout.write(
         `档 ${policy.mode} · enforcement ${policy.enforcement} · 在场的层 ${layers}\n` +
           `网络 ${policy.net}${policy.net === 'none' ? '（--unshare-net 把网切掉；回环照旧）' : '（动作点名要的）'}\n` +
+          `env 基线 ${policy.env.inherit}（core 定位那几样 · all 宿主整份 · none 空）` +
+          `${Object.keys(policy.env.set).length === 0 ? '' : ` · 注入 ${Object.keys(policy.env.set).length} 键`}\n` +
           `可达集 ${policy.reach.roRoots.length} 条只读根 · ${policy.reach.symlinks.length} 条软链 · ` +
           `${policy.reach.devices.length} 处设备与进程 · 树里挖掉 ${policy.reach.mask.join(' · ')}\n` +
           `  只读根 ${policy.reach.roRoots.join(' · ')}\n` +

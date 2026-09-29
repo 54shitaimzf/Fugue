@@ -172,6 +172,9 @@ const APPLY = '走申请（§ 15.3.b）'
 /** 树内那条写该拒时的指路：这一档树是只读的，那要写就声明它（§ 8.6 第 2 步 · § 8.7）。 */
 const DECLARE_IT = '把它声明进这个动作（cache / outputs）'
 
+/** env 那一条该拒时的指路：要一个键进沙箱，在策略那一份里显式给，不是从宿主继承。 */
+const INJECT_IT = '要它进沙箱：boundary.env.set 里给'
+
 /** 四十级 `..`：**一定到得了根**（到了根之后再 `..` 还是根），所以不必知道 fixture 有几层。 */
 const UP = '../'.repeat(40)
 
@@ -415,6 +418,19 @@ export const ESCAPE_CASES: readonly EscapeCase[] = [
     read: { how: 'exit' },
     cites: '§ 8.4：平台专属的路径形状不进这一份，但**挂进来的宿主盘**是一条路',
     note: '**今天通**。同"宿主那个家"：没有 /mnt/c 的机器上会退化成"拒"，由 `message` 分辨。',
+  },
+  {
+    name: '宿主的环境变量',
+    group: GROUPS.leak,
+    want: 'deny',
+    remedy: INJECT_IT,
+    argv: ['sh', '-c', 'test -n "$DEEPSEEK_API_KEY"'],
+    cwd: '',
+    read: { how: 'exit' },
+    cites: '§ 14.4 的 envRealize 挂账（计划 § 5.20 的 P1a）：宿主环境整份进沙箱，凭据那一类键跟着进',
+    note:
+      '**今天通**（`envFor` 整份照抄 process.env——测试进程往宿主环境里放了这一个键，沙箱里读得到）。' +
+      'P1a 起基线是 core 档，这一条翻成拒；真要它进沙箱的在 `boundary.env.set` 里给。',
   },
 ]
 

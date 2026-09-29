@@ -22,7 +22,7 @@
 // 落回 § 15.7 的 E4：树可写是那一档的事实。
 import { join } from 'node:path'
 import type { ConfigDoc } from '../config.ts'
-import { declaredDirs, type ActionBinding } from './binding.ts'
+import { declaredDirs, readEnvSpec, type ActionBinding, type EnvSpec } from './binding.ts'
 import { probeBwrap } from './confine.ts'
 import { cacheLayoutOf } from '../roots/coords.ts'
 import { probeLandlock } from './landlock.ts'
@@ -45,6 +45,11 @@ export interface Policy {
   readonly coords: Coords
   readonly net: NetMode
   readonly layers: readonly PolicyLayer[]
+  /**
+   * 子进程环境的基线与注入（`boundary.env` 四键，计划 § 5.20 的 P1a）：`envFor()` 读的是它。
+   * 宿主环境从此不再整份照抄——`inherit: 'all'` 是退化档，与从前的行为逐字节相同。
+   */
+  readonly env: EnvSpec
 }
 
 /** 现探出来的那几层，外加一句"为什么不在"——降级与拒绝的话都从这一句来。 */
@@ -135,6 +140,7 @@ export function resolvePolicy(i: PolicyInput): Policy {
     // 挂载（第二层缺席），只有第二层时"看得见什么"那一维没有围栏。
     enforcement: fenced && land ? 'full' : 'partial',
     reach: readReach(i.doc),
+    env: readEnvSpec(i.doc),
     coords,
     // 网只有挂载层拿得走（第二层没有网络那几条规则）：它不在场时如实报 `host`。
     net: fenced ? (i.binding?.net ?? 'none') : 'host',

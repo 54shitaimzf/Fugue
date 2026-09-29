@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, test } from 'node:test'
-import { DEFAULT_PORTS, envFor } from './binding.ts'
+import { DEFAULT_PORTS, DEFAULT_ENV_SPEC, envFor, readEnvSpec, type EnvSpec } from './binding.ts'
 import { cacheLayoutOf } from '../roots/coords.ts'
 import { createRoots } from '../roots/roots.ts'
 import type { Roots } from '../roots/contract.ts'
@@ -37,10 +37,20 @@ import {
   type EscapeReading,
 } from './escape.ts'
 import { resolvePolicy } from './policy.ts'
+import type { Policy } from './policy.ts'
+import { DEFAULT_REACH } from './reach.ts'
 
 const CLI = fileURLToPath(new URL('../cli/fugue.ts', import.meta.url))
 const C_SRC = '#include <stdio.h>\nint main(void){ printf("hi\\n"); return 0; }\n'
 const TS_SRC = 'export const b = 2\n'
+
+/**
+ * P1a 那一条读数要「宿主真的有这个键」：整份照抄的那一档（今天）才会把它带进沙箱，翻面才是
+ * 边界拦的。**测试进程自己的环境**就是 `envFor` 读的那一份——放一个假值，跑完删掉；宿主
+ * 本来就有它的话用宿主那份（更真），`after` 里按记下的原样恢复。
+ */
+const HAD_DEEPSEEK = process.env.DEEPSEEK_API_KEY
+if (HAD_DEEPSEEK === undefined) process.env.DEEPSEEK_API_KEY = 'y1-逃逸集的探测假值'
 
 function fugue(root: string, ...args: string[]): { code: number; err: string } {
   const r = spawnSync(process.execPath, [CLI, '--root', root, ...args], {
@@ -88,7 +98,7 @@ const MADE: Made[] = []
  * 沙箱里的三条），退化档那一份点名要树可写那一档——那一档里没有挂载，坐标照实写宿主那三条。
  * 两份策略各自的坐标都从这里进 `fx`（argv 那一侧），宿主那一侧另有一份 `host`。
  */
-function fixture(sandbox = true, mode?: 'read-only' | 'workspace-write'): Made {
+function fixture(sandbox = true, mode?: 'read-only' | 'workspace-write', doc: Record<string, unknown> = {}): Made {
   const root = mkdtempSync(join(tmpdir(), 'fugue-y1-'))
   const outside = mkdtempSync(join(tmpdir(), 'fugue-y1-out-'))
   mkdirSync(join(root, 'src'), { recursive: true })
@@ -126,8 +136,8 @@ function fixture(sandbox = true, mode?: 'read-only' | 'workspace-write'): Made {
     // 挂载层定（`policy.ts`）。只给 `mode` 的话，探针照旧报 bwrap 在场、坐标是沙箱里那三条，
     // 而跑器走的是 `degradedArgv`——argv 里的 `/work/...` 在宿主上不存在，整张表全变"拒"。
     sandbox
-      ? { roots, agent: AGENT, doc: {}, ...(mode === undefined ? {} : { mode }) }
-      : { roots, agent: AGENT, doc: {}, mode: 'workspace-write', probed: { layers: [], note: '退化档：两层都不在（E4）' } },
+      ? { roots, agent: AGENT, doc, ...(mode === undefined ? {} : { mode }) }
+      : { roots, agent: AGENT, doc, mode: 'workspace-write', probed: { layers: [], note: '退化档：两层都不在（E4）' } },
   )
   const env = envFor({
     agent: AGENT,
@@ -158,6 +168,7 @@ function fixture(sandbox = true, mode?: 'read-only' | 'workspace-write'): Made {
 }
 
 after(() => {
+  if (HAD_DEEPSEEK === undefined) delete process.env.DEEPSEEK_API_KEY
   for (const m of MADE) {
     for (const a of [AGENT, OTHER_AGENT]) fugue(m.root, '--agent', a, 'dispose')
     for (const dir of [m.root, m.outside]) {
@@ -222,7 +233,8 @@ test('Y3 ⑤ · 树可写那一档：看得见什么那一维照旧关着（树�
   // （`policy.ts` 的旧口径：挂载层只在 `read-only` 档用），于是真档那一趟的 `bash` 在宿主上
   // 裸跑——那一格读到了 `/tmp/scenario-b14/...` 下这一趟的验收结果与请求实录，"它自己解出来
   // 的"这句话就不再是一条证据。**判据落在这张表上**：档管的是树可不可写（乙那一组在这一档
-  // 翻成"通"），而"够得着什么"那一维由挂载层管——丙六条 + 丁六条必须**一条都够不着**。
+  // 而这一条**拧着那一趟的语义**：这一档的树是可写的，"树内该拒"那三条在这一档里会翻成"通"
+  // （乙那一组的语义），而"够得着什么"那一维由挂载层管——丙六条 + 丁七条必须**一条都够不着**。
   const w = fixture(true, 'workspace-write')
   const rows = runEscapeTable(ESCAPE_CASES, w.fx)
   show('树可写那一档（bwrap 那一层在 · mode=workspace-write）', rows)
@@ -234,9 +246,9 @@ test('Y3 ⑤ · 树可写那一档：看得见什么那一维照旧关着（树�
   for (const name of ['树内新建', '原地改源文件', '删除源文件']) {
     assert.equal(pick(rows, name).verdict, 'pass', `${name}：这一档树是可写的（模式=workspace-write）`)
   }
-  // 二 · 树以外：**十二条一条都不许够得着**（这就是那一处泄漏的封口）。
+  // 二 · 树以外：**十三条一条都不许够得着**（这就是那一处泄漏的封口）。
   const outside = ['写工作区外', '绝对路径读宿主', '.. 穿越读宿主', '软链指向树外', '经 /proc 的另一条坐标', 'shell 里 cd / 再读']
-  const leak = ['工作区配置', '工作区日志', '真源工作树（宿主路径）', '别家的物化树（宿主路径）', '宿主那个家', '挂进来的宿主盘']
+  const leak = ['工作区配置', '工作区日志', '真源工作树（宿主路径）', '别家的物化树（宿主路径）', '宿主那个家', '挂进来的宿主盘', '宿主的环境变量']
   for (const name of [...outside, ...leak]) {
     assert.equal(pick(rows, name).verdict, 'deny', `${name}：树以外那一条在这一档上够着了——账本与答案纸就在这条路上`)
   }
@@ -252,7 +264,7 @@ test('Y1 ② · 表里每条都给读数与文案，不吞异常；每条该拒�
 
   // 表的形状：名字唯一 · 四组都在 · 物理侧那六条一条不少（Y3 的负对照按组点名）。
   assert.equal(new Set(ESCAPE_CASES.map((c) => c.name)).size, ESCAPE_CASES.length, '用例名不许重')
-  assert.equal(ESCAPE_CASES.filter((c) => c.group === GROUPS.leak).length, 6, '物理侧够得着的那六条')
+  assert.equal(ESCAPE_CASES.filter((c) => c.group === GROUPS.leak).length, 7, '物理侧够得着的那七条')
   for (const g of [GROUPS.ok, GROUPS.inside, GROUPS.outside, GROUPS.leak]) {
     assert.ok(ESCAPE_CASES.some((c) => c.group === g), `这一组是空的：${g}`)
   }
@@ -278,7 +290,7 @@ test('Y1 ② · 表里每条都给读数与文案，不吞异常；每条该拒�
   }
 })
 
-test('Y1 ③ · 丁 那一组今天如实报"拒"（读数：Y3 之前这六条全"通"）', () => {
+test('Y1 ③ · 丁 那一组今天如实报读数（Y1 立表时那六条全"通"，Y3 之后全"拒"）', () => {
   // **这一条是读数，不是断言**（PLAN § 5.5 的 ③）：翻面这件事由 Y3 自己的断言看着
   // （`src/boundary/reach.test.ts` 的 ①）——这里只把它原样印出来。
   const rows = fullRun().filter((r) => r.group === GROUPS.leak)
@@ -286,7 +298,101 @@ test('Y1 ③ · 丁 那一组今天如实报"拒"（读数：Y3 之前这六条�
   for (const r of rows) console.log(`  ${formatReading(r)}`)
   const today = rows.map((r) => `${r.name}：${r.verdict}`)
   console.log(`  今天：${today.join(' · ')}`)
-  assert.equal(rows.length, 6, '六条')
+  assert.equal(rows.length, 7, '七条')
+})
+
+test('P1a · env 基线：core 档下宿主的凭据键读不到；inherit:all（今天的档）当场翻回通', () => {
+  // P1a 的那条会红的断言（计划 § 5.20 的 P1a 行）：envFor 从「整份照抄」换成「基线 + 注入 +
+  // 剔除」，缺省基线是 core 档——宿主的凭据键从此不进沙箱。落在丁组的那条用例问的就是这件事。
+  const w = fixture()
+  const rows = runEscapeTable(ESCAPE_CASES, w.fx)
+  assert.equal(
+    pick(rows, '宿主的环境变量').verdict,
+    'deny',
+    'core 基线：宿主环境里的凭据键读不到（读得到就是整份照抄还在）',
+  )
+
+  // 负对照（地板那一面）：inherit:all = 今天那一档——整份照抄，同一条当场读得到。
+  // 地板不是摆设：凭据之外有些工作区就是要宿主那份环境（本机工具链那一类），退化档一直在。
+  const old = fixture(true, undefined, { boundary: { env: { inherit: 'all' } } })
+  const rows2 = runEscapeTable(ESCAPE_CASES, old.fx)
+  assert.equal(
+    pick(rows2, '宿主的环境变量').verdict,
+    'pass',
+    'all 档与今天的行为相同：整份照抄，读得到',
+  )
+})
+
+test('P1a · envFor 三档与四键组合：core 基线 · all 与整份照抄逐字节相同 · none 只剩坐标', () => {
+  // 手拼策略值：这一条只问 envFor 的合并算法，不探层（层在不在场只改坐标，不改基线逻辑）。
+  const base: Policy = {
+    mode: 'read-only',
+    writableRoots: [],
+    enforcement: 'partial',
+    reach: DEFAULT_REACH,
+    coords: { tree: '/work', home: '/cache', tmp: '/tmp' },
+    net: 'none',
+    layers: [],
+    env: DEFAULT_ENV_SPEC,
+  }
+  const input = (env: EnvSpec) => ({
+    agent: AGENT,
+    binding: { name: 'p1a', argv: ['true'], cwd: '', outputs: [], cache: [], env: {}, net: 'none' },
+    injections: {},
+    portIndex: 0,
+    range: DEFAULT_PORTS,
+    policy: { ...base, env },
+  })
+
+  // core（缺省档）：凭据键不在 · 定位键在 · 坐标照旧。
+  const core = envFor(input(DEFAULT_ENV_SPEC))
+  assert.equal(core.DEEPSEEK_API_KEY, undefined, 'core 基线：宿主的凭据键不进沙箱')
+  assert.ok(core.PATH !== undefined && core.PATH !== '', 'core 基线：PATH 还在')
+  assert.equal(core.HOME, '/cache', 'HOME 是本 agent 的坐标')
+  assert.equal(core.PORT, '31000')
+  assert.equal(core.PORTS, '31000-31003')
+
+  // all（退化档）：与「整份照抄 + 坐标」的旧算法逐字节相同——地板不许变低。
+  const all = envFor(input({ inherit: 'all', set: {}, exclude: [], includeOnly: [] }))
+  const legacy: Record<string, string> = {}
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) legacy[k] = v
+  assert.deepEqual(
+    all,
+    {
+      ...legacy,
+      HOME: '/cache',
+      XDG_CACHE_HOME: '/cache/xdg-cache',
+      TMPDIR: '/tmp',
+      PORT: '31000',
+      PORTS: '31000-31003',
+    },
+    'all 档与整份照抄的从前逐字节相同',
+  )
+
+  // none：只剩坐标五件套——argv 得全路径的那一档，完整性在，没人日常用。
+  const none = envFor(input({ inherit: 'none', set: {}, exclude: [], includeOnly: [] }))
+  assert.deepEqual(
+    Object.keys(none).sort(),
+    ['HOME', 'PORT', 'PORTS', 'TMPDIR', 'XDG_CACHE_HOME'],
+    'none 档：坐标之外一个不进',
+  )
+
+  // 四键组合：include_only 收窄基线 · exclude 剔基线 · set 与坐标不受那两键影响。
+  const combo = envFor(
+    input({ inherit: 'all', set: { FUGUE_PROBE: 'v' }, exclude: ['SHELL'], includeOnly: ['PATH'] }),
+  )
+  assert.equal(combo.FUGUE_PROBE, 'v', 'set 的键恒在（include_only 只收窄基线）')
+  assert.equal(combo.SHELL, undefined, 'exclude 把基线里的键剔掉')
+  assert.deepEqual(
+    Object.keys(combo).sort(),
+    ['FUGUE_PROBE', 'HOME', 'PATH', 'PORT', 'PORTS', 'TMPDIR', 'XDG_CACHE_HOME'],
+    '组合档：基线只剩 PATH，坐标与 set 照叠',
+  )
+
+  // readEnvSpec：不在 = 缺省那份 · 坏形状拒 · set 盖坐标拒（与 readReach 同一条纪律）。
+  assert.deepEqual(readEnvSpec({}), DEFAULT_ENV_SPEC, '没配就是 core')
+  assert.throws(() => readEnvSpec({ boundary: { env: { inherit: 'yes' } } }), /inherit 取/)
+  assert.throws(() => readEnvSpec({ boundary: { env: { set: { HOME: '/x' } } } }), /不能盖/)
 })
 
 // 全档那一趟跑一次就够：② 与 ③ 读的是同一份读数（多跑一趟只是多花时间，还多一份 fixture）。

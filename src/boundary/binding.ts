@@ -14,9 +14,9 @@
 //
 // **本 agent 的坐标从策略值来**（架构 § 8.6 那张表的头三行 · § 8.8 的 `Policy.coords`）：
 // `HOME` / `XDG_CACHE_HOME` / `TMPDIR` 落在**子进程那一侧的坐标**上——沙箱档是 `/cache` 与
-// `/tmp`，退化档是 `cacheRoot(a)` 与 `tempRoot(a)`；端口从池里切一片给自己的 agent。**另一样
-// 是照旧递进去的**：宿主环境不清洗（凭据那一类在 S5 的 `Policy` 与 S6 的 `envRealize` 手里），
-// 这一站只保证表里这几项在子进程里是本 agent 的坐标。
+// `/tmp`，退化档是 `cacheRoot(a)` 与 `tempRoot(a)`；端口从池里切一片给自己的 agent。另一样
+// 从 P1a 起也过声明（计划 § 5.20 · 架构 § 14.4 的 `envRealize` 挂账收口）：宿主环境不再整份
+// 照抄，基线走 `boundary.env` 的三档（缺省 `core`），要哪个键进沙箱就在 `set` 里显式给。
 import { join } from 'node:path'
 import { XDG_DIR } from '../roots/coords.ts'
 import type { Policy } from './policy.ts'
@@ -144,6 +144,85 @@ export function assertNotReserved(keys: readonly string[], where: string): void 
   }
 }
 
+// ── env 基线（P1a，计划 § 5.20）────────────────────────────────────────────────
+
+/** 工作区配置里 env 那一个键。 */
+export const ENV_KEY = 'boundary.env'
+
+/**
+ * `core` 档的基线：**跑起一个进程必需的那几样定位性变量**——找得到命令（`PATH`）· 家与临时
+ * 目录（`HOME` · `TMPDIR`，随后会被本 agent 的坐标盖掉）· 语言与地域（`LANG` · `LC_*` 按前缀
+ * 收）· 终端（`TERM`）· shell（`SHELL`）· 时区（`TZ`）。凭据那一类键不在这里：要它进沙箱，
+ * 在 `boundary.env.set` 里显式给。
+ */
+const CORE_ENV_KEYS: readonly string[] = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'TERM', 'SHELL', 'TZ']
+const CORE_ENV_PREFIX = 'LC_'
+
+/**
+ * 子进程环境的那一份声明（`boundary.env` 四键，`Policy.env` 装的就是它）：
+ *   · `inherit`：基线取哪一档——`core`（上面那份清单，缺省）· `all`（宿主整份，**退化档**，
+ *     与整份照抄的从前逐字节相同）· `none`（空，argv 得全路径）；
+ *   · `set`：静态注入，过保留清单（盖不到坐标）；
+ *   · `exclude`：从**继承来的**那份里剔除（显式 `set` 的不剔——不想给就别 set）；
+ *   · `include_only`：把继承那份收窄成这几样（作用在基线上，`set` 与坐标不受它管）。
+ * 四键正交：`inherit` 定档 · `include_only` 窄化 · `exclude` 剔除 · `set` 注入。
+ */
+export interface EnvSpec {
+  readonly inherit: 'core' | 'all' | 'none'
+  readonly set: Readonly<Record<string, string>>
+  readonly exclude: readonly string[]
+  readonly includeOnly: readonly string[]
+}
+
+export const DEFAULT_ENV_SPEC: EnvSpec = { inherit: 'core', set: {}, exclude: [], includeOnly: [] }
+
+/** 读 `boundary.env`。不在 = 缺省那份（`core`）；在而成形不了 = 拒绝并指路（与 `readReach` 同款）。 */
+export function readEnvSpec(doc: ConfigDoc): EnvSpec {
+  const raw = getConfig(doc, ENV_KEY)
+  if (raw === undefined) return DEFAULT_ENV_SPEC
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new BindingError(
+      `${ENV_KEY} 要是一个对象：{"inherit":"core","set":{},"exclude":[],"include_only":[]}`,
+    )
+  }
+  const o = raw as ConfigDoc
+  const inherit = o.inherit
+  if (inherit !== undefined && inherit !== 'core' && inherit !== 'all' && inherit !== 'none') {
+    throw new BindingError(
+      `${ENV_KEY}.inherit 取 "core" / "all" / "none"（缺省 core）：${JSON.stringify(inherit)}`,
+    )
+  }
+  const set: Record<string, string> = {}
+  if (o.set !== undefined) {
+    if (typeof o.set !== 'object' || o.set === null || Array.isArray(o.set)) {
+      throw new BindingError(`${ENV_KEY}.set 要是一个对象（键是环境变量名，值是字符串）`)
+    }
+    for (const [k, v] of Object.entries(o.set)) {
+      if (typeof v !== 'string') throw new BindingError(`${ENV_KEY}.set.${k} 要是一个字符串`)
+      set[k] = v
+    }
+  }
+  assertNotReserved(Object.keys(set), ENV_KEY + '.set')
+  const listOf = (v: unknown, what: string): string[] => {
+    if (v === undefined) return []
+    if (!Array.isArray(v)) throw new BindingError(`${ENV_KEY}.${what} 要是一个字符串数组`)
+    const out: string[] = []
+    for (const x of v) {
+      if (typeof x !== 'string' || x === '') {
+        throw new BindingError(`${ENV_KEY}.${what} 里每一项都要是非空字符串`)
+      }
+      out.push(x)
+    }
+    return out
+  }
+  return {
+    inherit: inherit ?? 'core',
+    set,
+    exclude: listOf(o.exclude, 'exclude'),
+    includeOnly: listOf(o.include_only, 'include_only'),
+  }
+}
+
 /** `-- k=v…`：注入子进程的环境变量。**没有 `=` 的那一段是用法错**，不当成空值收下。 */
 export function parseInjections(rest: readonly string[]): Record<string, string> {
   const out: Record<string, string> = {}
@@ -203,14 +282,31 @@ export interface EnvInput {
 }
 
 /**
- * 子进程的那一份环境：宿主这一份照旧 + 本 agent 的坐标 + 动作自己的 + `-- k=v` 的（后两者
- * 已经在各自的入口上过了保留清单，盖不到坐标）。
+ * 子进程的那一份环境：**基线（`Policy.env`）+ 本 agent 的坐标 + 策略的 `set` + 动作自己的 +
+ * `-- k=v` 的**（后三者各自在入口上过了保留清单，盖不到坐标）。
+ *
+ * 基线三档：`all` = 宿主整份（**退化档**，与整份照抄的从前逐字节相同）· `none` = 空 ·
+ * `core` = 定位性那几样（缺省）。`include_only` 把基线收窄、`exclude` 从基线里剔除——两键
+ * 都只作用在**继承来的**那份上，坐标与 `set` 叠在后面，不受它们影响。
  */
 export function envFor(i: EnvInput): Record<string, string> {
   const c = i.policy.coords
   const slice = portSlice(i.range, i.portIndex)
+  const spec = i.policy.env
+  const keep = (k: string): boolean =>
+    spec.inherit === 'all'
+      ? true
+      : spec.inherit === 'none'
+        ? false
+        : CORE_ENV_KEYS.includes(k) || k.startsWith(CORE_ENV_PREFIX)
   const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined && keep(k)) env[k] = v
+  }
+  if (spec.includeOnly.length > 0) {
+    for (const k of Object.keys(env)) if (!spec.includeOnly.includes(k)) delete env[k]
+  }
+  for (const k of spec.exclude) delete env[k]
   return {
     ...env,
     HOME: c.home,
@@ -218,6 +314,7 @@ export function envFor(i: EnvInput): Record<string, string> {
     TMPDIR: c.tmp,
     PORT: String(slice.port),
     PORTS: slice.ports,
+    ...spec.set,
     ...i.binding.env,
     ...i.injections,
   }
