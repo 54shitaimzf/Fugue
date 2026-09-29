@@ -13,7 +13,7 @@
 // § 8.5 的差异集一致：文件比内容、软链比目标那串字符）。
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, test } from 'node:test'
@@ -21,7 +21,7 @@ import type { Delta } from '../delta.ts'
 import type { EntryMeta } from '../entries.ts'
 import { scanTree } from './diffstat.ts'
 import type { TreeStat } from './diffstat.ts'
-import { LandError, landDeltas } from './land.ts'
+import { LandError, diskEntry, landDeltas, sameEntry } from './land.ts'
 import type { LandResult, ViewReads } from './land.ts'
 import { makeWhiteout, removeTree } from './mount.ts'
 
@@ -578,4 +578,24 @@ test('V7 · 另两档上的"重开"：落地根是我们自己那棵树，对完
   assert.deepEqual(asObject(out.manifest), { 'docs/again.md': sha('again\n') })
   assert.deepEqual([...out.landed].sort(), ['docs/a.md', 'docs/again.md', 'docs/b.md'], '对账删掉的那两条也报进账')
   removeTree(root)
+})
+
+test('V7 · 盘上与视图比模式按 git 的两档：0664 就是 100644，执行位翻了才不同', () => {
+  // **显式 chmod**：`umask 002` 的机器上铺出来 / 用户写下的文件是 0664，视图那一侧是 `100644`
+  // 的 0644。按整模式比，"写回原内容不碰盘"那一条就不成立（它把模式不同当成了内容不同）。
+  const dir = mkdtempSync(join(tmpdir(), 'v7-mode-'))
+  made.push(dir)
+  const abs = join(dir, 'a.ts')
+  writeFileSync(abs, '一样的\n')
+  const view = { kind: 'file' as const, hash: createHash('sha256').update('一样的\n').digest('hex'), mode: 0o644 }
+
+  chmodSync(abs, 0o664)
+  assert.equal(sameEntry(diskEntry(abs, 'a.ts'), view), true, '0664 与 0644 是同一档')
+  chmodSync(abs, 0o600)
+  assert.equal(sameEntry(diskEntry(abs, 'a.ts'), view), true, '0600 也是 100644 那一档')
+
+  // 负对照：执行位真的翻了 → 不同。
+  chmodSync(abs, 0o775)
+  assert.equal(sameEntry(diskEntry(abs, 'a.ts'), view), false, '执行位翻了是真改动')
+  assert.equal(sameEntry(diskEntry(abs, 'a.ts'), { ...view, mode: 0o755 }), true, '0775 与 0755 是同一档')
 })

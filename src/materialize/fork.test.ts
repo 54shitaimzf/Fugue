@@ -38,6 +38,7 @@ import { WORKSPACE_STATE, scanTree } from './diffstat.ts'
 import { fork } from './fork.ts'
 import { clearMaterialization, isMounted, mountOverlay, unmountOverlay, removeTree } from './mount.ts'
 import type { OverlaySpec } from './mount.ts'
+import { gitModeOf } from '../delta.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const AGENT = 'round'
@@ -145,7 +146,9 @@ async function fromCommit(dir: string, commit: CommitId): Promise<Leaf[]> {
 async function fromTree(root: string): Promise<Leaf[]> {
   return scanTree(root, { skip: WORKSPACE_STATE }).leaves.map((l) => ({
     path: l.path,
-    mode: l.kind === 'symlink' ? 0o120000 : 0o100000 | (l.mode & 0o777),
+    // 折算走产品那一处（`gitModeOf`）：原先 `0o100000 | (l.mode & 0o777)` 并没有按可执行位
+    // 分两档，`umask 002` 的机器上铺出来的 0664 于是对不上树上的 100644。
+    mode: gitModeOf(l.mode),
     hash: l.hash,
   }))
 }

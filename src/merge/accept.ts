@@ -24,6 +24,7 @@ import { spawnSync } from 'node:child_process'
 import type { AbsPath, CommitId, RelPath } from '../terms.ts'
 import type { Assertion, AssertionResult, AssertionRun, Contract } from '../contract/types.ts'
 import { resultOf } from '../contract/types.ts'
+import { gitModeOf } from '../delta.ts'
 import { WORKSPACE_STATE } from '../materialize/diffstat.ts'
 import { treeOfCommit } from '../merge/merge.ts'
 import type { Truth } from '../truth/contract.ts'
@@ -193,7 +194,8 @@ export async function advance(deps: AdvanceDeps, commit: CommitId): Promise<Adva
       continue
     }
     const now = lstatSync(abs, { throwIfNoEntry: false })
-    if (now !== undefined && now.isFile() && Number(now.mode) === w.mode && hashOfFile(abs) === hashOf(w.bytes)) continue
+    // 模式按树上那一档比（`gitModeOf`）：盘上 0664 与树上 100644 是同一份，不该为此重写、改掉 mtime。
+    if (now !== undefined && now.isFile() && gitModeOf(Number(now.mode)) === w.mode && hashOfFile(abs) === hashOf(w.bytes)) continue
     mkdirSync(dirname(abs), { recursive: true })
     if (now !== undefined && !now.isFile()) rmSync(abs, { recursive: true, force: true })
     writeFileSync(abs, w.bytes)

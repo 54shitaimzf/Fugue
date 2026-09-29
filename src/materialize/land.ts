@@ -53,6 +53,7 @@
 //     是"拒绝并指路"（交付说明 V7）。**这一支在动手之前就拒绝**：半落一地的状态比拒绝难查得多。
 import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { gitModeOf } from '../delta.ts'
 import type { Delta } from '../delta.ts'
 import type { EntryMeta } from '../entries.ts'
 import type { AbsPath, RelPath } from '../terms.ts'
@@ -162,7 +163,8 @@ export function diskEntry(abs: AbsPath, rel: RelPath): EntryState | null {
     throw new LandError(rel, `看不动这一条：${(err as Error).message}`)
   }
   if (st.isSymbolicLink()) return { kind: 'symlink', target: readlinkSync(abs) }
-  if (st.isFile()) return { kind: 'file', hash: hashFile(abs), mode: st.mode & 0o7777 }
+  // 模式按树上那一档记（`gitModeOf`）：与 `portEntry` 那一侧同一个口径，盘上的 umask 不算改动。
+  if (st.isFile()) return { kind: 'file', hash: hashFile(abs), mode: gitModeOf(st.mode) & 0o7777 }
   if (st.isDirectory()) return { kind: 'dir' }
   // 字符设备 0:0 是 overlay 的 whiteout，它说的是"这儿没有"。
   if (st.isCharacterDevice() && st.rdev === 0) return WHITEOUT

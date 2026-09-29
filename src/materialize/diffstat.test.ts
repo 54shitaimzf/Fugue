@@ -44,6 +44,9 @@ function tree(files: Record<string, string>): string {
     const abs = join(root, rel)
     mkdirSync(dirname(abs), { recursive: true })
     writeFileSync(abs, body)
+    // 钉住模式：`writeFileSync` 给的是 0666 & ~umask，`umask 002` 的机器上是 0664——
+    // 这把尺子记整模式（文件头第四条），夹具就不能随跑测试那台机器变。
+    chmodSync(abs, 0o644)
   }
   return root
 }
