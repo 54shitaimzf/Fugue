@@ -4,13 +4,14 @@
 // 用法：node test/helpers/truth-writer.ts <root> <ref> <模式> [参数…]
 //
 //   commit <n>                    造 n 个提交，每个都 CAS 推进自己的 ref（零协调）
-//   race <expectedOld> <栅栏文件>  造一个提交，等栅栏出现，再 CAS 推进同一个 ref
+//   race <expectedOld> <栅栏文件>  造一个提交，**碰一下 `<栅栏>.ready` 自报到场**，等栅栏出现，
+//                                  再 CAS 推进同一个 ref
 //   crash                         落一个 blob、自报 id，然后挂住——等外面 SIGKILL
 //                                 （协议第 1 步之后、第 2 步之前）
 //
 // 输出：每行一条 JSON。**CAS 输掉不算异常**，照样一行 JSON、退出码 0——那是那把锁
 // 正常工作时的样子，不是这个进程出错。
-import { existsSync } from 'node:fs'
+import { appendFileSync, existsSync } from 'node:fs'
 import { openTruth } from '../../src/truth/truth.ts'
 import type { TreeEntry } from '../../src/entries.ts'
 import type { RefName } from '../../src/terms.ts'
@@ -49,6 +50,8 @@ if (mode === 'commit') {
   const blob = await truth.putBlob(Buffer.from(`race ${process.pid}\n`))
   const tree = await truth.putTree([{ name: `race-${process.pid}.txt`, mode: 0o100644, id: blob }])
   const commit = await truth.commit(tree, [expectedOld], `race ${process.pid}`)
+  // 到场记号（U17）：外面据此**等到**四个都造好提交再放栅栏——不再赌"500ms 应该够"。
+  appendFileSync(`${barrier}.ready`, `${process.pid}\n`)
   while (!existsSync(barrier)) await sleep(1)
   try {
     await truth.advance(ref as RefName, commit, expectedOld)

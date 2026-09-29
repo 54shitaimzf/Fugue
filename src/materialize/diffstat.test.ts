@@ -29,6 +29,7 @@ import {
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { waitUntil } from '../../test/helpers/wait.ts'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { tmpDir } from '../../test/helpers/tmp.ts'
@@ -62,7 +63,8 @@ test('① 静置：两次快照逐字节全等；叶子按路径排序；目录�
   // 建的顺序是 z · m · a：快照里排的是路径，不是 `readdir` 的返回顺序
   const root = tree({ 'z.txt': 'z', 'm.txt': 'm', 'a.txt': 'hello', 'src/deep/b.txt': 'b' })
   const one = scanTree(root)
-  await sleep(20)
+  // **等到稳定**（U17）：静置的树本来就两次相同，稳定即走——不再垫 20ms。
+  await waitUntil(() => JSON.stringify(scanTree(root)) === JSON.stringify(one), 1000, '静置的树两次快照相同')
   const two = scanTree(root)
   assert.equal(JSON.stringify(two), JSON.stringify(one), '静置的树两次快照必须逐字节相同')
   assert.deepEqual(
@@ -114,6 +116,7 @@ test('② 改 3 个文件 → 恰好 3 条，且正是那 3 条（§ 8.5 的第�
 test('③ 只 touch 一个文件 → 1 条，且列恰好是 mtime（内容一个字节没动）', async () => {
   const root = tree({ 'a.txt': 'a', 'b.txt': 'b', 'c.txt': 'c' })
   const before = scanTree(root)
+  // 时钟垫层（U17 保留）：让 touch 设的时刻与 `before` 那次快照隔着墙钟差——垫的是时间不是等待。
   await sleep(5)
   // touch 的干净写法：只改 mtime，别的都不动（`utimesSync` 不碰内容也不碰 mode）
   const f = join(root, 'b.txt')
@@ -229,12 +232,17 @@ test('⑦ 命令行：三条断言都从 `fugue diff-stat` 走得通；量不了
     'tree/.fugue/log/round.jsonl': '{"seq":0}\n',
   })
 
-  // ① 静置：两次快照各存一份，两份逐字节相同
+  // ① 静置：两次快照各存一份，两份逐字节相同（**等到稳定**——U17，不再垫 20ms）
   const one = fugue(root, 'diff-stat', 'tree', '--save', 'one.json')
-  await sleep(20)
-  const two = fugue(root, 'diff-stat', 'tree', '--save', 'two.json')
   assert.equal(one.code, 0, one.stderr)
-  assert.equal(two.code, 0, two.stderr)
+  await waitUntil(
+    () => {
+      const again = fugue(root, 'diff-stat', 'tree', '--save', 'two.json')
+      return again.code === 0 && readFileSync(join(root, 'two.json'), 'utf8') === readFileSync(join(root, 'one.json'), 'utf8')
+    },
+    5000,
+    '静置的树两次 --save 的快照相同',
+  )
   assert.equal(readFileSync(join(root, 'two.json'), 'utf8'), readFileSync(join(root, 'one.json'), 'utf8'))
   // `--save` 落盘的就是快照本身（`--baseline` 读的也是它，不是命令行的输出信封）
   const scan = JSON.parse(readFileSync(join(root, 'one.json'), 'utf8')) as {

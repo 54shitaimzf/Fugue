@@ -11,6 +11,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { tmpDir } from '../../test/helpers/tmp.ts'
+import { waitUntil } from '../../test/helpers/wait.ts'
 import { logDir, openLog } from '../log/log.ts'
 import { kindOf, openTruth, RefConflictError, RefNotCommitError, RefNotFoundError } from './truth.ts'
 import type { TreeEntry } from './contract.ts'
@@ -175,8 +176,19 @@ test('断言②：同一个 expectedOld 并发 advance 同一个 ref → 恰一�
   await t.close()
 
   const kids = [0, 1, 2, 3].map(() => runHelper(root, 'refs/heads/main', 'race', base, barrier))
-  // 让四个都造好自己的提交、走到栅栏前，再一起放行——这样才是"同时"。
-  await new Promise((r) => setTimeout(r, 500))
+  // **等到**四个都造好自己的提交、走到栅栏前，再一起放行——这样才是"同时"（U17：不再赌
+  // "500ms 应该够"，到场记号是孩子们自己碰的 `<栅栏>.ready`）。
+  await waitUntil(
+    () => {
+      try {
+        return readFileSync(`${barrier}.ready`, 'utf8').trim().split('\n').length === 4
+      } catch {
+        return false
+      }
+    },
+    30_000,
+    '四个写者都到场（ready 记号 4 行）',
+  )
   writeFileSync(barrier, '')
   const outs = await Promise.all(kids)
 
@@ -244,7 +256,8 @@ test('退化档：批量子进程被杀 → 退回逐次读，读数一个不差
   const kids = gitChildren()
   assert.equal(kids.length, 1, `应当恰好有一个 cat-file 子进程在跑，实际 ${kids.length}`)
   process.kill(kids[0], 'SIGKILL')
-  await new Promise((r) => setTimeout(r, 200))
+  // **等到**那个孩子死透（U17：不再赌 200ms）——`gitChildren` 空了才算。
+  await waitUntil(() => gitChildren().length === 0, 10_000, '被 SIGKILL 的 cat-file 子进程退场')
 
   for (let i = 0; i < 50; i++) {
     assert.equal(Buffer.from(await t.getBlob(ids[i])).toString(), `降级 ${i}\n`, `第 ${i} 个`)
