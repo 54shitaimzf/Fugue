@@ -4,14 +4,21 @@
 // 这一层守的是"漏了不报错"：`node --test` 在发现 0 个测试时输出
 // tests 0 / pass 0 / fail 0 并以退出码 0 结束（实测）——发现模式一旦失效，
 // 整套测试会静默"通过"。入口把"发现数"变成一条会失败的断言。
+//
+// **分档（0.2.1）**：`node tools/test-entry.js [all|fast|real]`，缺省 all（与分档之前同行为）。
+// 真档文件在首行声明 `// tier: real —— …`（点出依赖种类），没声明的都是快档；判据是
+// **依赖性质**（真进程 bwrap·cc · 真端口 · 真挂载），不是文件位置——声明随文件走，没有中央清单。
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOTS = ['src', 'test']
 const PATTERN = /\.test\.ts$/
+
+const REAL = /^\/\/\s*tier:\s*real\b/
+const LANES = ['all', 'fast', 'real']
 
 /** 发现范围内的全部测试文件。 */
 export function discover(root = process.cwd()) {
@@ -34,6 +41,18 @@ export function discover(root = process.cwd()) {
   return out.sort()
 }
 
+/** 按首行声明拆档：fast ∪ real 恒等于全集、交空——没有文件被漏掉或数两次。 */
+export function splitLanes(files) {
+  const fast = []
+  const real = []
+  for (const f of files) {
+    const first = readFileSync(f, 'utf8').split('\n', 1)[0] ?? ''
+    if (REAL.test(first)) real.push(f)
+    else fast.push(f)
+  }
+  return { fast, real }
+}
+
 // 直接运行时才执行；被测试 import 时不执行。
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const files = discover(process.cwd())
@@ -42,15 +61,34 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.error('发现 0 个测试文件（' + where + '下的 *.test.ts）——拒绝以"通过"结束')
     process.exit(1)
   }
-  // **一批跑**（W8 起那个两批的口子已经堵上）：环在 `tools/host.ts → capability/dispatch.ts`
-  // （为了 `shellArgv` 那一个值引用），W8 把它搬到没有依赖的 `tools/argv.ts` 之后，模块图又是一
-  // 棵树了。之所以要堵它而不是留着分两批：分两批跑会**静默丢掉几条**（实测 `tests 325` 而不是
-  // `332`，而退出码照样是 0）——一个不报错的漏，正是这个入口要守的那一类。
+  const lane = process.argv[2] ?? 'all'
+  if (!LANES.includes(lane)) {
+    console.error('未知档「' + lane + '」——只有 ' + LANES.join(' · ') + '（缺省 all）')
+    process.exit(2)
+  }
+  const { fast, real } = splitLanes(files)
+  if (fast.length + real.length !== files.length) {
+    console.error('分档漏了文件：快 ' + fast.length + ' + 真 ' + real.length + ' ≠ 全量 ' + files.length)
+    process.exit(1)
+  }
+  const chosen = lane === 'fast' ? fast : lane === 'real' ? real : files
+  if (chosen.length === 0) {
+    console.error('「' + lane + '」档 0 个文件——拒绝以"通过"结束')
+    process.exit(1)
+  }
+  console.error(
+    '档 ' + lane + '：' + chosen.length + ' 个文件（快 ' + fast.length + ' · 真 ' + real.length + ' · 全量 ' + files.length + '）'
+  )
+  // **一次仍只跑一批**：W8 那次两批丢测试（实测 `tests 325` 而非 `332`、退出码 0）的病根不在
+  // "名单分两份"，在**静默丢**——名单现在分快/真两份，但并集==发现集是硬断言（上面那行），
+  // 丢文件当场红。分档也不复现当年那个环（W8 已把 `shellArgv` 搬到无依赖的 `tools/argv.ts`，
+  // 模块图是树；这里每档一个独立进程）。
   //
   // **系统级配置指到空目录**（P2a 的测试隔离）：readConfig 缺省会叠 `~/.fugue/config`——
   // 测试读数不该取决于这台机器上有没有人配过系统级。要碰系统级的测试自己用
   // `FUGUE_SYSTEM_DIR`（或 readConfig 的 systemDir 参数）指到它准备的目录。
   process.env.FUGUE_SYSTEM_DIR = mkdtempSync(join(tmpdir(), 'fugue-test-sys-'))
-  const r = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' })
+  // `--` 之后都是文件名——以 `-` 开头的测试文件名不会被 node 吃成选项。
+  const r = spawnSync(process.execPath, ['--test', '--', ...chosen], { stdio: 'inherit' })
   process.exit(r.status ?? 1)
 }

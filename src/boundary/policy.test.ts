@@ -1,3 +1,4 @@
+// tier: real —— bwrap（层探测与降档对真沙箱）
 // Y2 的断言（PLAN § 5.5 的 Y2 行 · 架构 § 8.8 · § 15.7 的对接点）。
 //
 //   ① **两处读同一份**：`fugue policy --json` 报的那五栏（`mode` · `enforcement` · `layers` ·

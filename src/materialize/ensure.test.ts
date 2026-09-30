@@ -1,3 +1,4 @@
+// tier: real —— 真挂载（overlayfs 可用性是硬断言）
 // M4·V3 的断言。四条，逐条对 PLAN § 5.2 的 V3 行：
 //
 //   ① 六种变更各一条（`add` · `modify` · `delete` · `rename` · `chmod` · `symlink`）→ 落地根的

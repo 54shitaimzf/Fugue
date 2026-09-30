@@ -1,3 +1,4 @@
+// tier: real —— 真挂载 · userns（unshare 里跑 fork 各档）
 // M4·V2 的断言。四条，逐条对 PLAN § 5.2 的 V2 行：
 //
 //   ① `overlayfs` 档：`fork` 后物化树全树哈希 == 该提交的 tree（含 symlink 与可执行位）

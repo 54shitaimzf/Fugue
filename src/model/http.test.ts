@@ -1,3 +1,4 @@
+// tier: real —— 真端口（回环监听加真 fetch 传输）
 // B3 的断言（PLAN § 5.8 的 B3 行 · 架构 § 9.7 的轨迹 · § 10.5 的录制夹具 ·
 // § 8.15 的"不采集，只重算"要求事件里够算）。
 // 跑法：cd ~/fugue && node --test src/model/http.test.ts
