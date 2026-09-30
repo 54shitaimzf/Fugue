@@ -1257,3 +1257,71 @@ test('P1a · round 那一路的 bash 也过 envFor：坐标是本 agent 的、�
     await b.close()
   }
 })
+
+// ── P3b1 · run_action 归真（计划 § 5.20 第三线：名字按绑定解析成命令行，不再当 shell 命令跑）──
+
+test('P3b1 · run_action 的命令行来自绑定的解析：args 追加到尾 · 没绑的拒且指路', async () => {
+  const b = await bench()
+  try {
+    // 绑定就一条：mark。argv 用 `node -e` 打一行读数——`process.argv.slice(1)` 恰是「追加到尾」的
+    // 那几个参数，模型给了什么、spawn 收到什么，一行读数两头都能对上。
+    const SCRIPT = "process.stdout.write('P3B1-MARK:' + process.argv.slice(1).join(','))"
+    mkdirSync(join(b.root, '.fugue'), { recursive: true })
+    writeFileSync(
+      join(b.root, '.fugue', 'config'),
+      JSON.stringify({ actions: { mark: { argv: [process.execPath, '-e', SCRIPT] } } }),
+    )
+
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      [
+        ...callOne(0, 'c1', 'run_action', { action: 'mark', args: ['one', 'two'] }),
+        { t: 'usage', usage: USAGE },
+        { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+      ],
+      [
+        ...callOne(0, 'c2', 'run_action', { action: 'nope' }),
+        { t: 'usage', usage: USAGE },
+        { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+      ],
+      [
+        { t: 'delta', text: '跑完了。' },
+        { t: 'usage', usage: USAGE },
+        { t: 'stop', reason: 'end-turn', raw: 'end_turn' },
+      ],
+    ]
+    const scripted = scriptedModel(scripts)
+    const asked: RuntimeRequest[] = []
+    const call: CallModel = (request, signal) => {
+      asked.push(request)
+      return scripted(request, signal)
+    }
+    const run = await runRound(depsOf(b, realDriver({}), supportOf(b, call)))
+    assertLanded(run, 'P3b1 那一趟')
+
+    const zoneC = (n: number): string => new TextDecoder().decode(asked[n]?.prefix.zoneC ?? new Uint8Array())
+    const markTail = zoneC(1).slice(-300)
+    const nopeTail = zoneC(2).slice(-300)
+    console.log(`P3b1 读数：mark 的 C 区尾：${JSON.stringify(markTail)}\n  nope 的 C 区尾：${JSON.stringify(nopeTail)}`)
+
+    // 一 · **账上那一行就是绑定解析出来的命令行**：argv = 绑定的 argv + 模型的 args 追加到尾。
+    //    （归真之前那一行是 `shellArgv(名字)`——`['/bin/sh','-c','mark']`，与实际要跑的不是同一条。）
+    const starts = (await eventsOf(b.root)).filter((e) => e.t === 'run/start' && e.action === 'run_action')
+    assert.equal(starts.length, 2, `两次 run_action 各落一条 run/start，实际 ${starts.length} 条`)
+    assert.deepEqual(
+      starts[0]?.argv,
+      [process.execPath, '-e', SCRIPT, 'one', 'two'],
+      'run_action 的 run/start 该记绑定解析出来的 argv（名字不再是 shell 命令）',
+    )
+    // 二 · **spawn 收到的就是那一行**：追加的参数从子进程的 process.argv 读得回来（stdout 进回执进 C 区）。
+    assert.ok(markTail.includes('P3B1-MARK:one,two'), `mark 的读数该带追加的那两个参数——C 区尾：${markTail}`)
+    assert.ok(markTail.includes('action mark exit code 0'), `mark 的回执头该是退出码 0——C 区尾：${markTail}`)
+    // 三 · 地板：名字没绑 → 拒且话里带 actions 键的指路（readBinding 那句原样到模型面前，不猜不补）。
+    assert.ok(
+      nopeTail.includes('fugue config set actions.nope'),
+      `没绑的名字该被拒并指路 actions 键——C 区尾：${nopeTail}`,
+    )
+    assert.ok(nopeTail.includes('action nope exit code 1'), `nope 的回执头该是退出码 1——C 区尾：${nopeTail}`)
+  } finally {
+    await b.close()
+  }
+})

@@ -16,6 +16,7 @@ import type { View } from '../view/contract.ts'
 import { loadView } from '../view/view.ts'
 import { lowerFor } from '../view/lower.ts'
 import { createToolHost } from '../tools/host.ts'
+import type { CommandPlan } from '../tools/host.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
 import { shellArgv } from '../tools/argv.ts'
 import { capReceipt } from '../tools/receipt.ts'
@@ -31,14 +32,14 @@ import { cacheLayoutOf } from '../roots/coords.ts'
 import { mkdirSync } from 'node:fs'
 import type { Policy } from '../boundary/policy.ts'
 import { confine, degradedArgv } from '../boundary/confine.ts'
-import { envFor, portRangeOf } from '../boundary/binding.ts'
+import { envFor, portRangeOf, readBinding } from '../boundary/binding.ts'
 import { declaredSetOf } from '../contract/types.ts'
 import { refHeadOf } from './head.ts'
 import type { RefHead } from './head.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { TreeEntry } from '../entries.ts'
 import type { AgentId, CommitId, ContractId, LogSeq, RefName, RelPath, WriterId } from '../terms.ts'
-import type { RunAsk } from '../tools/execute.ts'
+import type { ActionAsk, RunAsk } from '../tools/execute.ts'
 import type { Contract } from '../contract/types.ts'
 import { checkpoint } from '../checkpoint.ts'
 import { snapshotOf } from '../view/snapshot.ts'
@@ -440,6 +441,106 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
   }
 
   /**
+   * **一个具名动作怎么跑**（P3b1 归真）：`readBinding` 把名字解析成绑定——argv = 绑定的 argv +
+   * 模型的 `extra` 追加到尾 · cwd 用绑定的 · env 经 `envFor` 一处拼（`binding.env` + 基线 +
+   * 坐标 + 端口片）。**与 `fugue run` 同一条纪律**，差别只在落点：这一格的执行面是 `execCwd()`
+   * 那棵树（不绑声明目录、产出落树那一侧，回写归 `afterRun` 的 `ownedPaths`——见 `commandFor`
+   * 上面那一段），而 `run/confined` 记的还是这一格那一份策略值（同一个 `policyNow()`，与 `bash`
+   * 共用「每格记一次」那一道）。
+   *
+   * 名字没绑 → `BindingError` 原样抛给宿主，降成被拒的回执（那一句自带 actions 键的指路）。
+   * **绑定那一栏的 `net` 这一格不读**：策略值是每格一份（`policyNow` 缓存），动作级的 net 要求
+   * 要等「按动作出策略」那一档——记在疑点清单，不在这一格顺手做。
+   */
+  async function actionFor(ask: ActionAsk): Promise<CommandPlan> {
+    // 先暖 `policyDoc`（`policyNow` 顺带把配置读了）：绑定从它读，别让第一次的解析读到空的那份。
+    const p = await policyNow()
+    const b = readBinding(policyDoc ?? {}, ask.action)
+    // 与 `commandFor` 同两步：执行面立起来 · 缓存那两处先建出来（绑定的落点要它们）。
+    await host.execCwd()
+    const cache = cacheLayoutOf(roots, me)
+    mkdirSync(cache.home, { recursive: true })
+    mkdirSync(cache.xdgCache, { recursive: true })
+    if (!fenceWritten) {
+      fenceWritten = true
+      await log.append(writer, {
+        t: 'run/confined',
+        agent: me,
+        mode: p.mode,
+        enforcement: p.enforcement,
+        net: p.net,
+        layers: p.layers,
+        reach: p.reach.roRoots,
+      })
+    }
+    const argv = [...b.argv, ...ask.extra]
+    const env = envFor({
+      agent: me,
+      binding: b,
+      injections: {},
+      portIndex: await portIndexOf(),
+      range: portRangeOf(policyDoc ?? {}),
+      policy: p,
+    })
+    if (p.layers.includes('bwrap')) {
+      return {
+        // cwd 由宿主拼（与 `commandFor` 同一条理由）：沙箱里那一份进 `--chdir`。
+        cwd: '',
+        argv: confine({
+          roots,
+          agent: me,
+          argv,
+          cwd: b.cwd as RelPath,
+          // 不绑声明目录（`commandFor` 那一栏的理由）：树整个挂成可写，产出落在树自己那一侧。
+          declared: [],
+          env: {},
+          policy: p,
+        }).argv,
+        env,
+      }
+    }
+    if (p.layers.includes('landlock')) {
+      // 第二层那一档：子进程就在宿主上跑，spawn 的 cwd 由宿主按绑定的那一份拼。
+      return { cwd: b.cwd, argv: degradedArgv(argv, { roots, policy: p }).argv, env }
+    }
+    // 两层都不在：与 `commandFor` 同一句拒——记一条 `bound/deny`，让读者看得见这一格没有强制点。
+    await log.append(writer, {
+      t: 'bound/deny',
+      agent: me,
+      path: ask.action,
+      space: 'physical',
+      rule: 'confine:none',
+    })
+    throw new Error(
+      `这一趟跑不了子进程：两层的围栏都不在场（${p.enforcement}），而执行类工具要跑在物化树里。` +
+        '装回 bwrap 或让第二层（Landlock）可用再跑；在那之前这一步只能靠 read / write / edit / glob / grep。',
+    )
+  }
+
+  /**
+   * **账上那一行**（`run/start` 的 `argv`/`cwd`）：`run_action` 的命令行就是 `actionFor` 解析
+   * 出来的那一份——`readBinding` 是配置的纯读，两处各调一次读的是同一份，不是第二处状态。
+   * 名字没绑返回 `null`（`dispatch` 那一侧退回模型问的那句，拒的话随后就到）。
+   */
+  const argvOf = async (
+    tool: string,
+    args: Readonly<Record<string, unknown>>,
+  ): Promise<{ readonly argv: readonly string[]; readonly cwd: string } | null> => {
+    if (tool !== 'run_action') return null
+    const name = typeof args['action'] === 'string' ? (args['action'] as string) : null
+    if (name === null) return null
+    const raw = args['args']
+    const extra = Array.isArray(raw) ? (raw as unknown[]).filter((x): x is string => typeof x === 'string') : []
+    await policyNow()
+    try {
+      const b = readBinding(policyDoc ?? {}, name)
+      return { argv: [...b.argv, ...extra], cwd: b.cwd }
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * 这一格物化到哪一档、挂没挂。**回写那一支要它们**（`landingOf` 看档 · `undeclared` 看有
    * 没有 `upper` 可枚举），而两样都由 `fork` / `ensure` 定、记在 `mat/*` 事件里——所以问一次
    * 执行面（`host.execCwd()`），它每次回答时顺手把它们记在这儿。
@@ -479,6 +580,8 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
   const host = createToolHost(view, roots, {
     actions: { writer, log, truth, head },
     commandFor,
+    // **动作那一条（P3b1）**：与 `commandFor` 同一道缝——名字按绑定解析，不再当 shell 命令跑。
+    actionFor,
     ownedPaths,
     reclaim: createReclaim({
       roots,
@@ -544,6 +647,9 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     createToolExecutor({
       logOf: () => log,
       host,
+      // **账上那一行（P3b1）**：`run_action` 的 `run/start` 记绑定解析出来的 argv——与实际要
+      // spawn 的是同一条；`bash` 那一格没接它，照旧 shell 那句。
+      argvOf,
       fenceOf: (raw, cwd) => {
         const got = roots.resolveVirtual(raw, cwd as RelPath)
         return got.ok ? { ok: true as const, value: got.value } : { ok: false as const, error: got.error }

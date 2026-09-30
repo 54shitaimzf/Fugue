@@ -53,6 +53,20 @@ export interface DispatchDeps {
    */
   readonly ensureOf?: (tool: string, args: Readonly<Record<string, unknown>>) => Promise<void>
   /**
+   * **一条执行类工具要起的那条命令行**（`run/start` 的 `argv` 与 `cwd` 那两栏）。
+   *
+   * 缺省把模型给的那句包给 shell（`shellArgv`）——`bash` 的形状。接了这一道的调用方可以换成
+   * 自己解析的那一份：`run_action` 的命令行在工作区配置的绑定里（P3b1 归真，`round/driver.ts`
+   * 拿 `readBinding` 解析），**账上那一行与实际要 spawn 的是同一条**。解析不了（名字没绑）
+   * 返回 `null`，退回缺省那句——拒的话随后就到，那一行照记模型问的那句。
+   *
+   * 与 `fenceOf`/`ensureOf` 同一道注入缝：这一份不认识工具，只把"要跑什么"问出去。
+   */
+  readonly argvOf?: (
+    tool: string,
+    args: Readonly<Record<string, unknown>>,
+  ) => Promise<{ readonly argv: readonly string[]; readonly cwd: string } | null>
+  /**
    * **这一趟的写入面**：持轮者那一趟那份草案的路径（预备态那一趟才有）。
    *
    * 它不是能力表那一栏（那一栏说"这个工具落在哪层状态"），而是**这一趟的作用域**——架构 § 15.4
@@ -381,7 +395,11 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
       const command = typeof fencedArgs['command'] === 'string' ? (fencedArgs['command'] as string) : null
       const action = typeof fencedArgs['action'] === 'string' ? (fencedArgs['action'] as string) : null
       const line = command ?? action ?? call.name
-      const argv = running ? shellArgv(line) : []
+      // **命令行问过调用方再定**（P3b1）：`run_action` 那一格的 argv 是绑定解析出来的（`argvOf`），
+      // 账上那一行与实际要 spawn 的是同一条；没接那一道、或名字没绑（null），退回 shell 那句。
+      const planned = running && deps.argvOf !== undefined ? await deps.argvOf(call.name, fencedArgs) : null
+      const argv = running ? (planned?.argv ?? shellArgv(line)) : []
+      const argvCwd = planned?.cwd ?? runCwd
       const log = deps.logOf(h.agent)
       const t0 = Date.now()
       // **先落 `run/start`**：它是"这一步要起一个进程"的凭据。**只有围栏拦下的那一趟不落**
@@ -397,7 +415,7 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
           action: call.name,
           argv0: argv[0] ?? call.name,
           argv,
-          cwd: runCwd,
+          cwd: argvCwd,
         })
       }
 

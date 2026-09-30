@@ -208,10 +208,16 @@ export interface TodoItem {
   readonly activeForm?: string
 }
 
-/** 一个具名动作（架构 § 8.9 里唯一有声明集的那一格：执行类经声明集回写）。 */
+/**
+ * 一个具名动作（架构 § 8.9 里唯一有声明集的那一格：执行类经声明集回写）。
+ *
+ * **名字不是命令行**（P3b1 归真）：`extra` 是追加到绑定 argv 尾上的那几个参数（公布面 `args`
+ * 那一栏的字符串数组，face 侧提净）；命令行 · cwd · env 由宿主那一层按工作区配置里的绑定解析
+ * （`HostOptions.actionFor`），这一层与 `RunAsk` 一样只递"模型说了什么"。
+ */
 export interface ActionAsk {
   readonly action: string
-  readonly args: Readonly<Record<string, unknown>>
+  readonly extra: readonly string[]
   readonly cwd: string
 }
 
@@ -436,11 +442,18 @@ const bashFace: ToolFn = async (args, host, ctx) => {
 const runActionFace: ToolFn = async (args, host, ctx) => {
   const action = text(args, 'action')
   if (action === null) return missing('run_action', 'action')
-  const rest: Record<string, unknown> = { ...args }
-  delete rest['action']
+  // **`args` 提净成字符串数组**（P3b1）：它是要追加到绑定 argv 尾上的那几个参数——不是自由参数包。
+  const raw = arg(args, 'args')
+  if (raw !== undefined && !Array.isArray(raw)) {
+    return no('run_action args must be an array of strings appended to the action\'s command line — this is not an array.')
+  }
+  if (Array.isArray(raw) && raw.some((x) => typeof x !== 'string')) {
+    return no('run_action args must be an array of strings — one of the entries is not a string.')
+  }
+  const extra = Array.isArray(raw) ? (raw as readonly string[]) : []
   // 与 `bash` 同一条：读围栏写回的那一份（见上面）。
   const cwd = typeof args['cwd'] === 'string' ? (args['cwd'] as string) : ctx.cwd
-  const res = await host.runAction({ action, args: rest, cwd })
+  const res = await host.runAction({ action, extra, cwd })
   // 与 `bash` 同一条：回执里不带毫秒。
   const head = `action ${action} exit code ${res.exit}`
   const body = [res.stdout, res.stderr].filter((s) => s !== '').join('\n')

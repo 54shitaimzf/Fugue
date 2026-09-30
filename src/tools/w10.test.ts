@@ -80,6 +80,9 @@ async function bench(): Promise<Bench> {
   const roots = createRoots(root as never)
   const host = createToolHost(view, roots, {
     actions: { writer: AGENT as WriterId, log, truth, head: await refHeadOf(log, AGENT as WriterId, base) },
+    // P3b1 起 run_action 不再当 shell 命令跑：台子给一个最小的解析（③量的是回执的形状，不是
+    // 绑定解析——那一条在 round/driver.test.ts 的 P3b1 里钉）。
+    actionFor: () => ({ argv: ['/bin/sh', '-c', 'echo hi'], cwd: '' }),
   })
   const extra: LogHandle[] = []
   return {

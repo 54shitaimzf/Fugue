@@ -79,6 +79,15 @@ export interface HostOptions {
    * 可以返回一个承诺：包命令行那一步要读这一格的策略值（那一层在不在场），而策略值现探。
    */
   readonly commandFor?: (ask: RunAsk) => CommandPlan | Promise<CommandPlan>
+  /**
+   * 一个具名动作怎么跑（P3b1 归真）：**动作名 → 命令行 · cwd · 环境**，与 `commandFor` 对
+   * `bash` 的关系同一形状——宿主不认识配置与策略，解析归调用方（`round/driver.ts` 那一份
+   * `readBinding` + `envFor` + `confine`）。`extra` 是模型追加到绑定 argv 尾上的那几个参数。
+   *
+   * 名字没绑 → 实现抛 `BindingError`（那一句自带 actions 键的指路），宿主把它降成被拒的回执。
+   * **没接这一层的宿主拒并指路，不降级成"把名字当命令跑"**——那正是这一格删掉的半接线。
+   */
+  readonly actionFor?: (ask: ActionAsk) => CommandPlan | Promise<CommandPlan>
   /** 没有它这一份宿主只能读：写与提交会改视图，而视图的每一次变更都要落日志（§ 9.3 的顺序）。 */
   readonly actions?: HostActions
   /**
@@ -346,13 +355,19 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     return roots.toReal(cwd as RelPath)
   }
 
-  async function runWith(ask: RunAsk, userArgv: readonly string[], cwd: string): Promise<RunReply> {
+  async function runWith(
+    ask: RunAsk,
+    userArgv: readonly string[],
+    cwd: string,
+    /** 命令行已由别的路解析好（动作那一条，P3b1）：直接用它，跳过 `commandFor`。 */
+    plan?: CommandPlan,
+  ): Promise<RunReply> {
     const timeoutMs = ask.timeoutMs
     const exec = (await execCwd()).root
     const t0 = Date.now()
-    let made: CommandPlan | undefined
+    let made: CommandPlan | undefined = plan
     try {
-      made = await opts.commandFor?.(ask)
+      if (made === undefined) made = await opts.commandFor?.(ask)
     } catch (err) {
       const why = (err as Error).message
       await afterRun()
@@ -520,11 +535,37 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     },
 
     async runAction(ask: ActionAsk) {
+      // **归真（P3b1）**：动作名不是 shell 命令。命令行 · cwd · env 由调用方那一层按工作区配置
+      // 里的绑定解析（`opts.actionFor`）——`extra` 追加到绑定的 argv 尾上，cwd 用绑定的。
+      //
       // **回写那一条今天没有接上**：架构 § 8.9 说执行类的产出经声明集回写视图（`M6` 的反向通道），
       // 而声明集是 `fugue run` 那一趟的（`reclaim.declare`）。所以这一格跑得起来，产出却留在
       // 沙箱里、不进视图——回写接上之前，它不比 `bash` 多什么。
-      const asRun: RunAsk = { command: ask.action, cwd: ask.cwd, timeoutMs: null }
-      return runWith(asRun, shellArgv(ask.action), ask.cwd)
+      const resolve = opts.actionFor
+      if (resolve === undefined) {
+        return {
+          exit: 1,
+          ms: 0,
+          denied: true,
+          stdout: '',
+          stderr:
+            '这一份宿主没有接上动作的解析：run_action 要把名字按工作区配置里的绑定解析成命令行' +
+            '（P3b1 起，动作名不再当 shell 命令跑）——请给 options.actionFor。',
+        }
+      }
+      const t0 = Date.now()
+      let made: CommandPlan
+      try {
+        made = await resolve(ask)
+      } catch (err) {
+        await afterRun()
+        return { exit: 1, ms: Date.now() - t0, denied: true, stdout: '', stderr: (err as Error).message }
+      }
+      // 有执行面：workdir 由 `runWith` 拼（执行根 + 绑定的 cwd）；没有执行面（夹具档）就把
+      // 绑定的相对 cwd 先翻成真实工作区里的落点——`runWith` 那一格的 `made.cwd` 是原样用的。
+      const plan = opts.execRoot === undefined ? { ...made, cwd: workdirOf(made.cwd) } : made
+      const asRun: RunAsk = { command: ask.action, cwd: plan.cwd, timeoutMs: null }
+      return runWith(asRun, plan.argv, plan.cwd, plan)
     },
 
     async checkpoint(msg) {
