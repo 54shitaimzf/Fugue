@@ -8,7 +8,7 @@
 // 那条把日志目录读成 cwd 的老路会露馅的地方（最后一条那样比）。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -95,6 +95,8 @@ test('U7 · 壳：任意目录敲 fugue，与在仓库里敲 node src/cli/fugue.
 
   // 读 · 检视 · 重放：不改状态的那些。
   same('--help', ['--help'])
+  same('--version', ['--version'])
+  same('--version 的机器那一面', ['--version', '--json'])
   same('revs', ['revs'])
   same('revs 的机器那一面', ['--json', 'revs'])
   same('read', ['read', 'notes/one.txt'])
@@ -131,4 +133,39 @@ test('U7 · 壳：任意目录敲 fugue，与在仓库里敲 node src/cli/fugue.
   assert.equal(broken.code, 1)
   assert.match(broken.stderr, /^日志损坏，拒绝加载 —— round 第 \d+ 行：/)
   assert.equal(broken.stderr.includes(join(a, '.fugue', 'log')), true, '日志目录要按 --root 算')
+})
+
+test('壳：--version 在非仓库目录可用，--root 不存在也不初始化工作区', (t) => {
+  const work = mkdtempSync(join(tmpdir(), 'fugue-shell-version-'))
+  t.after(() => rmSync(work, { recursive: true, force: true }))
+  const bin = join(work, 'bin')
+  mkdirSync(bin)
+  symlinkSync(SHELL, join(bin, 'fugue'))
+  const elsewhere = join(work, 'elsewhere')
+  mkdirSync(elsewhere)
+  const missing = join(elsewhere, 'missing')
+  const { name, version } = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8'))
+
+  for (const args of [
+    ['--version'],
+    ['--root', missing, '--version'],
+    ['--version', '--json'],
+    ['--root', missing, '--json', '--version'],
+  ]) {
+    const options = {
+      cwd: elsewhere,
+      encoding: 'utf8' as const,
+      env: { ...process.env, FUGUE_NODE: process.execPath, PATH: `${bin}:${process.env.PATH ?? ''}` },
+    }
+    const hand = spawnSync('fugue', args, options)
+    const direct = spawnSync(process.execPath, [CLI, ...args], options)
+    const result = (r: typeof hand) => ({ code: r.status, stdout: r.stdout, stderr: r.stderr })
+    assert.deepEqual(result(hand), result(direct), `fugue ${args.join(' ')}`)
+    assert.deepEqual(result(hand), {
+      code: 0,
+      stdout: (args.includes('--json') ? JSON.stringify({ name, version }) : `${name} ${version}`) + '\n',
+      stderr: '',
+    })
+  }
+  assert.deepEqual(readdirSync(elsewhere), [])
 })
