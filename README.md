@@ -151,6 +151,12 @@ fugue round work --live --max-steps 8
 
 [54shitaimzf](https://github.com/54shitaimzf)（唯一维护者）。
 
+## 贡献者
+
+- [StevenLi-phoenix](https://github.com/StevenLi-phoenix)——盘与树比模式先归到 git 的两档：`umask 002` 的机器上漂移检误拒未改动文件、软链在任何机器上被误判的修复与四条回归
+  （[#1](https://github.com/54shitaimzf/Fugue/issues/1) ·
+  [#3](https://github.com/54shitaimzf/Fugue/pull/3)）。
+
 ## 贡献
 
 - 问题与改动走这个仓库的 Issues 与 Pull Request。
