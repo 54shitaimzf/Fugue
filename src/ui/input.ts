@@ -24,7 +24,7 @@
 // 排队 · 授权都在账上，这一份连它们的名字都不认识（PLAN § 5.19 三那张表的三轴里，只有焦点与
 // 输入模式落在这一份，而输入模式还是推出来的）。
 import type { UiAction } from './keymap.ts'
-import { clustersOf, cutAt, widthOf } from './glyph.ts'
+import { clustersOf, widthOf } from './glyph.ts'
 
 /** 折叠阈值：粘进来的东西超过其中任意一条就折起来（显示成一块牌子，`Ctrl-O` 展开）。 */
 export const FOLD_LINES = 4
@@ -510,16 +510,24 @@ export function caretColOf(d: Draft, o?: { readonly unfolded?: boolean }): numbe
 function cutRows(s: string, w: number): readonly string[] {
   if (s === '') return ['']
   const out: string[] = []
-  let rest = s
-  while (rest !== '') {
-    const cut = cutAt(rest, w)
-    if (cut <= 0) {
-      out.push(rest)
-      break
+  // 一次分簇、一次遍历；逐段重分剩余后缀会让展开的大段粘贴按平方增长。
+  let start = 0
+  let used = 0
+  for (const c of clustersOf(s)) {
+    if (used + c.width > w && c.start > start) {
+      out.push(s.slice(start, c.start))
+      start = c.start
+      used = 0
     }
-    out.push(rest.slice(0, cut))
-    rest = rest.slice(cut)
+    used += c.width
+    // 与 cutAt 一样：一行连一个簇都放不下时也取整个簇，保证前进。
+    if (used > w) {
+      out.push(s.slice(start, c.end))
+      start = c.end
+      used = 0
+    }
   }
+  if (start < s.length) out.push(s.slice(start))
   return out
 }
 
