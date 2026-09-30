@@ -188,7 +188,8 @@ export async function advance(deps: AdvanceDeps, commit: CommitId): Promise<Adva
       const now = lstatSync(abs, { throwIfNoEntry: false })
       if (now !== undefined && now.isSymbolicLink() && readlinkSync(abs) === w.link) continue
       mkdirSync(dirname(abs), { recursive: true })
-      if (now !== undefined) rmSync(abs, { force: true })
+      // 目录也能换成软链；与下面换成普通文件的一支一样，先移除旧条目。
+      if (now !== undefined) rmSync(abs, { recursive: true, force: true })
       symlinkSync(w.link, abs)
       written.push(rel)
       continue
