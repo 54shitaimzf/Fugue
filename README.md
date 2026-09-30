@@ -44,7 +44,7 @@
 ```sh
 git clone https://github.com/54shitaimzf/Fugue.git ~/fugue && cd ~/fugue
 ln -s "$PWD/bin/fugue" ~/.local/bin/fugue      # 或者：npm i -g .
-fugue --help                                   # 27 条命令（round 5 条子命令 · config 3 条）
+fugue --help                                   # 28 条命令（round 5 条子命令 · config 3 条）
 ```
 
 没有依赖要装：`package.json` 里 `dependencies` 是空的。接真模型要一份凭据，按提供方的声明取——环境变量 `DEEPSEEK_API_KEY`，或 `~/.fugue/credentials/deepseek.key`；命令行 `--credential <路径>` 覆盖。模型目录与价目住系统级那一份（`~/.fugue/`）：`~/.fugue/models.json` 在场时整份替换内置目录，工作区配置只覆盖自己的键。
@@ -142,10 +142,10 @@ fugue round work --live --max-steps 8
 
 ## 想要更多
 
-- `fugue --help`：全部 27 条命令，每条一两句说清它是干什么的。
+- `fugue --help`：全部 28 条命令，每条一两句说清它是干什么的。
 - 每一版变了什么：[CHANGELOG.md](CHANGELOG.md)。
 - 想改它、想验它：[AGENTS.md](AGENTS.md)（环境 · 验收入口 · 走查）与 [tools/](tools/)（走查 · 探针 · 基准，**取证用的，不是产品的一部分**）。
-- 它为什么长成这样：三份设计文档（架构 · 计划 · 第一版之后的目标）不在这个仓库里。
+- 它为什么长成这样：设计文档不在这个仓库里（架构 · 计划 · 目标 · 路线图，另有已落地各站的归档）。
 
 ## 维护者
 

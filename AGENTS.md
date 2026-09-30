@@ -8,6 +8,7 @@
 > 而本仓库是另一个项目根。两处各写一段，不互相抄。
 >
 > 计划与审查规则：`/mnt/c/Users/Administrator/Desktop/CodeWish/PLAN.md`。
+> 版本梯子（收口次序 · 每版验收读数）：`/mnt/c/Users/Administrator/Desktop/CodeWish/ROADMAP.md`。
 > 进度：`git log --oneline`。
 
 ## 环境
@@ -99,7 +100,7 @@ ZZEOF
 
 | 目录 | 是什么 |
 |---|---|
-| `src/cli/` | 命令行（27 条命令） |
+| `src/cli/` | 命令行（28 条命令） |
 | `src/round/` | 一轮：拆分 · 门 · 派发 · 驱动 · 合并 |
 | `src/assemble/` | 前缀装配：三区 · 段源 · 协议值 · 约束 |
 | `src/log/` | 事件账：追加 · 索引 · 交错读 |
