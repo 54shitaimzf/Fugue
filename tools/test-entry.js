@@ -9,7 +9,7 @@
 // 真档文件在首行声明 `// tier: real —— …`（点出依赖种类），没声明的都是快档；判据是
 // **依赖性质**（真进程 bwrap·cc · 真端口 · 真挂载），不是文件位置——声明随文件走，没有中央清单。
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -125,8 +125,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   // **系统级配置指到空目录**（P2a 的测试隔离）：readConfig 缺省会叠 `~/.fugue/config`——
   // 测试读数不该取决于这台机器上有没有人配过系统级。要碰系统级的测试自己用
   // `FUGUE_SYSTEM_DIR`（或 readConfig 的 systemDir 参数）指到它准备的目录。
-  process.env.FUGUE_SYSTEM_DIR = mkdtempSync(join(tmpdir(), 'fugue-test-sys-'))
+  const sys = mkdtempSync(join(tmpdir(), 'fugue-test-sys-'))
+  process.env.FUGUE_SYSTEM_DIR = sys
   // `--` 之后都是文件名——以 `-` 开头的测试文件名不会被 node 吃成选项。
   const r = spawnSync(process.execPath, ['--test', '--', ...chosen], { stdio: 'inherit' })
+  // 跑完就删：这个目录是入口自己建的（P2a 的隔离），不删就每跑一趟漏一个进 /tmp。
+  rmSync(sys, { recursive: true, force: true })
   process.exit(r.status ?? 1)
 }
