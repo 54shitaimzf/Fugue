@@ -10,7 +10,7 @@
 //
 // **凭据只在 `targetOf` 里被取一次**，也就是说"取凭据"这件事只发生在**真要发一次请求**的
 // 时候——装配 · 重放 · 夹具档一条断言都不经过这里（PLAN § 5.8 的口径一）。
-import type { ModelCall, ModelEvent, ModelRequest, ThinkingLevel, Turn } from './contract.ts'
+import type { AuthRef, ModelCall, ModelEvent, ModelRequest, ThinkingLevel, Turn } from './contract.ts'
 import { ModelDeclError, WIRES, authOf, modelDeclOf, promptCacheFor, providerOf } from './contract.ts'
 import { checkEvents } from './contract.ts'
 import { hashOf } from '../assemble/assemble.ts'
@@ -88,10 +88,10 @@ export interface Target {
   readonly headers: Readonly<Record<string, string>>
 }
 
-/** 声明 → 目标。**`authOf()` 的唯一调用点。** */
-export function targetOf(declId: string): Target {
+/** 声明 → 目标。**`authOf()` 的唯一调用点。** 引用表从配置的 `credentials.<id>` 键来（调用方递）。 */
+export function targetOf(declId: string, creds: readonly AuthRef[] | undefined): Target {
   const decl = modelDeclOf(declId)
-  return targetAt(declId, authOf(providerOf(decl.provider)))
+  return targetAt(declId, authOf(decl.provider, creds))
 }
 
 /**

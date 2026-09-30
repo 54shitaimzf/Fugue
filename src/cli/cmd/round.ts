@@ -44,7 +44,7 @@ import { RETRY_DEFAULT } from '../../round/machine.ts'
 import { wireCallOver } from '../../runtime/step.ts'
 import type { AgentHandle, CallModel, ToolExecutor } from '../../runtime/step.ts'
 import { makeDumpCall, wireInTransport, targetAt } from '../../model/http.ts'
-import { authWith, modelDeclOf, providerOf } from '../../model/contract.ts'
+import { authWith, modelDeclOf } from '../../model/contract.ts'
 import type { ModelDecl } from '../../model/contract.ts'
 import { wireHeader } from '../../model/wire/headers.ts'
 import type { ToolEntry } from '../../tools/catalog.ts'
@@ -727,7 +727,7 @@ async function holderWiringOf(o: {
     protocol: HOLDER_PROTOCOL,
     model: decl.id,
     wireModel: decl.model,
-    target: targetAt(decl.id, credentialFor(decl, o.wire, o.judge)),
+    target: targetAt(decl.id, credentialFor(decl, o.wire, o.judge, o.doc)),
     adapter: { name: decl.wire },
     // **轮内固定的调用配置**（架构 § 10.2 的必固四条之一）**在声明里，而这里必须把它接上**。
     // 这一栏原先一处都没接：声明里那两栏是空的，于是没人看得出来"声明了却没发出去"——思考那一格
@@ -1400,13 +1400,14 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
 }
 
 /**
- * 凭据：**三种档各取各的**，一处。`--judge` 与回放档都不取凭据——它们一个字节都不出网
+ * 凭据：**三种档各取各的，一处**。引用表从配置的 `credentials.<id>` 键来（两级合并读——
+ * 机器那一半正该住系统级，P2c）；`--judge` 与回放档都不取凭据——它们一个字节都不出网
  * （架构 § 10.5），而取凭据那一步在没有 key 时会当场拒：那与这两档无关。
  */
-function credentialFor(decl: ReturnType<typeof modelDeclOf>, wire: WireFlags, judge: boolean): string {
+function credentialFor(decl: ReturnType<typeof modelDeclOf>, wire: WireFlags, judge: boolean, doc: ConfigDoc): string {
   if (judge) return '--judge：不跑模型，不取凭据'
   if (wire.wireIn !== undefined) return wire.credential ?? '回放档：不出网，不取凭据'
-  return authWith(providerOf(decl.provider), wire.credential ?? null)
+  return authWith(decl.provider, getConfig(doc, `credentials.${decl.provider}`), wire.credential ?? null)
 }
 
 /**
@@ -1704,16 +1705,16 @@ export function driverSupport(o: {
   const tools = publishedCatalog()
   const states = new Map<string, AssembleState>()
   const handles = new Map<string, AgentHandle>()
-  // **覆盖给了就用覆盖**（`targetAt`：值从参数进来，不再取一次）；**不给就按声明取**。
-  // 声明那一份是**有序的表**：环境变量优先，其次 `CREDENTIAL_FILE`——这两条的实现只有一处
-  // （`authOf()`），所以"文件里那份读到了也没用"这一类漂移在结构上不存在。
-  // **回放那一档不取凭据**：它一个字节都不出网（架构 § 10.5），而取凭据那一步在没有 key 时会
-  // 当场拒——那与这一档无关（夹具档要凭据这件事本身就是"把两件事混成一件"）。占位串只进这一份
-  // 目标的头里，而头不进请求体、也不进任何一份夹具。`--credential` 照旧优先（走查要换一份声明
-  // 之外的 key 时给的就是它）。
+  // **覆盖给了就用覆盖**（`targetAt`：值从参数进来，不再取一次）；**不给就按配置的引用表取**
+  // （`credentials.<id>` 键，两级合并读，P2c）。表那一份是**有序的**：环境变量优先，其次文件——
+  // 这两步的实现只有一处（`authOfChecked`），所以"文件里那份读到了也没用"这一类漂移在结构上
+  // 不存在。**回放那一档不取凭据**：它一个字节都不出网（架构 § 10.5），而取凭据那一步在没有
+  // key 时会当场拒——那与这一档无关（夹具档要凭据这件事本身就是"把两件事混成一件"）。占位串
+  // 只进这一份目标的头里，而头不进请求体、也不进任何一份夹具。`--credential` 照旧优先
+  // （表没配时它自己就是那条路；走查要换一份配置之外的 key 时给的就是它）。
   const credential =
     o.wireIn === undefined
-      ? authWith(providerOf(decl.provider), o.credential ?? null)
+      ? authWith(decl.provider, getConfig(o.doc, `credentials.${decl.provider}`), o.credential ?? null)
       : (o.credential ?? '回放档：不出网，不取凭据')
   const target = targetAt(decl.id, credential)
   /** 回放档的那条传输（不给就是"没有"，`callModel` 走真网络）。 */

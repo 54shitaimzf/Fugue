@@ -40,7 +40,8 @@ export class ConfigError extends Error {}
 
 /** 顶层键域（§ 15.3.a）：这份配置认得的所有顶层键。新的顶层键先进这张表，再进代码。
  * `workspace` 是 Z6 装配的 A 区系统状态三栏之一（sources-state 的 EXPOSED）——计划 § 5.20
- * 冻结清单漏了它，全量一跑被这张表拒出来（这正是这张表要抓的那类事），据实补进。 */
+ * 冻结清单漏了它，全量一跑被这张表拒出来（这正是这张表要抓的那类事），据实补进。
+ * `credentials` 是凭据的引用表（P2c）：值是引用不是凭据，取值只在真出网那一步。 */
 export const TOP_LEVEL_KEYS: readonly string[] = [
   'actions',
   'ports',
@@ -50,6 +51,7 @@ export const TOP_LEVEL_KEYS: readonly string[] = [
   'config',
   'docs',
   'workspace',
+  'credentials',
 ]
 
 export function configFileOf(root: string): string {

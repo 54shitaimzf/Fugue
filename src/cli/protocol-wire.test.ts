@@ -17,18 +17,26 @@ import { assemble } from '../assemble/assemble.ts'
 import { HOLDER_PROTOCOL, SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { sourcesFor } from '../assemble/sources.ts'
 import { readConfig } from '../config.ts'
+import type { ConfigDoc } from '../config.ts'
 import type { Contract } from '../contract/types.ts'
 import { driverSupport } from './fugue.ts'
 
 /**
- * 一个**假**的凭据：`driverSupport` 在拼目标那一栏时会读它（`targetOf` 是取值的地方）。
+ * 一个**假**的凭据：`driverSupport` 在拼目标那一栏时会读它（P2c 之后引用表从配置的
+ * `credentials.<id>` 键来，取值那一步只在真出网时）。
  *
  * 为什么必须给：这一份要给的是"句柄里那一栏是哪份协议"，而句柄住在真驱动那一档的口袋里
  * （打桩那一档一个字段都不读）。值从哪里来与本条断言无关，所以给一个占位串——**它不出网**，
- * 这个文件里没有任何一次 `fetch`。真凭据那两条路（环境变量 · 工作区外的文件）由
- * `chain.test.ts` 的守卫那条量与 `fugue run --live` 那一档管。
+ * 这个文件里没有任何一次 `fetch`。引用表走**环境变量那一档**（名字在配置里、值在 :38 行那个
+ * 占位里）；真凭据的纪律由 `chain.test.ts` 的守卫那条量与 `fugue run --live` 那一档管。
  */
 process.env.DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? 'test-placeholder-not-a-credential'
+
+/** 夹具的引用表：只认环境变量那一档，值是上面的占位串。 */
+const harnessDoc = (doc: ConfigDoc): ConfigDoc => ({
+  ...doc,
+  credentials: { deepseek: [{ from: 'env', name: 'DEEPSEEK_API_KEY' }] },
+})
 
 /** 一份子 agent 那一格要的契约（干一格的形状，架构 § 8.12）。 */
 function contractOf(): Contract {
@@ -45,7 +53,7 @@ function contractOf(): Contract {
 async function supportOf() {
   const root = tmpDir('fugue-driver-support-')
   const doc = await readConfig(root)
-  return { root, support: driverSupport({ root, doc, credential: '这一档不出网' }) }
+  return { root, support: driverSupport({ root, doc: harnessDoc(doc), credential: '这一档不出网' }) }
 }
 
 test('①e 真驱动那一档：子 agent 的句柄拿子 agent 那份协议，B 区里有契约那几行', async () => {
@@ -110,7 +118,7 @@ test('P2b · round.model 选模型：配置点另一条声明，句柄的模型�
   // **配置那一档**：`round.model` 点了 openai 那条声明 → decl 就是它（缺省是 anthropic 那条）。
   const byConfig = driverSupport({
     root,
-    doc: { ...doc, round: { model: 'deepseek-flash/openai' } },
+    doc: harnessDoc({ ...doc, round: { model: 'deepseek-flash/openai' } }),
     credential: '这一档不出网',
   })
   assert.equal(
@@ -124,14 +132,14 @@ test('P2b · round.model 选模型：配置点另一条声明，句柄的模型�
   // **旗标盖过配置**（CLI > 工作区）：两边同时给，听旗标的。
   const byFlag = driverSupport({
     root,
-    doc: { ...doc, round: { model: 'deepseek-flash/openai' } },
+    doc: harnessDoc({ ...doc, round: { model: 'deepseek-flash/openai' } }),
     model: 'deepseek-flash/anthropic',
     credential: '这一档不出网',
   })
   assert.equal(byFlag.decl.wire, 'anthropic-messages', '旗标与配置同时给，听旗标的（CLI > 工作区）')
   // **未知即拒、列出可用的**：话里要有目录里真正的那两个名字。
   assert.throws(
-    () => driverSupport({ root, doc, model: 'nope', credential: '这一档不出网' }),
+    () => driverSupport({ root, doc: harnessDoc(doc), model: 'nope', credential: '这一档不出网' }),
     /deepseek-flash\/anthropic/,
     '未知模型拒的时候要列出目录里有的',
   )
@@ -144,7 +152,7 @@ test('①f `--max-steps` 真的写进「我的任务」：给 3 就是 3，**不
   const root = tmpDir('fugue-driver-support-')
   const doc = await readConfig(root)
   const contract = contractOf()
-  const given = driverSupport({ root, doc, credential: '这一档不出网', maxSteps: 3 })
+  const given = driverSupport({ root, doc: harnessDoc(doc), credential: '这一档不出网', maxSteps: 3 })
   const handle = given.handle('agent-1' as never, contract)
   const st3 = given.state('agent-1' as never, contract)
   assert.equal(st3.maxSteps, 3, '给了 `--max-steps 3`，状态里就该是 3')
@@ -155,7 +163,7 @@ test('①f `--max-steps` 真的写进「我的任务」：给 3 就是 3，**不
   // 不给：**没有那一栏**，于是「我的任务」里也没有那一句。`step.test.ts` ⑨ 已经量过"没给预算
   // 就不写那一句"，这里量的是**上游那一栏真的缺席**——两处一起才封住"缺省偷偷补一个数"这条路
   // （原先这里补的正是 `DEFAULT_MAX_STEPS`）。
-  const none = driverSupport({ root, doc, credential: '这一档不出网' })
+  const none = driverSupport({ root, doc: harnessDoc(doc), credential: '这一档不出网' })
   const stNone = none.state('agent-1' as never, contract)
   assert.equal(stNone.maxSteps, undefined, '不给 `--max-steps` 时状态里不该有那一栏')
   const bNone = new TextDecoder().decode(

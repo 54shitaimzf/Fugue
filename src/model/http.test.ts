@@ -20,7 +20,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import type { ModelEvent } from './contract.ts'
-import { PROVIDERS, checkEvents, modelDeclOf } from './contract.ts'
+import { checkEvents, modelDeclOf } from './contract.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { sourcesFor } from '../assemble/sources.ts'
@@ -269,21 +269,19 @@ test('④ 上游中途掐断 → 报错并记事件，不静默重试、不把�
 // "跑测试的机器上恰好没有那份凭据文件"来成立——第 5 批 · 疑点 4 之后声明里有**两条**路，那份
 // 文件在本机是有的（放好了的），于是"没设环境变量就抛"当场不成立。
 //
-// 所以这一条把**那两条路都堵掉**（环境变量删掉 · 声明里那个文件换成一个不存在的路径），
+// 所以这一条把**那两条路都堵掉**（环境变量删掉 · 引用表里的文件换成一个不存在的路径），
 // 跑完原样放回去：判据于是变成"这条路真的会去取，而取不到就拒"，与机器上放着什么无关。
+// P2c 之后引用表从参数进来（配置的 `credentials.<id>` 键），"堵路"因此就是**递那张堵过的表**。
+const BLOCKED_CHAIN: readonly ({ readonly from: 'env'; readonly name: string } | { readonly from: 'file'; readonly path: string })[] = [
+  { from: 'env', name: 'DEEPSEEK_API_KEY' },
+  { from: 'file', path: '/nonexistent/fugue-b3-credentials' },
+]
 function withoutCredential<T>(run: () => T): T {
-  const p = PROVIDERS['deepseek'] as { auth: readonly { from: string; name?: string; path?: string }[] }
-  const keep = p.auth
   const before = process.env['DEEPSEEK_API_KEY']
   delete process.env['DEEPSEEK_API_KEY']
-  p.auth = [
-    { from: 'env', name: 'DEEPSEEK_API_KEY' },
-    { from: 'file', path: '/nonexistent/fugue-b3-credentials' },
-  ]
   try {
     return run()
   } finally {
-    p.auth = keep
     if (before !== undefined) process.env['DEEPSEEK_API_KEY'] = before
   }
 }
@@ -291,7 +289,7 @@ function withoutCredential<T>(run: () => T): T {
 test('⑤ 夹具档不取凭据：`targetOf` 会去取（两条路都没有就拒），夹具档那一份不会', () => {
   withoutCredential(() => {
     assert.throws(
-      () => targetOf('deepseek-flash/anthropic'),
+      () => targetOf('deepseek-flash/anthropic', BLOCKED_CHAIN),
       (err: unknown) => {
         // **两条路都要出现在那句话里**（只报一条会让人以为另一条不存在）。
         assert.match((err as Error).message, /DEEPSEEK_API_KEY/, (err as Error).message)
@@ -336,7 +334,7 @@ test('⑤b targetAt：值从参数进来，不看环境变量；而没有值的�
     withoutCredential(() => {
       let threw = false
       try {
-        targetOf('deepseek-flash/anthropic')
+        targetOf('deepseek-flash/anthropic', BLOCKED_CHAIN)
       } catch (err) {
         threw = true
         assert.match((err as Error).message, /DEEPSEEK_API_KEY/)

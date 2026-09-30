@@ -20,6 +20,7 @@ import type { ModelEvent, Thinking, Turn, Usage } from '../src/model/contract.ts
 import { makeDumpCall, targetAt } from '../src/model/http.ts'
 import { wireNamed } from '../src/model/wire/registry.ts'
 import { WIRES } from '../src/model/contract.ts'
+import { readConfig, getConfig } from '../src/config.ts'
 
 const argv = process.argv.slice(2)
 const live = argv.includes('--live')
@@ -39,7 +40,8 @@ const decl = modelDeclOf(DECL_ID)
 const provider = providerOf(decl.provider)
 let credential: string | null = null
 try {
-  credential = authWith(provider, credPath ?? null)
+  const cfg = await readConfig(process.cwd())
+  credential = authWith(decl.provider, getConfig(cfg, `credentials.${decl.provider}`), credPath ?? null)
   say(`凭据：读到了 ${credential.length} 个字符（值不印）`)
 } catch (err) {
   say(`凭据：读不到——${(err as Error).message.split('\n')[0]}`)

@@ -18,6 +18,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MODEL_DECLS, MODEL_IDS, PREFIX_MODELS, PROVIDERS, TRIGGER_PERCENT, WIRES, authOf, providerOf } from '../src/model/contract.ts'
+import { readConfig, getConfig } from '../src/config.ts'
 import { TOOL_ENTRIES, CATALOG_STATES, catalog, catalogHash } from '../src/tools/catalog.ts'
 
 const REPO = fileURLToPath(new URL('..', import.meta.url))
@@ -57,7 +58,7 @@ console.log('B0 · 模型与提供方：站前四处读数\n')
 console.log('一 · 宿主上到目标模型的路：声明里那两个端点，无凭据各回什么')
 
 const p = providerOf('deepseek')
-say(`提供方：${p.id} · host=${p.host} · 凭据引用=${JSON.stringify(p.auth)}`)
+say(`提供方：${p.id} · host=${p.host} · 凭据引用=两级配置的 credentials.deepseek 键（P2c）`)
 for (const w of Object.keys(WIRES) as (keyof typeof WIRES)[]) {
   say(`  ${w} → ${p.host}${WIRES[w].path}`)
 }
@@ -85,7 +86,8 @@ if (process.env.FUGUE_PROBE_OFFLINE === '1') {
 
 /** 凭据那一路：`authOf()` 只在出网时被调用，所以它读不到也不该影响别的读数。 */
 try {
-  const key = authOf(p)
+  const doc = await readConfig(process.cwd())
+  const key = authOf('deepseek', getConfig(doc, 'credentials.deepseek'))
   say(`authOf()：读到了凭据（${key.length} 个字符，值不印）——真模型那一档可以开`)
 } catch (err) {
   say(`authOf()：读不到凭据（${(err as Error).message.split('\n')[0]}）——夹具档与装配不受影响`)

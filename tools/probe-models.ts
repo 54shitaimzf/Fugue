@@ -23,6 +23,7 @@
 // **它不是产品路径**：产品那条路一个字节都不出网（装配 · 回放 · 夹具一条断言都不碰凭据），
 // 这个数从上游搬进声明里那一次是人做的（改 `MODEL_DECLS`），探针只负责让"没搬"这件事看得见。
 import { MODEL_DECLS, authWith, providerOf } from '../src/model/contract.ts'
+import { readConfig, getConfig } from '../src/config.ts'
 import { priceOf } from '../src/model/price.ts'
 import { wireHeader } from '../src/model/wire/headers.ts'
 
@@ -63,9 +64,10 @@ const say = (s: string): void => console.log(`  ·  ${s}`)
 
 async function main(): Promise<number> {
   const provider = providerOf('deepseek')
+  const cfg = await readConfig(process.cwd())
   let credential: string
   try {
-    credential = authWith(provider, credPath ?? null)
+    credential = authWith('deepseek', getConfig(cfg, 'credentials.deepseek'), credPath ?? null)
   } catch (err) {
     process.stdout.write(`凭据取不到：${err instanceof Error ? err.message : String(err)}\n`)
     return 2
