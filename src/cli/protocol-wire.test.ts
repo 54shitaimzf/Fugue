@@ -104,6 +104,42 @@ test('①e 负对照：同一份状态换持轮者那份协议，「我的任务
   )
 })
 
+test('P2b · round.model 选模型：配置点另一条声明，句柄的模型与线协议就是那一条', async () => {
+  const root = tmpDir('fugue-driver-support-')
+  const doc = await readConfig(root)
+  // **配置那一档**：`round.model` 点了 openai 那条声明 → decl 就是它（缺省是 anthropic 那条）。
+  const byConfig = driverSupport({
+    root,
+    doc: { ...doc, round: { model: 'deepseek-flash/openai' } },
+    credential: '这一档不出网',
+  })
+  assert.equal(
+    byConfig.decl.id,
+    'deepseek-flash/openai',
+    `配置点 openai 那条，decl 就该是它，拿到的是 ${byConfig.decl.id}`,
+  )
+  assert.equal(byConfig.decl.wire, 'openai-chat', `线协议跟着声明走，拿到的是 ${byConfig.decl.wire}`)
+  const handle = byConfig.handle('agent-1' as never, contractOf())
+  assert.equal(handle.adapter.name, 'openai-chat', `句柄的适配器也换到那一条线，拿到的是 ${handle.adapter.name}`)
+  // **旗标盖过配置**（CLI > 工作区）：两边同时给，听旗标的。
+  const byFlag = driverSupport({
+    root,
+    doc: { ...doc, round: { model: 'deepseek-flash/openai' } },
+    model: 'deepseek-flash/anthropic',
+    credential: '这一档不出网',
+  })
+  assert.equal(byFlag.decl.wire, 'anthropic-messages', '旗标与配置同时给，听旗标的（CLI > 工作区）')
+  // **未知即拒、列出可用的**：话里要有目录里真正的那两个名字。
+  assert.throws(
+    () => driverSupport({ root, doc, model: 'nope', credential: '这一档不出网' }),
+    /deepseek-flash\/anthropic/,
+    '未知模型拒的时候要列出目录里有的',
+  )
+  console.log(
+    `P2b 读数：round.model → decl ${byConfig.decl.id}（wire ${byConfig.decl.wire}）· 旗标盖过配置 · 未知即拒并列目录`,
+  )
+})
+
 test('①f `--max-steps` 真的写进「我的任务」：给 3 就是 3，**不给就是不设上界**（那一句不写）', async () => {
   const root = tmpDir('fugue-driver-support-')
   const doc = await readConfig(root)

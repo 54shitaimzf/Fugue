@@ -18,7 +18,6 @@ import type { TruthHandle } from '../../truth/truth.ts'
 import type { View } from '../../view/contract.ts'
 import { lowerAt } from '../../view/lower.ts'
 import { loadView } from '../../view/view.ts'
-import { DEFAULT_MODEL } from '../../assemble/models.ts'
 import { HOLDER_PROTOCOL, protocolFor } from '../../assemble/protocol.ts'
 import { emptyState } from '../../assemble/sources.ts'
 import type { AssembleState } from '../../assemble/sources.ts'
@@ -59,7 +58,7 @@ import { computeAllMetrics, computeAttribution, lineOf, lineOfAttribution } from
 import { METRICS_HEAD, REPORT_HEAD, callLinesOf, rowsOf } from '../../probe/status.ts'
 import { phaseOf } from '../../model/price.ts'
 import type { Ctx } from '../shared.ts'
-import { UsageError, emitJson, emitLine, fail, openCtx, usageFail } from '../shared.ts'
+import { UsageError, emitJson, emitLine, fail, openCtx, selectedModelId, usageFail } from '../shared.ts'
 import { dumpWireDir, modelLimitOf, publishedCatalog } from './assemble.ts'
 
 /**
@@ -105,22 +104,28 @@ function wireFlagsOf(root: string, flags: Map<string, string | true>): WireFlags
   } else if (stepsFlag === true) {
     throw new UsageError('--max-steps 要一个数：--max-steps 8')
   }
+  // `--model <id>`：**这一趟用哪条模型声明**（`round.model` 的旗标那一档）。它只收名字——
+  // 与配置的先后、缺省、未知即拒，都在 `selectedModelId` 一处（`shared.ts`）。
+  const model = typeof flags.get('model') === 'string' ? (flags.get('model') as string) : undefined
   return {
     live,
     ...(wireIn === undefined ? {} : { wireIn }),
     ...(dumpDir === undefined ? {} : { dumpDir }),
     ...(credential === undefined ? {} : { credential }),
     ...(maxSteps === undefined ? {} : { maxSteps }),
+    ...(model === undefined ? {} : { model }),
   }
 }
 
-/** `wireFlagsOf` 的产出：三条传输档 · 一个覆盖 · 一道上界。**缺的那几栏就是"没要求"。** */
+/** `wireFlagsOf` 的产出：三条传输档 · 一个覆盖 · 一道上界 · 一个模型选择。**缺的那几栏就是"没要求"。** */
 interface WireFlags {
   readonly live: boolean
   readonly wireIn?: string
   readonly dumpDir?: string
   readonly credential?: string
   readonly maxSteps?: number
+  /** `--model <id>`：**这一趟用哪条声明**（P2b）。缺省那条由查表那一步给（表的第一条）。 */
+  readonly model?: string
 }
 
 /**
@@ -194,7 +199,7 @@ export async function roundCmd(
       // 物化那一档：每一条分支一个口，那个 agent 自己的日志。
       logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
       // **声明的上限接进 `seed` 那一条**：这一档没有种子（`seeds: []`），但读数那一行印的就是它。
-      modelLimit: modelLimitOf(),
+      modelLimit: modelLimitOf(doc),
       materialize,
     })
     if (json) {
@@ -326,6 +331,7 @@ export async function roundRun(
   const dumpDir = wire.dumpDir
   const credentialOverride = wire.credential
   const maxSteps = wire.maxSteps
+  const modelChoice = wire.model
   const real = live || wireIn !== undefined
   const handoff = flags.has('no-handoff') ? false : undefined
   // **一个 agent 一个日志口、由调用方持有**（`hold.ts` 那道栅栏：同一个 writer 开第二个口就是
@@ -414,7 +420,7 @@ export async function roundRun(
       logForAgent: agentLogOf,
       materialize: flags.has('materialize'),
       // **声明的上限接进 `seed` 那一条**：与 `round new` / `round go` 递的是同一个数。
-      modelLimit: modelLimitOf(),
+      modelLimit: modelLimitOf(doc),
       // **两条路在 `runRound` 眼里没有区别**（同一个 `AgentDriver`）：打桩那一档把 `Stub` 包
       // 一层（S7 定下的那个形状不动），真驱动那一档走 `realDriver` + `DriverSupport`。凭据那一
       // 步只在这一档走（不打 `--live` 的话 `driverSupport` 一次都不被调）。
@@ -447,6 +453,7 @@ export async function roundRun(
               ...(maxSteps === undefined ? {} : { maxSteps }),
               ...(credentialOverride === undefined ? {} : { credential: credentialOverride }),
               ...(dumpDir === undefined ? {} : { dumpDir }),
+              ...(modelChoice === undefined ? {} : { model: modelChoice }),
             }),
           }
         : {}),
@@ -704,7 +711,8 @@ async function holderWiringOf(o: {
       return got.ok ? { ok: true as const, value: got.value } : { ok: false as const, error: got.error }
     },
   })
-  const decl = modelDeclOf(DEFAULT_MODEL.id)
+  // **模型按这一趟的选择来**（`--model` 旗标 > `round.model` 配置 > 缺省那条，`shared.ts` 一处）。
+  const decl = modelDeclOf(selectedModelId(o.wire.model, o.doc))
   const baseState = stateWithState(emptyState(), o.doc, o.root)
   // 「凝聚前最近几次原文」：**会话记录那一段投影**（最近 3 条）。记录不在就是空串——第一次说话
   // 之前这一场对话还没有一条。
@@ -1211,6 +1219,7 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
                 ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
                 ...(wire.credential === undefined ? {} : { credential: wire.credential }),
                 ...(wire.dumpDir === undefined ? {} : { dumpDir: wire.dumpDir }),
+                ...(wire.model === undefined ? {} : { model: wire.model }),
               }),
             }
           : {}),
@@ -1328,7 +1337,7 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
       identityFor: (n: number) => identFor(round, n),
       actions: actionsTableOf(doc),
       // **声明的上限接进 `seed` 那一条**：判那一趟（`round plan`）读的是同一份声明。
-      modelLimit: modelLimitOf(),
+      modelLimit: modelLimitOf(doc),
       materialize,
       logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
     })
@@ -1677,6 +1686,11 @@ export function driverSupport(o: {
    */
   readonly wireIn?: string
   /**
+   * `--model <id>`：**这一轮用哪条模型声明**（P2b）。旗标优先于配置，都没给就是缺省那条——
+   * 先后在 `selectedModelId` 一处（`shared.ts`），查表与拒未知在 `modelDeclOf` 一处。
+   */
+  readonly model?: string
+  /**
    * 这一格最多走几步（`--max-steps`）。**它是「我的任务」里那句话的那个数**，所以要在拼状态
    * 的时候就写进去——那一份状态同时喂给两处装配（`step` 里那一次与驱动算预算用的 `prefixOf`
    * 那一次），两处读到的字节因此是同一串。
@@ -1686,7 +1700,7 @@ export function driverSupport(o: {
    */
   readonly maxSteps?: number
 }): DriverSupport {
-  const decl = modelDeclOf(DEFAULT_MODEL.id)
+  const decl = modelDeclOf(selectedModelId(o.model, o.doc))
   const tools = publishedCatalog()
   const states = new Map<string, AssembleState>()
   const handles = new Map<string, AgentHandle>()

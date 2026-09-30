@@ -21,7 +21,7 @@ import { RoundRunError } from '../../round/execute.ts'
 import { modelDeclOf } from '../../model/contract.ts'
 import { implementedNames, publishedTools } from '../../tools/execute.ts'
 import { CATALOG_STATES, TOOL_NAMES, catalog } from '../../tools/catalog.ts'
-import { emitJson, emitLine, fail, usageFail } from '../shared.ts'
+import { emitJson, emitLine, fail, selectedModelId, usageFail } from '../shared.ts'
 
 /**
  * `fugue assemble <protocol> [--agent <id>] [--against <protocol>] [--json]`（架构 § 9.6 的装配行 ·
@@ -53,10 +53,13 @@ export async function assembleCmd(
   const against = flags.get('against')
   try {
     const doc = await readConfig(abs)
+    // **装配跟着配置走**（P2b：`round.model`；装配不收旗标——它是视图，前缀要与轮次用的一致）。
+    // **过一遍查表**：未知即拒并列出目录（与轮次那两处同一条口径），不把一个没核对过的名字递下去。
+    const modelId = modelDeclOf(selectedModelId(undefined, doc)).id
     const protocol = protocolNamed(name)
     const coord = await agentCoord(abs, typeof who === 'string' ? who : null, doc)
     const segments = sourcesFor(protocol, coord.state, coord.who)
-    const prefix = assemble({ protocol, model: DEFAULT_MODEL.id, segments })
+    const prefix = assemble({ protocol, model: modelId, segments })
     const violations = checkConstraints(protocol, segments, null, '这一步', undefined, prefix)
 
     const zoneLine = (z: 'A' | 'B' | 'C'): { hash: string; bytes: number } => {
@@ -70,7 +73,7 @@ export async function assembleCmd(
       const other = protocolNamed(against)
       const otherCoord = await agentCoord(abs, typeof who === 'string' ? who : null, doc)
       const otherSegments = sourcesFor(other, otherCoord.state, otherCoord.who)
-      const otherPrefix = assemble({ protocol: other, model: DEFAULT_MODEL.id, segments: otherSegments })
+      const otherPrefix = assemble({ protocol: other, model: modelId, segments: otherSegments })
       const a = firstDivergence(prefix.zoneA, otherPrefix.zoneA)
       const at = a >= 0 ? a : prefix.zoneA.length + firstDivergenceOrEnd(prefix.zoneB, otherPrefix.zoneB)
       divergence = {
@@ -174,12 +177,11 @@ export function publishedCatalog(): ReturnType<typeof catalog> {
  * 声明"）——两个数不再相等，所以三处**漏递一处，读数就变**（`model/contract.test.ts` 里那一条
  * `assert.notEqual` 钉的就是它：递与不递的种子上限不同）。在这之前两个数一样，漏递不可见。
  *   · **算式那一层有牙**：`round/start.test.ts` ⑥（`modelLimit: 8 000` → 上限 0 · 不递 → 904 000）。
- *   · **接线那一层的牙要等「模型目录可换」那一格**：那时给它一条断言——换一个上限不同的声明，
- *     三处的读数都跟着动。今天装牙只有一个办法（为一条断言开一个换模型的入口），那是把形状往
- *     错的方向拽：那个入口属于"模型目录可换"那一格，不属于这一处。
+ *   · **接线那一层的牙随 `P2b` 落了**：上限跟着 `round.model` 走（`selectedModelId` 一处解析）——
+ *     换一条上限不同的声明，三处的读数都跟着动。
  */
-export function modelLimitOf(): number {
-  return modelDeclOf(DEFAULT_MODEL.id).contextLimit
+export function modelLimitOf(doc: ConfigDoc): number {
+  return modelDeclOf(selectedModelId(undefined, doc) ?? DEFAULT_MODEL.id).contextLimit
 }
 
 /**

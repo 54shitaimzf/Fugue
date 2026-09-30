@@ -15,6 +15,8 @@ import { loadView } from '../view/view.ts'
 import { readSnapshot } from '../view/snapshot.ts'
 import type { PolicyMode, RelPath, ViewRev, WriterId } from '../terms.ts'
 import { KEYMAP, hintLimitOf, hintLineOf } from '../ui/keymap.ts'
+import { getConfig } from '../config.ts'
+import type { ConfigDoc } from '../config.ts'
 
 /** 用法错（旗子少一个值 · 互斥的两档一起给）：`run()` 那一层把它收成退出码 2。 */
 export class UsageError extends Error {}
@@ -148,6 +150,8 @@ const VALUED: ReadonlySet<string> = new Set([
   // `--wire-in <目录>`：**回放档**（PLAN § 5.12 序 1）。它也取一个值，同一条纪律；而它是**内部档**
   // ——不进用法说明：它要的是"录下来的那一趟"，只有取证与走查用得上。
   'wire-in',
+  // `--model <id>`：模型选择（`round.model` 的旗标那一档，P2b）。同一条纪律——它取一个值。
+  'model',
 ])
 export { VALUED }
 
@@ -271,6 +275,23 @@ export function fence(roots: Roots, raw: string): Fenced {
 export function writerOf(flags: Map<string, string | true>): WriterId {
   const a = flags.get('agent')
   return (typeof a === 'string' ? a : 'round') as WriterId
+}
+
+/**
+ * 这一趟用哪个模型：**旗标 > 配置（`round.model`）> 没说**。**"没说"交回 `undefined`**——
+ * 缺省那条由 `modelDeclOf` 按"表的第一条"给（与 `--agent` 不给走主线同一条口径）：
+ * "没写 model"与"写了一个没有的 model"是两件事，后者在查表那一步当场拒并列出目录。
+ *
+ * 配置里那栏给了却不是非空字符串，是写错了一个字——照 `--max-steps` 那条纪律当场拒，
+ * 不静默读成"没配"（拼错被咽下去与"今天没配"在读数上分不开）。
+ */
+export function selectedModelId(flag: string | undefined, doc: ConfigDoc): string | undefined {
+  const v = flag ?? getConfig(doc, 'round.model')
+  if (v === undefined) return undefined
+  if (typeof v !== 'string' || v === '') {
+    throw new UsageError(`round.model 要是一个模型名字（目录里有的那几个），拿到的是 ${JSON.stringify(v)}`)
+  }
+  return v
 }
 
 export interface Ctx {
