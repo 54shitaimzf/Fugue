@@ -214,29 +214,21 @@ test('⑦ 那一句产物说明：逐节逐键印出键名与形状，两样都�
   assert.ok(text.includes('each section is an independent task'), `那一段里没有"每一节都是独立的一格"：${text}`)
   assert.ok(text.includes("cannot see another section's output"), `那一句里没有"看不见别节的产物"：${text}`)
   assert.ok(text.includes('must come from seeds that already exist on the base'), `那一句里没有"底上就已经有的那几条"那半句：${text}`)
-  // 五 · **`action` 那一栏只能从那几个里挑**：那几个名字是工作区的事实，由调用方给进来。
-  //      **名字后面还要带上"它跑什么"**：只给名字的那一版真档里，那一趟为了弄清哪个动作核哪
-  //      一处，去找工作区的配置（它猜 `*.json` / `*.yaml` / `*.toml`，而那一份叫 `.fugue/config`），
-  //      8 步里四步花在找它上，一次都没伸手写草案，最后停在步数上界（`--dump-wire` 实录）。
-  const withActions = draftRuleTextOf(at, ['ok', '测试全过'])
-  assert.ok(withActions.includes('can only come from the actions bound in this workspace: ok · 测试全过'), `那一句里没带上绑好的动作名：${withActions}`)
-  const withCommands = draftRuleTextOf(at, ['ok', '测试全过'], { ok: '/bin/sh -c true' })
-  assert.ok(
-    withCommands.includes('ok (/bin/sh -c true) · 测试全过'),
-    `带了命令的那一档没把命令印出来：${withCommands}`,
-  )
-  assert.ok(withCommands.includes('(the command it runs is in parentheses after the name)'), `没有一处说括号里那一栏是什么：${withCommands}`)
-  // 负对照：一条命令都没给（夹具与单测那一档）→ 不凭空多出那一栏解释，也不替它编一个命令。
-  assert.equal(withActions.includes('the command it runs is in parentheses after the name'), false, '没给命令却说了括号里是它跑什么')
-  assert.equal(withActions.includes('/bin/sh'), false, '没给命令却凭空印出一个命令')
-  const none = draftRuleTextOf(at)
-  assert.ok(none.includes('none is bound today'), `一条都没绑那一档没说清：${none}`)
+  // 五 · **`action` 那一栏只能从绑好的动作里挑**：清单不再内联在这一段里（P3b2 撤模型侧枚举
+  //      注入），那一句指到 A 区系统状态那一栏——名字与 argv 都在那里，与跑的时候同一份来源。
+  //      只给名字那一版的教训（8 步烧四步找配置，`--dump-wire` 实录）由那一栏封住。
+  assert.ok(text.includes('can only come from the actions bound in this workspace'), `那一句没把范围说死：${text}`)
+  assert.ok(text.includes('the list (name + argv) is in the system state'), `那一句没指到系统状态那一栏：${text}`)
+  assert.ok(text.includes('fugue config set actions.<name>'), `一条都没绑那一档的指路不在：${text}`)
+  // 负对照：一句清单都不内联——名字与命令一个都不进提示词（它们住在 A 区，两边各一份就会漂）。
+  assert.equal(text.includes('none is bound today'), false, '那句还在内联清单')
+  assert.equal(text.includes('parentheses'), false, '那句还在内联命令')
   // 六 · `goalWithDraftRule`：人那一句在最前，末尾是那一句（近因）。
   const goal = goalWithDraftRule('写一份 README.md', at)
   assert.ok(goal.startsWith('写一份 README.md'), `开头不是人那一句：${goal.slice(0, 60)}`)
   assert.ok(goal.trimEnd().endsWith("Another path does not count as this pass's deliverable."), `末尾不是那一句：${goal.slice(-80)}`)
   console.log(
-    `⑦ 读数：那一段 ${text.length} 字节（带命令那一版 ${withCommands.length} 字节）· ` +
-      `${DRAFT_KINDS.map((k) => `${k} ${DRAFT_FIELDS[k].length} 键`).join(' · ')} · 形状逐字来自 FIELD_RULES`,
+    `⑦ 读数：那一段 ${text.length} 字节 · ` +
+      `${DRAFT_KINDS.map((k) => `${k} ${DRAFT_FIELDS[k].length} 键`).join(' · ')} · 形状逐字来自 FIELD_RULES · 动作清单指到系统状态`,
   )
 })

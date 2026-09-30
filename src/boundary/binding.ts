@@ -6,7 +6,7 @@
 //
 // **它是这一站唯一一处新接口，也是人唯一要手写的东西。** 形状按设计预期批过（PLAN § 5.4 尾）：
 //
-//   actions.<名字> = { argv: [...] · cwd?: <视图内路径> · outputs?: [...] · cache?: [...] · env?: {} } · net?: "host"
+//   actions.<名字> = { argv: [...] · doc?: <一句话> · cwd?: <视图内路径> · outputs?: [...] · cache?: [...] · env?: {} } · net?: "host"
 //
 // `outputs`（回写视图的产出，X2 的回收读它）与 `cache`（绑到本 agent 的缓存、不回写，构建产物
 // 落这里）分开，是这一处唯一要紧的取舍：架构 § 8.7 明说构建产物**不回收**，而 `run_action`
@@ -30,6 +30,8 @@ export class BindingError extends Error {}
 export interface ActionBinding {
   readonly name: ActionName
   readonly argv: readonly string[]
+  /** 给模型看的那一句话（P3b2 系统状态的 `actions` 栏）：这个动作用来干什么。不配就不进投影。 */
+  readonly doc?: string
   /** 视图内的相对路径，缺省是视图的根（`''`）。 */
   readonly cwd: string
   /** 要回写视图的产出（X2 的回收读它；X1 只校验形状）。 */
@@ -99,6 +101,8 @@ export function readBinding(doc: ConfigDoc, name: string): ActionBinding {
     )
   }
   const argv = asStringArray(raw.argv, `动作 ${name} 的 argv`, { nonEmpty: true })
+  const docText = raw.doc
+  if (docText !== undefined && typeof docText !== 'string') throw new BindingError(`动作 ${name} 的 doc 要是一句话字符串`)
   const cwd = raw.cwd === undefined ? '' : raw.cwd
   if (typeof cwd !== 'string') throw new BindingError(`动作 ${name} 的 cwd 要是一个字符串`)
   const outputs = raw.outputs === undefined ? [] : asStringArray(raw.outputs, `动作 ${name} 的 outputs`)
@@ -116,7 +120,9 @@ export function readBinding(doc: ConfigDoc, name: string): ActionBinding {
   }
   const net: NetMode = rawNet === 'host' ? 'host' : 'none'
   assertNotReserved(Object.keys(env), `动作 ${name} 的 env`)
-  return { name, argv, cwd, outputs, cache, env, net }
+  return docText === undefined
+    ? { name, argv, cwd, outputs, cache, env, net }
+    : { name, argv, doc: docText, cwd, outputs, cache, env, net }
 }
 
 /**

@@ -695,13 +695,8 @@ async function holderWiringOf(o: {
   const goalText =
     o.draftPath === undefined
       ? o.goal
-      : holderGoalText(
-          o.goal,
-          o.draftPath,
-          Object.keys(actionsTableOf(o.doc)).sort(),
-          o.wire.maxSteps,
-          actionCommandsOf(o.doc),
-        )
+      : // **动作清单不内联**（P3b2 撤模型侧枚举注入）：它在 A 区系统状态那一栏，与跑的时候同一份。
+        holderGoalText(o.goal, o.draftPath, o.wire.maxSteps)
   const base = await pinnedBase(o.ctx.truth)
   const view = await loadView(o.ctx.log, 'round' as WriterId, { lower: lowerAt(o.ctx.truth, base) })
   const head = await refHeadOf(o.ctx.log, 'round' as WriterId, base)
@@ -1597,9 +1592,10 @@ export function actionsTableOf(doc: ConfigDoc): Readonly<Record<string, readonly
 
 /**
  * 绑好的动作**跑什么**：名字 → `argv` 拼起来。**与 `actionsTableOf` 同一个来源**（`readBinding`
- * 一处读），用处只有一个——产物说明里那一句动作，名字后面括号里那个命令。
+ * 一处读）。P3b2 起它的消费方只剩**门停给人看的那张表**（`observe.ts`）——模型那一侧的清单
+ * 住在 A 区系统状态的 `actions` 栏（名字 + argv，同一份来源），不再由提示词内联。
  *
- * 为什么要印出来：`assertions.action` 只能从这几个里挑，而"只给名字"那一版真档烧掉过一整趟的
+ * 那张表为什么留着：`assertions.action` 只能从这几个里挑，而"只给名字"那一版真档烧掉过一整趟的
  * 预算——那一趟为了弄清哪个动作核哪一处，去找工作区的配置（它猜 `*.json` / `*.yaml` /
  * `*.toml`，而那一份叫 `.fugue/config`），8 步里四步花在找它上，一次都没伸手写草案。
  */

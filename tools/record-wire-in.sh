@@ -32,7 +32,7 @@ D=$(mktemp -d /tmp/fugue-record-wire-XXXXXX)
 # `err.txt` · `out.json` 两条会被覆盖）。
 T=$(mktemp -d /tmp/fugue-record-out-XXXXXX)
 # 照 `scenario.json` 搭同一份工作区：底那几份文件 + 一个提交 + 那三条配置。**别的键一条都不设**
-# （`系统状态` 那一段照 `EXPOSED` 投影，多设一条 A 区的字节就变了，而夹具绑的就是那一串）。
+# （`系统状态` 那一段照 `projectConfig` 投影，多设一条 A 区的字节就变了，而夹具绑的就是那一串）。
 # **每录一趟换一枚"趟次标记"，钉在 A 区第一段（`项目方针`）的第一行上。** 由头：前缀是
 # 内容寻址的缓存键，而两次录制的 A/B 区几乎逐字相同——上一趟刚发过的那些字节还在上游的缓存里，
 # 于是第 1 次调用照样报 `cacheReadTokens > 0`，`prefix-hit-rate` 就成了平凡的 3/3

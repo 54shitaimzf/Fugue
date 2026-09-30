@@ -53,6 +53,50 @@ function declaredOf(doc: Record<string, unknown>): Map<string, ToolchainDecl> {
   return out
 }
 
+/**
+ * 投影那一行（系统状态的 `toolchain` 栏，P3b2）：声明照抄，读数只在**出自当前这条 probe**
+ * 时带上——probe 对不上的缓存是另一条命令的读数，带出去就是谎。`null` 照带（探过、没有肯定
+ * 读数：前缀如实缺席，物化那一边的下一次起跑会重探）。名字排序：数组次序稳定序列化保不住，
+ * 排序才是逐字节稳定的。键不在 → `undefined`（那一栏整个不出现）。
+ */
+export interface ToolchainLine {
+  readonly name: string
+  readonly probe: readonly string[]
+  readonly doc?: string
+  readonly reading?: string | null
+}
+
+/** 声明与读数 → 那一栏（纯函数，不跑探针——前缀那一步不起子进程）。 */
+export function projectToolchain(doc: Record<string, unknown>): readonly ToolchainLine[] | undefined {
+  if (doc['toolchain'] === undefined) return undefined
+  const declared = declaredOf(doc)
+  const table = doc['toolchain'] as Record<string, unknown>
+  const out: ToolchainLine[] = []
+  for (const name of [...declared.keys()].sort()) {
+    const d = declared.get(name) as ToolchainDecl
+    const entry = table[name]
+    const raw = typeof entry === 'object' && entry !== null && !Array.isArray(entry)
+      ? (entry as Record<string, unknown>)['reading']
+      : undefined
+    let reading: string | null | undefined
+    if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+      const r = raw as Record<string, unknown>
+      const p = r['probe']
+      if (Array.isArray(p) && p.length === d.probe.length && p.every((s, i) => s === d.probe[i])) {
+        const v = r['value']
+        reading = typeof v === 'string' ? v : v === null ? null : undefined
+      }
+    }
+    out.push({
+      name,
+      probe: d.probe,
+      ...(d.doc === undefined ? {} : { doc: d.doc }),
+      ...(reading === undefined ? {} : { reading }),
+    })
+  }
+  return out
+}
+
 /** 缓存命中 = 读数在 · 出自同一条命令 · 且是肯定的（null 永不命中）。 */
 function hit(reading: unknown, probe: readonly string[]): boolean {
   if (typeof reading !== 'object' || reading === null) return false

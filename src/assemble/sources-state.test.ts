@@ -10,8 +10,9 @@
 //   ④ **红负对照**：把系统状态的段值改成「从宿主路径生成」（把 `<realRoot>` 拼进去）→ ② 那一
 //      条量的是「不取决于 agent」，而这一档量的是另一头：**宿主的坐标也不许进去**——同一份配置
 //      在两个宿主根下装配出来的 A 区必须相同，否则拿这一份前缀去比两个工作区就是在比路径
-//   ⑤ **投影不是原文**：键按字典序、只列这个仓库真的会读的那几栏、值原样（配置里加一栏与
-//      这一步无关的东西，不进这一份）
+//   ⑤ **投影不是原文**：能力各占一栏（P3b2 拍平：`entries` 信封与 `net` 双投删掉）· 两串清单
+//      按 name 排序且与声明次序无关 · 绑定的 env 值不进前缀（负对照）· 配置里加一栏与这一步
+//      无关的东西，不进这一份
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -24,19 +25,28 @@ import { BUILTIN_CATALOG, defaultModelOf } from '../model/catalog.ts'
 const DEFAULT_MODEL = { id: defaultModelOf(BUILTIN_CATALOG).id }
 import { HOLDER_PROTOCOL, SUBAGENT_PROTOCOL } from './protocol.ts'
 import { assemble, hashOf } from './assemble.ts'
+import { stableStringify } from './render.ts'
 import type { AgentCoord } from './sources.ts'
 import { emptyState, readPolicy, sourcesFor } from './sources.ts'
 import { projectConfig, stateWithState, systemForEachAgent, systemSegment } from './sources-state.ts'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 
-/** 一份像样的配置：三栏能力 + 一栏与这一步无关的东西（⑤ 用它量「投影不是原文」）。 */
+/** 一份像样的配置：五栏能力 + 动作与工具链两串清单 + 一栏与这一步无关的东西（⑤ 用它量「投影不是原文」）。 */
 const CONFIG = {
   platform: 'linux',
   workspace: 'fugue',
   config: { net: 'none' },
-  'ports.range': '31000-31099',
+  // `fugue config set ports.range …` 写出来的是嵌套那一份（`setConfig` 按 `.` 分层），照它写。
+  ports: { range: '31000-31099' },
   docs: [{ path: 'ARCHITECTURE.md', prompt: '这一版是什么' }],
+  actions: {
+    build: { argv: ['make', 'build'], outputs: ['dist/'], env: { TOKEN: '不该出现的值' } },
+    check: { argv: ['node', '--check', 'src/app.js'] },
+  },
+  toolchain: {
+    node: { probe: ['node', '--version'], doc: '跑 JS 那一个', reading: { probe: ['node', '--version'], value: 'v24.21.0' } },
+  },
   与这一步无关: { 随便: '什么' },
 }
 
@@ -146,17 +156,49 @@ test('④ 红负对照：把宿主路径拼进系统状态 → 同一份配置�
   }
 })
 
-test('⑤ 投影不是原文：键按字典序 · 只列真的会读的那几栏 · 值原样', () => {
+test('⑤ 投影不是原文：能力各一栏 · 清单按 name 排序 · 绑定的 env 值不进前缀', () => {
   const sys = projectConfig(CONFIG)
-  const keys = sys.entries.map((e) => e.key)
-  assert.deepEqual(keys, [...keys].sort(), '投影的键不是字典序')
+  const keys = Object.keys(sys)
+  // **只比集合不比插入序**：对象的键序进不了前缀——渲染那一步（`stableStringify`）会把键排好，
+  // 所以这里钉"哪几栏在了"，字节那一半钉在下面渲染相等的两条里。
+  assert.deepEqual(
+    [...keys].sort(),
+    ['actions', 'docs', 'net', 'platform', 'ports', 'toolchain', 'workspace'],
+    `该进的栏没全进（投影不是原文，只列有人消费的那几栏）：${keys.join(' · ')}`,
+  )
   assert.ok(!keys.includes('与这一步无关'), '与这一步无关的配置进了投影')
-  assert.ok(keys.includes('config.net') && keys.includes('docs'), '该进的栏没进投影')
+  // **负对照：绑定的 env 值不投影**——凭据与配置值走引用不走来，进了这一栏就同时进夹具与日志。
+  const rendered = JSON.stringify(sys)
+  assert.ok(!rendered.includes('TOKEN') && !rendered.includes('不该出现的值'), `绑定的 env 值进了投影：${rendered}`)
+  // 动作清单：name 排序 · argv 原样 · outputs 带上 · doc/outputs 可缺（check 那条就没有）。
+  assert.deepEqual(sys.actions, [
+    { name: 'build', argv: ['make', 'build'], outputs: ['dist/'] },
+    { name: 'check', argv: ['node', '--check', 'src/app.js'] },
+  ], '动作清单该是 name 排序、env 不投影、可缺的栏不出现')
+  // 工具链：声明照抄，读数只在出自当前这条 probe 时带上。
+  assert.deepEqual(sys.toolchain, [
+    { name: 'node', probe: ['node', '--version'], doc: '跑 JS 那一个', reading: 'v24.21.0' },
+  ], '工具链该带声明与当前 probe 的读数')
+  // **与声明次序无关**：整份配置的键倒过来写（连 actions 里的两条也是），进前缀的那份字节不变
+  // ——对象的键序由渲染器排（`stableStringify`），数组的次序序列化保不住、排序自己给（上面那
+  // 两条 deepEqual 钉的就是那一半）。
+  const revEntries = Object.entries(CONFIG).reverse().map(([k, v]) => [
+    k,
+    k === 'actions'
+      ? { check: (CONFIG.actions as Record<string, unknown>).check, build: (CONFIG.actions as Record<string, unknown>).build }
+      : v,
+  ])
+  const reversed = projectConfig(Object.fromEntries(revEntries) as never)
+  assert.equal(stableStringify(reversed), stableStringify(sys), '声明次序不该影响投影字节')
+  // **旧读数不带出去**：probe 换了的那份缓存是另一条命令的读数，带出去就是谎。
+  const stale = projectToolchainOfStale()
+  assert.ok(!JSON.stringify(stale).includes('v99.99.99'), `换了 probe 的旧读数进了投影：${JSON.stringify(stale)}`)
   // 值原样：不是字符串化的，也不是求过哈希的（`docs` 是一串对象，原样带过去）。
-  assert.deepEqual(sys.entries.find((e) => e.key === 'docs')?.value, CONFIG.docs)
+  assert.deepEqual(sys.docs, CONFIG.docs)
   assert.equal(sys.platform, 'linux')
   assert.equal(sys.workspace, 'fugue')
   assert.equal(sys.net, 'none')
+  assert.equal(sys.ports, '31000-31099')
   // 两处入口同一份值：`systemSegment` 就是 `projectConfig`（同一个函数，没有第二条路）。
   assert.deepEqual(systemSegment(CONFIG), sys)
   // 持轮者那一份协议也用同一份系统状态（A 区是两份协议唯一相交的地方）。
@@ -166,6 +208,14 @@ test('⑤ 投影不是原文：键按字典序 · 只列真的会读的那几栏
   assert.deepEqual(sub.zoneA, holder.zoneA)
 })
 
+/** ⑤ 的旧读数负对照：声明换了 probe，缓存里那份读数还是旧命令的。 */
+function projectToolchainOfStale(): unknown {
+  return projectConfig({
+    ...CONFIG,
+    toolchain: { node: { probe: ['node', '-v'], reading: { probe: ['node', '--version'], value: 'v99.99.99' } } },
+  } as never)
+}
+
 /** 一个临时工作区根：里面有一份 AGENTS.md，给这两段当输入。 */
 function fixtureRoot(tag: string): string {
   const root = mkdtempSync(join(tmpdir(), `fugue-z5-${tag}-`))
@@ -174,21 +224,20 @@ function fixtureRoot(tag: string): string {
   return root
 }
 
-test('⑥ 地板那一档：配置里一栏都没有时，系统状态不投影出 undefined，A 区照样装得出', () => {
+test('⑥ 地板那一档：配置里一栏都没有时，系统状态投影成空对象，A 区照样装得出', () => {
   const root = fixtureRoot('empty')
   try {
     // ① 段值里一个 undefined 都没有：有的话 `json` 渲染器会抛（那是"跑不起来"，不是地板）。
     const sys = projectConfig({}) as Record<string, unknown>
     assert.deepEqual(Object.values(sys).filter((v) => v === undefined), [], '空配置投影出了 undefined')
-    assert.deepEqual(sys['entries'], [])
-    assert.deepEqual(Object.keys(sys), ['entries'], '空配置下只该有 entries 那一栏')
+    assert.deepEqual(Object.keys(sys), [], '空配置下一个栏都不该有')
 
     // ② 装配照跑，而且没有把字面量 `undefined` 拼进前缀。负对照：真把 undefined 拼进去过。
     const { segs, a } = assembleA({}, root, AGENTS[0] as AgentCoord)
     assert.ok(a.length === 16, '空配置下 A 区照样出得来哈希')
     const rendered = JSON.stringify(segs['系统状态'])
     assert.ok(!rendered.includes('undefined'), `系统状态里出现了字面量 undefined：${rendered}`)
-    assert.equal(rendered, '{"entries":[]}', `空配置下那一段就是 entries 那一栏：${rendered}`)
+    assert.equal(rendered, '{}', `空配置下那一段就是一个空对象：${rendered}`)
 
     // ③ 空配置与配全了的 A 区**不同**：这两条读数不是同一个值（否则上面那条是恒等式）。
     assert.notEqual(a, assembleA(CONFIG, root, AGENTS[0] as AgentCoord).a, '空配置与配全了的 A 区居然相同')

@@ -224,7 +224,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'run_action',
-    description: 'Run an action that is already bound (a build, a test); the outputs it declares are written back into the view. Actions are the prepared, reproducible commands: for a one-off command use bash, and to see what an action takes, look its name up in the config.',
+    description: 'Run an action bound in this workspace (a build, a test). The bound actions are listed in the system state, each with its name and the command line it runs; pass extra arguments as args and they are appended to that command line. For a one-off command use bash.',
     parameters: {
       type: 'object',
       properties: {

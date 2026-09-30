@@ -181,25 +181,10 @@ export function draftPathOf(round: string): RelPath {
  *     判值域用的就是那两份（架构 § 8.12「构造器不猜、不补」）。抄一份的后果是提示词与判据
  *     各说各话，而它一个错都不报——症状只有一个：模型老是写不中。
  */
-export function draftRuleTextOf(
-  draftPath: RelPath,
-  actionNames: readonly string[] = [],
-  actionCommands: Readonly<Record<string, string>> = {},
-): string {
+export function draftRuleTextOf(draftPath: RelPath): string {
   const lines = DRAFT_KINDS.map(
     (k) => `  ${k}: ${DRAFT_FIELDS[k].map((f) => `${f}: ${FIELD_RULES[f]?.shape ?? '(no shape given)'}`).join(' · ')}`,
   )
-  // **它跑的什么也要印出来。** `assertions.action` 只能从这几个里挑，而"只给名字"那一版真档
-  // 照出过一次后果：那一趟为了弄清哪个动作核哪一处，去找工作区的配置——它猜的是 `*.json` /
-  // `*.yaml` / `*.toml`，`.fugue/config` 不在猜法里，8 步里烧掉四步，一次都没伸手写草案，
-  // 最后停在步数上界（`--dump-wire` 实录）。名字与命令都从**工作区那一份绑定**念
-  // （`readBinding` 的 `argv`）：提示词与跑的时候同源，所以漂移不了。
-  const shown = actionNames.map((n) => {
-    const cmd = actionCommands[n]
-    // **不给命令就与原来那一版逐字相同**（`name`）：夹具与单测那一档不该因为这一栏变字节。
-    return cmd === undefined || cmd === '' ? n : `${n} (${cmd})`
-  })
-  const withCommand = actionNames.some((n) => (actionCommands[n] ?? '') !== '')
   return (
     `Write the split into \`${draftPath}\`: one task per section, each section in a fenced block tagged \`json\`;` +
     " inside the block give the keys for that section's kind, with each value in the shape shown:\n" +
@@ -207,23 +192,18 @@ export function draftRuleTextOf(
     `\n${SECTION_ORDER_RULE}.\n` +
     `${SECTION_ISOLATION_RULE}.\n` +
     // `assertions` 里那个 `action` **只能从工作区绑好的动作里挑**（PLAN § 5.10 的 C1 ⑦：不猜、
-    // 不补、不替它挑）。而"绑好了哪几个"是**工作区的事实**，模型无从得知——所以由调用方给进来。
-    // 真档那一趟它就是最后那一处：草案的键与值都对，退回来的唯一一句是"指向一个没绑的动作"。
-    `the action in assertions can only come from the actions bound in this workspace${withCommand ? ' (the command it runs is in parentheses after the name)' : ''}: ${
-      actionNames.length === 0 ? '(none is bound today — bind one first with fugue config set actions.<name>)' : shown.join(' · ')
-    }.\n` +
+    // 不补、不替它挑）。清单不再内联在这一句里（P3b2 撤掉模型侧枚举注入）：它就在 A 区的
+    // 系统状态那一栏（`actions`：名字 + argv），与跑它的人同一份来源——提示词不可能与配置漂移。
+    // 之所以必须有那一条路：只给名字那一版真档照出过一次后果——那一趟为了弄清哪个动作核哪一处，
+    // 去找工作区的配置（猜 `*.json` / `*.yaml` / `*.toml`），8 步里烧掉四步（`--dump-wire` 实录）。
+    `the action in assertions can only come from the actions bound in this workspace — the list (name + argv) is in the system state; if it lists none, bind one first with fugue config set actions.<name>.\n` +
     'Keep the prose outside the blocks — that is where "why split it this way" belongs. Another path does not count as this pass\'s deliverable.'
   )
 }
 
 /** 「工作总目标」那一段的正文：人的意图那一句 + **末尾**那一句产物说明（近因：末处说什么，它做什么）。 */
-export function goalWithDraftRule(
-  goal: string,
-  draftPath: RelPath,
-  actionNames: readonly string[] = [],
-  actionCommands: Readonly<Record<string, string>> = {},
-): string {
-  return `${goal}\n\n${draftRuleTextOf(draftPath, actionNames, actionCommands)}`
+export function goalWithDraftRule(goal: string, draftPath: RelPath): string {
+  return `${goal}\n\n${draftRuleTextOf(draftPath)}`
 }
 
 /** 一个围栏块：语言那一栏与正文。**不标语言的不算节**（它多半是示意）。 */

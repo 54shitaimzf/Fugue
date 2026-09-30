@@ -103,7 +103,7 @@ test('①e 持轮者那一趟的前缀里说得出收工口径，而子 agent �
   const dec = new TextDecoder()
   const draftPath = draftPathOf('r1')
   // 这一份状态就是 `holderWiringOf` 给持轮者的那一份（改这一条时那边也要跟着改）。
-  const goal = holderGoalText('让 check 通过', draftPath, ['fields'], 6)
+  const goal = holderGoalText('让 check 通过', draftPath, 6)
   const hold = dec.decode(
     assemble({
       protocol: HOLDER_PROTOCOL,

@@ -17,57 +17,91 @@
 // A 区的第一条禁令：A 区要求 N 个 agent 逐字节相同，任何逐 agent 或逐步变化的值都不行。
 import type { ConfigDoc } from '../config.ts'
 import { getConfig } from '../config.ts'
+import { actionNames, readBinding } from '../boundary/binding.ts'
+import { projectToolchain } from '../materialize/toolchain.ts'
+import type { ToolchainLine } from '../materialize/toolchain.ts'
 import { stableStringify } from './render.ts'
 import type { AgentCoord, AssembleState } from './sources.ts'
 import { readPolicy } from './sources.ts'
 
-/** 配置里那几栏的键。**只列这个仓库今天真的会读的**——写一个没人读的键进前缀是白付缓存。 */
-const EXPOSED: readonly string[] = ['platform', 'workspace', 'config.net', 'ports.range', 'docs']
+/**
+ * 动作那一行（`actions` 栏的一行，P3b2 拍平）：绑定里模型要看到的那几个字。
+ *
+ * **`env` 的值不投影**（负对照在 sources-state.test ⑤ 钉着）：环境变量是给人配的（凭据走
+ * 引用、值不进任何模型面），进了这一栏就同时进夹具与日志。
+ */
+export interface ActionLine {
+  readonly name: string
+  readonly argv: readonly string[]
+  /** 给模型看的一句话（绑定的 `doc`，可缺）。 */
+  readonly doc?: string
+  /** 声明要回写视图的产出（空就不出现那一栏）。 */
+  readonly outputs?: readonly string[]
+}
 
 /**
- * 系统状态：**一份双向稳定的值**。
+ * 系统状态：**一份双向稳定的值**（P3b2 拍平：一栏能力一列，`entries` 信封与 `net` 双投删掉）。
  *
- * - `entries`：配置对本工作区的投影（点分键 → 值），键按字典序。投影而不是原文：配置里可以
- *   有与这一步无关的东西，而写进前缀的每一个字节都要付一遍缓存。
- * - `platform` · `workspace` · `net`：那三条单独拎出来，因为它们是**能力面**——"这个工作区
- *   拿得到什么"这句话最常问的就是这三样。
+ * 每一栏**不在配置里就不投影**（不是投影成 `undefined`）：`json` 渲染器序列化不了 undefined，
+ * 而"这个工作区没配它"是常态，不是异常——一份空配置投影成 `{}`，照样装得出 A 区。
+ *
+ * **两串清单按 name 排序**：`stableStringify` 只排对象的键，数组的次序原样过——逐字节稳定
+ * 得靠排序自己给。
  *
  * **没有 `realRoot`。** 它是宿主的坐标，不是工作区的能力：进了这一份就同时踩中约束 2 与 3，
  * 而 A 区的全等当场不成立（负对照量的就是这一条）。
  */
 export interface SystemStatus {
-  readonly entries: readonly { readonly key: string; readonly value: unknown }[]
-  /** 下面三栏**不在配置里就不投影**（不是投影成 `undefined`）：`json` 渲染器序列化不了
-   *  undefined，而"这个工作区没配这三样"是常态，不是异常——一份空配置照样装得出 A 区。 */
   readonly platform?: unknown
   readonly workspace?: unknown
   readonly net?: unknown
+  readonly ports?: unknown
+  readonly docs?: unknown
+  readonly actions?: readonly ActionLine[]
+  readonly toolchain?: readonly ToolchainLine[]
 }
 
 /**
- * 系统状态那一刻的值：**纯函数**，收（配置 · 那两栏），不碰环境。
+ * 系统状态那一刻的值：**纯函数**，收配置，不碰环境。
  *
  * 它不收 agent，也不收根路径——那是这一份的设计：② 断言要读的那条性质由签名保证，不是由
- * 调用方的自觉保证。
+ * 调用方的自觉保证。投影而不是原文：配置里可以有与这一步无关的东西，而写进前缀的每一个
+ * 字节都要付一遍缓存——所以只投影有人消费的那几栏。
  */
 export function projectConfig(config: ConfigDoc): SystemStatus {
-  const entries = EXPOSED.filter((k) => k !== 'platform' && k !== 'workspace')
-    .map((key) => ({ key, value: getConfig(config, key) }))
-    .filter((e) => e.value !== undefined)
-  // 三栏逐个按"在不在"接上：配置里没有的键不进这一份。写成 `platform: config['platform']`（值
-  // 是 `undefined`）也能通过类型检查，而它到渲染那一步会抛——**`json` 渲染器序列化不了
-  // undefined**，于是"没配那三栏"这个常态把整条装配打翻。地板那一档要的是"那一段短了、装配
-  // 照跑"，所以这里按在场与否逐个接。
   const out: {
-    entries: readonly { readonly key: string; readonly value: unknown }[]
     platform?: unknown
     workspace?: unknown
     net?: unknown
-  } = { entries }
+    ports?: unknown
+    docs?: unknown
+    actions?: readonly ActionLine[]
+    toolchain?: readonly ToolchainLine[]
+  } = {}
   if (config['platform'] !== undefined) out.platform = config['platform']
   if (config['workspace'] !== undefined) out.workspace = config['workspace']
   const net = getConfig(config, 'config.net')
   if (net !== undefined) out.net = net
+  const ports = getConfig(config, 'ports.range')
+  if (ports !== undefined) out.ports = ports
+  const docs = getConfig(config, 'docs')
+  if (docs !== undefined) out.docs = docs
+  // 动作清单：`readBinding` 一处解析（跑它的人与投影同一份），名字排序。
+  const names = actionNames(config)
+  if (names.length > 0) {
+    out.actions = names.map((name) => {
+      const b = readBinding(config, name)
+      return {
+        name,
+        argv: b.argv,
+        ...(b.doc === undefined ? {} : { doc: b.doc }),
+        ...(b.outputs.length === 0 ? {} : { outputs: [...b.outputs] }),
+      }
+    })
+  }
+  // 工具链：声明照抄、读数只在出自当前 probe 时带上（toolchain.ts 的 projectToolchain）。
+  const toolchain = projectToolchain(config)
+  if (toolchain !== undefined) out.toolchain = toolchain
   return out
 }
 
