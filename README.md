@@ -44,10 +44,10 @@
 ```sh
 git clone https://github.com/54shitaimzf/Fugue.git ~/fugue && cd ~/fugue
 ln -s "$PWD/bin/fugue" ~/.local/bin/fugue      # 或者：npm i -g .
-fugue --help                                   # 26 条命令（round 5 条子命令 · config 3 条）
+fugue --help                                   # 27 条命令（round 5 条子命令 · config 3 条）
 ```
 
-没有依赖要装：`package.json` 里 `dependencies` 是空的。接真模型要一份凭据，按提供方的声明取——环境变量 `DEEPSEEK_API_KEY`，或 `~/.fugue/credentials/deepseek.key`；命令行 `--credential <路径>` 覆盖。
+没有依赖要装：`package.json` 里 `dependencies` 是空的。接真模型要一份凭据，按提供方的声明取——环境变量 `DEEPSEEK_API_KEY`，或 `~/.fugue/credentials/deepseek.key`；命令行 `--credential <路径>` 覆盖。模型目录与价目住系统级那一份（`~/.fugue/`）：`~/.fugue/models.json` 在场时整份替换内置目录，工作区配置只覆盖自己的键。
 
 ## 先看它干一趟真的（不出网 · 不花钱 · 半分钟）
 
@@ -68,10 +68,10 @@ sh tools/live-round.sh src/cli/__fixture__/wire-in/scenario.json \
   验收：通过 2 · 没通过 0 · 跑不起来 0
   推进：写 1 条 · 删 0 条 · 跳过 2 条
   停因：agent/r1/1 3 步 · 收敛
-  合计 调用 3 · input 2907 · cacheRead 4864 · cacheWrite 0 · output 195 · 思考 0（缺 3 条） · 费用 ≈ $0.000568
+  合计 调用 3 · input 2762 · cacheRead 4992 · cacheWrite 0 · output 140 · 思考 0（缺 3 条） · 费用 ≈ $0.000513
 ```
 
-`cacheRead 4864 / input 2907` 是这套结构省钱的样子：给模型的上下文分三区（稳定的项目背景 · 每份活自己的任务 · 每一步的处境），相邻两步只有第三区在变——那一趟的第 2 步只新发了 172 个 token。（底提交的哈希每次都不一样：工作区是当场建的。）
+`cacheRead 4992 / input 2762` 是这套结构省钱的样子：给模型的上下文分三区（稳定的项目背景 · 每份活自己的任务 · 每一步的处境），相邻两步只有第三区在变——那一趟的第 2 步只新发了 150 个 token。（底提交的哈希每次都不一样：工作区是当场建的。）
 
 ## 上手
 
@@ -142,7 +142,7 @@ fugue round work --live --max-steps 8
 
 ## 想要更多
 
-- `fugue --help`：全部 26 条命令，每条一两句说清它是干什么的。
+- `fugue --help`：全部 27 条命令，每条一两句说清它是干什么的。
 - 想改它、想验它：[AGENTS.md](AGENTS.md)（环境 · 验收入口 · 走查）与 [tools/](tools/)（走查 · 探针 · 基准，**取证用的，不是产品的一部分**）。
 - 它为什么长成这样：三份设计文档（架构 · 计划 · 第一版之后的目标）不在这个仓库里。
 
