@@ -175,6 +175,9 @@ const DECLARE_IT = '把它声明进这个动作（cache / outputs）'
 /** env 那一条该拒时的指路：要一个键进沙箱，在策略那一份里显式给，不是从宿主继承。 */
 const INJECT_IT = '要它进沙箱：boundary.env.set 里给'
 
+/** vsock 那一条该拒时的指路：宿主通信不走这条道——要网的动作走声明过的 TCP，vsock 不开。 */
+const NO_VSOCK = '要网的动作在 net 那一栏点名（TCP）；vsock 这条道不开'
+
 /** 四十级 `..`：**一定到得了根**（到了根之后再 `..` 还是根），所以不必知道 fixture 有几层。 */
 const UP = '../'.repeat(40)
 
@@ -431,6 +434,23 @@ export const ESCAPE_CASES: readonly EscapeCase[] = [
     note:
       '**今天通**（`envFor` 整份照抄 process.env——测试进程往宿主环境里放了这一个键，沙箱里读得到）。' +
       'P1a 起基线是 core 档，这一条翻成拒；真要它进沙箱的在 `boundary.env.set` 里给。',
+  },
+  {
+    name: 'vsock 那条道',
+    group: GROUPS.leak,
+    want: 'deny',
+    remedy: NO_VSOCK,
+    argv: [
+      'python3',
+      '-c',
+      'import socket, sys\ntry:\n    socket.socket(40, socket.SOCK_STREAM)\n    print("vsock-leak")\nexcept OSError as e:\n    print("vsock-sealed", e.errno, file=sys.stderr)\n    sys.exit(0)',
+    ],
+    cwd: '',
+    read: { how: 'stdout', has: 'vsock-leak' },
+    cites: '计划 § 5.20 的 P1b：AF_VSOCK 不属于网络命名空间（实测 --unshare-net 挡不住它）——同类 harness 都封它',
+    note:
+      '实测读数（2026-09-29，宿主与沙箱内各量一次）：**都通**（socket(40) 不需要 /dev/vsock 节点，netns 不拦它）。' +
+      'P1b 起由 seccomp 包装器封成 EPERM——封住的样子：stdout 无 leak 字样，stderr 落一句 vsock-sealed 1（errno 1=EPERM）。',
   },
 ]
 

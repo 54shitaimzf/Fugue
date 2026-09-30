@@ -234,7 +234,7 @@ test('Y3 ⑤ · 树可写那一档：看得见什么那一维照旧关着（树�
   // 裸跑——那一格读到了 `/tmp/scenario-b14/...` 下这一趟的验收结果与请求实录，"它自己解出来
   // 的"这句话就不再是一条证据。**判据落在这张表上**：档管的是树可不可写（乙那一组在这一档
   // 而这一条**拧着那一趟的语义**：这一档的树是可写的，"树内该拒"那三条在这一档里会翻成"通"
-  // （乙那一组的语义），而"够得着什么"那一维由挂载层管——丙六条 + 丁七条必须**一条都够不着**。
+  // （乙那一组的语义），而"够得着什么"那一维由挂载层管——丙六条 + 丁八条必须**一条都够不着**。
   const w = fixture(true, 'workspace-write')
   const rows = runEscapeTable(ESCAPE_CASES, w.fx)
   show('树可写那一档（bwrap 那一层在 · mode=workspace-write）', rows)
@@ -246,9 +246,9 @@ test('Y3 ⑤ · 树可写那一档：看得见什么那一维照旧关着（树�
   for (const name of ['树内新建', '原地改源文件', '删除源文件']) {
     assert.equal(pick(rows, name).verdict, 'pass', `${name}：这一档树是可写的（模式=workspace-write）`)
   }
-  // 二 · 树以外：**十三条一条都不许够得着**（这就是那一处泄漏的封口）。
+  // 二 · 树以外：**十四条一条都不许够得着**（这就是那一处泄漏的封口）。
   const outside = ['写工作区外', '绝对路径读宿主', '.. 穿越读宿主', '软链指向树外', '经 /proc 的另一条坐标', 'shell 里 cd / 再读']
-  const leak = ['工作区配置', '工作区日志', '真源工作树（宿主路径）', '别家的物化树（宿主路径）', '宿主那个家', '挂进来的宿主盘', '宿主的环境变量']
+  const leak = ['工作区配置', '工作区日志', '真源工作树（宿主路径）', '别家的物化树（宿主路径）', '宿主那个家', '挂进来的宿主盘', '宿主的环境变量', 'vsock 那条道']
   for (const name of [...outside, ...leak]) {
     assert.equal(pick(rows, name).verdict, 'deny', `${name}：树以外那一条在这一档上够着了——账本与答案纸就在这条路上`)
   }
@@ -264,7 +264,7 @@ test('Y1 ② · 表里每条都给读数与文案，不吞异常；每条该拒�
 
   // 表的形状：名字唯一 · 四组都在 · 物理侧那六条一条不少（Y3 的负对照按组点名）。
   assert.equal(new Set(ESCAPE_CASES.map((c) => c.name)).size, ESCAPE_CASES.length, '用例名不许重')
-  assert.equal(ESCAPE_CASES.filter((c) => c.group === GROUPS.leak).length, 7, '物理侧够得着的那七条')
+  assert.equal(ESCAPE_CASES.filter((c) => c.group === GROUPS.leak).length, 8, '物理侧够得着的那八条')
   for (const g of [GROUPS.ok, GROUPS.inside, GROUPS.outside, GROUPS.leak]) {
     assert.ok(ESCAPE_CASES.some((c) => c.group === g), `这一组是空的：${g}`)
   }
@@ -298,7 +298,7 @@ test('Y1 ③ · 丁 那一组今天如实报读数（Y1 立表时那六条全"�
   for (const r of rows) console.log(`  ${formatReading(r)}`)
   const today = rows.map((r) => `${r.name}：${r.verdict}`)
   console.log(`  今天：${today.join(' · ')}`)
-  assert.equal(rows.length, 7, '七条')
+  assert.equal(rows.length, 8, '八条')
 })
 
 test('P1a · env 基线：core 档下宿主的凭据键读不到；inherit:all（今天的档）当场翻回通', () => {

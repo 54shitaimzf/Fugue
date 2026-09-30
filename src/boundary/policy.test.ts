@@ -259,16 +259,18 @@ test('P1c · 声明 full 而实测层不齐：起跑前拒并指两条出路；�
   const p = JSON.parse(ok.out.trim()) as Record<string, unknown>
   assert.equal(p.enforcement, 'partial', '如实报，不夸大')
 
-  // degraded 那一档跑一趟真动作：run/start 记的 argv 该是实际 spawn 的那条（第二层包装器
-  // 开头）——原先这里恒记裸 binding.argv（execute.ts 读了个不存在的 `policy.degraded` 栏）。
+  // degraded 那一档跑一趟真动作：run/start 记的 argv 该是实际 spawn 的那条——原先这里恒记裸
+  // binding.argv（execute.ts 读了个不存在的 `policy.degraded` 栏）。P1b 起包装链多一层
+  // （seccomp 在最外、landlock 居中、命令收尾），这里把整条链钉住。
   const run = fugueEnv(noBwrap, root, '--json', 'run', 'build')
   assert.equal(run.code, 0, run.err)
   const start = events(root, 'run/start').pop() as Record<string, unknown>
-  const argv0 = String((start.argv as readonly string[])[0])
+  const argv = start.argv as readonly string[]
+  const argv0 = String(argv[0])
   assert.notEqual(argv0, 'node', `degraded 档的 argv[0] 不该还是裸的动作名：${argv0}`)
   assert.ok(
-    argv0.includes('landlock'),
-    `degraded 档的 argv[0] 该是第二层包装器：${JSON.stringify(start.argv)}`,
+    argv0.includes('seccomp-exec') && String(argv[1] ?? '').includes('landlock-exec'),
+    `degraded 档的包装链该是 seccomp 在最外、landlock 居中：${JSON.stringify(argv)}`,
   )
 
   // 坏值在读的时候拒（载入核对，set 本身不校验值域）。stderr 上是一行 JSON（引号带转义），

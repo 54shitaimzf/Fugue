@@ -44,6 +44,7 @@ import type { Roots } from '../roots/contract.ts'
 import type { AgentId, RelPath } from '../terms.ts'
 import type { ConfinedArgv } from '../execute/contract.ts'
 import { deviceFiles, helperPath, LANDLOCK_SANDBOX_PATH, landlockArgv, writableFor } from './landlock.ts'
+import { ensureSeccompHelper, SECCOMP_SANDBOX_PATH } from './seccomp.ts'
 import type { Policy } from './policy.ts'
 import { cacheLayoutOf } from '../roots/coords.ts'
 
@@ -102,8 +103,12 @@ export function degradedArgv(argv: readonly string[], land?: Unmounted): Confine
   if (land === undefined || !land.policy.layers.includes('landlock')) {
     return { argv: [...argv], mechanism: 'none', mode: 'workspace-write', enforcement: 'partial' }
   }
+  // 第二层照旧在里面；逃逸面封禁那一小层（P1b）叠在**外面**——先装过滤器再让第二层 exec，
+  // 两个正交机制各装各的。缺席时不叠，逃逸表那条用例如实红（见 seccomp.ts 头注）。
+  const inner = landlockArgv(helperPath(land.roots), writableFor(land.policy), argv)
+  const sec = ensureSeccompHelper(land.roots)
   return {
-    argv: landlockArgv(helperPath(land.roots), writableFor(land.policy), argv),
+    argv: sec.ok ? [sec.bin, ...inner] : inner,
     mechanism: 'landlock',
     mode: land.policy.mode,
     enforcement: land.policy.enforcement,
@@ -138,6 +143,8 @@ export function confine(i: ConfineInput): ConfinedArgv {
   const writable = i.policy.mode === 'workspace-write'
   // 第二层在不在场：在的话把包装器挂进来、argv 末尾那一截就是它（见文件头）。
   const land = i.policy.layers.includes('landlock')
+  // 逃逸面封禁那一小层（P1b，seccomp.ts）：编得出来就挂——它与第二层各自独立在场。
+  const sec = ensureSeccompHelper(i.roots)
 
   const argv: string[] = ['bwrap', '--die-with-parent']
   // **只读清单逐条挂进来**：一份真构建在树外碰过的那些路径（`/usr` · `/opt` · `/etc` 的三条）。
@@ -187,6 +194,9 @@ export function confine(i: ConfineInput): ConfinedArgv {
   // 包装器自己：**只读挂进来**（它是这一层自己的实现，不是孩子够得着的东西）。它必须排在
   // 根 remount 之前——反了的话 bwrap 在只读的根上建不出挂载点。
   if (land) argv.push('--ro-bind', helperPath(i.roots), LANDLOCK_SANDBOX_PATH)
+  // 逃逸面封禁那个包装器：同款只读挂、同样要排在根 remount 之前。它叠在**最外层**——
+  // 先装过滤器，再 exec 第二层（或原命令行）。
+  if (sec.ok) argv.push('--ro-bind', sec.bin, SECCOMP_SANDBOX_PATH)
   // **根自己也要只读，这一条排在所有挂载之后。** bwrap 的新根是一份 tmpfs：没挂进来的那些顶层
   // 路径（`/` 自己，以及为 `/etc/ld.so.cache` 那样一条被建出来的 `/etc`）就住在它上面，不
   // remount 成 ro 的话它们是**写得进去的**——"没点名的一律不在"会多出一个静默的例外（实测：
@@ -196,8 +206,10 @@ export function confine(i: ConfineInput): ConfinedArgv {
   argv.push('--remount-ro', '/')
   for (const [k, v] of Object.entries(i.env)) argv.push('--setenv', k, v)
   argv.push('--chdir', join(c.tree, i.cwd))
-  // **两层叠在一起**：第二层在里面——它先把自己关进规则集，再 `exec` 原命令行。
-  argv.push('--', ...(land ? landlockArgv(LANDLOCK_SANDBOX_PATH, rw, i.argv) : i.argv))
+  // **层从外到里叠**：seccomp（先装过滤器）→ 第二层（把自己关进规则集）→ 原命令行。
+  // 各层缺席就跳过那一截——命令行的形状因此如实反映"这一趟哪些机制在场"。
+  const inner = land ? landlockArgv(LANDLOCK_SANDBOX_PATH, rw, i.argv) : i.argv
+  argv.push('--', ...(sec.ok ? [SECCOMP_SANDBOX_PATH, ...inner] : inner))
 
   // **两栏照抄策略值**：`confine()` 不自己判断这是哪一档，它只负责把那一档包出来——`fugue policy`
   // 与 `run/confined` 报的因此是同一个来源。调用方给一份不带 `bwrap` 的策略值就是调用方的错

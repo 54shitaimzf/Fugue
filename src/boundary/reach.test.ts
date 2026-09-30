@@ -235,11 +235,11 @@ function runConfined(m: Made, reach: ReachSpec, argv: readonly string[]) {
   })
 }
 
-test('Y3 ① · 七条泄漏用例全部翻成"拒"，且 `ls /` 只剩清单那几条', () => {
+test('Y3 ① · 八条泄漏用例全部翻成"拒"，且 `ls /` 只剩清单那几条', () => {
   const m = fixture()
   assert.ok(m.fx.policy.layers.includes('bwrap'), '这一趟 bwrap 在场——不在场的话下面读的不是沙箱档')
   const rows = runEscapeTable(ESCAPE_CASES, m.fx)
-  console.log('\n── Y3 ① · 全档（清单落地之后）：二十条 ──')
+  console.log('\n── Y3 ① · 全档（清单落地之后）：二十一条 ──')
   for (const r of rows) console.log(`  ${formatReading(r)}`)
 
   // 整张表：该通的通着、该拒的拒着（"没问成"不算拒，它自己一栏）。
@@ -247,17 +247,17 @@ test('Y3 ① · 七条泄漏用例全部翻成"拒"，且 `ls /` 只剩清单那
   assert.deepEqual(
     wrong.map((r) => `${r.name}：期望 ${r.want}，读到 ${r.verdict ?? '（没问成）'}｜${r.message}`),
     [],
-    '二十条里该通的通、该拒的拒',
+    '二十一条里该通的通、该拒的拒',
   )
 
-  // 逐条点名 Y1 那一组（组名是判据的一部分）：那七条从"通"翻成"拒"（P1a 加的 env 那条
-  // 生下来就是拒——它问的是基线，不是清单；清单落地之前宿主环境也在整份照抄）。
+  // 逐条点名 Y1 那一组（组名是判据的一部分）：那八条从"通"翻成"拒"（P1a 的 env 那条与
+  // P1b 的 vsock 那条生下来就该拒——env 问基线、vsock 问 seccomp，都不是清单那一维）。
   const leak = rows.filter((r) => r.group === GROUPS.leak)
-  assert.equal(leak.length, 7, '七条')
+  assert.equal(leak.length, 8, '八条')
   assert.deepEqual(
     leak.filter((r) => r.verdict !== 'deny').map((r) => `${r.name}：${r.verdict ?? '（没问成）'}`),
     [],
-    '物理侧那七条全"拒"',
+    '物理侧那八条全"拒"',
   )
 
   // `ls /`：整机换成了数得出来的十二个名字（清单那几条 + 树与两处可写落点）。
