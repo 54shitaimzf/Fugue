@@ -70,7 +70,8 @@ export interface WireDecl {
 }
 
 /**
- * 两条线各自的路径与能力。**"同一个 host 上两条路"是一件事**，不是两条各写一遍的常量。
+ * 两条线各自的**协议标准路径**与能力（P2e 起：表里只留标准——DeepSeek 那段 host 特化
+ * `/anthropic` 前缀住 `ProviderDecl.wireOverrides`，URL 拼装只有 `targetAt` 一处）。
  */
 export const WIRES: Readonly<Record<WireName, WireDecl>> = {
   // **今天这一档是 implicit**，判据是三条读数，不是"新东西还没接上"：
@@ -81,7 +82,7 @@ export const WIRES: Readonly<Record<WireName, WireDecl>> = {
   //   三 · 这个仓库那条线的 `system` 今天是一串**纯文本**（实测请求体 `"system":"…"`），
   //        换形状是三样一起动的改动，而"这条端点收不收断点"本地验不了（要真出网）。
   // **改成 explicit 是一行**：改完请求体里 A 区与 B 区各多一个断点，别的字节不动。
-  'anthropic-messages': { path: '/anthropic/v1/messages', promptCache: 'implicit' },
+  'anthropic-messages': { path: '/v1/messages', promptCache: 'implicit' },
   'openai-chat': { path: '/v1/chat/completions', promptCache: 'implicit' },
 }
 
@@ -131,6 +132,8 @@ export const PROVIDERS: Readonly<Record<string, ProviderDecl>> = {
   deepseek: {
     id: 'deepseek',
     host: 'https://api.deepseek.com',
+    // Messages 那条线的 host 特化（P2e）：这家把协议标准路径接在 `/anthropic` 前缀底下。
+    wireOverrides: { 'anthropic-messages': '/anthropic/v1/messages' },
   },
 }
 /**

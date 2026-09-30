@@ -115,7 +115,8 @@ export function targetAt(declId: string, credential: string, cat: Catalog): Targ
     providerId: provider.id,
     host: provider.host,
     wire: wireNamed(decl.wire),
-    path: WIRES[decl.wire].path,
+    // **URL 拼装只此一处**（P2e）：提供方声明了覆盖就用它的，否则走线协议的标准路径。
+    path: provider.wireOverrides?.[decl.wire] ?? WIRES[decl.wire].path,
     model: decl.model,
     from: 'decl',
     headers: wireHeader(decl.wire, credential),

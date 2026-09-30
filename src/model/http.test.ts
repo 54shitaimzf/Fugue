@@ -353,6 +353,23 @@ test('⑤b targetAt：值从参数进来，不看环境变量；而没有值的�
     if (before !== undefined) process.env['DEEPSEEK_API_KEY'] = before
   }
 })
+
+// ── ⑤c 路径只此一处：标准住 WIRES，host 特化住提供方的覆盖（P2e）─────────────────
+//
+// 两条线 × 两条声明的请求 URL 与挪栏之前**逐字节相同**（回放夹具零重录的地基：夹具绑的是
+// 请求体指纹，URL 不在体里）；而**没声明覆盖的提供方走协议标准路径**——覆盖是"这一家的
+// 差异"，不是"这条线的缺省"。
+test('⑤c targetAt 的路径：有覆盖用覆盖（与挪栏前逐字节相同），无覆盖走线协议标准路径', () => {
+  const a = targetAt('deepseek-flash/anthropic', 'k', BUILTIN_CATALOG)
+  const o = targetAt('deepseek-flash/openai', 'k', BUILTIN_CATALOG)
+  assert.equal(a.host + a.path, 'https://api.deepseek.com/anthropic/v1/messages', 'anthropic 那条的 URL 变了——覆盖没接上')
+  assert.equal(o.host + o.path, 'https://api.deepseek.com/v1/chat/completions', 'openai 那条的 URL 变了')
+  // 负对照：把覆盖从提供方上拿掉 → anthropic 那条线走协议标准 `/v1/messages`。
+  const { wireOverrides: _gone, ...bare } = BUILTIN_CATALOG.providers.deepseek
+  const bareCat = { ...BUILTIN_CATALOG, providers: { deepseek: bare } }
+  assert.equal(targetAt('deepseek-flash/anthropic', 'k', bareCat).path, '/v1/messages', '无覆盖该走协议标准路径')
+  console.log('⑤c 读数：覆盖在 → ' + a.path + ' · ' + o.path + '（与挪栏前逐字节相同）；无覆盖 → /v1/messages（标准）')
+})
 // ── ⑦ `--dump-wire`：默认不落，而落的时候发出去的字节一模一样 ────────────────────
 
 test('⑦ dump-wire：不带它时一个文件都不写；带它时那一串请求体与夹具记的逐字节相同', async () => {

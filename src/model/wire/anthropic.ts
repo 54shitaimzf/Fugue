@@ -2,7 +2,8 @@
 //
 // **形状来自两处**：Anthropic 官方的 Messages 流式文档（`message_start` · `content_block_start` ·
 // `content_block_delta` · `content_block_stop` · `message_delta` · `message_stop` · `ping`），以及
-// 声明里那个 host 的 `/anthropic/v1/messages` 那一条路（`B0` 的读数：无凭据 401，路在）。
+// DeepSeek 那家声明了覆盖的那条路 `/anthropic/v1/messages`（`B0` 的读数：无凭据 401，路在；
+// P2e 起这段特化住 `wireOverrides`，线协议表里留的是标准 `/v1/messages`）。
 //
 // **翻译的三条规矩**（`B2` 的断言 ② 量的就是这三条）：
 //
