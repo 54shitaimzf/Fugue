@@ -20,7 +20,7 @@ import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import { scanTree } from '../materialize/diffstat.ts'
 import { WORKSPACE_STATE } from '../materialize/diffstat.ts'
-import { advance, commitThenAdvance, countsAsReject, entriesOf, verify } from './accept.ts'
+import { AcceptError, advance, commitThenAdvance, countsAsReject, entriesOf, verify } from './accept.ts'
 
 const KEEP = process.env.KEEP === '1'
 const roots: string[] = []
@@ -303,6 +303,49 @@ test('④ 目录换成软链：移除旧目录、不跟随其中的软链，重�
     const again = await advance({ truth: t, realRoot: real }, commit)
     assert.deepEqual(again.written, [])
     assert.equal(fingerprintAll(real), before, '一致的软链不重写、不改 mtime')
+  } finally {
+    await t.close()
+  }
+})
+
+
+test('保留前缀的祖先不能换成叶子：软链与普通文件都在任何写入之前拒绝', async () => {
+  for (const mode of [0o120000, 0o100644]) {
+    const { real, store } = scratch()
+    const t = openTruth(store)
+    try {
+      mkdirSync(join(real, 'docs', 'local'), { recursive: true })
+      writeFileSync(join(real, 'docs', 'local', 'keep.txt'), '必须保留\n')
+      const before = fingerprintAll(real)
+      const blob = await t.putBlob(new TextEncoder().encode('replacement'))
+      const commit = await t.commit(await t.putTree([
+        { name: 'a-first.txt', mode: 0o100644, id: blob },
+        { name: 'docs', mode, id: blob },
+      ]), [], '目标叶子与嵌套保留前缀冲突')
+
+      await assert.rejects(
+        advance({ truth: t, realRoot: real, preserve: [...WORKSPACE_STATE, 'docs/local'] }, commit),
+        (err) => err instanceof AcceptError && err.message.includes('docs/local'),
+      )
+      assert.equal(fingerprintAll(real), before, '不只保留文件不动：排在冲突前的文件也不能先落地')
+      assert.equal(existsSync(join(real, 'a-first.txt')), false)
+    } finally {
+      await t.close()
+    }
+  }
+})
+
+test('嵌套保留前缀不妨碍兄弟文件正常推进', async () => {
+  const { real, store } = scratch()
+  const t = openTruth(store)
+  try {
+    mkdirSync(join(real, 'docs', 'local'), { recursive: true })
+    writeFileSync(join(real, 'docs', 'local', 'keep.txt'), '必须保留\n')
+    const commit = await commitOf(t, { 'docs/public.txt': '公开内容\n' }, [], '只写保留前缀的兄弟')
+    const out = await advance({ truth: t, realRoot: real, preserve: [...WORKSPACE_STATE, 'docs/local'] }, commit)
+    assert.deepEqual(out.written, ['docs/public.txt'])
+    assert.equal(readFileSync(join(real, 'docs', 'local', 'keep.txt'), 'utf8'), '必须保留\n')
+    assert.equal(readFileSync(join(real, 'docs', 'public.txt'), 'utf8'), '公开内容\n')
   } finally {
     await t.close()
   }

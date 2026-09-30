@@ -174,6 +174,16 @@ export async function advance(deps: AdvanceDeps, commit: CommitId): Promise<Adva
   const skipped: RelPath[] = []
   const isPreserved = (rel: RelPath): boolean => preserve.some((s) => rel === s || rel.startsWith(`${s}/`))
 
+  // 叶子不能覆盖保留前缀的祖先（如 docs → 软链/文件，而 docs/local 必须留下）。
+  // 先查完整目标，再动任何文件；否则前面的条目已经落地，后面的冲突才被发现。
+  for (const rel of want.keys()) {
+    if (isPreserved(rel)) continue
+    const protectedChild = preserve.find((p) => p.startsWith(`${rel}/`))
+    if (protectedChild !== undefined) {
+      throw new AcceptError(`目标条目 ${rel} 会覆盖保留前缀 ${protectedChild}，拒绝推进`)
+    }
+  }
+
   const written: RelPath[] = []
   const removed: RelPath[] = []
 
