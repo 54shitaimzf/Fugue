@@ -538,9 +538,12 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
       // **归真（P3b1）**：动作名不是 shell 命令。命令行 · cwd · env 由调用方那一层按工作区配置
       // 里的绑定解析（`opts.actionFor`）——`extra` 追加到绑定的 argv 尾上，cwd 用绑定的。
       //
-      // **回写那一条今天没有接上**：架构 § 8.9 说执行类的产出经声明集回写视图（`M6` 的反向通道），
-      // 而声明集是 `fugue run` 那一趟的（`reclaim.declare`）。所以这一格跑得起来，产出却留在
-      // 沙箱里、不进视图——回写接上之前，它不比 `bash` 多什么。
+      // **回写与 bash 同一条反向通道**（W8 起；原先这里写着「没接上」——那是过期的话）：`runWith`
+      // 尾上的 `afterRun()` 用 `opts.ownedPaths`（格内=契约的写入面）declare→collect→applyEdit，
+      // 把物化树里声明集内的差异写回视图。动作声明的 `outputs` 由门上的跨字段检查保证 ⊆
+      // ownedPaths，于是产出随契约面回视图、进提交；声明集外的写只报（`mat/reclaim`）不进。
+      // 绑定自己的 `outputs`/`cache` 声明集只在 `fugue run` 那一趟直接用（那边还把 cache 绑到
+      // per-agent 缓存）；格内不绑 cache——格内增量构建是 TARGETS T15 的事。
       const resolve = opts.actionFor
       if (resolve === undefined) {
         return {

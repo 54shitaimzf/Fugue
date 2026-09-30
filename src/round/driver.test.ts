@@ -1325,3 +1325,85 @@ test('P3b1 · run_action 的命令行来自绑定的解析：args 追加到尾 �
     await b.close()
   }
 })
+
+// ── 产出去向 · run_action 的回写与 bash 同一条反向通道（W8 起；host.ts 原先写着「没接上」是过期的）──
+
+test('产出去向 · 声明集内的产出回视图进提交，集外的写 mat/reclaim 如实报、进不了', async () => {
+  const b = await bench()
+  try {
+    // 一条动作写两样：声明集内的 out/mark.txt 与集外的 outside.txt——去向该分开。契约的写入面
+    // 恰是那一条声明路径（门上的跨字段检查：outputs ⊆ ownedPaths），于是这一趟把回写的两个方向
+    // 都走了一遍：集内随 applyEdit 回视图，集外落一条 mat/reclaim。
+    const EMIT = 'mkdir -p out && echo mark > out/mark.txt && echo noise > outside.txt'
+    mkdirSync(join(b.root, '.fugue'), { recursive: true })
+    writeFileSync(
+      join(b.root, '.fugue', 'config'),
+      JSON.stringify({
+        actions: {
+          emit: { argv: ['/bin/sh', '-c', EMIT], outputs: ['out/mark.txt'], doc: '写一份声明集内的产出与一份集外的噪声' },
+        },
+      }),
+    )
+
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      [
+        ...callOne(0, 'c1', 'run_action', { action: 'emit' }),
+        { t: 'usage', usage: USAGE },
+        { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+      ],
+      [
+        { t: 'delta', text: '跑完了。' },
+        { t: 'usage', usage: USAGE },
+        { t: 'stop', reason: 'end-turn', raw: 'end_turn' },
+      ],
+    ]
+    const scripted = scriptedModel(scripts)
+    const asked: RuntimeRequest[] = []
+    const call: CallModel = (request, signal) => {
+      asked.push(request)
+      return scripted(request, signal)
+    }
+    const run = await runRound(
+      depsOf(b, realDriver({}), supportOf(b, call), 'r1', {
+        split: [
+          {
+            goal: '跑 emit 把产出写出来',
+            ownedPaths: ['out/mark.txt' as RelPath],
+            deliverables: [{ path: 'out/mark.txt' as RelPath, form: '一份文件' }],
+            assertions: [{ name: '总是过', action: 'ok' }],
+          },
+        ],
+      }),
+    )
+    assertLanded(run, '产出去向那一趟')
+
+    const events = await eventsOf(b.root)
+
+    // 一 · 账上那一行就是绑定解析出来的命令行（与 P3b1 同一条口径）：产出去向的判据都挂在
+    //    「跑的就是声明的那条」上。
+    const starts = events.filter((e) => e.t === 'run/start' && e.action === 'run_action')
+    assert.equal(starts.length, 1, `emit 该恰起一次进程，实际 ${starts.length} 条 run/start`)
+    assert.deepEqual(starts[0]?.argv, ['/bin/sh', '-c', EMIT], 'run_action 的 run/start 该记绑定的 argv')
+
+    // 二 · **声明集内的产出回视图、进提交**：`afterRun` 的 applyEdit 把物化树里的差异写回
+    //    （W8 的反向通道），收尾提交里就有那一份，字节即命令写下的。
+    const commit = Object.values(run.work)[0] as CommitId
+    const entries = await entriesOf(b.truth, commit)
+    const names = entries.map((e) => e.name).sort()
+    assert.ok(names.includes('out/mark.txt'), `收尾提交该含声明集内的产出——实际 ${JSON.stringify(names)}`)
+    const mark = entries.find((e) => e.name === 'out/mark.txt')
+    const markBytes = mark === undefined ? '' : Buffer.from((await b.truth.getBlob(mark.id as never)) ?? new Uint8Array()).toString('utf8')
+    assert.equal(markBytes, 'mark\n', '产出的字节该是命令写下的那份')
+
+    // 三 · **集外的写进不了提交**：物化树里落了盘，但声明集不认——收尾树里没有它。
+    assert.ok(!names.includes('outside.txt'), `集外的写不该进提交——实际 ${JSON.stringify(names)}`)
+
+    // 四 · **集外的写被如实报**：`undeclared` 枚举 upper、减掉清单与声明集，`mat/reclaim` 落一条账，
+    //    changed 恰是集外那一份——报，但不进。
+    const reclaims = events.filter((e) => e.t === 'mat/reclaim')
+    assert.equal(reclaims.length, 1, `集外的写该落一条 mat/reclaim，实际 ${reclaims.length} 条`)
+    assert.deepEqual(reclaims[0]?.changed, ['outside.txt'], 'changed 该恰是集外那一份')
+  } finally {
+    await b.close()
+  }
+})
