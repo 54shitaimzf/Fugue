@@ -9,6 +9,11 @@
 
 ## [未发布]
 
+## [0.2.2] - 2026-10-01
+
+这一版两条线：**`umask 002` 的机器跑得通了**（外部贡献合并进来的那一笔）· **CI 从"每次全量"
+分成三档节奏**——快档挡每次 push · 全档挡 PR · 审档 nightly 只报。用户面行为不变。
+
 ### 用得上的改进
 
 - **`umask 002` 的机器跑得通了**（Ubuntu 桌面普通用户的缺省值）：此前一份没被碰过的
@@ -27,6 +32,29 @@
 - 四处押着 `umask 022` 的测试夹具改成与机器无关（显式 `chmod` 造现场，各带负对照），
   回归不再随跑测试那台机器的 umask 变；`src/delta.ts` 的 `gitModeOf` 是盘上模式归到
   git 那一档的唯一一处，`scanTree` 与 diff-stat 照旧记整模式。
+- **CI 分三档**（`test.yml` 一个文件三个 job，**check 名 = job 名**）：`fast`（push + PR ·
+  只跑快档）· `full`（PR · 快档 + 真档）· `audit`（nightly + 手动 · 全量兜底 + 变异审计，
+  **只报不挡**）。快档 job **不装 `bwrap`**：快档按定义不碰真依赖，档判据破了让它在 CI 上
+  当场红，而不是被 apt 那一步盖过去。头部那两段注释（标签不跑 · `branches: ['**']` 不能删）
+  原文保留。
+- **计时 artifact（冻结面）**：PR 档逐档跑 `node tools/ci-timing.js <档> --out ci-timing-<档>.json`
+  ——`wallMs` · `exitCode` · 起止时刻 · 分档文件数 · runner 与这一趟的坐标，收成 artifact
+  `ci-timing`（`if: always()`：红了的那趟也留读数）。**条数不进读数**：那要解析 `node --test`
+  的输出格式，格式一变就静默丢。
+- **变异审计**（审档）：`tools/mutation-audit.js`——干净树上改一处算子 → 跑整档 → 红＝有牙 ·
+  绿＝没牙。靶子是有快档覆盖的源文件（98/133）· 时限内跑多少算多少 · 候选按当天日期轮转
+  起点 · 跑完还原并核对 `src/` 一条没变。本地小范围先跑通：2 处都有牙。
+- **保护 payload（冻结面）**：`.github/main-protection.json`，应用命令在
+  `.github/main-protection.md`；必绿集合 = `fast` + `full`（快 + 真）。文档仓那条 `check-*`
+  留在本机（文档仓无远端），`audit` 只报不挡。
+- **分片与受影响选择默认不启用**（门槛口径草案，判定与前后对照由人在推送后落账）：看 PR 档
+  artifact `ci-timing` 里 `fast` 那一条的 `wallMs`（runner 读数只作趋势）——超 8 分钟先上
+  **受影响范围**（import 图纯文本扫描，只跑受影响的快档文件）；上了仍超 12 分钟再上**分片**；
+  两个都上了仍超 20 分钟 → 报给人（换 runner 档位或缩真档范围），不动片数。两个手段都只在
+  PR 档用，nightly 永远全量兜底。
+- **自检进快档**：`test/ci-workflow.test.ts`（三档结构 · 必绿集合对照 · artifact 形状 · 两段
+  头部注释在位）· `test/ci-timing.test.ts`（artifact 键集）· `test/mutation-audit.test.ts`
+  （有牙/没牙两个方向都要红）· `test/version.test.ts`（版本唯一出处 + CHANGELOG 跟版本走）。
 
 ## [0.2.1] - 2026-10-01
 
