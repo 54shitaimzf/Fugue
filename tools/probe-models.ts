@@ -21,8 +21,10 @@
 // 判据就是这一条：这一份**还问得出新问题**。
 //
 // **它不是产品路径**：产品那条路一个字节都不出网（装配 · 回放 · 夹具一条断言都不碰凭据），
-// 这个数从上游搬进声明里那一次是人做的（改 `MODEL_DECLS`），探针只负责让"没搬"这件事看得见。
-import { MODEL_DECLS, authWith, providerOf } from '../src/model/contract.ts'
+// 这个数从上游搬进目录里那一次是人做的（改内置档或 `~/.fugue/models.json`），探针只负责让
+// "没搬"这件事看得见。
+import { authWith } from '../src/model/contract.ts'
+import { providerOf, readCatalog } from '../src/model/catalog.ts'
 import { readConfig, getConfig } from '../src/config.ts'
 import { priceOf } from '../src/model/price.ts'
 import { wireHeader } from '../src/model/wire/headers.ts'
@@ -63,7 +65,8 @@ const OUR_UPDATE_TO_UPSTREAM: Readonly<Record<string, string>> = {
 const say = (s: string): void => console.log(`  ·  ${s}`)
 
 async function main(): Promise<number> {
-  const provider = providerOf('deepseek')
+  const CAT = readCatalog()
+  const provider = providerOf('deepseek', CAT)
   const cfg = await readConfig(process.cwd())
   let credential: string
   try {
@@ -88,9 +91,9 @@ async function main(): Promise<number> {
 
   const fails: string[] = []
   const rows: Record<string, unknown>[] = []
-  for (const [id, decl] of Object.entries(MODEL_DECLS)) {
+  for (const [id, decl] of Object.entries(CAT.models)) {
     const hit = list.find((m) => m.id === decl.model)
-    const priced = priceOf(decl.model)
+    const priced = priceOf(decl.model, CAT)
     const levels = hit?.effort?.supported_levels ?? []
     const upd = hit?.api_capabilities?.anthropic_messages?.system_prompt_update
     const row: Record<string, unknown> = {
@@ -153,7 +156,7 @@ async function main(): Promise<number> {
   } else {
     process.stdout.write(`\n${fails.length === 0 ? 'PASS' : 'FAIL'} ${fails.length === 0 ? '' : `${fails.length} 条对不上：\n`}`)
     for (const f of fails) process.stdout.write(`  FAIL ${f}\n`)
-    if (fails.length === 0) process.stdout.write(`  ${url} 与声明逐条对得上（${Object.keys(MODEL_DECLS).length} 条声明）\n`)
+    if (fails.length === 0) process.stdout.write(`  ${url} 与目录逐条对得上（${Object.keys(CAT.models).length} 条声明）\n`)
   }
   return fails.length === 0 ? 0 : 1
 }

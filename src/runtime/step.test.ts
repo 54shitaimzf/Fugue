@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ModelEvent, Turn } from '../model/contract.ts'
-import { modelDeclOf } from '../model/contract.ts'
+import { BUILTIN_CATALOG, modelDeclOf } from '../model/catalog.ts'
 import { openLog } from '../log/log.ts'
 import type { LogHandle, LogEvent } from '../log/events.ts'
 import { assemble, firstDivergence, hashOf } from '../assemble/assemble.ts'
@@ -44,7 +44,7 @@ import { runSteps } from './run.ts'
 
 const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: ['deliver/agent-1/'] }
 const FIXTURES = fileURLToPath(new URL('../model/fixtures/', import.meta.url))
-const DECL = modelDeclOf('deepseek-flash/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG)
 const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 
 /** 一次调用的四个数（假模型也守 `B1` 的口径：用量可以缺，缺了是 `null`）。 */

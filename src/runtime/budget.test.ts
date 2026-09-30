@@ -13,8 +13,9 @@
 //      不裁剪——它是模型的产物，没有"拒"的对象）
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { modelDeclOf, triggerAt } from '../model/contract.ts'
+import { triggerAt } from '../model/contract.ts'
 import type { ModelDecl } from '../model/contract.ts'
+import { BUILTIN_CATALOG, modelDeclOf } from '../model/catalog.ts'
 import { assemble, readPrefix } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { sourcesFor } from '../assemble/sources.ts'
@@ -26,7 +27,7 @@ import { DISTILL_LIMIT_TOKENS, ENVELOPE_TOKENS, checkBudget, estimateTokens, est
 import { calibrate, ratioOf, truthOf } from './calib.ts'
 import type { BudgetAsk } from './budget.ts'
 
-const DECL = modelDeclOf('deepseek-flash/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG)
 const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: [] }
 
 /** 工具目录与 `seed` 那两段：**账里递的是正文**（怎么量归 `planBudget`，调用方不换算）。 */

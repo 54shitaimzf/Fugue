@@ -26,7 +26,10 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { ZONE_SEGMENTS } from './contract.ts'
 import type { SegmentId, SegmentValue } from './contract.ts'
-import { DEFAULT_MODEL } from './models.ts'
+import { BUILTIN_CATALOG, defaultModelOf } from '../model/catalog.ts'
+
+/** 装配只要一个模型键：内置档第一条当那一格的输入（P2d 起目录是数据）。 */
+const DEFAULT_MODEL = { id: defaultModelOf(BUILTIN_CATALOG).id }
 import { HOLDER_PROTOCOL, SUBAGENT_PROTOCOL } from './protocol.ts'
 import { render, stableStringify } from './render.ts'
 import { assemble, hashOf } from './assemble.ts'

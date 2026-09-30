@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { modelDeclOf } from '../model/contract.ts'
+import { BUILTIN_CATALOG, modelDeclOf } from '../model/catalog.ts'
 import { openLog } from '../log/log.ts'
 import type { LogEvent } from '../log/events.ts'
 import { assemble, firstDivergence } from '../assemble/assemble.ts'
@@ -27,7 +27,7 @@ import type { AgentId, BranchId, ContractId, WriterId } from '../terms.ts'
 import { planBudget } from './budget.ts'
 import { digestOf, handoffAt, promptOf, successorNameOf, successorOf } from './restart.ts'
 
-const DECL = modelDeclOf('deepseek-flash/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG)
 const AGENT = 'agent-1' as AgentId
 const WHO: AgentCoord = { id: AGENT, branch: 'refs/heads/agent-1', outputPaths: ['deliver/agent-1/'] }
 const BRANCH = 'refs/heads/agent-1' as BranchId

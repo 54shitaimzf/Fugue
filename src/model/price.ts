@@ -12,7 +12,8 @@
  * **钱只从 `USAGE_COUNTS` 那四样算。** 思考 token 是输出里的明细（`reasoningTokens`），它已经在
  * `outputTokens` 里了，再加一遍就是把同一笔钱算两回。
  */
-import { MODEL_DECLS } from './contract.ts'
+import type { ModelDecl } from './contract.ts'
+import type { Catalog } from './catalog.ts'
 
 /** 三档价（**美元 / 每 100 万 token**）。官方那一页上就这三行。 */
 export interface Rates {
@@ -66,17 +67,18 @@ export const PRICE_BOOK: readonly PriceRow[] = [
   },
 ]
 
-/** 账上那个键（`ModelId`）→ 发出去的名字。不是账上的键就**当它是名字本身**（价目表按名字查）。 */
-function wireNameOf(name: string): string {
-  const d = MODEL_DECLS[name]
+/** 账上那个键（`ModelId`）→ 发出去的名字。不是账上的键就**当它是名字本身**（价目表按名字查）。
+ * 键域来自目录（P2d）：`priceOf` 收整份目录，两张表（模型 · 价目）因此出自同一份。 */
+function wireNameOf(name: string, models: Readonly<Record<string, ModelDecl>>): string {
+  const d = models[name]
   return d === undefined ? name : d.model
 }
 
 /** 一个名字 → 一份价目行。**查不到是 `null`，不替它挑一行**——"没有价目"不是"免费的"。 */
-export function priceOf(name: string | null, book: readonly PriceRow[] = PRICE_BOOK): PriceRow | null {
+export function priceOf(name: string | null, cat: Catalog): PriceRow | null {
   if (name === null || name === '') return null
-  const wire = wireNameOf(name)
-  return book.find((r) => r.model === wire || r.aliases.includes(wire)) ?? null
+  const wire = wireNameOf(name, cat.models)
+  return cat.prices.find((r) => r.model === wire || r.aliases.includes(wire)) ?? null
 }
 
 /**
@@ -156,11 +158,11 @@ export interface PriceMatch {
  * 三种情形都不给行：一个名字都没有（账上还没有调用）· 有一个名字不在表里 · 几个名字指向**两行不同
  * 的价**（那一趟的钱要按模型分开算，这里不合成一个数）。
  */
-export function matchModels(models: readonly string[], book: readonly PriceRow[] = PRICE_BOOK): PriceMatch {
+export function matchModels(models: readonly string[], cat: Catalog): PriceMatch {
   if (models.length === 0) return { row: null, miss: 'empty' }
   const rows = new Set<PriceRow>()
   for (const m of models) {
-    const r = priceOf(m, book)
+    const r = priceOf(m, cat)
     if (r === null) return { row: null, miss: 'unknown' }
     rows.add(r)
   }

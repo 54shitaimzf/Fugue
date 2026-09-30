@@ -27,7 +27,7 @@ import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { emptyState } from '../assemble/sources.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 import { fixtureState } from '../model/fixture-state.ts'
-import { modelDeclOf } from '../model/contract.ts'
+import { BUILTIN_CATALOG, modelDeclOf } from '../model/catalog.ts'
 import type { ModelEvent } from '../model/contract.ts'
 import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
 import type { AgentId, BranchId, CommitId, ContractId, RelPath, WriterId } from '../terms.ts'
@@ -43,7 +43,7 @@ import { refHeadOf } from '../round/head.ts'
 
 const AGENT = 'agent-1' as AgentId
 const CATALOG = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
-const DECL = modelDeclOf('deepseek-flash/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG)
 
 /** 测试自己起 git 时用同一套隔离：用户级配置不该决定测试的读数。 */
 const GIT_ENV: NodeJS.ProcessEnv = {

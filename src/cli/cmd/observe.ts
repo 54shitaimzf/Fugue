@@ -5,6 +5,7 @@ import type { LogEvent } from '../../log/events.ts'
 import { openLog } from '../../log/log.ts'
 import type { LogPos, RelPath } from '../../terms.ts'
 import { phaseOf } from '../../model/price.ts'
+import { readCatalog } from '../../model/catalog.ts'
 import { readings, readingsLines } from '../../probe/status.ts'
 import type { StatusRow } from '../../probe/status.ts'
 import { follow, readNew } from '../../probe/watch.ts'
@@ -59,6 +60,8 @@ export async function statusCmd(
   try {
     // 钱那一栏要一个档：**读的时候按当时的钟算**（官方价目分峰谷两档）。
     const phase = phaseOf(new Date())
+    // 价目与模型目录按这一台算（P2d：`~/.fugue/models.json` 在就是它）。
+    const cat = readCatalog()
     const only = flags.get('agent')
     const r = await readings(log, {
       metrics: flags.has('metrics'),
@@ -71,7 +74,7 @@ export async function statusCmd(
       emitJson(r)
       return 0
     }
-    for (const line of readingsLines(r, { phase })) emitLine(line)
+    for (const line of readingsLines(r, { phase, cat })) emitLine(line)
     return 0
   } finally {
     await log.close()
@@ -216,6 +219,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   if (typeof tail === 'string') return usageFail(tail, json)
   // 钱那一栏要一个档（与 `status --once` 同一个口径：读的时候按当时的钟算）。
   const phase = phaseOf(new Date())
+  // 价目与模型目录按这一台算（P2d，与 `status --once` 同一份）。
+  const cat = readCatalog()
   const log = openLog(root)
   // ── `T6` 的三样输入（与 `round go` 那一趟逐样对上）─────────────────────────────────────
   // 轮次号与绑好的动作表来自工作区配置，身份分配器是同一个（`identFor`——门只认契约集合，而集合
@@ -299,6 +304,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     onAdvance: stage.onAdvance,
     readings: { metrics: flags.has('metrics'), report: flags.has('report') },
     phase,
+    cat,
     intervalMs: interval,
     signal: ac.signal,
   })

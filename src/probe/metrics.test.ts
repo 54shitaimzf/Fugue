@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import type { LogEvent } from '../log/events.ts'
-import { modelDeclOf } from '../model/contract.ts'
+import { BUILTIN_CATALOG, modelDeclOf } from '../model/catalog.ts'
 import { readFixture, replayOf } from '../model/session.ts'
 import type { Fixture } from '../model/session.ts'
 import type { AgentId, RoundId } from '../terms.ts'
@@ -38,7 +38,7 @@ import type { MergedRow } from './metrics.ts'
 const FIXTURES = fileURLToPath(new URL('../model/fixtures/', import.meta.url))
 const ANTHROPIC: Fixture = readFixture(FIXTURES + 'deepseek-flash-anthropic.json')
 const OPENAI: Fixture = readFixture(FIXTURES + 'deepseek-flash-openai.json')
-const DECL = modelDeclOf('deepseek-flash/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG)
 
 /** 一件事件配一个位置（交错的读侧那一份形状）。 */
 let seq = 0

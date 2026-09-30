@@ -11,14 +11,14 @@ import type { ConfigDoc } from '../../config.ts'
 import { refFor } from '../../identity.ts'
 import { openTruth } from '../../truth/truth.ts'
 import { assemble, firstDivergence, hashOf } from '../../assemble/assemble.ts'
-import { DEFAULT_MODEL } from '../../assemble/models.ts'
 import { PROTOCOLS, protocolNamed } from '../../assemble/protocol.ts'
 import { checkConstraints, formatViolation } from '../../assemble/constraints.ts'
 import { emptyState, HOLDER, SourceError, sourcesFor } from '../../assemble/sources.ts'
 import type { AgentCoord } from '../../assemble/sources.ts'
 import { stateWithState } from '../../assemble/sources-state.ts'
 import { RoundRunError } from '../../round/execute.ts'
-import { modelDeclOf } from '../../model/contract.ts'
+import { modelDeclOf, readCatalog } from '../../model/catalog.ts'
+import type { Catalog } from '../../model/catalog.ts'
 import { implementedNames, publishedTools } from '../../tools/execute.ts'
 import { CATALOG_STATES, TOOL_NAMES, catalog } from '../../tools/catalog.ts'
 import { emitJson, emitLine, fail, selectedModelId, usageFail } from '../shared.ts'
@@ -53,9 +53,12 @@ export async function assembleCmd(
   const against = flags.get('against')
   try {
     const doc = await readConfig(abs)
+    // **目录按这一台来**（P2d）：`~/.fugue/models.json` 在就是它，不在就是内置档——装配与轮次
+    // 读的是同一份（`round.model` 的解析 · 三处种子上限，都在这份目录上查）。
+    const cat = readCatalog()
     // **装配跟着配置走**（P2b：`round.model`；装配不收旗标——它是视图，前缀要与轮次用的一致）。
     // **过一遍查表**：未知即拒并列出目录（与轮次那两处同一条口径），不把一个没核对过的名字递下去。
-    const modelId = modelDeclOf(selectedModelId(undefined, doc)).id
+    const modelId = modelDeclOf(selectedModelId(undefined, doc), cat).id
     const protocol = protocolNamed(name)
     const coord = await agentCoord(abs, typeof who === 'string' ? who : null, doc)
     const segments = sourcesFor(protocol, coord.state, coord.who)
@@ -172,16 +175,16 @@ export function publishedCatalog(): ReturnType<typeof catalog> {
  * 三处（`round new` · `round run` · `round go`）递的是同一个数——三处各自读一次声明的话，
  * "发给模型的那个上限"与"判种子的那个上限"会静默分家。
  *
- * **这一处从序 29 起可证伪了**：`DEFAULT_MODEL` 的 `contextLimit` 是上游报的 1 048 576，而
+ * **这一处从序 29 起可证伪了**：目录第一条的 `contextLimit` 是上游报的 1 048 576，而
  * `contract/types.ts` 的 `DEFAULT_MODEL_LIMIT` 是**这一份的缺省**（1 000 000，"不是任何一个模型的
  * 声明"）——两个数不再相等，所以三处**漏递一处，读数就变**（`model/contract.test.ts` 里那一条
  * `assert.notEqual` 钉的就是它：递与不递的种子上限不同）。在这之前两个数一样，漏递不可见。
  *   · **算式那一层有牙**：`round/start.test.ts` ⑥（`modelLimit: 8 000` → 上限 0 · 不递 → 904 000）。
  *   · **接线那一层的牙随 `P2b` 落了**：上限跟着 `round.model` 走（`selectedModelId` 一处解析）——
- *     换一条上限不同的声明，三处的读数都跟着动。
+ *     换一条上限不同的声明，三处的读数都跟着动。P2d 起查的是**这一台的目录**（`cat`，调用方递）。
  */
-export function modelLimitOf(doc: ConfigDoc): number {
-  return modelDeclOf(selectedModelId(undefined, doc) ?? DEFAULT_MODEL.id).contextLimit
+export function modelLimitOf(doc: ConfigDoc, cat: Catalog): number {
+  return modelDeclOf(selectedModelId(undefined, doc), cat).contextLimit
 }
 
 /**

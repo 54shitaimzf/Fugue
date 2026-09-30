@@ -6,17 +6,16 @@
 // 任何一区；拼进去的话，同一份状态换一个温度就换掉整条前缀，而缓存对此一无所知。
 //
 // **它是声明值，不是分支。** 架构 § 10.3 的判据：适配器里出现 `if (model === 'x')` 就是漏了
-// 一个声明式字段。所以这一份里只有常量表与查表，没有一行按名字分岔的逻辑。
+// 一个声明式字段。所以这一份里只有查表转发，没有一行按名字分岔的逻辑。
 //
-// **占位表在这一站撤掉了（S8 的 B0）。** 真的那份住 `src/model/contract.ts`（PLAN § 5.8）：
-// 那里有 `provider` · `wire` · `model`（发给谁 · 走哪条线 · 那边叫什么）与凭据的引用。装配
-// 这四样一个都不读，所以这一份拿的是它的**投影** `PREFIX_MODELS`——四个字段（名字 · 系统提示词
-// 的更新方式 · 上限 · 调用配置），键域与声明表同域，载入时核对。
-//
-// **一份记录，两个面。** 上面那一段与这一段说的是同一件事：`fugue assemble` 读到的模型与
-// `B2` 的适配器读到的模型不是两份数据。改一个模型的上限，改的是 `src/model/contract.ts` 那一行。
-import { DEFAULT_MODEL as DECLARED_DEFAULT, MODEL_DECLS, PREFIX_MODELS, modelDeclOf, prefixDeclOf } from '../model/contract.ts'
+// **常量出口随 P2d 撤了**（`DEFAULT_MODEL` · `MODELS` · `MODEL_IDS`）：目录成了数据
+// （`catalog.ts` 的 `readCatalog`），派生常量没有"哪一份目录"这个答案就立不住——留着就会
+// 有人拿到内置档那份而另一头在跑文件档。留下的转发只有 `modelOf(id, cat)`：Z0 起的消费者
+// 不必改 import 的那一半照旧成立，另一半（目录从参数来）跟着查表走。
+import { prefixDeclOf } from '../model/contract.ts'
 import type { ModelDecl as ModelDeclaration } from '../model/contract.ts'
+import { modelDeclOf } from '../model/catalog.ts'
+import type { Catalog } from '../model/catalog.ts'
 
 /**
  * 一个模型的声明（前缀那一侧的那四个字段）。
@@ -34,23 +33,14 @@ import type { ModelDecl as ModelDeclaration } from '../model/contract.ts'
  */
 export type ModelDecl = Pick<ModelDeclaration, 'id' | 'systemPromptUpdate' | 'contextLimit' | 'call'>
 
-/** 缺省模型：声明表的第一条（Messages 优先，架构 § 10.3）。 */
-export const DEFAULT_MODEL: ModelDecl = prefixDeclOf(DECLARED_DEFAULT)
-
-/** 常量表：名字 → 声明。与 `PROTOCOLS` 同一种查法（`fugue assemble --model <id>` 读它）。 */
-export const MODELS: Readonly<Record<string, ModelDecl>> = PREFIX_MODELS
-
 /**
  * 按名字取一个声明。**查不到就拒，不替它挑一个**——"没写 model"与"写了一个没有的 model"是
  * 两件事：前者走缺省，后者是打错了一个字，静默替他选一个会让命令行那次装配的读数指着另一个
  * 模型。这一条与 `--agent` 拒未知名字是同一条口径（PLAN § 5.6 的 Z4）。
  *
- * **它就是 `modelDeclOf`**（`src/model/contract.ts` 那一处），转发一行是为了让 Z0 起的消费者
+ * **它就是 `modelDeclOf`**（`src/model/catalog.ts` 那一处），转发一行是为了让 Z0 起的消费者
  * 不必改 import——两份查表逻辑会漂，一份不会。
  */
-export function modelOf(id: string | undefined): ModelDecl {
-  return prefixDeclOf(modelDeclOf(id))
+export function modelOf(id: string | undefined, cat: Catalog): ModelDecl {
+  return prefixDeclOf(modelDeclOf(id, cat))
 }
-
-/** 这一份认识的模型名，按声明表的键序。**给探针与走查对账用**，不是第二张表。 */
-export const MODEL_IDS: readonly string[] = Object.keys(MODEL_DECLS)

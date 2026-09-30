@@ -38,13 +38,18 @@ import { stateWithState } from '../src/assemble/sources-state.ts'
 import { readConfig } from '../src/config.ts'
 import { CATALOG_STATES, TOOL_ENTRIES, catalog, catalogHash } from '../src/tools/catalog.ts'
 import { HANDOFF_MARGIN, ZONE_A_PERCENT, seedLimitOf, zoneABudgetOf } from '../src/contract/types.ts'
-import { MODEL_DECLS, MODEL_IDS, TRIGGER_PERCENT, providerOf } from '../src/model/contract.ts'
+import { TRIGGER_PERCENT } from '../src/model/contract.ts'
+import { defaultModelOf, providerOf, readCatalog } from '../src/model/catalog.ts'
 import { estimateTokens, estimateTokensOfText, planBudget } from '../src/runtime/budget.ts'
 import { seedRulerOf } from '../src/round/seed.ts'
 import { wireNamed } from '../src/model/wire/registry.ts'
 
 const REPO = fileURLToPath(new URL('..', import.meta.url))
-const MODEL_ID = MODEL_DECLS[MODEL_IDS[0] as string]?.id as ModelId
+/** 这一台的目录（P2d）与它的第一条——第六 · 七节量的是"缺省模型那一档"的前缀。 */
+const CAT = readCatalog()
+const FIRST = defaultModelOf(CAT)
+const MODEL_NAMES = Object.keys(CAT.models)
+const MODEL_ID = FIRST.id as ModelId
 
 let failed = 0
 function ok(msg: string): void {
@@ -131,7 +136,7 @@ const TASK: AssembleState['task'] = {
 function stepState(base: AssembleState, step: number): AssembleState {
   return {
     ...base,
-    runtime: `第 ${step} 步 · 沙箱策略 none · 可用工具 ${TOOL_ENTRIES.length} 条 · 上界 ${MODEL_DECLS[MODEL_IDS[0] as string]?.contextLimit}`,
+    runtime: `第 ${step} 步 · 沙箱策略 none · 可用工具 ${TOOL_ENTRIES.length} 条 · 上界 ${FIRST.contextLimit}`,
     signals: Array.from({ length: step + 1 }, (_, i) => `sig-${i + 1} · B0 的站前读数：前缀那笔账`),
     lastStep: step === 0 ? '（这一步还没有上一步）' : `第 ${step - 1} 步的结果：装配 · 调用 · 工具，三条事件各一条`,
   }
@@ -159,7 +164,7 @@ const PREFIXES = SEGMENTS.map((segs) => assemble({ protocol: SUBAGENT_PROTOCOL, 
 console.log('B0 · 前缀那笔账（进入真流程之前的那道闸）\n')
 say(`状态取自这个仓库本身：${REPO}`)
 say(`项目方针 ${n(Buffer.byteLength(POLICY, 'utf8'))} 字节 · 配置 ${Object.keys(CONFIG).length} 栏 · 文件内容 ${REAL_FILES.length} 份 · 提交序列 ${COMMITS.length} 条 · agent ${AGENTS.length} 个 · 步 ${STEPS.length} 步`)
-say(`模型：${MODEL_IDS.join(' · ')}（上限 ${MODEL_DECLS[MODEL_IDS[0] as string]?.contextLimit} · 提供方 ${providerOf(MODEL_DECLS[MODEL_IDS[0] as string]?.provider ?? '').host}）`)
+say(`模型：${MODEL_NAMES.join(' · ')}（上限 ${FIRST.contextLimit} · 提供方 ${providerOf(FIRST.provider, CAT).host}）`)
 
 // ── 一 · 三区 ──────────────────────────────────────────────────────────────────
 console.log('\n一 · 三区各多少字节与指纹（第 0 步）')
@@ -294,7 +299,7 @@ console.log('\n五 · 工具 schema 哈希在状态切换前后不变（架构 �
 console.log('\n六 · 窗口那一笔账：三区 + 工具目录 + seed 与 contextLimit 的差额（走产品那一处算）')
 
 {
-  const m = MODEL_DECLS[MODEL_IDS[0] as string]
+  const m = FIRST
   if (m === undefined) {
     bad('拿不到第一条声明——第六节量不了')
   } else {
@@ -366,7 +371,7 @@ console.log('\n七 · 真请求体里：三区的转义形态 · 相邻两步的
   const enc = new TextEncoder()
   /** 一段字节在 JSON 里的那一串（`JSON.stringify` 的转义规则，去掉两头的引号）。 */
   const esc = (u: Uint8Array): Uint8Array => enc.encode(JSON.stringify(dec.decode(u)).slice(1, -1))
-  const m = MODEL_DECLS[MODEL_IDS[0] as string]
+  const m = FIRST
   if (m === undefined) {
     bad('拿不到第一条声明——第七节量不了')
   } else {

@@ -8,7 +8,7 @@
 //   二 · 工具目录今天是什么状态：十五条有没有名字 · 描述 · `parameters`，有没有一处 `execute`。
 //   三 · 事件流够不够算基线：`prefix/assemble` 发不发射、有没有 `llm/call`、`run/start` 记不记
 //       完整 argv。
-//   四 · 声明本身在盘上是几条（`MODEL_DECLS` 与 `PREFIX_MODELS` 的键域），以及它是不是这一栏
+//   四 · 声明本身在盘上是几条（这一台的目录：内置档或 `models.json` 文件档），以及它是不是这一栏
 //        唯一的一份表（别处还有没有第二条写死的模型名）。
 //
 // **网络那一节可以关掉**（`FUGUE_PROBE_OFFLINE=1`）：关掉时它报"没量"并**照样计入失败**——
@@ -17,8 +17,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MODEL_DECLS, MODEL_IDS, PREFIX_MODELS, PROVIDERS, TRIGGER_PERCENT, WIRES, authOf, providerOf } from '../src/model/contract.ts'
-import { readConfig, getConfig } from '../src/config.ts'
+import { TRIGGER_PERCENT, WIRES, authOf } from '../src/model/contract.ts'
+import { BUILTIN_CATALOG, prefixModelsOf, providerOf, readCatalog } from '../src/model/catalog.ts'
+import { defaultSystemDir, readConfig, getConfig } from '../src/config.ts'
 import { TOOL_ENTRIES, CATALOG_STATES, catalog, catalogHash } from '../src/tools/catalog.ts'
 
 const REPO = fileURLToPath(new URL('..', import.meta.url))
@@ -54,10 +55,13 @@ function eventNames(src: string): string[] {
 
 console.log('B0 · 模型与提供方：站前四处读数\n')
 
+/** 这一台的目录（P2d）：`~/.fugue/models.json` 在就是它，不在就是内置档。 */
+const CAT = readCatalog()
+
 // ── 一 · 两个端点 ──────────────────────────────────────────────────────────────
 console.log('一 · 宿主上到目标模型的路：声明里那两个端点，无凭据各回什么')
 
-const p = providerOf('deepseek')
+const p = providerOf('deepseek', CAT)
 say(`提供方：${p.id} · host=${p.host} · 凭据引用=两级配置的 credentials.deepseek 键（P2c）`)
 for (const w of Object.keys(WIRES) as (keyof typeof WIRES)[]) {
   say(`  ${w} → ${p.host}${WIRES[w].path}`)
@@ -176,21 +180,29 @@ eq('事件联合里有 run/start 吗', names.includes('run/start'), true)
 // ── 四 · 声明本身 ──────────────────────────────────────────────────────────────
 console.log('\n四 · 声明这一份在盘上的样子')
 
-eq('MODEL_DECLS 的名字', MODEL_IDS, ['deepseek-flash/anthropic', 'deepseek-flash/openai'])
-eq('PREFIX_MODELS 与 MODEL_DECLS 的键域相同', Object.keys(PREFIX_MODELS).sort(), Object.keys(MODEL_DECLS).sort())
-eq('PROVIDERS 的名字', Object.keys(PROVIDERS), ['deepseek'])
+// 内置档（models.json 不在时的地板）是确定性读数；这一台实际在跑的那份如实报出来。
+eq('内置档的名字（文件不在时的地板）', Object.keys(BUILTIN_CATALOG.models), ['deepseek-flash/anthropic', 'deepseek-flash/openai'])
+eq('内置档的提供方', Object.keys(BUILTIN_CATALOG.providers), ['deepseek'])
+const fromFile = existsSync(join(defaultSystemDir(), 'models.json'))
+say(`这一台的目录（${fromFile ? '文件档 models.json' : '内置档'}）：${Object.keys(CAT.models).join(' · ')}`)
+eq('前缀投影与目录同键域', Object.keys(prefixModelsOf(CAT)).sort(), Object.keys(CAT.models).sort())
 {
   // "别处没有第二条写死的模型名"：占位名撤掉之后，全仓不该再有 `fugue-default` 这类替身。
   const files = ['src/assemble/models.ts', 'src/cli/fugue.ts', 'src/assemble/protocol.ts']
   const placeholders = files.filter((f) => sourceOf(f).includes('fugue-default'))
   eq('还写着占位模型名的文件', placeholders, [])
   const modelsSrc = sourceOf('src/assemble/models.ts')
-  eq('src/assemble/models.ts 是不是只有投影（没有自己的常量表）', /MODEL_DECLS|PREFIX_MODELS/.test(modelsSrc), true)
-  say(`每条声明一份调用配置：${MODEL_IDS.map((n) => `${n}=${JSON.stringify(MODEL_DECLS[n]?.call)}`).join(' · ')}`)
-  say(`上下文上限：${MODEL_IDS.map((n) => `${n}=${MODEL_DECLS[n]?.contextLimit}`).join(' · ')}`)
-  say(`预算触发点：${MODEL_IDS.map((n) => `${n}=${MODEL_DECLS[n]?.budget.trigger}`).join(' · ')}（上限的 ${TRIGGER_PERCENT}%）`)
+  eq(
+    'src/assemble/models.ts 只有转发（常量出口已撤，P2d）',
+    [/modelDeclOf/.test(modelsSrc), /export const (MODELS|DEFAULT_MODEL|MODEL_IDS)/.test(modelsSrc)],
+    [true, false],
+  )
+  const names = Object.keys(CAT.models)
+  say(`每条声明一份调用配置：${names.map((n) => `${n}=${JSON.stringify(CAT.models[n]?.call)}`).join(' · ')}`)
+  say(`上下文上限：${names.map((n) => `${n}=${CAT.models[n]?.contextLimit}`).join(' · ')}`)
+  say(`预算触发点：${names.map((n) => `${n}=${CAT.models[n]?.budget.trigger}`).join(' · ')}（上限的 ${TRIGGER_PERCENT}%）`)
 }
-eq('src/model/contract.ts 在盘上', existsSync(join(REPO, 'src/model/contract.ts')), true)
+eq('src/model/catalog.ts 在盘上', existsSync(join(REPO, 'src/model/catalog.ts')), true)
 
 console.log(`\n${failed === 0 ? '全部通过' : `FAIL ${failed} 处`}`)
 process.exit(failed === 0 ? 0 : 1)

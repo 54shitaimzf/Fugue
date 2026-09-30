@@ -37,6 +37,7 @@
 import type { MetricValue } from '../probe/metrics.ts'
 import { costOf, matchModels, moneyText } from '../model/price.ts'
 import type { Phase } from '../model/price.ts'
+import type { Catalog } from '../model/catalog.ts'
 import type { MetricReading } from '../probe/round.ts'
 import type { StatusSnapshot } from '../probe/status.ts'
 import { clip, widthOf, wrap } from './glyph.ts'
@@ -92,6 +93,11 @@ export interface FrameInput {
    */
   readonly phase?: Phase
   /**
+   * 钱算在哪一份目录上（P2d）。与 `phase` **一起给才印**那一栏——两样都是"读的人递"，缺一样
+   * 就不印（会话那一层的选项全是可选的，这一对也跟着可选；命令面总是成对递）。
+   */
+  readonly cat?: Catalog
+  /**
    * 读源四：**永久行那一栏**（`ui/stream.ts` 的 `permanentLinesOf(rows)`）。账尾印它最后一条的
    * 原文——"这份账走到哪儿了"要说的是处境那条链走到哪了，不是"最近一条事件"的时刻与坐标（最近
    * 一条多半是一条只进瞬态区的 `llm/call`，印出来只是一个坐标）。不给（或空）时账尾照旧印
@@ -137,6 +143,8 @@ export function bodyOf(o: {
   readonly snapshot: StatusSnapshot
   readonly metrics?: readonly MetricValue[]
   readonly report?: readonly MetricReading[]
+  readonly phase?: Phase
+  readonly cat?: Catalog
 }): FrameBody {
   const s = o.snapshot
 
@@ -166,8 +174,8 @@ export function bodyOf(o: {
       ` · 思考 ${usageText(s.usage.reasoningTokens)}`,
   )
   // 钱那一栏：与 `status --once` 同一处算法、同一句话（`src/model/price.ts` 的 `moneyText`）。
-  if (o.phase !== undefined) {
-    const match = matchModels(s.models)
+  if (o.phase !== undefined && o.cat !== undefined) {
+    const match = matchModels(s.models, o.cat)
     right.push(moneyText({ money: costOf(s.usage, match.row, o.phase), match, phase: o.phase, models: s.models }))
   }
   for (const m of o.metrics ?? []) {

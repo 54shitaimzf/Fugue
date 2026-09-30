@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { PRICE_BOOK, costOf, formatUsd, matchModels, moneyText, phaseOf, priceOf, ratesOf } from './price.ts'
 import type { Billable } from './price.ts'
+import { BUILTIN_CATALOG } from './catalog.ts'
 
 /** 真档那一趟的三个数（三份录制加起来的：未命中 2982 · 命中 4864 · 输出 271）。 */
 const TRIP: Billable = {
@@ -22,8 +23,8 @@ function near(got: number | null, want: number, msg: string): void {
 }
 
 test('① 价目表与官方那一页逐项相同（三档 × 两档 × 两个模型）', () => {
-  const flash = priceOf('deepseek-flash')
-  const pro = priceOf('deepseek-v4-pro')
+  const flash = priceOf('deepseek-flash', BUILTIN_CATALOG)
+  const pro = priceOf('deepseek-v4-pro', BUILTIN_CATALOG)
   assert.ok(flash !== null && pro !== null, '官方那两个名字在价目表里查不到')
   assert.deepEqual(flash.peak, { cacheMiss: 0.3, cacheHit: 0.006, output: 1.2 })
   assert.deepEqual(flash.offPeak, { cacheMiss: 0.15, cacheHit: 0.003, output: 0.6 })
@@ -37,7 +38,7 @@ test('① 价目表与官方那一页逐项相同（三档 × 两档 × 两个�
   }
   // 负对照：把 Flash 的输出价换成 Pro 那一档，① 里那条逐项断言当场红。
   const tampered = [{ ...(flash as object), offPeak: { ...flash.offPeak, output: 3.96 } } as (typeof PRICE_BOOK)[number]]
-  assert.notDeepEqual(priceOf('deepseek-flash', tampered)?.offPeak, flash.offPeak)
+  assert.notDeepEqual(priceOf('deepseek-flash', { ...BUILTIN_CATALOG, prices: tampered })?.offPeak, flash.offPeak)
 })
 
 test('② 峰谷那一档：官方那两个窗（UTC）· 周末整天谷时 · 节假日从参数进来', () => {
@@ -60,7 +61,7 @@ test('② 峰谷那一档：官方那两个窗（UTC）· 周末整天谷时 · 
 })
 
 test('③ 算钱：真档那一趟 · 峰谷真的分开 · 思考那一栏一分钱都不加', () => {
-  const row = priceOf('deepseek-flash/anthropic') // 账上写的是我们这个键
+  const row = priceOf('deepseek-flash/anthropic', BUILTIN_CATALOG) // 账上写的是我们这个键
   assert.ok(row !== null, '账上那个键认不出价目')
   assert.equal(row.model, 'deepseek-flash', '我们自己发出去的名字没折回官方那一行的名字')
   const off = costOf(TRIP, row, 'off-peak')
@@ -93,24 +94,24 @@ test('③ 算钱：真档那一趟 · 峰谷真的分开 · 思考那一栏一�
 })
 
 test('④ 名字 → 价目行：账上那两个键都认得出，两种价混在一趟与没见过的名字都不给行', () => {
-  assert.equal(matchModels(['deepseek-flash/openai']).row?.model, 'deepseek-flash')
-  assert.equal(matchModels(['deepseek-flash/anthropic']).row?.model, 'deepseek-flash')
-  assert.equal(matchModels(['deepseek-flash/anthropic', 'deepseek-flash/openai']).row?.model, 'deepseek-flash')
-  assert.equal(matchModels(['deepseek-flash', 'deepseek-chat']).row?.model, 'deepseek-flash')
-  assert.deepEqual(matchModels([]), { row: null, miss: 'empty' })
-  assert.deepEqual(matchModels(['没有这个模型']), { row: null, miss: 'unknown' })
-  assert.deepEqual(matchModels(['deepseek-flash', 'deepseek-v4-pro']), { row: null, miss: 'mixed' })
-  assert.equal(priceOf(null), null)
-  assert.equal(priceOf(''), null)
+  assert.equal(matchModels(['deepseek-flash/openai'], BUILTIN_CATALOG).row?.model, 'deepseek-flash')
+  assert.equal(matchModels(['deepseek-flash/anthropic'], BUILTIN_CATALOG).row?.model, 'deepseek-flash')
+  assert.equal(matchModels(['deepseek-flash/anthropic', 'deepseek-flash/openai'], BUILTIN_CATALOG).row?.model, 'deepseek-flash')
+  assert.equal(matchModels(['deepseek-flash', 'deepseek-chat'], BUILTIN_CATALOG).row?.model, 'deepseek-flash')
+  assert.deepEqual(matchModels([], BUILTIN_CATALOG), { row: null, miss: 'empty' })
+  assert.deepEqual(matchModels(['没有这个模型'], BUILTIN_CATALOG), { row: null, miss: 'unknown' })
+  assert.deepEqual(matchModels(['deepseek-flash', 'deepseek-v4-pro'], BUILTIN_CATALOG), { row: null, miss: 'mixed' })
+  assert.equal(priceOf(null, BUILTIN_CATALOG), null)
+  assert.equal(priceOf('', BUILTIN_CATALOG), null)
 })
 
 test('⑤ 钱那一行：算不出来时不拿 0 顶 · 价与档印在同一行里 · 缺项报下界', () => {
-  const flash = priceOf('deepseek-flash')
+  const flash = priceOf('deepseek-flash', BUILTIN_CATALOG)
   assert.ok(flash !== null)
   const money = costOf(TRIP, flash, 'off-peak')
   const text = moneyText({
     money,
-    match: matchModels(['deepseek-flash/openai']),
+    match: matchModels(['deepseek-flash/openai'], BUILTIN_CATALOG),
     phase: 'off-peak',
     models: ['deepseek-flash/openai'],
   })
@@ -118,19 +119,19 @@ test('⑤ 钱那一行：算不出来时不拿 0 顶 · 价与档印在同一行
   assert.ok(text.includes('谷时'), text)
   assert.ok(text.includes('deepseek-flash'), text)
   assert.ok(text.includes('deepseek-flash/openai'), '回执里没印账上那个名字，价与名对不上时看不出来')
-  const none = moneyText({ money, match: matchModels(['没有这个模型']), phase: 'peak', models: ['没有这个模型'] })
+  const none = moneyText({ money, match: matchModels(['没有这个模型'], BUILTIN_CATALOG), phase: 'peak', models: ['没有这个模型'] })
   assert.ok(none.includes('算不出来'), none)
   assert.ok(!none.includes('0.000000'), '没有价目时印了一个 0')
   const mixed = moneyText({
     money,
-    match: matchModels(['deepseek-flash', 'deepseek-v4-pro']),
+    match: matchModels(['deepseek-flash', 'deepseek-v4-pro'], BUILTIN_CATALOG),
     phase: 'peak',
     models: ['deepseek-flash', 'deepseek-v4-pro'],
   })
   assert.ok(mixed.includes('两种价'), mixed)
   const lower = moneyText({
     money: { usd: 1, missing: 3 },
-    match: matchModels(['deepseek-flash']),
+    match: matchModels(['deepseek-flash'], BUILTIN_CATALOG),
     phase: 'peak',
     models: ['deepseek-flash'],
   })

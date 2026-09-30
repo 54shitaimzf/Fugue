@@ -17,7 +17,7 @@ import { catalog, CATALOG_STATES } from '../src/tools/catalog.ts'
 import { assemble, hashOf } from '../src/assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../src/assemble/protocol.ts'
 import { sourcesFor } from '../src/assemble/sources.ts'
-import { modelDeclOf } from '../src/model/contract.ts'
+import { modelDeclOf, readCatalog } from '../src/model/catalog.ts'
 import { checkEvents, requestJson } from '../src/model/contract.ts'
 import { parseStream } from '../src/model/wire/stream.ts'
 import { wireNamed } from '../src/model/wire/registry.ts'
@@ -44,7 +44,7 @@ mkdirSync(FIXTURES, { recursive: true })
 const tools = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 
 for (const pair of PAIRS) {
-  const decl = modelDeclOf(pair.decl)
+  const decl = modelDeclOf(pair.decl, readCatalog())
   const prefix = assemble({ protocol: SUBAGENT_PROTOCOL, model: decl.id, segments: sourcesFor(SUBAGENT_PROTOCOL, fixtureState(0), WHO) })
   const r = requestOf(prefix, decl.model, tools, decl.call)
   const wire = wireNamed(decl.wire)

@@ -20,7 +20,8 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import type { ModelEvent } from './contract.ts'
-import { checkEvents, modelDeclOf } from './contract.ts'
+import { checkEvents } from './contract.ts'
+import { BUILTIN_CATALOG, modelDeclOf } from './catalog.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { sourcesFor } from '../assemble/sources.ts'
@@ -38,7 +39,7 @@ import { canonicalOf, fixtureTarget, fixtureTransport, readFixture, recordOf, re
 
 const FIXTURES = fileURLToPath(new URL('./fixtures/', import.meta.url))
 const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: ['deliver/agent-1/'] }
-const DECL = modelDeclOf('deepseek-flash/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG)
 
 function prefixOf(step: number) {
   return assemble({
@@ -289,7 +290,7 @@ function withoutCredential<T>(run: () => T): T {
 test('⑤ 夹具档不取凭据：`targetOf` 会去取（两条路都没有就拒），夹具档那一份不会', () => {
   withoutCredential(() => {
     assert.throws(
-      () => targetOf('deepseek-flash/anthropic', BLOCKED_CHAIN),
+      () => targetOf('deepseek-flash/anthropic', BLOCKED_CHAIN, BUILTIN_CATALOG),
       (err: unknown) => {
         // **两条路都要出现在那句话里**（只报一条会让人以为另一条不存在）。
         assert.match((err as Error).message, /DEEPSEEK_API_KEY/, (err as Error).message)
@@ -316,11 +317,11 @@ test('⑤b targetAt：值从参数进来，不看环境变量；而没有值的�
   delete process.env['DEEPSEEK_API_KEY']
   try {
     // 一 · 给值那一档：环境变量没设也拼得出来，头里带的就是给的那个值（**两条线各一套头**）。
-    const a = targetAt('deepseek-flash/anthropic', 'k-给的值')
+    const a = targetAt('deepseek-flash/anthropic', 'k-给的值', BUILTIN_CATALOG)
     assert.equal(a.headers['x-api-key'], 'k-给的值')
     assert.equal(a.headers['accept'], 'text/event-stream')
     assert.equal(a.headers['anthropic-version'], '2023-06-01')
-    const o = targetAt('deepseek-flash/openai', 'k-给的值')
+    const o = targetAt('deepseek-flash/openai', 'k-给的值', BUILTIN_CATALOG)
     assert.equal(o.headers['authorization'], 'Bearer k-给的值')
     // 目标那几栏与声明一致（"给值"不改目标，只改凭据从哪来）。
     assert.equal(a.host, 'https://api.deepseek.com')
@@ -334,7 +335,7 @@ test('⑤b targetAt：值从参数进来，不看环境变量；而没有值的�
     withoutCredential(() => {
       let threw = false
       try {
-        targetOf('deepseek-flash/anthropic', BLOCKED_CHAIN)
+        targetOf('deepseek-flash/anthropic', BLOCKED_CHAIN, BUILTIN_CATALOG)
       } catch (err) {
         threw = true
         assert.match((err as Error).message, /DEEPSEEK_API_KEY/)
@@ -343,7 +344,7 @@ test('⑤b targetAt：值从参数进来，不看环境变量；而没有值的�
     })
 
     // 三 · 给的值要是空串就没有意义：空凭据发出去换来一个 401，那看起来像"模型不行"。
-    assert.throws(() => targetAt('deepseek-flash/anthropic', ''), /不能是空/)
+    assert.throws(() => targetAt('deepseek-flash/anthropic', '', BUILTIN_CATALOG), /不能是空/)
     console.log(
       `⑤b 读数：targetAt（给值）anthropic 头 [${Object.keys(a.headers).join(' · ')}] · openai 鉴权栏 authorization · ` +
         '环境变量没设也拼得出来；targetOf（自己取，两条路都堵掉）照旧拒',

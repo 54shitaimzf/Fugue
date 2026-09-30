@@ -16,15 +16,14 @@
 //
 // **两份表·一条记录。** 装配要的只是四个字段（名字 · 系统提示词的更新方式 · 上限 · 调用配置），
 // 提供方那三样（`provider` · `wire` · `model`）它一个字都不读。所以前缀那一侧看到的是
-// `prefixDeclOf(m)` 投出来的 `PrefixModelDecl`——**投影，不是第二张表**：两边的键域同域这一条
-// 由 `PREFIX_MODEL_IDS` 与载入时那一次核对保证，改一处漏一处会当场炸。
+// `prefixDeclOf(m)` 投出来的 `PrefixModelDecl`——**投影，不是第二张表**：P2d 起那份投影由
+// `catalog.ts` 的 `prefixModelsOf(cat)` 从目录现折，两边不存在各写一份的可能。
 //
 // **凭据的值不进这一份。** `auth` 只收两样东西：一个环境变量的**名字**，或工作区外的一个
 // **路径**；取值那一步是 `authOf()`，它**只在真要出网时被调用**。于是装配 · 重放 · 夹具档
 // 一条断言都不碰凭据（PLAN § 5.8 的口径一），"沙箱里看得见的环境"（架构 § 14.4）也仍是闭的。
 import { readFileSync } from 'node:fs'
 import type { ModelId, StopReason, ThinkingLevel } from '../terms.ts'
-import { protocolNames } from '../assemble/protocol.ts'
 
 /**
  * `StopReason` 与 `ThinkingLevel` 的**类型**也住 `terms.ts`（U3）——事件联合直接引它们；
@@ -99,10 +98,32 @@ export type AuthRef = { readonly from: 'env'; readonly name: string } | { readon
  * 键（寿命 = 机器的那一半，正该在系统级），值仍是引用——取值那一步是 `authOf()`，它**只在
  * 真要出网时被调用**。于是装配 · 重放 · 夹具档一条断言都不碰凭据（PLAN § 5.8 的口径一），
  * "沙箱里看得见的环境"（架构 § 14.4）也仍是闭的。
+ *
+ * **`wireOverrides` 与 `retries` 两栏在 P2d 随目录数据化一并冻结**（models.json 的 schema 定了
+ * 它们），消费分别在 P2e（URL 拼装那一处）与 P2f（传输循环）落地——这一份只持有形状。
  */
 export interface ProviderDecl {
   readonly id: string
   readonly host: string
+  /**
+   * 这家提供方在某条线协议上**与协议标准不同的路径**（P2e 消费）。比如 DeepSeek 的
+   * `/anthropic/v1/messages`：协议标准是 `/v1/messages`，那一段差异是 host 那一侧的事。
+   */
+  readonly wireOverrides?: Readonly<Partial<Record<WireName, string>>>
+  /** 这家提供方那一路的**重试档**（P2f 消费）：几次 · 哪些状态码 · 超时算不算。 */
+  readonly retries?: RetryPolicy
+}
+
+/**
+ * 一份重试档（P2f 的形状，P2d 冻结）。**不声明就是一次即终**——那一档的行为一个字节都不多。
+ */
+export interface RetryPolicy {
+  /** 最多再试几次（含首次在内，一条调用至多 `1 + count` 次尝试）。 */
+  readonly count: number
+  /** 哪些 HTTP 状态码值得再来一次（429 · 503 那一类"上游忙"）。 */
+  readonly on: readonly number[]
+  /** 超时那一类错误算不算"值得再来一次"。 */
+  readonly timeout: boolean
 }
 
 /** 提供方的常量表。**第一条是缺省**（与 `MODEL_DECLS` 同一条口径）。 */
@@ -217,6 +238,10 @@ export const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'high', 
  * **`protocol` 两条都是 `'subagent'`。** 这不是抄的：`'holder'` 是**持轮者那一格**用的
  * （B 区多两段、少一段），而模型目录描述的是"干一格的 agent"，不是轮次的主线。持轮者换不换
  * 提示词由轮次那一层定（`round/driver.ts`），不由模型定。
+ *
+ * **这一份从 P2d 起是内置档**：`readCatalog()`（`catalog.ts`）在 `~/.fugue/models.json` 不在
+ * 时拿它顶上；文件在了它就是整份目录，不与这一份合并。查表因此全在 `catalog.ts`（收目录参），
+ * 这一份只持有数据与形状。
  */
 export const MODEL_DECLS: Readonly<Record<string, ModelDecl>> = {
   'deepseek-flash/anthropic': {
@@ -247,8 +272,7 @@ export const MODEL_DECLS: Readonly<Record<string, ModelDecl>> = {
   },
 }
 
-/** 目录里的名字，按表的键序。**第一条是缺省**（Messages 优先，架构 § 10.3）。 */
-export const MODEL_IDS: readonly string[] = Object.keys(MODEL_DECLS)
+/** 前缀那一侧的表（`src/assemble/models.ts` 的 `MODELS` 就是它）。**P2d 起按目录现折**：`catalog.ts` 的 `prefixModelsOf(cat)`。 */
 
 /**
  * 前缀那一侧的投影：**装配真的会读的那四个字段**。
@@ -262,37 +286,11 @@ export const MODEL_IDS: readonly string[] = Object.keys(MODEL_DECLS)
  */
 export type PrefixModelDecl = Pick<ModelDecl, 'id' | 'systemPromptUpdate' | 'contextLimit' | 'call'>
 
-/** 前缀那一侧看得见的那些名字。**与 `MODEL_DECLS` 同域**，由载入时那一次核对保证。 */
-export const PREFIX_MODEL_IDS: readonly string[] = MODEL_IDS
-
 /** 一个声明 → 前缀那一侧看到的四个字段。**投影，不是改写**：四个字段原样搬。 */
 export function prefixDeclOf(m: ModelDecl): PrefixModelDecl {
   return { id: m.id, systemPromptUpdate: m.systemPromptUpdate, contextLimit: m.contextLimit, call: m.call }
 }
 
-/** 前缀那一侧的表：`src/assemble/models.ts` 的 `MODELS` 就是它。 */
-export const PREFIX_MODELS: Readonly<Record<string, PrefixModelDecl>> = Object.fromEntries(
-  Object.entries(MODEL_DECLS).map(([name, m]) => [name, prefixDeclOf(m)]),
-)
-
-/** 缺省模型。**表的第一条**——不是一条写在别处的常量（写两处就会漂）。 */
-export const DEFAULT_MODEL: ModelDecl = MODEL_DECLS[MODEL_IDS[0] as string] as ModelDecl
-
-/**
- * 按名字取一个声明。**查不到就拒，不替它挑一个**——"没写 model"与"写了一个没有的 model"是
- * 两件事：前者走缺省，后者是打错了一个字，静默替他选一个会让命令行那次装配的读数指着另一个
- * 模型。与 `--agent` 拒未知名字是同一条口径（PLAN § 5.6 的 Z4）。
- */
-export function modelDeclOf(id: string | undefined): ModelDecl {
-  if (id === undefined || id === '') return DEFAULT_MODEL
-  const m = MODEL_DECLS[id]
-  if (m === undefined) {
-    throw new ModelDeclError(`没有这个模型：${id}（目录里只有 ${MODEL_IDS.join(' · ')}）`)
-  }
-  return m
-}
-
-/** 按名字取一个提供方。同上：查不到就拒。 */
 /**
  * 一条线协议的发断点方式。**声明 → 请求形状的唯一一处解析。**
  *
@@ -303,19 +301,6 @@ export function promptCacheFor(wire: string): WireDecl['promptCache'] {
   const w = WIRES[wire as WireName]
   if (w === undefined) throw new ModelDeclError(`没有这条线协议：${wire}（有的是 ${WIRE_NAMES.join(' · ')}）`)
   return w.promptCache
-}
-
-export function providerOf(id: string): ProviderDecl {
-  const p = PROVIDERS[id]
-  if (p === undefined) {
-    throw new ModelDeclError(`没有这个提供方：${id}（目录里只有 ${Object.keys(PROVIDERS).join(' · ')}）`)
-  }
-  return p
-}
-
-/** 一个名字是不是目录里那个。**判据是目录，不是形状**（形状对了但没声明过的名字仍然拒）。 */
-export function isModelRef(id: string): boolean {
-  return MODEL_DECLS[id] !== undefined
 }
 
 /** 环境变量名的形状：大写字母 · 数字 · 下划线，且不以数字开头。 */
@@ -448,36 +433,9 @@ function authOfTable(providerId: string, table: readonly AuthRef[]): string {
       `它一条断言都不需要凭据（PLAN § 5.8 的口径一）。`,
   )
 }
-/**
- * 载入时那一次核对：**两份表的键域同域**，加上那几条一眼看得出写错的声明。
- *
- * 它封的是"静默失效"那一类：投影漏掉一条记录，命令行那次装配的读数就指着另一个模型，而
- * 没有一处会报错。与 `contract/types.ts` 的 `unownedFields` 载入时当场炸是同一条纪律。
- *
- * **`protocol` 那一条同属这一类**：声明里写了一个不存在的协议名，后果是"装配出来的前缀是
- * 别人的那一份"——多一段少一段都只是字节不同，没有别的报错。所以它和键域那几条一起当场炸。
- */
-const mismatch: string[] = []
-for (const name of MODEL_IDS) {
-  if (PREFIX_MODELS[name] === undefined) mismatch.push(`${name} 有声明，前缀那一侧看不见`)
-  else if (PREFIX_MODELS[name].id !== MODEL_DECLS[name].id) mismatch.push(`${name} 的投影换了名字`)
-}
-for (const name of Object.keys(PREFIX_MODELS)) {
-  if (MODEL_DECLS[name] === undefined) mismatch.push(`${name} 在前缀那一侧有，却没有声明`)
-}
-for (const [name, m] of Object.entries(MODEL_DECLS)) {
-  if (!WIRE_NAMES.includes(m.wire)) mismatch.push(`${name} 的线协议没有这一条：${m.wire}`)
-  if (PROVIDERS[m.provider] === undefined) mismatch.push(`${name} 指的提供方没有声明：${m.provider}`)
-  if (!protocolNames().includes(m.protocol)) {
-    mismatch.push(`${name} 指的协议没有这一份：${m.protocol}（有的是 ${protocolNames().join(' · ')}）`)
-  }
-  if (m.systemPromptUpdate !== 'in-history' && m.systemPromptUpdate !== 'rewrite-head') {
-    mismatch.push(`${name} 的系统提示词更新方式没有这一档：${String(m.systemPromptUpdate)}`)
-  }
-}
-if (mismatch.length > 0) {
-  throw new Error(`模型声明与它的投影对不上：\n  ${mismatch.join('\n  ')}`)
-}
+// 载入时那一次核对随 P2d 挪到 `catalog.ts` 的 `validateCatalog`：它核的从"两份表的键域"换成
+// **整份目录**（线协议 · 提供方 · 协议 · 更新方式 · 价目），内置档照旧在载入时核一遍——投影
+// 那一段（`prefixModelsOf` 现折）因此不再需要单独的键域核对：它从目录本身派生，没有第二份表。
 
 // ── B1 · 调用的边界（冻结接口点）────────────────────────────────────────────────
 //

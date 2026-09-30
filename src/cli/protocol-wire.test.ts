@@ -20,6 +20,7 @@ import { readConfig } from '../config.ts'
 import type { ConfigDoc } from '../config.ts'
 import type { Contract } from '../contract/types.ts'
 import { driverSupport } from './fugue.ts'
+import { BUILTIN_CATALOG } from '../model/catalog.ts'
 
 /**
  * 一个**假**的凭据：`driverSupport` 在拼目标那一栏时会读它（P2c 之后引用表从配置的
@@ -53,7 +54,7 @@ function contractOf(): Contract {
 async function supportOf() {
   const root = tmpDir('fugue-driver-support-')
   const doc = await readConfig(root)
-  return { root, support: driverSupport({ root, doc: harnessDoc(doc), credential: '这一档不出网' }) }
+  return { root, support: driverSupport({ root, doc: harnessDoc(doc), credential: '这一档不出网', cat: BUILTIN_CATALOG }) }
 }
 
 test('①e 真驱动那一档：子 agent 的句柄拿子 agent 那份协议，B 区里有契约那几行', async () => {
@@ -120,6 +121,7 @@ test('P2b · round.model 选模型：配置点另一条声明，句柄的模型�
     root,
     doc: harnessDoc({ ...doc, round: { model: 'deepseek-flash/openai' } }),
     credential: '这一档不出网',
+    cat: BUILTIN_CATALOG,
   })
   assert.equal(
     byConfig.decl.id,
@@ -135,11 +137,12 @@ test('P2b · round.model 选模型：配置点另一条声明，句柄的模型�
     doc: harnessDoc({ ...doc, round: { model: 'deepseek-flash/openai' } }),
     model: 'deepseek-flash/anthropic',
     credential: '这一档不出网',
+    cat: BUILTIN_CATALOG,
   })
   assert.equal(byFlag.decl.wire, 'anthropic-messages', '旗标与配置同时给，听旗标的（CLI > 工作区）')
   // **未知即拒、列出可用的**：话里要有目录里真正的那两个名字。
   assert.throws(
-    () => driverSupport({ root, doc: harnessDoc(doc), model: 'nope', credential: '这一档不出网' }),
+    () => driverSupport({ root, doc: harnessDoc(doc), model: 'nope', credential: '这一档不出网', cat: BUILTIN_CATALOG }),
     /deepseek-flash\/anthropic/,
     '未知模型拒的时候要列出目录里有的',
   )
@@ -152,7 +155,7 @@ test('①f `--max-steps` 真的写进「我的任务」：给 3 就是 3，**不
   const root = tmpDir('fugue-driver-support-')
   const doc = await readConfig(root)
   const contract = contractOf()
-  const given = driverSupport({ root, doc: harnessDoc(doc), credential: '这一档不出网', maxSteps: 3 })
+  const given = driverSupport({ root, doc: harnessDoc(doc), credential: '这一档不出网', cat: BUILTIN_CATALOG, maxSteps: 3 })
   const handle = given.handle('agent-1' as never, contract)
   const st3 = given.state('agent-1' as never, contract)
   assert.equal(st3.maxSteps, 3, '给了 `--max-steps 3`，状态里就该是 3')
@@ -163,7 +166,7 @@ test('①f `--max-steps` 真的写进「我的任务」：给 3 就是 3，**不
   // 不给：**没有那一栏**，于是「我的任务」里也没有那一句。`step.test.ts` ⑨ 已经量过"没给预算
   // 就不写那一句"，这里量的是**上游那一栏真的缺席**——两处一起才封住"缺省偷偷补一个数"这条路
   // （原先这里补的正是 `DEFAULT_MAX_STEPS`）。
-  const none = driverSupport({ root, doc: harnessDoc(doc), credential: '这一档不出网' })
+  const none = driverSupport({ root, doc: harnessDoc(doc), credential: '这一档不出网', cat: BUILTIN_CATALOG })
   const stNone = none.state('agent-1' as never, contract)
   assert.equal(stNone.maxSteps, undefined, '不给 `--max-steps` 时状态里不该有那一栏')
   const bNone = new TextDecoder().decode(

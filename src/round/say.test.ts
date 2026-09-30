@@ -28,7 +28,7 @@ import { HOLDER_PROTOCOL } from '../assemble/protocol.ts'
 import { emptyState } from '../assemble/sources.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 import { fixtureState } from '../model/fixture-state.ts'
-import { modelDeclOf } from '../model/contract.ts'
+import { BUILTIN_CATALOG, modelDeclOf } from '../model/catalog.ts'
 import { scriptedModel } from '../runtime/step.ts'
 import type { AgentHandle, CallModel, ModelEvent, RuntimeRequest, ToolExecutor } from '../runtime/step.ts'
 import { wireRequestOf } from '../model/http.ts'
@@ -69,7 +69,7 @@ process.on('exit', () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true })
 })
 
-const DECL = modelDeclOf('deepseek-flash/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG)
 const CATALOG = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 const ROUND = 'r1' as RoundId
 const AGENT = 'round' as AgentId

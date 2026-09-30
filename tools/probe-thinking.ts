@@ -12,11 +12,12 @@
 //   四 · 落盘：`--dump` 那个目录里的 `call-0001/response.sse` 就是 `src/model/fixtures/` 的输入
 //
 // **为什么走 `openai` 那条线**：它是产品的主用格式（`--live` 那一趟默认跑的就是它里那个缺省声明
-// 之外的这一条；见 `MODEL_DECLS`）。`anthropic` 那条线同一格另有一条断言（签名那一路）。
+// 之外的这一条；见内置目录 `MODEL_DECLS`）。`anthropic` 那条线同一格另有一条断言（签名那一路）。
 import { mkdirSync } from 'node:fs'
 import { catalog, CATALOG_STATES } from '../src/tools/catalog.ts'
-import { MODEL_DECLS, authWith, providerOf, modelDeclOf } from '../src/model/contract.ts'
+import { authWith } from '../src/model/contract.ts'
 import type { ModelEvent, Thinking, Turn, Usage } from '../src/model/contract.ts'
+import { modelDeclOf, providerOf, readCatalog } from '../src/model/catalog.ts'
 import { makeDumpCall, targetAt } from '../src/model/http.ts'
 import { wireNamed } from '../src/model/wire/registry.ts'
 import { WIRES } from '../src/model/contract.ts'
@@ -36,8 +37,9 @@ const DECL_ID = 'deepseek-flash/openai'
 const say = (s: string): void => console.log(`  ·  ${s}`)
 console.log('思考那一格：收 · 存 · 回传（探针）\n')
 
-const decl = modelDeclOf(DECL_ID)
-const provider = providerOf(decl.provider)
+const CAT = readCatalog()
+const decl = modelDeclOf(DECL_ID, CAT)
+const provider = providerOf(decl.provider, CAT)
 let credential: string | null = null
 try {
   const cfg = await readConfig(process.cwd())

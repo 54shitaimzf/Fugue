@@ -33,6 +33,7 @@
 import type { Log, LogEvent } from '../log/events.ts'
 import { costOf, formatUsd, matchModels, moneyText } from '../model/price.ts'
 import type { Billable, Phase } from '../model/price.ts'
+import type { Catalog } from '../model/catalog.ts'
 import { EDGES, STATES, abortEdges } from '../round/machine.ts'
 import type { Cause, Edge } from '../round/machine.ts'
 import { countsOf, rejectsIn, linesOfReadings } from './round.ts'
@@ -589,8 +590,8 @@ function callNums(u: { readonly inputTokens: number | null; readonly cacheReadTo
 }
 
 /** 一次调用的钱。**只吃那四个数**（思考 token 是输出里的明细，再加一遍就是把同一笔钱算两回）。 */
-function oneCallMoney(model: string, u: Parameters<typeof callNums>[0], phase: Phase): string {
-  const row = matchModels([model]).row
+function oneCallMoney(model: string, u: Parameters<typeof callNums>[0], phase: Phase, cat: Catalog): string {
+  const row = matchModels([model], cat).row
   const b: Billable = {
     calls: 1,
     inputTokens: totalOf([u.inputTokens]),
@@ -616,14 +617,14 @@ function oneCallMoney(model: string, u: Parameters<typeof callNums>[0], phase: P
  * 钱的档由读的人给（账上没有时刻）：**不给档就不印钱**，而"不印"这件事在那一行里说出来
  * （与用量那一栏同一条规矩：少印要说，不拿 0 顶）。
  */
-export function callLinesOf(rows: readonly StatusRow[], opts: LinesOptions = {}): readonly string[] {
+export function callLinesOf(rows: readonly StatusRow[], opts: LinesOptions): readonly string[] {
   const out: string[] = []
   for (const { e } of rows) {
     if (e.t !== 'llm/call') continue
     // 半截的流那一档（`stop` 为 `null`）：**不许当"走完了"**，所以它有自己的写法。
     const why = e.stop === null ? 'cut-stream（这一趟没走完）' : e.rawStop === null ? e.stop : `${e.stop}（${e.rawStop}）`
     const money =
-      opts.phase === undefined ? ' · 钱 没印（读的时候没给峰谷档）' : ` · 钱 ${oneCallMoney(e.model, e.usage, opts.phase)}`
+      opts.phase === undefined ? ' · 钱 没印（读的时候没给峰谷档）' : ` · 钱 ${oneCallMoney(e.model, e.usage, opts.phase, opts.cat)}`
     out.push(`格 ${e.agent} · 步 ${e.step} · ${why} · 思考 ${e.thinking ?? '没声明'} · ${callNums(e.usage)}${money}`)
   }
   const s = statusOf(rows)
@@ -640,7 +641,7 @@ export function callLinesOf(rows: readonly StatusRow[], opts: LinesOptions = {})
     out.push(`${total} · 费用 没印：读的时候没给峰谷档（账上没有时刻，这一档只能由读的人给）——不拿 0 顶`)
     return out
   }
-  const match = matchModels(s.models)
+  const match = matchModels(s.models, opts.cat)
   out.push(`${total} · ${moneyText({ money: costOf(u, match.row, opts.phase), match, phase: opts.phase, models: s.models })}`)
   return out
 }
@@ -656,9 +657,12 @@ export interface LinesOptions {
    * 读的人给（`src/model/price.ts` 的 `phaseOf` 拿当时的钟算）。
    */
   readonly phase?: Phase
+  /** 价目与模型目录算在哪一份上（P2d）：**必给**——`phase` 给了它就一定用得到；调用方
+   * （命令面）拿 `readCatalog()` 的那份，不缺省回内置（缺省会让文件档在场时钱按内置算）。 */
+  readonly cat: Catalog
 }
 
-export function linesOf(s: StatusSnapshot, opts: LinesOptions = {}): readonly string[] {
+export function linesOf(s: StatusSnapshot, opts: LinesOptions): readonly string[] {
   const out: string[] = []
   if (s.rounds.length === 0) out.push('一条轮次状态都没有：这份日志里还没开过轮次')
   for (const r of s.rounds) {
@@ -696,7 +700,7 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions = {}): readonly st
   )
   // 钱那一栏：**读的人给了档才印**（账上没有时刻）。算不出来时那一行会说"算不出来"，不拿 0 顶。
   if (opts.phase !== undefined) {
-    const match = matchModels(s.models)
+    const match = matchModels(s.models, opts.cat)
     out.push(moneyText({ money: costOf(u, match.row, opts.phase), match, phase: opts.phase, models: s.models }))
   } else {
     // **少印要说**：原先这一档静默地少一行，于是"没给档"与"这一份日志没有钱那一栏"长得一样。
@@ -721,7 +725,7 @@ export const METRICS_HEAD = '八元指标（从日志重算，不采集；分子
  * `emitLine`，而"两处读法逐字相同"这句话在文字面上也立得住（表头是上面那两个常数，行是
  * `linesOfReadings` 与 `lineOf` 那两处）。
  */
-export function readingsLines(r: StatusReadings, opts: LinesOptions = {}): readonly string[] {
+export function readingsLines(r: StatusReadings, opts: LinesOptions): readonly string[] {
   const out = [...linesOf(r.snapshot, opts)]
   if (r.report !== undefined) out.push(REPORT_HEAD, ...linesOfReadings(r.report).map((l) => `  ${l}`))
   if (r.metrics !== undefined) out.push(METRICS_HEAD, ...r.metrics.map((m) => `  ${lineOf(m)}`))

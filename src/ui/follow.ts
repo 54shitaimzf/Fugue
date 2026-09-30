@@ -43,6 +43,7 @@
 // `redraw()`。这一份不注册任何信号、不碰 `process`——那样它才在 `node --test` 里跑得动。
 import type { Log } from '../log/events.ts'
 import type { Phase } from '../model/price.ts'
+import type { Catalog } from '../model/catalog.ts'
 import type { ReadingsOptions, StatusReadings, StatusRow } from '../probe/status.ts'
 import { readingsOf } from '../probe/status.ts'
 import { follow, readNew } from '../probe/watch.ts'
@@ -79,6 +80,8 @@ export interface SessionOptions {
   readonly readings?: ReadingsOptions
   /** 钱那一栏的档（峰/谷）。**不给就不印钱那一栏**——账上没有时刻，这一档只能由读的人给。 */
   readonly phase?: Phase
+  /** 钱算在哪一份目录上（P2d）：与 `phase` 成对——两样都给了那一栏才印。 */
+  readonly cat?: Catalog
   /** 事件族那一张分法表。**它是入参**（`ui/stream.ts`）：换一张表，历史那一栏就跟着换。 */
   readonly table?: FamilyTable
   /**
@@ -197,6 +200,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       // 三份读数与 `status --once` 同一个入口（`readingsOf`）——命令面与这一档读的是同一份。
       ...readingsAt(v?.focus ?? null),
       ...(o.phase === undefined ? {} : { phase: o.phase }),
+      ...(o.cat === undefined ? {} : { cat: o.cat }),
       // 界面自己那几样（输入行 · 候选那一层 · 树 · 门口那一块）**每帧现问**：它们不是读源，是这一档
       // 自己的视图状态。
       ...(v?.menu === undefined ? {} : { menu: v.menu }),
@@ -268,6 +272,7 @@ export interface TuiOptions {
   readonly mode: TuiMode
   readonly readings?: ReadingsOptions
   readonly phase?: Phase
+  readonly cat?: Catalog
   readonly table?: FamilyTable
   /** 跟随那一趟睡多久（毫秒）。缺省 200——人眼的分辨率，而不是它的精度。 */
   readonly intervalMs?: number
@@ -319,6 +324,7 @@ export function openTui(o: TuiOptions): Tui {
   const session = openSession({
     readings: o.readings,
     phase: o.phase,
+    cat: o.cat,
     table: o.table,
     view: o.view,
     reveal: o.reveal,

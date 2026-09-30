@@ -29,7 +29,7 @@ import type { Log, LogReader } from '../log/events.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { emptyState } from '../assemble/sources.ts'
 import { fixtureState } from '../model/fixture-state.ts'
-import { modelDeclOf } from '../model/contract.ts'
+import { BUILTIN_CATALOG, modelDeclOf } from '../model/catalog.ts'
 import type { ModelEvent } from '../model/contract.ts'
 import { scriptedModel } from '../runtime/step.ts'
 import type { CallModel, RuntimeRequest } from '../runtime/step.ts'
@@ -46,7 +46,7 @@ import { refHeadOf } from './head.ts'
 import { RefConflictError } from '../truth/truth.ts'
 
 const AGENT = 'agent-1' as AgentId
-const DECL = modelDeclOf('deepseek-flash/anthropic')
+const DECL = modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG)
 const CATALOG = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 
 // P1a 那一条读数要「宿主真的有这个键」（escape.test 同款）：round 这一路实现之前整份继承宿主

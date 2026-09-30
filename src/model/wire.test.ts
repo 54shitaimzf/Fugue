@@ -17,7 +17,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type { ModelEvent, ModelRequest } from './contract.ts'
-import { DEFAULT_CALL, ModelDeclError, checkEvents, modelDeclOf, toolCallsIn } from './contract.ts'
+import { DEFAULT_CALL, ModelDeclError, checkEvents, toolCallsIn } from './contract.ts'
+import { BUILTIN_CATALOG, modelDeclOf } from './catalog.ts'
 import type { WireAdapter } from './wire/stream.ts'
 import { chunksOf, parseStream } from './wire/stream.ts'
 import { wireOf as anthropicWireOf } from './wire/anthropic.ts'
@@ -50,7 +51,7 @@ async function eventsOf(text: string, wire: WireAdapter, size: number): Promise<
 function request(tools = true): ModelRequest {
   const enc = new TextEncoder()
   return {
-    model: modelDeclOf('deepseek-flash/anthropic').model,
+    model: modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG).model,
     zones: {
       A: enc.encode('你是子 agent。你的契约是：把工作树里的 .ts 数一遍。'),
       B: enc.encode('第 0 步。工作区：/w/fixture。'),
@@ -177,7 +178,7 @@ function escapedInJson(s: string): string {
 function requestWithEscapes(): ModelRequest {
   const enc = new TextEncoder()
   return {
-    model: modelDeclOf('deepseek-flash/anthropic').model,
+    model: modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG).model,
     zones: {
       A: enc.encode('项目方针：换行要转义\n「引号」与\\反斜杠\t制表符也要转义。'),
       B: enc.encode('第 0 步。\n工作区：/w/fixture\n路径：src/a.ts'),

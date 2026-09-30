@@ -53,6 +53,7 @@ import {
 } from './status.ts'
 import { readingsOf } from './status.ts'
 import type { StatusRow } from './status.ts'
+import { BUILTIN_CATALOG } from '../model/catalog.ts'
 import { follow, readNew } from './watch.ts'
 
 let seq = 0
@@ -135,7 +136,7 @@ test('①b 实测那一趟的形状：账记的不是一条路径（跳步要能
   assert.equal(s.rounds[0]?.unrouted, 0)
   assert.deepEqual(s.rounds[0]?.edges.slice(3), ['Verifying ⇒ Rebuilding（跳步，经 verdict-pass · advanced）'])
   // 人读那几行把跳步印出来（读面不许把"账与图对不上"咽下去）。
-  assert.match(linesOf(s).join('\n'), /跳步，经 verdict-pass · advanced/)
+  assert.match(linesOf(s, { cat: BUILTIN_CATALOG }).join('\n'), /跳步，经 verdict-pass · advanced/)
 })
 
 test('①c 负对照：图外的记数不炸；图上没有的路 routeOf 给 null', () => {
@@ -147,7 +148,7 @@ test('①c 负对照：图外的记数不炸；图上没有的路 routeOf 给 nu
   const s = statusOf(chain('r1' as RoundId, [['Aborted', 'Idle']]))
   assert.equal(s.rounds[0]?.unrouted, 1)
   assert.equal(s.rounds[0]?.state, 'Idle')
-  assert.match(linesOf(s).join('\n'), /图上没有这条路/)
+  assert.match(linesOf(s, { cat: BUILTIN_CATALOG }).join('\n'), /图上没有这条路/)
   // 状态本身不认识 → 账坏了，当场拒。
   assert.throws(() => statusOf(chain('r1' as RoundId, [['Idle', 'Dreaming']])), /不认识的轮次状态/)
 })
@@ -211,7 +212,7 @@ test('④ 同一串事件折两次 → 同一份快照', () => {
   assert.equal(a.agents[0]?.stopped, '收敛')
   assert.equal(a.agents[0]?.stopSteps, 1)
   // 人读那几行要把这几样印出来（`--once` 的正面就是它）。
-  const text = linesOf(a).join('\n')
+  const text = linesOf(a, { cat: BUILTIN_CATALOG }).join('\n')
   assert.match(text, /状态 Rebuilding/)
   assert.match(text, /停：1 步 · 收敛/)
   assert.match(text, /cacheRead 1920/)
@@ -349,7 +350,7 @@ test('⑦ 越界那一栏：`bound/deny` 按由头分组 + 内核那一档；三
   assert.equal(s.refusals.total - s.refusals.kernel, 3, '三条 bound/deny 都不在那三个数里')
 
   // 三 · 人面那一行把两半都印出来。
-  const line = linesOf(s).find((l) => l.startsWith('越界 '))
+  const line = linesOf(s, { cat: BUILTIN_CATALOG }).find((l) => l.startsWith('越界 '))
   assert.ok(
     line !== undefined && line.includes('被挡 4') && line.includes('内核拒 1') && line.includes('contract-scope 2'),
     `人面那一行：${String(line)}`,
@@ -393,7 +394,7 @@ test('⑧ 树那一侧的越界：`mat/reclaim` 里 `changed` 非空的那几条
   assert.equal(s.refusals.byRule[0]?.rule, 'contract-scope')
   assert.equal(s.outside.paths.includes('src/total.ts'), false, '被挡的那一条没落进树里')
 
-  const line = linesOf(s).find((l) => l.startsWith('越界 '))
+  const line = linesOf(s, { cat: BUILTIN_CATALOG }).find((l) => l.startsWith('越界 '))
   assert.ok(
     line !== undefined && line.includes('被挡 1 次') && line.includes('树上报了没挡的 3 条') && line.includes('__probe.txt'),
     `人面那一行：${String(line)}`,
@@ -413,15 +414,15 @@ test('⑨ 逐趟账：每一条 `llm/call` 一行 + 合计；半截的流与"没
     row({ ...(call('agent/r1/1', '1', 0, 1920) as object), stop: null, rawStop: null } as LogEvent, 'agent/r1/1'),
   ]
   // **没给档**：逐趟与合计都说"钱没印"，而"没印"这件事本身印出来了（少印要说）。
-  const bare = callLinesOf(rows)
+  const bare = callLinesOf(rows, { cat: BUILTIN_CATALOG })
   assert.equal(bare.length, 3, `两条调用 + 一行合计，盘上是 ${bare.length} 行`)
   assert.match(bare[0] as string, /步 0 · end-turn（end_turn） · 思考 high · input 未量到 · cacheRead 1920 · cacheWrite 0 · output 10（思考 未量到） · 钱 没印/)
   assert.match(bare[1] as string, /cut-stream（这一趟没走完）/)
   assert.match(bare[2] as string, /^合计 调用 2 · input 0（缺 2 条） · cacheRead 3840 · cacheWrite 0 · output 20 · 思考 0（缺 2 条） · 费用 没印：/)
-  assert.match(linesOf(statusOf(rows)).join('\n'), /费用 没印：读的时候没给峰谷档/, '`linesOf` 那一档也要说"少印"')
+  assert.match(linesOf(statusOf(rows), { cat: BUILTIN_CATALOG }).join('\n'), /费用 没印：读的时候没给峰谷档/, '`linesOf` 那一档也要说"少印"')
 
   // **给了档**：逐趟一笔、合计一笔。合计那个数走的是 `costOf`（一处算式）。
-  const priced = callLinesOf(rows, { phase: 'off-peak' })
+  const priced = callLinesOf(rows, { phase: 'off-peak', cat: BUILTIN_CATALOG })
   assert.match(priced[0] as string, /· 钱 \$0\.000012（下界：有 1 条没量到）/)
   assert.match(priced[2] as string, /· 费用 ≈ \$0\.000024（谷时 · deepseek-flash\/anthropic → deepseek-flash：未命中 \$0\.15\/M · 命中 \$0\.003\/M · 输出 \$0\.6\/M）/)
 
@@ -518,7 +519,7 @@ test('⑩ 出口：`status` 那两栏与 `round run` 那两栏同一个数、同
       METRICS_HEAD,
       ...viaRun.metrics.map((m) => `  ${lineOf(m)}`),
     ]
-    const mine = readingsLines(viaStatus, { phase: 'off-peak' })
+    const mine = readingsLines(viaStatus, { phase: 'off-peak', cat: BUILTIN_CATALOG })
     assert.deepEqual(mine.slice(mine.indexOf(REPORT_HEAD)), runBlocks, `文字面：\n${mine.join('\n')}`)
 
     // 三 · 负对照：没要的那一栏**不出现**（不是空数组），而 `--json` 那一份就是它。

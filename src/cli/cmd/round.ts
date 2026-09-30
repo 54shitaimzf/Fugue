@@ -44,8 +44,10 @@ import { RETRY_DEFAULT } from '../../round/machine.ts'
 import { wireCallOver } from '../../runtime/step.ts'
 import type { AgentHandle, CallModel, ToolExecutor } from '../../runtime/step.ts'
 import { makeDumpCall, wireInTransport, targetAt } from '../../model/http.ts'
-import { authWith, modelDeclOf } from '../../model/contract.ts'
+import { authWith } from '../../model/contract.ts'
 import type { ModelDecl } from '../../model/contract.ts'
+import { modelDeclOf, readCatalog } from '../../model/catalog.ts'
+import type { Catalog } from '../../model/catalog.ts'
 import { wireHeader } from '../../model/wire/headers.ts'
 import type { ToolEntry } from '../../tools/catalog.ts'
 import type { Contract } from '../../contract/types.ts'
@@ -199,7 +201,7 @@ export async function roundCmd(
       // 物化那一档：每一条分支一个口，那个 agent 自己的日志。
       logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
       // **声明的上限接进 `seed` 那一条**：这一档没有种子（`seeds: []`），但读数那一行印的就是它。
-      modelLimit: modelLimitOf(doc),
+      modelLimit: modelLimitOf(doc, readCatalog()),
       materialize,
     })
     if (json) {
@@ -420,7 +422,7 @@ export async function roundRun(
       logForAgent: agentLogOf,
       materialize: flags.has('materialize'),
       // **声明的上限接进 `seed` 那一条**：与 `round new` / `round go` 递的是同一个数。
-      modelLimit: modelLimitOf(doc),
+      modelLimit: modelLimitOf(doc, readCatalog()),
       // **两条路在 `runRound` 眼里没有区别**（同一个 `AgentDriver`）：打桩那一档把 `Stub` 包
       // 一层（S7 定下的那个形状不动），真驱动那一档走 `realDriver` + `DriverSupport`。凭据那一
       // 步只在这一档走（不打 `--live` 的话 `driverSupport` 一次都不被调）。
@@ -449,6 +451,7 @@ export async function roundRun(
             driver: driverSupport({
               root,
               doc,
+              cat: readCatalog(),
               ...(wireIn === undefined ? {} : { wireIn }),
               ...(maxSteps === undefined ? {} : { maxSteps }),
               ...(credentialOverride === undefined ? {} : { credential: credentialOverride }),
@@ -522,7 +525,7 @@ export async function roundRun(
     const attribution = await computeAttribution(() => ctx.log.readMerged())
     // **逐趟账**（PLAN § 5.9 的 `G5`）：每一条 `llm/call` 一行 + 合计。它也是从同一份日志重算，
     // 钱的档按读这一次的钟算（账上没有时刻）。
-    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()) })
+    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()), cat: readCatalog() })
     const report = reportOf({ round }, readings, attribution.map(lineOfAttribution), callLines)
     // 八元指标（架构 § 8.15）：**与上面那三个数同一个来源**（同一份日志 · 同样重算）。
     // 那一趟的日志就是刚才跑出来的那一份——所以 `--metrics` 印的就是这一趟。
@@ -653,6 +656,8 @@ async function holderWiringOf(o: {
   readonly root: string
   readonly ctx: Ctx
   readonly doc: ConfigDoc
+  /** 这一台的模型目录（P2d）：`~/.fugue/models.json` 在就是它，不在就是内置档。 */
+  readonly cat: Catalog
   readonly round: RoundId
   readonly wire: WireFlags
   readonly judge: boolean
@@ -712,7 +717,7 @@ async function holderWiringOf(o: {
     },
   })
   // **模型按这一趟的选择来**（`--model` 旗标 > `round.model` 配置 > 缺省那条，`shared.ts` 一处）。
-  const decl = modelDeclOf(selectedModelId(o.wire.model, o.doc))
+  const decl = modelDeclOf(selectedModelId(o.wire.model, o.doc), o.cat)
   const baseState = stateWithState(emptyState(), o.doc, o.root)
   // 「凝聚前最近几次原文」：**会话记录那一段投影**（最近 3 条）。记录不在就是空串——第一次说话
   // 之前这一场对话还没有一条。
@@ -727,7 +732,7 @@ async function holderWiringOf(o: {
     protocol: HOLDER_PROTOCOL,
     model: decl.id,
     wireModel: decl.model,
-    target: targetAt(decl.id, credentialFor(decl, o.wire, o.judge, o.doc)),
+    target: targetAt(decl.id, credentialFor(decl, o.wire, o.judge, o.doc), o.cat),
     adapter: { name: decl.wire },
     // **轮内固定的调用配置**（架构 § 10.2 的必固四条之一）**在声明里，而这里必须把它接上**。
     // 这一栏原先一处都没接：声明里那两栏是空的，于是没人看得出来"声明了却没发出去"——思考那一格
@@ -802,6 +807,7 @@ export async function roundPlan(
       root,
       ctx,
       doc,
+      cat: readCatalog(),
       round,
       wire,
       judge,
@@ -998,6 +1004,7 @@ export async function sayCommand(
       root,
       ctx,
       doc,
+      cat: readCatalog(),
       round,
       wire,
       // 说话那一趟**没有 `--judge`**：人的话必须真的到持轮者手里，一步都不能省（那一档是"人喊停、
@@ -1215,6 +1222,7 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
               driver: driverSupport({
                 root,
                 doc,
+                cat: readCatalog(),
                 ...(wire.wireIn === undefined ? {} : { wireIn: wire.wireIn }),
                 ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
                 ...(wire.credential === undefined ? {} : { credential: wire.credential }),
@@ -1230,7 +1238,7 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
     // 三 · 打回那三个数与八元指标（**与 `round run` 同一份读法**：同一份日志上的重算，不采集）。
     const readings = await computeAll(() => ctx.log.readMerged(), { round })
     const attribution = await computeAttribution(() => ctx.log.readMerged())
-    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()) })
+    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()), cat: readCatalog() })
     const report = reportOf({ round }, readings, attribution.map(lineOfAttribution), callLines)
     const metrics = flags.has('metrics') ? await computeAllMetrics(() => ctx.log.readMerged(), { round }) : null
     // **复用了哪几格**印在 stderr：它是"这一趟只补了没交卷的那几格"的读数（重跑不重复烧钱）。
@@ -1337,7 +1345,7 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
       identityFor: (n: number) => identFor(round, n),
       actions: actionsTableOf(doc),
       // **声明的上限接进 `seed` 那一条**：判那一趟（`round plan`）读的是同一份声明。
-      modelLimit: modelLimitOf(doc),
+      modelLimit: modelLimitOf(doc, readCatalog()),
       materialize,
       logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
     })
@@ -1674,6 +1682,8 @@ function splitOf(raw: unknown, n: number): SplitAssignment {
 export function driverSupport(o: {
   readonly root: string
   readonly doc: ConfigDoc
+  /** 这一台的模型目录（P2d）：`~/.fugue/models.json` 在就是它，不在就是内置档。 */
+  readonly cat: Catalog
   /** `--credential <路径>`：**那个文件在哪**（不给就走声明里那一格）。顺序照声明。 */
   readonly credential?: string
   /** `--dump-wire` 那一档的落点（**已经在工作区之外**——守卫在 `dumpWireDir`）。不给就不落。 */
@@ -1701,7 +1711,7 @@ export function driverSupport(o: {
    */
   readonly maxSteps?: number
 }): DriverSupport {
-  const decl = modelDeclOf(selectedModelId(o.model, o.doc))
+  const decl = modelDeclOf(selectedModelId(o.model, o.doc), o.cat)
   const tools = publishedCatalog()
   const states = new Map<string, AssembleState>()
   const handles = new Map<string, AgentHandle>()
@@ -1716,7 +1726,7 @@ export function driverSupport(o: {
     o.wireIn === undefined
       ? authWith(decl.provider, getConfig(o.doc, `credentials.${decl.provider}`), o.credential ?? null)
       : (o.credential ?? '回放档：不出网，不取凭据')
-  const target = targetAt(decl.id, credential)
+  const target = targetAt(decl.id, credential, o.cat)
   /** 回放档的那条传输（不给就是"没有"，`callModel` 走真网络）。 */
   const pump = o.wireIn === undefined ? undefined : wireInTransport(o.wireIn)
 

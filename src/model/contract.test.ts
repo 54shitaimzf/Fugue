@@ -26,12 +26,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readConfig, getConfig } from '../config.ts'
-import { DEFAULT_CALL, DEFAULT_MODEL, MODEL_DECLS, MODEL_IDS, ModelDeclError, PREFIX_MODELS, PREFIX_MODEL_IDS, PROVIDERS, authWith, isAuthChain, STOP_REASONS, USAGE_COUNTS, USAGE_FIELDS, WIRES, WIRE_NAMES, authOf, checkEvents, isAuthRef, isModelRef, modelDeclOf, prefixDeclOf, providerOf, requestJson, stopped, toolCallsIn, triggerAt, usageCount } from './contract.ts'
+import { DEFAULT_CALL, ModelDeclError, authWith, isAuthChain, STOP_REASONS, USAGE_COUNTS, USAGE_FIELDS, WIRES, WIRE_NAMES, authOf, checkEvents, isAuthRef, prefixDeclOf, requestJson, stopped, toolCallsIn, triggerAt, usageCount } from './contract.ts'
 import type { ModelCall, ModelDecl, ModelEvent, ModelRequest, StopReason, ToolCall, Turn, Usage } from './contract.ts'
+import { BUILTIN_CATALOG, defaultModelOf, isModelRef, modelDeclOf, prefixModelsOf, providerOf } from './catalog.ts'
 import { DEFAULT_MODEL_LIMIT, HANDOFF_MARGIN, checkContract, seedLimitOf, zoneABudgetOf } from '../contract/types.ts'
 import type { ImplementContract } from '../contract/types.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
-import { MODELS, modelOf } from '../assemble/models.ts'
+import { modelOf } from '../assemble/models.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { emptyState, sourcesFor } from '../assemble/sources.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
@@ -41,8 +42,9 @@ const HERE = fileURLToPath(new URL('.', import.meta.url))
 const REPO = fileURLToPath(new URL('../../', import.meta.url))
 
 /** 两条声明：目录里的第一个与第二个。**缺一条就当场红**——这一份测的就是"两条都在"。 */
-const FIRST = MODEL_DECLS[MODEL_IDS[0] as string] as ModelDecl
-const SECOND = MODEL_DECLS[MODEL_IDS[1] as string] as ModelDecl
+const MODEL_NAMES = Object.keys(BUILTIN_CATALOG.models)
+const FIRST = defaultModelOf(BUILTIN_CATALOG)
+const SECOND = modelDeclOf('deepseek-flash/openai', BUILTIN_CATALOG)
 
 /** 一次 `checkContract` 的原始输出（`[]` = 没问题）。 */
 function issuesOf(c: ImplementContract, tokens: number, modelLimit?: number): string[] {
@@ -68,38 +70,22 @@ function contractWithSeed(seed: readonly string[]): ImplementContract {
 
 test('① 声明是值，不是分支：取两次同一份，投影与声明同域且不换名字', () => {
   // 确定性：同一个名字取两次是同一个值（声明里没有一处读环境 · 时间 · 随机）。
-  assert.deepEqual(modelDeclOf('deepseek-flash/anthropic'), modelDeclOf('deepseek-flash/anthropic'))
-  assert.equal(modelDeclOf('deepseek-flash/anthropic'), FIRST)
-  assert.deepEqual(PREFIX_MODEL_IDS, MODEL_IDS)
+  assert.deepEqual(modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG), modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG))
+  assert.equal(modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG), FIRST)
 
-  // 前缀那一侧的表与声明表逐项相同：**投影不是第二张表**。
-  for (const [name, m] of Object.entries(MODEL_DECLS)) {
-    const p = PREFIX_MODELS[name]
+  // 前缀那一侧的表是**按目录现折的投影**（`prefixModelsOf`），不是第二张表：键域与目录逐键相同，
+  // 每一条又与 `prefixDeclOf(声明)` 逐字段相同——两份表不是各写一遍，是同一份折出来的。
+  const PREFIX = prefixModelsOf(BUILTIN_CATALOG)
+  assert.deepEqual(Object.keys(PREFIX), MODEL_NAMES)
+  for (const [name, m] of Object.entries(BUILTIN_CATALOG.models)) {
+    const p = PREFIX[name]
     assert.notEqual(p, undefined, `${name} 在前缀那一侧看不见`)
     assert.deepEqual(p, { id: m.id, systemPromptUpdate: m.systemPromptUpdate, contextLimit: m.contextLimit, call: m.call })
   }
-  assert.deepEqual(Object.keys(PREFIX_MODELS).sort(), Object.keys(MODEL_DECLS).sort())
 
-  // 载入时那一次核对是真的在核：三个变体（投影漏一条 · 投影换名字 · 提供方没声明）各该报出来。
-  // 它是模块载入时跑的那一段的副本——那一段恒真的话，这一条也量不出来。
-  const checks = (decls: Record<string, ModelDecl>, prefix: Record<string, { id: string }>, providers: Record<string, unknown>): string[] => {
-    const out: string[] = []
-    for (const [name, m] of Object.entries(decls)) {
-      if (prefix[name] === undefined) out.push(`${name} 有声明，前缀那一侧看不见`)
-      else if (prefix[name].id !== m.id) out.push(`${name} 的投影换了名字`)
-      if (providers[m.provider] === undefined) out.push(`${name} 指的提供方没有声明：${m.provider}`)
-    }
-    return out
-  }
-  const ok = (): Record<string, { id: string }> => Object.fromEntries(Object.entries(MODEL_DECLS).map(([n, m]) => [n, prefixDeclOf(m)]))
-  assert.deepEqual(checks(MODEL_DECLS, ok(), PROVIDERS), [], '三条真声明不该报任何一处')
-  const dropped = ok()
-  delete dropped[MODEL_IDS[1] as string]
-  assert.equal(checks(MODEL_DECLS, dropped, PROVIDERS).length, 1, '投影漏掉一条要报一处')
-  const renamed = ok()
-  renamed[MODEL_IDS[1] as string] = { id: 'fugue-default' }
-  assert.equal(checks(MODEL_DECLS, renamed, PROVIDERS).length, 1, '投影换掉名字要报一处')
-  assert.equal(checks(MODEL_DECLS, ok(), {}).length, MODEL_IDS.length, '提供方一条都没声明时要逐条报')
+  // 载入核对随 P2d 住在 `catalog.ts` 的 `validateCatalog`（内置档在模块载入时走一遍）：它核的是
+  // 线协议 · 提供方 · 协议名 · 更新方式 · 价目命中——负例（wire 写错 · 价目缺行 · 跨提供方重名）
+  // 在 `catalog.test.ts`。"投影与声明分家"那条旧核对结构性消失了：投影不再是第二张表，是现折的。
 
   // 负对照：把投影的 id 写成一个常量 → 第二条声明的投影认不出它自己。
   const faked: ModelDecl = { ...SECOND, id: 'fugue-default' as ModelDecl['id'] }
@@ -107,15 +93,15 @@ test('① 声明是值，不是分支：取两次同一份，投影与声明同�
 })
 
 test('② 目录：两条真声明，各指得出提供方 · 线协议 · 上限；查不到的名字当场拒', () => {
-  assert.deepEqual(MODEL_IDS, ['deepseek-flash/anthropic', 'deepseek-flash/openai'])
+  assert.deepEqual(MODEL_NAMES, ['deepseek-flash/anthropic', 'deepseek-flash/openai'])
   assert.deepEqual(WIRE_NAMES, ['anthropic-messages', 'openai-chat'])
   assert.deepEqual(Object.keys(WIRES), [...WIRE_NAMES])
   // 两条线协议的路径两样：同一个 host 上两条路，这是"同一模型两个协议"那条验证的落点。
   assert.notEqual(WIRES['anthropic-messages'].path, WIRES['openai-chat'].path)
 
-  for (const [name, m] of Object.entries(MODEL_DECLS)) {
+  for (const [name, m] of Object.entries(BUILTIN_CATALOG.models)) {
     assert.equal(m.id, name, `${name} 的 id 与它的键不一致`)
-    assert.deepEqual([WIRE_NAMES.includes(m.wire), PROVIDERS[m.provider] !== undefined], [true, true], `${name} 的线协议或提供方指不到`)
+    assert.deepEqual([WIRE_NAMES.includes(m.wire), BUILTIN_CATALOG.providers[m.provider] !== undefined], [true, true], `${name} 的线协议或提供方指不到`)
     assert.equal(m.model, 'deepseek-flash', `${name} 那边叫的名字`)
     assert.deepEqual([m.systemPromptUpdate], ['in-history'], `${name} 的系统提示词更新方式`)
     // 上限那一个数是**上游报的**（`GET /models` 的 `context_window` · `tools/probe-models.ts` 核它），
@@ -127,24 +113,27 @@ test('② 目录：两条真声明，各指得出提供方 · 线协议 · 上�
     // 思考与答案共用同一个输出预算，"想完再说"在 4096 那一档装不下。
     assert.deepEqual(m.call, { thinking: 'high', maxTokens: 32_768 }, `${name} 的调用配置`)
   }
-  // 缺省 = 表的第一条，不是另一条写死的常量。
-  assert.equal(DEFAULT_MODEL, FIRST)
-  assert.equal(modelDeclOf(undefined), FIRST)
-  assert.equal(modelDeclOf(''), FIRST)
-  assert.equal(modelDeclOf(MODEL_IDS[1] as string), SECOND)
+  // 缺省 = 目录的第一条，不是另一条写死的常量。
+  assert.equal(defaultModelOf(BUILTIN_CATALOG), FIRST)
+  assert.equal(modelDeclOf(undefined, BUILTIN_CATALOG), FIRST)
+  assert.equal(modelDeclOf('', BUILTIN_CATALOG), FIRST)
+  assert.equal(modelDeclOf(MODEL_NAMES[1] as string, BUILTIN_CATALOG), SECOND)
 
   // 负对照：给一个不存在的名字 → 拒，且报出来的话里列出有的那几个。
-  assert.throws(() => modelDeclOf('gpt-9'), (err: unknown) => {
+  assert.throws(() => modelDeclOf('gpt-9', BUILTIN_CATALOG), (err: unknown) => {
     assert.ok(err instanceof ModelDeclError, `要拒成一个 ModelDeclError，拿到 ${String(err)}`)
-    for (const name of MODEL_IDS) assert.ok(err.message.includes(name), `那句话里该列出 ${name}：${err.message}`)
+    for (const name of MODEL_NAMES) assert.ok(err.message.includes(name), `那句话里该列出 ${name}：${err.message}`)
     return true
   })
-  assert.throws(() => providerOf('openai'), ModelDeclError)
-  assert.deepEqual([isModelRef('deepseek-flash/anthropic'), isModelRef('deepseek-flash'), isModelRef('')], [true, false, false])
+  assert.throws(() => providerOf('openai', BUILTIN_CATALOG), ModelDeclError)
+  assert.deepEqual(
+    [isModelRef('deepseek-flash/anthropic', BUILTIN_CATALOG), isModelRef('deepseek-flash', BUILTIN_CATALOG), isModelRef('', BUILTIN_CATALOG)],
+    [true, false, false],
+  )
 })
 
 test('③ 凭据是一个引用：只收环境变量的名字或工作区外的路径，值不进声明', () => {
-  for (const [id, p] of Object.entries(PROVIDERS)) {
+  for (const [id, p] of Object.entries(BUILTIN_CATALOG.providers)) {
     assert.equal(p.id, id)
     assert.ok(p.host.startsWith('https://'), `${id} 的 host 要是 https`)
     // **凭据不在声明里**（P2c）：引用表住两级配置的 `credentials.<id>` 键——声明里连那个位置都没有。
@@ -186,7 +175,7 @@ test('③ 凭据是一个引用：只收环境变量的名字或工作区外的�
   )
 
   // 声明是一份常量表：全表逐字节里没有一处能装下一个凭据的值——只装得下引用。
-  const decls = JSON.stringify({ MODEL_DECLS, PROVIDERS })
+  const decls = JSON.stringify(BUILTIN_CATALOG)
   assert.ok(!decls.includes('credentials'), '声明里不该出现 credentials（它住配置，两级合并读）')
   assert.ok(!/\bsk-[A-Za-z0-9]/.test(decls), '声明里出现了一串像凭据的值')
 })
@@ -279,7 +268,7 @@ test('④ 凭据只在出网那一步取：不在会话环境里时，装配与�
   // 装配这一路：一个字节都不取决于凭据在不在。
   const st = emptyState()
   const who: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: [] }
-  const prefix = assemble({ protocol: SUBAGENT_PROTOCOL, model: DEFAULT_MODEL.id, segments: sourcesFor(SUBAGENT_PROTOCOL, st, who) })
+  const prefix = assemble({ protocol: SUBAGENT_PROTOCOL, model: FIRST.id, segments: sourcesFor(SUBAGENT_PROTOCOL, st, who) })
   assert.match(hashOf(prefix.zoneA), /^[0-9a-f]{16}$/)
   assert.ok(!had || typeof process.env.DEEPSEEK_API_KEY === 'string')
 
@@ -300,7 +289,7 @@ test('⑤ 估账与余量：contextLimit 接进 seedLimitOf，超限报"超了�
   // 是**这一份的缺省**（"不是任何一个模型的声明"，`types.ts` 那一行写着）——两个数不再相等，于是
   // "命令面漏递一处"这件事在读数上看得见了（原先两个数一样，漏递一个字节都不变）。
   // 算式那一层本来就有牙（`round/start.test.ts` ⑥）；这一条补的是**接线**那一层的牙。
-  const declaredLimit = modelDeclOf(DEFAULT_MODEL.id).contextLimit
+  const declaredLimit = defaultModelOf(BUILTIN_CATALOG).contextLimit
   assert.notEqual(declaredLimit, DEFAULT_MODEL_LIMIT, '两个数一样的话，漏递一处在读数上看不出来')
   assert.notEqual(seedLimitOf({ modelLimit: declaredLimit }), seedLimitOf({}), '递与不递的种子上限该不同')
   assert.equal(seedLimitOf({ modelLimit: 128_000 }), 128_000 - zoneABudgetOf(128_000) - HANDOFF_MARGIN)
@@ -328,7 +317,7 @@ test('⑤ 估账与余量：contextLimit 接进 seedLimitOf，超限报"超了�
 })
 
 test('⑥ 前缀那一侧的四个字段与声明逐项相同（投影漏一个字段，装配读到的就是另一个模型）', () => {
-  for (const [name, m] of Object.entries(MODEL_DECLS)) {
+  for (const [name, m] of Object.entries(BUILTIN_CATALOG.models)) {
     const p = prefixDeclOf(m)
     assert.deepEqual(Object.keys(p).sort(), ['call', 'contextLimit', 'id', 'systemPromptUpdate'], `${name} 的投影字段`)
     assert.equal(p.id, m.id)
@@ -338,15 +327,12 @@ test('⑥ 前缀那一侧的四个字段与声明逐项相同（投影漏一个�
     // 提供方那三样**不在**投影里：装配不该认识 host 与线协议（架构 § 13.4 的 P1）。
     assert.deepEqual(Object.keys(p).some((k) => k === 'provider' || k === 'wire' || k === 'model'), false)
   }
-  // `src/assemble/models.ts` 这一次真的换过表：它的 `MODELS` 就是 `PREFIX_MODELS`，它的
-  // `modelOf` 与 `modelDeclOf` 同一条口径——**两份表不是各写一遍**。
-  assert.equal(MODELS, PREFIX_MODELS)
-  // 查表那一路：`modelOf` 与 `modelDeclOf` 同一条口径（**值相同**，不是同一个对象的引用——
-  // 投影每次新建一份，而"两份表不是各写一遍"这件事由 `MODELS === PREFIX_MODELS` 那一行量）。
-  assert.deepEqual(modelOf('deepseek-flash/openai'), prefixDeclOf(modelDeclOf('deepseek-flash/openai')))
-  assert.deepEqual(modelOf(''), prefixDeclOf(DEFAULT_MODEL))
-  assert.deepEqual(modelOf(undefined), prefixDeclOf(DEFAULT_MODEL))
-  assert.throws(() => modelOf('gpt-9'), ModelDeclError)
+  // `src/assemble/models.ts` 从 P2d 起只是转发：它的 `modelOf` 与 `modelDeclOf` 同一条口径——
+  // **值相同**，不是同一个对象的引用（投影每次新建一份）。
+  assert.deepEqual(modelOf('deepseek-flash/openai', BUILTIN_CATALOG), prefixDeclOf(modelDeclOf('deepseek-flash/openai', BUILTIN_CATALOG)))
+  assert.deepEqual(modelOf('', BUILTIN_CATALOG), prefixDeclOf(defaultModelOf(BUILTIN_CATALOG)))
+  assert.deepEqual(modelOf(undefined, BUILTIN_CATALOG), prefixDeclOf(defaultModelOf(BUILTIN_CATALOG)))
+  assert.throws(() => modelOf('gpt-9', BUILTIN_CATALOG), ModelDeclError)
 })
 
 // ── 夹具 ──────────────────────────────────────────────────────────────────────
@@ -541,7 +527,7 @@ test('① 一个请求与一串事件能往返序列化，字段一个不多一�
 // `REPO` 由上面那一半（B0）声明，指的同一个目录——**不重复声明**（合成之后是同一个文件）。
 const SRC = readFileSync(new URL('contract.ts', import.meta.url), 'utf8')
 /** 模型那一栏的第一个声明：请求里那个 `model` 是**提供方那边的名字**（不是我们这边的键）。 */
-const DECL = MODEL_DECLS[MODEL_IDS[0] as string] as (typeof MODEL_DECLS)[string]
+const DECL = FIRST
 
 assert.ok(REPO.endsWith('/') || REPO.endsWith('\\'), `仓库根那一串要是个目录：${REPO}`)
 assert.ok(SRC.includes('export interface ModelRequest'), '盘上读到的那一份里没有 ModelRequest')

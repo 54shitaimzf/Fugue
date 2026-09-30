@@ -11,8 +11,10 @@
 // **凭据只在 `targetOf` 里被取一次**，也就是说"取凭据"这件事只发生在**真要发一次请求**的
 // 时候——装配 · 重放 · 夹具档一条断言都不经过这里（PLAN § 5.8 的口径一）。
 import type { AuthRef, ModelCall, ModelEvent, ModelRequest, ThinkingLevel, Turn } from './contract.ts'
-import { ModelDeclError, WIRES, authOf, modelDeclOf, promptCacheFor, providerOf } from './contract.ts'
+import { ModelDeclError, WIRES, authOf, promptCacheFor } from './contract.ts'
 import { checkEvents } from './contract.ts'
+import { modelDeclOf, providerOf } from './catalog.ts'
+import type { Catalog } from './catalog.ts'
 import { hashOf } from '../assemble/assemble.ts'
 import type { WireAdapter } from './wire/stream.ts'
 import { concatBytes, parseStream } from './wire/stream.ts'
@@ -89,9 +91,9 @@ export interface Target {
 }
 
 /** 声明 → 目标。**`authOf()` 的唯一调用点。** 引用表从配置的 `credentials.<id>` 键来（调用方递）。 */
-export function targetOf(declId: string, creds: readonly AuthRef[] | undefined): Target {
-  const decl = modelDeclOf(declId)
-  return targetAt(declId, authOf(decl.provider, creds))
+export function targetOf(declId: string, creds: readonly AuthRef[] | undefined, cat: Catalog): Target {
+  const decl = modelDeclOf(declId, cat)
+  return targetAt(declId, authOf(decl.provider, creds), cat)
 }
 
 /**
@@ -105,10 +107,10 @@ export function targetOf(declId: string, creds: readonly AuthRef[] | undefined):
  * 漂）。给值的那一档让**取凭据**与**拼目标**这两件事分开：谁取、从哪取归壳，目标长什么样归
  * 这一份。**它不读环境变量、不读文件**——值必须从参数进来。
  */
-export function targetAt(declId: string, credential: string): Target {
+export function targetAt(declId: string, credential: string, cat: Catalog): Target {
   if (credential === '') throw new ModelDeclError('凭据不能是空串：空凭据发出去换来一个 401，那看起来像"模型不行"，其实是没给值')
-  const decl = modelDeclOf(declId)
-  const provider = providerOf(decl.provider)
+  const decl = modelDeclOf(declId, cat)
+  const provider = providerOf(decl.provider, cat)
   return {
     providerId: provider.id,
     host: provider.host,
