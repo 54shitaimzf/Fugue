@@ -535,8 +535,8 @@ export interface InputFrame {
  * 量出一块输入行：提示符占前几列，剩下的按列宽折；超过 `rows` 行就**按光标滚**，滚上去的时候
  * 提示符那一格换成 `…`（说出"上面还有"）。
  *
- * 光标那一列**不许等于这一行宽**（终端上那个位置放不下光标）：只有**那一行真占满了**、光标又正好
- * 落在行尾时才归下一行，下一行还不存在就补一个空行；没占满的行上光标就停在内容末尾那一格。
+ * 光标那一列**不许等于这一行宽**（终端上那个位置放不下光标）：按实际折行的断点归到下一行，
+ * 宽簇挤到下一行时也一样。最后一行占满才补空行；最后一行没占满就停在内容末尾那一格。
  */
 export function inputFrameOf(o: {
   readonly e: Editor
@@ -554,11 +554,12 @@ export function inputFrameOf(o: {
   const caretAt = caretColOf(o.e.draft, { unfolded: o.e.unfolded })
   let row = 0
   let before = 0
-  // 往下走一格的条件是**这一行真的占满了**（`avail` 列）：没占满的那一行上，光标落在内容末尾
-  // 仍然放得下（列 = 提示符 + 内容宽 < width），不该被推到下一行去。
+  // 按实际断点定位：宽簇放不下时上一行会留白，断点上的光标仍该跟到下一行。
+  // 只有最后一行未占满时，末尾光标才留在这一行；占满则补下一行。
   while (row < all.length) {
     const w = widthOf(all[row] as string)
-    if (w === 0 || caretAt < before + avail) break
+    if (w === 0 || caretAt < before + w) break
+    if (row === all.length - 1 && caretAt === before + w && w < avail) break
     before += w
     row += 1
   }

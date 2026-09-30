@@ -273,3 +273,26 @@ test('⑧ `intentOf`：编辑那几样都翻得出来 · `newline` 是插一个�
       '10 条界面动作一律 null · setLine 换整行（进撤销栈、退得回来）',
   )
 })
+
+test('② 宽字符提前折行：光标在下一簇前时跟到下一行，不留在上一行空白处', () => {
+  for (const glyph of ['中', '👨‍👩‍👧', '🇨🇳', '👍🏽']) {
+    const text = `abc${glyph}z`
+    const e = typed(text)
+    const beforeGlyph = { ...e, draft: { ...e.draft, caret: 3 } }
+    const f = inputFrameOf({ e: beforeGlyph, prompt: '> ', width: 6 })
+    assert.deepEqual(f.rows, ['> abc', `  ${glyph}z`])
+    assert.deepEqual(f.caret, { row: 1, col: 2 }, `宽簇 ${glyph} 前的光标应在它所在行的行首`)
+    const left = applyIntent(beforeGlyph, { t: 'left' })
+    assert.deepEqual(inputFrameOf({ e: left, prompt: '> ', width: 6 }).caret, { row: 0, col: 4 })
+    const right = applyIntent(beforeGlyph, { t: 'right' })
+    assert.deepEqual(inputFrameOf({ e: right, prompt: '> ', width: 6 }).caret, { row: 1, col: 4 })
+    assert.equal(submitOf(beforeGlyph), text, '定位不改原文')
+
+    const scrolled = inputFrameOf({ e: beforeGlyph, prompt: '> ', width: 6, rows: 1 })
+    assert.deepEqual(scrolled.caret, { row: 0, col: 2 })
+    assert.deepEqual(scrolled.hidden, { above: 1, below: 0 }, '单行窗口跟着光标滚到宽簇所在行')
+  }
+  // 最后一行没有下一簇可移到下一行：未占满时仍留在内容末尾。
+  assert.deepEqual(inputFrameOf({ e: typed('abc'), prompt: '> ', width: 6 }).caret, { row: 0, col: 5 })
+  assert.deepEqual(inputFrameOf({ e: typed('abcd'), prompt: '> ', width: 6 }).caret, { row: 1, col: 2 })
+})
