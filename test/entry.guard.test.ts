@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { discover, splitLanes } from '../tools/test-entry.js'
+import { discover, splitLanes, auditFast } from '../tools/test-entry.js'
 
 const REPO = join(import.meta.dirname, '..')
 const ENTRY = join(REPO, 'tools', 'test-entry.js')
@@ -78,4 +78,30 @@ test('负对照：档名拼错非零退出（不静默当 all 跑）', () => {
   const r = spawnSync(process.execPath, [ENTRY, 'quick'], { cwd: REPO, encoding: 'utf8' })
   assert.notEqual(r.status, 0, `拼错档名应非零退出，实得 ${r.status}`)
   assert.match(r.stderr, /未知档/)
+})
+
+test('审计牙：快档出现真依赖调用形状即报（闭合清单 · 字面匹配）', () => {
+  // 形状字面量拆开拼：守卫自己是快档，整串写进源码会咬到自己——这正是被审对象与
+  // 审计器同文件的自指，拼开是唯一不设豁免的解法。
+  const bwrapShape = "spawnSync('bw" + "rap'"
+  const dir = mkdtempSync(join(tmpdir(), 'fugue-audit-'))
+  try {
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'clean.test.ts'), 'import { test } from "node:test"\n')
+    writeFileSync(join(dir, 'src', 'dirty.test.ts'), 'const r = ' + bwrapShape + ', [])\n')
+    const { fast } = splitLanes(discover(dir))
+    const hits = auditFast(fast)
+    assert.equal(hits.length, 1, `应恰好报一条，实得 ${JSON.stringify(hits)}`)
+    assert.ok(hits[0].file.endsWith('dirty.test.ts'), '报错了文件')
+    assert.equal(hits[0].shape, bwrapShape)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+  // 真实仓：当前快档必须零命中——将来谁往快档文件写真依赖调用，这一行就红
+  const { fast } = splitLanes(discover(REPO))
+  assert.deepEqual(
+    auditFast(fast),
+    [],
+    '快档含真依赖形状——该文件要么改断言，要么首行声明 // tier: real',
+  )
 })

@@ -1,3 +1,4 @@
+// tier: real —— bwrap · cc（同格视图断言要求围栏/工具链在位：PATH 探针实测单缺其一全绿 · 双缺四条红——bash cat 读不到同格刚写入的文件）
 // W8 的断言：格内一致性——回写 · 删除 · 声明集是边界 · 双向同步（PLAN § 5.15 的 W8 行 · 架构 § 8.7）。
 // 跑法：cd ~/fugue && node --test src/tools/w8.test.ts
 //

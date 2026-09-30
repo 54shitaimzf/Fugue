@@ -53,6 +53,36 @@ export function splitLanes(files) {
   return { fast, real }
 }
 
+// 真依赖的闭合调用形状：快档文件出现任一形状即红。这不是穷尽的依赖分析——只认
+// **字面**调用形状（经变量的间接调用、帮助模块里的调用、整串 shell 里的 bwrap/cc 都看不见），
+// 口径是「抓字面、零仪式」：没有白名单、没有豁免注释；哪个形状抓不到的，记口径，不打补丁。
+// 「快档不依赖真依赖」的直接证伪通道是 PATH 探针（读数归档在提交序列），审计只是绊线。
+const REAL_CALL_SHAPES = [
+  "spawnSync('bwrap'",
+  "spawn('bwrap'",
+  "['bwrap'",
+  "spawnSync('unshare'",
+  "spawn('unshare'",
+  "execFileSync('cc'",
+  "spawnSync('cc'",
+  "['cc'",
+  '.listen(',
+  'mountOverlay(',
+  'unmountOverlay(',
+]
+
+/** 快档审计：fast 文件里出现的真依赖调用形状（常开、纯文本、瞬时）。 */
+export function auditFast(fast) {
+  const hits = []
+  for (const f of fast) {
+    const text = readFileSync(f, 'utf8')
+    for (const shape of REAL_CALL_SHAPES) {
+      if (text.includes(shape)) hits.push({ file: f, shape })
+    }
+  }
+  return hits
+}
+
 // 直接运行时才执行；被测试 import 时不执行。
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const files = discover(process.cwd())
@@ -69,6 +99,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const { fast, real } = splitLanes(files)
   if (fast.length + real.length !== files.length) {
     console.error('分档漏了文件：快 ' + fast.length + ' + 真 ' + real.length + ' ≠ 全量 ' + files.length)
+    process.exit(1)
+  }
+  const violations = auditFast(fast)
+  if (violations.length > 0) {
+    for (const v of violations) {
+      console.error('快档含真依赖形状：' + v.file + ' ← ' + v.shape)
+    }
+    console.error('快档不碰真依赖（bwrap · cc · 真端口 · 真挂载）——该文件要么改断言，要么首行声明 // tier: real')
     process.exit(1)
   }
   const chosen = lane === 'fast' ? fast : lane === 'real' ? real : files
