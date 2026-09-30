@@ -135,9 +135,10 @@ export interface ModelReply {
   readonly events: AsyncIterable<ModelEvent>
   /**
    * 流停下来之后才有值。半截的流是 `call: null` + `failure` 有话说（与 `B3` 同一个口径：
-   * 没 `stop` 就不算一次调用）。
+   * 没 `stop` 就不算一次调用）。`attempts` 是每一次尝试的状态码（P2f，恒 ≥ 1 条——假模型
+   * 那一档也是一次即成 `[200]`）。
    */
-  ledger(): { readonly call: ModelCall | null; readonly failure: string | null }
+  ledger(): { readonly call: ModelCall | null; readonly failure: string | null; readonly attempts: readonly number[] }
 }
 
 /**
@@ -235,7 +236,7 @@ export function wireCallOver(transport?: Transport): CallModel {
       events: stream.events,
       ledger: () => {
         const l = stream.ledger()
-        return { call: l.call, failure: l.failure }
+        return { call: l.call, failure: l.failure, attempts: l.attempts }
       },
     }
   }
@@ -259,7 +260,7 @@ export function scriptedModel(scripts: readonly (readonly ModelEvent[])[]): Call
       events: (async function* (): AsyncGenerator<ModelEvent> {
         for (const e of events) yield e
       })(),
-      ledger: () => ({ call: checkEvents(events), failure: null }),
+      ledger: () => ({ call: checkEvents(events), failure: null, attempts: [200] }),
     }
   }
 }
@@ -374,16 +375,22 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     let failure: string | null = null
     /** 上游给的那几个事实：**只有失败那一路才有**（成功那一路是 `null`）。 */
     let facts: Readonly<Record<string, string | number>> | null = null
+    /** 试了几次（P2f）：账里恒有 ≥1 条（传输层记的），成功那一路通常就是 `[200]`。 */
+    let attempts: readonly number[] = []
     try {
       for await (const e of reply.events) events.push(e)
       const l = reply.ledger()
       call = l.call
       failure = l.failure
+      attempts = l.attempts
     } catch (err) {
-      // 半截的流：**记一条 `llm/call`（`stop: null`）并报失败**，不重试（`B3` 断言 ④ 那条纪律）。
+      // 半截的流：**记一条 `llm/call`（`stop: null`）并报失败**——要不要再来一次由传输层
+      // 按提供方的重试档决定（P2f），到了这里就是终态。
       failure = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
       // 上游的原话从**抛出来的那个错误对象**上读（`B3` 的传输把它挂在那里）。读不到就是没有。
       facts = wireFactsOf(err)
+      // 流抛了之后账读得出来（`done` 在它的 `finally` 里已置位）：终态之前试了几次，从这里拿。
+      attempts = reply.ledger().attempts
     }
     if (call === null && failure === null) {
       call = safeCall(events)
@@ -424,6 +431,9 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         // 成功那一路这里是 `null`——**默认档一个字节都不多**。
         status: facts === null ? null : ((facts['status'] as number | undefined) ?? null),
         headers: facts,
+        // 试了几次（P2f）：每一次的状态码（`0` = 没拿到状态码那一档）。**恰一次时整栏不出现**
+        // ——没声明重试的默认档一个字节都不多，旧日志回放照旧。
+        ...(attempts.length > 1 ? { attempts: [...attempts] } : {}),
       }),
     )
 

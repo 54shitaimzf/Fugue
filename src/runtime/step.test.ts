@@ -401,7 +401,7 @@ test('⑤ `wireCall` 接上 `B3` 的夹具档：夹具里那两条调用被执�
         events: stream.events,
         ledger: () => {
           const l = stream.ledger()
-          return { call: l.call, failure: l.failure }
+          return { call: l.call, failure: l.failure, attempts: l.attempts }
         },
       }
     }
@@ -447,7 +447,7 @@ test('⑥ 半截的流 → `failed` · 不静默重试，而 `llm/call` 仍然�
           yield { t: 'delta', text: '说到一半' }
           throw new HarnessError('cut-stream', '上游掐了')
         })(),
-        ledger: () => ({ call: null, failure: 'HarnessError: 上游掐了' }),
+        ledger: () => ({ call: null, failure: 'HarnessError: 上游掐了', attempts: [0] }),
       }
     }
     const rt = createRuntime({ logOf: () => log, call: cut, execute: recordingExecutor(() => ({ ok: true, output: '' })), tools })
@@ -473,7 +473,7 @@ test('⑦ 失败那一趟：状态码与请求号进 `llm/call` 的 status/heade
       events: (async function* (): AsyncGenerator<ModelEvent> {
         throw new HarnessError('cut-stream', '上游 429', said)
       })(),
-      ledger: () => ({ call: null, failure: 'HarnessError: 上游 429' }),
+      ledger: () => ({ call: null, failure: 'HarnessError: 上游 429', attempts: [429] }),
     })
     const rt = createRuntime({ logOf: () => log, call: refused, execute: recordingExecutor(() => ({ ok: true, output: '' })), tools })
     const r = await rt.step(handleOf(fixtureState(0)), new AbortController().signal)
@@ -528,7 +528,7 @@ test('⑧ 第二步的请求带上第一步的往返：RuntimeRequest.turns 有�
         events: stream.events,
         ledger: () => {
           const l = stream.ledger()
-          return { call: l.call, failure: l.failure }
+          return { call: l.call, failure: l.failure, attempts: l.attempts }
         },
       }
     }

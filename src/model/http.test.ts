@@ -29,7 +29,8 @@ import type { AgentCoord } from '../assemble/sources.ts'
 import { fixtureState } from './fixture-state.ts'
 import { CATALOG_STATES, catalog, catalogHash } from '../tools/catalog.ts'
 import type { Target, Transport } from './http.ts'
-import { callModel, fetchTransport, makeDumpCall, targetAt, targetOf, wireFactsOf } from './http.ts'
+import { HttpError, callModel, fetchTransport, makeDumpCall, targetAt, targetOf, wireFactsOf } from './http.ts'
+import { WireError } from './wire/stream.ts'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -565,4 +566,69 @@ test('⑦c 上游回 401：事件那边抛，而 dump 里 request.json / respons
   } finally {
     globalThis.fetch = realFetch
   }
+})
+
+// ── ⑨ 重试档（P2f）：值得再来的错照同一份 body 重发，其余照旧一次即终 ──────────────
+//
+// 重试循环包在传输那一层（`callModel`），**body 在循环外拼一次**——重试发出去的那一串与首次
+// 逐字节相同，`bodyHash` 天然是同一个（架构 § 10.2 的"必固不破"）。线中掐断（`WireError`，
+// 字节流已经开始解析）与人喊停**都不重试**：前者是 B3 断言 ④ 那条纪律（不把半个响应当完整、
+// 也不静默重来），后者是人的意图。默认档（没声明 `retries`）一个字节都不多——一次即终。
+test('⑨ 重试：429 两次后成功 → 同一条调用三次尝试 · 同一份 body · 终态走完；默认档 · 名单外 · 线中掐断各一次即终', async () => {
+  const f = fixture('deepseek-flash-anthropic')
+  const replay = fixtureTransport(f, 1)
+
+  /** 桩：前 n 次抛 status 那个码（cut 时抛 `WireError`——线中掐断那一档），之后走夹具的流；
+   *  每一次发出去的 body 指纹留一份（验"三次是同一份"）。 */
+  function stub(status: number, n: number, cut = false): { transport: Transport; posts: { n: number; bodies: string[] } } {
+    const posts = { n: 0, bodies: [] as string[] }
+    const transport: Transport = {
+      async *post(t, body) {
+        posts.n += 1
+        posts.bodies.push(hashOf(body))
+        if (posts.n <= n) {
+          if (cut) throw new WireError('线中掐断（测试造的那一档）')
+          throw new HttpError(status, `stub 的 ${status}`, { status })
+        }
+        for await (const chunk of replay.post(t, body)) yield chunk
+      },
+    }
+    return { transport, posts }
+  }
+  const withRetries = { ...fixtureTarget(f), retries: { count: 2, on: [429], timeout: false } }
+
+  // 一 · 声明了重试（count 2 · on [429]）：连退两次 429 后成功 → 三次尝试 · 同 bodyHash · 走完。
+  const one = stub(429, 2)
+  const s = callModel(withRetries, requestFrom(f), one.transport)
+  const events = await drain(s.events)
+  const l = s.ledger()
+  assert.equal(one.posts.n, 3, `该发三次，发了 ${one.posts.n} 次`)
+  assert.deepEqual(l.attempts, [429, 429, 200], `三次尝试的状态码：${JSON.stringify(l.attempts)}`)
+  assert.ok(l.call !== null && l.failure === null, '第三次成功后该有一份走完的账')
+  assert.equal(new Set(one.posts.bodies).size, 1, '三次发出去的 body 不是同一份')
+  assert.equal(l.bodyHash, one.posts.bodies[0], '账上的 bodyHash 与发出去的那份对不上')
+  assert.ok(events.length > 0)
+
+  // 二 · 负对照·默认档：同一个桩，目标不声明 retries → 一次即终（P2f 之前的行为）。
+  const two = stub(429, 2)
+  const s2 = callModel(fixtureTarget(f), requestFrom(f), two.transport)
+  await assert.rejects(drain(s2.events), /429/)
+  const l2 = s2.ledger()
+  assert.equal(two.posts.n, 1, '没声明重试就该只发一次')
+  assert.deepEqual(l2.attempts, [429])
+  assert.equal(l2.call, null)
+
+  // 三 · 负对照·名单外：声明了重试但 status 不在 on 里（401 是"凭据不对"，再来一次还是 401）。
+  const three = stub(401, 1)
+  const s3 = callModel(withRetries, requestFrom(f), three.transport)
+  await assert.rejects(drain(s3.events), /401/)
+  assert.equal(three.posts.n, 1, '名单外的状态码不该重发')
+
+  // 四 · 线中掐断不重试（B3 断言 ④）：字节流已经开始解析，那不是"再来一次"接得住的档。
+  const four = stub(429, 1, true)
+  const s4 = callModel(withRetries, requestFrom(f), four.transport)
+  await assert.rejects(drain(s4.events), /线中掐断/)
+  assert.equal(four.posts.n, 1, '线中掐断不该触发重发')
+
+  console.log(`⑨ 读数：attempts [${l.attempts.join(' · ')}] · 三次同一 bodyHash ${l.bodyHash} · 默认档/名单外/线中掐断各一次即终`)
 })

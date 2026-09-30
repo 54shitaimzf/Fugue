@@ -4,20 +4,20 @@
 // **不加路由依赖**（架构"落地期间不引入"那一条）：宿主 Node 自带 `fetch` 与内建字节流，
 // 所以这一层就是一个 `fetch` 加一段 `for await (const chunk of res.body)`。
 //
-// **这一份只做四件事**：拼 URL（`host` + `WIRES[wire].path`）· 带上这条线要的头 ·
-// 把请求体发出去 · 把回来的**字节块**交给 `B2` 的适配器。它不认识任何一个协议的字段
+// **这一份只做四件事**：拼 URL（`host` + 提供方的覆盖或线协议标准路径，P2e）· 带上这条线
+// 要的头 · 把请求体发出去 · 把回来的**字节块**交给 `B2` 的适配器。它不认识任何一个协议的字段
 // （那是适配器的事），也不留凭据的副本（`authOf()` 取来的值从 `targetOf` 直接进头里）。
 //
 // **凭据只在 `targetOf` 里被取一次**，也就是说"取凭据"这件事只发生在**真要发一次请求**的
 // 时候——装配 · 重放 · 夹具档一条断言都不经过这里（PLAN § 5.8 的口径一）。
-import type { AuthRef, ModelCall, ModelEvent, ModelRequest, ThinkingLevel, Turn } from './contract.ts'
+import type { AuthRef, ModelCall, ModelEvent, ModelRequest, RetryPolicy, ThinkingLevel, Turn } from './contract.ts'
 import { ModelDeclError, WIRES, authOf, promptCacheFor } from './contract.ts'
 import { checkEvents } from './contract.ts'
 import { modelDeclOf, providerOf } from './catalog.ts'
 import type { Catalog } from './catalog.ts'
 import { hashOf } from '../assemble/assemble.ts'
 import type { WireAdapter } from './wire/stream.ts'
-import { concatBytes, parseStream } from './wire/stream.ts'
+import { WireError, concatBytes, parseStream } from './wire/stream.ts'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
@@ -88,6 +88,11 @@ export interface Target {
   readonly from: 'decl' | 'fixture'
   /** 鉴权的头。**值在构造它的时候取一次**——这一份自己不存凭据。 */
   readonly headers: Readonly<Record<string, string>>
+  /**
+   * 这一家那一路的**重试档**（P2f）：`targetAt` 从提供方带入，消费在 `callModel` 的传输循环。
+   * 不声明就是一次即终——默认档的行为一个字节都不多（夹具档与旧日志照旧）。
+   */
+  readonly retries?: RetryPolicy
 }
 
 /** 声明 → 目标。**`authOf()` 的唯一调用点。** 引用表从配置的 `credentials.<id>` 键来（调用方递）。 */
@@ -120,6 +125,7 @@ export function targetAt(declId: string, credential: string, cat: Catalog): Targ
     model: decl.model,
     from: 'decl',
     headers: wireHeader(decl.wire, credential),
+    ...(provider.retries === undefined ? {} : { retries: provider.retries }),
   }
 }
 
@@ -284,6 +290,12 @@ export interface CallLedger {
   /** 发出去的那一串字节的指纹与长度（"发出去的字节与装配出来的字节是同一份"这句的度量）。 */
   readonly bodyHash: string
   readonly bytes: number
+  /**
+   * **每一次尝试的状态码**（P2f），恒 ≥ 1 条：`200` = 那一次走完 · `HttpError.status` = 上游
+   * 回了那一个码 · `0` = 没拿到状态码的那一类（传输层错 · 超时）。重试发的是**同一份 body**
+   * （循环外拼一次），所以这一栏与 `bodyHash` 一起读，就是"同一串字节发了几次、各回了什么"。
+   */
+  readonly attempts: readonly number[]
   /** 流上看见了几条事件、开了几条调用、收了几条（**半截那一档的证据**）。 */
   readonly seen: number
   readonly opened: number
@@ -406,6 +418,8 @@ export function makeDumpCall(dir: string, transport: Transport = fetchTransport)
             zoneCHash: hashOf(request.prefix.zoneC),
             tools: request.tools?.length ?? 0,
             events: events.length,
+            // 每一次尝试的状态码（P2f）：与 `requestHash` 一起读，"同一串字节发了几次、各回了什么"。
+            attempts: [...l.attempts],
             opened: l.opened,
             closed: l.closed,
             stop: l.call?.stop ?? null,
@@ -494,12 +508,17 @@ export function wireRequestOf(request: {
 }
 
 /**
- * 发一次调用：字节 → 事件。**这一份不做重试**——上游中途掐断就是掐断：
- * "报错并记事件，不静默重试，不把半个响应当完整"（PLAN § 5.8 的 B3 断言 ④）。
+ * 发一次调用：字节 → 事件。**重试只发生在这一层的传输循环里**（P2f），且只重发**同一份
+ * body**——它在循环外拼一次，于是重试的 `bodyHash` 与首次天然逐字节相同（架构 § 10.2 的
+ * "必固不破"）。值得再来的是两类：`HttpError.status` 在提供方声明的名单里 ·（开了
+ * `timeout` 档时）根本没拿到状态码的那一类传输错误。**线中掐断（`WireError`）与人喊停都不
+ * 重试**：前者是"报错并记事件，不静默重试，不把半个响应当完整"那条纪律（PLAN § 5.8 的
+ * B3 断言 ④），后者是人的意图（`signal.aborted`）。不声明 `retries` 就是一次即终——
+ * 那一档的行为与 P2f 之前逐字节相同。
  *
  * 半截那一档的读法：`events` 那边抛（`WireError` 或 `HttpError`），这一边的 `ledger()` 仍然
- * 交得出一份账——`call: null` · `failure` 有话说 · `seen` 告诉你走到第几条断的。**调用方
- * 拿着这份账去记 `llm/call` 并记错误事件**，而不是替它重试一次。
+ * 交得出一份账——`call: null` · `failure` 有话说 · `seen` 告诉你走到第几条断的 · `attempts`
+ * 告诉你终态之前试了几次。**调用方拿着这份账去记 `llm/call`**。
  */
 export function callModel(
   t: Target,
@@ -517,30 +536,53 @@ export function callModel(
   /** 开了几条调用 · 收了几条（半截那一档的证据：开了没收就是断在半路）。 */
   let opened = 0
   let closed = 0
+  /** 每一次尝试的状态码（`CallLedger.attempts` 那一栏的原身）。 */
+  const attempts: number[] = []
+
+  /** 这个错值不值得再来一次：名单内的状态码，或（开了 timeout 档）没拿到状态码的传输错误。 */
+  const retryable = (err: unknown): boolean => {
+    if (t.retries === undefined || signal?.aborted === true) return false
+    if (err instanceof HttpError) return t.retries.on.includes(err.status)
+    if (err instanceof WireError) return false
+    return t.retries.timeout
+  }
 
   async function* run(): AsyncGenerator<ModelEvent> {
-    try {
-      for await (const e of parseStream(t.wire, teeBytes(transport, back).post(t, body, signal))) {
-        seen.push(e)
-        if (e.t === 'tool-start') opened += 1
-        if (e.t === 'tool-call') closed += 1
-        yield e
+    for (let nth = 0; ; nth++) {
+      try {
+        for await (const e of parseStream(t.wire, teeBytes(transport, back).post(t, body, signal))) {
+          seen.push(e)
+          if (e.t === 'tool-start') opened += 1
+          if (e.t === 'tool-call') closed += 1
+          yield e
+        }
+        // 走完了才谈得上"一次完整的调用"：`checkEvents` 在这里核收尾那一条（架构 § 14.2 第 2 步）。
+        call = checkEvents(seen)
+        attempts.push(200)
+        return
+      } catch (err) {
+        attempts.push(err instanceof HttpError ? err.status : 0)
+        if (retryable(err) && nth < (t.retries as RetryPolicy).count) {
+          // 清流上残字：半截的字节与半截的事件不是这一次的账，下一次从零开始。
+          back.length = 0
+          seen.length = 0
+          opened = 0
+          closed = 0
+          continue
+        }
+        failure = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+        // 事实**转挂到一个普通错误上**（`wireFactsOf` 按形状读，转挂之后照样读得到）：抛出去的那
+        // 一个对象 `step` 接得住，于是"为什么失败"不只是 stderr 上的一句话。
+        const said = wireFactsOf(err)
+        if (said !== null) {
+          const wrapped = new Error(failure)
+          ;(wrapped as { facts?: Readonly<Record<string, string | number>> }).facts = said
+          throw wrapped
+        }
+        throw err
+      } finally {
+        done = true
       }
-      // 走完了才谈得上"一次完整的调用"：`checkEvents` 在这里核收尾那一条（架构 § 14.2 第 2 步）。
-      call = checkEvents(seen)
-    } catch (err) {
-      failure = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
-      // 事实**转挂到一个普通错误上**（`wireFactsOf` 按形状读，转挂之后照样读得到）：抛出去的那
-      // 一个对象 `step` 接得住，于是"为什么失败"不只是 stderr 上的一句话。
-      const said = wireFactsOf(err)
-      if (said !== null) {
-        const wrapped = new Error(failure)
-        ;(wrapped as { facts?: Readonly<Record<string, string | number>> }).facts = said
-        throw wrapped
-      }
-      throw err
-    } finally {
-      done = true
     }
   }
 
@@ -552,6 +594,7 @@ export function callModel(
         call,
         bodyHash: hashOf(body),
         bytes: body.length,
+        attempts: [...attempts],
         seen: seen.length,
         opened,
         closed,
