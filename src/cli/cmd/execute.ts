@@ -193,7 +193,10 @@ export async function runCmd(
       // **完整 argv 与 cwd**：这一栏是绕行率的数据源（`METRIC_HOW` 里那张模式表按 `argv` 判），
       // 而工具面那一侧（`B5`）已经这么填了。两处填的记录的东西一致（都是"真要 spawn 的那一条
       // 命令行"），读数才有同一把尺——差别只在这边是 `binding.argv`，那边是 `["/bin/sh","-c",…]`。
-      argv: policy.degraded ? degradedArgv(binding.argv, { roots, policy }) : binding.argv,
+      // **degraded 档记实际 spawn 的那条**（原先这里读的是 `Policy` 上并不存在的 `degraded`
+      // 栏——strip-only 不查型，恒 undefined，于是恒记裸 `binding.argv`；landlock 一个人撑的
+      // 那一档，账上的 argv 与实际执行的不是同一条。P1c 修正，判据在 policy.test 的 P1c）。
+      argv: sandboxed ? binding.argv : confined.argv,
       cwd: roots.merged,
     })
     // 这一条事件记的是**上面那一份策略值**（要求），不是包出来的那条命令行自己算的：两处读同一份，

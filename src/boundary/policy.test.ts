@@ -150,6 +150,23 @@ function fiveOfEvent(e: Record<string, unknown>): Record<string, unknown> {
 
 const roRoots = (p: Record<string, unknown>): string[] => (p.reach as { roRoots: string[] }).roRoots
 
+/** 一面"除了 bwrap 什么都有"的 PATH：把两个 bin 目录整个镜像过来，去掉那一个（Y2 ③ · P1c 共用）。 */
+function noBwrapPath(): { readonly PATH: string } {
+  const bin = mkdtempSync(join(tmpdir(), 'fugue-y2-bin-'))
+  BINS.push(bin)
+  for (const dir of ['/usr/bin', '/usr/local/bin']) {
+    for (const name of readdirSync(dir)) {
+      if (name === 'bwrap') continue
+      try {
+        symlinkSync(join(dir, name), join(bin, name))
+      } catch {
+        // 重名（/usr/local/bin 覆盖 /usr/bin）不是错，先来的那个算
+      }
+    }
+  }
+  return { PATH: bin }
+}
+
 test('Y2 ① · 两处读同一份：fugue policy 与 run/confined 的五栏逐字相等', () => {
   const root = workspace()
   const run = fugue(root, '--json', 'run', 'build')
@@ -202,20 +219,7 @@ test('Y2 ② · 从同一处来：配置里那一栏一改，两处一起变', (
 
 test('Y2 ③ · 负对照：bwrap 不在 PATH 上，两处一起降（降一档，不是降到底：第二层接过来）', () => {
   const root = workspace()
-  // 一面"除了 bwrap 什么都有"的 PATH：把两个 bin 目录整个镜像过来，去掉那一个。
-  const bin = mkdtempSync(join(tmpdir(), 'fugue-y2-bin-'))
-  BINS.push(bin)
-  for (const dir of ['/usr/bin', '/usr/local/bin']) {
-    for (const name of readdirSync(dir)) {
-      if (name === 'bwrap') continue
-      try {
-        symlinkSync(join(dir, name), join(bin, name))
-      } catch {
-        // 重名（/usr/local/bin 覆盖 /usr/bin）不是错，先来的那个算
-      }
-    }
-  }
-  const noBwrap = { PATH: bin }
+  const noBwrap = noBwrapPath()
   const probe = spawnSync('bwrap', ['--version'], { env: { ...process.env, ...noBwrap }, encoding: 'utf8' })
   assert.equal((probe.error as NodeJS.ErrnoException | undefined)?.code, 'ENOENT', '这条路上真没有 bwrap')
 
@@ -232,4 +236,48 @@ test('Y2 ③ · 负对照：bwrap 不在 PATH 上，两处一起降（降一档�
   assert.equal(JSON.parse(run.out.trim()).mode as string, 'read-only', '那一趟也报同一档')
   const e = events(root, 'run/confined').pop() as Record<string, unknown>
   assert.deepEqual(fiveOfPolicy(p), fiveOfEvent(e), '两处一起降，不是只有一处')
+})
+
+test('P1c · 声明 full 而实测层不齐：起跑前拒并指两条出路；声明 partial 照跑照实报', () => {
+  const root = workspace()
+  const noBwrap = noBwrapPath()
+
+  // 声明期望档 full，实测只有第二层（bwrap 不在）——fugue policy 与 fugue run 都在起跑前拒，
+  // 文案指两条出路（把层补齐 · 把声明改 partial）。**错误那一行走 stderr**（§ 9.8：stdout 纪律）。
+  assert.equal(fugue(root, 'config', 'set', 'boundary.enforcement', '"full"').code, 0)
+  const denied = fugueEnv(noBwrap, root, '--json', 'policy')
+  assert.equal(denied.code, 1, '起跑前拒（fail=1）——不是静默降档照跑')
+  assert.ok(denied.err.includes('把层补齐'), `指路要给"补层"那条出路：${denied.err}`)
+  assert.ok(denied.err.includes('partial'), `指路要给"改声明"那条出路：${denied.err}`)
+  const refused = fugueEnv(noBwrap, root, '--json', 'run', 'build')
+  assert.equal(refused.code, 1, 'fugue run 同一处拒（resolvePolicy 一处解析两处读）')
+
+  // 负对照：声明 partial（= 把"我知道在降档"写下来）→ 照跑，如实报实测那一档（今天的行为）。
+  assert.equal(fugue(root, 'config', 'set', 'boundary.enforcement', '"partial"').code, 0)
+  const ok = fugueEnv(noBwrap, root, '--json', 'policy')
+  assert.equal(ok.code, 0, ok.err)
+  const p = JSON.parse(ok.out.trim()) as Record<string, unknown>
+  assert.equal(p.enforcement, 'partial', '如实报，不夸大')
+
+  // degraded 那一档跑一趟真动作：run/start 记的 argv 该是实际 spawn 的那条（第二层包装器
+  // 开头）——原先这里恒记裸 binding.argv（execute.ts 读了个不存在的 `policy.degraded` 栏）。
+  const run = fugueEnv(noBwrap, root, '--json', 'run', 'build')
+  assert.equal(run.code, 0, run.err)
+  const start = events(root, 'run/start').pop() as Record<string, unknown>
+  const argv0 = String((start.argv as readonly string[])[0])
+  assert.notEqual(argv0, 'node', `degraded 档的 argv[0] 不该还是裸的动作名：${argv0}`)
+  assert.ok(
+    argv0.includes('landlock'),
+    `degraded 档的 argv[0] 该是第二层包装器：${JSON.stringify(start.argv)}`,
+  )
+
+  // 坏值在读的时候拒（载入核对，set 本身不校验值域）。stderr 上是一行 JSON（引号带转义），
+  // 断言用不带引号的子串：原值回显 + 取值域里那两个字。
+  assert.equal(fugue(root, 'config', 'set', 'boundary.enforcement', '"FULL"').code, 0)
+  const bad = fugue(root, '--json', 'policy')
+  assert.equal(bad.code, 1, '坏值起跑前拒')
+  assert.ok(
+    bad.err.includes('FULL') && bad.err.includes('partial'),
+    `坏值的拒绝要回显原值并说出取值域：${bad.err}`,
+  )
 })

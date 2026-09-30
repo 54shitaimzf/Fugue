@@ -21,6 +21,7 @@
 // `--mode workspace-write` 是**有人点名**要树可写（那一档它把整棵树开出来）。两层都不在时才
 // 落回 § 15.7 的 E4：树可写是那一档的事实。
 import { join } from 'node:path'
+import { getConfig } from '../config.ts'
 import type { ConfigDoc } from '../config.ts'
 import { declaredDirs, readEnvSpec, type ActionBinding, type EnvSpec } from './binding.ts'
 import { probeBwrap } from './confine.ts'
@@ -28,7 +29,7 @@ import { cacheLayoutOf } from '../roots/coords.ts'
 import { probeLandlock } from './landlock.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { AbsPath, AgentId, Enforcement, NetMode, PolicyLayer, PolicyMode } from '../terms.ts'
-import { readReach, SANDBOX_COORDS, type Coords, type ReachSpec } from './reach.ts'
+import { PolicyError, readReach, SANDBOX_COORDS, type Coords, type ReachSpec } from './reach.ts'
 
 export { PolicyError } from './reach.ts'
 
@@ -89,6 +90,23 @@ export interface PolicyInput {
   readonly probed?: LayersProbe
 }
 
+/** 工作区配置里期望档那一个键（P1c，计划 § 5.20）。 */
+export const ENFORCEMENT_KEY = 'boundary.enforcement'
+
+/**
+ * **期望档**（`boundary.enforcement`）：人声明"这一趟要 `full`"——实测层不齐就起跑前拒，
+ * 指两条出路（补层 · 把声明改 `partial`）。不声明 = 今天的行为（照跑，如实报实测那一档）；
+ * 声明 `partial` 也收：那是把"我知道在降档"写下来，读数与不声明相同。
+ */
+function wantedEnforcement(doc: ConfigDoc): Enforcement | undefined {
+  const v = getConfig(doc, ENFORCEMENT_KEY)
+  if (v === undefined) return undefined
+  if (v !== 'full' && v !== 'partial') {
+    throw new PolicyError(`${ENFORCEMENT_KEY} 取 "full" 或 "partial"：${JSON.stringify(v)}`)
+  }
+  return v
+}
+
 /**
  * 一处解析：`fugue policy` 与 `fugue run` 读的都是它，两处不各自算一遍。
  *
@@ -129,6 +147,19 @@ export function resolvePolicy(i: PolicyInput): Policy {
   // 包装器按它开可写口子，多一条少一条都是静默的错位。`dist/app` 那一类产出声明是"落在声明目录
   // 里的路径"，跑之前它根本不存在：给它单开一条规则只会落一句"这一条不在，没给它开口子"。
   const declared = i.binding === undefined ? [] : declaredDirs(i.binding)
+  // **两层都在场才是 full**（§ 15.7 的 E5）。少一层就少一维：只有挂载层时"写"那一维靠的是
+  // 挂载（第二层缺席），只有第二层时"看得见什么"那一维没有围栏。
+  const enforcement: Enforcement = fenced && land ? 'full' : 'partial'
+  // **期望档对照**（P1c，计划 § 5.20）：声明了 `full` 而实测层不齐，是策略被架空——不是给人
+  // 选的档，起跑前拒，指两条出路。不声明 = 照跑照实报（今天的行为）。
+  const enforcementWanted = wantedEnforcement(i.doc)
+  if (enforcementWanted === 'full' && enforcement !== 'full') {
+    throw new PolicyError(
+      `声明了 ${ENFORCEMENT_KEY}: "full"，而这一趟实测在场的层是` +
+        `${layers.length === 0 ? '一层都不在' : layers.join(' + ')}（enforcement 实测 ${enforcement}）。\n` +
+        `两条出路：把层补齐（${probed.note}）；或把声明改 partial，如实跑降档（fugue config set ${ENFORCEMENT_KEY} '"partial"'）。`,
+    )
+  }
   return {
     mode,
     // 可写落点按**子进程那一侧的坐标**写：沙箱档是 `/cache` `/tmp` `/work/<声明目录>`，
@@ -136,9 +167,7 @@ export function resolvePolicy(i: PolicyInput): Policy {
     writableRoots: [
       ...new Set<AbsPath>([coords.home, coords.tmp, ...declared.map((rel) => join(coords.tree, rel))]),
     ],
-    // **两层都在场才是 full**（§ 15.7 的 E5）。少一层就少一维：只有挂载层时"写"那一维靠的是
-    // 挂载（第二层缺席），只有第二层时"看得见什么"那一维没有围栏。
-    enforcement: fenced && land ? 'full' : 'partial',
+    enforcement,
     reach: readReach(i.doc),
     env: readEnvSpec(i.doc),
     coords,
