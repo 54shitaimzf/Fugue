@@ -54,7 +54,6 @@ export async function main(argv: readonly string[]): Promise<number> {
 async function run(argv: readonly string[]): Promise<number> {
   const { flags, positional, rest } = parseArgv(argv)
   const json = flags.has('json')
-  const rootFlag = flags.get('root')
   const cmd = positional[0]
 
   // `--help` 是一条成功的命令；什么都不给是用法错——两者的退出码不一样。
@@ -62,12 +61,17 @@ async function run(argv: readonly string[]): Promise<number> {
     process.stdout.write(USAGE)
     return 0
   }
+  // 没给开关才用缺省值；给了却缺值不是同一回事。否则 --root 会退回 cwd、--agent 会
+  // 退回 round，连 write 都会悄悄写进另一份视图。开上下文与读取 stdin 之前就拒绝（§ 9.8）。
+  const rootFlag = flags.get('root')
+  const agentFlag = flags.get('agent')
+  if (rootFlag === true || rootFlag === '') return usageFail('--root 需要一个目录：--root <dir>', json)
+  if (agentFlag === true || agentFlag === '') return usageFail('--agent 需要一个标识：--agent <id>', json)
   // 安装版本与工作区无关：在落点探测、开日志之前读，只认安装目录里的 package.json。
   if (flags.has('version')) {
     const bad = unknownFlagsOf('--version', flags, ['version', 'root', 'json', 'help'])
     if (bad !== null) return usageFail(bad, json)
     if (flags.get('version') !== true) return usageFail('--version 不取值', json)
-    if (rootFlag === true || rootFlag === '') return usageFail('--root 需要一个目录值', json)
     if (positional.length > 0 || rest.length > 0) {
       return usageFail('--version 单独使用，不接命令或其他参数', json)
     }
