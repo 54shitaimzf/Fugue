@@ -38,6 +38,7 @@ import { manifestMap, manifestPayload, matState } from './manifest.ts'
 import type { MatState } from './manifest.ts'
 import { MountError, isMounted, makeWhiteout, mountOverlayReady, unmountOverlay } from './mount.ts'
 import type { MountMode, OverlaySpec } from './mount.ts'
+import { ensureToolchain } from './toolchain.ts'
 
 /** 这一档现在落不了地。**不是异常，是一次有由头的拒绝**——由头原样带给调用点（与 `ForkRefused` 同一个形状）。 */
 export class EnsureRefused extends Error {
@@ -154,6 +155,8 @@ export async function ensure(deps: EnsureDeps, agent: AgentId, upTo: ViewRev): P
     )
   }
 
+  // 工具链读数（P3a）：趁物化补一遍缓存——投影只读缓存，前缀那一步不跑子进程。
+  await ensureToolchain(deps.root)
   let facts: PlatformFacts | null = null
   let spec: OverlaySpec | null = null
   if (overlay) {

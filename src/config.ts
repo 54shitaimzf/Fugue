@@ -12,7 +12,7 @@
 //
 // **顶层键域是闭的**（`TOP_LEVEL_KEYS`）：配置是边界的来源，一个拼错的顶层键会被静默读成
 // "没配"，那比报错危险——所以未知顶层键**拒绝并指路**，两级各自核。新的顶层键先进这张表
-// 再进代码（P3a 的 `env` 届时进）。
+// 再进代码（P3a 的 `toolchain` 就是这么进的）。
 //
 // **格式是整份 JSON，不是逐行键值。** 配置的内容天然是两三层（动作绑定带 `outputs`、
 // 文档定义是一串 `{path, prompt}`），写成 JSON 就不必再造一套嵌套语法，也不必写第二份
@@ -41,7 +41,8 @@ export class ConfigError extends Error {}
 /** 顶层键域（§ 15.3.a）：这份配置认得的所有顶层键。新的顶层键先进这张表，再进代码。
  * `workspace` 是 Z6 装配的 A 区系统状态三栏之一（sources-state 的 EXPOSED）——计划 § 5.20
  * 冻结清单漏了它，全量一跑被这张表拒出来（这正是这张表要抓的那类事），据实补进。
- * `credentials` 是凭据的引用表（P2c）：值是引用不是凭据，取值只在真出网那一步。 */
+ * `credentials` 是凭据的引用表（P2c）：值是引用不是凭据，取值只在真出网那一步。
+ * `toolchain` 是工具链的声明与探测读数（P3a）：声明两级可配，读数只写工作区级（materialize/toolchain.ts）。 */
 export const TOP_LEVEL_KEYS: readonly string[] = [
   'actions',
   'ports',
@@ -52,6 +53,7 @@ export const TOP_LEVEL_KEYS: readonly string[] = [
   'docs',
   'workspace',
   'credentials',
+  'toolchain',
 ]
 
 export function configFileOf(root: string): string {

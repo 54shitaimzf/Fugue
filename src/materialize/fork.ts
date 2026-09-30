@@ -42,6 +42,7 @@ import { LayError, layTree } from './lay.ts'
 import type { LayResult } from './lay.ts'
 import { clearMaterialization, makeWhiteout, mountOverlayReady } from './mount.ts'
 import type { MountMode, OverlaySpec } from './mount.ts'
+import { ensureToolchain } from './toolchain.ts'
 
 /** 这一档现在不成立。**不是异常，是一次有由头的拒绝**——由头原样带给调用点。 */
 export class ForkRefused extends Error {
@@ -104,6 +105,8 @@ export async function fork(
   let facts = await ensureFacts(deps.root, roots.realRoot, scratch)
   let chosen = chooseStrategy(facts, opt)
   if (!chosen.ok) throw new ForkRefused(chosen.why)
+  // 工具链读数（P3a）：fork 是另一个物化入口，与 ensure 同一处补缓存。
+  await ensureToolchain(deps.root)
 
   let p = wipe(roots, agent)
   let laid: LayResult | null

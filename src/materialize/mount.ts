@@ -50,19 +50,26 @@ export class MountError extends Error {
   }
 }
 
-interface Ran {
+export interface Ran {
   status: number
   stderr: string
+  /** 工具链探针（P3a，toolchain.ts）带进来的需求：读数就是 stdout 的首行。 */
+  stdout: string
 }
 
-/** 起一个进程，原样收它的退出码与 stderr。**不走 shell**：路径里有什么字符都不该被解释。 */
+/** 起一个进程，原样收它的退出码与 stderr（还有 stdout——探针要的那一份）。
+ * **不走 shell**：路径里有什么字符都不该被解释。这一层的子进程跑手就这一个：
+ * 挂载 · sudo 探测 · 工具链探针（P3a，toolchain.ts）共用它。 */
 function run(argv: readonly string[]): Ran {
   const r = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8' })
   if (r.error !== undefined && r.error !== null) {
-    return { status: 127, stderr: String((r.error as Error).message) }
+    return { status: 127, stderr: String((r.error as Error).message), stdout: '' }
   }
-  return { status: r.status ?? 127, stderr: (r.stderr ?? '').trim() }
+  return { status: r.status ?? 127, stderr: (r.stderr ?? '').trim(), stdout: r.stdout ?? '' }
 }
+
+/** 出口名带上语境：这一层里叫 `run` 太裸，外面要的是「按 argv 起、收三样」。 */
+export { run as runArgv }
 
 /** `sudo -n` 走得通吗。**`-n` 是这一条的全部**：要密码就当场失败，绝不吊在那里等人敲。 */
 export function sudoAvailable(): boolean {
