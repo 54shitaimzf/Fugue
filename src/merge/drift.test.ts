@@ -15,7 +15,7 @@
 //   ⑤ HEAD 动了 · 判不了 → 拒。拒的时候盘上字节一个都没动（`driftOf` 只读）。
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -282,6 +282,77 @@ test('⑥ 逐条路径比 · 工作区自己的本子不算 · 只读', async ()
     const before = JSON.stringify(scanTree(real, { skip: WORKSPACE_STATE }))
     await driftOf({ truth: t, realRoot: real, base, target })
     assert.equal(JSON.stringify(scanTree(real, { skip: WORKSPACE_STATE })), before, 'driftOf 动了工作树')
+  } finally {
+    await t.close()
+  }
+})
+
+test('⑦ 盘上的权限位随 umask 走（0664 · 0775）不是手改：按 git 的两档比，执行位真翻了才拒', async () => {
+  // **显式 chmod**，不靠跑测试那台机器的 umask：`umask 002`（Ubuntu 普通用户的缺省）下写出来的
+  // 文件就是 0664 / 0775，而 git 只记 `100644` / `100755`——同一份东西，不是"盘上既不是底也不是
+  // 目标树"。原先这里拿盘上的整模式逐数比，README 那条回放在这种机器上被拒在物化前。
+  const { real, t, base } = await scene({ 'AGENTS.md': '# 方针\n', 'src/a.ts': '底那一份\n' })
+  try {
+    chmodSync(join(real, 'AGENTS.md'), 0o664)
+    chmodSync(join(real, 'src/a.ts'), 0o664)
+    const target = await commitOf(t, { 'AGENTS.md': '# 方针\n', 'src/a.ts': '合并的结果\n', 'notes.md': '数完了\n' }, '目标树')
+    const ok = await mergeDrift({ truth: t, realRoot: real, base, target })
+    assert.equal(ok.ok, true, `0664 与 100644 是同一档：${ok.say}`)
+    assert.deepEqual(ok.drift.colliding, [])
+    assert.deepEqual(ok.drift.handTouched, [], '权限位的组写不是"用户碰过"')
+    assert.deepEqual(ok.drift.divergent, ['src/a.ts'], '与目标树不同的只有内容真的要变的那一条')
+
+    // 可执行的那一档同理：树上 `100755`，盘上 0775。
+    const execTree = await t.putTree([
+      { name: 'run.sh', mode: 0o100755, id: await t.putBlob(new TextEncoder().encode('#!/bin/sh\n')) },
+    ])
+    const execBase = await t.commit(execTree, [], '可执行的底')
+    const execReal = join(real, '..', 'exec-real')
+    mkdirSync(execReal, { recursive: true })
+    writeFileSync(join(execReal, 'run.sh'), '#!/bin/sh\n')
+    chmodSync(join(execReal, 'run.sh'), 0o775)
+    await t.advance('refs/heads/exec', execBase, null)
+    const same = await mergeDrift({ truth: t, realRoot: execReal, base: execBase, target: execBase, ref: 'refs/heads/exec' })
+    assert.deepEqual(same.drift.colliding, [], `0775 与 100755 是同一档：${same.say}`)
+    assert.deepEqual(same.drift.divergent, [])
+
+    // **负对照：执行位真的翻了**（git 也把它当一次改动）→ 照旧是手改，照旧拒。
+    chmodSync(join(real, 'src/a.ts'), 0o775)
+    const flipped = await mergeDrift({ truth: t, realRoot: real, base, target })
+    assert.equal(flipped.ok, false, '执行位翻了是真改动，不许被归一吞掉')
+    assert.deepEqual(flipped.drift.colliding, ['src/a.ts'])
+  } finally {
+    await t.close()
+  }
+})
+
+test('⑧ 盘上的软链指向没变就是底那一条（lstat 报 0o120777，树上记 0o120000）', async () => {
+  // 与 umask 无关、在哪台机器上都成立的那一半：软链的整模式从来不等于树上那一档，原先任何一条
+  // 没被碰过的软链都会被判成"盘上既不是底也不是目标树"。
+  const { real, t } = await scene({})
+  try {
+    const link = await t.putBlob(new TextEncoder().encode('README.md'))
+    const readme = await t.putBlob(new TextEncoder().encode('# 项目\n'))
+    const base = await t.commit(
+      await t.putTree([
+        { name: 'README.md', mode: 0o100644, id: readme },
+        { name: 'docs.md', mode: 0o120000, id: link },
+      ]),
+      [],
+      '带软链的底',
+    )
+    await t.advance('refs/heads/links', base, null)
+    writeFileSync(join(real, 'README.md'), '# 项目\n')
+    symlinkSync('README.md', join(real, 'docs.md'))
+    const ok = await mergeDrift({ truth: t, realRoot: real, base, target: base, ref: 'refs/heads/links' })
+    assert.deepEqual(ok.drift.colliding, [], `软链没动过：${ok.say}`)
+    assert.deepEqual(ok.drift.divergent, [])
+
+    // 负对照：软链改指别处 → 照旧是手改。
+    rmSync(join(real, 'docs.md'))
+    symlinkSync('elsewhere.md', join(real, 'docs.md'))
+    const moved = await mergeDrift({ truth: t, realRoot: real, base, target: base, ref: 'refs/heads/links' })
+    assert.deepEqual(moved.drift.colliding, ['docs.md'], '指向变了是真改动')
   } finally {
     await t.close()
   }

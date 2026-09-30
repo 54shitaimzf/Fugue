@@ -33,3 +33,24 @@ export const MODE_EXEC = 0o100755
 export function normMode(mode: number): number {
   return (mode & 0o111) === 0 ? MODE_FILE : MODE_EXEC
 }
+
+/** 软链在树上的那一档（盘上 `lstat` 报的是 `0o120777`，树上只记 `0o120000`）。 */
+export const MODE_SYMLINK = 0o120000
+
+/**
+ * **盘上的 `st_mode` → 树上会记的那个数。** 盘与树逐数比模式的地方一律先过它（漂移检 ·
+ * `advance` 的"一致就跳过" · 落地与 `verify-mat` 的 `diskEntry`）。
+ *
+ * 盘上的整模式带着 umask：`umask 002` 的机器上一份普通文件是 `0o100664`，而 git 只记
+ * `100644` / `100755`——拿整模式去比，一份没被碰过的文件就成了"既不是底也不是目标树"。
+ * 软链同理：`lstat` 报 `0o120777`。别的（fifo · 设备）树里没有对应的一档，原样返回。
+ *
+ * `scanTree` 与 diff-stat **照旧记整模式**（`diffstat.ts` 文件头第四条）：那把尺子量的是盘自己
+ * 变没变，这一处量的是盘与树是不是同一份东西。
+ */
+export function gitModeOf(stMode: number): number {
+  const type = stMode & 0o170000
+  if (type === 0o120000) return MODE_SYMLINK
+  if (type === 0o100000) return normMode(stMode)
+  return stMode
+}

@@ -9,13 +9,14 @@
 //      下没有
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import type { Assertion } from '../contract/types.ts'
 import type { BlobId, CommitId, RelPath } from '../terms.ts'
 import type { TreeEntry } from '../entries.ts'
+import { gitModeOf } from '../delta.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import { scanTree } from '../materialize/diffstat.ts'
@@ -165,9 +166,11 @@ test('② 通过那一档：保留前缀之外逐字节一致，且内容相同�
     // ② 第四条验证：真实工作树与该 commit 的 tree 在保留前缀之外逐字节一致。
     const got = scanTree(real, { skip: WORKSPACE_STATE })
     const want = await materializeForCompare(t, withSession)
+    // 模式按树上那一档比（`gitModeOf`）：与"该 commit 的 tree"比，比的就是 git 记得住的那一档
+    // ——两侧的盘上整模式各随 umask（参照树是这里 `writeFileSync` 铺的，`same.txt` 推进不碰）。
     assert.deepEqual(
-      got.leaves.map((l) => [l.path, l.kind, l.mode, l.size, l.hash]),
-      want.map((l) => [l.path, l.kind, l.mode, l.size, l.hash]),
+      got.leaves.map((l) => [l.path, l.kind, gitModeOf(l.mode), l.size, l.hash]),
+      want.map((l) => [l.path, l.kind, gitModeOf(l.mode), l.size, l.hash]),
       '推进之后的真实工作树与那棵树对不上（保留前缀之外）',
     )
     // 内容相同的没被 touch：mtime 与推进之前逐字节相同。
@@ -250,6 +253,32 @@ test('跑不起来那一档：命令不在 → unrunnable，不进"没通过"的
     assert.equal(only.ok, true)
     const none = verify(mat, [])
     assert.equal(none.ok, false, '一条断言都没有 = 没量到，不算通过')
+  } finally {
+    await t.close()
+  }
+})
+
+test('④ 盘上 0664 · 内容一样：advance 不重写、不 touch（组写位不是改动，执行位翻了才是）', async () => {
+  // **显式 chmod**：`umask 002` 的机器上用户的文件就是 0664，而树上是 `100644`。原先 `advance`
+  // 拿盘上整模式逐数比，于是内容一样的文件也被重写一遍、mtime 跟着变——正是 ② 说的"假失效"。
+  const { real, store } = scratch()
+  const t = openTruth(store)
+  try {
+    const commit = await commitOf(t, { 'same.txt': '一样的\n', 'new.txt': '新来的\n' }, [], '目标')
+    writeFileSync(join(real, 'same.txt'), '一样的\n')
+    chmodSync(join(real, 'same.txt'), 0o664)
+    const before = JSON.stringify(scanTree(real).leaves.find((l) => l.path === 'same.txt'))
+
+    const out = await advance({ truth: t, realRoot: real }, commit)
+    assert.deepEqual([...out.written], ['new.txt'], '只该写目标里新来的那一条')
+    const after = JSON.stringify(scanTree(real).leaves.find((l) => l.path === 'same.txt'))
+    assert.equal(after, before, '0664 · 内容一样的文件被重写了（mtime 或模式变了）')
+
+    // **负对照：执行位真的翻了**——git 也把它当一次改动，推进要把它落回树上那一档。
+    chmodSync(join(real, 'same.txt'), 0o755)
+    const again = await advance({ truth: t, realRoot: real }, commit)
+    assert.deepEqual([...again.written], ['same.txt'], '执行位翻了是真改动，不许被归一吞掉')
+    assert.equal(lstatSync(join(real, 'same.txt')).mode & 0o111, 0, '落回之后没有执行位')
   } finally {
     await t.close()
   }

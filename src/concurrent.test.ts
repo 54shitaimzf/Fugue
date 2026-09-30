@@ -38,6 +38,7 @@ import { dirname, join } from 'node:path'
 import { after, test } from 'node:test'
 import { WORKSPACE_STATE, scanTree } from './materialize/diffstat.ts'
 import { removeTree } from './materialize/mount.ts'
+import { gitModeOf } from './delta.ts'
 
 const CLI = join(import.meta.dirname, 'cli', 'fugue.ts')
 
@@ -192,10 +193,14 @@ function mountPoints(root: string): string[] {
     .sort()
 }
 
-/** 一棵树的全树摘要：**路径 · 模式 · 内容哈希**，不比时间戳。 */
+/**
+ * 一棵树的全树摘要：**路径 · 模式 · 内容哈希**，不比时间戳。模式按树上那一档（`gitModeOf`）：
+ * 参照树是 `git clone` 按 umask 铺的，物化树是落地按树上模式 chmod 的——整模式比的是两台
+ * 机器的 umask，不是两棵树。
+ */
 function digestOf(root: string): string {
   const rows = scanTree(root, { skip: WORKSPACE_STATE }).leaves
-    .map((l) => `${l.path}\t${l.mode.toString(8)}\t${l.hash}`)
+    .map((l) => `${l.path}\t${gitModeOf(l.mode).toString(8)}\t${l.hash}`)
     .sort()
   return createHash('sha256').update(rows.join('\n')).digest('hex')
 }

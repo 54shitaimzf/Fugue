@@ -42,6 +42,7 @@
 import { createHash } from 'node:crypto'
 import type { BlobId, CommitId, RefName, RelPath } from '../terms.ts'
 import type { Truth } from '../truth/contract.ts'
+import { gitModeOf } from '../delta.ts'
 import { WORKSPACE_STATE, hashBytes, scanTree } from '../materialize/diffstat.ts'
 
 /** 这一层自己的失败：读不出 HEAD · 读不出工作树 · 读不出底或目标树。 */
@@ -183,8 +184,10 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
     for (const [p, l] of onDisk) {
       const t = target.leaves.get(p)
       const b = base.leaves.get(p)
+      // 盘上的整模式先归到树上那一档（`gitModeOf`）：umask 给的组写位 · 软链的 0777 都不是
+      // "用户碰过"。执行位翻了照旧是不同——git 也把它当一次改动。
       const same = (x: { readonly mode: number; readonly hash: string } | undefined): boolean =>
-        x !== undefined && x.hash === l.hash && x.mode === Number(l.mode)
+        x !== undefined && x.hash === l.hash && x.mode === gitModeOf(Number(l.mode))
       if (t === undefined) {
         // 盘上有、目标树里没有 → 推进会把它从盘上拿掉。**这一支先按 ① 判**（收窄的一处）：
         // 盘上 == 底（用户没碰过，这条推进就是删掉它）→ 放行；盘上那一份不是底（用户自己新加的
