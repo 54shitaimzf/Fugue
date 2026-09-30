@@ -83,7 +83,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'bash',
-    description: 'Run a shell command and get its exit code and output. **The work tree is read-only**: this command cannot change any file — to produce files use write, or run an action (run_action). Suited to read-only work such as running tests, looking at repo state, or doing arithmetic.',
+    description: 'Run a shell command and get its exit code and output. **Only declared paths survive**: with a read-only work tree this command cannot change any file; with a writable one (round work) writes land in the tree but only the declared write paths are written back — anything outside them is reported and discarded. To produce files use write, or run an action (run_action). Suited to running tests, looking at repo state, or doing arithmetic.',
     parameters: {
       type: 'object',
       properties: {

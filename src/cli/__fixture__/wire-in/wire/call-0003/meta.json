@@ -9,15 +9,15 @@
     "wire": "anthropic-messages"
   },
   "model": "deepseek-flash",
-  "requestBytes": 10278,
-  "requestHash": "b54ee0628caa69ac",
-  "responseBytes": 5548,
-  "responseHash": "d32fcfcdcbd4994f",
-  "zoneAHash": "68d92af7abecc1de",
+  "requestBytes": 10250,
+  "requestHash": "655f3346dd4e82c4",
+  "responseBytes": 3633,
+  "responseHash": "393cb9be0a5bb2fb",
+  "zoneAHash": "57bf4e895c18810d",
   "zoneBHash": "6b7e0454a6d59c10",
   "zoneCHash": "238f2cedc4742eec",
   "tools": 12,
-  "events": 40,
+  "events": 24,
   "attempts": [
     200
   ],
