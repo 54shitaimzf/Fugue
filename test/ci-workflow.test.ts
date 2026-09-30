@@ -253,7 +253,11 @@ function gateEvents(ifText: string | undefined): string[] {
 
 const TRIGGERS = ['pull_request', 'push', 'schedule', 'workflow_dispatch']
 const JOBS = ['audit', 'fast', 'full']
-const ALLOWED_TOOLS = ['tools/test-entry.js']
+const ALLOWED_TOOLS = ['tools/test-entry.js', 'tools/ci-timing.js']
+// 计时 artifact 的名字与路径（冻结点 ② 的另一半）：报告 · 保护 payload 附近的那张表引的就是这两个。
+const TIMING_ARTIFACT = 'ci-timing'
+const TIMING_PATH = 'ci-timing-*.json'
+const TIMING_RUNS = ['fast→ci-timing-fast.json', 'real→ci-timing-real.json']
 
 /** 三档结构的问题清单（空数组 = 全过）。 */
 function inspectWorkflow(wf: Yaml): string[] {
@@ -330,6 +334,30 @@ function inspectWorkflow(wf: Yaml): string[] {
       bad.push('fast：快档 job 里装了真依赖（apt/bubblewrap）——按定义快档不碰它们')
     }
   }
+  // 全档的计时 artifact（冻结点 ②）：逐档一条命令 · 上传步恰好一个 · 名字与路径是冻结面 · 红了也上传。
+  const fullJob = jobs.full as Yaml | undefined
+  if (fullJob !== undefined && typeof fullJob === 'object') {
+    const timing = [...scripts(fullJob).matchAll(/node\s+tools\/ci-timing\.js\s+([\w-]+)\s+--out\s+(\S+)/g)].map(
+      (m) => `${m[1]}→${m[2]}`,
+    )
+    if (JSON.stringify(timing) !== JSON.stringify(TIMING_RUNS)) {
+      bad.push(`full：计时步是 ${timing.join(' · ') || '（没有）'}——要的是 ${TIMING_RUNS.join(' · ')}`)
+    }
+    const steps = (fullJob.steps as Yaml[]) ?? []
+    const uploads = steps.filter((s) => String((s as Yaml).uses ?? '').startsWith('actions/upload-artifact@'))
+    if (uploads.length !== 1) {
+      bad.push(`full：计时 artifact 的上传步应当恰好一个，实得 ${uploads.length}`)
+    } else {
+      const u = uploads[0] as Yaml
+      const w = (u.with ?? {}) as Yaml
+      if (w.name !== TIMING_ARTIFACT) bad.push(`full：artifact 名是 ${String(w.name)}——要的是 ${TIMING_ARTIFACT}`)
+      if (w.path !== TIMING_PATH) bad.push(`full：artifact 路径是 ${String(w.path)}——要的是 ${TIMING_PATH}`)
+      if (u.if !== 'always()') bad.push('full：上传步要 `if: always()`——红了的那趟也要留下墙钟读数')
+      if (w['if-no-files-found'] !== 'error') {
+        bad.push('full：上传步要 `if-no-files-found: error`——没有读数就是形状破了，不许静默上传空 artifact')
+      }
+    }
+  }
   return bad
 }
 
@@ -341,7 +369,9 @@ test('三档结构：触发器齐 · job 名 = check 名 · 每档跑什么（0.
   const table = Object.keys(jobs)
     .sort()
     .map((id) => `${id}(${gateEvents((jobs[id] as Yaml).if as string).join('/')})→${lanes(scripts(jobs[id] as Yaml)).join('+')}`)
-  console.log(`三档读数：触发器 ${Object.keys(on).sort().join(' · ')} ｜ ${table.join(' ｜ ')}`)
+  console.log(
+    `三档读数：触发器 ${Object.keys(on).sort().join(' · ')} ｜ ${table.join(' ｜ ')} ｜ 计时 artifact ${TIMING_ARTIFACT}(${TIMING_PATH})`,
+  )
   assert.deepEqual(bad, [], '三档结构自检不过：\n' + bad.join('\n'))
 })
 
@@ -403,16 +433,6 @@ test('负对照：快档 job 改跑全量 → 当场红', () => {
   )
 })
 
-test('负对照：全档漏了真档 → 当场红', () => {
-  const bad = changed((wf) => {
-    ;(jobOf(wf, 'full').steps as unknown[]).pop()
-  })
-  assert.ok(
-    bad.some((m) => m.includes('full：调了档')),
-    `全档只有快档应当报出来，实得 ${JSON.stringify(bad)}`,
-  )
-})
-
 test('负对照：多开一个 job（windows 通道）→ 当场红', () => {
   const bad = changed((wf) => {
     ;(wf.jobs as Record<string, unknown>).windows = { 'runs-on': 'windows-latest' }
@@ -430,6 +450,62 @@ test('负对照：快档 job 里加一步 apt/bwrap → 当场红', () => {
   assert.ok(
     bad.some((m) => m.includes('装了真依赖')),
     `快档装真依赖应当报出来，实得 ${JSON.stringify(bad)}`,
+  )
+})
+
+function uploadStep(wf: Yaml): Record<string, unknown> {
+  const steps = jobOf(wf, 'full').steps as Record<string, unknown>[]
+  const u = steps.find((s) => String(s.uses ?? '').startsWith('actions/upload-artifact@'))
+  assert.ok(u !== undefined, '负对照的靶子不在了：全档的上传步')
+  return u
+}
+
+/** 上传步的 `with:`（artifact 名与路径在那里，不在步骤那一层）。 */
+function uploadWith(wf: Yaml): Record<string, unknown> {
+  return uploadStep(wf).with as Record<string, unknown>
+}
+
+test('负对照：全档没有计时 artifact 上传步 → 当场红', () => {
+  const bad = changed((wf) => {
+    ;(jobOf(wf, 'full').steps as unknown[]).pop()
+  })
+  assert.ok(
+    bad.some((m) => m.includes('上传步')),
+    `少了上传步应当报出来，实得 ${JSON.stringify(bad)}`,
+  )
+})
+
+test('负对照：artifact 改名 → 当场红', () => {
+  const bad = changed((wf) => {
+    uploadWith(wf).name = 'timing'
+  })
+  assert.ok(
+    bad.some((m) => m.includes('artifact 名')),
+    `artifact 改名应当报出来，实得 ${JSON.stringify(bad)}`,
+  )
+})
+
+test('负对照：上传步去掉 `if: always()` → 当场红', () => {
+  const bad = changed((wf) => {
+    delete uploadStep(wf).if
+  })
+  assert.ok(
+    bad.some((m) => m.includes('always')),
+    `红了就不上传应当报出来，实得 ${JSON.stringify(bad)}`,
+  )
+})
+
+test('负对照：计时步漏掉真档 → 当场红', () => {
+  const bad = changed((wf) => {
+    const steps = jobOf(wf, 'full').steps as Record<string, unknown>[]
+    steps.splice(
+      steps.findIndex((s) => String(s.run ?? '').includes('ci-timing.js real')),
+      1,
+    )
+  })
+  assert.ok(
+    bad.some((m) => m.includes('full：计时步')),
+    `计时只量了快档应当报出来，实得 ${JSON.stringify(bad)}`,
   )
 })
 

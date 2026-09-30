@@ -79,8 +79,18 @@ jobs:
           sudo apt-get install -y -qq bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: node --version && git --version && bwrap --version
-      - run: node tools/test-entry.js fast
-      - run: node tools/test-entry.js real
+      # 计时读数（冻结点 ②）：**两档各一条命令、各一份 JSON**。artifact 的形状与文件名是冻结面——
+      # 断言在 test/ci-timing.test.ts（键集）与 test/ci-workflow.test.ts（这两步与上传步在不在）。
+      - run: node tools/ci-timing.js fast --out ci-timing-fast.json
+      - run: node tools/ci-timing.js real --out ci-timing-real.json
+      # `if: always()`：红了的那趟也把墙钟读数留下来——趋势与回归哨兵要的正是红趟的读数。
+      # `if-no-files-found: error`：没有读数就是形状破了，别静默上传一个空 artifact。
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-timing
+          path: ci-timing-*.json
+          if-no-files-found: error
 
   # 审档：nightly（或手动 dispatch）。**只报不挡**——它的名字不进必绿集合。只装今天存在的东西：
   # 全套兜底；长 fuzz 与索引重建等价是后面版本的内容，这里不开空 job。
