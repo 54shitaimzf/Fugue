@@ -1,5 +1,11 @@
 # 唯一的流水线：跑那个验收入口。**仓库侧没有依赖，也就没有安装步骤**——下面那一步补的是
 # runner 的环境，不是本仓库的依赖。
+#
+# **0.2.2 起分三档**（路线图 §2）：快 = 每次 push（只跑快档）· 全 = PR（快档 + 真档，计时读数存
+# artifact）· 审 = nightly 或手动（全套兜底 + 变异审计，**只报不挡**）。三档里的每一档都是本地
+# 一条命令（`node tools/test-entry.js fast|real|all`）——workflow 只是搬运工，不许长出第二条路；
+# 它死掉的那天本地照跑照绿（是哨兵不是承重）。分片与受影响选择**默认不启用**：结构跟着读数走，
+# 门槛口径见 0.2.2 收口报告——读数取自推送后的 PR 档墙钟。
 name: test
 
 on:
@@ -14,10 +20,48 @@ on:
     branches: ['**']
     tags-ignore: ['**']
   pull_request:
+  # 审档的定时：UTC 18:00（本机 UTC+8 → 次日 02:00），避开工作时段。审档不在任何必绿集合里。
+  schedule:
+    - cron: '0 18 * * *'
+  # 审档也要能手动开一次（等不了 cron）。**workflow 文件得先在默认分支上**，dispatch 才生效——
+  # 所以它是推送后清单里的最后一步。
+  workflow_dispatch:
 
 jobs:
-  suite:
+  # 快档：每次 push 的那一趟（PR 上也在——必绿集合里 `fast` 这个名字得有地方来）。按定义不碰
+  # 真依赖（bwrap · cc · 真端口 · 真挂载），所以**这里不装 bwrap**：档判据万一破了，让它在 CI 上
+  # 当场红，而不是被 apt 那一步盖过去——"这台机器上 bwrap 在"是 `src/execute/degraded.test.ts` ④
+  # 那句**真档**断言，它该待的地方是下面那两个 job。改主意条件：快档真需要真依赖时，改的是档判据
+  # 或那个文件的首行声明，不是把 apt 搬回这里。
+  fast:
+    name: fast
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 同一个 ref 上再推一次 → 旧趟取消。组名按 job 分开写：concurrency 组是全仓共用的，
+    # 同一个 run 里两个 job 同组会互相取消。
+    concurrency:
+      group: ${{ github.workflow }}-fast-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --version
+      - run: node tools/test-entry.js fast
+
+  # 全档：PR 那一趟——快档 + 真档两条命令，逐档分开是为了计时读数按档落 artifact（冻结点 ②）。
+  # 这里再跑一遍快档是**冻结形状**的要求：PR 档自身就是"快档 + 真档"，重复的那一趟墙钟算进
+  # PR 档读数里，不藏。
+  full:
+    name: full
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: ${{ github.workflow }}-full-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -35,4 +79,53 @@ jobs:
           sudo apt-get install -y -qq bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: node --version && git --version && bwrap --version
-      - run: node tools/test-entry.js
+      # 计时读数（冻结点 ②）：**两档各一条命令、各一份 JSON**。artifact 的形状与文件名是冻结面——
+      # 断言在 test/ci-timing.test.ts（键集）与 test/ci-workflow.test.ts（这两步与上传步在不在）。
+      - run: node tools/ci-timing.js fast --out ci-timing-fast.json
+      - run: node tools/ci-timing.js real --out ci-timing-real.json
+      # `if: always()`：红了的那趟也把墙钟读数留下来——趋势与回归哨兵要的正是红趟的读数。
+      # `if-no-files-found: error`：没有读数就是形状破了，别静默上传一个空 artifact。
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-timing
+          path: ci-timing-*.json
+          if-no-files-found: error
+
+  # 审档：nightly（或手动 dispatch）。**只报不挡**——它的名字不进必绿集合。只装今天存在的东西：
+  # 全套兜底；长 fuzz 与索引重建等价是后面版本的内容，这里不开空 job。
+  audit:
+    name: audit
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # 审档不取消：它是报告，定时那一趟与手动那一趟排队就是了。
+    concurrency:
+      group: ${{ github.workflow }}-audit
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: |
+          git config --global user.name 'fugue-ci'
+          git config --global user.email 'fugue-ci@localhost'
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: node --version && git --version && bwrap --version
+      - run: node tools/test-entry.js all
+      # 变异审计：把源码里的一处算子改掉，看快档红不红——不红的那一处就是"这条断言没牙"。
+      # **全量兜底红了也照跑**：它的产出是报告，不是门。口径（靶子 · 算子 · 时限 · 轮转）在
+      # tools/mutation-audit.js 顶上；`--budget-ms` 到点就停，跑多少算多少、剩下的如实报。
+      - if: always()
+        run: node tools/mutation-audit.js --budget-ms 900000 --out mutation-audit.json
+      # 审计报告同样"红了也留"：报告缺了就是这一趟白跑。审档不在任何必绿集合里。
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-audit
+          path: mutation-audit.json
+          if-no-files-found: error
