@@ -22,8 +22,9 @@ import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import test from 'node:test'
+import test, { mock } from 'node:test'
 import { tmpDir } from '../../test/helpers/tmp.ts'
+import { waitUntil } from '../../test/helpers/wait.ts'
 import { openLog } from '../log/log.ts'
 import type { WriterId } from '../terms.ts'
 import type { LineMode, RunOutcome, SpawnFn } from './run.ts'
@@ -160,7 +161,7 @@ test('② 起一次命令：argv 与手敲同形 · 跑着的时候按不起了�
     },
   })
   bad1.press(GO_LINE)
-  await new Promise((r) => setTimeout(r, 5))
+  await waitUntil(() => badOutcome !== null, 500, '起不来的那一趟也该报出收尾（onDone）')
   assert.deepEqual(badOutcome, { code: null, why: 'spawn node ENOENT' })
   console.log(
     `② 读数：argv「${lineArgvOf({ self: ['node', '/x/fugue.ts'], root: '/tmp/r', line: GO_LINE }).argv.join(' ')}」· ` +
@@ -374,58 +375,69 @@ test('④ 请它停下：没在跑就一个信号都不发 · 跑着时递到子
 // 之后有一刀，而那一刀**有界**（`KILL_AFTER_MS`，测试里给 20 毫秒，不必真等两秒）。两条负对照：
 // 它自己收尾了就不补（不许往一个可能已被复用的 pid 上发）· 给别的信号就直接发、不排那一刀。
 test('⑤ 打断了之后有界地补一刀：`SIGINT` 之后还没死就发 `SIGKILL` · 自己死了就不发', async () => {
-  const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
-  // 一 · 不收尾的那一趟：礼之后那一刀到。
-  const h = held()
-  const run = openRun({
-    root: '/tmp/r',
-    self: ['node', '/x/fugue.ts'],
-    spawn: h.spawn,
-    killAfterMs: 20,
-    onLine: () => {},
-    onDone: () => {},
-  })
-  assert.equal(run.press(GO_LINE), true)
-  assert.equal(run.stop(), true)
-  assert.deepEqual(h.signals, ['SIGINT'], '礼先到')
-  await wait(60)
-  assert.deepEqual(h.signals, ['SIGINT', 'SIGKILL'], `礼之后那一刀该到：${h.signals.join(' · ')}`)
-  assert.equal(run.running, true, '它一直没收尾，于是这一档照旧是"跑着"')
-  h.finish({ code: null })
-  await wait(5)
-  assert.equal(run.running, false)
-  // 二 · **负对照**：它自己收尾了就不补那一刀。
-  const h2 = held()
-  const run2 = openRun({
-    root: '/tmp/r',
-    self: ['node', '/x/fugue.ts'],
-    spawn: h2.spawn,
-    killAfterMs: 20,
-    onLine: () => {},
-    onDone: () => {},
-  })
-  assert.equal(run2.press(GO_LINE), true)
-  assert.equal(run2.stop(), true)
-  h2.finish({ code: null })
-  await wait(60)
-  assert.deepEqual(h2.signals, ['SIGINT'], `自己死了就不许补那一刀：${h2.signals.join(' · ')}`)
-  // 三 · 给别的信号：直接发，不排那一刀（那是"兵"，不是"礼"）。
-  const h3 = held()
-  const run3 = openRun({
-    root: '/tmp/r',
-    self: ['node', '/x/fugue.ts'],
-    spawn: h3.spawn,
-    killAfterMs: 20,
-    onLine: () => {},
-    onDone: () => {},
-  })
-  assert.equal(run3.press(GO_LINE), true)
-  assert.equal(run3.stop('SIGKILL'), true)
-  await wait(60)
-  assert.deepEqual(h3.signals, ['SIGKILL'], `给兵就发兵，不排那一刀：${h3.signals.join(' · ')}`)
-  h3.finish({ code: null })
+  // 杀窗是 `run.ts` 里那个裸 `setTimeout`（`killAfterMs`，测试给 20 毫秒）：全趟换假钟——窗口到没到
+  // 用 tick 兑现，不再赌「睡 60ms 应该够」。负对照也因此更硬：tick 过窗还没发，证明的是
+  // `kid === target && running` 那道守卫真的在，而不是「恰好没等到」。
+  // 微事件（`done` 传到 `onDone` 那一串）不经定时器，用 setImmediate 放干——它不在假钟的 apis 里。
+  const settle = (): Promise<void> => new Promise((r) => setImmediate(r))
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    // 一 · 不收尾的那一趟：礼之后那一刀到。
+    const h = held()
+    const run = openRun({
+      root: '/tmp/r',
+      self: ['node', '/x/fugue.ts'],
+      spawn: h.spawn,
+      killAfterMs: 20,
+      onLine: () => {},
+      onDone: () => {},
+    })
+    assert.equal(run.press(GO_LINE), true)
+    assert.equal(run.stop(), true)
+    assert.deepEqual(h.signals, ['SIGINT'], '礼先到')
+    mock.timers.tick(21)
+    assert.deepEqual(h.signals, ['SIGINT', 'SIGKILL'], `礼之后那一刀该到：${h.signals.join(' · ')}`)
+    assert.equal(run.running, true, '它一直没收尾，于是这一档照旧是"跑着"')
+    h.finish({ code: null })
+    await settle()
+    assert.equal(run.running, false)
+    // 二 · **负对照**：它自己收尾了就不补那一刀。
+    const h2 = held()
+    const run2 = openRun({
+      root: '/tmp/r',
+      self: ['node', '/x/fugue.ts'],
+      spawn: h2.spawn,
+      killAfterMs: 20,
+      onLine: () => {},
+      onDone: () => {},
+    })
+    assert.equal(run2.press(GO_LINE), true)
+    assert.equal(run2.stop(), true)
+    h2.finish({ code: null })
+    await settle()
+    mock.timers.tick(21)
+    assert.deepEqual(h2.signals, ['SIGINT'], `自己死了就不许补那一刀：${h2.signals.join(' · ')}`)
+    // 三 · 给别的信号：直接发，不排那一刀（那是"兵"，不是"礼"）。
+    const h3 = held()
+    const run3 = openRun({
+      root: '/tmp/r',
+      self: ['node', '/x/fugue.ts'],
+      spawn: h3.spawn,
+      killAfterMs: 20,
+      onLine: () => {},
+      onDone: () => {},
+    })
+    assert.equal(run3.press(GO_LINE), true)
+    assert.equal(run3.stop('SIGKILL'), true)
+    mock.timers.tick(21)
+    assert.deepEqual(h3.signals, ['SIGKILL'], `给兵就发兵，不排那一刀：${h3.signals.join(' · ')}`)
+    h3.finish({ code: null })
+    await settle()
+  } finally {
+    mock.timers.reset()
+  }
   console.log(
-    `⑤ 读数：SIGINT 之后 20 毫秒补上 SIGKILL（${h.signals.join(' → ')}）· 自己收尾的那一趟只有 ` +
-      `${h2.signals.join(' → ')} · 直接给 SIGKILL 的那一趟是 ${h3.signals.join(' → ')}`,
+    `⑤ 读数：假钟 tick 过 20ms 杀窗——SIGINT 之后补上 SIGKILL（不收尾那一趟）· ` +
+      `自己收尾的那一趟只有 SIGINT（tick 过窗仍不发）· 直接给 SIGKILL 的那一趟只有 SIGKILL`,
   )
 })

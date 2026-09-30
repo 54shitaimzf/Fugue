@@ -26,7 +26,7 @@
 // `ui/term.ts` 那个接口的**记录器**（它用真的 `panelOf` 补到 K 行 × 列数，所以记下来的那几行就是
 // 真终端上会出现的那几行）。真终端上的字节由 `ui/term.test.ts` 管，两份各管一头。
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { test, mock } from 'node:test'
 import type { Log, LogEvent } from '../log/events.ts'
 import type { ReadingsOptions, StatusReadings, StatusRow } from '../probe/status.ts'
 import { readingsOf } from '../probe/status.ts'
@@ -428,16 +428,23 @@ test('⑨ resize 尾沿防抖（U7）：连按三次只补一画 · 安静期没
   const before = r.records.length
   r.tui.redraw()
   assert.equal(r.records.length, before + 1, 'redraw() 是立即的那一条')
-  const settled = (): Promise<void> => new Promise((done) => setTimeout(done, 60))
-  r.tui.resize()
-  await settled()
-  r.tui.resize()
-  await settled()
-  r.tui.resize()
-  assert.equal(r.records.length, before + 1, '安静期没到不该画（还在连发）')
-  await new Promise((done) => setTimeout(done, RESIZE_WAIT_MS + 80))
-  assert.equal(r.records.length, before + 2, `连发三次只补一画（尾沿），拿到 ${r.records.length - before - 1} 画`)
-  console.log(`⑨ 读数：redraw() 立即 +1 · 60ms 间隔连按三次 → 安静 ${RESIZE_WAIT_MS}ms 后恰 +1`)
+  // 跟随循环收住之后线上只剩防抖这一个定时器（abort 干净，见 `follow.ts` 那个 `unref` 的注释），
+  // 于是换假钟是安全的：连发的节奏从「真睡 60ms」换成 tick(60)，尾沿那一刀从「真睡 200ms」
+  // 换成 tick 过 `RESIZE_WAIT_MS`。窗口收窄在 try 里，进出各一次 enable/reset。
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    r.tui.resize()
+    mock.timers.tick(60)
+    r.tui.resize()
+    mock.timers.tick(60)
+    r.tui.resize()
+    assert.equal(r.records.length, before + 1, '安静期没到不该画（还在连发）')
+    mock.timers.tick(RESIZE_WAIT_MS + 80)
+    assert.equal(r.records.length, before + 2, `连发三次只补一画（尾沿），拿到 ${r.records.length - before - 1} 画`)
+  } finally {
+    mock.timers.reset()
+  }
+  console.log(`⑨ 读数：redraw() 立即 +1 · 假钟三段各 60ms 连按三次 → 安静 ${RESIZE_WAIT_MS}ms 后恰 +1`)
 })
 
 test('⑦ 历史不许被回头改：已经写出去的那几条变了就当场抛', () => {
