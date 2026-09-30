@@ -300,6 +300,9 @@ export async function roundRun(
 
   const rawRound = getConfig(doc, 'round.id')
   const round = typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1'
+  /** **这一条命令的目录，读一次**（P2d）：后面三处（上限 · 驱动接线 · 账那一栏）用的是同一份——
+   * 一次命令里两处各读各的，文件档换过一次就会出现"上半场旧目录 · 下半场新目录"。 */
+  const cat = readCatalog()
   /** **身份分配器**（架构 § 14.1 第 1 步）：名字与它那条分支一处给（`identFor`）。 */
   const identityFor = (n: number): { agent: AgentId; branch: BranchId } => identFor(round, n)
   /** 打桩那一档只要"这是第几格"（给那棵树的路径起个名）——同一个分配器给的次序。 */
@@ -422,7 +425,7 @@ export async function roundRun(
       logForAgent: agentLogOf,
       materialize: flags.has('materialize'),
       // **声明的上限接进 `seed` 那一条**：与 `round new` / `round go` 递的是同一个数。
-      modelLimit: modelLimitOf(doc, readCatalog()),
+      modelLimit: modelLimitOf(doc, cat),
       // **两条路在 `runRound` 眼里没有区别**（同一个 `AgentDriver`）：打桩那一档把 `Stub` 包
       // 一层（S7 定下的那个形状不动），真驱动那一档走 `realDriver` + `DriverSupport`。凭据那一
       // 步只在这一档走（不打 `--live` 的话 `driverSupport` 一次都不被调）。
@@ -451,7 +454,7 @@ export async function roundRun(
             driver: driverSupport({
               root,
               doc,
-              cat: readCatalog(),
+              cat,
               ...(wireIn === undefined ? {} : { wireIn }),
               ...(maxSteps === undefined ? {} : { maxSteps }),
               ...(credentialOverride === undefined ? {} : { credential: credentialOverride }),
@@ -525,7 +528,7 @@ export async function roundRun(
     const attribution = await computeAttribution(() => ctx.log.readMerged())
     // **逐趟账**（PLAN § 5.9 的 `G5`）：每一条 `llm/call` 一行 + 合计。它也是从同一份日志重算，
     // 钱的档按读这一次的钟算（账上没有时刻）。
-    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()), cat: readCatalog() })
+    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()), cat })
     const report = reportOf({ round }, readings, attribution.map(lineOfAttribution), callLines)
     // 八元指标（架构 § 8.15）：**与上面那三个数同一个来源**（同一份日志 · 同样重算）。
     // 那一趟的日志就是刚才跑出来的那一份——所以 `--metrics` 印的就是这一趟。
@@ -1170,6 +1173,8 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
   }
   const rawRound = getConfig(doc, 'round.id')
   const round = typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1'
+  /** **这一条命令的目录，读一次**（P2d，与 `round run` 同一条）：驱动接线与账那一栏用同一份。 */
+  const cat = readCatalog()
 
   const wire = wireFlagsOf(root, flags)
   const real = wire.live || wire.wireIn !== undefined
@@ -1222,7 +1227,7 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
               driver: driverSupport({
                 root,
                 doc,
-                cat: readCatalog(),
+                cat,
                 ...(wire.wireIn === undefined ? {} : { wireIn: wire.wireIn }),
                 ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
                 ...(wire.credential === undefined ? {} : { credential: wire.credential }),
@@ -1238,7 +1243,7 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
     // 三 · 打回那三个数与八元指标（**与 `round run` 同一份读法**：同一份日志上的重算，不采集）。
     const readings = await computeAll(() => ctx.log.readMerged(), { round })
     const attribution = await computeAttribution(() => ctx.log.readMerged())
-    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()), cat: readCatalog() })
+    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()), cat })
     const report = reportOf({ round }, readings, attribution.map(lineOfAttribution), callLines)
     const metrics = flags.has('metrics') ? await computeAllMetrics(() => ctx.log.readMerged(), { round }) : null
     // **复用了哪几格**印在 stderr：它是"这一趟只补了没交卷的那几格"的读数（重跑不重复烧钱）。
