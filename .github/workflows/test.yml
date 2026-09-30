@@ -117,3 +117,15 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: node --version && git --version && bwrap --version
       - run: node tools/test-entry.js all
+      # 变异审计：把源码里的一处算子改掉，看快档红不红——不红的那一处就是"这条断言没牙"。
+      # **全量兜底红了也照跑**：它的产出是报告，不是门。口径（靶子 · 算子 · 时限 · 轮转）在
+      # tools/mutation-audit.js 顶上；`--budget-ms` 到点就停，跑多少算多少、剩下的如实报。
+      - if: always()
+        run: node tools/mutation-audit.js --budget-ms 900000 --out mutation-audit.json
+      # 审计报告同样"红了也留"：报告缺了就是这一趟白跑。审档不在任何必绿集合里。
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-audit
+          path: mutation-audit.json
+          if-no-files-found: error

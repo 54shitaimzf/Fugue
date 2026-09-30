@@ -253,11 +253,14 @@ function gateEvents(ifText: string | undefined): string[] {
 
 const TRIGGERS = ['pull_request', 'push', 'schedule', 'workflow_dispatch']
 const JOBS = ['audit', 'fast', 'full']
-const ALLOWED_TOOLS = ['tools/test-entry.js', 'tools/ci-timing.js']
+const ALLOWED_TOOLS = ['tools/test-entry.js', 'tools/ci-timing.js', 'tools/mutation-audit.js']
 // 计时 artifact 的名字与路径（冻结点 ② 的另一半）：报告 · 保护 payload 附近的那张表引的就是这两个。
 const TIMING_ARTIFACT = 'ci-timing'
 const TIMING_PATH = 'ci-timing-*.json'
 const TIMING_RUNS = ['fast→ci-timing-fast.json', 'real→ci-timing-real.json']
+// 审档的报告（没进冻结面，但它也得真产出——报告缺了那一趟就白跑）。
+const MUTATION_ARTIFACT = 'mutation-audit'
+const MUTATION_PATH = 'mutation-audit.json'
 
 /** 三档结构的问题清单（空数组 = 全过）。 */
 function inspectWorkflow(wf: Yaml): string[] {
@@ -334,7 +337,7 @@ function inspectWorkflow(wf: Yaml): string[] {
       bad.push('fast：快档 job 里装了真依赖（apt/bubblewrap）——按定义快档不碰它们')
     }
   }
-  // 全档的计时 artifact（冻结点 ②）：逐档一条命令 · 上传步恰好一个 · 名字与路径是冻结面 · 红了也上传。
+  // artifact 那一组判据两个 job 共用：恰好一个上传步 · 名字与路径是冻结面 · 红了也上传。
   const fullJob = jobs.full as Yaml | undefined
   if (fullJob !== undefined && typeof fullJob === 'object') {
     const timing = [...scripts(fullJob).matchAll(/node\s+tools\/ci-timing\.js\s+([\w-]+)\s+--out\s+(\S+)/g)].map(
@@ -343,22 +346,47 @@ function inspectWorkflow(wf: Yaml): string[] {
     if (JSON.stringify(timing) !== JSON.stringify(TIMING_RUNS)) {
       bad.push(`full：计时步是 ${timing.join(' · ') || '（没有）'}——要的是 ${TIMING_RUNS.join(' · ')}`)
     }
-    const steps = (fullJob.steps as Yaml[]) ?? []
-    const uploads = steps.filter((s) => String((s as Yaml).uses ?? '').startsWith('actions/upload-artifact@'))
-    if (uploads.length !== 1) {
-      bad.push(`full：计时 artifact 的上传步应当恰好一个，实得 ${uploads.length}`)
-    } else {
-      const u = uploads[0] as Yaml
-      const w = (u.with ?? {}) as Yaml
-      if (w.name !== TIMING_ARTIFACT) bad.push(`full：artifact 名是 ${String(w.name)}——要的是 ${TIMING_ARTIFACT}`)
-      if (w.path !== TIMING_PATH) bad.push(`full：artifact 路径是 ${String(w.path)}——要的是 ${TIMING_PATH}`)
-      if (u.if !== 'always()') bad.push('full：上传步要 `if: always()`——红了的那趟也要留下墙钟读数')
-      if (w['if-no-files-found'] !== 'error') {
-        bad.push('full：上传步要 `if-no-files-found: error`——没有读数就是形状破了，不许静默上传空 artifact')
-      }
+    bad.push(...artifactFindings(fullJob, 'full', TIMING_ARTIFACT, TIMING_PATH))
+  }
+  // 审档：全量兜底 + 变异审计。只装今天存在的东西；报告是产出，survivor 只报不挡。
+  const auditJob = jobs.audit as Yaml | undefined
+  if (auditJob !== undefined && typeof auditJob === 'object') {
+    const auditRuns = [...scripts(auditJob).matchAll(/node\s+tools\/mutation-audit\.js\s+([^\n]*)/g)].map((m) =>
+      m[1].trim(),
+    )
+    if (auditRuns.length !== 1) {
+      bad.push(`audit：变异审计步应当恰好一个，实得 ${auditRuns.length}`)
+    } else if (!auditRuns[0].includes('--out ' + MUTATION_PATH)) {
+      bad.push(`audit：变异审计要 \`--out ${MUTATION_PATH}\`，实得 ${auditRuns[0]}`)
     }
+    const steps = (auditJob.steps as Yaml[]) ?? []
+    const step = steps.find((s) => String((s as Yaml).run ?? '').includes('mutation-audit.js'))
+    if (step !== undefined && (step as Yaml).if !== 'always()') {
+      bad.push('audit：变异审计步要 `if: always()`——全量兜底红了也照跑（它的产出是报告）')
+    }
+    bad.push(...artifactFindings(auditJob, 'audit', MUTATION_ARTIFACT, MUTATION_PATH))
   }
   return bad
+}
+
+/** artifact 那一组：恰好一个上传步 · 名字与路径对得上 · 红了也上传 · 没读数就报错。 */
+function artifactFindings(job: Yaml, id: string, wantName: string, wantPath: string): string[] {
+  const out: string[] = []
+  const steps = (job.steps as Yaml[]) ?? []
+  const uploads = steps.filter((s) => String((s as Yaml).uses ?? '').startsWith('actions/upload-artifact@'))
+  if (uploads.length !== 1) {
+    out.push(`${id}：artifact 的上传步应当恰好一个，实得 ${uploads.length}`)
+    return out
+  }
+  const u = uploads[0] as Yaml
+  const w = (u.with ?? {}) as Yaml
+  if (w.name !== wantName) out.push(`${id}：artifact 名是 ${String(w.name)}——要的是 ${wantName}`)
+  if (w.path !== wantPath) out.push(`${id}：artifact 路径是 ${String(w.path)}——要的是 ${wantPath}`)
+  if (u.if !== 'always()') out.push(`${id}：上传步要 \`if: always()\`——红了的那趟也要留下读数`)
+  if (w['if-no-files-found'] !== 'error') {
+    out.push(`${id}：上传步要 \`if-no-files-found: error\`——没有读数就是形状破了，不许静默上传空 artifact`)
+  }
+  return out
 }
 
 test('三档结构：触发器齐 · job 名 = check 名 · 每档跑什么（0.2.2 冻结面）', () => {
@@ -370,7 +398,7 @@ test('三档结构：触发器齐 · job 名 = check 名 · 每档跑什么（0.
     .sort()
     .map((id) => `${id}(${gateEvents((jobs[id] as Yaml).if as string).join('/')})→${lanes(scripts(jobs[id] as Yaml)).join('+')}`)
   console.log(
-    `三档读数：触发器 ${Object.keys(on).sort().join(' · ')} ｜ ${table.join(' ｜ ')} ｜ 计时 artifact ${TIMING_ARTIFACT}(${TIMING_PATH})`,
+    `三档读数：触发器 ${Object.keys(on).sort().join(' · ')} ｜ ${table.join(' ｜ ')} ｜ artifact ${TIMING_ARTIFACT}(${TIMING_PATH}) + ${MUTATION_ARTIFACT}(${MUTATION_PATH})`,
   )
   assert.deepEqual(bad, [], '三档结构自检不过：\n' + bad.join('\n'))
 })
@@ -506,6 +534,64 @@ test('负对照：计时步漏掉真档 → 当场红', () => {
   assert.ok(
     bad.some((m) => m.includes('full：计时步')),
     `计时只量了快档应当报出来，实得 ${JSON.stringify(bad)}`,
+  )
+})
+
+function auditSteps(wf: Yaml): Record<string, unknown>[] {
+  return jobOf(wf, 'audit').steps as Record<string, unknown>[]
+}
+
+function auditUploadWith(wf: Yaml): Record<string, unknown> {
+  const u = auditSteps(wf).find((s) => String(s.uses ?? '').startsWith('actions/upload-artifact@'))
+  assert.ok(u !== undefined, '负对照的靶子不在了：审档的上传步')
+  return u.with as Record<string, unknown>
+}
+
+test('负对照：审档没有变异审计步 → 当场红', () => {
+  const bad = changed((wf) => {
+    const steps = auditSteps(wf)
+    steps.splice(
+      steps.findIndex((s) => String(s.run ?? '').includes('mutation-audit.js')),
+      1,
+    )
+  })
+  assert.ok(
+    bad.some((m) => m.includes('变异审计步')),
+    `审档少了变异审计应当报出来，实得 ${JSON.stringify(bad)}`,
+  )
+})
+
+test('负对照：审档的变异审计步去掉 `if: always()` → 当场红', () => {
+  const bad = changed((wf) => {
+    const step = auditSteps(wf).find((s) => String(s.run ?? '').includes('mutation-audit.js'))
+    assert.ok(step !== undefined, '负对照的靶子不在了：审档的变异审计步')
+    delete step.if
+  })
+  assert.ok(
+    bad.some((m) => m.includes('always')),
+    `全量兜底红了就不跑审计应当报出来，实得 ${JSON.stringify(bad)}`,
+  )
+})
+
+test('负对照：审档报告改名 → 当场红', () => {
+  const bad = changed((wf) => {
+    auditUploadWith(wf).name = 'mutation'
+  })
+  assert.ok(
+    bad.some((m) => m.includes('artifact 名')),
+    `审档 artifact 改名应当报出来，实得 ${JSON.stringify(bad)}`,
+  )
+})
+
+test('负对照：审档改跑快档 → 当场红', () => {
+  const bad = changed((wf) => {
+    const step = auditSteps(wf).find((s) => String(s.run ?? '').includes('test-entry.js all'))
+    assert.ok(step !== undefined, '负对照的靶子不在了：审档的全量那一步')
+    step.run = 'node tools/test-entry.js fast'
+  })
+  assert.ok(
+    bad.some((m) => m.includes('audit：调了档')),
+    `审档不跑全量兜底应当报出来，实得 ${JSON.stringify(bad)}`,
   )
 })
 
