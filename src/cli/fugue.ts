@@ -87,7 +87,8 @@ async function run(argv: readonly string[]): Promise<number> {
   // 落在 9p / drvfs 那一类跨内核的落点上时，失败模式是静默的（§ 15.8 的"不成立"档）。
   // 根还不存在时探它最近的祖先（`host.ts`），所以这条检查不依赖"目录已经建好"；
   // `--help` 与 `--version` 在上面，不受影响。
-  const root = typeof rootFlag === 'string' ? rootFlag : process.cwd()
+  // 只在入口按调用者 cwd 解析一次；git 子进程也以 root 为 cwd，不能再解释一遍相对路径。
+  const root = resolve(typeof rootFlag === 'string' ? rootFlag : process.cwd())
   try {
     assertHost(root)
   } catch (err) {
