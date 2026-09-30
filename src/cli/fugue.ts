@@ -136,7 +136,7 @@ async function run(argv: readonly string[]): Promise<number> {
   if (cmd === 'say') return await sayCommand(root, flags, positional.slice(1), json)
 
   // 配置不建视图、不读日志：它是工作区的输入，不是它的状态（§ 15.3.a 末段）。
-  if (cmd === 'config') return await config(root, positional.slice(1), json)
+  if (cmd === 'config') return await config(root, flags, positional.slice(1), json)
 
   // 策略值读的也是配置与探针，不是工作区的状态——所以它也排在视图之前（架构 § 8.8）。
   if (cmd === 'policy') return await policyCmd(root, flags, positional.slice(1), json)

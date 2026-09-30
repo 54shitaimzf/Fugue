@@ -4,20 +4,35 @@
 import { PolicyError, probeLayers, resolvePolicy } from '../../boundary/policy.ts'
 import { BindingError, readBinding } from '../../boundary/binding.ts'
 import {
+  appendHistory,
+  configHistoryOf,
   ConfigError,
   configFileOf,
+  defaultSystemDir,
   getConfig,
+  keySegments,
   parseConfigValue,
   readConfig,
+  readSystemConfig,
+  readWorkspaceConfig,
   setConfig,
+  systemConfigFileOf,
+  systemConfigHistoryOf,
+  TOP_LEVEL_KEYS,
   writeConfig,
+  writeSystemConfig,
 } from '../../config.ts'
 import { agentFor } from '../../identity.ts'
 import { createRoots } from '../../roots/roots.ts'
 import { resolve } from 'node:path'
 import { emitJson, emitLine, fail, modeOf, usageFail, writerOf } from '../shared.ts'
 
-export async function config(root: string, args: string[], json: boolean): Promise<number> {
+export async function config(
+  root: string,
+  flags: Map<string, string | true>,
+  args: string[],
+  json: boolean,
+): Promise<number> {
   const verb = args[0]
   try {
     if (verb === 'show') {
@@ -36,20 +51,48 @@ export async function config(root: string, args: string[], json: boolean): Promi
       return 0
     }
     if (verb === 'set') {
+      // `--system` 写系统那一级（`~/.fugue`）；不带它照旧写工作区。开关由分发处收进 flags，
+      // 到这里的 args 只有位置参数。写永远落单级——合并只在读。
+      const system = flags.has('system')
       const key = args[1]
       const raw = args[2]
-      if (key === undefined || raw === undefined) return usageFail('config set 需要 <key> <value>', json)
-      const doc = await readConfig(root)
-      const old = getConfig(doc, key)
+      if (key === undefined || raw === undefined) {
+        return usageFail('config set 需要 <key> <value>（--system 写系统级）', json)
+      }
+      // 顶层键域把关在**写**这一面：读那面也会核（P2a），但写时拦住才不会把文件写成
+      // 之后每一次读都拒的样子——那是把配置砖掉，不是拒绝并指路。
+      const top = keySegments(key)[0]
+      if (!TOP_LEVEL_KEYS.includes(top)) {
+        return fail(
+          `config set：顶层键只认 ${TOP_LEVEL_KEYS.join(' · ')} —— ${top} 不在其中；` +
+            `要加新的顶层键，先把键域定下来（架构 § 15.3.a）`,
+          json,
+        )
+      }
       const value = parseConfigValue(raw)
-      setConfig(doc, key, value)
-      await writeConfig(root, doc)
-      const out: Record<string, unknown> = { key, value, path: configFileOf(root) }
-      // **老值只在原本有这条键时出现**：凭空多一个 `old: null` 会与"存了个 null"混起来。
-      if (old !== undefined) out.old = old
+      const out: Record<string, unknown> = { key, value }
+      if (system) {
+        const dir = defaultSystemDir()
+        const doc = await readSystemConfig(dir)
+        const old = getConfig(doc, key)
+        setConfig(doc, key, value)
+        await writeSystemConfig(dir, doc)
+        await appendHistory(systemConfigHistoryOf(dir), { key, old, new: value })
+        out.path = systemConfigFileOf(dir)
+        if (old !== undefined) out.old = old
+      } else {
+        const doc = await readWorkspaceConfig(root)
+        const old = getConfig(doc, key)
+        setConfig(doc, key, value)
+        await writeConfig(root, doc)
+        await appendHistory(configHistoryOf(root), { key, old, new: value })
+        out.path = configFileOf(root)
+        if (old !== undefined) out.old = old
+      }
       if (json) emitJson(out)
       else {
-        emitLine(`${key}	${old === undefined ? '(没有)' : JSON.stringify(old)}	→	${JSON.stringify(value)}`)
+        const old = 'old' in out ? JSON.stringify(out.old) : '(没有)'
+        emitLine(`${key}	${old}	→	${JSON.stringify(value)}`)
       }
       return 0
     }

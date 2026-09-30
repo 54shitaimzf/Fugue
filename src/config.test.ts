@@ -18,7 +18,8 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { tmpDir } from '../test/helpers/tmp.ts'
-import { configFileOf } from './config.ts'
+import { configFileOf, getConfig, readConfig, readWorkspaceConfig } from './config.ts'
+import { saveFacts } from './materialize/capability.ts'
 
 const CLI = fileURLToPath(new URL('./cli/fugue.ts', import.meta.url))
 
@@ -28,11 +29,17 @@ interface Run {
   stderr: string
 }
 
+// 这一份测试**自己钉死系统根**（P2a）：缺省指到空目录——CLI 的读数不取决于这台机器上有没有
+// 人配过系统级；两级的用例把 `SYS_DIR` 换成自己准备的那一份，用完还回来（try/finally）。
+const EMPTY_SYS = tmpDir('fugue-sys-none-')
+let SYS_DIR = EMPTY_SYS
+
 function fugue(root: string, ...args: string[]): Run {
   const r = spawnSync(process.execPath, [CLI, '--root', root, ...args], {
     encoding: 'utf8',
     input: '',
     maxBuffer: 1 << 26,
+    env: { ...process.env, FUGUE_SYSTEM_DIR: SYS_DIR },
   })
   return { code: r.status ?? 1, stdout: r.stdout, stderr: r.stderr }
 }
@@ -42,6 +49,7 @@ function fugueStdin(root: string, input: string, ...args: string[]): Run {
     encoding: 'utf8',
     input,
     maxBuffer: 1 << 26,
+    env: { ...process.env, FUGUE_SYSTEM_DIR: SYS_DIR },
   })
   return { code: r.status ?? 1, stdout: r.stdout, stderr: r.stderr }
 }
@@ -96,16 +104,18 @@ test('config：缺文件是空配置 · 坏文件拒绝加载 · 一次改动原
   assert.equal(empty.stdout, '{}\n', '还没配过 = 空配置，不是错误')
   assert.equal(existsSync(file), false, '读一次不该把文件或目录建出来')
 
-  const miss = fugue(root, 'config', 'get', 'a.b')
+  const miss = fugue(root, 'config', 'get', 'config.nope')
   assert.notEqual(miss.code, 0, '没有这条键要非零退出——"没有"与"配了个空"分得开')
   assert.equal(miss.stdout, '')
 
-  const set = fugue(root, 'config', 'set', 'a.b', '5')
+  const set = fugue(root, 'config', 'set', 'config.scratch', '5')
   assert.equal(set.code, 0, set.stderr)
-  assert.equal(fugue(root, 'config', 'get', 'a.b').stdout, '5\n')
-  assert.equal(fugue(root, '--json', 'config', 'get', 'a.b').stdout, '5\n', '数字过 JSON 面还是数字')
-  assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { a: { b: number } }).a.b, 5)
-  assert.deepEqual(readdirSync(join(root, '.fugue')), ['config'], '原子写的临时名不该留下')
+  assert.equal(fugue(root, 'config', 'get', 'config.scratch').stdout, '5\n')
+  assert.equal(fugue(root, '--json', 'config', 'get', 'config.scratch').stdout, '5\n', '数字过 JSON 面还是数字')
+  const saved = JSON.parse(readFileSync(file, 'utf8')) as { config: { scratch: number } }
+  assert.equal(saved.config.scratch, 5)
+  // P2a 起 set 还落一行原值记录（与目标级 config 同目录）——清单因此是这两个文件。
+  assert.deepEqual(readdirSync(join(root, '.fugue')).sort(), ['config', 'config-history'], '原子写的临时名不该留下')
 
   // 空文件与坏文件必须分开：前者是"还没写"，后者是"写坏了"（§ 9.3 对日志中段损坏同一条）。
   writeFileSync(file, '')
@@ -115,12 +125,12 @@ test('config：缺文件是空配置 · 坏文件拒绝加载 · 一次改动原
   assert.notEqual(bad.code, 0, '解析不了要拒绝加载')
   assert.equal(bad.stdout, '', '拒绝时不许吐出半份或一份空的配置')
   assert.match(bad.stderr, /JSON/)
-  const badGet = fugue(root, 'config', 'get', 'a')
+  const badGet = fugue(root, 'config', 'get', 'config.scratch')
   assert.notEqual(badGet.code, 0, '改不了也读不了：坏文件上没有一条路能给出一个值')
 
   // 根不存在：`set` 不替人建一个工作区。
   const ghost = join(root, 'nope')
-  assert.notEqual(fugue(ghost, 'config', 'set', 'a', '1').code, 0)
+  assert.notEqual(fugue(ghost, 'config', 'set', 'config.ghost', '1').code, 0)
   assert.equal(existsSync(ghost), false)
 })
 
@@ -128,10 +138,10 @@ test('config：点分键寻址 · 值是 JSON 或字符串 · 回报改之前的
   const root = tmpRoot()
   for (const [k, v] of [
     ['docs.trace.path', '.fugue/docs/trace.html'],
-    ['policy.readOnly', 'true'],
+    ['config.readOnly', 'true'],
     ['actions.build.cmd', 'make'],
-    ['tags', '["a","b"]'],
-  ]) {
+    ['config.tags', '["a","b"]'],
+  ] as const) {
     const r = fugue(root, 'config', 'set', k, v)
     assert.equal(r.code, 0, r.stderr)
   }
@@ -140,12 +150,11 @@ test('config：点分键寻址 · 值是 JSON 或字符串 · 回报改之前的
   assert.equal(show.code, 0, show.stderr)
   assert.deepEqual(JSON.parse(show.stdout), {
     docs: { trace: { path: '.fugue/docs/trace.html' } },
-    policy: { readOnly: true },
+    config: { readOnly: true, tags: ['a', 'b'] },
     actions: { build: { cmd: 'make' } },
-    tags: ['a', 'b'],
   })
 
-  assert.equal(fugue(root, 'config', 'get', 'policy.readOnly').stdout, 'true\n', 'true 是布尔值')
+  assert.equal(fugue(root, 'config', 'get', 'config.readOnly').stdout, 'true\n', 'true 是布尔值')
   assert.equal(
     fugue(root, 'config', 'get', 'docs.trace.path').stdout,
     '.fugue/docs/trace.html\n',
@@ -157,14 +166,14 @@ test('config：点分键寻址 · 值是 JSON 或字符串 · 回报改之前的
     'JSON 面一律是 JSON',
   )
 
-  const over = JSON.parse(fugue(root, '--json', 'config', 'set', 'policy.readOnly', 'false').stdout)
+  const over = JSON.parse(fugue(root, '--json', 'config', 'set', 'config.readOnly', 'false').stdout)
   assert.deepEqual(over, {
-    key: 'policy.readOnly',
+    key: 'config.readOnly',
     value: false,
     old: true,
     path: configFileOf(root),
   })
-  const fresh = JSON.parse(fugue(root, '--json', 'config', 'set', 'later.key', '1').stdout)
+  const fresh = JSON.parse(fugue(root, '--json', 'config', 'set', 'config.later.key', '1').stdout)
   assert.equal('old' in fresh, false, '第一次写没有老值，这条字段就不出现（null 会与"存了个 null"混起来）')
 
   // 中途不是对象就报错，不替人做决定——而且一个字节都不动。
@@ -190,13 +199,13 @@ test('① 配置改动后重放结果不变', () => {
   // 配置该管的事（§ 15.3.a），而一件都不该改变一条既有日志重放出来的东西。
   for (const [k, v] of [
     ['actions.build.cmd', 'make'],
-    ['policy.readOnly', 'true'],
+    ['config.readOnly', 'true'],
     ['docs.trace.path', '.fugue/docs/trace.html'],
-    ['limits.retries', '3'],
-  ]) {
+    ['config.retries', '3'],
+  ] as const) {
     assert.equal(fugue(root, 'config', 'set', k, v).code, 0)
   }
-  assert.equal(fugue(root, 'config', 'get', 'policy.readOnly').stdout, 'true\n', '负对照：配置真的变了')
+  assert.equal(fugue(root, 'config', 'get', 'config.readOnly').stdout, 'true\n', '负对照：配置真的变了')
 
   assert.equal(replayState(root), state, '重放结果只由日志决定——配置改动动不了它')
   assert.equal(fugue(root, 'replay', '--verify').code, 0, '两条独立的重建路径仍然一致')
@@ -212,10 +221,10 @@ test('② 视图内没有一条路到得了 .fugue/', () => {
   const root = tmpRoot()
   const file = configFileOf(root)
   const marker = '只有-config-拿得到'
-  assert.equal(fugue(root, 'config', 'set', 'marker', marker).code, 0)
+  assert.equal(fugue(root, 'config', 'set', 'config.marker', marker).code, 0)
   const real = readFileSync(file, 'utf8')
   assert.ok(real.includes(marker), `负对照：真文件里确实有这个字 —— ${file}`)
-  assert.equal(fugue(root, 'config', 'get', 'marker').stdout, `${marker}\n`, '负对照：这条命令看得见真文件')
+  assert.equal(fugue(root, 'config', 'get', 'config.marker').stdout, `${marker}\n`, '负对照：这条命令看得见真文件')
 
   // 视图那一面**每一条收路径的命令**，逐个拿这个名字去撞。判据是"吐不出真内容"，
   // 不是"退出码好看"：一条路只要拿到了真文件，这条断言就该红。
@@ -249,7 +258,7 @@ test('② 视图内没有一条路到得了 .fugue/', () => {
   const viewText = '视图里的同名文件\n'
   assert.equal(fugueStdin(root, viewText, 'write', '.fugue/config', '--stdin').code, 0)
   assert.equal(fugue(root, 'read', '.fugue/config').stdout, viewText, '视图里那一个是它自己的')
-  assert.equal(fugue(root, 'config', 'get', 'marker').stdout, `${marker}\n`, '真配置没有被碰')
+  assert.equal(fugue(root, 'config', 'get', 'config.marker').stdout, `${marker}\n`, '真配置没有被碰')
   assert.equal(readFileSync(file, 'utf8'), real, '真文件逐字节未变')
 
   for (const args of [
@@ -261,4 +270,93 @@ test('② 视图内没有一条路到得了 .fugue/', () => {
   }
   assert.equal(fugue(root, 'commit', '-m', '视图里的 .fugue/').code, 0)
   assert.equal(readFileSync(file, 'utf8'), real, '视图那一面的每一条写路径都没碰到真文件')
+})
+
+test('P2a · 两级配置：系统打底工作区覆盖 · 写单级读合并 · 未知顶层键拒并指路 · 原值记录', async () => {
+  const root = tmpRoot()
+  const sys = tmpDir('fugue-sys-')
+  const sysFile = join(sys, 'config')
+  writeFileSync(
+    sysFile,
+    JSON.stringify({
+      ports: { range: '32000-32099' },
+      actions: { build: { argv: ['make'], env: { CC: 'cc' } } },
+    }),
+  )
+
+  SYS_DIR = sys
+  try {
+    // ① 合并读（P2a 那条会红的断言）：工作区还是空的，系统级的键读得到——昨天 readConfig 只看工作区。
+    const merged = await readConfig(root, sys)
+    assert.equal(getConfig(merged, 'ports.range'), '32000-32099', '工作区空 → 系统级的默认顶上来')
+    assert.equal(fugue(root, 'config', 'get', 'ports.range').stdout, '32000-32099\n', 'CLI 那一面也是合并读')
+
+    // ② 工作区覆盖：只赢那一个叶子；系统文件一个字节不动；没碰的兄弟键还在（深合并不是整份替换）。
+    assert.equal(fugue(root, 'config', 'set', 'ports.range', '"31000-31099"').code, 0)
+    const after = await readConfig(root, sys)
+    assert.equal(getConfig(after, 'ports.range'), '31000-31099', '工作区那份赢')
+    assert.equal(getConfig(after, 'actions.build.env.CC'), 'cc', '没碰到的键从系统级来')
+    assert.equal(
+      (JSON.parse(readFileSync(sysFile, 'utf8')) as { ports: { range: string } }).ports.range,
+      '32000-32099',
+      '系统文件一个字节没动',
+    )
+
+    // 深合并到第三层：工作区往系统级给过的对象里加一个键，两边的键都在。
+    assert.equal(fugue(root, 'config', 'set', 'actions.build.env.CFLAGS', '"-O2"').code, 0)
+    assert.deepEqual(getConfig(await readConfig(root, sys), 'actions.build.env'), { CC: 'cc', CFLAGS: '-O2' })
+
+    // ③ set --system 写系统那一级；工作区文件不掺；读那面（合并）看得见。
+    assert.equal(fugue(root, 'config', 'set', '--system', 'boundary.enforcement', '"full"').code, 0)
+    const sysDoc = JSON.parse(readFileSync(sysFile, 'utf8')) as Record<string, unknown>
+    assert.equal((sysDoc['boundary'] as Record<string, unknown>)['enforcement'], 'full')
+    const wsBefore = JSON.parse(readFileSync(configFileOf(root), 'utf8')) as Record<string, unknown>
+    assert.equal('boundary' in wsBefore, false, '系统级写不落到工作区文件')
+    assert.equal(fugue(root, 'config', 'get', 'boundary.enforcement').stdout, 'full\n', '读那面看得见系统级的键')
+
+    // ④ 原值记录：两级各自跟各自的目标级；第一次写没有 old，覆盖写有。
+    assert.equal(fugue(root, 'config', 'set', '--system', 'boundary.enforcement', '"partial"').code, 0)
+    const sysLines = readFileSync(join(sys, 'config-history'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+    assert.equal(sysLines.length, 2, '两次系统级写各落一行')
+    assert.equal(sysLines[0]?.['key'], 'boundary.enforcement')
+    assert.equal('old' in (sysLines[0] ?? {}), false, '第一次写：键原本不在，old 这一栏不出现')
+    assert.equal(sysLines[1]?.['old'], 'full', '覆盖写：old 是改之前那份')
+    assert.ok(typeof sysLines[1]?.['at'] === 'string', '每行带时间')
+    const wsLines = readFileSync(join(root, '.fugue', 'config-history'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+    assert.equal(wsLines.length, 2, '工作区那两次 set 落工作区的账，没进系统的')
+    assert.equal(wsLines[0]?.['key'], 'ports.range')
+
+    // ⑤ 防抄底：saveFacts 单级读——系统级有 boundary，落完事实工作区文件里没有它（没被吸进来）。
+    await saveFacts(root, {
+      fs: 'ext4',
+      overlayfs: 'direct',
+      overlayfsNote: 'probe',
+      hardlink: true,
+      whiteout: 'direct',
+      whiteoutNote: 'probe',
+    })
+    const wsDoc = JSON.parse(readFileSync(configFileOf(root), 'utf8')) as Record<string, unknown>
+    assert.deepEqual(Object.keys(wsDoc).sort(), ['actions', 'platform', 'ports'], '系统级的键没被抄底固化进来')
+
+    // ⑥ 退化档：系统根指空目录 → 合并读与单级读是同一份。
+    const emptySys = tmpDir('fugue-sys-empty-')
+    assert.deepEqual(await readConfig(root, emptySys), await readWorkspaceConfig(root), '没有系统级那一份时，读合并 === 单级读')
+
+    // ⑦ 顶层键域：读那面拒绝加载并指路；写那面先拦（不然一次 set 就把文件写成之后每次读都拒的样子）。
+    writeFileSync(sysFile, JSON.stringify({ ...sysDoc, modelz: {} }))
+    const badShow = fugue(root, 'config', 'show')
+    assert.notEqual(badShow.code, 0, '未知顶层键要拒绝加载')
+    assert.match(badShow.stderr, /顶层只认/, '拒绝时指路：说出认得哪些')
+    const badSet = fugue(root, 'config', 'set', 'who.what', '1')
+    assert.notEqual(badSet.code, 0, '写那面也拦')
+    assert.ok(badSet.stderr.includes('顶层'), `写那面的拒绝也指路：${badSet.stderr}`)
+  } finally {
+    SYS_DIR = EMPTY_SYS
+  }
 })

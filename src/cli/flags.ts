@@ -51,7 +51,7 @@ export const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
   ensure: { flags: ['root', 'agent', 'json', 'help', 'to'] },
   run: { flags: ['root', 'agent', 'json', 'help', 'step', 'mode'] },
   policy: { flags: ['root', 'agent', 'json', 'help', 'mode'] },
-  config: { flags: ['root', 'json', 'help'] },
+  config: { flags: ['root', 'json', 'help', 'system'], note: 'config set --system 写系统那一级（~/.fugue）；不带它写工作区' },
   doctor: { flags: ['root', 'json', 'help'] },
   assemble: { flags: ['root', 'agent', 'json', 'help', 'against'] },
   say: { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'max-steps', 'credential', 'dump-wire'] },

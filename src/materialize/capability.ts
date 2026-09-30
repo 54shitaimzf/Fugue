@@ -20,7 +20,7 @@
 // 失败变成永久降级。代价是降级档每次多一次失败的挂载尝试，那是常数，不是判断。
 import { linkSync, mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { readConfig, setConfig, writeConfig } from '../config.ts'
+import { readConfig, readWorkspaceConfig, setConfig, writeConfig } from '../config.ts'
 import { probeHost } from '../roots/host.ts'
 import type { AbsPath, ForkStrategy, RelPath } from '../terms.ts'
 import type { MaterializeOptions } from './contract.ts'
@@ -190,9 +190,10 @@ export async function loadFacts(root: string): Promise<PlatformFacts | null> {
   }
 }
 
-/** 把事实落进工作区配置（§ 8.5 的"探针 + 缓存"）。**不碰别的键**。 */
+/** 把事实落进工作区配置（§ 8.5 的"探针 + 缓存"）。**不碰别的键**——单级读（P2a 的防抄底）：
+ * 系统级若有别的键，这一写不把它们固化进工作区文件。 */
 export async function saveFacts(root: string, facts: PlatformFacts): Promise<void> {
-  const doc = await readConfig(root)
+  const doc = await readWorkspaceConfig(root)
   setConfig(doc, FACTS_KEY, { ...facts })
   await writeConfig(root, doc)
 }
