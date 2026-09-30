@@ -261,6 +261,13 @@ const TIMING_RUNS = ['fast→ci-timing-fast.json', 'real→ci-timing-real.json']
 // 审档的报告（没进冻结面，但它也得真产出——报告缺了那一趟就白跑）。
 const MUTATION_ARTIFACT = 'mutation-audit'
 const MUTATION_PATH = 'mutation-audit.json'
+// 保护 payload（冻结点 ③）：必绿集合是**快 + 真**；文档仓那条留在本机（文档仓无远端），audit 只报不挡。
+const PROTECTION = join(REPO, '.github', 'main-protection.json')
+const PROTECTION_MD = join(REPO, '.github', 'main-protection.md')
+const PROTECTION_JSON = readFileSync(PROTECTION, 'utf8')
+const REQUIRED_CONTEXTS = ['fast', 'full']
+const PROTECTION_CMD =
+  'gh api -X PUT repos/54shitaimzf/Fugue/branches/main/protection --input .github/main-protection.json'
 
 /** 三档结构的问题清单（空数组 = 全过）。 */
 function inspectWorkflow(wf: Yaml): string[] {
@@ -592,6 +599,100 @@ test('负对照：审档改跑快档 → 当场红', () => {
   assert.ok(
     bad.some((m) => m.includes('audit：调了档')),
     `审档不跑全量兜底应当报出来，实得 ${JSON.stringify(bad)}`,
+  )
+})
+
+/** 保护 payload 的问题清单。`jobNames` 是 workflow 里定义的 job/check 名（`name:` = job id）。 */
+function inspectProtection(p: Record<string, unknown>, jobNames: string[]): string[] {
+  const bad: string[] = []
+  const rsc = p.required_status_checks as Record<string, unknown> | null | undefined
+  if (rsc === null || rsc === undefined || typeof rsc !== 'object') return ['payload 里没有 required_status_checks']
+  const contexts = rsc.contexts
+  if (!Array.isArray(contexts)) return ['required_status_checks.contexts 不是数组']
+  const names = contexts.map(String)
+  if (JSON.stringify([...names].sort()) !== JSON.stringify(REQUIRED_CONTEXTS)) {
+    bad.push(`必绿集合是 ${names.join(' · ')}——要的是 ${REQUIRED_CONTEXTS.join(' · ')}（快 + 真；审档只报不挡）`)
+  }
+  for (const c of names) {
+    if (!jobNames.includes(c)) {
+      bad.push(`必绿集合里的 ${c} 在 workflow 里没有同名的 job/check——这条 check 永远不会出现，PR 会被永远挡在门外`)
+    }
+  }
+  if (p.required_pull_request_reviews !== null) {
+    bad.push('payload 要求了 PR 审查——与「CI 挡的是合，不是写」（不要求 PR）的口径相反；要改就连口径一起改（人批）')
+  }
+  if (p.restrictions !== null && p.restrictions !== undefined) {
+    bad.push('payload 加了推送限制（restrictions）——那会改掉"谁能推 main"，要改就得人批')
+  }
+  return bad
+}
+
+test('保护 payload：必绿集合 ↔ workflow 的 job 名逐一对照（错一个名就永远挡合）', () => {
+  const wf = parseYamlSubset(YAML_TEXT)
+  const jobNames = Object.keys(wf.jobs as Yaml).sort()
+  const payload = JSON.parse(PROTECTION_JSON) as Record<string, unknown>
+  const contexts = (payload.required_status_checks as Record<string, unknown>).contexts as string[]
+  const table = contexts.map((c) => `${c}↔${jobNames.includes(c) ? 'job ' + c : '**没有这个 job**'}`)
+  console.log(
+    `必绿读数：context ${contexts.join(' · ')} ｜ ${table.join(' · ')} ｜ workflow 里的 job ${jobNames.join(' · ')}（audit 不在集合里）`,
+  )
+  assert.deepEqual(inspectProtection(payload, jobNames), [], '保护 payload 不过这组判据')
+})
+
+test('应用命令与 payload 成对：md 里那条 gh api 指的就是这一份文件', () => {
+  const md = readFileSync(PROTECTION_MD, 'utf8')
+  assert.ok(md.includes(PROTECTION_CMD), 'md 里那条应用命令漂了（或指到别的文件去了）')
+  const contexts = (JSON.parse(PROTECTION_JSON) as Record<string, unknown>).required_status_checks as Record<string, unknown>
+  for (const c of contexts.contexts as string[]) {
+    assert.ok(md.includes('`' + c + '`'), `md 的对照表里少了 ${c}`)
+  }
+})
+
+// 负对照：保护配置最常见的翻车是"名字错一个"——写错了不报错，只是 PR 永远合不进来。
+function brokenProtection(mutate: (p: Record<string, unknown>) => void): string[] {
+  const wf = parseYamlSubset(YAML_TEXT)
+  const payload = JSON.parse(PROTECTION_JSON) as Record<string, unknown>
+  mutate(payload)
+  return inspectProtection(payload, Object.keys(wf.jobs as Yaml))
+}
+
+test('负对照：必绿集合里写错一个名字 → 当场红', () => {
+  const bad = brokenProtection((p) => {
+    ;(p.required_status_checks as Record<string, unknown>).contexts = ['fats', 'full']
+  })
+  assert.ok(
+    bad.some((m) => m.includes('没有同名的 job')),
+    `名字拼错应当报出来，实得 ${JSON.stringify(bad)}`,
+  )
+})
+
+test('负对照：必绿集合漏了真档（只剩 fast）→ 当场红', () => {
+  const bad = brokenProtection((p) => {
+    ;(p.required_status_checks as Record<string, unknown>).contexts = ['fast']
+  })
+  assert.ok(
+    bad.some((m) => m.includes('必绿集合是')),
+    `漏了真档应当报出来，实得 ${JSON.stringify(bad)}`,
+  )
+})
+
+test('负对照：把 audit 塞进必绿集合 → 当场红（审档只报不挡）', () => {
+  const bad = brokenProtection((p) => {
+    ;(p.required_status_checks as Record<string, unknown>).contexts = ['audit', 'fast', 'full']
+  })
+  assert.ok(
+    bad.some((m) => m.includes('必绿集合是')),
+    `审档进了必绿集合应当报出来，实得 ${JSON.stringify(bad)}`,
+  )
+})
+
+test('负对照：payload 要求 PR 审查 → 当场红（与「挡的是合，不是写」的口径相反）', () => {
+  const bad = brokenProtection((p) => {
+    p.required_pull_request_reviews = { required_approving_review_count: 1 }
+  })
+  assert.ok(
+    bad.some((m) => m.includes('审查')),
+    `要求 PR 审查应当报出来，实得 ${JSON.stringify(bad)}`,
   )
 })
 
