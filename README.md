@@ -143,6 +143,7 @@ fugue round work --live --max-steps 8
 ## 想要更多
 
 - `fugue --help`：全部 27 条命令，每条一两句说清它是干什么的。
+- 每一版变了什么：[CHANGELOG.md](CHANGELOG.md)。
 - 想改它、想验它：[AGENTS.md](AGENTS.md)（环境 · 验收入口 · 走查）与 [tools/](tools/)（走查 · 探针 · 基准，**取证用的，不是产品的一部分**）。
 - 它为什么长成这样：三份设计文档（架构 · 计划 · 第一版之后的目标）不在这个仓库里。
 
