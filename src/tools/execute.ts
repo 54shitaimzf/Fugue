@@ -415,23 +415,53 @@ const readImageFace: ToolFn = async (args, host) => {
 }
 
 /**
+ * 发现类那两条工具的**范围**：一条相对路径，可以指目录（含其后代），也可以直接指一条文件。
+ *
+ * **尾斜杠在这里归一掉**：`path: 'src/'` 不归一的话 `dir + '/'` 成了 `'src//'`、`path === dir`
+ * 也不成立，候选集于是是空集。而空集在发现类工具上**看起来只是"真没有"**——一个字的错都不报。
+ */
+function scopeOf(raw: string | null, fallback: string): string {
+  return (raw ?? fallback).replace(/\/+$/, '')
+}
+
+/** 这条路径在范围里吗。空范围 = 整个视图；范围指到一条文件时它自己也算在内。 */
+function inScope(path: string, dir: string): boolean {
+  return dir === '' || path === dir || path.startsWith(dir + '/')
+}
+
+/**
+ * 路径模式**在范围内也配一次**（视图根相对的那一份之外）。
+ *
+ * `path: 'src'` 或 `cwd: 'src'` 之下，模型给的最自然的那个模式是 `*.ts`——它说的是"范围里的
+ * 文件名"，而视图根相对的路径是 `src/a.ts`，`^[^/]*\.ts$` 配不上。这一条坑在 `glob` 工具上
+ * 真烧过一格（见 `globToRe` 的注释：模型先 `find` 看见 `./count.ts`，再用惯常模式问 `glob`
+ * 拿到空列表，四步全在 `find`/`ls`，写 0 条），而且**这一条不报错**。
+ *
+ * 两边取并：既认"从视图根看是这样"，也认"从范围里看是这样"。
+ */
+function matchesInScope(re: RegExp, path: string, dir: string): boolean {
+  if (re.test(path)) return true
+  return dir !== '' && path.length > dir.length && re.test(path.slice(dir.length + 1))
+}
+
+/**
  * 走一遍树。**走法归宿主**（`walk`）：它知道哪些行是目录、哪些是软链、能走多深。这一层只
  * 拿结果去配 `glob` 的语法（`**` 要不要跨 `/` 是模式那边的事）。
  */
 const globFace: ToolFn = async (args, host) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('glob', 'pattern')
-  const dir = text(args, 'path') ?? ''
+  const dir = scopeOf(text(args, 'path'), '')
   const all = await host.walk()
   const re = globToRe(pattern)
-  const hit = all.filter((p) => (dir === '' || p.startsWith(dir + '/')) && re.test(p))
+  const hit = all.filter((p) => inScope(p, dir) && matchesInScope(re, p, dir))
   return ok(hit.length === 0 ? `no path matches ${pattern}.` : `${hit.length} paths:\n${hit.join('\n')}`)
 }
 
 const grepFace: ToolFn = async (args, host, ctx) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('grep', 'pattern')
-  const dir = text(args, 'path') ?? ctx.cwd
+  const dir = scopeOf(text(args, 'path'), ctx.cwd)
   const mode = args.output_mode === undefined ? 'content' : args.output_mode
   if (mode !== 'content' && mode !== 'files_with_matches' && mode !== 'count') {
     return no('grep output_mode must be content, files_with_matches, or count.')
@@ -447,8 +477,7 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   }
   const pathPattern = typeof args.glob === 'string' ? globToRe(args.glob) : null
   const all = (await host.walk()).filter(path =>
-    (dir === '' || path === dir || path.startsWith(dir + '/')) &&
-    (pathPattern === null || pathPattern.test(path)),
+    inScope(path, dir) && (pathPattern === null || matchesInScope(pathPattern, path, dir)),
   )
   // 只预取筛后的候选。可选口缺席时仍逐文件读；失败仍由真源读口报出。
   let prefetch: ((paths: readonly string[]) => Promise<void>) | undefined
