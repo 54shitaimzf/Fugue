@@ -8,7 +8,7 @@
 //   ④ **假模型驱动 读 → 写 → 检查点，走到一次真提交**，而**真工作树一个文件都没多**
 //   ⑤ 负对照：字节那一栏改成"读回来的 UTF-8 文本相同"→ 一条非法序列就把它变红
 //   ⑨ **模型读到的每一个字节都是英文**（口径：谁读谁的语言——人读的走中文 · 见证 § 8.11）
-//   格 3（0.2.4）**`grep` 的候选先按一批取回内容**：冷的那一趟请求数不随文件数线性涨，
+//   格 3 **`grep` 的候选先按一批取回内容**：冷的那一趟请求数不随文件数线性涨，
 //   热的那一趟一次都不发；这道缝缺席时退回逐文件读（回执逐字节不变）
 
 import assert from 'node:assert/strict'
@@ -773,7 +773,7 @@ test('⑨ 模型读到的回执里没有一个汉字（正文那几格只看头�
     await b.close()
   }
 })
-// ── 格 3（0.2.4）· 预取：缓存与批量取在工具这一层的落点 ──────────────────────────
+// ── 格 3 · 预取：缓存与批量取在工具这一层的落点 ──────────────────────────────────
 
 /**
  * 一份**从提交起**的台子：内容在下层（对象库里），所以 `grep` 的每一次读都要经真源。
@@ -790,7 +790,10 @@ interface LowerBench {
   readonly close: () => Promise<void>
 }
 
-async function lowerBench(files: Record<string, string>): Promise<LowerBench> {
+async function lowerBench(
+  files: Record<string, string>,
+  opts: { readonly cache?: number; readonly read?: 'batch' | 'oneshot' } = {},
+): Promise<LowerBench> {
   const root = mkdtempSync(join(tmpdir(), 'fugue-b5-lower-'))
   const init = spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' })
   assert.equal(init.status, 0, init.stderr)
@@ -803,7 +806,10 @@ async function lowerBench(files: Record<string, string>): Promise<LowerBench> {
   await build.close()
 
   const log = openLog(root, { write: AGENT as WriterId, sync: 'each' })
-  const measure = openTruth(root)
+  const measure = openTruth(root, {
+    ...(opts.cache === undefined ? {} : { blobCacheBytes: opts.cache }),
+    ...(opts.read === undefined ? {} : { read: opts.read }),
+  })
   const view = await loadView(log, AGENT as WriterId, { lower: lowerAt(measure, base) })
   const host = createToolHost(view, createRoots(root as never), {
     actions: { writer: AGENT as WriterId, log, truth: measure, head: await refHeadOf(log, AGENT as WriterId, base) },
@@ -828,7 +834,40 @@ function lowerCorpus(): Record<string, string> {
   return files
 }
 
+test('格 3 · 地板：容量 0 + 预取缺席 + oneshot 三者同开，回执与缺省档逐字节相同', async () => {
+  // **这三样是本站在两个方向上留的退化档**：容量 0（缓存关）· 预取缺席（没有那道缝）·
+  // `oneshot`（批量子进程那一档不要）。它们任意组合都必须**跑得起来**——判据是回执不变。
+  const floor = await lowerBench(lowerCorpus(), { cache: 0, read: 'oneshot' })
+  const floorHost = (({ prefetch, ...rest }) => rest)(floor.host)
+  assert.equal(floor.host.prefetch === undefined, false)
+  try {
+    const before = floor.truth.stats().gitRequests
+    const out = await face('grep', { pattern: '记号' }, floorHost as ToolHost)
+    const cost = floor.truth.stats().gitRequests - before
+    assert.equal(out.ok, true)
+    assert.equal(out.output.split('\n').length - 1, 30, `三样同开也要搜到 30 行：${out.output.slice(0, 120)}`)
+    assert.equal(floor.truth.stats().readTier, 'oneshot', '显式选了退化档，就该在退化档上')
+    assert.equal(floor.truth.stats().blobEntries, 0, '容量 0 一条都不存')
+    assert.ok(cost >= 30, `三样同开就是逐文件读：实际 ${cost}`)
+    assert.ok(cost <= 45, `但也不该炸开：实际 ${cost}（每个文件一趟 + 走树那几趟）`)
+
+    // 与缺省档（缓存开着 · 预取在位 · 批量档）的回执**逐字节相同**。
+    const full = await lowerBench(lowerCorpus())
+    try {
+      const ref = await face('grep', { pattern: '记号' }, full.host)
+      assert.equal(out.output, ref.output, '三样同开与缺省档的回执必须逐字节相同')
+      assert.ok(full.truth.stats().readTier !== 'oneshot')
+    } finally {
+      await full.close()
+    }
+    console.log(`格 3 地板读数：三者同开（容量 0 · 无预取 · oneshot）30 个文件 ${cost} 次请求，回执与缺省档逐字节相同`)
+  } finally {
+    await floor.close()
+  }
+})
+
 test('格 3 · 预取：一批把候选的内容取回来，此后逐文件读全命中', async () => {
+
   // **无预取那一档**：从产品宿主上摘掉那一栏，就是今天的逐文件读。
   const b = await lowerBench(lowerCorpus())
   let bareCost = 0

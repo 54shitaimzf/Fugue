@@ -526,7 +526,7 @@ test('mergeTree：判据是退出码；冲突时不给出 tree', async (ctx) => 
   await t.close()
 })
 
-// ────────────────────────────────── blob 缓存与 info 小表（0.2.4）
+// ────────────────────────────────── blob 缓存与 info 小表（T16 ① · 本站）
 
 test('格 2 · blob 缓存：同一 blob 二次 getBlob / readAt → gitRequests 不涨；出口仍是拷贝', async (ctx) => {
   const root = tmpRoot()

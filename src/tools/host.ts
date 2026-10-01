@@ -221,7 +221,8 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
 
 
   /**
-   * **把这几条路径的内容先取回一层来**（0.2.4）。id 从 `view.stat` 拿（`EntryMeta.id` 就是
+   * **把这几条路径的内容先取回一层来**（这一站加的）。id 从 `view.stat` 拿（`EntryMeta.id` 就是
+
    * 那个 blob）——info 小表热了之后这一步是内存操作，一次收集、一次批量。
    *
    * **没有真源（夹具档）就是缺席**：这里直接返回，grep 退回逐文件读。

@@ -74,7 +74,7 @@ export interface ToolHost {
    */
   walk(): Promise<readonly string[]>
   /**
-   * **把这几条路径的内容先取回一层来**（0.2.4 加的，可选）。它是一道**缝**：实现了就在这一层
+   * **把这几条路径的内容先取回一层来**（这一站加的，可选）。它是一道**缝**：实现了就在这一层
    * 批量取（一条 `objectMany('contents', …)`），没实现就照旧"用一条读一条"——**预取缺席 =
    * 退回逐文件读**，不是坏掉（AGENTS 第五节的地板判据）。
    *
@@ -408,7 +408,7 @@ const grepFace: ToolFn = async (args, host, ctx) => {
     return no(`that is not a regular expression: ${(err as Error).message}`)
   }
   const all = await host.walk()
-  // **先按一次批量把候选的内容取回来**（0.2.4）：它是提示，缺席或失败都退回今天的逐文件读
+  // **先按一次批量把候选的内容取回来**：它是提示，缺席或失败都退回今天的逐文件读
   // ——这台宿主没有那道缝（测试夹具）、或者那一层没接上真源，都只是慢一点。
   //
   // **读那道缝这件事自己包在 try 里**：`host` 可能是负对照那种"读任何字段都抛"的假体
