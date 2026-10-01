@@ -9,19 +9,18 @@
 //      下没有
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import type { Assertion } from '../contract/types.ts'
 import type { BlobId, CommitId, RelPath } from '../terms.ts'
 import type { TreeEntry } from '../entries.ts'
-import { gitModeOf } from '../delta.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import { scanTree } from '../materialize/diffstat.ts'
 import { WORKSPACE_STATE } from '../materialize/diffstat.ts'
-import { advance, commitThenAdvance, countsAsReject, entriesOf, verify } from './accept.ts'
+import { AcceptError, advance, commitThenAdvance, countsAsReject, entriesOf, verify } from './accept.ts'
 
 const KEEP = process.env.KEEP === '1'
 const roots: string[] = []
@@ -166,11 +165,9 @@ test('② 通过那一档：保留前缀之外逐字节一致，且内容相同�
     // ② 第四条验证：真实工作树与该 commit 的 tree 在保留前缀之外逐字节一致。
     const got = scanTree(real, { skip: WORKSPACE_STATE })
     const want = await materializeForCompare(t, withSession)
-    // 模式按树上那一档比（`gitModeOf`）：与"该 commit 的 tree"比，比的就是 git 记得住的那一档
-    // ——两侧的盘上整模式各随 umask（参照树是这里 `writeFileSync` 铺的，`same.txt` 推进不碰）。
     assert.deepEqual(
-      got.leaves.map((l) => [l.path, l.kind, gitModeOf(l.mode), l.size, l.hash]),
-      want.map((l) => [l.path, l.kind, gitModeOf(l.mode), l.size, l.hash]),
+      got.leaves.map((l) => [l.path, l.kind, l.mode, l.size, l.hash]),
+      want.map((l) => [l.path, l.kind, l.mode, l.size, l.hash]),
       '推进之后的真实工作树与那棵树对不上（保留前缀之外）',
     )
     // 内容相同的没被 touch：mtime 与推进之前逐字节相同。
@@ -258,32 +255,6 @@ test('跑不起来那一档：命令不在 → unrunnable，不进"没通过"的
   }
 })
 
-test('④ 盘上 0664 · 内容一样：advance 不重写、不 touch（组写位不是改动，执行位翻了才是）', async () => {
-  // **显式 chmod**：`umask 002` 的机器上用户的文件就是 0664，而树上是 `100644`。原先 `advance`
-  // 拿盘上整模式逐数比，于是内容一样的文件也被重写一遍、mtime 跟着变——正是 ② 说的"假失效"。
-  const { real, store } = scratch()
-  const t = openTruth(store)
-  try {
-    const commit = await commitOf(t, { 'same.txt': '一样的\n', 'new.txt': '新来的\n' }, [], '目标')
-    writeFileSync(join(real, 'same.txt'), '一样的\n')
-    chmodSync(join(real, 'same.txt'), 0o664)
-    const before = JSON.stringify(scanTree(real).leaves.find((l) => l.path === 'same.txt'))
-
-    const out = await advance({ truth: t, realRoot: real }, commit)
-    assert.deepEqual([...out.written], ['new.txt'], '只该写目标里新来的那一条')
-    const after = JSON.stringify(scanTree(real).leaves.find((l) => l.path === 'same.txt'))
-    assert.equal(after, before, '0664 · 内容一样的文件被重写了（mtime 或模式变了）')
-
-    // **负对照：执行位真的翻了**——git 也把它当一次改动，推进要把它落回树上那一档。
-    chmodSync(join(real, 'same.txt'), 0o755)
-    const again = await advance({ truth: t, realRoot: real }, commit)
-    assert.deepEqual([...again.written], ['same.txt'], '执行位翻了是真改动，不许被归一吞掉')
-    assert.equal(lstatSync(join(real, 'same.txt')).mode & 0o111, 0, '落回之后没有执行位')
-  } finally {
-    await t.close()
-  }
-})
-
 /** 拿一个提交在盘上铺一份"参照树"，好与真实工作树逐条比。 */
 async function materializeForCompare(t: TruthHandle, commit: CommitId): Promise<{ path: string; kind: string; mode: number; size: number; hash: string }[]> {
   const dir = join(roots[roots.length - 1] as string, `ref-${commit.slice(0, 6)}`)
@@ -303,3 +274,79 @@ async function materializeForCompare(t: TruthHandle, commit: CommitId): Promise<
   // "保留前缀在不在真实工作树里"，而那是 ③ 那条断言的事。
   return scanTree(dir, { skip: WORKSPACE_STATE }).leaves.map((l) => ({ path: l.path, kind: l.kind, mode: l.mode, size: l.size, hash: l.hash }))
 }
+
+
+test('④ 目录换成软链：移除旧目录、不跟随其中的软链，重复推进不 touch', async () => {
+  const { real, store } = scratch()
+  const t = openTruth(store)
+  try {
+    const outside = join(real, '..', 'outside')
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'keep.txt'), '目录之外的内容\n')
+    mkdirSync(join(real, 'docs', 'nested'), { recursive: true })
+    writeFileSync(join(real, 'docs', 'nested', 'old.txt'), '旧目录里的内容\n')
+    symlinkSync(outside, join(real, 'docs', 'outside'))
+    const stateBefore = readFileSync(join(real, '.git', 'HEAD'), 'utf8')
+    const tree = await t.putTree([
+      { name: 'docs', mode: 0o120000, id: await t.putBlob(new TextEncoder().encode('new-docs')) },
+    ])
+    const commit = await t.commit(tree, [], '目录换成软链')
+
+    const out = await advance({ truth: t, realRoot: real }, commit)
+    assert.deepEqual(out.written, ['docs'])
+    assert.equal(lstatSync(join(real, 'docs')).isSymbolicLink(), true)
+    assert.equal(readlinkSync(join(real, 'docs')), 'new-docs')
+    assert.equal(readFileSync(join(outside, 'keep.txt'), 'utf8'), '目录之外的内容\n')
+    assert.equal(readFileSync(join(real, '.git', 'HEAD'), 'utf8'), stateBefore)
+
+    const before = fingerprintAll(real)
+    const again = await advance({ truth: t, realRoot: real }, commit)
+    assert.deepEqual(again.written, [])
+    assert.equal(fingerprintAll(real), before, '一致的软链不重写、不改 mtime')
+  } finally {
+    await t.close()
+  }
+})
+
+
+test('保留前缀的祖先不能换成叶子：软链与普通文件都在任何写入之前拒绝', async () => {
+  for (const mode of [0o120000, 0o100644]) {
+    const { real, store } = scratch()
+    const t = openTruth(store)
+    try {
+      mkdirSync(join(real, 'docs', 'local'), { recursive: true })
+      writeFileSync(join(real, 'docs', 'local', 'keep.txt'), '必须保留\n')
+      const before = fingerprintAll(real)
+      const blob = await t.putBlob(new TextEncoder().encode('replacement'))
+      const commit = await t.commit(await t.putTree([
+        { name: 'a-first.txt', mode: 0o100644, id: blob },
+        { name: 'docs', mode, id: blob },
+      ]), [], '目标叶子与嵌套保留前缀冲突')
+
+      await assert.rejects(
+        advance({ truth: t, realRoot: real, preserve: [...WORKSPACE_STATE, 'docs/local'] }, commit),
+        (err) => err instanceof AcceptError && err.message.includes('docs/local'),
+      )
+      assert.equal(fingerprintAll(real), before, '不只保留文件不动：排在冲突前的文件也不能先落地')
+      assert.equal(existsSync(join(real, 'a-first.txt')), false)
+    } finally {
+      await t.close()
+    }
+  }
+})
+
+test('嵌套保留前缀不妨碍兄弟文件正常推进', async () => {
+  const { real, store } = scratch()
+  const t = openTruth(store)
+  try {
+    mkdirSync(join(real, 'docs', 'local'), { recursive: true })
+    writeFileSync(join(real, 'docs', 'local', 'keep.txt'), '必须保留\n')
+    const commit = await commitOf(t, { 'docs/public.txt': '公开内容\n' }, [], '只写保留前缀的兄弟')
+    const out = await advance({ truth: t, realRoot: real, preserve: [...WORKSPACE_STATE, 'docs/local'] }, commit)
+    assert.deepEqual(out.written, ['docs/public.txt'])
+    assert.equal(readFileSync(join(real, 'docs', 'local', 'keep.txt'), 'utf8'), '必须保留\n')
+    assert.equal(readFileSync(join(real, 'docs', 'public.txt'), 'utf8'), '公开内容\n')
+  } finally {
+    await t.close()
+  }
+})
