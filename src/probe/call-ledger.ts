@@ -34,10 +34,14 @@ function count(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
-/** 非数组（含 null / 字符串 / 数字）与含非法计数的数组一律整栏未知；不把字符串拆成状态码。 */
+/**
+ * 非数组（含 null / 字符串 / 数字）与含非法计数的数组一律整栏未知；不把字符串拆成状态码。
+ * 先取稠密快照再判：`Array.prototype.map` / `every` 会跳过稀疏数组的空槽，而空槽 JSON 化
+ * 之后是 `null`——那等于凭空多出一个「没拿到状态码」的尝试。
+ */
 function attemptsOf(value: unknown): readonly number[] | null {
   if (!Array.isArray(value)) return null
-  const codes = value.map(count)
+  const codes = Array.from({ length: value.length }, (_, at) => count(value[at]))
   return codes.every((code): code is number => code !== null) ? codes : null
 }
 

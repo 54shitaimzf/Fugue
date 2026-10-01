@@ -53,7 +53,9 @@ test('legacy absent and malformed counts remain unknown, not zero or coerced tex
 })
 
 test('malformed retry lists stay unknown instead of aborting the ledger or coercing text', () => {
-  for (const attempts of [null, 7, 'x', {}, ['429'], [429, -1], [429, 1.5]]) {
+  const sparse = [429, 200]
+  delete sparse[0] // Array.prototype.map 会跳过空槽，空槽 JSON 化成 null 就是凭空多一个状态码。
+  for (const attempts of [null, 7, 'x', {}, ['429'], [429, -1], [429, 1.5], sparse, new Array<number>(2)]) {
     const ledger = callLedgerOf([row(call({ attempts } as unknown as Partial<Call>))])
     assert.equal(ledger.calls[0].attempts, null, JSON.stringify(attempts))
     assert.equal(ledger.totalCalls, 1)
