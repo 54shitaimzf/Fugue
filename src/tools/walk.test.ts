@@ -6,7 +6,7 @@ import type { CommitId, RelPath } from '../terms.ts'
 import { loadView } from '../view/view.ts'
 import { createToolHost } from './host.ts'
 import { createRoots } from '../roots/roots.ts'
-import { createCachedWalkDetailed } from './walk.ts'
+import { createCachedWalkDetailed, WALK_LIMITS } from './walk.ts'
 
 function row(name: string, kind: EntryKind = 'file'): DirEntry {
   return { name, kind, mode: kind === 'dir' ? 0o40000 : 0o100644, size: 0, id: '' }
@@ -193,7 +193,7 @@ test('ToolHost detailed and legacy reads reuse the same cached enumeration', asy
 
 test('production row/depth thresholds report incomplete traversal without exceeding bounds', async () => {
   const files = Array.from({ length: 5001 }, (_, i) => row(String(i)))
-  const wide = await createCachedWalkDetailed(fakeView({ '': files }), limits)()
+  const wide = await createCachedWalkDetailed(fakeView({ '': files }), WALK_LIMITS)()
   assert.equal(wide.paths.length, 5000)
   assert.equal(wide.paths[4999], '4999')
   assert.deepEqual(wide.limits, ['rows'])
@@ -203,7 +203,12 @@ test('production row/depth thresholds report incomplete traversal without exceed
     tree[path] = [row('file'), row('next', 'dir')]
     path = path === '' ? 'next' : `${path}/next`
   }
-  const deep = await createCachedWalkDetailed(fakeView(tree), limits)()
+  const deep = await createCachedWalkDetailed(fakeView(tree), WALK_LIMITS)()
   assert.equal(deep.paths.length, 25)
   assert.deepEqual(deep.limits, ['depth'])
+})
+
+test('the product walk limits are one shared constant, pinned to the documented 24 deep / 5,000 rows', () => {
+  assert.deepEqual({ ...WALK_LIMITS }, { maxDepth: 24, maxRows: 5000 })
+  assert.ok(Object.isFrozen(WALK_LIMITS))
 })
