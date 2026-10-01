@@ -1,7 +1,7 @@
 // 不缓存 path→blob；每批当前 View 元数据相交，变代/不确定就退回原批。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { filterCurrentViewCandidates } from './current-view-candidates.ts'
+import { MAX_INDEX_REQUIREMENTS, filterCurrentViewCandidates } from './current-view-candidates.ts'
 import type { CandidateIndexLookup, CandidateView } from './current-view-candidates.ts'
 import type { BlobId, CommitId, RelPath, ViewRev } from '../terms.ts'
 import type { EntryMeta } from '../entries.ts'
@@ -67,20 +67,41 @@ test('null, exceptions, invalid metadata and non-boolean decisions cannot exclud
   assert.equal(queried, 0)
 })
 
-test('empty/invalid requirements and overlarge batches stay on the scan path without index work', async () => {
+test('empty/invalid requirements stay on the scan path without index work', async () => {
   const b = viewOf({ a: old })
   let calls = 0
   let metadataReads = 0
   const stat = b.view.stat
   b.view.stat = async path => { metadataReads++; return stat(path) }
   const noCall: CandidateIndexLookup = async () => { calls++; return false }
-  for (const grams of [[], ['ab'], ['abcd'], new Array<string>(1), Array(129).fill('hit')]) {
+  for (const grams of [[], ['ab'], ['abcd'], new Array<string>(1), Array(MAX_INDEX_REQUIREMENTS + 1).fill('hit')]) {
     assert.deepEqual(await filterCurrentViewCandidates(b.view, ['a'], grams, noCall), ['a'])
   }
-  const paths = Array.from({ length: 129 }, (_, index) => `file-${index}`)
-  assert.deepEqual(await filterCurrentViewCandidates(b.view, paths, required, noCall), paths)
-  assert.equal(calls, 0)
-  assert.equal(metadataReads, 0)
+  assert.deepEqual(await filterCurrentViewCandidates(b.view, ['a'], Array(MAX_INDEX_REQUIREMENTS).fill('hit'), noCall), [])
+  assert.equal(calls, 1, 'exactly the requirement ceiling still queries the index')
+  assert.equal(metadataReads, 1)
+})
+
+test('candidate lists longer than one index batch are still filtered, not silently passed through', async () => {
+  const ids: Record<string, string> = {}
+  for (let at = 0; at < 300; at++) ids[`f${at}`] = at % 2 ? hit : old
+  const b = viewOf(ids)
+  const paths = Object.keys(ids)
+  let calls = 0
+  const counted: CandidateIndexLookup = async blob => { calls++; return blob === hit }
+  const kept = await filterCurrentViewCandidates(b.view, paths, required, counted)
+  assert.equal(calls, 300, 'walk() hands over up to MAX_ROWS paths; none of them may skip the index')
+  assert.deepEqual(kept, paths.filter((_, at) => at % 2 === 1))
+})
+
+test('a generation change in a later part of a long list still reverts the earlier negatives', async () => {
+  const ids: Record<string, string> = {}
+  for (let at = 0; at < 300; at++) ids[`f${at}`] = old
+  const b = viewOf(ids)
+  const paths = Object.keys(ids)
+  let calls = 0
+  const racing: CandidateIndexLookup = async () => { if (++calls === 200) b.change(); return false }
+  assert.deepEqual(await filterCurrentViewCandidates(b.view, paths, required, racing), paths)
 })
 
 test('rename, mode-only generation changes and tombstone recreation use the newly supplied view set', async () => {
@@ -225,4 +246,9 @@ test('sticky stale state prevents later backend work even if a nonstandard gener
     b.change()
     for (const release of releases) release()
   }
+})
+
+test('the requirement cap is the extractor\'s output cap, not a second 128', async () => {
+  const { MAX_REQUIRED_TRIGRAMS } = await import('./regex-literal.ts')
+  assert.equal(MAX_INDEX_REQUIREMENTS, MAX_REQUIRED_TRIGRAMS, '提取器产出比过滤接受的多，条件就静默作废；反过来则是死上限')
 })

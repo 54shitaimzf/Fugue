@@ -54,9 +54,12 @@ function payloadOf(index: BlobIndex): BlobIndex {
     tables: { trigrams: [...index.tables.trigrams], symbols: null } }
 }
 
+/** 同样的字节永远同样的结果（超预算），与读源失败这类暂时故障分开：只有它值得被记住。 */
+export class IndexBudgetError extends Error {}
+
 export function buildBlobIndex(blob: BlobId, bytes: Uint8Array): BlobIndex {
   if (!isBlobId(blob)) throw new Error('index requires a complete lowercase Git blob ID')
-  if (bytes.byteLength > MAX_SOURCE_BYTES) throw new Error('index source byte budget exceeded')
+  if (bytes.byteLength > MAX_SOURCE_BYTES) throw new IndexBudgetError('index source byte budget exceeded')
   const source = Buffer.from(bytes)
   const hash = createHash(blob.length === 40 ? 'sha1' : 'sha256')
   hash.update(`blob ${source.byteLength}\0`)
@@ -67,7 +70,7 @@ export function buildBlobIndex(blob: BlobId, bytes: Uint8Array): BlobIndex {
   const grams = new Set<string>()
   for (let at = 0; at + 2 < text.length; at++) {
     grams.add(text.slice(at, at + 3))
-    if (grams.size > MAX_TRIGRAMS) throw new Error('index trigram budget exceeded')
+    if (grams.size > MAX_TRIGRAMS) throw new IndexBudgetError('index trigram budget exceeded')
   }
   return { format: 'fugue-blob-trigrams', version: 1, blob, sourceBytes: source.byteLength,
     textUnits: text.length, tables: { trigrams: [...grams].sort(), symbols: null } }
