@@ -18,7 +18,10 @@ import type { Capability, Denied } from '../capability/table.ts'
 // **路径形状那一个错来自叶子**（`src/path-shape.ts`）：视图那一层抛它，这一层按它接成一条结果。
 // 不 import 视图那边——这一层的头注写着"不认识视图"，而这条规矩两层共用，所以它有一条自己的家。
 import { PathShapeError } from '../path-shape.ts'
-import { lineCount } from './receipt.ts'
+import { lineCountOfBytes } from './receipt.ts'
+// **行窗口住工具面**（`window.ts`）：字节已经是整对象，要省的是解码与行切——在这里做窗口算术
+// 零接口改动、逐字节可证，将来 serve 化时它跟 `readBytes` 一起搬，形状不返工。
+import { lineWindow, windowNote } from './window.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -334,18 +337,55 @@ const PATH_TOOLS: readonly string[] = ['read', 'write', 'edit', 'read_image']
 // 路径参数原样交给实现那一侧（`ToolHost`）：围栏在 `dispatch` 那一道（由能力表的 `fence` 推
 // 出来的），物理落点在 `Roots`。这一层不碰路径算术——§ 8.4 的"唯一入口"那句话说的就是它。
 
+/**
+ * 一个「整行号」参数（`read` 的 `offset` · `limit`）：**没给这一栏就是没给**，给了就必须是安全
+ * 整数（`offset` 正 · `limit` 非负）。
+ *
+ * **坏参数在伸手之前拒**（§ 8.10 硬纪律 1 的另一半：公布了就要有人接，接了就要接得干净）：
+ * 为了回一句"参数不对"先去读一整份文件，是把我们的粗心算在它头上。缺省只有一种形状——这个键
+ * 不在；给了别的形状（含 `null`）就是坏参数，拒的话里点出是哪一个。
+ */
+function wholeArg(
+  args: Readonly<Record<string, unknown>>,
+  name: 'offset' | 'limit',
+): { readonly value: number | null } | { readonly why: string } {
+  const v = arg(args, name)
+  if (v === undefined) return { value: null }
+  if (typeof v === 'number' && Number.isSafeInteger(v) && v >= (name === 'offset' ? 1 : 0)) return { value: v }
+  const said = typeof v === 'string' ? JSON.stringify(v) : String(v)
+  const wants =
+    name === 'offset'
+      ? 'a positive whole number of lines (1 is the first line)'
+      : 'a whole number of lines (0 is allowed, and shows none)'
+  return { why: `${name} has to be ${wants} — this call gave ${said}.` }
+}
+
 const readFace: ToolFn = async (args, host) => {
   const path = text(args, 'path')
   if (path === null) return missing('read', 'path')
+  // **窗口先问清楚，再伸手**：两个参数一个都没给就是整档——那一档与从前逐字节相同。
+  const offset = wholeArg(args, 'offset')
+  if ('why' in offset) return no(offset.why)
+  const limit = wholeArg(args, 'limit')
+  if ('why' in limit) return no(limit.why)
   const got = await host.readBytes(path)
   if (got === null) return no(`no ${path} in the view (unreadable reads as absent — this layer does not tell the two apart).`)
-  const body = utf8Of(got.bytes)
-  // **行数走 `receipt.ts` 那一处**：这一行里的「L 行」与截断标记里的「共 L 行」必须是同一个数
-  // ——两处各算一次，两个数就迟早不一样（施工当场撞到过：头里 401 行、标记里 400 行）。
-  const lines = lineCount(body)
-  return ok(
-    `${path} (${got.bytes.byteLength} bytes · ${lines} lines · mode ${got.mode.toString(8)})\n${body}`,
-  )
+  const size = `${got.bytes.byteLength} bytes`
+  const mode = `mode ${got.mode.toString(8)}`
+  if (offset.value === null && limit.value === null) {
+    // **整档不带行号**（定案：整读的产物是 `edit`/`write` 的底稿，`old_string` 要逐字取自原文，
+    // 每行一个 `N\t` 前缀是每行都付的剥离税；行号是导航信息，grep 与切片档已经给了）。
+    //
+    // **行数走 `receipt.ts` 那一处**：这一行里的「L 行」与截断标记里的「共 L 行」必须是同一个数
+    // ——两处各算一次，两个数就迟早不一样（施工当场撞到过：头里 401 行、标记里 400 行）。
+    // 整档本来就要把整段解出来，所以数的是字节侧那一把尺（同一个口径的另一种数法，更便宜）。
+    const lines = lineCountOfBytes(got.bytes)
+    return ok(`${path} (${size} · ${lines} lines · ${mode})\n${utf8Of(got.bytes)}`)
+  }
+  // 切片档：**一次扫描**既报出整个文件的行数（头上那一句要它），也定下这一窗的字节区间；
+  // 正文每行带**原文件行号**，头在原句尾上加一句窗口标注。同一个「L 行」口径。
+  const w = lineWindow(got.bytes, offset.value ?? 1, limit.value)
+  return ok(`${path} (${size} · ${w.total} lines · ${mode}${windowNote(w)})\n${w.text}`)
 }
 
 const writeFace: ToolFn = async (args, host) => {
