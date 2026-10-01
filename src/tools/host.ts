@@ -24,6 +24,8 @@ import type { RunReply } from './execute.ts'
 import type { ActionAsk, AskItem, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, ToolHost, ToolListing } from './execute.ts'
 import { refuse } from './execute.ts'
 import { shellArgv } from './argv.ts'
+// **清单缓存**：`walk()` 的实现与它的键（视图代）都住这一份，宿主只接线（见 `walk-cache.ts`）。
+import { createWalk } from './walk-cache.ts'
 import { digestOf } from '../runtime/restart.ts'
 import { lstatSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -249,22 +251,12 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     await blobs(out)
   }
 
-  async function walk(): Promise<readonly string[]> {
-    const out: string[] = []
-    const step = async (dir: string, depth: number): Promise<void> => {
-      if (depth > MAX_DEPTH || out.length >= MAX_ROWS) return
-      const rows = await view.list(dir as RelPath)
-      for (const row of rows) {
-        if (out.length >= MAX_ROWS) return
-        const path = dir === '' ? row.name : `${dir}/${row.name}`
-        // **软链不跟**：它指向的东西不在视图的可达集里（§ 8.4 的 `through-symlink`）。
-        if (row.kind === 'dir') await step(path, depth + 1)
-        else if (row.kind === 'file') out.push(path)
-      }
-    }
-    await step('', 0)
-    return out
-  }
+  /**
+   * 走一遍树。**走法与它的缓存归 `walk-cache.ts`**，键是这份视图的代（`view.rev`）：同代连发的
+   * `glob`/`grep` 不再重走清单，而视图一动（`write` · `rename` · `chmod` · `remove` · 执行回写）
+   * 就是新的一代——深度 · 条数 · 软链不跟三条语义逐字照旧（同一份视图缓存前后给出的清单相同）。
+   */
+  const walk = createWalk(view, { depth: MAX_DEPTH, rows: MAX_ROWS })
 
   // ── 执行面（W8：视图是读面，物化根是执行面）──────────────────────────
   //
