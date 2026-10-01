@@ -291,6 +291,21 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // 与 `ansiOf` 同一张表）。
   const degrade = degradeNote(process.env.TERM, process.stdout.isTTY)
   if (degrade !== null && !flags.has('once')) process.stderr.write(`${degrade}\n`)
+  // 先装收尾钩，再允许任何note/首帧进入alt screen或输入进入raw。
+  // 可见首帧之前的SIGTERM不能落回缺省杀进程路径，把终端留在另一块屏。
+  let keys: KeySource | null = null
+  // **每一条退出路径都要把终端还原回去**（计划 § 5.19 里 DECSTBM 那笔账在 raw mode 上是同一笔：
+  // 漏一条，那台终端就得人 `reset`）。四路：正常退 · `Ctrl-C`（raw mode 下走按键那一头）·
+  // `SIGTERM`/`SIGHUP` · 崩了（`exit` 那一钩，最后一次同步地把 raw mode 关掉）。
+  const onTerm = (): void => ac.abort()
+  if (mode === 'panel') {
+    process.on('SIGTERM', onTerm)
+    process.on('SIGHUP', onTerm)
+    process.once('exit', () => {
+      keys?.close()
+      term.close()
+    })
+  }
   // 接上那一档：读账 → 折帧 → 摆到那块地方，一路跟着（`ui/follow.ts`）。
   const tui = openTui({
     log,
@@ -318,7 +333,6 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // ── `UI4` · 门那儿按一下（只在"面板"那一档）──────────────────────────────────────────
   // 按 `g` 起的是**一条命令**（`ui/run.ts` 的 `openRun` → 一个子进程），账由那个子进程写。界面手里
   // 没有写句柄这件事在**类型上**就成立：`openTui` 收的 `log` 只有 `readMerged` 那一半。
-  let keys: KeySource | null = null
   if (mode === 'panel') {
     // 子进程吐出来的行**走注记**（写在面板上方）：直接写 `stdout` 会在终端历史里插进半块面板。
     // 收尾那一下整套在舞台里（`stage.onRunDone`：说了什么 · 要退就退 · 跑完一趟起排队里下一条）。
@@ -336,18 +350,6 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
         ? hintLineOf(KEYMAP, hintLimitOf(term.columns))
         : 'stdin 不是终端：这一档不收按键（输入行与弹层都在等按键，画出来是骗人）',
     )
-  }
-  // **每一条退出路径都要把终端还原回去**（计划 § 5.19 里 DECSTBM 那笔账在 raw mode 上是同一笔：
-  // 漏一条，那台终端就得人 `reset`）。四路：正常退 · `Ctrl-C`（raw mode 下走按键那一头）·
-  // `SIGTERM`/`SIGHUP` · 崩了（`exit` 那一钩，最后一次同步地把 raw mode 关掉）。
-  const onTerm = (): void => ac.abort()
-  if (mode === 'panel') {
-    process.on('SIGTERM', onTerm)
-    process.on('SIGHUP', onTerm)
-    process.once('exit', () => {
-      keys?.close()
-      term.close()
-    })
   }
   // 读账在 `try` 里：读炸了也要走到 `finally` 去把日志口与面板收干净。
   try {

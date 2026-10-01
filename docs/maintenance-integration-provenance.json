@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "base": "bbf2ef10294ddd54f662da217dcab661a4d78fbc",
+  "branchPurpose": "integration-test evidence; no release or acceptance declaration",
+  "originalFiles": [
+    {
+      "commit": "9420f8d93b0e362e190f9d4ce4cf8e22e4368fee",
+      "path": "docs/log-duplicate-keys.md",
+      "gitBlob": "1dc3ffcbca97e4c3f24de8609cdce440f6cb0bfe"
+    },
+    {
+      "commit": "9420f8d93b0e362e190f9d4ce4cf8e22e4368fee",
+      "path": "src/log/duplicate-keys.test.ts",
+      "gitBlob": "7383d76620286a217e82e6a3979674722f9119db"
+    },
+    {
+      "commit": "9420f8d93b0e362e190f9d4ce4cf8e22e4368fee",
+      "path": "src/log/envelope.ts",
+      "gitBlob": "7c3ad2d0f59fbb5d5f3815578c17845b62b9fa54"
+    },
+    {
+      "commit": "0372b73f77463ec3c2f9869b0bcd2bf538887c6f",
+      "path": "docs/log-tail-recovery.md",
+      "gitBlob": "d9b499c66bcd3ed52163637a3bdecffca97b862a"
+    },
+    {
+      "commit": "0372b73f77463ec3c2f9869b0bcd2bf538887c6f",
+      "path": "src/log/log.ts",
+      "gitBlob": "edfb1b41d2d972809494f487c30f5d96187e6e7f"
+    },
+    {
+      "commit": "0372b73f77463ec3c2f9869b0bcd2bf538887c6f",
+      "path": "src/log/tail-recovery.test.ts",
+      "gitBlob": "8ee39aa037bbe6e0ca213161394b99d8ae5ad979"
+    },
+    {
+      "commit": "16654cdb2e0d3b81322cda6dffcbfc17762aa950",
+      "path": "docs/git-object-format.md",
+      "gitBlob": "0dbf68d105123b25133a4b5fd5d98e6b70968789"
+    },
+    {
+      "commit": "16654cdb2e0d3b81322cda6dffcbfc17762aa950",
+      "path": "src/truth/object-format.test.ts",
+      "gitBlob": "e164c58f54d3e21aa9ac3bb23b82ec2a0e7352ff"
+    },
+    {
+      "commit": "16654cdb2e0d3b81322cda6dffcbfc17762aa950",
+      "path": "src/truth/object-format.ts",
+      "gitBlob": "8694ae2c72edf44779e1711199d287ddce7d1638"
+    },
+    {
+      "commit": "16654cdb2e0d3b81322cda6dffcbfc17762aa950",
+      "path": "src/truth/truth.ts",
+      "gitBlob": "a3fae2947b2b688d03d78bb55226c7eb1690f1e6"
+    },
+    {
+      "commit": "ddb194c77652a9529fbd66f008e2bf430df061a5",
+      "path": "docs/terminal-exit-restoration.md",
+      "gitBlob": "995e23afe3a6dbb85df320a9fb0d3a0683248900"
+    },
+    {
+      "commit": "ddb194c77652a9529fbd66f008e2bf430df061a5",
+      "path": "src/cli/cmd/observe.ts",
+      "gitBlob": "b5ef0768cf75f35bd9edabc94fdd95b11e0867e3"
+    },
+    {
+      "commit": "ddb194c77652a9529fbd66f008e2bf430df061a5",
+      "path": "src/ui/terminal-exit.test.ts",
+      "gitBlob": "bb7d54aaed1fdf34570155202293e9170f143e0e"
+    },
+    {
+      "commit": "ddb194c77652a9529fbd66f008e2bf430df061a5",
+      "path": "test/helpers/terminal-exit.py",
+      "gitBlob": "af3f97ade8698797dfc29d9d0754d9c8a5f03c70"
+    },
+    {
+      "commit": "ddb194c77652a9529fbd66f008e2bf430df061a5",
+      "path": "test/helpers/terminal-startup-stop.mjs",
+      "gitBlob": "f9bcb75f36e69ff015b650340337a8be13de1fb2"
+    },
+    {
+      "commit": "415cbc705ae3300136439a87d4efdef5e730a2ad",
+      "path": "docs/edit-stage-recovery.md",
+      "gitBlob": "31f2b6658c21ef08e3a5a02a55c0e6558c91f938"
+    },
+    {
+      "commit": "415cbc705ae3300136439a87d4efdef5e730a2ad",
+      "path": "src/view/edit-stages.test.ts",
+      "gitBlob": "bc4676ce5196dcfedf28ae2baf49560e0db15721"
+    },
+    {
+      "commit": "3cc862b7467c10132077ed186c186fbc87e97938",
+      "path": "docs/refusal-no-mutation.md",
+      "gitBlob": "24474f4d128d097beb7a635c5e510256075fe844"
+    },
+    {
+      "commit": "3cc862b7467c10132077ed186c186fbc87e97938",
+      "path": "src/view/edit-refusal.test.ts",
+      "gitBlob": "0fc1ff808164cfc166cc0f9fcef4448567feb0b6"
+    },
+    {
+      "commit": "3cc862b7467c10132077ed186c186fbc87e97938",
+      "path": "test/helpers/refusal.ts",
+      "gitBlob": "319e73621c6cdd13e2babd60fe82ce94e35915c5"
+    },
+    {
+      "commit": "3cc862b7467c10132077ed186c186fbc87e97938",
+      "path": "test/refusal.test.ts",
+      "gitBlob": "9873b5b409dd87fbf42f62b28eb75c8f9aeafced"
+    },
+    {
+      "commit": "fba692067ac5e561760e34ebe1dde779b552b34d",
+      "path": "docs/checkpoint-stage-observations.md",
+      "gitBlob": "4e8fc10772852d762b90b0293880a47eb1cba061"
+    },
+    {
+      "commit": "fba692067ac5e561760e34ebe1dde779b552b34d",
+      "path": "src/checkpoint-stages.test.ts",
+      "gitBlob": "91508ad3a51f9f4f97141bf8441cd61be4c8fe20"
+    }
+  ],
+  "additionalFiles": [
+    "src/log/maintenance-integration.test.ts",
+    "docs/maintenance-integration.md",
+    "docs/maintenance-integration-provenance.json"
+  ],
+  "changelog": "All original additive entries retained; one integration entry added."
+}
