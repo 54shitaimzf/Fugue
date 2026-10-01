@@ -51,3 +51,17 @@ export function numberedWindowOf(got: ReadText, offset: number): string {
   if (got.selectedLines === 0) return ''
   return got.text.split('\n').map((line, index) => `${offset + index}\t${line}`).join('\n')
 }
+
+/**
+ * 窗口档的回执头里**点明这一份正文是哪几行**。
+ *
+ * 不点明的话一条回执里会出现两套互不相干的数、而没有一处说清谁是谁：头里的「N 字节 · L 行」
+ * 算的是**整个文件**，而 `capReceipt` 的截断标记里那句 `N bytes and L lines in all` 算的是
+ * **这一条回执**。施工当场读到过 `31000 bytes · 1000 lines` 的头配上 `17544 bytes and 501
+ * lines in all` 的标记——两个数相差一倍，而模型无从判断哪个是文件、哪个是它手里这一段。
+ */
+export function windowNoteOf(got: ReadText, offset: number): string {
+  if (got.selectedLines === 0) return ' · no lines shown'
+  if (got.selectedLines === 1) return ` · line ${offset} shown`
+  return ` · lines ${offset}–${offset + got.selectedLines - 1} shown`
+}
