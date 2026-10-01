@@ -55,7 +55,7 @@ export type FamilyTable = Readonly<Record<string, FamilyKind | undefined>>
  * 路径级的流水（`view/*` · `mat/*` · `ckpt/*` · `run/*` · `holder/*`）。
  *
  * 类型那一侧写成 `Record<EventFamily, …>`：联合长了一族而这里没跟上，`tsc` 会说话。这一版没有
- * 构建步骤（约定 § 六），所以真正的牙在 `stream.test.ts` ①——它拿 `src/log/events.ts` 的源码
+ * 构建步骤（约定 § 六），所以真正的判据在 `stream.test.ts` ①——它拿 `src/log/events.ts` 的源码
  * 当输入，与 `tools/check-events.js` 同一把尺。
  */
 export const FAMILY_KIND: Readonly<Record<EventFamily, FamilyKind>> = {

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 变异审计：把源码里的一处算子改掉，看那一档**红不红**——不红的那一处就是"这条断言没牙"。
+// 变异审计：把源码里的一处算子改掉，看那一档**红不红**——不红的那一处就是"这个变异存活了"。
 //
 // 它在**审档**（nightly / 手动 dispatch）里跑，**只报不挡**：survivor 是发现，不是失败；只有
 // 工具自己跑不动（树脏 · 没有靶子 · 收尾发现 src/ 有残留）才非零退出。
@@ -18,14 +18,14 @@
 //     文件里有一句 import 指到它（按说明符解析，不是文本包含）。没有快档覆盖的源文件不进候选
 //     ——真档一趟一分钟，"时限内跑多少算多少"这句话就没了；报告里如实给"没覆盖"的个数。
 //   · **算子**＝带空格的算子字面替换（` === ` → ` !== ` · ` >= ` → ` > ` · ` && ` → ` || ` ·
-//     整词的 `true` → `false` 那一类）。要求两边有空白是为了**不制造语法错**：要问的是"断言有
-//     没有牙"，不是"编译器过不过"。抓字面、零仪式；抓不到的形状（经变量的间接调用那一类）
+//     整词的 `true` → `false` 那一类）。要求两边有空白是为了**不制造语法错**：要问的是"断言
+//     抓不抓得住"，不是"编译器过不过"。抓字面、零仪式；抓不到的形状（经变量的间接调用那一类）
 //     记口径，不打补丁。每一处仍过一遍 `node --check`，语法先不过的另记一档（`skippedSyntax`）
 //     ——但这条过滤器**每次先在没改过的靶子上校准**：`node --check` 认不认 TS 看它附近的
 //     package.json（实测），判不了就如实记进报告并干脆不用它，而不是交一份"跑了 0 处"的报告。
 //   · **判决**＝在**干净树**上改一处 → 跑整档（缺省快档，`node tools/test-entry.js fast`，
-//     与 CI 同一条路，不另立第二条测试路）→ 红＝有牙（killed）· 绿＝没牙（survived）·
-//     挂住＝另记（timeout，不当作有牙）。跑完**恢复原字节**，收尾再核一遍 `src/` 在 git 里
+//     与 CI 同一条路，不另立第二条测试路）→ 红＝被杀（killed）· 绿＝存活（survived）·
+//     挂住＝另记（timeout，不当作被杀）。跑完**恢复原字节**，收尾再核一遍 `src/` 在 git 里
 //     一条没变。
 //   · **时限**＝`--budget-ms`（缺省 15 分钟）：到点就停，报告里如实写"跑了几个 · 还剩几个没跑"。
 //   · **轮转**＝候选按路径排序，起点 = `--seed`（缺省当天日期）对候选数取模——一夜跑不完的部分
@@ -189,7 +189,7 @@ export function syntaxOk(abs) {
 export function runLane(root, lane, timeoutMs = 300000) {
   const env = { ...process.env }
   // 同 `tools/ci-timing.js`：`NODE_TEST_CONTEXT` 一在场，`node --test` 会静默跳过所有文件并退 0
-  // ——那会让每一个变异都"活下来"（假"没牙"）。CI 上不存在这个变量，只有嵌套夹具会撞上。
+  // ——那会让每一个变异都"活下来"（假"存活"）。CI 上不存在这个变量，只有嵌套夹具会撞上。
   delete env.NODE_TEST_CONTEXT
   return spawnSync(process.execPath, [join(root, 'tools', 'test-entry.js'), lane], {
     cwd: root,
@@ -270,7 +270,7 @@ export function audit(o = {}) {
       const exitCode = r.status ?? null
       const verdict = timeout ? 'timeout' : exitCode === 0 ? 'survived' : 'killed'
       if (timeout) timedOut++
-      if (verdict === 'survived') say('    没牙：这一处改了，' + lane + ' 档照旧全绿')
+      if (verdict === 'survived') say('    存活：这一处改了，' + lane + ' 档照旧全绿')
       results.push({
         file: m.file,
         line: m.line,
@@ -324,7 +324,7 @@ export function reportToText(r) {
       '（没覆盖的 ' + r.scope.uncovered + ' 不进候选）· 候选 ' + r.scope.candidates + ' 处 · 起点 ' + r.scope.startAt,
   )
   out.push(
-    '跑了 ' + r.counts.ran + ' 处：有牙 ' + r.counts.killed + ' · 没牙 ' + r.counts.survived +
+    '跑了 ' + r.counts.ran + ' 处：被杀 ' + r.counts.killed + ' · 存活 ' + r.counts.survived +
       ' · 挂住 ' + r.counts.timeout + ' · 语法先不过 ' + r.counts.skippedSyntax +
       ' · 时限外没跑 ' + r.counts.skippedBudget,
   )
@@ -332,7 +332,7 @@ export function reportToText(r) {
     out.push('语法过滤器：这个仓里 `node --check` 判不了 `.ts`（附近没有 package.json）——没用它，判据退回那一档的红绿')
   }
   for (const x of r.results) {
-    if (x.verdict === 'survived') out.push('  没牙：' + x.file + ':' + x.line + '（' + x.operator + '）')
+    if (x.verdict === 'survived') out.push('  存活：' + x.file + ':' + x.line + '（' + x.operator + '）')
   }
   out.push('树：跑前干净 · 跑后 ' + (r.clean ? 'src/ 一条没变' : '**有残留**'))
   return out.join('\n')

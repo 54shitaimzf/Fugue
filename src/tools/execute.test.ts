@@ -715,7 +715,7 @@ test('⑨ 模型读到的回执里没有一个汉字（正文那几格只看头�
       const part = headOnly ? (text.split('\n')[0] ?? '') : text
       assert.ok(!CJK.test(part), `${what} 那一份里有汉字：${JSON.stringify(part.slice(0, 200))}`)
     }
-    // **负对照：这一条自己有牙**——换成一份中文的回执，当场就该红。
+    // **负对照：这一条自己抓得住**——换成一份中文的回执，当场就该红。
     assert.throws(() => judge('负对照', '视图里没有这个文件：x'), /那一份里有汉字/)
     // 一 · 十二条工具各自那一种回执（成功与失败两路都走一遍）
     const calls: readonly (readonly [string, unknown, boolean])[] = [

@@ -3,7 +3,7 @@
 //
 //   node tools/scenario/board-node.ts selftest <cases.json>
 //       离线：把每一案的**已知答案**（`answer`）判两棵树——出题人写的 `solved` 该过、
-//       底那一棵（`base`）该不过。判据自己有没有牙，先在这一步上量出来（不花钱、不出网）。
+//       底那一棵（`base`）该不过。判据自己抓不抓得住，先在这一步上量出来（不花钱、不出网）。
 //
 //   node tools/scenario/board-node.ts judge <cases.json> <工作区> <案名>
 //       跑完那一趟之后判**真实工作树**：过了打印 `已知答案全中`，不过把红的那几条连
@@ -173,7 +173,7 @@ function reconLine(rows: readonly unknown[]): string {
 }
 
 /**
- * **两个读面自己有没有牙**（离线 · 不花钱）：拿两把假日志喂进去，读数得逐字对上。
+ * **两个读面自己抓不抓得住**（离线 · 不花钱）：拿两把假日志喂进去，读数得逐字对上。
  *
  * 由头是实打实的一条错路：`run/confined` 与 `run/start` 的字段住在 `r.e` 里，而这两处原先
  * 读在"行"那一层上——每一格都是 `undefined`，只是那一趟恰好一个子进程都没有，于是它一路
@@ -274,7 +274,7 @@ if (cmd === 'selftest') {
       )
     }
   }
-  console.log(bad ? '\n' + String(bad) + ' 案没过' : '\n' + String(all.length) + ' 案都过（判据有牙：底那一棵每一种都判不过）')
+  console.log(bad ? '\n' + String(bad) + ' 案没过' : '\n' + String(all.length) + ' 案都过（判据抓得住：底那一棵每一种都判不过）')
   bad += readingsSelfTest()
   process.exit(bad ? 1 : 0)
 } else if (cmd === 'usage') {

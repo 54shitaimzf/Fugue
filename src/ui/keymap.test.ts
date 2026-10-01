@@ -327,7 +327,7 @@ test('④ 三处渲染：键串逐字来自表 · 条数是数出来的 · 负�
     '帮助面板每一行开头那一串与表逐字相同、次序也相同',
   )
   // **负对照**：手抄一份目录（同类里那家"帮助目录与真分发两张互不相干的表"，实测漂了 5 条：
-  // `?` · `l` · `v` · `g` · `G` 早就换了前缀）。它与表对不上——这就是这条断言那把尺的牙。
+  // `?` · `l` · `v` · `g` · `G` 早就换了前缀）。它与表对不上——这条断言抓的就是这一处。
   const handWritten = ['g', 'q', '?', 'l', 'v', 'G']
   const drifted = handWritten.filter((k) => !labels.has(k))
   assert.ok(drifted.length >= 3, `手抄那一份与表只差 ${drifted.length} 条，这把尺太钝：${handWritten.join(' ')}`)

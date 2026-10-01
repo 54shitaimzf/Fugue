@@ -1,5 +1,5 @@
-// 变异审计的牙（0.2.2 的审档）。它自己在审档里跑，所以这里断的是**它判得准不准**：
-// 有牙的那一处必须报 killed · 没牙的那一处必须报 survived · 跑完原字节要还原 · 树脏了要拒。
+// 变异审计自己的判据（0.2.2 的审档）。它自己在审档里跑，所以这里断的是**它判得准不准**：
+// 被杀的那一处必须报 killed · 存活的那一处必须报 survived · 跑完原字节要还原 · 树脏了要拒。
 //
 // 夹具是一个真 git 仓（拷贝一份验收入口进去）：真改文件 · 真跑那一档 · 真还原。夹具里两个候选
 // 是故意摆的——`unused()` 里的 `===` 没人测（该报 survived），`pick()` 里的 `>=` 有人测（该报
@@ -40,7 +40,7 @@ function git(dir: string, args: string[]): string {
   return r.stdout
 }
 
-/** 一个干净的真 git 仓：入口一份拷贝 + 一源一测（两个候选：一个有牙、一个没牙）。
+/** 一个干净的真 git 仓：入口一份拷贝 + 一源一测（两个候选：一个被杀、一个存活）。
  *  `package.json` 也在场——真仓都有一份，而 `node --check` 认不认 TS 就看它（见下面那两条）。 */
 function fixture(): string {
   const dir = tmpDir('fugue-mut-')
@@ -83,7 +83,7 @@ test('轮转起点：seed 对候选数取模（负 seed 也不越界）', () => 
   assert.deepEqual(plan({ root: dir, seed: 0, perFile: 2 }).scope.startAt, 0)
 })
 
-test('真跑一趟（夹具仓）：有牙报 killed · 没牙报 survived · 原字节还原 · 退出码 0', () => {
+test('真跑一趟（夹具仓）：被杀的一处报 killed · 存活的一处报 survived · 原字节还原 · 退出码 0', () => {
   const dir = fixture()
   const out = join(dir, 'mutation-audit.json')
   const r = tool(['--root', dir, '--out', out, '--seed', '0', '--max-mutants', '2'])
@@ -95,10 +95,10 @@ test('真跑一趟（夹具仓）：有牙报 killed · 没牙报 survived · �
   assert.equal(rec.syntaxFilter, true, '夹具里有 package.json，语法过滤器该是可用的')
   assert.equal(rec.counts.candidates, 2)
   assert.equal(rec.counts.ran, 2)
-  assert.equal(rec.counts.killed, 1, `应当恰好一处有牙：${JSON.stringify(rec.results)}`)
-  assert.equal(rec.counts.survived, 1, `应当恰好一处没牙：${JSON.stringify(rec.results)}`)
+  assert.equal(rec.counts.killed, 1, `应当恰好一处被杀：${JSON.stringify(rec.results)}`)
+  assert.equal(rec.counts.survived, 1, `应当恰好一处存活：${JSON.stringify(rec.results)}`)
   const survived = rec.results.find((x) => x.verdict === 'survived')
-  assert.equal(survived.operator, '===', '没牙的应当是没人测的那个 ===')
+  assert.equal(survived.operator, '===', '存活的那一处该是没人测的那个 ===')
   const killed = rec.results.find((x) => x.verdict === 'killed')
   assert.equal(killed.operator, '>=')
   assert.notEqual(killed.exitCode, 0, 'killed 的退出码应当是红的')
@@ -106,7 +106,7 @@ test('真跑一趟（夹具仓）：有牙报 killed · 没牙报 survived · �
   assert.equal(readFileSync(join(dir, 'src', 'foo.ts'), 'utf8'), FOO, '原字节必须还原')
   assert.equal(git(dir, ['status', '--porcelain', '--', 'src']).trim(), '')
   console.log(
-    `变异审计读数（夹具）：候选 ${rec.counts.candidates} · 跑了 ${rec.counts.ran} = 有牙 ${rec.counts.killed} + 没牙 ${rec.counts.survived} · 用时 ${rec.usedMs}ms`,
+    `变异审计读数（夹具）：候选 ${rec.counts.candidates} · 跑了 ${rec.counts.ran} = 被杀 ${rec.counts.killed} + 存活 ${rec.counts.survived} · 用时 ${rec.usedMs}ms`,
   )
 })
 

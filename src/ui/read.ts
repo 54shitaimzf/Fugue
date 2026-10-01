@@ -52,7 +52,7 @@ type DeltaFace =
  * `Delta.kind` → 读面那一格。**唯一一处**（命令面与阅读面读的是它）。
  *
  * 键写成 `Record<Delta['kind'], …>`：`Delta` 长了新的一档而这里没跟上，是编译期的事；这一版没有
- * 构建步骤（约定 § 六），所以真正的牙在 `read.test.ts` ① 的负对照上。
+ * 构建步骤（约定 § 六），所以真正的判据在 `read.test.ts` ① 的负对照上。
  */
 export const DELTA_FACE: Readonly<Record<Delta['kind'], DeltaFace['kind']>> = {
   add: 'write',
@@ -208,7 +208,7 @@ interface ReadOptions {
   readonly prev?: ReadState | undefined
   /**
    * 折一条就报一次。**入参，不是模块私有的**（与 `ui/stream.ts` 的 `table` 同一条）：`read.test.ts`
-   * ③ 用它数"这一次折了几条"——"只折尾部"这句话的牙就在这颗钩子上。
+   * ③ 用它数"这一次折了几条"——"只折尾部"这句话就靠这颗钩子兑现。
    */
   readonly onRow?: ((row: StatusRow) => void) | undefined
 }

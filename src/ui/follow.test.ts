@@ -339,7 +339,7 @@ test('③ 负对照 · "从 seq N 接着读"：晚出现的那个 writer 整段�
   assert.deepEqual(badIds, ['round 1', 'round 2', 'round 3', 'round 4'], `这一档该只读到 round 那一路：${badIds.join(' · ')}`)
   assert.equal(badIds.some((id) => id.startsWith('agent/r1/1')), false, '"从 seq N 接着读"却读到了晚出现的那个 writer')
   assert.equal(goodIds.filter((id) => id.startsWith('agent/r1/1')).length, 2, '正着那一档该读到那两条')
-  // 两条路的面板因此不同（① 那条断言在错的那一档上会红——这就是它的牙）。
+  // 两条路的面板因此不同（① 那条断言在错的那一档上会红——它抓得住的就是这一档）。
   const badFrame = frameAt(bad)
   const goodLast = good.records[good.records.length - 1] as Recorded
   assert.notDeepEqual([...goodLast.panel], panelOfFrame(badFrame), '两种读法给出的面板竟然一样——那①就量不出东西')

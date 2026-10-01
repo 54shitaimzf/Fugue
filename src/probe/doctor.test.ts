@@ -35,7 +35,7 @@ test('① doctor 读得出就退 0：逐项有名有说明，bwrap 那行与探�
   const bwrap = j.rows.find((row) => row.name === 'bwrap')
   const direct = probeBwrap()
   assert.equal(bwrap!.ok, direct.ok, 'bwrap 那一行与当场跑一遍 probeBwrap 对不上')
-  // crc32 那一行带一个算得出的样值（对账的牙：换一台机器/一个 node，样值该是同一个）。
+  // crc32 那一行带一个算得出的样值（对账的判据：换一台机器/一个 node，样值该是同一个）。
   assert.match(j.rows.find((row) => row.name === 'node:zlib.crc32')!.note, /crc32\("doctor"\) = [0-9a-f]{8}/)
 })
 

@@ -375,7 +375,7 @@ test('⑥ 队列行印的那批契约与 `round go` 真发出去的是同一批�
     assert.notDeepEqual(
       wrong.pending.built.contracts.map((c) => c.agent),
       seen.pending.built.contracts.map((c) => c.agent),
-      '换一个分配器还是同一批 agent——那这条负对照没有牙',
+      '换一个分配器还是同一批 agent——那这条负对照就抓不住',
     )
 
     // 四 · **放行那一头**：真发。发出去的那一批就是队列行印的那一批。

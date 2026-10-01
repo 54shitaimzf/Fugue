@@ -15,7 +15,7 @@
 #        （`detour-rate` 绕路率 · `zero-tool-call-rate`）。
 #
 # 靶子是一份真能改的小仓库：`src/greet.js` 只会说"你好，X"，`check/` 底下三份检查现在**都不通过**
-# ——目标是让它们通过。所以"验收通过"这句话在这一趟里有牙：改动不到位就是红。
+# ——目标是让它们通过。所以"验收通过"这句话在这一趟里算数：改动不到位就是红。
 #
 # 跑法：cd ~/fugue && sh tools/probe-live-chain.sh            （要凭据 · 花钱）
 #       PLANMAX=12 WORKMAX=8 sh tools/probe-live-chain.sh      （上界；缺省就是这两个数）
@@ -262,7 +262,7 @@ find "$W" -path "$W/.git" -prune -o -path "$W/.fugue" -prune -o -type f -print |
     git config user.email fugue@localhost && git config user.name fugue &&
     git add -A && git commit -qm 起点
 ) || bad "靶子的起点提交"
-# 三份检查**现在都不通过**：这一条是"验收通过"这句话的牙（负对照）。
+# 三份检查**现在都不通过**：这一条是"验收通过"这句话的判据（负对照）。
 for one in greet-default greet-options readme; do
   if (cd "$W" && node "check/$one.js" > /dev/null 2>&1); then
     bad "起点上 check/$one.js 就通过了——那这一趟量不出「改对了没有」"

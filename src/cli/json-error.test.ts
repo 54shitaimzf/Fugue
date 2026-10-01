@@ -11,7 +11,7 @@
 // 返回的码与写下的字节；「返回码 → 进程退出码」那一层映射是既有代码，`fugue.test.ts`
 // 的真进程用例已经在管。捕获靠把两股 `write` 短暂换成收集器，调完还原。
 //
-// 负对照的牙在形状本身：把 `emitFail` 的 json 分支去掉（恒走人面），下面的
+// 负对照的判据在形状本身：把 `emitFail` 的 json 分支去掉（恒走人面），下面的
 // `JSON.parse` 当场炸——这份测试存在的意义就是那一炸。
 import assert from 'node:assert/strict'
 import test from 'node:test'

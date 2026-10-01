@@ -179,8 +179,8 @@ export function publishedCatalog(): ReturnType<typeof catalog> {
  * `contract/types.ts` 的 `DEFAULT_MODEL_LIMIT` 是**这一份的缺省**（1 000 000，"不是任何一个模型的
  * 声明"）——两个数不再相等，所以三处**漏递一处，读数就变**（`model/contract.test.ts` 里那一条
  * `assert.notEqual` 钉的就是它：递与不递的种子上限不同）。在这之前两个数一样，漏递不可见。
- *   · **算式那一层有牙**：`round/start.test.ts` ⑥（`modelLimit: 8 000` → 上限 0 · 不递 → 904 000）。
- *   · **接线那一层的牙随 `P2b` 落了**：上限跟着 `round.model` 走（`selectedModelId` 一处解析）——
+ *   · **算式那一层抓得住**：`round/start.test.ts` ⑥（`modelLimit: 8 000` → 上限 0 · 不递 → 904 000）。
+ *   · **接线那一层的判据随 `P2b` 落了**：上限跟着 `round.model` 走（`selectedModelId` 一处解析）——
  *     换一条上限不同的声明，三处的读数都跟着动。P2d 起查的是**这一台的目录**（`cat`，调用方递）。
  */
 export function modelLimitOf(doc: ConfigDoc, cat: Catalog): number {

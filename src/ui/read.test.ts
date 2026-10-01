@@ -266,7 +266,7 @@ test('⑥ 翻到哪一行（U14）：±1 / ±PAGE_STEP / 跳首尾都夹住，�
   // 到头停住（不绕回）：头再往上、尾再往下都是原地。
   assert.equal(stepTop(30, 0, -4), 0, '头上再翻还是头')
   assert.equal(stepTop(30, 29, 4), 29, '尾上再翻还是尾')
-  // 越界的 top 先夹回来（分发处给的 top 永远在界内，这一条是它自己的牙）。
+  // 越界的 top 先夹回来（分发处给的 top 永远在界内，这一条是它自己的把关）。
   assert.equal(stepTop(30, 99, 0), 29, '越界的 top 夹回末行')
   assert.equal(stepTop(0, 5, 4), 0, '一页都没有时给 0')
   console.log(`⑥ 读数：±1 · ±4 · 跳首尾 夹住到头停 · 越界 top 夹回`)
