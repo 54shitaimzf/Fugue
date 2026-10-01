@@ -5,7 +5,8 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { openTruth } from '../src/truth/truth.ts'
 import { openLog } from '../src/log/log.ts'
 import { loadView } from '../src/view/view.ts'
@@ -19,10 +20,19 @@ import { capReceipt } from '../src/tools/receipt.ts'
 const at = process.argv.indexOf('--runs')
 const runs = at === -1 ? 3 : Number(process.argv[at+1])
 if (!Number.isSafeInteger(runs) || runs < 1 || runs > 20) throw new Error('--runs must be an integer from1to20')
-const root = mkdtempSync(join(tmpdir(),'fugue-search-stop-'))
 const env = { ...process.env,GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null',GIT_AUTHOR_NAME:'fugue',GIT_AUTHOR_EMAIL:'fugue@localhost',GIT_COMMITTER_NAME:'fugue',GIT_COMMITTER_EMAIL:'fugue@localhost' }
 const ctx = { agent:'bench',step:0,cwd:'',holder:false }
 const grep = faceOf('grep')
+const referenceAt = process.argv.indexOf('--reference-root')
+const referenceRoot = referenceAt === -1 ? null : process.argv[referenceAt + 1]
+if (referenceAt !== -1 && (!referenceRoot || referenceRoot.startsWith('--'))) {
+  throw new Error('--reference-root requires a checkout path')
+}
+// 参数/模块失败必须在分配临时工作区之前发生。
+const referenceGrep = referenceRoot === null ? null
+  : (await import(pathToFileURL(join(resolve(referenceRoot), 'src/tools/execute.ts')).href)).faceOf('grep')
+if (referenceRoot !== null && typeof referenceGrep !== 'function') throw new Error('reference has no grep implementation')
+const root = mkdtempSync(join(tmpdir(),'fugue-search-stop-'))
 let totalBytes = 0
 
 async function build() {
@@ -67,7 +77,9 @@ async function pair(base,pattern,reference) {
       readBytes:async path => { reads++; return product.readBytes(path) },
       prefetch:async paths => { prefetchPaths += paths.length; return product.prefetch(paths) },
     }
-    const invoke = () => reference ? baseline(pattern,host) : grep({ pattern },host,ctx).then(result => capReceipt(result.output))
+    const invoke = () => reference
+      ? referenceGrep ? referenceGrep({ pattern }, host, ctx).then(result => capReceipt(result.output)) : baseline(pattern,host)
+      : grep({ pattern },host,ctx).then(result => capReceipt(result.output))
     const phases = []
     const outputs = []
     for (const phase of ['cold','hot']) {
@@ -96,12 +108,13 @@ try {
     for (let run=0;run<runs;run++) {
       before.push(await pair(base,pattern,true));after.push(await pair(base,pattern,false))
     }
-    if (name==='dense') {
+    if (referenceGrep) assert.equal(after[0].output, before[0].output, 'batch strategy changed receipt semantics')
+    else if (name==='dense') {
       assert.match(after[0].output,/Search stopped/)
       assert.ok(after[0].phases[0].reads < before[0].phases[0].reads)
       assert.ok(after[0].phases[0].prefetchPaths < before[0].phases[0].prefetchPaths)
     } else assert.equal(after[0].output,before[0].output,'complete sparse/miss result differs')
     cases[name]={ pattern,baseline:summarize(before),bounded:summarize(after) }
   }
-  console.log(JSON.stringify({ files:256,linesPerFile:64,bytes:totalBytes,runs,cases,boundary:'cloud trend only; same immutable lower corpus; full blobs are still retrieved for scanned files' },null,2))
+  console.log(JSON.stringify({ files:256,linesPerFile:64,bytes:totalBytes,runs,cases,comparison:referenceGrep ? 'prior bounded fixed-batch source' : 'legacy full-prefetch/scanning on current cache',boundary:'cloud trend only; same immutable lower corpus; full blobs are still retrieved for scanned files' },null,2))
 } finally { rmSync(root,{ recursive:true,force:true }) }

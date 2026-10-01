@@ -4,6 +4,7 @@ import { MAX_RECEIPT_BYTES } from './receipt.ts'
 // 给结果头、限制说明与运行时追加的步预算留余量，最终仍经过统一 capReceipt 出口。
 const ROW_BYTES = MAX_RECEIPT_BYTES - 512
 export const SEARCH_PREFETCH_ROWS = 32
+export const SEARCH_PREFETCH_MAX_ROWS = 128
 
 export interface SearchCoverage {
   readonly known: boolean
@@ -42,6 +43,9 @@ export class SearchRows {
   private stopped = false
   private shortened = false
   private omitted = false
+
+  /** 仅供候选预取提示；不是输入字节/内存预算。 */
+  get fillRatio(): number { return this.bytes / ROW_BYTES }
 
   /** 返回 false 就停止扫描；第一条过长时仍给 UTF-8 完整前缀，并如实说明它缩短了。 */
   add(row: string): boolean {

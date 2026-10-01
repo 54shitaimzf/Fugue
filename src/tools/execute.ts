@@ -22,7 +22,7 @@ import { lineCount } from './receipt.ts'
 import { textWindowOf, numberedWindowOf } from './read-window.ts'
 import type { ReadWindow, ReadText } from './read-window.ts'
 import type { WalkResult } from './walk.ts'
-import { SearchRows, searchLines, SEARCH_PREFETCH_ROWS } from './search-receipt.ts'
+import { SearchRows, searchLines, SEARCH_PREFETCH_ROWS, SEARCH_PREFETCH_MAX_ROWS } from './search-receipt.ts'
 import type { SearchCoverage } from './search-receipt.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
@@ -468,8 +468,10 @@ const grepFace: ToolFn = async (args, host, ctx) => {
     prefetch = undefined
   }
   const rows = new SearchRows()
-  scan: for (let at = 0; at < all.length; at += SEARCH_PREFETCH_ROWS) {
-    const batch = all.slice(at, at + SEARCH_PREFETCH_ROWS)
+  let batchRows = SEARCH_PREFETCH_ROWS
+  scan: for (let at = 0; at < all.length;) {
+    const batch = all.slice(at, at + batchRows)
+    at += batch.length
     // 最多预取当前批；回执够了以后不再预取后面整棵树。
     if (prefetch !== undefined) await prefetch(batch)
     for (const path of batch) {
@@ -485,6 +487,8 @@ const grepFace: ToolFn = async (args, host, ctx) => {
       // count 只提交扫描完这个文件后的精确数，未扫文件不冒充计过了。
       if (count > 0 && mode !== 'content' && !rows.add(mode === 'count' ? `${path}:${count}` : path)) break scan
     }
+    // 首批小探针保住密集命中；回执还空时减少后续冷批请求，接近满时继续小批。
+    batchRows = rows.fillRatio < 0.25 ? SEARCH_PREFETCH_MAX_ROWS : SEARCH_PREFETCH_ROWS
   }
   return ok(rows.render(mode === 'content' ? 'lines' : 'paths', `no line matches ${pattern}.`, walked.coverage))
 }
