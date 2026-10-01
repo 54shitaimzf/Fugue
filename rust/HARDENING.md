@@ -23,3 +23,9 @@ Failure-first proofs and final focused/aggregate logs are included in the privat
 Mandatory successful isolation still needs an eligible Linux host. This container lacks usable Landlock ABI6 and bwrap NETLINK capabilities; the five positive cases remain failing acceptance, not silently skipped proof. No kernel/security switch or unsafe host fallback was used.
 
 Git and final filesystem validation are not a sandbox against another malicious process running under the same UID that races between validation and access. CRC/checksum chains detect corruption and semantic inconsistency, not cryptographically authenticate an attacker-writable journal. Configuration/journal/cache/ref stores retain their documented cross-store I/O crash boundaries. Successful live-provider interoperability and macOS/Windows backends remain unverified/unsupported as documented.
+
+## First published CI portability correction
+
+The first native GitHub run on Ubuntu24.04 rejected the default systemd resolver alias while running the doctor secret/PATH regression. The correction accepts only /etc/resolv.conf itself and the three documented systemd files (/run/systemd/resolve/stub-resolv.conf, /run/systemd/resolve/resolv.conf and /usr/lib/systemd/resolv.conf). This exposes one bounded, public-readable, system-owned regular DNS configuration file and never grants a /run directory. Private /etc aliases and an alias into a different/undeclared /opt toolchain refuse. Owner checks use the observed /usr system owner, including mapped container UIDs. Eight new pure/real-workspace policy regressions and the doctor regression verify these conditions.
+
+References: [Ubuntu networking](https://ubuntu.com/server/docs/explanation/networking/configuring-networks/) and [upstream systemd resolver modes](https://github.com/systemd/systemd/blob/main/man/systemd-resolved.service.xml). No kernel/security switch or namespace, Landlock or seccomp requirement changed.

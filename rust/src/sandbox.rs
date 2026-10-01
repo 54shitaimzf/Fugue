@@ -59,7 +59,52 @@ fn execution_options(o:&Value)->Result<()> {if !o.is_object(){return Err(e("exec
 fn strings(v:Option<&Value>,what:&str)->Result<Vec<String>>{let Some(v)=v else{return Ok(Vec::new())};let a=v.as_array().ok_or_else(||e(format!("{what} must be an array")))?;if a.len()>1024{return Err(e(format!("{what} exceeds item budget")))}let mut bytes=0usize;a.iter().map(|v|{let s=v.as_str().ok_or_else(||e(format!("{what} must contain strings")))?;if s.is_empty()||s.len()>128*1024||s.contains('\0'){return Err(e(format!("invalid {what} string")))}bytes=bytes.checked_add(s.len()).filter(|n|*n<=1024*1024).ok_or_else(||e(format!("{what} exceeds byte budget")))?;Ok(s.into())}).collect()}
 fn env(v:Option<&Value>)->Result<BTreeMap<String,String>>{let Some(v)=v else{return Ok(BTreeMap::new())};let a=v.as_object().ok_or_else(||e("environment must be an object"))?;if a.len()>256{return Err(e("environment item budget exceeded"))}let mut b=BTreeMap::new();let mut z=0;for(k,v)in a{let v=v.as_str().ok_or_else(||e("environment values must be strings"))?;if k.is_empty()||k.len()>255||!k.bytes().enumerate().all(|(i,b)|b==b'_'||b.is_ascii_alphabetic()||(i>0&&b.is_ascii_digit()))||v.contains('\0')||v.len()>16384{return Err(e("invalid environment entry"))}if ["HOME","TMPDIR","XDG_CACHE_HOME","PATH","PORT","PORTS"].contains(&k.as_str())||k.starts_with("LD_")||k.starts_with("DYLD_")||["BASH_ENV","ENV","SHELLOPTS","BASHOPTS","PYTHONPATH","PYTHONHOME","PERL5OPT","RUBYOPT","NODE_OPTIONS","GIT_CONFIG","GIT_CONFIG_COUNT","GIT_CONFIG_GLOBAL","GIT_CONFIG_SYSTEM","GIT_SSH","GIT_SSH_COMMAND","GIT_ASKPASS","SSH_ASKPASS"].contains(&k.as_str()){return Err(e(format!("reserved or unsafe environment key {k}")))}z+=k.len()+v.len();if z>128*1024{return Err(e("environment byte budget exceeded"))}b.insert(k.clone(),v.into());}Ok(b)}
 fn binding(doc:&Value,name:&str)->Result<B>{execution_doc(doc)?;if name.is_empty()||name.len()>255||name.contains(['.','/','\0']){return Err(e("invalid action name"))}let a=config::get(doc,"actions")?.and_then(Value::as_object).ok_or_else(||e("no actions are configured"))?;let v=a.get(name).ok_or_else(||e(format!("unbound action {name}")))?.as_object().ok_or_else(||e("action binding must be an object"))?;for k in v.keys(){if !["argv","doc","cwd","outputs","cache","env","net"].contains(&k.as_str()){return Err(e(format!("unknown action binding field {k}")))}}if v.get("doc").is_some_and(|v|!v.is_string()||v.as_str().is_some_and(|s|s.len()>16384||s.contains('\0'))){return Err(e("action doc must be a bounded string"))}let argv=strings(v.get("argv"),"argv")?;if argv.is_empty(){return Err(e("action argv is empty"))}let cwd=v.get("cwd").map(|v|v.as_str().ok_or_else(||e("action cwd must be a string"))).transpose()?.unwrap_or("").to_string();if !cwd.is_empty(){util::rel(&cwd)?}let outputs=strings(v.get("outputs"),"outputs")?;let cache=strings(v.get("cache"),"cache")?;for p in outputs.iter().chain(&cache){util::rel(p)?}let net=v.get("net").map(|v|v.as_str().ok_or_else(||e("net must be none or host"))).transpose()?.unwrap_or("none");if !["none","host"].contains(&net){return Err(e("net must be none or host"))}Ok(B{argv,cwd,outputs,cache,env:env(v.get("env"))?,net:net.into()})}
-fn reach(doc:&Value)->Result<Vec<String>>{let def=["/usr","/etc/ld.so.cache","/etc/ssl/certs","/etc/ssl/openssl.cnf","/etc/alternatives","/etc/resolv.conf"];let a=match config::get(doc,"boundary.reach")?{None=>def.into_iter().filter(|p|Path::new(p).exists()).map(str::to_string).collect(),v=>strings(v,"boundary.reach")?};if a.is_empty()||a.len()>32{return Err(e("empty or oversized reach declaration"))}let mut b=Vec::new();for p in a{if !p.starts_with('/')||p.ends_with('/')||p.split('/').skip(1).any(|s|s.is_empty()||s=="."||s=="..")||!(def.iter().any(|q|p==*q||p.starts_with(&format!("{q}/")))||p.starts_with("/opt/")&&p.split('/').count()>=3){return Err(e("unsafe reach root: use public system paths or an explicitly named /opt toolchain; broad /opt and SSL private reach are refused"))}let actual=std::fs::canonicalize(&p)?;if !actual.starts_with("/usr")&&!actual.starts_with("/opt")&&!actual.starts_with("/etc"){return Err(e("reach symlink resolves outside public system roots"))}let m=std::fs::metadata(&actual)?;if m.uid()!=std::fs::metadata("/usr")?.uid()||m.mode()&0o022!=0{return Err(e("untrusted writable reach root"))}b.push(p)}Ok(b)}
+const REACH_DEFAULT:[&str;6]=["/usr","/etc/ld.so.cache","/etc/ssl/certs","/etc/ssl/openssl.cnf","/etc/alternatives","/etc/resolv.conf"];
+const RESOLVER_BYTES:u64=64*1024;
+fn normal_system_path(p:&str)->bool{p.starts_with('/')&&!p.ends_with('/')&&!p.contains('\0')&&!p.split('/').skip(1).any(|s|s.is_empty()||s=="."||s=="..")}
+fn public_system_path(p:&str)->bool{
+    normal_system_path(p)&&(["/usr","/etc/ssl/certs","/etc/alternatives"].iter().any(|q|p==*q||p.strip_prefix(q).is_some_and(|s|s.starts_with('/')))
+        ||["/etc/ld.so.cache","/etc/ssl/openssl.cnf","/etc/resolv.conf"].contains(&p)||p.starts_with("/opt/"))
+}
+fn reach_path_policy(p:&str,actual:&str)->Result<bool>{
+    if !public_system_path(p){return Err(e("unsafe reach root: use public system paths or an explicitly named /opt toolchain; broad /opt and SSL private reach are refused"))}
+    if p=="/etc/resolv.conf"{
+        // Ubuntu's default alias and the other upstream systemd resolver modes:
+        // https://ubuntu.com/server/docs/explanation/networking/configuring-networks/
+        // https://github.com/systemd/systemd/blob/main/man/systemd-resolved.service.xml
+        // This grants one file at /etc/resolv.conf, never a /run directory.
+        if !["/etc/resolv.conf","/run/systemd/resolve/stub-resolv.conf","/run/systemd/resolve/resolv.conf","/usr/lib/systemd/resolv.conf"].contains(&actual){return Err(e("unapproved canonical resolver file"))}
+        return Ok(true)
+    }
+    if !public_system_path(actual){return Err(e("reach symlink resolves outside public system roots"))}
+    let named_opt=|s:&str|s.strip_prefix("/opt/").and_then(|s|s.split('/').next()).map(str::to_string);
+    if actual.starts_with("/opt/")&&named_opt(actual)!=named_opt(p){return Err(e("canonical /opt reach requires the same explicitly named toolchain"))}
+    Ok(actual=="/etc/resolv.conf")
+}
+fn reach_metadata_policy(resolver:bool,system_uid:u32,uid:u32,mode:u32,size:u64)->Result<()>{
+    // /usr's owner is the system-owner reference, including mapped containers.
+    if uid!=system_uid||mode&0o022!=0{return Err(e("untrusted writable reach root"))}
+    if !matches!(mode&libc::S_IFMT,libc::S_IFREG|libc::S_IFDIR){return Err(e("special reach root refused"))}
+    // Resolver configuration is public, small and regular. Reject private files
+    // as well as sockets/devices/FIFOs without opening or reading their contents.
+    if resolver&&(mode&libc::S_IFMT!=libc::S_IFREG||mode&0o044!=0o044||size>RESOLVER_BYTES){return Err(e("private, non-regular or oversized resolver file refused"))}
+    Ok(())
+}
+fn reach(doc:&Value)->Result<Vec<String>>{
+    let a=match config::get(doc,"boundary.reach")?{None=>REACH_DEFAULT.into_iter().filter(|p|Path::new(p).exists()).map(str::to_string).collect(),v=>strings(v,"boundary.reach")?};
+    if a.is_empty()||a.len()>32{return Err(e("empty or oversized reach declaration"))}
+    let system_uid=std::fs::metadata("/usr")?.uid();
+    let mut b=Vec::new();
+    for p in a{
+        if !public_system_path(&p){return Err(e("unsafe reach root: use public system paths or an explicitly named /opt toolchain; broad /opt and SSL private reach are refused"))}
+        let actual=std::fs::canonicalize(&p)?;
+        let resolver=reach_path_policy(&p,actual.to_str().ok_or_else(||e("non-UTF8 canonical reach path"))?)?;
+        let m=std::fs::metadata(&actual)?;
+        reach_metadata_policy(resolver,system_uid,m.uid(),m.mode(),m.len())?;
+        b.push(p)
+    }
+    Ok(b)
+}
 fn environment(doc:&Value,b:&B,params:&[String])->Result<BTreeMap<String,String>>{if params.len()>256||params.iter().try_fold(0usize,|n,p|n.checked_add(p.len())).is_none_or(|n|n>128*1024){return Err(e("environment injection budget exceeded"))}let spec=config::get(doc,"boundary.env")?;if let Some(v)=spec{let v=v.as_object().ok_or_else(||e("boundary.env must be an object"))?;for k in v.keys(){if !["inherit","set","exclude","include_only"].contains(&k.as_str()){return Err(e("unknown environment baseline field"))}}if v.get("inherit").is_some_and(|v|!v.is_string())||!matches!(v.get("inherit").and_then(Value::as_str),None|Some("core")|Some("none")){return Err(Error::unsupported("host environment inheritance; use core or none"))}strings(v.get("exclude"),"environment exclude")?;strings(v.get("include_only"),"environment include_only")?;}let mut out=BTreeMap::from([("PATH".into(),"/usr/bin:/bin".into()),("HOME".into(),"/cache".into()),("TMPDIR".into(),"/tmp".into()),("XDG_CACHE_HOME".into(),"/cache/xdg-cache".into()),("LANG".into(),"C.UTF-8".into()),("LC_ALL".into(),"C.UTF-8".into()),("TZ".into(),"UTC".into())]);out.extend(env(spec.and_then(|v|v.get("set")))?);out.extend(b.env.clone());let mut inject=serde_json::Map::new();for p in params{let(k,v)=p.split_once('=').ok_or_else(||e("run parameters must be KEY=VALUE injections"))?;if inject.insert(k.into(),Value::String(v.into())).is_some(){return Err(e("duplicate environment injection"))}}out.extend(env(Some(&Value::Object(inject)))?);if out.len()>256||out.iter().try_fold(0usize,|n,(k,v)|n.checked_add(k.len()).and_then(|n|n.checked_add(v.len()))).is_none_or(|n|n>128*1024){return Err(e("combined environment budget exceeded"))}Ok(out)}
 fn executable()->Result<PathBuf>{let p=std::fs::canonicalize(std::env::current_exe()?)?;let m=std::fs::metadata(&p)?;if !m.is_file()||m.mode()&0o022!=0{return Err(e("sandbox helper binary is writable by other users"))}Ok(p)}
 fn bwrap()->Result<PathBuf>{let p=std::fs::canonicalize("/usr/bin/bwrap")?;let m=std::fs::metadata(&p)?;if !m.is_file()||m.uid()!=std::fs::metadata("/usr")?.uid()||m.mode()&0o022!=0{return Err(e("untrusted bubblewrap executable"))}Ok(p)}
@@ -111,6 +156,92 @@ pub fn guard(a:&[String])->Result<i32>{#[cfg(not(target_os="linux"))]{let _=a;re
 #[cfg(test)]mod materialize_receipt_tests{use super::*;
 #[test]fn denied_and_success_reclaim_receipts_are_compatible_with_metrics(){let d=tempfile::tempdir().unwrap();reclaim_receipt(d.path(),"agent/test",&["rogue".into()],&[],true).unwrap();reclaim_receipt(d.path(),"agent/test",&["out/good".into()],&["out/good".into()],false).unwrap();let rows=journal::read(d.path(),"agent/test").unwrap();assert_eq!(rows[0].event["changed"],json!([]));assert_eq!(rows[1].event["changed"],json!(["out/good"]));assert!(crate::probe::metrics(&rows,&json!({})).is_ok());assert!(reclaim_receipt(d.path(),"agent/test",&[],&["rogue".into()],true).is_err());}
 #[test]fn version_readings_are_strict_utf8_byte_bounded(){let s="字".repeat(5000);let r=first_version(&s);assert!(r.len()<=4096);assert!(!r.contains('\u{fffd}'));}
+}
+
+#[cfg(test)]
+mod system_path_policy_tests {
+    use super::*;
+    use std::os::unix::fs::{symlink,PermissionsExt};
+
+    #[test]
+    fn declarations_allow_only_normal_public_paths_and_named_toolchains(){
+        for p in REACH_DEFAULT.into_iter().chain(["/usr/bin","/etc/ssl/certs/ca.pem","/etc/alternatives/node","/opt/toolchain","/opt/toolchain/bin"]){assert!(public_system_path(p),"{p}")}
+        for p in ["/","/etc","/etc/shadow","/etc/ssl","/etc/ssl/private/key","/opt","/opt/","/usr-local","/usr/../etc/shadow","/usr//bin","/usr/./bin","usr/bin","/usr/bin/","/etc/ld.so.cache/child","/etc/ssl/openssl.cnf/child","/etc/resolv.conf/child","/run","/run/systemd/resolve","/run/systemd/resolve/stub-resolv.conf","/usr/a\0b"]{assert!(!public_system_path(p),"{p}")}
+    }
+
+    #[test]
+    fn canonical_aliases_cannot_reach_private_etc_or_broad_roots(){
+        for p in ["/usr/bin/alias","/etc/alternatives/alias","/etc/ssl/certs/alias","/opt/toolchain/alias"]{
+            for actual in ["/etc","/etc/shadow","/etc/passwd","/etc/ssl/private/key","/etc/ssl","/etc/ld.so.cache/child","/etc/resolv.conf/child","/opt","/run/systemd/resolve/stub-resolv.conf","/tmp/public-looking","/home/user/key","/usr/../etc/shadow"]{assert!(reach_path_policy(p,actual).is_err(),"{p} -> {actual}")}
+        }
+        assert_eq!(reach_path_policy("/etc/alternatives/node","/usr/bin/node").unwrap(),false);
+        assert_eq!(reach_path_policy("/etc/ssl/certs/ca.pem","/usr/share/ca-certificates/ca.crt").unwrap(),false);
+        assert_eq!(reach_path_policy("/opt/toolchain/bin/cc","/opt/toolchain/bin/cc").unwrap(),false);
+        for p in ["/usr/bin/alias","/etc/alternatives/alias","/etc/ssl/certs/alias","/opt/toolchain/alias"]{assert!(reach_path_policy(p,"/opt/private/key").is_err(),"{p}")}
+    }
+
+    #[test]
+    fn resolver_exception_is_exact_and_scoped_to_etc_resolv_conf(){
+        for actual in ["/etc/resolv.conf","/run/systemd/resolve/stub-resolv.conf","/run/systemd/resolve/resolv.conf","/usr/lib/systemd/resolv.conf"]{assert!(reach_path_policy("/etc/resolv.conf",actual).unwrap(),"{actual}")}
+        for actual in ["/run","/run/systemd/resolve","/run/systemd/resolve/stub-resolv.conf.extra","/run/systemd/resolve/stub-resolv.conf/child","/run/systemd/resolve/private.conf","/run/NetworkManager/resolv.conf","/etc/shadow","/etc/ssl/private/key","/etc/ssl/certs/public.pem","/usr/lib/systemd/private.conf","/opt/toolchain/resolv.conf","/run/systemd/resolve/../resolve/stub-resolv.conf"]{assert!(reach_path_policy("/etc/resolv.conf",actual).is_err(),"{actual}")}
+        assert!(reach_path_policy("/run/systemd/resolve/stub-resolv.conf","/run/systemd/resolve/stub-resolv.conf").is_err());
+        assert!(reach_path_policy("/etc/alternatives/resolver","/run/systemd/resolve/stub-resolv.conf").is_err());
+    }
+
+    #[test]
+    fn resolver_trust_preserves_system_owner_mapping_and_rejects_other_owners(){
+        for system_uid in [0,65534]{
+            assert!(reach_metadata_policy(true,system_uid,system_uid,libc::S_IFREG|0o644,512).is_ok());
+            assert!(reach_metadata_policy(true,system_uid,1000,libc::S_IFREG|0o644,512).is_err());
+            assert!(reach_metadata_policy(false,system_uid,system_uid,libc::S_IFDIR|0o755,4096).is_ok());
+        }
+    }
+
+    #[test]
+    fn resolver_files_must_be_public_regular_bounded_and_not_untrusted_writable(){
+        for mode in [0o666,0o664,0o646,0o600,0o640,0o604]{assert!(reach_metadata_policy(true,0,0,libc::S_IFREG|mode,512).is_err(),"{mode:o}")}
+        for kind in [libc::S_IFDIR,libc::S_IFIFO,libc::S_IFSOCK,libc::S_IFCHR,libc::S_IFBLK,libc::S_IFLNK]{assert!(reach_metadata_policy(true,0,0,kind|0o444,0).is_err(),"{kind:o}")}
+        assert!(reach_metadata_policy(true,0,0,libc::S_IFREG|0o444,RESOLVER_BYTES).is_ok());
+        assert!(reach_metadata_policy(true,0,0,libc::S_IFREG|0o644,RESOLVER_BYTES+1).is_err());
+        assert!(reach_metadata_policy(false,0,0,libc::S_IFIFO|0o644,0).is_err());
+    }
+
+    // Map real workspace fixtures into the system namespace for pure policy
+    // evaluation. No fixture is created under the host's /etc or /run.
+    fn fixture()->tempfile::TempDir{tempfile::Builder::new().prefix("resolver-policy-").tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()).unwrap()}
+    fn check_fixture(root:&Path,p:&str)->Result<()>{
+        let actual=std::fs::canonicalize(root.join(p.trim_start_matches('/')))?;
+        let projected=format!("/{}",actual.strip_prefix(root).map_err(|_|e("fixture escapes root"))?.to_str().ok_or_else(||e("non-UTF8 fixture path"))?);
+        let resolver=reach_path_policy(p,&projected)?;let m=std::fs::metadata(actual)?;
+        reach_metadata_policy(resolver,std::fs::metadata(root)?.uid(),m.uid(),m.mode(),m.len())
+    }
+    fn put_fixture(root:&Path,p:&str){let p=root.join(p);std::fs::create_dir_all(p.parent().unwrap()).unwrap();std::fs::write(&p,b"nameserver 127.0.0.53\n").unwrap();std::fs::set_permissions(p,std::fs::Permissions::from_mode(0o644)).unwrap();}
+
+    #[test]
+    fn ubuntu_relative_resolver_alias_passes_real_canonicalization_and_metadata(){
+        let d=fixture();put_fixture(d.path(),"run/systemd/resolve/stub-resolv.conf");std::fs::create_dir(d.path().join("etc")).unwrap();
+        symlink("../run/systemd/resolve/stub-resolv.conf",d.path().join("etc/resolv.conf")).unwrap();
+        assert!(check_fixture(d.path(),"/etc/resolv.conf").is_ok());
+        assert!(check_fixture(d.path(),"/run/systemd/resolve/stub-resolv.conf").is_err());
+    }
+
+    #[test]
+    fn real_aliases_into_private_etc_or_unknown_resolver_files_are_refused(){
+        let d=fixture();put_fixture(d.path(),"etc/ssl/private/key");put_fixture(d.path(),"run/systemd/resolve/private.conf");
+        std::fs::create_dir_all(d.path().join("etc/alternatives")).unwrap();symlink("../ssl/private/key",d.path().join("etc/alternatives/alias")).unwrap();
+        symlink("ssl/private/key",d.path().join("etc/resolv.conf")).unwrap();
+        assert!(check_fixture(d.path(),"/etc/alternatives/alias").is_err());assert!(check_fixture(d.path(),"/etc/resolv.conf").is_err());
+        std::fs::remove_file(d.path().join("etc/resolv.conf")).unwrap();symlink("../run/systemd/resolve/private.conf",d.path().join("etc/resolv.conf")).unwrap();assert!(check_fixture(d.path(),"/etc/resolv.conf").is_err());
+    }
+
+    #[test]
+    fn real_resolver_metadata_rejects_writable_private_oversized_and_fifo_fixtures(){
+        let d=fixture();put_fixture(d.path(),"etc/resolv.conf");let p=d.path().join("etc/resolv.conf");
+        assert!(check_fixture(d.path(),"/etc/resolv.conf").is_ok());
+        for mode in [0o666,0o664,0o600]{std::fs::set_permissions(&p,std::fs::Permissions::from_mode(mode)).unwrap();assert!(check_fixture(d.path(),"/etc/resolv.conf").is_err())}
+        std::fs::set_permissions(&p,std::fs::Permissions::from_mode(0o644)).unwrap();OpenOptions::new().write(true).open(&p).unwrap().set_len(RESOLVER_BYTES+1).unwrap();assert!(check_fixture(d.path(),"/etc/resolv.conf").is_err());
+        std::fs::remove_file(&p).unwrap();let name=c(p.as_os_str()).unwrap();assert_eq!(unsafe{libc::mkfifo(name.as_ptr(),0o644)},0);assert!(check_fixture(d.path(),"/etc/resolv.conf").is_err());
+    }
 }
 
 #[cfg(test)]
