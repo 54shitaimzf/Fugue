@@ -79,7 +79,9 @@ test('blocked optional source does not block queries; pending loads are shared a
   assert.equal(await lookup.mightContain(a, ['abc']), null, 'must return without resolving source gate')
   assert.equal(await lookup.mightContain(a, ['abc']), null)
   assert.equal(await lookup.mightContain(b, ['xyz']), null)
-  assert.equal(lookup.stats().pending, 1)
+  await new Promise<void>((done) => setImmediate(done)); await new Promise<void>((done) => setImmediate(done))
+  assert.equal(lookup.stats().pending, 1, 'b 的探测过了、构建名额满了没排候补，只剩 a 在等源')
+  assert.equal(f.reads(), 0, '源被闸门挡着，b 也没有去读')
   release(); await lookup.drain()
   assert.equal(await lookup.mightContain(a, ['abc']), true)
   assert.equal(f.reads(), 1); assert.equal(lookup.stats().sharedLoads, 1)
@@ -218,4 +220,19 @@ test('close terminates an active owned worker and retires its lifecycle', async 
   assert.equal(lookup.stats().workers, 0); assert.equal(lookup.stats().pending, 0)
   assert.equal(await lookup.mightContain(id, ['abc']), null)
   // 已完成的安全缓存发布可能存在；关闭不是对已发生 IO 的事务回滚。
+})
+
+test('concurrent queries for blobs that already have a disk record are not gated by the background-build quota', async () => {
+  const f = fixture(), ids = Array.from({ length: 16 }, (_, at) => f.add(`record ${at} abc`))
+  const writer = createBlobIndexLookup(f.root, f.source)
+  for (const id of ids) await build(writer, id, ['abc'])
+  await writer.close()
+  const reads = f.reads()
+  // 全新的句柄：内存里什么都没有，16 个（探测上限；构建名额只有 4）查询同时到，记录都已经在盘上。
+  const lookup = createBlobIndexLookup(f.root, f.source)
+  const answers = await Promise.all(ids.map((id) => lookup.mightContain(id, ['abc'])))
+  assert.deepEqual(answers, ids.map(() => true), '盘上已有的记录不该因为"后台构建名额只有 4 个"而退回扫描')
+  assert.equal(f.reads(), reads, '纯磁盘命中不读源')
+  assert.equal(lookup.stats().diskHits, 16)
+  await lookup.close()
 })

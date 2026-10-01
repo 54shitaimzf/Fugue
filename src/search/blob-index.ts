@@ -28,6 +28,9 @@ export interface IndexLookupOptions {
   readonly maxSerializedBytes?: number; readonly maxPending?: number
   readonly maxBuildMs?: number; readonly signal?: AbortSignal
 }
+/** 同时在飞的磁盘探测上限：与 `maxPending` 的合法上限同一个数（16），单份记录 ≤ MAX_INDEX_BYTES。 */
+const MAX_PENDING_LIMIT = 16
+const MAX_PROBES = MAX_PENDING_LIMIT
 interface PreparedIndex { readonly grams: ReadonlySet<number>; readonly serializedBytes: number }
 interface LoadTask {
   readonly blob: BlobId; readonly temporaryId: string; readonly abort: AbortController
@@ -53,11 +56,14 @@ export function createBlobIndexLookup(
   const maxRecords = limit(options.maxRecords, 256, 4096, 'record')
   const maxGrams = limit(options.maxGrams, 1_000_000, 4_000_000, 'gram')
   const maxBytes = limit(options.maxSerializedBytes, 16 * 1024 * 1024, 64 * 1024 * 1024, 'serialized-byte')
-  const maxPending = limit(options.maxPending, 4, 16, 'pending')
+  const maxPending = limit(options.maxPending, 4, MAX_PENDING_LIMIT, 'pending')
   const maxBuildMs = limit(options.maxBuildMs, 60_000, 120_000, 'build-time')
   const store = createBlobIndexStore(selectedRoot)
   const cache = new Map<BlobId, PreparedIndex>()
   const pending = new Map<BlobId, LoadTask>()
+  // `maxPending` 只管**构建**（读源 + Worker）：盘上已有记录的纯读命中不占构建名额，否则并发一到
+  // 就把本该命中的查询退回扫描。探测本身另有固定上限（每份记录 ≤ MAX_INDEX_BYTES，16 份同时在飞）。
+  let building = 0
   const counters = { queries: 0, memoryHits: 0, sharedLoads: 0, diskHits: 0,
     sourceReads: 0, builds: 0, unsavedBuilds: 0, scanFallbacks: 0, evictions: 0 }
   let grams = 0, serializedBytes = 0, closed = false
@@ -132,7 +138,11 @@ export function createBlobIndexLookup(
         // query 已返回 null；后续 source/CPU/持久化不在主查询等待链上。
         task.answer(null)
         await new Promise<void>((ready) => setImmediate(ready))
-        if (!closed && !task.canceled) await build(task)
+        // 构建名额满了就不排候补：这一份这次回扫描，下次再来。
+        if (!closed && !task.canceled && building < maxPending) {
+          building++
+          try { await build(task) } finally { building-- }
+        }
       }
     } catch { task.answer(null) }
     finally {
@@ -147,7 +157,7 @@ export function createBlobIndexLookup(
     if (found !== undefined) { cache.delete(blob); cache.set(blob, found); counters.memoryHits++; return Promise.resolve(found) }
     const waiting = pending.get(blob)
     if (waiting !== undefined) { counters.sharedLoads++; return waiting.query }
-    if (pending.size >= maxPending || maxBuildMs === 0) return Promise.resolve(null)
+    if (pending.size >= MAX_PROBES || maxBuildMs === 0) return Promise.resolve(null)
     let answer!: LoadTask['answer'], finish!: LoadTask['finish']
     const query = new Promise<PreparedIndex | null>((done) => { answer = done })
     const done = new Promise<void>((resolveDone) => { finish = resolveDone })
