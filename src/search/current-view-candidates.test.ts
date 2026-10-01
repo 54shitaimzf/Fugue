@@ -1,7 +1,7 @@
 // 不缓存 path→blob；每批当前 View 元数据相交，变代/不确定就退回原批。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { filterCurrentViewCandidates } from './current-view-candidates.ts'
+import { filterCurrentViewCandidates, MAX_INDEX_CANDIDATE_BATCH, MAX_INDEX_REQUIREMENTS } from './current-view-candidates.ts'
 import type { CandidateIndexLookup, CandidateView } from './current-view-candidates.ts'
 import type { BlobId, CommitId, RelPath, ViewRev } from '../terms.ts'
 import type { EntryMeta } from '../entries.ts'
@@ -123,4 +123,11 @@ test('caller mutations of path/requirement arrays cannot change an in-flight bat
   }
   assert.deepEqual(await filterCurrentViewCandidates(b.view, paths, grams, mutate), ['b'])
   assert.deepEqual(seen, [['hit'], ['hit']])
+})
+
+test('the 128s that must agree do agree: grep batch ≤ filter batch, extractor output ≤ filter requirements', async () => {
+  const { SEARCH_PREFETCH_MAX_ROWS } = await import('../tools/search-receipt.ts')
+  const { MAX_REQUIRED_TRIGRAMS } = await import('./regex-literal.ts')
+  assert.ok(SEARCH_PREFETCH_MAX_ROWS <= MAX_INDEX_CANDIDATE_BATCH, '批比过滤上限大，整批就静默回扫描')
+  assert.ok(MAX_REQUIRED_TRIGRAMS <= MAX_INDEX_REQUIREMENTS, '提取器产出比过滤接受的多，条件就静默作废')
 })

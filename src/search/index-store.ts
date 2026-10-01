@@ -6,13 +6,15 @@ import type { FileHandle } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
 import type { BlobId } from '../terms.ts'
-import { buildBlobIndex, decodeBlobIndex, encodeBlobIndex, MAX_INDEX_BYTES } from './index-format.ts'
+import { buildBlobIndex, decodeBlobIndex, encodeBlobIndex, IndexBudgetError, MAX_INDEX_BYTES } from './index-format.ts'
 import type { BlobIndex } from './index-format.ts'
 
 export interface IndexWrite {
   readonly index: BlobIndex | null
   /** 文件与目录 fsync 都成功才为 true；不表示候选查询已经接线。 */
   readonly stored: boolean
+  /** 这份字节超出构建预算：永远建不出来，调用方可以记住、不再重读重建。读源失败等暂时故障不在此列。 */
+  readonly unindexable?: boolean
 }
 export interface BlobIndexStore {
   read(blob: BlobId): Promise<BlobIndex | null>
@@ -122,7 +124,7 @@ export function createBlobIndexStore(root: string): BlobIndexStore {
     async rebuild(blob, bytes, temporaryId) {
       let index: BlobIndex
       try { index = buildBlobIndex(blob, bytes) }
-      catch { return { index: null, stored: false } }
+      catch (error) { return error instanceof IndexBudgetError ? { index: null, stored: false, unindexable: true } : { index: null, stored: false } }
       try {
         const encoded = encodeBlobIndex(index)
         await withShard(selectedRoot, blob, true, (directory) => replaceRecord(directory, blob, encoded, temporaryId))

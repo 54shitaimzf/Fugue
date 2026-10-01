@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
 import type { BlobId } from '../terms.ts'
 import { cleanupIndexTemporary, createBlobIndexStore } from './index-store.ts'
-import { encodeBlobIndex, MAX_INDEX_BYTES, MAX_TRIGRAMS } from './index-format.ts'
+import { encodeBlobIndex, MAX_INDEX_BYTES, MAX_SOURCE_BYTES, MAX_TRIGRAMS } from './index-format.ts'
 import type { BlobIndex } from './index-format.ts'
 import { copyIndexSource } from './index-source.ts'
 
@@ -15,7 +15,7 @@ export interface IndexLookupStats {
   readonly queries: number; readonly memoryHits: number; readonly sharedLoads: number
   readonly diskHits: number; readonly sourceReads: number; readonly builds: number
   readonly unsavedBuilds: number; readonly scanFallbacks: number; readonly evictions: number
-  readonly entries: number; readonly grams: number; readonly serializedBytes: number; readonly pending: number; readonly workers: number
+  readonly unindexable: number; readonly entries: number; readonly grams: number; readonly serializedBytes: number; readonly pending: number; readonly workers: number
 }
 export interface IndexLookupHandle extends BlobIndexLookup {
   stats(): IndexLookupStats
@@ -28,6 +28,8 @@ export interface IndexLookupOptions {
   readonly maxSerializedBytes?: number; readonly maxPending?: number
   readonly maxBuildMs?: number; readonly signal?: AbortSignal
 }
+/** 记住多少份永久建不出来的 blob：只是 40/64 个字符的键，几千份也不占地方；满了丢最旧的。 */
+const MAX_UNINDEXABLE = 4096
 interface PreparedIndex { readonly grams: ReadonlySet<number>; readonly serializedBytes: number }
 interface LoadTask {
   readonly blob: BlobId; readonly temporaryId: string; readonly abort: AbortController
@@ -58,6 +60,9 @@ export function createBlobIndexLookup(
   const store = createBlobIndexStore(selectedRoot)
   const cache = new Map<BlobId, PreparedIndex>()
   const pending = new Map<BlobId, LoadTask>()
+  // 永久建不出来的 blob（二进制 · 超源/trigram 预算）：同样的字节永远同样的结果，记住就不会让每次
+  // grep 都重读原字节再起一个 Worker 白建。只记确定性失败；读源出错、超时、被取消都不记。
+  const unindexable = new Set<BlobId>()
   const counters = { queries: 0, memoryHits: 0, sharedLoads: 0, diskHits: 0,
     sourceReads: 0, builds: 0, unsavedBuilds: 0, scanFallbacks: 0, evictions: 0 }
   let grams = 0, serializedBytes = 0, closed = false
@@ -73,6 +78,11 @@ export function createBlobIndexLookup(
       counters.evictions++
     }
     cache.set(blob, index); grams += index.grams.size; serializedBytes += index.serializedBytes
+  }
+  function forget(blob: BlobId): void {
+    if (closed) return
+    while (unindexable.size >= MAX_UNINDEXABLE) unindexable.delete(unindexable.keys().next().value!)
+    unindexable.add(blob)
   }
   function prepared(index: BlobIndex): PreparedIndex {
     return { grams: new Set(index.tables.trigrams.map(gramKey)), serializedBytes: encodeBlobIndex(index).byteLength }
@@ -98,7 +108,10 @@ export function createBlobIndexLookup(
     const bytes = await source(task.blob, task.abort.signal)
     if (closed || task.canceled) return
     const ownedBytes = copyIndexSource(bytes)
-    if (ownedBytes === null) return
+    if (ownedBytes === null) {
+      if (bytes instanceof Uint8Array && bytes.byteLength > MAX_SOURCE_BYTES) forget(task.blob)
+      return
+    }
     const worker = new Worker(new URL('./index-worker.ts', import.meta.url), {
       workerData: { root: selectedRoot, blob: task.blob, bytes: ownedBytes, temporaryId: task.temporaryId },
       env: {}, execArgv: process.execArgv.filter((arg) => arg === '--experimental-strip-types'),
@@ -108,6 +121,7 @@ export function createBlobIndexLookup(
     worker.stdout?.resume(); worker.stderr?.resume()
     const result = await new Promise<PreparedIndex | null>((done) => {
       worker.once('message', (message) => {
+        if (message?.ok === false && message.unindexable === true && !task.canceled) forget(task.blob)
         if (message?.ok !== true || !(message.keys instanceof Float64Array) || message.keys.length > MAX_TRIGRAMS || !Number.isSafeInteger(message.serializedBytes) || message.serializedBytes < 0 || message.serializedBytes > MAX_INDEX_BYTES) return done(null)
         const keys = [...message.keys] as number[]
         if (keys.some((key) => !Number.isSafeInteger(key) || key < 0 || key > 0xffff_ffff_ffff)) return done(null)
@@ -145,6 +159,7 @@ export function createBlobIndexLookup(
     if (closed) return Promise.resolve(null)
     const found = cache.get(blob)
     if (found !== undefined) { cache.delete(blob); cache.set(blob, found); counters.memoryHits++; return Promise.resolve(found) }
+    if (unindexable.has(blob)) return Promise.resolve(null)
     const waiting = pending.get(blob)
     if (waiting !== undefined) { counters.sharedLoads++; return waiting.query }
     if (pending.size >= maxPending || maxBuildMs === 0) return Promise.resolve(null)
@@ -186,7 +201,7 @@ export function createBlobIndexLookup(
       if (index === null) { counters.scanFallbacks++; return null }
       return keys.every((key) => index.grams.has(key))
     },
-    stats() { return { ...counters, entries: cache.size, grams, serializedBytes, pending: pending.size, workers: [...pending.values()].filter((task) => task.worker !== undefined && task.worker.threadId !== -1).length } },
+    stats() { return { ...counters, unindexable: unindexable.size, entries: cache.size, grams, serializedBytes, pending: pending.size, workers: [...pending.values()].filter((task) => task.worker !== undefined && task.worker.threadId !== -1).length } },
     async drain() {
       for (;;) { const tasks = [...pending.values()]; if (tasks.length === 0) return; await Promise.all(tasks.map((task) => task.done)) }
     },

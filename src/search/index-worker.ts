@@ -6,7 +6,7 @@ import { encodeBlobIndex } from './index-format.ts'
 const { root, blob, bytes, temporaryId } = workerData
 try {
   const result = await createBlobIndexStore(root).rebuild(blob, bytes, temporaryId)
-  if (result.index === null) parentPort?.postMessage({ ok: false })
+  if (result.index === null) parentPort?.postMessage({ ok: false, unindexable: result.unindexable === true })
   else {
     const keys = Float64Array.from(result.index.tables.trigrams, (gram) =>
       gram.charCodeAt(0) * 0x1_0000_0000 + gram.charCodeAt(1) * 0x1_0000 + gram.charCodeAt(2))

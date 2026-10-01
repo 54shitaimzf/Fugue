@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpDir } from '../../test/helpers/tmp.ts'
@@ -218,4 +218,29 @@ test('close terminates an active owned worker and retires its lifecycle', async 
   assert.equal(lookup.stats().workers, 0); assert.equal(lookup.stats().pending, 0)
   assert.equal(await lookup.mightContain(id, ['abc']), null)
   // 已完成的安全缓存发布可能存在；关闭不是对已发生 IO 的事务回滚。
+})
+
+test('permanently unindexable blobs are remembered: the source is read at most once, later greps scan without rebuilding', async () => {
+  const f = fixture()
+  // 超出源字节预算 · 超出 trigram 预算：同样的字节永远同样的结果，不是暂时故障。
+  const oversized = new Uint8Array(MAX_SOURCE_BYTES + 1), oversizedId = idOf(oversized)
+  const noisy = Array.from(randomBytes(900_000), (byte) => String.fromCharCode(33 + byte % 94)).join('') // 远多于 20 万个互异 trigram
+  const dense = f.add(noisy)
+  const lookup = createBlobIndexLookup(f.root, async (blob) => blob === oversizedId ? oversized : f.source(blob))
+  for (const id of [oversizedId, dense]) {
+    for (let round = 0; round < 3; round++) assert.equal(await lookup.mightContain(id, ['abc']), null)
+    await lookup.drain()
+    assert.equal(await lookup.mightContain(id, ['abc']), null)
+  }
+  assert.equal(f.reads(), 1, '超 trigram 预算的那份只读一次；超源预算的那份不进 f.source')
+  assert.equal(lookup.stats().sourceReads, 2, '两份各读一次源，之后不再读')
+  assert.equal(lookup.stats().builds, 0)
+  assert.equal(lookup.stats().unindexable, 2)
+  // 暂时故障不记：同一份字节读一次失败、第二次成功，仍然建得出来。
+  const id = f.add('transient abc'); let attempts = 0
+  const flaky = createBlobIndexLookup(f.root, async (blob) => { if (++attempts === 1) throw new Error('temporary'); return f.source(blob) })
+  await build(flaky, id, ['abc']); await build(flaky, id, ['abc'])
+  assert.equal(await flaky.mightContain(id, ['abc']), true)
+  assert.equal(flaky.stats().unindexable, 0)
+  await Promise.all([lookup.close(), flaky.close()])
 })
