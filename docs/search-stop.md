@@ -39,18 +39,28 @@
 ## 工具目录与离线请求重录
 
 路线图 §10 要求把早停/MAX_ROWS 的描述变化一次付清。grep/glob 描述同时更新，schema 不变；
-目录指纹 `5681832878aa0634` → `1d3c279ecd84ec3f`，三种状态一致。
+三种状态同一份目录（`src/tools/search-prefix.test.ts` 的第一条就是它）。
 
-- `node tools/make-fixtures.ts` 重新捕获三份**离线请求**，响应/历史 usage 原样保留
-- `test/helpers/search-wire.ts` 生成临时、带 provenance 的额外合成兼容副本，只适配两个描述和派生请求指纹/字节数；原 `src/cli/__fixture__/wire-in/` 真录制与 chain 的历史验收绑定均不改
-- 新目录请求喂给原历史目录仍会被产品 transport 逐字节拒绝，任意请求改动仍拒绝；没有放松 `--wire-in` 的取证规则
-- `node tools/recapture-search-wire.ts` 可另外生成临时离线输入检查，输出目录需自行清理
+- `node tools/make-fixtures.ts` 重新捕获三份**离线请求**（`src/model/fixtures/*.json`），响应/历史 usage 原样保留
+- `node tools/adapt-wire-in.ts` 把回放夹具 `src/cli/__fixture__/wire-in/` 里那份录制请求的
+  `tools` 栏**就地**改齐当前整份目录（不只是 grep/glob），并重算 `request.sha256` 与 `meta.json`
+  的 `requestBytes` / `requestHash` / `zoneAHash`；响应、usage、timings、`messages` 一个字节不动。
+  来历写在 `src/cli/__fixture__/wire-in/PROVENANCE.md`，机器可读的那份在同目录的 `provenance.json`
+- `src/cli/wire-in-catalog.test.ts` 在 **fast** 档盯着这件事：盘上那一份与当前目录不一致就当场红，
+  而不是等 `full` 档里的 real 测试
+- **"录下来的字节被改过就当场拒"一个字没松**：请求改一个字节仍被产品 transport 拒
+  （`src/cli/chain.test.ts` 的「序 1 负对照」与 `src/cli/wire-in-catalog.test.ts` 的最后一条各守一档）
 
 **离线适配不是新的 live 录制、提供方成功证据、付费前缀读数或 cache 成本证据。**响应、用量和时间来自历史，
-新请求没有发给提供方，也不会替换历史 chain 验收。目录字节已经变化，旧历史 chain 将按冻结规则正确拒绝；
-路线图 §10 的**真正新 live 重录仍是阻塞项**，需要明确的提供方/凭据/费用授权，以及具备隔离能力的 Linux 主机。
-本云环境 bwrap NETLINK_ROUTE 被拒，
+新请求没有发给提供方。路线图 §10 的**真正新 live 重录仍是阻塞项**，需要明确的提供方/凭据/费用授权，
+以及具备隔离能力的 Linux 主机。本云环境 bwrap NETLINK_ROUTE 被拒，
 未绕过宿主策略，也不将有界搜索的测试通过算作隔离正向通过。
+
+**为什么不是"目录字节变了就让历史 chain 红着"**：`--wire-in` 过期之后 `src/cli/chain.test.ts`
+序 1 不是"报出一处不同"，而是整条端到端验收（验收照过 · 产物逐字节相同 · 每条调用逐条对上 ·
+围栏 `full` + `bwrap+landlock` · 停因收敛）**一条都不再执行**，`full` 这道合并闸门长期红。
+那不是更严格，只是更瞎——所以口径拆成两句：目录字节漂了就离线改齐（可逐字节复算 · 来历写明），
+录下来的字节被改过仍当场拒。
 
 ## 验证入口
 
