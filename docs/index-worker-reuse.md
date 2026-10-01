@@ -10,6 +10,11 @@
 - 一份Worker同时只接一份任务；每次传输实际字节窗口的独立副本，绝不detach借用源buffer。
   独立随机nonce同时关联输入、回执和临时文件。迟到/外来nonce、坏字段、无序/重复/越界键
   都给null且Worker退休，不用旧任务的表排除新blob。
+- **两个方向都不信跨边界的消息形状。** `parentPort`是子线程唯一的外部输入面：
+  宿主→Worker的消息先逐字段查（`blob`是字符串、`bytes`是`Uint8Array`、`temporaryId`是字符串），
+  任一项不对就回`{ok:false}`，**不写成回调的参数解构**——async函数参数解构失败产生的是
+  一个没人消费的rejected promise（EventEmitter不看回调返回值），默认unhandledRejection
+  模式下当场打死线程，代价正好是一份已经预热好的可复用Worker。宿主侧回执校验不变。
 - 回执合法并且任务未取消才可归池。失败、deadline、主动取消和error不能把Worker放回空闲池。
   源回调仍接AbortSignal；忽略signal的外部IO不受强制停止保证，原lookup说明的边界不变。
 - 默认空闲10秒后终止（workerIdleMs可配0–60秒，0禁用复用）。空闲Worker和定时器都unref；
@@ -30,7 +35,8 @@ node tools/check-events.js
 
 检查同Worker连续不同blob不混表、无队列/有限存量、失败build后新任务换Worker、活动任务
 mock deadline后不复用且下个任务恢复、关闭幂等、相对根跨cwd固定、空闲超时、独立客户端进程不被空闲Worker
-拖住、nonce和坏回执退档、可见窗口/私有keys。禁用复用的负对照应把连续任务的创建次数
+拖住、nonce和坏回执退档、可见窗口/私有keys、宿主发来九种坏形状消息都只回`{ok:false}`
+且同一份Worker随后仍能完成真实任务（`starts`始终是1）。禁用复用的负对照应把连续任务的创建次数
 从1变成3，复用断言红。速度数字不作为测试通过条件。
 
 开发脚本同进程交替比较workerIdleMs=0/10000，各3趟新缓存根，64份源字节共2,304,918字节。

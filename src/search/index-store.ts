@@ -24,6 +24,14 @@ export interface IndexStoreStats {
   /** 收走的无主临时对象个数（进程被杀留下的那些）。 */
   readonly sweptTemporaries: number
 }
+export interface IndexStoreStats {
+  /** 控制目录链整体不可用的次数。退档不全静默：区分「单条记录 miss」和「整盘缺席」。 */
+  readonly directoryRefusals: number
+  /** 发布/读取已经完成、只是回收目录描述符失败的次数；不改变 stored/读结果。 */
+  readonly closeFailures: number
+  /** 收走的无主临时对象个数（进程被杀留下的那些）。 */
+  readonly sweptTemporaries: number
+}
 export interface BlobIndexStore {
   read(blob: BlobId): Promise<BlobIndex | null>
   /** 只接真实原字节，不能把调用者传来的任意表直接存成可信构建结果。 */
