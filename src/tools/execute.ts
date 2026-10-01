@@ -552,7 +552,8 @@ const grepFace: ToolFn = async (args, host, ctx) => {
     // 这一段（至少一个，保证前进），批在第一条没覆盖的候选处截断，其余留给下一轮重新成批。
     if (prefetch !== undefined) {
       const covered = await prefetch(candidates)
-      if (typeof covered === 'number') {
+      // 可选口的数值只有稠密候选前缀计数这一种含义；坏形状仍扫描原批，不能跳过路径。
+      if (typeof covered === 'number' && Number.isSafeInteger(covered) && covered >= 0 && covered <= candidates.length) {
         const kept = Math.max(1, Math.min(covered, candidates.length))
         if (kept < candidates.length) {
           batch = batch.slice(0, batch.indexOf(candidates[kept]!))
