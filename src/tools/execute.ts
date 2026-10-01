@@ -425,18 +425,25 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('grep', 'pattern')
   const dir = text(args, 'path') ?? ctx.cwd
+  const mode = args.output_mode === undefined ? 'content' : args.output_mode
+  if (mode !== 'content' && mode !== 'files_with_matches' && mode !== 'count') {
+    return no('grep output_mode must be content, files_with_matches, or count.')
+  }
+  if (args.glob !== undefined && typeof args.glob !== 'string') {
+    return no('grep glob must be a path-pattern string.')
+  }
   let re: RegExp
   try {
     re = new RegExp(pattern)
   } catch (err) {
     return no(`that is not a regular expression: ${(err as Error).message}`)
   }
-  const all = await host.walk()
-  // **先按一次批量把候选的内容取回来**：它是提示，缺席或失败都退回今天的逐文件读
-  // ——这台宿主没有那道缝（测试夹具）、或者那一层没接上真源，都只是慢一点。
-  //
-  // **读那道缝这件事自己包在 try 里**：`host` 可能是负对照那种"读任何字段都抛"的假体
-  // （`execute.test.ts` 的 ①d 用它），那种宿主上"没有这道缝"该走缺席那一条，不该把这一趟打死。
+  const pathPattern = typeof args.glob === 'string' ? globToRe(args.glob) : null
+  const all = (await host.walk()).filter(path =>
+    (dir === '' || path === dir || path.startsWith(dir + '/')) &&
+    (pathPattern === null || pathPattern.test(path)),
+  )
+  // 只预取筛后的候选。可选口缺席时仍逐文件读；失败仍由真源读口报出。
   let prefetch: ((paths: readonly string[]) => Promise<void>) | undefined
   try {
     prefetch = host.prefetch
@@ -446,16 +453,22 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   if (prefetch !== undefined) await prefetch(all)
   const hits: string[] = []
   for (const path of all) {
-    if (dir !== '' && !path.startsWith(dir + '/')) continue
     const got = await host.readBytes(path)
     if (got === null) continue
-    utf8Of(got.bytes)
-      .split('\n')
-      .forEach((line, i) => {
-        if (re.test(line)) hits.push(`${path}:${i + 1}:${line}`)
-      })
+    let count = 0
+    const lines = utf8Of(got.bytes).split('\n')
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]!
+      if (!re.test(line)) continue
+      count += 1
+      if (mode === 'content') hits.push(`${path}:${index + 1}:${line}`)
+      // 文件名模式只要证实存在一条匹配，不必再数其余行。
+      if (mode === 'files_with_matches') break
+    }
+    if (count > 0 && mode !== 'content') hits.push(mode === 'count' ? `${path}:${count}` : path)
   }
-  return ok(hits.length === 0 ? `no line matches ${pattern}.` : `${hits.length} lines:\n${hits.join('\n')}`)
+  const label = mode === 'content' ? 'lines' : 'paths'
+  return ok(hits.length === 0 ? `no line matches ${pattern}.` : `${hits.length} ${label}:\n${hits.join('\n')}`)
 }
 
 // ── 执行类那两个 ───────────────────────────────────────────────────────────────
