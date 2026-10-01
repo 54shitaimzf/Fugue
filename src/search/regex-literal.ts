@@ -17,8 +17,13 @@ function endsWithAnchor(pattern: string): boolean {
  * 支持整段普通 literal、单个外层 ^/$ 与转义标点。量词、选择、类、分组、反向引用、
  * 字符/边界转义和任何 flags 都退回扫描。尤其不把一个量词后的 literal 当成必需的。
  * 返回非空的、去重有序的三个 UTF-16 code units；与 Buffer UTF-8 解码后的 JS RegExp 一致。
+ *
+ * `flags` **必传**，而且要从编译这条 RegExp 的同一处传进来：整个模块的安全性建立在「任何
+ * flags 都退回 null」之上，而 `i` 是致命的——`/hello/i` 匹配 `"HELLO"`，但 `hel` 不是
+ * `"HELLO"` 的子串，把 `i` 当成「无 flags」立刻产出假必需条件并漏命中。所以这里不给缺省值：
+ * 漏传的实参是 `undefined`，`!== ''` 当场退回扫描，而不是替调用方声称「没有 flags」。
  */
-export function requiredLiteralTrigrams(pattern: string, flags = ''): readonly string[] | null {
+export function requiredLiteralTrigrams(pattern: string, flags: string): readonly string[] | null {
   if (typeof pattern !== 'string' || flags !== '' || pattern.length > MAX_LITERAL_PATTERN_UNITS) return null
   let source = pattern.startsWith('^') ? pattern.slice(1) : pattern
   if (endsWithAnchor(source)) source = source.slice(0, -1)
