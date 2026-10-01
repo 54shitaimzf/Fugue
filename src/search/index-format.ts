@@ -64,13 +64,16 @@ export function buildBlobIndex(blob: BlobId, bytes: Uint8Array): BlobIndex {
   if (hash.digest('hex') !== blob) throw new Error('index source does not match its Git blob ID')
   // 必须先按 grep 同一条路解码。原始字节的 trigram 会漏掉非法 UTF-8 的替换字符。
   const text = source.toString('utf8')
-  const grams = new Set<string>()
+  // 三个UTF-16单元恰好48位，仍在Number精确整数范围内。
+  // 只为唯一项造字符串，避免给源文本每个位置分配slice。
+  const grams = new Set<number>()
   for (let at = 0; at + 2 < text.length; at++) {
-    grams.add(text.slice(at, at + 3))
+    grams.add(text.charCodeAt(at) * 0x1_0000_0000 + text.charCodeAt(at + 1) * 0x1_0000 + text.charCodeAt(at + 2))
     if (grams.size > MAX_TRIGRAMS) throw new Error('index trigram budget exceeded')
   }
   return { format: 'fugue-blob-trigrams', version: 1, blob, sourceBytes: source.byteLength,
-    textUnits: text.length, tables: { trigrams: [...grams].sort(), symbols: null } }
+    textUnits: text.length, tables: { trigrams: [...grams].sort((a, b) => a - b).map((key) =>
+      String.fromCharCode(Math.floor(key / 0x1_0000_0000), Math.floor(key / 0x1_0000) % 0x1_0000, key % 0x1_0000)), symbols: null } }
 }
 
 export function encodeBlobIndex(index: BlobIndex): Uint8Array {

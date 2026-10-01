@@ -33,6 +33,7 @@ try {
 以后查询可以重试。默认60秒任务时限（可配0–120秒），包括磁盘 probe/source/构建；
 0禁用新任务。每个任务向 source 传 AbortSignal，close 或外部 signal 取消任务、
 终止已经启动的 Worker，清句柄缓存与逻辑 pending，并尝试收走自己 nonce 对应的临时文件。
+Worker可在同一句柄内短暂复用，池存量/空闲退出与创建次数见[复用边界](index-worker-reuse.md)。
 Worker 只收到可见字节窗口的独立副本并转移该副本，不转移借用 Buffer 的 backing store，
 不会携带池内其它字节，也不会 detach 原回调的字节。Worker 不继承宿主环境变量。
 

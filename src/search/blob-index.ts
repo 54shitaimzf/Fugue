@@ -1,12 +1,14 @@
 // ROADMAP § 4 / 0.3.2 · miss 不等构建：主查询回扫描，受控后台任务随后补索引。
-import { Worker } from 'node:worker_threads'
+import type { Worker } from 'node:worker_threads'
 import { randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
 import type { BlobId } from '../terms.ts'
 import { cleanupIndexTemporary, createBlobIndexStore } from './index-store.ts'
-import { encodeBlobIndex, MAX_INDEX_BYTES, MAX_TRIGRAMS } from './index-format.ts'
+import { encodeBlobIndex } from './index-format.ts'
 import type { BlobIndex } from './index-format.ts'
 import { copyIndexSource } from './index-source.ts'
+import { createIndexWorkerPool } from './index-worker-pool.ts'
+import { decodeIndexWorkerReply } from './index-worker-reply.ts'
 
 export interface BlobIndexLookup {
   mightContain(blob: BlobId, required: readonly string[]): Promise<boolean | null>
@@ -16,6 +18,7 @@ export interface IndexLookupStats {
   readonly diskHits: number; readonly sourceReads: number; readonly builds: number
   readonly unsavedBuilds: number; readonly scanFallbacks: number; readonly evictions: number
   readonly entries: number; readonly grams: number; readonly serializedBytes: number; readonly pending: number; readonly workers: number
+  readonly workerStarts: number; readonly retainedWorkers: number; readonly idleWorkers: number
 }
 export interface IndexLookupHandle extends BlobIndexLookup {
   stats(): IndexLookupStats
@@ -26,14 +29,14 @@ export interface IndexLookupHandle extends BlobIndexLookup {
 export interface IndexLookupOptions {
   readonly maxRecords?: number; readonly maxGrams?: number
   readonly maxSerializedBytes?: number; readonly maxPending?: number
-  readonly maxBuildMs?: number; readonly signal?: AbortSignal
+  readonly maxBuildMs?: number; readonly workerIdleMs?: number; readonly signal?: AbortSignal
 }
 interface PreparedIndex { readonly grams: ReadonlySet<number>; readonly serializedBytes: number }
 interface LoadTask {
   readonly blob: BlobId; readonly temporaryId: string; readonly abort: AbortController
   readonly query: Promise<PreparedIndex | null>; readonly done: Promise<void>
   readonly answer: (value: PreparedIndex | null) => void; readonly finish: () => void
-  timer?: NodeJS.Timeout; worker?: Worker; canceled: boolean; settled: boolean
+  timer?: NodeJS.Timeout; worker?: Worker; workerStarted?: boolean; canceled: boolean; settled: boolean
 }
 function gramKey(gram: string): number {
   return gram.charCodeAt(0) * 0x1_0000_0000 + gram.charCodeAt(1) * 0x1_0000 + gram.charCodeAt(2)
@@ -55,6 +58,8 @@ export function createBlobIndexLookup(
   const maxBytes = limit(options.maxSerializedBytes, 16 * 1024 * 1024, 64 * 1024 * 1024, 'serialized-byte')
   const maxPending = limit(options.maxPending, 4, 16, 'pending')
   const maxBuildMs = limit(options.maxBuildMs, 60_000, 120_000, 'build-time')
+  const workerIdleMs = limit(options.workerIdleMs, 10_000, 60_000, 'worker-idle-time')
+  const pool = createIndexWorkerPool(selectedRoot, maxPending, workerIdleMs)
   const store = createBlobIndexStore(selectedRoot)
   const cache = new Map<BlobId, PreparedIndex>()
   const pending = new Map<BlobId, LoadTask>()
@@ -99,25 +104,29 @@ export function createBlobIndexLookup(
     if (closed || task.canceled) return
     const ownedBytes = copyIndexSource(bytes)
     if (ownedBytes === null) return
-    const worker = new Worker(new URL('./index-worker.ts', import.meta.url), {
-      workerData: { root: selectedRoot, blob: task.blob, bytes: ownedBytes, temporaryId: task.temporaryId },
-      env: {}, execArgv: process.execArgv.filter((arg) => arg === '--experimental-strip-types'),
-      stdout: true, stderr: true, trackUnmanagedFds: true, transferList: [ownedBytes.buffer],
-    })
-    task.worker = worker
-    worker.stdout?.resume(); worker.stderr?.resume()
+    const worker = pool.acquire()
+    if (worker === null) return
+    task.worker = worker; task.workerStarted = true
     const result = await new Promise<PreparedIndex | null>((done) => {
-      worker.once('message', (message) => {
-        if (message?.ok !== true || !(message.keys instanceof Float64Array) || message.keys.length > MAX_TRIGRAMS || !Number.isSafeInteger(message.serializedBytes) || message.serializedBytes < 0 || message.serializedBytes > MAX_INDEX_BYTES) return done(null)
-        const keys = [...message.keys] as number[]
-        if (keys.some((key) => !Number.isSafeInteger(key) || key < 0 || key > 0xffff_ffff_ffff)) return done(null)
-        if (!task.canceled && !closed) { counters.builds++; if (message.stored !== true) counters.unsavedBuilds++ }
-        done({ grams: new Set(keys), serializedBytes: message.serializedBytes })
-      })
-      worker.once('error', () => done(null))
-      worker.once('exit', () => done(null))
+      const finish = (result: PreparedIndex | null) => {
+        worker.removeListener('message', onMessage)
+        worker.removeListener('error', onError)
+        worker.removeListener('exit', onExit)
+        done(result)
+      }
+      const onMessage = (message: unknown) => {
+        const reply = decodeIndexWorkerReply(message, task.temporaryId)
+        if (reply === null) return finish(null)
+        if (!task.canceled && !closed) { counters.builds++; if (!reply.stored) counters.unsavedBuilds++ }
+        finish(reply)
+      }
+      const onError = () => finish(null), onExit = () => finish(null)
+      worker.once('message', onMessage); worker.once('error', onError); worker.once('exit', onExit)
+      try { worker.postMessage({ blob: task.blob, bytes: ownedBytes, temporaryId: task.temporaryId }, [ownedBytes.buffer]) }
+      catch { finish(null) }
     })
-    try { await worker.terminate() } catch { /* worker 已退出也是正常收尾。 */ }
+    task.worker = undefined
+    await pool.release(worker, result !== null && !task.canceled && !closed)
     if (result !== null && !closed && !task.canceled) remember(task.blob, result)
   }
   async function probe(task: LoadTask): Promise<void> {
@@ -137,7 +146,7 @@ export function createBlobIndexLookup(
     } catch { task.answer(null) }
     finally {
       task.answer(null)
-      if (task.worker !== undefined) await cleanupIndexTemporary(selectedRoot, task.blob, task.temporaryId)
+      if (task.workerStarted) await cleanupIndexTemporary(selectedRoot, task.blob, task.temporaryId)
       complete(task)
     }
   }
@@ -163,6 +172,7 @@ export function createBlobIndexLookup(
     options.signal?.removeEventListener('abort', onAbort)
     closing = (async () => {
       await Promise.all([...pending.values()].map(cancel))
+      await pool.close()
       cache.clear(); grams = 0; serializedBytes = 0
     })()
     return closing
@@ -186,7 +196,7 @@ export function createBlobIndexLookup(
       if (index === null) { counters.scanFallbacks++; return null }
       return keys.every((key) => index.grams.has(key))
     },
-    stats() { return { ...counters, entries: cache.size, grams, serializedBytes, pending: pending.size, workers: [...pending.values()].filter((task) => task.worker !== undefined && task.worker.threadId !== -1).length } },
+    stats() { const workers = pool.stats(); return { workerStarts: workers.starts, retainedWorkers: workers.retained, idleWorkers: workers.idle, ...counters, entries: cache.size, grams, serializedBytes, pending: pending.size, workers: [...pending.values()].filter((task) => task.worker !== undefined && task.worker.threadId !== -1).length } },
     async drain() {
       for (;;) { const tasks = [...pending.values()]; if (tasks.length === 0) return; await Promise.all(tasks.map((task) => task.done)) }
     },
