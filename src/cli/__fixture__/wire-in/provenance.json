@@ -1,0 +1,35 @@
+{
+  "kind": "offline-catalog-adaptation",
+  "catalogHash": "dbe4fa742eff6747",
+  "liveRequestSent": false,
+  "historicalResponseAndUsage": true,
+  "calls": [
+    {
+      "call": "call-0001",
+      "sourceRequestSha256": "df09987f5c290cd2e4adc9b9e3ec85321c6c5e01b6f0c9594389cf24136e39b7",
+      "requestSha256": "e224ab04ab6d2628d83b713044d1b46f44e918c3b20765b2b3204c0d10b9b8d2",
+      "requestHash": "e224ab04ab6d2628",
+      "requestBytes": 9091,
+      "responseSha256": "e043b6e860f8706468eb32bde0137311e428a9e6124997a642f6581ee2e45417",
+      "changed": true
+    },
+    {
+      "call": "call-0002",
+      "sourceRequestSha256": "da3179d090424d3dd431f8010acefadefc6947856b5166a149d258a97c7d1bbd",
+      "requestSha256": "b3dba679975d0717a247cc2fca39fb83007b5466a6c7fa08c9597184bb3586ad",
+      "requestHash": "b3dba679975d0717",
+      "requestBytes": 9737,
+      "responseSha256": "822cf2fe96f1a97c229822d7b0289825c214270762baad00280a66bff9aa380b",
+      "changed": true
+    },
+    {
+      "call": "call-0003",
+      "sourceRequestSha256": "655f3346dd4e82c45c4fef1f5f86a3d8b56d2a5bd95446d35e3f1d607e2d2bae",
+      "requestSha256": "3eaf1bbe555d174725974e0b4bb6440b805edb21e6f5bb23588cf58e6a76719d",
+      "requestHash": "3eaf1bbe555d1747",
+      "requestBytes": 10319,
+      "responseSha256": "393cb9be0a5bb2fb06be52646aeb468340d0b9448e39ab6a94a2861139a657ac",
+      "changed": true
+    }
+  ]
+}

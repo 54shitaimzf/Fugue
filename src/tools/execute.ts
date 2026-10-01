@@ -19,7 +19,7 @@ import type { Capability, Denied } from '../capability/table.ts'
 // 不 import 视图那边——这一层的头注写着"不认识视图"，而这条规矩两层共用，所以它有一条自己的家。
 import { PathShapeError } from '../path-shape.ts'
 import { lineCount } from './receipt.ts'
-import { textWindowOf, numberedWindowOf } from './read-window.ts'
+import { textWindowOf, numberedWindowOf, windowNoteOf } from './read-window.ts'
 import type { ReadWindow, ReadText } from './read-window.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
@@ -360,12 +360,19 @@ const readFace: ToolFn = async (args, host) => {
       got = raw === null ? null : { ...textWindowOf(raw.bytes, window), mode: raw.mode }
     }
     if (got === null) return no(`no ${path} in the view (unreadable reads as absent — this layer does not tell the two apart).`)
-    return ok(`${path} (${got.byteLength} bytes · ${got.lines} lines · mode ${got.mode.toString(8)})\n${numberedWindowOf(got, offset)}`)
+    // **头里点出窗口**（`windowNoteOf`）：头里那两个数是整文件的，而截断标记里那两个是这一条
+    // 回执的——不点明的话一条回执里就有两套各差一倍的数，谁都不知道哪个说的是哪件事。
+    return ok(
+      `${path} (${got.byteLength} bytes · ${got.lines} lines · mode ${got.mode.toString(8)}${windowNoteOf(got, offset)})\n` +
+        numberedWindowOf(got, offset),
+    )
   }
   const got = await host.readBytes(path)
   if (got === null) return no(`no ${path} in the view (unreadable reads as absent — this layer does not tell the two apart).`)
   const body = utf8Of(got.bytes)
   // 整文件读保持原样：统计和回执截断仍用 receipt.ts 的共同口径。
+  // **这一档不带行号**，所以目录里那句描述只许把行号挂在切片那一档上（架构 § 8.10 只公布能
+  // 兑现的选项）——两种格式混在一个 `read` 里的时候，模型拿到的 `old_string` 就带着 `N\t`。
   const lines = lineCount(body)
   return ok(
     `${path} (${got.bytes.byteLength} bytes · ${lines} lines · mode ${got.mode.toString(8)})\n${body}`,
