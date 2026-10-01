@@ -34,6 +34,13 @@ function count(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
+/** 非数组（含 null / 字符串 / 数字）与含非法计数的数组一律整栏未知；不把字符串拆成状态码。 */
+function attemptsOf(value: unknown): readonly number[] | null {
+  if (!Array.isArray(value)) return null
+  const codes = value.map(count)
+  return codes.every((code): code is number => code !== null) ? codes : null
+}
+
 function entryOf(row: MergedRow, event: ModelCall): CallLedgerEntry {
   return {
     source: { writer: row.pos.writer, seq: row.pos.seq },
@@ -51,7 +58,7 @@ function entryOf(row: MergedRow, event: ModelCall): CallLedgerEntry {
       reasoningTokens: count(event.usage?.reasoningTokens),
     },
     stop: event.stop ?? null,
-    attempts: event.attempts === undefined ? null : [...event.attempts],
+    attempts: attemptsOf(event.attempts),
     toolMs: null,
     toolArgumentBytes: null,
     toolReceiptBytes: null,

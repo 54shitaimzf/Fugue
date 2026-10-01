@@ -52,6 +52,15 @@ test('legacy absent and malformed counts remain unknown, not zero or coerced tex
   assert.equal(ledger.calls[0].stop, 'tool-calls')
 })
 
+test('malformed retry lists stay unknown instead of aborting the ledger or coercing text', () => {
+  for (const attempts of [null, 7, 'x', {}, ['429'], [429, -1], [429, 1.5]]) {
+    const ledger = callLedgerOf([row(call({ attempts } as unknown as Partial<Call>))])
+    assert.equal(ledger.calls[0].attempts, null, JSON.stringify(attempts))
+    assert.equal(ledger.totalCalls, 1)
+  }
+  assert.deepEqual(callLedgerOf([row(call({ attempts: [429, 0, 200] }))]).calls[0].attempts, [429, 0, 200])
+})
+
 test('partial provider calls keep absent usage and completion distinct', () => {
   const usage = { inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null, reasoningTokens: null }
   const ledger = callLedgerOf([row(call({ stop: null, rawStop: null, status: 503, usage }))])
