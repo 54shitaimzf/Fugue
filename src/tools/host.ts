@@ -20,6 +20,8 @@ import { applyEdit } from '../view/edit.ts'
 import { snapshotOf } from '../view/snapshot.ts'
 import type { View } from '../view/contract.ts'
 import { textWindowOf } from './read-window.ts'
+import { filterCurrentViewCandidates } from '../search/current-view-candidates.ts'
+import type { BlobIndexLookup } from '../search/blob-index.ts'
 import { checkpoint } from '../checkpoint.ts'
 import type { RunReply } from './execute.ts'
 import type { ActionAsk, AskItem, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, ToolHost, ToolListing } from './execute.ts'
@@ -76,6 +78,8 @@ export interface CommandPlan {
 }
 
 export interface HostOptions {
+  /** 显式提供才启用索引候选读口；默认缺席。构造/排空/关闭的生命周期由调用方持有。 */
+  readonly blobIndex?: BlobIndexLookup
   /**
    * 起一个进程要什么：命令行 · cwd · 环境 · 超时。**怎么关起来归调用方**（`M7` 包命令行 · `M5` 起进程）。
    *
@@ -168,6 +172,7 @@ export interface ToolHostHandle extends ToolHost {
 
 export function createToolHost(view: View, roots: Roots, opts: HostOptions = {}): ToolHostHandle {
   const parts = opts.actions
+  const blobIndex = opts.blobIndex
 
   async function deny(d: DenyAsk): Promise<void> {
     // 没有日志口就不记（夹具档与单测里那几份宿主就是这样）——但**有口就一定要记**：
@@ -527,6 +532,10 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
   }
   return {
     readBytes: readBytesOf,
+    ...(blobIndex === undefined ? {} : {
+      filterCandidates: (paths: readonly string[], required: readonly string[]) =>
+        filterCurrentViewCandidates(view, paths, required, (blob, grams) => blobIndex.mightContain(blob, grams)),
+    }),
     async readTextWindow(rel, window) {
       // 和字节读共用路径检查/视图，不建立第二个来源；仅把 UTF-8 解码下推到选中的行段。
       const got = await readBytesOf(rel)

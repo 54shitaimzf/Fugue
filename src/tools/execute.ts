@@ -24,6 +24,7 @@ import type { ReadWindow, ReadText } from './read-window.ts'
 import type { WalkResult } from './walk.ts'
 import { SearchRows, searchLines, SEARCH_PREFETCH_ROWS, SEARCH_PREFETCH_MAX_ROWS } from './search-receipt.ts'
 import type { SearchCoverage } from './search-receipt.ts'
+import { requiredLiteralTrigrams } from '../search/regex-literal.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -82,6 +83,8 @@ export interface ToolHost {
   walk(): Promise<readonly string[]>
   /** 可选详细读口；缺席时枚举完整性未知，不把截掉的候选说成没有匹配。 */
   readonly walkDetailed?: () => Promise<WalkResult>
+  /** 可选辅助候选过滤。仅接收必需的三元组，缺席/失败/坏结果都按原批扫描。 */
+  readonly filterCandidates?: (paths: readonly string[], required: readonly string[]) => Promise<readonly string[]>
   /**
    * **把这几条路径的内容先取回一层来**（这一站加的，可选）。它是一道**缝**：实现了就在这一层
    * 批量取（一条 `objectMany('contents', …)`），没实现就照旧"用一条读一条"——**预取缺席 =
@@ -437,6 +440,27 @@ const globFace: ToolFn = async (args, host) => {
   return ok(rows.render('paths',`no path matches ${pattern}.`,all.coverage))
 }
 
+async function indexedCandidates(host: ToolHost, paths: readonly string[], required: readonly string[] | null): Promise<readonly string[]> {
+  const original = [...paths]
+  if (required === null) return original
+  try {
+    if (typeof host.filterCandidates !== 'function') return original
+    // 可选提供者拿独立冻结副本；失败回原批，不能改原批/后续查询条件。
+    const filtered = await host.filterCandidates(Object.freeze([...original]), Object.freeze([...required]))
+    if (!Array.isArray(filtered)) return original
+    const allowed = new Set(original)
+    const kept = new Set<string>()
+    for (const path of filtered) {
+      if (typeof path !== 'string' || !allowed.has(path) || kept.has(path)) return original
+      kept.add(path)
+    }
+    // 可选实现不许重排/注入路径；数据来源和逐行匹配仍在原路径上。
+    return original.filter(path => kept.has(path))
+  } catch {
+    return original
+  }
+}
+
 const grepFace: ToolFn = async (args, host, ctx) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('grep', 'pattern')
@@ -454,6 +478,7 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   } catch (err) {
     return no(`that is not a regular expression: ${(err as Error).message}`)
   }
+  const required = requiredLiteralTrigrams(pattern, re.flags)
   const pathPattern = typeof args.glob === 'string' ? globToRe(args.glob) : null
   const walked = await searchWalk(host)
   const all = walked.paths.filter(path =>
@@ -472,9 +497,10 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   scan: for (let at = 0; at < all.length;) {
     const batch = all.slice(at, at + batchRows)
     at += batch.length
-    // 最多预取当前批；回执够了以后不再预取后面整棵树。
-    if (prefetch !== undefined) await prefetch(batch)
-    for (const path of batch) {
+    // 候选过滤也只做当前批；索引 miss 不许提前枚举/读取后面的全树。
+    const candidates = await indexedCandidates(host, batch, required)
+    if (prefetch !== undefined) await prefetch(candidates)
+    for (const path of candidates) {
       const got = await host.readBytes(path)
       if (got === null) continue
       let count = 0
