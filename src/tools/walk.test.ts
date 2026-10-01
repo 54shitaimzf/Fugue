@@ -1,4 +1,4 @@
-// T16 ① 的第一半：**walk 清单按视图代缓存**。出处：TARGETS `T16` ① · ROADMAP 的 0.2.5 那一行 ·
+// T16 ① 的第一半：**walk 清单按视图代缓存**。出处：TARGETS `T16` ① · ROADMAP § 3 里"walk 清单按视图代缓存"那一行 ·
 // 架构 § 8.10（`glob` 与 `grep` 走的是同一份清单）。跑法：cd ~/fugue && node --test src/tools/walk.test.ts
 //
 //   ① 纯机制：同代复用（数 `list` 调用）· 代变重枚举 · 枚举失败不缓存 · 结果彼此独立
