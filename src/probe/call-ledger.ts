@@ -14,6 +14,8 @@ export interface CallLedgerEntry {
   readonly requestedTools: number | null
   readonly usage: ModelCall['usage']
   readonly stop: ModelCall['stop']
+  /** 上游拒绝时的状态码：只有失败那一路有，成功是 null。与 `stop: null` 一起读才分得出「被拒」「断流」「健康的单次尝试」。 */
+  readonly status: number | null
   /** 缺省单次尝试没有状态码明细，不能凭成功的 stop 猜成 [200]。 */
   readonly attempts: readonly number[] | null
   /** 既有日志没有这些逐工具事实；未知不能拿 0 或 run/end.ms 顶。 */
@@ -62,12 +64,16 @@ function entryOf(row: MergedRow, event: ModelCall): CallLedgerEntry {
       reasoningTokens: count(event.usage?.reasoningTokens),
     },
     stop: event.stop ?? null,
+    status: count(event.status),
     attempts: attemptsOf(event.attempts),
     toolMs: null,
     toolArgumentBytes: null,
     toolReceiptBytes: null,
   }
 }
+
+/** 缺省保留多少行：库入口与命令行共用这一个数。 */
+export const DEFAULT_CALL_LEDGER_ROWS = 5000
 
 function accumulator(maxRows: number) {
   if (!Number.isSafeInteger(maxRows) || maxRows < 0 || maxRows > 1_000_000) {
@@ -88,14 +94,14 @@ function accumulator(maxRows: number) {
 }
 
 /** 只保留有界的模型调用行；同一个 step 的重试/重放按日志位置各留一条。 */
-export function callLedgerOf(rows: readonly MergedRow[], maxRows = 5000): CallLedger {
+export function callLedgerOf(rows: readonly MergedRow[], maxRows = DEFAULT_CALL_LEDGER_ROWS): CallLedger {
   const ledger = accumulator(maxRows)
   for (const row of rows) ledger.add(row)
   return ledger.result()
 }
 
 /** 流读口与纯函数共用同一折法；不会为大日志另攒一份全部事件数组。 */
-export async function readCallLedger(rows: AsyncIterable<MergedRow>, maxRows = 5000): Promise<CallLedger> {
+export async function readCallLedger(rows: AsyncIterable<MergedRow>, maxRows = DEFAULT_CALL_LEDGER_ROWS): Promise<CallLedger> {
   const ledger = accumulator(maxRows)
   for await (const row of rows) ledger.add(row)
   return ledger.result()

@@ -67,6 +67,7 @@ test('partial provider calls keep absent usage and completion distinct', () => {
   const usage = { inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null, reasoningTokens: null }
   const ledger = callLedgerOf([row(call({ stop: null, rawStop: null, status: 503, usage }))])
   assert.equal(ledger.calls[0].stop, null)
+  assert.equal(ledger.calls[0].status, 503, '上游拒绝码是日志里唯一的失败证据，不能丢')
   assert.deepEqual(ledger.calls[0].usage, usage)
   assert.equal(ledger.calls[0].toolMs, null)
 })
@@ -144,7 +145,11 @@ test('developer CLI stays read-only for valid, corrupt and missing journal input
   const zero = run(root, '0')
   assert.equal(zero.status, 0, zero.stderr)
   assert.equal(JSON.parse(zero.stdout).truncated, true)
-  assert.notEqual(run(root, 'invalid').status, 0)
+  for (const bad of ['invalid', '', ' ', '0x10', '1e3', '-1', '1.5']) {
+    const rejected = run(root, bad)
+    assert.equal(rejected.status, 2, `max-rows ${JSON.stringify(bad)} 要被拒`)
+    assert.equal(rejected.stdout, '')
+  }
 
   const corrupt = before.toString().replace('"inputTokens":10', '"inputTokens":11')
   writeFileSync(path, corrupt)

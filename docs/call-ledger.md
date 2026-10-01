@@ -19,7 +19,7 @@ node tools/test-entry.js fast src/probe/call-ledger.test.ts
 
 每条调用用 `writer + seq` 指到唯一原事件。同一 agent、同一步编号的多条事件
 各留一条，不悄悄去重。记录模型/协议、公布工具数、请求调用数、提供方用量与
-结束原因；重试状态码只在源事件确实带着它时出现。
+结束原因；上游拒绝时的状态码（`status`，成功是 null）与重试状态码（`attempts`）只在源事件确实带着它时出现。
 
 ## 能说明和不能说明什么
 
