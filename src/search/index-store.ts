@@ -90,6 +90,22 @@ export async function settleShard<T>(attempt: ShardAttempt<T>, opened: readonly 
   return attempt.outcome as T
 }
 
+/** 已知自建临时叶的收尾：原始操作错误优先，所有cleanup都尝试并逐个观察。 */
+export async function settleOwnedTemporary<T>(
+  attempt: Pick<ShardAttempt<T>, 'outcome' | 'failure' | 'failed'>,
+  close: (() => Promise<unknown>) | undefined,
+  remove: (() => Promise<unknown>) | undefined,
+): Promise<T> {
+  let failed = attempt.failed, failure = attempt.failure
+  for (const cleanup of [close, remove]) {
+    if (cleanup === undefined) continue
+    try { await cleanup() }
+    catch (error) { if (!failed) { failed = true; failure = error } }
+  }
+  if (failed) throw failure
+  return attempt.outcome as T
+}
+
 /** Linux 描述符锚：每一层只开真实目录，后续操作不再重新解析用户的路径祖先。 */
 async function withShard<T>(root: string, blob: BlobId, create: boolean, run: (dir: FileHandle) => Promise<T>, notes?: ShardNotes): Promise<T> {
   const opened: FileHandle[] = []
@@ -176,7 +192,8 @@ async function replaceRecord(directory: FileHandle, blob: BlobId, bytes: Uint8Ar
   const name = `.tmp-${process.pid}-${temporaryId ?? randomBytes(12).toString('hex')}`
   const temporary = at(directory, name)
   let file: FileHandle | undefined
-  let created = false
+  let created = false, failed = false
+  let failure: unknown
   try {
     file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
     created = true
@@ -185,16 +202,19 @@ async function replaceRecord(directory: FileHandle, blob: BlobId, bytes: Uint8Ar
     await file.close()
     file = undefined
     await rename(temporary, target)
+    created = false // 临时名称已被rename消耗；后来复用nonce的叶不属于本操作。
     await directory.sync()
     try { const swept = await sweepStaleTemporaries(directory, name, Date.now()); if (notes !== undefined) notes.sweptTemporaries += swept }
     catch { /* 扫不动不能把一次已经发布成功的记录退成 stored:false。 */ }
-  } finally {
-    if (file !== undefined) await file.close()
-    if (created) {
+  } catch (error) { failed = true; failure = error }
+  const remainingFile = file
+  await settleOwnedTemporary({ failed, failure },
+    remainingFile === undefined ? undefined : () => remainingFile.close(),
+    created ? async () => {
       try { await unlink(temporary) }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
-    }
-  }
+    } : undefined,
+  )
 }
 
 /** 句柄不持长期 fd，不写日志、不修权限。共享可写/软链控制目录上磁盘索引直接缺席。 */

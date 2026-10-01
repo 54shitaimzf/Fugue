@@ -819,7 +819,6 @@ interface Boundary {
 | 视图 | `read` `write` `edit` `read_image` `glob` `grep` |
 | 执行（物化后） | `bash` `run_action` |
 | 真源（提交） | `checkpoint` |
-
 | 日志 | `todo_write` `ask_user_question` `exit_plan_mode` |
 
 **除表之外只剩一句要单独说的：** 执行类的产出一律经声明集回视图（`M6` 反向通道）：`run_action` 自带那份声明集（绑定的 `outputs`，门上跨字段检查保证 ⊆ 契约写入面），`bash` 没有——格内两者同走宿主接的那份契约面（W8 起）。**其余每一格都是这一层的推论**——四条推论各有一个消费方：
@@ -860,7 +859,6 @@ interface Tool {
 | 执行 | `bash` |
 | 发现 | `glob` `grep` |
 | 待办 | `todo_write` |
-
 | 交互 | `ask_user_question` |
 | 计划 | `exit_plan_mode` |
 | 本架构新增 | `checkpoint` `run_action` |
