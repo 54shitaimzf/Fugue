@@ -18,6 +18,7 @@ import { createBlobIndexLookup } from '../src/search/blob-index.ts'
 import { createBlobIndexStore } from '../src/search/index-store.ts'
 import { createToolHost } from '../src/tools/host.ts'
 import { faceOf } from '../src/tools/execute.ts'
+import { closeIndexBenchmark } from './bench-index-cleanup.js'
 
 function argument(name, fallback, max) {
   const at = process.argv.indexOf(name)
@@ -34,10 +35,15 @@ if (!referenceArgument || referenceArgument.startsWith('--')) throw new Error('-
 const referenceRoot = resolve(referenceArgument)
 const referenceFactory = (await import(pathToFileURL(join(referenceRoot, 'src/tools/host.ts')).href)).createToolHost
 if (typeof referenceFactory !== 'function') throw new Error('reference must export createToolHost')
+const referenceLookupFactory = (await import(pathToFileURL(join(referenceRoot, 'src/search/blob-index.ts')).href)).createBlobIndexLookup
+if (typeof referenceLookupFactory !== 'function') throw new Error('reference must export createBlobIndexLookup')
 const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex')
 const sourceHashes = {
   referenceHost: hash(join(referenceRoot, 'src/tools/host.ts')),
   referenceCandidates: hash(join(referenceRoot, 'src/search/current-view-candidates.ts')),
+  referenceLookup: hash(join(referenceRoot, 'src/search/blob-index.ts')),
+  referenceStore: hash(join(referenceRoot, 'src/search/index-store.ts')),
+  referenceFormat: hash(join(referenceRoot, 'src/search/index-format.ts')),
   currentHost: hash(new URL('../src/tools/host.ts', import.meta.url)),
   currentCandidates: hash(new URL('../src/search/current-view-candidates.ts', import.meta.url)),
   indexLookup: hash(new URL('../src/search/blob-index.ts', import.meta.url)),
@@ -75,11 +81,12 @@ async function build() {
       corpusBuildMs, offlineIndexPreparationMs: performance.now() - preparedAt }
   } finally { await truth.close() }
 }
-async function pass(base, pattern, factory) {
+async function pass(base, pattern, factory, lookupFactory = createBlobIndexLookup) {
   const truth = openTruth(root)
   const log = openLog(root, { write: 'bench', sync: 'never' })
-  const index = createBlobIndexLookup(root, id => truth.getBlob(id))
+  let index
   try {
+    index = lookupFactory(root, id => truth.getBlob(id))
     const view = await loadView(log, 'bench', { lower: lowerAt(truth, base) })
     const product = factory(view, createRoots(root), { blobIndex: index,
       actions: { writer: 'bench', log, truth, head: await refHeadOf(log, 'bench', base) },
@@ -108,7 +115,7 @@ async function pass(base, pattern, factory) {
     }
     assert.equal(index.stats().sourceReads, 0, 'prepared-only probe comparison accidentally measured a source/build miss')
     return { phases, output }
-  } finally { await index.close(); await log.close(); await truth.close() }
+  } finally { await closeIndexBenchmark(index, log, truth) }
 }
 function summarize(values) {
   return Object.fromEntries(['diskCold', 'preparedRepeat'].map(phase => {
@@ -126,8 +133,8 @@ try {
     const scan = await pass(fixture.base, pattern, scanFactory)
     const before = [], after = []
     for (let run = 0; run < runs; run++) {
-      if (run % 2 === 0) { before.push(await pass(fixture.base, pattern, referenceFactory)); after.push(await pass(fixture.base, pattern, createToolHost)) }
-      else { after.push(await pass(fixture.base, pattern, createToolHost)); before.push(await pass(fixture.base, pattern, referenceFactory)) }
+      if (run % 2 === 0) { before.push(await pass(fixture.base, pattern, referenceFactory, referenceLookupFactory)); after.push(await pass(fixture.base, pattern, createToolHost)) }
+      else { after.push(await pass(fixture.base, pattern, createToolHost)); before.push(await pass(fixture.base, pattern, referenceFactory, referenceLookupFactory)) }
       assert.equal(before[run].output, scan.output, 'reference indexed probe disagrees with default-off scan')
       assert.equal(after[run].output, scan.output, 'bounded indexed probe disagrees with default-off scan')
     }

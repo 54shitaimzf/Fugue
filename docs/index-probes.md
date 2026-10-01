@@ -31,7 +31,7 @@ node tools/test-entry.js fast src/search/current-view-candidates.test.ts src/too
 ## 隔离已准备记录的 before/after
 
 先取此前接线分支的 worktree（fork commit `65e7df60dc1cade1b4955d9330fc7cf7a1ac5f7d`），
-以它的 host 为串行对照：
+以它的 host 与 lookup/store 为独立对照：
 
 ```sh
 node tools/bench-index-probes.js --reference-root /path/to/prior-checkout --runs 5
@@ -39,14 +39,17 @@ node tools/bench-index-probes.js --reference-root /path/to/prior-checkout --runs
 ```
 
 同一份 immutable 语料、同一组已准备 canonical 记录，before/after 交替顺序，每个计时
-session 都新建 Truth/View/lookup。额外默认关闭的全扫作为独立答案；两种索引路径每趟
+session 都新建 Truth/View/lookup。before 显式加载 reference 的 host 和 lookup；lookup
+的相对 import 因而绑定到 reference store/codec。只换 host 却共用当前后端，会在测后端
+变化时让两个同样错误的实现自证，现已用会抛 sentinel 的 reference factory 负对照钉住。额外默认关闭的全扫作为独立答案；两种索引路径每趟
 都必须与它的精确回执相同。这个全扫在计时 pairs 外，也会预热 OS 文件缓存，所以这里的
 “磁盘冷”是重启 lookup 的冷口，不是物理设备/page cache 冷测量。
 
 脚本显式记录生成语料与线下直接 rebuild 的准备时间。这隔离候选探测调度，不代表正常
 后台 Worker 准备可以这样免费绕过；首次 miss、源读、Worker 与持久化全成本仍在
-[查询接线](index-query.md) 的原矩阵里。参数、模块与 source hash 校验都在分配临时目录前；
-关闭句柄后再清理本脚本自己建的目录。输出保留源 hash、逐趟资源读数与中位数。
+[查询接线](index-query.md) 的原矩阵里。参数、host/lookup 模块与 source hash 校验都在分配临时目录前；
+即使 reference lookup 构造失败，也关闭已开 Truth/log 口再清理本脚本自己建的目录。
+输出分别保留 before 的 lookup/store/codec 与当前源 hash、逐趟资源读数与中位数。
 
 cloud overlay 趋势，不能替代 ext4/0.4.0 验收：
 
@@ -80,3 +83,18 @@ spawns 都是 1。首次 miss 时延 19.461/23.867/18.346 ms；后台收尾另�
 172.605/130.600/146.283 ms，全体 Worker 准备另付 9841.646/7566.139/7488.594 ms。
 它是单趟补充，不据此声称 missing-path 速度改进，也不能把线下直接 rebuild 的准备数字
 换成正常后台成本。已准备探测对照、首缺索引完整矩阵与准备成本分别保留。
+
+
+### Reference 后端的测量守卫
+
+本修复是测量正确性小步，没有声称产品加速，也不默认启用索引。此前四路调度对照的两侧
+后端源码相同，所以已公布的纯调度读数仍成立；之后比较不同后端必须用新加载规则。
+四个测试通过唯一入口：参数/引用错误不分配临时工作区；受控 reference lookup 构造器
+抛 sentinel，子进程确实碰到它且清理全部自己生成的工作区。旧共用当前后端的脚本在
+第二条反例上红（子进程反而成功）；直接模拟 reference close 拒绝仍观察到 log/Truth
+两个关闭口完成；log 拒绝时必须等待阻塞的 Truth.close，同步抛错也不能跳过它，不允许只核 source hash 却不调用所声明的后端。
+
+该分支 foundation 组合已独立审查的 pool `771e8640edd50f618812e53f6af98e03d384a0f0`
+与四路查询 `4639dd25c901d9aca8adb0f7b85eecd619456be2` 的精确源码，供后续测量复用。
+没有带入 sized-read 实验：它的正确性测试通过，但首次端到端矩阵有明显退化，故保留本地
+实验与原读数，不发布优化或 0.4.0 达标声明。原 canonical 编码/完整信任检查保持不变。
