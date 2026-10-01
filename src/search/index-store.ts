@@ -17,7 +17,7 @@ export interface IndexWrite {
 export interface BlobIndexStore {
   read(blob: BlobId): Promise<BlobIndex | null>
   /** 只接真实原字节，不能把调用者传来的任意表直接存成可信构建结果。 */
-  rebuild(blob: BlobId, bytes: Uint8Array): Promise<IndexWrite>
+  rebuild(blob: BlobId, bytes: Uint8Array, temporaryId?: string): Promise<IndexWrite>
 }
 
 const DIR_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
@@ -82,16 +82,19 @@ async function readRecord(directory: FileHandle, blob: BlobId): Promise<BlobInde
   } finally { await file.close() }
 }
 
-async function replaceRecord(directory: FileHandle, blob: BlobId, bytes: Uint8Array): Promise<void> {
+async function replaceRecord(directory: FileHandle, blob: BlobId, bytes: Uint8Array, temporaryId?: string): Promise<void> {
+  if (temporaryId !== undefined && !/^[0-9a-f]{24}$/.test(temporaryId)) throw new Error("invalid index temporary ID")
   const target = at(directory, `${blob}.json`)
   try {
     const existing = await lstat(target)
     if (!safeLeaf(existing)) throw new Error('refuse unsafe existing index leaf')
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
-  const temporary = at(directory, `.tmp-${process.pid}-${randomBytes(12).toString('hex')}`)
+  const temporary = at(directory, `.tmp-${process.pid}-${temporaryId ?? randomBytes(12).toString('hex')}`)
   let file: FileHandle | undefined
+  let created = false
   try {
     file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+    created = true
     await file.writeFile(bytes)
     await file.sync()
     await file.close()
@@ -100,8 +103,10 @@ async function replaceRecord(directory: FileHandle, blob: BlobId, bytes: Uint8Ar
     await directory.sync()
   } finally {
     if (file !== undefined) await file.close()
-    try { await unlink(temporary) }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+    if (created) {
+      try { await unlink(temporary) }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+    }
   }
 }
 
@@ -114,15 +119,28 @@ export function createBlobIndexStore(root: string): BlobIndexStore {
       try { return await withShard(selectedRoot, blob, false, (directory) => readRecord(directory, blob)) }
       catch { return null }
     },
-    async rebuild(blob, bytes) {
+    async rebuild(blob, bytes, temporaryId) {
       let index: BlobIndex
       try { index = buildBlobIndex(blob, bytes) }
       catch { return { index: null, stored: false } }
       try {
         const encoded = encodeBlobIndex(index)
-        await withShard(selectedRoot, blob, true, (directory) => replaceRecord(directory, blob, encoded))
+        await withShard(selectedRoot, blob, true, (directory) => replaceRecord(directory, blob, encoded, temporaryId))
         return { index, stored: true }
       } catch { return { index, stored: false } }
     },
   }
+}
+
+
+/** 只清本进程为已知后台任务保留的临时叶；特殊/共享叶不碰。 */
+export async function cleanupIndexTemporary(root: string, blob: BlobId, temporaryId: string): Promise<void> {
+  if (!validId(blob) || !/^[0-9a-f]{24}$/.test(temporaryId)) return
+  try {
+    await withShard(resolve(root), blob, false, async (directory) => {
+      const path = at(directory, `.tmp-${process.pid}-${temporaryId}`)
+      const meta = await lstat(path)
+      if (safeFile(meta)) await unlink(path)
+    })
+  } catch { /* 不存在/权限故障也是安全退档，不清其它文件。 */ }
 }

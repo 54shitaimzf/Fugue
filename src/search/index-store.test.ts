@@ -164,3 +164,16 @@ test('idx, version and shard directories reject aliases to valid outside records
     assert.deepEqual(readFileSync(leaf), Buffer.from(encoded))
   }
 })
+
+
+test('exclusive temporary collision never deletes another operation file', async () => {
+  const root = tmpDir('fugue-index-temp-collision-'), bytes = Buffer.from('abc'), id = idOf(bytes)
+  const directory = join(root, '.fugue/idx/v1', id.slice(0, 2))
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
+  const nonce = 'a'.repeat(24), temporary = join(directory, `.tmp-${process.pid}-${nonce}`)
+  writeFileSync(temporary, 'another operation', { mode: 0o600 })
+  const result = await createBlobIndexStore(root).rebuild(id, bytes, nonce)
+  assert.equal(result.stored, false)
+  assert.equal(readFileSync(temporary, 'utf8'), 'another operation')
+  assert.ok(!existsSync(pathOf(root, id)))
+})
