@@ -6,11 +6,24 @@
 ## 用法和边界
 
 - 不给 `offset` / `limit`：原来的整文件回执逐字节不变，包括原始换行与字节/行数/模式头。
+  **这一档不带行号**——正文就是文件的字节，`edit` 的 `old_string` 可以直接从这里取。
 - 给其中任意一项：只显示选中的行，行号仍是原文件行号（`N\t正文`）。`offset` 缺省 1，`limit` 缺省读到末尾。
+  这一档的正文带 `N\t` 前缀，拿去做 `old_string` 之前要先去掉它。
+- **目录里那句描述说的就是上面这两句**：原先写的是 `return its text with line numbers`——无条件
+  承诺行号，而整文件那一档从来没有行号（架构 § 8.10「只公布能兑现的选项」管的正是这件事）。
+  现在它把行号挂在切片那半句上，整文件那一档写明「原样」。
+- **窗口档的头里点出这一份正文是哪几行**（`· lines 100–599 shown` / `· line 4 shown` /
+  `· no lines shown`）。不点明的话一条回执里会出现两套互不相干的数：头里的「N 字节 · L 行」算的是
+  整个文件，而 `capReceipt` 的截断标记里 `N bytes and L lines in all` 算的是这一条回执——施工当场
+  读到过 `31000 bytes · 1000 lines` 的头配 `17544 bytes and 501 lines in all` 的标记。
 - `offset` 必须是正的安全整数，`limit` 必须是非负安全整数；`limit: 0`、越过文件末尾和空文件都给空正文。坏参数在读文件前拒绝。
 - 头里的字节/行数仍统计完整原文件。末尾 LF 不额外算一行，CRLF 的 CR 原样保留；非法 UTF-8 与原实现一样用替代字符表示。
 - 目录、软链和缺失路径仍共用宿主的文件检查；`read_image` 不经过文本窗口。
-- 工具目录的描述/schema 字节没有改。窗口修复兑现架构 § 8.10「只公布能兑现的选项」；回执仍从原来的统一出口经过 `capReceipt`。
+- schema 的字节没有改，`read` 的**描述**改了一句（见上）。描述属于前缀字节，所以
+  `src/model/fixtures/*.json`（`node tools/make-fixtures.ts`）与回放夹具里那份录制请求
+  （`node tools/adapt-wire-in.ts`，来历见 `src/cli/__fixture__/wire-in/PROVENANCE.md`）一并改齐；
+  响应、usage、timings 一个字节都没动。窗口修复兑现架构 § 8.10「只公布能兑现的选项」；回执仍从
+  原来的统一出口经过 `capReceipt`。
 
 ## 实现接缝
 

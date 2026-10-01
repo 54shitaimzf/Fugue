@@ -5,6 +5,7 @@ import { faceOf } from './execute.ts'
 import type { ToolHost, ToolContext } from './execute.ts'
 import { textWindowOf, numberedWindowOf } from './read-window.ts'
 import { lineCount, capReceipt } from './receipt.ts'
+import { CATALOG_STATES, catalog } from './catalog.ts'
 import { createToolHost } from './host.ts'
 import type { View } from '../view/contract.ts'
 import type { Roots } from '../roots/contract.ts'
@@ -18,14 +19,30 @@ function hostFor(text: string): ToolHost {
 
 test('read offset/limit select and number only the requested original lines', async () => {
   const body = 'first\r\n第二\n\nlast\n'
-  const head = `note (${Buffer.byteLength(body)} bytes · 4 lines · mode 100755)\n`
+  // 头里**先是整文件那两个数，再是这一份回执的窗口**；整文件那一档没有窗口可说。
+  const head = (window: string) => `note (${Buffer.byteLength(body)} bytes · 4 lines · mode 100755${window})\n`
   assert.deepEqual(await read({ path: 'note', offset: 2, limit: 2 }, hostFor(body), ctx),
-    { ok: true, output: head + '2\t第二\n3\t' })
-  assert.equal((await read({ path: 'note', limit: 1 }, hostFor(body), ctx)).output, head + '1\tfirst\r')
-  assert.equal((await read({ path: 'note', offset: 4 }, hostFor(body), ctx)).output, head + '4\tlast')
-  assert.equal((await read({ path: 'note', limit: 0 }, hostFor(body), ctx)).output, head)
-  assert.equal((await read({ path: 'note', offset: 20 }, hostFor(body), ctx)).output, head)
-  assert.equal((await read({ path: 'note' }, hostFor(body), ctx)).output, head + body)
+    { ok: true, output: head(' · lines 2–3 shown') + '2\t第二\n3\t' })
+  assert.equal((await read({ path: 'note', limit: 1 }, hostFor(body), ctx)).output, head(' · line 1 shown') + '1\tfirst\r')
+  assert.equal((await read({ path: 'note', offset: 4 }, hostFor(body), ctx)).output, head(' · line 4 shown') + '4\tlast')
+  assert.equal((await read({ path: 'note', limit: 0 }, hostFor(body), ctx)).output, head(' · no lines shown'))
+  assert.equal((await read({ path: 'note', offset: 20 }, hostFor(body), ctx)).output, head(' · no lines shown'))
+  assert.equal((await read({ path: 'note' }, hostFor(body), ctx)).output, head('') + body)
+})
+
+test('only the sliced read carries line numbers, and the catalog says so instead of promising them outright', async () => {
+  const body = 'first\nsecond\n'
+  const whole = (await read({ path: 'note' }, hostFor(body), ctx)).output
+  const sliced = (await read({ path: 'note', offset: 1 }, hostFor(body), ctx)).output
+  assert.ok(whole.endsWith('\nfirst\nsecond\n'), `整文件那一档是原样字节，不带行号：${whole}`)
+  assert.ok(sliced.endsWith('\n1\tfirst\n2\tsecond'), `切片那一档带原文件行号：${sliced}`)
+  // **公布面 == 兑现面**（架构 § 8.10）：开头那句说的是「不给窗口时拿到什么」，而那一档不带
+  // 行号——行号这件事只许挂在括号里那半句（切片）上，不许是无条件的承诺。
+  const entry = catalog(CATALOG_STATES[0]!).find((t) => t.name === 'read')
+  assert.ok(entry !== undefined)
+  const opening = entry.description.slice(0, entry.description.indexOf('.') + 1)
+  assert.doesNotMatch(opening, /line numbers/, `整文件读不带行号，开头那句不能无条件承诺行号：${opening}`)
+  assert.match(entry.description, /a slice comes back with the original line numbers/, '切片带行号这件事仍要公布')
 })
 
 test('read rejects malformed windows before asking the host for content', async () => {
@@ -105,21 +122,29 @@ test('product host shares file checks and current view content with the raw byte
   } as unknown as View
   const host = createToolHost(view,{} as Roots)
   assert.ok(host.readTextWindow)
-  assert.equal((await read({ path:'note',offset:2,limit:1 },host,ctx)).output,'note (9 bytes · 2 lines · mode 100755)\n2\tline')
+  assert.equal((await read({ path:'note',offset:2,limit:1 },host,ctx)).output,'note (9 bytes · 2 lines · mode 100755 · line 2 shown)\n2\tline')
   body = Buffer.from('changed\nnow\n')
-  assert.equal((await read({ path:'note',offset:2,limit:1 },host,ctx)).output,'note (12 bytes · 2 lines · mode 100755)\n2\tnow')
+  assert.equal((await read({ path:'note',offset:2,limit:1 },host,ctx)).output,'note (12 bytes · 2 lines · mode 100755 · line 2 shown)\n2\tnow')
   for (kind of ['dir','symlink','absent']) {
     assert.equal((await read({ path:'note',limit:1 },host,ctx)).ok,false)
     assert.equal(await host.readBytes('note'),null)
   }
 })
 
-test('receipt cap still applies to large selected windows with original line numbers', async () => {
+test('a large window names its own range, and the cap mark counts the receipt rather than the file', async () => {
   const body = '中😀 long content\n'.repeat(1000)
   const out = await read({ path:'note',offset:100,limit:500 },hostFor(body),ctx)
   const selected = reference(Buffer.from(body),100,500)
-  const expected = `note (${Buffer.byteLength(body)} bytes · 1000 lines · mode 100755)\n${numberedWindowOf(selected,100)}`
+  const expected = `note (${Buffer.byteLength(body)} bytes · 1000 lines · mode 100755 · lines 100–599 shown)\n${numberedWindowOf(selected,100)}`
   assert.equal(out.output,expected)
-  assert.equal(capReceipt(out.output),capReceipt(expected))
-  assert.match(capReceipt(out.output),/bytes omitted/)
+  const capped = capReceipt(out.output)
+  assert.match(capped,/bytes omitted/)
+  // **两套数各有所指**：头里的 31000/1000 是文件，标记里的那两个是这一条回执。原先这一格写的是
+  // `capReceipt(out.output) === capReceipt(expected)`——那在上一句成立之后是恒等式，一个字都守不住。
+  const mark = /…\((\d+) bytes omitted · (\d+) bytes and (\d+) lines in all\)…/.exec(capped)
+  assert.ok(mark !== null,`截断标记没出现：${capped.slice(0,160)}`)
+  assert.equal(Number(mark[2]),Buffer.byteLength(out.output),'标记里的字节数是这一条回执的')
+  assert.equal(Number(mark[3]),lineCount(out.output),'标记里的行数是这一条回执的')
+  assert.notEqual(Number(mark[2]),Buffer.byteLength(body),'回执字节与文件字节本来就不是一个数')
+  assert.match(capped,/lines 100–599 shown/,'截断之后头里那句窗口仍在（头留在前 4 KiB 里）')
 })

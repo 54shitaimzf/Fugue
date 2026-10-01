@@ -58,3 +58,35 @@ test('a sparse-to-dense transition overfetches at most the current large batch a
   assert.equal(b.reads(), 33)
   assert.ok(Buffer.byteLength(out.output) <= MAX_RECEIPT_BYTES)
 })
+
+test('a byte-capped prefetch covers only a prefix: grep reads that prefix and re-batches from the first uncovered path', async () => {
+  const paths = Array.from({ length: 100 }, (_, index) => `file-${index}`)
+  const asked: string[][] = []
+  const read: string[] = []
+  const host = {
+    walk: async () => paths,
+    walkDetailed: async () => ({ paths, truncated: false, limits: [] }),
+    prefetch: async (batch: readonly string[]) => { asked.push([...batch]); return 10 },
+    readBytes: async (path: string) => { read.push(path); return { bytes: Buffer.from('none'), mode: 0o100644 } },
+  } as ToolHost
+  assert.equal((await grep({ pattern: 'hit' }, host, ctx)).output, 'no line matches hit.')
+  assert.deepEqual(read, paths, '每个文件仍然恰好读一次，顺序不变')
+  assert.deepEqual(asked.map(batch => batch[0]), paths.filter((_, index) => index % 10 === 0), '下一轮从没覆盖的第一条起')
+})
+
+test('a prefetch that covers nothing still advances by one path', async () => {
+  const paths = ['a', 'b', 'c']
+  const host = {
+    walk: async () => paths,
+    walkDetailed: async () => ({ paths, truncated: false, limits: [] }),
+    prefetch: async () => 0,
+    readBytes: async () => ({ bytes: Buffer.from('none'), mode: 0o100644 }),
+  } as ToolHost
+  assert.equal((await grep({ pattern: 'hit' }, host, ctx)).output, 'no line matches hit.')
+})
+
+test('the per-batch prefetch byte budget leaves room in the default blob cache for the previous batch', async () => {
+  const { PREFETCH_BYTE_BUDGET } = await import('./host.ts')
+  const { DEFAULT_BLOB_CACHE_BYTES } = await import('../truth/truth.ts')
+  assert.ok(PREFETCH_BYTE_BUDGET * 2 <= DEFAULT_BLOB_CACHE_BYTES)
+})
