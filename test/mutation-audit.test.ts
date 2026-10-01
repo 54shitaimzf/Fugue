@@ -1,5 +1,7 @@
 // 变异审计自己的判据（0.2.2 的审档）。它自己在审档里跑，所以这里断的是**它判得准不准**：
 // 被杀的那一处必须报 killed · 存活的那一处必须报 survived · 跑完原字节要还原 · 树脏了要拒。
+// 两段式判决（预筛 → 升格）也要两方向各一条：预筛红的那处**不许**再跑整档 · 预筛绿的**必须**
+// 升格整档定终身——少一个方向，"预筛"就可能变成第二套判据。
 //
 // 夹具是一个真 git 仓（拷贝一份验收入口进去）：真改文件 · 真跑那一档 · 真还原。夹具里两个候选
 // 是故意摆的——`unused()` 里的 `===` 没人测（该报 survived），`pick()` 里的 `>=` 有人测（该报
@@ -9,7 +11,7 @@ import { spawnSync } from 'node:child_process'
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { audit, daySeed, plan, resolveSource, resolveSpecifier, specifiers } from '../tools/mutation-audit.js'
+import { audit, changedSinceLastTag, daySeed, plan, resolveSource, resolveSpecifier, specifiers } from '../tools/mutation-audit.js'
 import { tmpDir } from './helpers/tmp.ts'
 
 const REPO = join(import.meta.dirname, '..')
@@ -56,6 +58,13 @@ function fixture(): string {
   return dir
 }
 
+/** 往夹具里再摆一层（提交进 git，保持树干净）。 */
+function add(dir: string, rel: string, body: string): void {
+  writeFileSync(join(dir, rel), body)
+  git(dir, ['add', '-A'])
+  git(dir, ['-c', 'user.name=fugue-test', '-c', 'user.email=test@localhost', 'commit', '-qm', '加 ' + rel])
+}
+
 function tool(args: string[]): { status: number | null; stdout: string; stderr: string } {
   const r = spawnSync(process.execPath, [TOOL, ...args], { encoding: 'utf8' })
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
@@ -83,13 +92,97 @@ test('轮转起点：seed 对候选数取模（负 seed 也不越界）', () => 
   assert.deepEqual(plan({ root: dir, seed: 0, perFile: 2 }).scope.startAt, 0)
 })
 
+test('覆盖按 import 链算：经别的源文件转手的测试也算覆盖（预筛名单不断链）', () => {
+  const dir = fixture()
+  add(
+    dir,
+    'src/mid.ts',
+    'import { pick } from "./foo.ts"\n' +
+      'export function mid(n: number): string {\n' +
+      '  return pick(n + 1)\n' +
+      '}\n',
+  )
+  add(
+    dir,
+    'src/mid.test.ts',
+    'import { test } from "node:test"\n' +
+      'import assert from "node:assert/strict"\n' +
+      'import { mid } from "./mid.ts"\n' +
+      '\n' +
+      'test("mid", () => {\n' +
+      '  assert.equal(mid(9), "big")\n' +
+      '  assert.equal(mid(8), "small")\n' +
+      '})\n',
+  )
+  const { scope } = plan({ root: dir, seed: 0 })
+  const coverFoo = scope.covering['src/foo.ts'] ?? []
+  assert.ok(coverFoo.includes('src/foo.test.ts'), '直接 import 的测试在名单里')
+  assert.ok(
+    coverFoo.includes('src/mid.test.ts'),
+    '经 mid 转手的测试也该在——只算直接 import 的话，深处模块的变异全得升格跑整档',
+  )
+})
+
+test('排队：发版以来动过的源文件排头，其余照常按 seed 轮转（无 tag 就纯轮转）', () => {
+  const dir = fixture()
+  assert.deepEqual(changedSinceLastTag(dir), { tag: null, files: [] }, '夹具没有 tag：拿不到就退回纯轮转')
+  const a = plan({ root: dir, seed: 1 })
+  assert.equal(a.scope.priority, 0)
+  assert.equal(a.scope.startAt, 1)
+  assert.equal(a.queue[0].operator, '>=', 'seed 1 · 起点 1：先跑的是列表里第二处（pick 的 >=）')
+  const b = plan({ root: dir, seed: 1, changed: ['src/foo.ts'] })
+  assert.equal(b.scope.priority, 2, 'foo.ts 的两处候选都排头')
+  assert.equal(b.queue[0].file, 'src/foo.ts', '动过的文件排头')
+  assert.equal(b.scope.startAt, 0, '其余候选为空，起点无关紧要')
+})
+
+test('两段式：预筛红的那处就地判被杀不跑整档 · 预筛绿的升格整档定终身', () => {
+  const dir = fixture()
+  add(
+    dir,
+    'src/bar.ts',
+    'export function both(a: boolean, b: boolean): boolean {\n' + '  return a && b\n' + '}\n',
+  )
+  add(
+    dir,
+    'src/bar.test.ts',
+    'import { test } from "node:test"\n' +
+      'import assert from "node:assert/strict"\n' +
+      'import { both } from "./bar.ts"\n' +
+      '\n' +
+      'test("both", () => {\n' +
+      '  assert.equal(both(true, true), true)\n' +
+      '  assert.equal(both(true, false), false)\n' +
+      '})\n',
+  )
+  // 假跑器按「点没点名 · 名单里有没有 bar」给红绿：bar 的预筛红（该就地判被杀）· foo 的预筛绿
+  // （该升格整档，整档也绿）。整档（不点名那一趟）只允许出现一次。
+  const calls: { files?: string[] }[] = []
+  const run = (_root: string, _lane: string, _timeoutMs: number, files?: string[]) => {
+    calls.push({ files })
+    if (files === undefined) return { status: 0 }
+    return { status: files.some((f) => f.endsWith('bar.test.ts')) ? 1 : 0 }
+  }
+  const { report } = audit({ root: dir, seed: 0, maxMutants: 2, run, check: () => true, say: () => {} })
+  const bar = report.results.find((r) => r.file === 'src/bar.ts')
+  const foo = report.results.find((r) => r.file === 'src/foo.ts')
+  assert.equal(bar.verdict, 'killed')
+  assert.equal(bar.killedBy, 'prefilter', '有人测的那处该在预筛就被杀')
+  assert.equal(foo.verdict, 'survived')
+  assert.equal(foo.killedBy, null, '预筛绿的由整档定终身')
+  assert.equal(report.counts.laneRuns, 1, '整档只许给预筛绿的那一处跑')
+  assert.equal(report.counts.prefilterKilled, 1)
+  assert.equal(calls.filter((c) => c.files === undefined).length, 1)
+  assert.ok(calls.some((c) => (c.files ?? []).some((f) => f.endsWith('bar.test.ts'))), 'bar 的预筛要点名它的测试')
+})
+
 test('真跑一趟（夹具仓）：被杀的一处报 killed · 存活的一处报 survived · 原字节还原 · 退出码 0', () => {
   const dir = fixture()
   const out = join(dir, 'mutation-audit.json')
   const r = tool(['--root', dir, '--out', out, '--seed', '0', '--max-mutants', '2'])
   assert.equal(r.status, 0, `审计自己不该红（survivor 是发现不是失败）：${r.stderr}`)
   const rec = JSON.parse(readFileSync(out, 'utf8'))
-  assert.equal(rec.schema, 1)
+  assert.equal(rec.schema, 2)
   assert.equal(rec.lane, 'fast')
   assert.equal(rec.clean, true, '跑完 src/ 不该有残留')
   assert.equal(rec.syntaxFilter, true, '夹具里有 package.json，语法过滤器该是可用的')
@@ -97,16 +190,19 @@ test('真跑一趟（夹具仓）：被杀的一处报 killed · 存活的一处
   assert.equal(rec.counts.ran, 2)
   assert.equal(rec.counts.killed, 1, `应当恰好一处被杀：${JSON.stringify(rec.results)}`)
   assert.equal(rec.counts.survived, 1, `应当恰好一处存活：${JSON.stringify(rec.results)}`)
+  assert.equal(rec.counts.prefilterKilled, 1, '有人测的那处该在预筛就被杀（子集红 ⇒ 整档红）')
+  assert.equal(rec.counts.laneRuns, 1, '整档只许给预筛绿的那一处跑')
   const survived = rec.results.find((x) => x.verdict === 'survived')
   assert.equal(survived.operator, '===', '存活的那一处该是没人测的那个 ===')
   const killed = rec.results.find((x) => x.verdict === 'killed')
   assert.equal(killed.operator, '>=')
+  assert.equal(killed.killedBy, 'prefilter')
   assert.notEqual(killed.exitCode, 0, 'killed 的退出码应当是红的')
   assert.ok(killed.outputTail.length > 0, 'killed 要留下输出尾巴（红了才判得动）')
   assert.equal(readFileSync(join(dir, 'src', 'foo.ts'), 'utf8'), FOO, '原字节必须还原')
   assert.equal(git(dir, ['status', '--porcelain', '--', 'src']).trim(), '')
   console.log(
-    `变异审计读数（夹具）：候选 ${rec.counts.candidates} · 跑了 ${rec.counts.ran} = 被杀 ${rec.counts.killed} + 存活 ${rec.counts.survived} · 用时 ${rec.usedMs}ms`,
+    `变异审计读数（夹具）：候选 ${rec.counts.candidates} · 跑了 ${rec.counts.ran} = 被杀 ${rec.counts.killed}（预筛 ${rec.counts.prefilterKilled}）+ 存活 ${rec.counts.survived} · 整档 ${rec.counts.laneRuns} 趟 · 用时 ${rec.usedMs}ms`,
   )
 })
 
@@ -178,10 +274,10 @@ test('负对照：参数不认识 / 档名拼错 → 退 2（不猜缺省）', (
   assert.equal(tool(['--budget-ms']).status, 2)
 })
 
-test('真仓读数：靶子与候选（只有有快档覆盖的源文件进候选）', () => {
+test('真仓读数：靶子与候选（import 链可达的才算覆盖）', () => {
   const { scope, queue } = plan({ root: REPO, lane: 'fast', seed: daySeed(), perFile: 2 })
   console.log(
-    `变异审计靶子读数（真仓）：源文件 ${scope.sourceFiles} · 有快档覆盖 ${scope.covered} · 没覆盖 ${scope.uncovered} · 候选 ${scope.candidates} 处（每文件至多 2）· 起点 ${scope.startAt}`,
+    `变异审计靶子读数（真仓）：源文件 ${scope.sourceFiles} · 有快档覆盖 ${scope.covered} · 没覆盖 ${scope.uncovered} · 候选 ${scope.candidates} 处（每文件至多 2）· 优先 ${scope.priority} · 起点 ${scope.startAt}`,
   )
   assert.equal(scope.uncovered, scope.sourceFiles - scope.covered)
   assert.equal(queue.length, scope.candidates)
