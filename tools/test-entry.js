@@ -8,6 +8,10 @@
 // **分档（0.2.1）**：`node tools/test-entry.js [all|fast|real]`，缺省 all（与分档之前同行为）。
 // 真档文件在首行声明 `// tier: real —— …`（点出依赖种类），没声明的都是快档；判据是
 // **依赖性质**（真进程 bwrap·cc · 真端口 · 真挂载），不是文件位置——声明随文件走，没有中央清单。
+//
+// **点名子集**：档名后面还可以跟文件名（`node tools/test-entry.js fast src/a.test.ts …`），
+// 只跑点名的那些——变异审计两段式判决的预筛那一趟走的就是它。点名的文件必须落在所选档里，
+// 点错当场红：与分档同一句"不许静默丢"（W8）。不点名 = 跑整档，与从前一个字节不差。
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -109,13 +113,26 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.error('快档不碰真依赖（bwrap · cc · 真端口 · 真挂载）——该文件要么改断言，要么首行声明 // tier: real')
     process.exit(1)
   }
-  const chosen = lane === 'fast' ? fast : lane === 'real' ? real : files
+  const whole = lane === 'fast' ? fast : lane === 'real' ? real : files
+  // 点名子集：只跑点名的那些（仍走同一个入口、同一套发现与判据）。点名必须落在所选档里。
+  const named = process.argv.slice(3)
+  let chosen = whole
+  if (named.length > 0) {
+    const pool = new Set(whole.map((p) => resolve(p)))
+    const unknown = named.filter((p) => !pool.has(resolve(p)))
+    if (unknown.length > 0) {
+      console.error('点名的文件不在「' + lane + '」档里：' + unknown.join(' · '))
+      console.error('要么路径写错，要么它是另一档的文件——点错了不静默跳过')
+      process.exit(2)
+    }
+    chosen = named
+  }
   if (chosen.length === 0) {
     console.error('「' + lane + '」档 0 个文件——拒绝以"通过"结束')
     process.exit(1)
   }
   console.error(
-    '档 ' + lane + '：' + chosen.length + ' 个文件（快 ' + fast.length + ' · 真 ' + real.length + ' · 全量 ' + files.length + '）'
+    '档 ' + lane + '：' + chosen.length + ' 个文件（快 ' + fast.length + ' · 真 ' + real.length + ' · 全量 ' + files.length + '）',
   )
   // **一次仍只跑一批**：W8 那次两批丢测试（实测 `tests 325` 而非 `332`、退出码 0）的病根不在
   // "名单分两份"，在**静默丢**——名单现在分快/真两份，但并集==发现集是硬断言（上面那行），

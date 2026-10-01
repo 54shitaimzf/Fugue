@@ -105,6 +105,10 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+        # 深历史：排队的「发版以来动过哪些源文件」要 git describe + diff，浅克隆拿不到——
+        # 拿不到就退回纯轮转（不红）；这一步只是让夜审第一趟真能盯上新代码。
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'

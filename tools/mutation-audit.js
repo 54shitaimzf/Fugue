@@ -14,22 +14,27 @@
 //                                [--per-file N] [--target <路径>]…
 //
 // 口径（写死在这里，也写进报告）：
-//   · **靶子**＝`src/**/*.ts`（不含 `*.test.ts`）里**有快档测试覆盖**的那些；覆盖＝快档测试
-//     文件里有一句 import 指到它（按说明符解析，不是文本包含）。没有快档覆盖的源文件不进候选
-//     ——真档一趟一分钟，"时限内跑多少算多少"这句话就没了；报告里如实给"没覆盖"的个数。
+//   · **靶子**＝`src/**/*.ts`（不含 `*.test.ts`）里**有快档测试覆盖**的那些；覆盖＝快档测试文件
+//     经 **import 链**够得到它（直接 import · 经帮手文件转手 · 经别的源文件转手都算）。按链算
+//     不只是多几处靶子——**两段式判决**的预筛那一趟跑的就是"够得到它的测试"，链断一节预筛就瞎。
+//     没有覆盖的源文件不进候选——报告里如实给"没覆盖"的个数。
+//   · **判决分两段**：第一段只跑覆盖到靶子的那几个测试文件（同一个入口的点名子集那一趟），
+//     **红了就地判被杀**——覆盖集是整档的子集，子集红整档必红，判决与跑整档一字不差；
+//     **绿了（或挂住）才升格跑整档**，存活 · 被杀 · 挂住由整档定。绝大多数变异第一段几秒出
+//     结果，整档那一趟只留给预筛说不准的那部分——同一条预算里跑得完的变异多出几倍。
 //   · **算子**＝带空格的算子字面替换（` === ` → ` !== ` · ` >= ` → ` > ` · ` && ` → ` || ` ·
 //     整词的 `true` → `false` 那一类）。要求两边有空白是为了**不制造语法错**：要问的是"断言
 //     抓不抓得住"，不是"编译器过不过"。抓字面、零仪式；抓不到的形状（经变量的间接调用那一类）
 //     记口径，不打补丁。每一处仍过一遍 `node --check`，语法先不过的另记一档（`skippedSyntax`）
 //     ——但这条过滤器**每次先在没改过的靶子上校准**：`node --check` 认不认 TS 看它附近的
 //     package.json（实测），判不了就如实记进报告并干脆不用它，而不是交一份"跑了 0 处"的报告。
-//   · **判决**＝在**干净树**上改一处 → 跑整档（缺省快档，`node tools/test-entry.js fast`，
-//     与 CI 同一条路，不另立第二条测试路）→ 红＝被杀（killed）· 绿＝存活（survived）·
-//     挂住＝另记（timeout，不当作被杀）。跑完**恢复原字节**，收尾再核一遍 `src/` 在 git 里
-//     一条没变。
+//   · **终判的路**＝`node tools/test-entry.js <档>`（缺省快档），与 CI 同一条，不另立第二条
+//     测试路；预筛走的是**同一个入口**的点名子集。跑完**恢复原字节**，收尾再核一遍 `src/` 在
+//     git 里一条没变。
 //   · **时限**＝`--budget-ms`（缺省 15 分钟）：到点就停，报告里如实写"跑了几个 · 还剩几个没跑"。
-//   · **轮转**＝候选按路径排序，起点 = `--seed`（缺省当天日期）对候选数取模——一夜跑不完的部分
-//     下一夜从别处开始，长期把整条清单盖完。
+//   · **排队**＝上次发版（最近的 tag）以来动过的源文件**排头**——夜审第一趟先盯新代码；其余
+//     候选按路径排序，起点 = `--seed`（缺省当天日期）对余下候选数取模轮转——一夜跑不完的部分
+//     下一夜从别处开始，长期把整条清单盖完。没有 tag（浅克隆 · 初仓）就纯轮转，不红。
 import { spawnSync } from 'node:child_process'
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, posix, relative, resolve } from 'node:path'
@@ -39,7 +44,7 @@ import { discover, splitLanes } from './test-entry.js'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 /** 报告的形状版本（没进冻结面，但它自己带号：形状变了读报告的人看得出来）。 */
-export const SCHEMA = 1
+export const SCHEMA = 2
 
 export const LANES = ['fast', 'real', 'all']
 
@@ -61,12 +66,26 @@ export function daySeed(d = new Date()) {
 }
 
 function walkRel(abs, out = []) {
-  for (const e of readdirSync(abs, { withFileTypes: true })) {
+  // 目录不在（比如没有 test/ 的仓）就当它空——与入口 discover 同一种容忍。
+  let entries
+  try {
+    entries = readdirSync(abs, { withFileTypes: true })
+  } catch {
+    return out
+  }
+  for (const e of entries) {
     const p = join(abs, e.name)
     if (e.isDirectory()) walkRel(p, out)
     else if (e.name.endsWith('.ts')) out.push(p)
   }
   return out
+}
+
+/** 一棵目录下的全部 `.ts`，仓库相对的 posix 路径。 */
+function relTs(root, dir) {
+  return walkRel(join(root, dir))
+    .map((p) => relative(root, p).split('\\').join('/'))
+    .sort()
 }
 
 function occurrences(text, from, word) {
@@ -101,7 +120,8 @@ export function resolveSpecifier(testRel, spec) {
   return posix.normalize(posix.join(posix.dirname(testRel), spec))
 }
 
-/** 说明符指向的**仓内源文件**：仓里的源码是 `.ts`，所以 `.js` 后缀也试一次同名 `.ts`。 */
+/** 说明符指向的**仓内文件**：仓里的源码是 `.ts`，所以 `.js` 后缀也试一次同名 `.ts`。
+ *  名单给什么范围就解析到什么范围（候选只给 `src/` 的源文件，import 图给全部仓内 `.ts`）。 */
 export function resolveSource(testRel, spec, sources) {
   const p = resolveSpecifier(testRel, spec)
   if (p === null) return null
@@ -110,34 +130,85 @@ export function resolveSource(testRel, spec, sources) {
   return null
 }
 
-/** 候选清单：谁有覆盖 · 每一处算子在哪一行。轮转起点由 seed 定。 */
-export function plan({ root = ROOT, lane = 'fast', seed = daySeed(), perFile = 2, targets = null } = {}) {
-  const sources = walkRel(join(root, 'src'))
-    .map((p) => relative(root, p).split('\\').join('/'))
-    .filter((p) => !p.endsWith('.test.ts'))
-    .sort()
+/** `src/` 与 `test/` 下每个 `.ts` 各自 import 了哪些**源文件**（候选范围里的）。帮手文件与
+ *  测试文件都在图上：链 `测试 → 帮手 → 源` 与 `测试 → 源 → 源` 都要走得通。 */
+function importGraph(root, sources) {
+  const files = [...new Set([...relTs(root, 'src'), ...relTs(root, 'test')])]
+  const deps = new Map()
+  for (const f of files) {
+    let text
+    try {
+      text = readFileSync(join(root, f), 'utf8')
+    } catch {
+      continue
+    }
+    const out = []
+    for (const spec of specifiers(text)) {
+      const t = resolveSource(f, spec, sources)
+      if (t !== null) out.push(t)
+    }
+    deps.set(f, out)
+  }
+  return deps
+}
+
+/** import 链可达的覆盖：从源文件沿"谁 import 我"往回走，走到的是**所选档的测试**就收。
+ *  间接够得到也算——预筛那一趟要跑的正是这份名单（少了它，深处模块的变异全得升格跑整档）。 */
+function coveringOf(source, deps, testSet) {
+  const importers = new Map()
+  for (const [f, ds] of deps) {
+    for (const d of ds) {
+      if (!importers.has(d)) importers.set(d, [])
+      importers.get(d).push(f)
+    }
+  }
+  const seen = new Set([source])
+  const found = new Set()
+  const stack = [source]
+  while (stack.length > 0) {
+    const cur = stack.pop()
+    for (const imp of importers.get(cur) ?? []) {
+      if (seen.has(imp)) continue
+      seen.add(imp)
+      if (testSet.has(imp)) found.add(imp)
+      stack.push(imp)
+    }
+  }
+  return [...found].sort()
+}
+
+/** 上次发版（最近的 tag）以来 `src/` 下动过的源文件（不含测试）。没有 tag（浅克隆 · 初仓）
+ *  或 git 读不动就给空——排队退回纯轮转，不红。 */
+export function changedSinceLastTag(root) {
+  const t = spawnSync('git', ['describe', '--tags', '--abbrev=0'], { cwd: root, encoding: 'utf8' })
+  if (t.status !== 0 || (t.stdout ?? '').trim() === '') return { tag: null, files: [] }
+  const tag = t.stdout.trim()
+  const d = spawnSync('git', ['diff', '--name-only', tag, 'HEAD', '--', 'src'], { cwd: root, encoding: 'utf8' })
+  if (d.status !== 0) return { tag: null, files: [] }
+  const files = (d.stdout ?? '')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => s !== '' && s.endsWith('.ts') && !s.endsWith('.test.ts'))
+    .map((s) => s.split('\\').join('/'))
+  return { tag, files }
+}
+
+/** 候选清单：谁有覆盖 · 每一处算子在哪一行 · 先跑谁。轮转起点由 seed 定，发版以来动过的排头。 */
+export function plan({ root = ROOT, lane = 'fast', seed = daySeed(), perFile = 2, targets = null, changed = undefined } = {}) {
+  const sources = relTs(root, 'src').filter((p) => !p.endsWith('.test.ts'))
   // 分档用入口自己那套判据（`splitLanes`），不在审计里另立一份。
   const { fast, real } = splitLanes(discover(root))
   const laneFiles = lane === 'fast' ? fast : lane === 'real' ? real : [...fast, ...real]
   const tests = laneFiles.map((p) => relative(root, p).split('\\').join('/')).sort()
-  const covered = new Map()
-  for (const t of tests) {
-    let text
-    try {
-      text = readFileSync(join(root, t), 'utf8')
-    } catch {
-      continue
-    }
-    for (const spec of specifiers(text)) {
-      const target = resolveSource(t, spec, sources)
-      if (target !== null) {
-        if (!covered.has(target)) covered.set(target, [])
-        covered.get(target).push(t)
-      }
-    }
+  const testSet = new Set(tests)
+  const deps = importGraph(root, sources)
+  const covering = new Map()
+  for (const src of sources) {
+    const ts = coveringOf(src, deps, testSet)
+    if (ts.length > 0) covering.set(src, ts)
   }
   const list = []
-  for (const src of [...covered.keys()].sort()) {
+  for (const src of [...covering.keys()].sort()) {
     if (targets !== null && !targets.some((t) => src === t || src.endsWith('/' + t) || src.endsWith(t))) continue
     const text = readFileSync(join(root, src), 'utf8')
     let n = 0
@@ -150,19 +221,26 @@ export function plan({ root = ROOT, lane = 'fast', seed = daySeed(), perFile = 2
       if (n >= perFile) break
     }
   }
-  const start = list.length === 0 ? 0 : ((seed % list.length) + list.length) % list.length
+  const picked = changed !== undefined ? changed : changedSinceLastTag(root).files
+  const changedSet = new Set(picked)
+  const priority = list.filter((m) => changedSet.has(m.file))
+  const rest = list.filter((m) => !changedSet.has(m.file))
+  const start = rest.length === 0 ? 0 : ((seed % rest.length) + rest.length) % rest.length
   return {
     scope: {
       lane,
       sourceFiles: sources.length,
-      covered: covered.size,
-      uncovered: sources.length - covered.size,
+      covered: covering.size,
+      uncovered: sources.length - covering.size,
       candidates: list.length,
+      priority: priority.length,
+      sinceTag: changed !== undefined ? null : changedSinceLastTag(root).tag,
       startAt: start,
       targets,
-      covering: Object.fromEntries([...covered.entries()].sort()),
+      covering: Object.fromEntries([...covering.entries()].sort()),
     },
-    queue: list.slice(start).concat(list.slice(0, start)),
+    covering,
+    queue: [...priority, ...rest.slice(start), ...rest.slice(0, start)],
   }
 }
 
@@ -185,13 +263,14 @@ export function syntaxOk(abs) {
   return spawnSync(process.execPath, ['--check', abs], { encoding: 'utf8' }).status === 0
 }
 
-/** 跑一整档——与 CI 同一条路（入口那一条命令），不另立第二条。 */
-export function runLane(root, lane, timeoutMs = 300000) {
+/** 跑一整档（或点名的那几个文件）——与 CI 同一条路（入口那一条命令），不另立第二条。
+ *  `files` 给了就只跑点名的那些；入口自己会核它们属于这一档。 */
+export function runLane(root, lane, timeoutMs = 300000, files = undefined) {
   const env = { ...process.env }
   // 同 `tools/ci-timing.js`：`NODE_TEST_CONTEXT` 一在场，`node --test` 会静默跳过所有文件并退 0
   // ——那会让每一个变异都"活下来"（假"存活"）。CI 上不存在这个变量，只有嵌套夹具会撞上。
   delete env.NODE_TEST_CONTEXT
-  return spawnSync(process.execPath, [join(root, 'tools', 'test-entry.js'), lane], {
+  return spawnSync(process.execPath, [join(root, 'tools', 'test-entry.js'), lane, ...(files ?? [])], {
     cwd: root,
     encoding: 'utf8',
     timeout: timeoutMs,
@@ -204,6 +283,8 @@ function tail(s, n) {
   const t = s.replace(/\s+$/, '')
   return t.length <= n ? t : '…' + t.slice(-n)
 }
+
+const timedOutRun = (r) => r.signal === 'SIGTERM' || r.error?.code === 'ETIMEDOUT'
 
 /**
  * 跑一趟审计。判据全在参数里，副作用只有"改一个文件再还原"。
@@ -233,7 +314,7 @@ export function audit(o = {}) {
     }
   }
 
-  const { scope, queue } = plan({ root, lane, seed, perFile, targets })
+  const { scope, queue, covering } = plan({ root, lane, seed, perFile, targets })
   if (queue.length === 0) {
     return { report: null, code: 1, message: '这个范围内没有靶子（没有快档覆盖的源文件，或 --target 没匹配上）' }
   }
@@ -243,6 +324,8 @@ export function audit(o = {}) {
   let ran = 0
   let skippedSyntax = 0
   let timedOut = 0
+  let laneRuns = 0
+  let prefilterKilled = 0
   // 过滤器自校准：先在**没改过**的靶子上试一次。连原样都判不过，说明这个仓里 `node --check`
   // 判不了 TS——如实记进报告，并**不用它**（判据退回那一档的红绿），而不是把每一处都记成
   // "语法先不过"然后交一份跑了 0 处的报告。
@@ -258,27 +341,51 @@ export function audit(o = {}) {
     try {
       if (syntaxFilter && !check(abs)) {
         skippedSyntax++
-        results.push({ file: m.file, line: m.line, operator: m.operator, verdict: 'skipped-syntax', wallMs: 0, exitCode: null, outputTail: '' })
+        results.push({ file: m.file, line: m.line, operator: m.operator, verdict: 'skipped-syntax', wallMs: 0, exitCode: null, outputTail: '', killedBy: null })
         continue
       }
       say('  ' + m.file + ':' + m.line + '  ' + m.from.trim() + ' → ' + m.to.trim())
       const t1 = now()
-      const r = run(root, lane, timeoutMs)
-      const wallMs = now() - t1
+      // 第一段（预筛）：只跑够得到这一处的测试。子集红 ⇒ 整档红——就地判被杀，整档不用跑；
+      // 挂住说明不了红绿，不算数。
+      const cover = covering.get(m.file) ?? []
+      let verdict = null
+      let killedBy = null
+      let exitCode = null
+      let outputTail = ''
+      if (cover.length > 0) {
+        const ra = run(root, lane, timeoutMs, cover)
+        if (!timedOutRun(ra) && (ra.status ?? 0) !== 0) {
+          verdict = 'killed'
+          killedBy = 'prefilter'
+          exitCode = ra.status ?? null
+          outputTail = tail((ra.stdout ?? '') + (ra.stderr ?? ''), 600)
+        }
+      }
+      // 第二段（升格）：整档定终身——与 CI 同一条路。
+      if (verdict === null) {
+        const rb = run(root, lane, timeoutMs)
+        laneRuns++
+        const timeout = timedOutRun(rb)
+        exitCode = rb.status ?? null
+        verdict = timeout ? 'timeout' : exitCode === 0 ? 'survived' : 'killed'
+        if (verdict === 'killed') killedBy = 'lane'
+        if (timeout) timedOut++
+        outputTail = tail((rb.stdout ?? '') + (rb.stderr ?? ''), 600)
+      }
       ran++
-      const timeout = r.signal === 'SIGTERM' || r.error?.code === 'ETIMEDOUT'
-      const exitCode = r.status ?? null
-      const verdict = timeout ? 'timeout' : exitCode === 0 ? 'survived' : 'killed'
-      if (timeout) timedOut++
+      if (killedBy === 'prefilter') prefilterKilled++
       if (verdict === 'survived') say('    存活：这一处改了，' + lane + ' 档照旧全绿')
       results.push({
         file: m.file,
         line: m.line,
         operator: m.operator,
         verdict,
-        wallMs,
+        killedBy,
+        coveringFiles: cover.length,
+        wallMs: now() - t1,
         exitCode,
-        outputTail: tail((r.stdout ?? '') + (r.stderr ?? ''), 600),
+        outputTail,
       })
     } finally {
       writeFileSync(abs, original)
@@ -307,6 +414,8 @@ export function audit(o = {}) {
       timeout: timedOut,
       skippedSyntax,
       skippedBudget: queue.length - ran - skippedSyntax,
+      prefilterKilled,
+      laneRuns,
     },
     clean,
     results,
@@ -321,12 +430,14 @@ export function reportToText(r) {
   out.push('变异审计 · 档 ' + r.lane + ' · 预算 ' + sec(r.budgetMs) + ' · 用时 ' + sec(r.usedMs) + ' · seed ' + r.seed)
   out.push(
     '靶子：有' + r.lane + '档覆盖的源文件 ' + r.scope.covered + ' / ' + r.scope.sourceFiles +
-      '（没覆盖的 ' + r.scope.uncovered + ' 不进候选）· 候选 ' + r.scope.candidates + ' 处 · 起点 ' + r.scope.startAt,
+      '（没覆盖的 ' + r.scope.uncovered + ' 不进候选）· 候选 ' + r.scope.candidates + ' 处 · 优先 ' +
+      r.scope.priority + ' 处（自 ' + (r.scope.sinceTag ?? '无 tag') + '）· 其余起点 ' + r.scope.startAt,
   )
   out.push(
-    '跑了 ' + r.counts.ran + ' 处：被杀 ' + r.counts.killed + ' · 存活 ' + r.counts.survived +
+    '跑了 ' + r.counts.ran + ' 处：被杀 ' + r.counts.killed + '（预筛 ' + r.counts.prefilterKilled +
+      '）· 存活 ' + r.counts.survived +
       ' · 挂住 ' + r.counts.timeout + ' · 语法先不过 ' + r.counts.skippedSyntax +
-      ' · 时限外没跑 ' + r.counts.skippedBudget,
+      ' · 时限外没跑 ' + r.counts.skippedBudget + ' · 整档跑了 ' + r.counts.laneRuns + ' 趟',
   )
   if (r.syntaxFilter !== true) {
     out.push('语法过滤器：这个仓里 `node --check` 判不了 `.ts`（附近没有 package.json）——没用它，判据退回那一档的红绿')

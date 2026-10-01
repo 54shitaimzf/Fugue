@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { test } from 'node:test'
 import { discover, splitLanes, auditFast } from '../tools/test-entry.js'
 
@@ -78,6 +78,22 @@ test('负对照：档名拼错非零退出（不静默当 all 跑）', () => {
   const r = spawnSync(process.execPath, [ENTRY, 'quick'], { cwd: REPO, encoding: 'utf8' })
   assert.notEqual(r.status, 0, `拼错档名应非零退出，实得 ${r.status}`)
   assert.match(r.stderr, /未知档/)
+})
+
+test('点名子集：只跑点名的那些 · 点名不在所选档里当场红', () => {
+  // 正路：点名本仓快档里的一个文件，只跑它（stderr 那行写出 1 个文件）。
+  const ok = spawnSync(process.execPath, [ENTRY, 'fast', 'test/version.test.ts'], { cwd: REPO, encoding: 'utf8' })
+  assert.equal(ok.status, 0, ok.stderr)
+  assert.match(ok.stderr, /档 fast：1 个文件/)
+  // 点名一个真档文件却选了快档 → 当场红（不静默跳过）。
+  const real = splitLanes(discover(REPO)).real[0]
+  const wrongLane = spawnSync(process.execPath, [ENTRY, 'fast', relative(REPO, real)], { cwd: REPO, encoding: 'utf8' })
+  assert.notEqual(wrongLane.status, 0, '点名另一档的文件应当红')
+  assert.match(wrongLane.stderr, /不在「fast」档里/)
+  // 点名一个不存在的路径 → 同样当场红。
+  const nope = spawnSync(process.execPath, [ENTRY, 'fast', 'src/nope.test.ts'], { cwd: REPO, encoding: 'utf8' })
+  assert.notEqual(nope.status, 0, '点名不存在的路径应当红')
+  assert.match(nope.stderr, /不在「fast」档里/)
 })
 
 test('审计的判据：快档出现真依赖调用形状即报（闭合清单 · 字面匹配）', () => {
