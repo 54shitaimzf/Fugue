@@ -51,13 +51,19 @@ close、超时、失败重试和外部 abort，不声称任意外部回调都可
 字节记账，三个独立 LRU 上限。runtime Set/Map 与 Worker 还有额外分配，
 **canonical字节数是逻辑记账，不是精确堆内存或RSS**。单份记录/source预算由codec控制。
 必要三元组在任何 await 前拷成私有数值键，后来的调用者数组变化不改这次判断。
-失败不缓存；任务完成/失败/取消清逻辑pending。**唯一的例外是确定性失败**：同样的字节永远同样的结果（超 64 MiB 源字节预算、超 20 万个 trigram），记进有界集合（4096 份，满了丢最旧的，`stats().unindexable`），之后这份 blob 直接回扫描，不再读源、不再起 Worker；读源出错、超时、取消都不记，下次仍会重试。容量0可退档，危险磁盘不阻止可信内存构建。
+失败不缓存；任务完成/失败/取消清逻辑pending。**唯一例外是已核内容地址后的确定性
+构建失败**：Worker先核BlobId，再发现超20万个trigram，记进有界集合（4096份，满了丢
+最旧的，`stats().unindexable`），这份blob以后直接回扫描，避免重复重建。超过64MiB的
+source回复在接收时被拒，尚未核其请求BlobId，所以保持unknown、下次可重试；不为了
+负memo去复制/Hash任意超预算回复。store的unindexable也只表示地址已核验后的预算失败。
+close立即清负集合，并禁止迟到结果重添；读源出错、超时、取消都不记。容量0可退档，
+危险磁盘不阻止可信内存构建。
 持久存储没有全盘配额/淘汰，原字节回调与M0/M1既有缓冲也不属于保留缓存的RSS保证。
 
 ## 复现与测量
 
 ```sh
-node tools/test-entry.js fast src/search/blob-index.test.ts src/search/index-store.test.ts src/search/index-format.test.ts
+node tools/test-entry.js fast src/search/index-negative-memo.test.ts src/search/blob-index.test.ts src/search/index-store.test.ts src/search/index-format.test.ts
 node tools/bench-blob-index.js
 node tools/check-targets.js
 node tools/check-events.js

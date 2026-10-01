@@ -13,7 +13,7 @@ export interface IndexWrite {
   readonly index: BlobIndex | null
   /** 文件与目录 fsync 都成功才为 true；不表示候选查询已经接线。 */
   readonly stored: boolean
-  /** 这份字节超出构建预算：永远建不出来，调用方可以记住、不再重读重建。读源失败等暂时故障不在此列。 */
+  /** 内容地址已核验后超出构建预算，调用方可记住不再重建；未核源身份的接收拒绝、读源失败不在此列。 */
   readonly unindexable?: boolean
 }
 export interface IndexStoreStats {
