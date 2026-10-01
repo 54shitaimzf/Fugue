@@ -438,6 +438,20 @@ test('advance：创建即占位；输了给出实际值；resolve 只认提交',
     'expectedOld=null 时 ref 已存在 → CAS 必须拒绝，并报出实际值',
   )
   await assert.rejects(() => t.resolve('refs/heads/nope'), RefNotFoundError)
+
+  // 两条 ref 错话的**格式**也钉住：空 detail 不带冒号尾巴、非空 detail 带且已去过空白——
+  // 这两个三元分支此前只有类型断言看着，变异审计的两处存活（truth.ts 两个构造器里的
+  // detail.trim() === ）由此收口。
+  assert.equal(new RefNotFoundError('refs/heads/x', '').message, 'ref 不存在：refs/heads/x')
+  assert.equal(new RefNotFoundError('refs/heads/x', ' 细节 ').message, 'ref 不存在：refs/heads/x：细节')
+  assert.equal(
+    new RefNotCommitError('refs/heads/x', 'abc123', '').message,
+    'ref 存在但不指向提交：refs/heads/x → abc123',
+  )
+  assert.equal(
+    new RefNotCommitError('refs/heads/x', 'abc123', '坏').message,
+    'ref 存在但不指向提交：refs/heads/x → abc123：坏',
+  )
   await t.advance('refs/heads/main', c2, c1)
   assert.equal(await t.resolve('refs/heads/main'), c2)
 
