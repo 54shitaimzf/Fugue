@@ -6,6 +6,7 @@ export type CandidateIndexLookup = (blob: BlobId, required: readonly string[]) =
 export type CandidateView = Pick<View, 'base' | 'rev' | 'stat'>
 export const MAX_INDEX_CANDIDATE_BATCH = 128
 export const MAX_INDEX_REQUIREMENTS = 128
+export const MAX_INDEX_PROBES = 4
 
 function blobId(value: unknown): value is BlobId {
   return typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value)
@@ -27,19 +28,33 @@ export async function filterCurrentViewCandidates(
     const grams = Object.freeze(values)
     const base = view.base
     const rev = view.rev
-    const kept: string[] = []
-    for (const path of batch) {
-      let excluded = false
-      try {
-        const meta = await view.stat(path as RelPath)
-        if (meta?.kind === 'file' && blobId(meta.id)) excluded = await lookup(meta.id, grams) === false
-      } catch {
-        // 辅助层不能掩盖真实读取错误；保留候选，由原 readBytes 路径给出结果或错误。
-      }
-      if (view.base !== base || view.rev !== rev) return batch
-      if (!excluded) kept.push(path)
+    const excluded = new Set<number>()
+    let next = 0
+    let stale = false
+    const changed = (): boolean => {
+      try { return view.base !== base || view.rev !== rev }
+      catch { return true }
     }
-    return view.base === base && view.rev === rev ? kept : batch
+    const lane = async (): Promise<void> => {
+      while (!stale) {
+        if (stale || changed()) { stale = true; return }
+        const at = next++
+        if (at >= batch.length) return
+        let omit = false
+        try {
+          const meta = await view.stat(batch[at] as RelPath)
+          if (stale || changed()) { stale = true; return }
+          if (meta?.kind === 'file' && blobId(meta.id)) omit = await lookup(meta.id, grams) === false
+        } catch {
+          // 保留候选；原 readBytes 路径仍负责真实读取错误。
+        }
+        if (stale || changed()) { stale = true; return }
+        if (omit) excluded.add(at)
+      }
+    }
+    // 只并发本批的派生只读探测，不并发工具调用/写事件。已发出的异步口全部观察到收尾。
+    await Promise.all(Array.from({ length: Math.min(MAX_INDEX_PROBES, batch.length) }, lane))
+    return stale || changed() ? batch : batch.filter((_, at) => !excluded.has(at))
   } catch {
     return batch
   }

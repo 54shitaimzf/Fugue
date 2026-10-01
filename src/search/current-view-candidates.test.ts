@@ -124,3 +124,105 @@ test('caller mutations of path/requirement arrays cannot change an in-flight bat
   assert.deepEqual(await filterCurrentViewCandidates(b.view, paths, grams, mutate), ['b'])
   assert.deepEqual(seen, [['hit'], ['hit']])
 })
+
+test('candidate lookups run with four bounded lanes and preserve order after out-of-order completion', async () => {
+  const b = viewOf(Object.fromEntries(Array.from({ length: 12 }, (_, at) => [`file-${at}`, (at + 1).toString(16).padStart(40, '0')])))
+  const releases: (() => void)[] = []
+  let blocking = true
+  let active = 0
+  let peak = 0
+  let calls = 0
+  const probe: CandidateIndexLookup = async blob => {
+    calls++; active++; peak = Math.max(peak, active)
+    if (calls <= 4 && blocking) await new Promise<void>(done => { releases.push(done) })
+    active--
+    return Number.parseInt(blob.slice(-2), 16) % 2 === 0
+  }
+  const paths = [...b.ids.keys()]
+  const pending = filterCurrentViewCandidates(b.view, paths, required, probe)
+  try {
+    await new Promise<void>(done => setImmediate(done))
+    assert.equal(calls, 4, 'only the four active lanes may enter a blocked optional provider')
+    assert.equal(peak, 4)
+  } finally { blocking = false; for (const release of releases.reverse()) release() }
+  assert.deepEqual(await pending, paths.filter((_, at) => at % 2 === 1))
+  assert.equal(calls, 12)
+  assert.equal(peak, 4)
+  assert.equal(active, 0)
+})
+
+test('generation rollback stops future scheduling and observes every already-started probe', async () => {
+  const b = viewOf(Object.fromEntries(Array.from({ length: 12 }, (_, at) => [`file-${at}`, old])))
+  const releases: (() => void)[] = []
+  let calls = 0
+  let returned = false
+  const pending = filterCurrentViewCandidates(b.view, [...b.ids.keys()], required, async () => {
+    calls++
+    await new Promise<void>(done => { releases.push(done) })
+    return false
+  }).then(result => { returned = true; return result })
+  try {
+    await new Promise<void>(done => setImmediate(done))
+    assert.equal(calls, 4)
+    b.change()
+    releases[0]()
+    await new Promise<void>(done => setImmediate(done))
+    assert.equal(calls, 4, 'stale batch must not queue the remaining eight candidates')
+    assert.equal(returned, false, 'already-started optional calls remain observed before returning')
+  } finally {
+    b.change() // 断言失败也阻止新排队，并释放本测试已经打开的口。
+    for (const release of releases) release()
+  }
+  assert.deepEqual(await pending, [...b.ids.keys()])
+})
+
+test('out-of-order strict false/null/error/true probes retain exact original candidate ordering', async () => {
+  const b = viewOf(Object.fromEntries(Array.from({ length: 4 }, (_, at) => [`file-${at}`, (at + 1).toString(16).padStart(40, '0')])))
+  const releases: (() => void)[] = []
+  const completed: number[] = []
+  let blocking = true
+  const pending = filterCurrentViewCandidates(b.view, [...b.ids.keys()], required, async blob => {
+    if (blocking) await new Promise<void>(done => { releases.push(done) })
+    const id = Number.parseInt(blob.slice(-2), 16)
+    completed.push(id)
+    if (id === 1) return false
+    if (id === 2) return null
+    if (id === 3) throw new Error('optional query failed')
+    return true
+  })
+  try {
+    await new Promise<void>(done => setImmediate(done))
+    assert.equal(releases.length, 4)
+  } finally {
+    blocking = false
+    for (const release of releases.reverse()) release()
+  }
+  assert.deepEqual(await pending, ['file-1', 'file-2', 'file-3'])
+  assert.deepEqual(completed, [4, 3, 2, 1])
+})
+
+test('sticky stale state prevents later backend work even if a nonstandard generation reverts', async () => {
+  const b = viewOf({ a: old, b: old, c: old, d: old, e: old })
+  const originalRev = b.view.rev
+  const stat = b.view.stat
+  const releases: (() => void)[] = []
+  let queries = 0
+  b.view.stat = path => new Promise<EntryMeta | null>(done => {
+    releases.push(() => { void stat(path).then(done) })
+  })
+  const pending = filterCurrentViewCandidates(b.view, [...b.ids.keys()], required, async () => { queries++; return false })
+  try {
+    await new Promise<void>(done => setImmediate(done))
+    assert.equal(releases.length, 4)
+    b.change(); releases[0]()
+    await new Promise<void>(done => setImmediate(done))
+    b.view.rev = originalRev // 真实 View 单调；外部适配器仍不能消掉已检测的 stale。
+    for (const release of releases.slice(1)) release()
+    assert.deepEqual(await pending, [...b.ids.keys()])
+    assert.equal(queries, 0)
+    assert.equal(releases.length, 4)
+  } finally {
+    b.change()
+    for (const release of releases) release()
+  }
+})
