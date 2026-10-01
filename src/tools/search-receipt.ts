@@ -96,7 +96,7 @@ export class SearchRows {
   private omitted = false
 
   /** 仅供候选预取提示；不是输入字节/内存预算。 */
-  get fillRatio(): number { return this.bytes / ROW_BYTES }
+  get fillRatio(): number { return this.bytes / SEARCH_ROW_BYTES }
 
   /** 返回 false 就停止扫描；第一条过长时仍给 UTF-8 完整前缀，并如实说明它缩短了。 */
   add(row: string): boolean {
