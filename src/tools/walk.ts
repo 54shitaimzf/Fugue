@@ -9,26 +9,38 @@ interface WalkLimits {
   readonly maxRows: number
 }
 
+export interface WalkResult {
+  readonly paths: readonly string[]
+  /** Enumeration stopped before examining a file or subtree; omitted file count is unknown. */
+  readonly truncated: boolean
+  readonly limits: readonly ('rows' | 'depth')[]
+}
+
 interface CachedWalk {
   readonly base: CommitId | null
   readonly rev: ViewRev
-  readonly paths: Promise<readonly string[]>
+  readonly result: Promise<WalkResult>
 }
 
-/** 与旧走法同一顺序、同一截尾；软链和 gitlink 不跟随。 */
-async function collectPaths(view: WalkView, limits: WalkLimits): Promise<readonly string[]> {
+/** 与旧走法同一候选前缀；只为未遍历的文件/子树补上限制原因。 */
+async function collectPaths(view: WalkView, limits: WalkLimits): Promise<WalkResult> {
   const paths: string[] = []
+  const stopped = new Set<'rows' | 'depth'>()
   const step = async (dir: string, depth: number): Promise<void> => {
-    if (depth > limits.maxDepth || paths.length >= limits.maxRows) return
+    if (depth > limits.maxDepth) { stopped.add('depth'); return }
+    if (paths.length >= limits.maxRows) { stopped.add('rows'); return }
     for (const row of await view.list(dir as RelPath)) {
-      if (paths.length >= limits.maxRows) return
+      // 软链/gitlink 没有候选，不把一个只有这些条目的尾部报成缺了文件。
+      if (row.kind !== 'file' && row.kind !== 'dir') continue
+      if (paths.length >= limits.maxRows) { stopped.add('rows'); return }
       const path = dir === '' ? row.name : `${dir}/${row.name}`
       if (row.kind === 'dir') await step(path, depth + 1)
-      else if (row.kind === 'file') paths.push(path)
+      else paths.push(path)
     }
   }
   await step('', 0)
-  return paths
+  const reasons = (['rows', 'depth'] as const).filter((reason) => stopped.has(reason))
+  return { paths, truncated: reasons.length > 0, limits: reasons }
 }
 
 /**
@@ -36,14 +48,14 @@ async function collectPaths(view: WalkView, limits: WalkLimits): Promise<readonl
  * 调用者拿独立数组，不能改坏下一次 grep/glob 的候选。遍历期间视图有变更时，
  * 本次结果沿用旧走法的语义，但不留作后来调用的缓存；这里不声称提供原子快照。
  */
-export function createCachedWalk(view: WalkView, limits: WalkLimits): () => Promise<readonly string[]> {
+export function createCachedWalkDetailed(view: WalkView, limits: WalkLimits): () => Promise<WalkResult> {
   let cached: CachedWalk | undefined
   return async () => {
     if (cached === undefined || cached.base !== view.base || cached.rev !== view.rev) {
-      const generation: CachedWalk = { base: view.base, rev: view.rev, paths: collectPaths(view, limits) }
+      const generation: CachedWalk = { base: view.base, rev: view.rev, result: collectPaths(view, limits) }
       cached = generation
       // 只清自己的那一代：旧请求晚回来不能抹掉已经起跑的新一代。
-      generation.paths.then(
+      generation.result.then(
         () => {
           if (cached === generation && (view.base !== generation.base || view.rev !== generation.rev)) {
             cached = undefined
@@ -52,6 +64,13 @@ export function createCachedWalk(view: WalkView, limits: WalkLimits): () => Prom
         () => { if (cached === generation) cached = undefined },
       )
     }
-    return [...await cached.paths]
+    const result = await cached.result
+    return { paths: [...result.paths], truncated: result.truncated, limits: [...result.limits] }
   }
+}
+
+/** 原有读口保留；详细状态是额外的句柄能力，不改冻结的 View 契约。 */
+export function createCachedWalk(view: WalkView, limits: WalkLimits): () => Promise<readonly string[]> {
+  const detailed = createCachedWalkDetailed(view, limits)
+  return async () => (await detailed()).paths
 }

@@ -38,7 +38,8 @@ import type { RefHead } from '../round/head.ts'
 import { isMounted, unmountOverlay } from '../materialize/mount.ts'
 import { matParts } from '../roots/paths.ts'
 import { lowerAt } from '../view/lower.ts'
-import { createCachedWalk } from './walk.ts'
+import { createCachedWalkDetailed } from './walk.ts'
+import type { WalkResult } from './walk.ts'
 import type { Reclaim, DeclaredSet } from '../execute/reclaim.ts'
 import type { AbsPath } from '../terms.ts'
 
@@ -159,7 +160,12 @@ function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Prom
  * `roots` 只用来过围栏——**它不拼物理路径**：这一档里文件的字节住在视图的上层，不在物化出来的
  * 那棵树上（`B6` 把"执行前物化"接上时，`bash` 那一条才真的落在树里）。
  */
-export function createToolHost(view: View, roots: Roots, opts: HostOptions = {}): ToolHost {
+export interface ToolHostHandle extends ToolHost {
+  /** 原有 walk 的同一次遍历，加上不完整枚举的原因；状态不代表遗漏文件数。 */
+  walkDetailed(): Promise<WalkResult>
+}
+
+export function createToolHost(view: View, roots: Roots, opts: HostOptions = {}): ToolHostHandle {
   const parts = opts.actions
 
   async function deny(d: DenyAsk): Promise<void> {
@@ -251,7 +257,8 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
   }
 
   // 清单随视图代失效；MAX_ROWS/深度与不跟软链的原语义保持不变。
-  const walk = createCachedWalk(view, { maxDepth: MAX_DEPTH, maxRows: MAX_ROWS })
+  const walkDetailed = createCachedWalkDetailed(view, { maxDepth: MAX_DEPTH, maxRows: MAX_ROWS })
+  const walk = async () => (await walkDetailed()).paths
 
   // ── 执行面（W8：视图是读面，物化根是执行面）──────────────────────────
   //
@@ -558,6 +565,7 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     },
 
     walk,
+    walkDetailed,
     prefetch: prefetchNow,
 
     async run(ask: RunAsk) {

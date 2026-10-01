@@ -6,7 +6,7 @@ import type { CommitId, RelPath } from '../terms.ts'
 import { loadView } from '../view/view.ts'
 import { createToolHost } from './host.ts'
 import { createRoots } from '../roots/roots.ts'
-import { createCachedWalk } from './walk.ts'
+import { createCachedWalk, createCachedWalkDetailed } from './walk.ts'
 
 function row(name: string, kind: EntryKind = 'file'): DirEntry {
   return { name, kind, mode: kind === 'dir' ? 0o40000 : 0o100644, size: 0, id: '' }
@@ -143,4 +143,59 @@ test('actual ToolHost invalidates after write, rename, chmod, tombstone and recr
   await view.write('d/new', Buffer.from('new'))
   assert.deepEqual(await host.walk(), ['d/new'])
   assert.deepEqual(await host.walk(), ['d/new'])
+})
+
+
+test('detailed walk distinguishes exact row limit from an unvisited file/subtree', async () => {
+  for (const tail of [[], [row('link', 'symlink')], [row('submodule', 'gitlink')]]) {
+    const walk = createCachedWalkDetailed(fakeView({ '': [row('a'), row('b'), ...tail] }), { maxDepth: 1, maxRows: 2 })
+    assert.deepEqual(await walk(), { paths: ['a', 'b'], truncated: false, limits: [] })
+  }
+  for (const tail of [row('c'), row('directory', 'dir')]) {
+    const walk = createCachedWalkDetailed(fakeView({ '': [row('a'), row('b'), tail] }), { maxDepth: 1, maxRows: 2 })
+    assert.deepEqual(await walk(), { paths: ['a', 'b'], truncated: true, limits: ['rows'] })
+  }
+})
+
+test('detailed walk reports depth and rows independently without changing the candidate prefix', async () => {
+  const view = fakeView({ '': [row('deep', 'dir'), row('a'), row('b')], deep: [row('unvisited')] })
+  const walk = createCachedWalkDetailed(view, { maxDepth: 0, maxRows: 1 })
+  assert.deepEqual(await walk(), { paths: ['a'], truncated: true, limits: ['rows', 'depth'] })
+  const cached = await walk()
+  ;(cached.limits as string[]).length = 0
+  ;(cached.paths as string[]).length = 0
+  assert.deepEqual(await walk(), { paths: ['a'], truncated: true, limits: ['rows', 'depth'] })
+})
+
+test('ToolHost detailed and legacy reads reuse the same cached enumeration', async () => {
+  const view = await loadView({ async *readByWriter() {} }, 'round', { lower: {
+    base: null,
+    async readBlob() { throw new Error('no lower blobs') },
+    async stat() { return null }, async read() { return null }, async list() { return [] },
+  } })
+  await view.write('a', Buffer.from('a'))
+  let calls = 0
+  const list = view.list.bind(view)
+  view.list = async (dir) => { calls++; return list(dir) }
+  const host = createToolHost(view, createRoots('/tmp/fugue-detailed-walk-memory-only'))
+  assert.deepEqual(await host.walkDetailed(), { paths: ['a'], truncated: false, limits: [] })
+  assert.deepEqual(await host.walk(), ['a'])
+  assert.equal(calls, 1)
+})
+
+test('production row/depth thresholds report incomplete traversal without exceeding bounds', async () => {
+  const files = Array.from({ length: 5001 }, (_, i) => row(String(i)))
+  const wide = await createCachedWalkDetailed(fakeView({ '': files }), limits)()
+  assert.equal(wide.paths.length, 5000)
+  assert.equal(wide.paths[4999], '4999')
+  assert.deepEqual(wide.limits, ['rows'])
+  const tree: Record<string, DirEntry[]> = {}
+  let path = ''
+  for (let depth = 0; depth <= 25; depth++) {
+    tree[path] = [row('file'), row('next', 'dir')]
+    path = path === '' ? 'next' : `${path}/next`
+  }
+  const deep = await createCachedWalkDetailed(fakeView(tree), limits)()
+  assert.equal(deep.paths.length, 25)
+  assert.deepEqual(deep.limits, ['depth'])
 })
