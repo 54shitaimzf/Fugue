@@ -5,12 +5,6 @@ import { MAX_REQUIRED_TRIGRAMS } from './regex-literal.ts'
 
 export type CandidateIndexLookup = (blob: BlobId, required: readonly string[]) => Promise<boolean | null>
 export type CandidateView = Pick<View, 'base' | 'rev' | 'stat'>
-/**
- * 一批候选最多过滤多少条：必须 ≥ `grep` 一批的最大条数（`SEARCH_PREFETCH_MAX_ROWS`），否则自适应批次一放大
- * 就整批回扫描、索引静默不起作用——两个 128 之间的相等由 `current-view-candidates.test.ts` 钉住
- * （这一层不 import `tools/` 的常量）。
- */
-export const MAX_INDEX_CANDIDATE_BATCH = 128
 /** 必需条件最多多少个：就是正则前置**产出**的上限，同一个数，不是另拍一个——两边各写 128 会各自漂。 */
 export const MAX_INDEX_REQUIREMENTS = MAX_REQUIRED_TRIGRAMS
 
@@ -21,14 +15,21 @@ function blobId(value: unknown): value is BlobId {
 /**
  * 只剔除有效当前文件的严格 false；未知/错误保持在扫描路径。任何变代撤销本批之前的
  * 负判断。这不提供整个枚举/查询的原子快照，也不会发现原枚举之外新加的路径。
+ *
+ * **候选条数不设上限**：每条候选各一次 `View.stat` + 一次索引问询，顺序执行，代价与原
+ * 扫描路径同阶，所以没有需要用计数封顶的东西。曾经有过一道「超过 128 条原样返回」的闸，
+ * 那是个陷阱：候选的自然来源 `ToolHost.walk()` 上限是 5000 条，调用方整批传进来时这个
+ * 适配器 100% 空转，而且不留任何「我没帮你过滤」的信号——接线后看着像启用了，实际一次
+ * 索引都没走。真正要封顶的是必需条件数（`MAX_INDEX_REQUIREMENTS`），它决定每次问询的入参。
  */
 export async function filterCurrentViewCandidates(
   view: CandidateView, paths: readonly string[], required: readonly string[], lookup: CandidateIndexLookup,
 ): Promise<readonly string[]> {
   const batch = [...paths]
   try {
-    if (batch.length > MAX_INDEX_CANDIDATE_BATCH || required.length === 0 || required.length > MAX_INDEX_REQUIREMENTS) return batch
-    // 按索引生成有界的稠密快照；Array.some 不会访问稀疏原数组的空槽。
+    if (required.length === 0 || required.length > MAX_INDEX_REQUIREMENTS) return batch
+    // 按索引生成有界的稠密快照：Array.prototype.every 会跳过稀疏数组的空槽，稠密化之后
+    // 空槽变成 undefined，才判得出来。
     const values = Array.from({ length: required.length }, (_, at) => required[at])
     if (!values.every((gram): gram is string => typeof gram === 'string' && gram.length === 3)) return batch
     const grams = Object.freeze(values)
@@ -46,7 +47,9 @@ export async function filterCurrentViewCandidates(
       if (view.base !== base || view.rev !== rev) return batch
       if (!excluded) kept.push(path)
     }
-    return view.base === base && view.rev === rev ? kept : batch
+    // 循环内每个挂起点之后都复查过代次，这里到上一次复查之间没有 await；再查一次
+    // 只会留下一个变异审计永远杀不掉的分支。
+    return kept
   } catch {
     return batch
   }
