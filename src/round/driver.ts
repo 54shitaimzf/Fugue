@@ -190,8 +190,14 @@ export function openRefHead(log: LogReader, writer: WriterId, from: CommitId | n
   return refHeadOf(log, writer, from)
 }
 
-/** 契约那一句人读的话（提交信息与交接都用它）。 */
-function goalOf(c: Contract): string {
+/**
+ * 契约那一句人读的话（提交信息与交接都用它），**导出它是为了让它能被指着看**。
+ *
+ * 为什么要交出来：0.2.2 的变异审计里 `c.kind` 那两处变体判断一直是 survivor——`driver.test.ts`
+ * 归真档，而快档里没有文件执行它；`goal.test.ts` 起把这两行收进快档的判据里（照 `openRefHead`
+ * 先例：单独交出来，调用处一处不动）。
+ */
+export function goalOf(c: Contract): string {
   if (c.kind === 'implement') return c.goal
   if (c.kind === 'resolve') return c.goal ?? `解 ${c.conflictPaths.length} 条冲突`
   return `查清 ${c.question}`
