@@ -236,27 +236,27 @@ test('exclusive temporary collision never deletes another operation file', async
   assert.ok(!existsSync(pathOf(root, id)))
 })
 
-test('temporaries orphaned by a killed process are swept, in-flight ones are left alone', async () => {
+test('unknown temporaries stay intact regardless of age or claimed PID', async () => {
   const root = tmpDir('fugue-index-temp-sweep-'), bytes = Buffer.from('sweep source'), id = idOf(bytes)
   const directory = join(root, '.fugue/idx/v1', id.slice(0, 2))
   mkdirSync(directory, { recursive: true, mode: 0o700 })
-  // 被杀的进程留下的：pid 不再匹配、nonce 已经随进程消失，没有任何调用能认领它。
+  // PID 不属于本命名空间不构成死亡证明。
   const orphan = join(directory, `.tmp-999999-${'b'.repeat(24)}`)
   // 另一个**正在**写的操作：同样不属于本进程，但还新鲜，一个字节都不能动。
   const inFlight = join(directory, `.tmp-999998-${'c'.repeat(24)}`)
-  // 同 pid 但够老的也算无主——本进程里没有任何任务还会回来认它。
+  // 同 pid 的旧叶仍可能属于暂停的活跃写者。
   const ownStale = join(directory, `.tmp-${process.pid}-${'d'.repeat(24)}`)
   // 不是临时对象的叶不在扫描面上。
   const foreign = join(directory, 'keep-me')
   for (const path of [orphan, inFlight, ownStale, foreign]) writeFileSync(path, 'leftover', { mode: 0o600 })
   for (const path of [orphan, ownStale, foreign]) utimesSync(path, 0, 0)
   const store = createBlobIndexStore(root)
-  assert.equal((await store.rebuild(id, bytes)).stored, true, '收孤儿不能是发布成功的前提')
-  assert.equal(store.stats().sweptTemporaries, 2)
-  assert.ok(!existsSync(orphan), '过期的无主临时对象要被收走')
-  assert.ok(!existsSync(ownStale), '同 pid 的过期临时对象同样无主')
+  assert.equal((await store.rebuild(id, bytes)).stored, true, '未知临时叶不阻碍发布')
+  assert.equal(store.stats().sweptTemporaries, 0)
+  assert.equal(readFileSync(orphan, 'utf8'), 'leftover')
+  assert.equal(readFileSync(ownStale, 'utf8'), 'leftover')
   assert.equal(readFileSync(inFlight, 'utf8'), 'leftover', '新鲜的并发临时对象不能动')
-  assert.equal(readFileSync(foreign, 'utf8'), 'leftover', '只扫 .tmp- 前缀')
+  assert.equal(readFileSync(foreign, 'utf8'), 'leftover', '未知非临时叶也保持原样')
   assert.deepEqual(await store.read(id), buildBlobIndex(id, bytes))
-  assert.deepEqual(readdirSync(directory).sort(), ['.tmp-999998-' + 'c'.repeat(24), `${id}.json`, 'keep-me'])
+  assert.deepEqual(readdirSync(directory).sort(), [orphan, inFlight, ownStale, foreign, pathOf(root, id)].map(path => path.split('/').at(-1)).sort())
 })
