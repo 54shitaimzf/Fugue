@@ -5,3 +5,6 @@ node_modules/
 
 # 在仓库里随手跑一轮时，账与物化树落在这里（工作区真源）。它不入库。
 .fugue/
+
+# Native Rust build output.
+/rust/target/

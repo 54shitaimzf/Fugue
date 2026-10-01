@@ -1,27 +1,8 @@
 #!/bin/sh
-# 命令壳：把 PATH 上的 `fugue` 接到仓库里那个命令行（架构 § 9.6 的规范形 · U7）。
-#
-# **它住在人这一侧。** 装在人手边、跑在真实机器上；沙箱里没有它，视图里也没有它——
-# 模型那一侧的动作面是声明过的工具目录（§ 8.10），不是 PATH（§ 24 纪律 13）。
-#
-# **它一次 exec，不认识任何命令。** `fugue …` 与 `node <仓库>/src/cli/fugue.ts …` 因此是
-# 同一次调用：同一个进程 · 同一个 argv · 同一份退出码。两个面不可能漂移成两套语义，
-# 因为这里根本没有第二套。
-#
-# 装法就是一条软链（下面那段顺着链找自己，所以链到哪都行）：
-#     ln -s ~/fugue/bin/fugue ~/.local/bin/fugue
-#
-# 换解释器：`FUGUE_NODE=<node 的路径>`。别的都不必知道。
 set -eu
-
-self=$0
-while [ -L "$self" ]; do
-  link=$(readlink "$self")
-  case $link in
-    /*) self=$link ;;
-    *) self=$(dirname "$self")/$link ;;
-  esac
-done
-home=$(cd "$(dirname "$self")/.." && pwd)
-
-exec "${FUGUE_NODE:-node}" "$home/src/cli/fugue.ts" "$@"
+p=$0;n=0
+while [ -L "$p" ]; do n=$((n+1));[ "$n" -le 32 ] || { printf '%s\n' 'fugue: symlink cycle' >&2;exit 1;};q=$(readlink "$p");case $q in /*)p=$q;;*)p=$(dirname "$p")/$q;;esac;done
+r=$(CDPATH= cd -- "$(dirname "$p")/.." && pwd)
+b=${FUGUE_RUST:-"$r/rust/target/release/fugue"}
+[ -x "$b" ] || { printf '%s\n' 'fugue: build first: cargo build --release --locked --manifest-path rust/Cargo.toml' >&2;exit 1;}
+exec "$b" "$@"

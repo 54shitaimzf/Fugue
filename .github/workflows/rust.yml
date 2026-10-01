@@ -1,0 +1,26 @@
+name: rust-port
+on:
+  push:
+    branches: ['**']
+    tags-ignore: ['**']
+    paths: ['rust/**', 'bin/fugue', 'bin/fugue-rust', 'bin/fugue-node', '.github/workflows/rust.yml']
+  pull_request:
+    paths: ['rust/**', 'bin/fugue', 'bin/fugue-rust', 'bin/fugue-node', '.github/workflows/rust.yml']
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install public sandbox probe dependency
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+      - name: Require Rust tooling
+        run: rustup component add clippy
+      - name: Native checks and independent upstream oracle
+        run: sh rust/check.sh

@@ -17,6 +17,8 @@ on:
 
 jobs:
   suite:
+    # Native Rust branches use rust.yml. Do not run legacy runner security changes there.
+    if: ${{ !startsWith(github.ref_name, 'rewrite/rust-') && !startsWith(github.head_ref, 'rewrite/rust-') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

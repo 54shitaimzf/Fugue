@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+p=$0;n=0
+while [ -L "$p" ]; do n=$((n+1));[ "$n" -le 32 ] || { printf '%s\n' 'fugue-rust: symlink cycle' >&2;exit 1;};q=$(readlink "$p");case $q in /*)p=$q;;*)p=$(dirname "$p")/$q;;esac;done
+r=$(CDPATH= cd -- "$(dirname "$p")/.." && pwd)
+b=${FUGUE_RUST:-"$r/rust/target/release/fugue"}
+[ -x "$b" ] || { printf '%s\n' 'fugue-rust: build first: cargo build --release --locked --manifest-path rust/Cargo.toml' >&2;exit 1;}
+exec "$b" "$@"

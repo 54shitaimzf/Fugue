@@ -1,0 +1,23 @@
+[package]
+name = "fugue"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "A defensive Rust port of Fugue's Git-backed coding agent"
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+crc32fast = "1"
+sha2 = "0.10"
+libc = "0.2"
+regex = "1"
+ryu-js = "1"
+[dev-dependencies]
+tempfile = "3"
+[profile.release]
+overflow-checks = true
+panic = "unwind"
+strip = true
+lto = true
+codegen-units = 1
