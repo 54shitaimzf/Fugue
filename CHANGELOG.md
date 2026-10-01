@@ -17,6 +17,7 @@
 
 ### 技术细节
 
+- **回放夹具跟着工具目录走，漂移在 fast 档就红**：`node tools/adapt-wire-in.ts`（实现 `test/helpers/wire-catalog.ts`）把 `src/cli/__fixture__/wire-in/` 里那份录制请求的 `tools` 栏离线改齐当前 `catalog()`，并重算 `request.sha256` · `meta.json` 的 `requestBytes` / `requestHash` / `zoneAHash`；响应、usage、timings、`messages` 一个字节不动，来历写在 `src/cli/__fixture__/wire-in/PROVENANCE.md`。`src/cli/wire-in-catalog.test.ts` 在 **fast** 档盯着它——此前改一句工具描述会让 `--wire-in` 逐字节核对失败，而那意味着 `full` 档里**唯一**的端到端验收（`src/cli/chain.test.ts` 序 1）整条不再执行、合并闸门长期红。「录下来的字节被改过就当场拒」这条产品规则一个字没松（同一份测试的最后一条就是它的负对照）。
 - **变异审计两段式判决**：先只跑覆盖到靶子的测试文件（import 链可达，直接与间接转手都算），红了就地判「被杀」——覆盖集是整档的子集，子集红整档必红，判决口径不变；绿了才升格跑整档。同一预算（15 分钟 · 20 核 · seed 20261001）从跑 **24** 处到 **46** 处，整档只跑了 **18** 趟（改前每一处都要跑一趟）；靶面从直接覆盖 99/134 放宽到链覆盖 133/134，候选 179 → **237**。排队加一条优先级：最近 tag 以来动过的源文件排头（夜审第一趟先盯新代码），没有 tag 就退回纯轮转。
 - **测试入口支持点名文件**：`node tools/test-entry.js fast src/a.test.ts …`——只跑点名的那些（必须落在所选档里，点错当场红）。预筛那一趟走的就是它，仍是同一条路。审计报告 schema 1 → 2（`killedBy` · `prefilterKilled` · `laneRuns` · `priority` 等）。
 - **这份日志统一骨架**：历史版本段（0.1.0–0.2.4）按「类型分节 · 条目动词开头 · 结尾对比链接」重排；所有数字、链接、日期、命令原样，改前/改后的事实清单见提交序列；六份 Release 正文同步更新。
