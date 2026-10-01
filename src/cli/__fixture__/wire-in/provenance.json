@@ -1,5 +1,7 @@
 {
   "kind": "offline-catalog-adaptation",
+  "sourceCommit": "e02fa524579bbd6332278e21a27b15c7b12c4b05",
+  "sourceManifestSha256": "62aa94ffd198b92a359e3fff5a42c40f1bbbae6119949fdf4b3e33d97da21a10",
   "catalogHash": "dbe4fa742eff6747",
   "liveRequestSent": false,
   "historicalResponseAndUsage": true,
@@ -7,6 +9,7 @@
     {
       "call": "call-0001",
       "sourceRequestSha256": "df09987f5c290cd2e4adc9b9e3ec85321c6c5e01b6f0c9594389cf24136e39b7",
+      "sourceMetaSha256": "2323dab65fabe9c1fe2f09d8e1f3484c9b6ef1bb5952b5b746c85a476dd9acd3",
       "requestSha256": "e224ab04ab6d2628d83b713044d1b46f44e918c3b20765b2b3204c0d10b9b8d2",
       "requestHash": "e224ab04ab6d2628",
       "requestBytes": 9091,
@@ -16,6 +19,7 @@
     {
       "call": "call-0002",
       "sourceRequestSha256": "da3179d090424d3dd431f8010acefadefc6947856b5166a149d258a97c7d1bbd",
+      "sourceMetaSha256": "d3fa3b92dc524d64d267690ebac4d3182133aa75e4acb43114f088ccac32f7f2",
       "requestSha256": "b3dba679975d0717a247cc2fca39fb83007b5466a6c7fa08c9597184bb3586ad",
       "requestHash": "b3dba679975d0717",
       "requestBytes": 9737,
@@ -25,6 +29,7 @@
     {
       "call": "call-0003",
       "sourceRequestSha256": "655f3346dd4e82c45c4fef1f5f86a3d8b56d2a5bd95446d35e3f1d607e2d2bae",
+      "sourceMetaSha256": "e8ffbbc60772c9c1515fb64192b64d3c5c8823773766c0b72ebd8457667f7619",
       "requestSha256": "3eaf1bbe555d174725974e0b4bb6440b805edb21e6f5bb23588cf58e6a76719d",
       "requestHash": "3eaf1bbe555d1747",
       "requestBytes": 10319,

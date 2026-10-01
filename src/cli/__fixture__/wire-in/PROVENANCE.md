@@ -1,37 +1,43 @@
-# 这一份夹具的来历
+# 历史录音与合成目录兼容回放
 
-`wire/call-000N/` 是 `fugue round run --dump-wire` 落下来的形状（读法见每个子目录里的 `README`）。
-`provenance.json` 是机器可读的那一份同样内容。
+`original/` 完整保留提交 `e02fa524579bbd6332278e21a27b15c7b12c4b05` 的这份夹具：
+场景及三条调用的请求、响应、meta、sha256、README 均逐字节不变。
+`original/manifest.json` 标明源提交及每个文件的完整 SHA-256；适配器固定核对 manifest
+自身的指纹，再核全部种子，不能把被改过的种子或 manifest 当成原录音。
+这些字节不会被适配器写入。
 
-## 响应是**录下来的**，请求是**离线改齐的**
+`wire/` 是额外的合成兼容覆盖：请求的 `tools` 换成当前 catalog 投影，
+`request.sha256`、meta 的 `requestBytes` / `requestHash` / `zoneAHash` 跟着复算。
+除此之外的请求字段、meta、response、usage、timings、scenario 与原种子一致。
+调用子目录中的历史 README 说明录音的文件形状；当前请求是否是真实录音以本说明和
+`provenance.json` 为准，不能把这个合成目录称为新的提供方响应或 live 录制。
 
-- `response.sse` · `response.sha256` · `meta.json` 的 `responseBytes` / `responseHash` / `stop` /
-  usage / timings：**都是当时真跑那一趟收回来的字节**，一个字节都没有被改过。
-- `request.json`：正文（`messages` · `system` · 三区内容 · 协议参数）同样是当时发出去的那一份；
-  **只有 `tools` 那一栏被离线改齐成当前 `src/tools/catalog.ts` 的投影**，跟着它派生的
-  `request.sha256`、`meta.json` 的 `requestBytes` / `requestHash` / `zoneAHash` 一并重算。
+## 确定性和写入边界
 
-改齐这件事由 `node tools/adapt-wire-in.ts` 做（实现在 `test/helpers/wire-catalog.ts`）：它读本仓库
-的目录、按产品那把序列化器（`src/model/wire/stream.ts` 的 `stableJson`）重写请求字节。**整个过程
-不出网、不读凭据、不花钱**，而且逐字节可复算——拿同一个提交跑两遍得到同一份字节。
+`node tools/adapt-wire-in.ts` 总从原种子派生，不从已经适配过的请求派生。
+全部种子、调用集合、目标非目录请求字段、历史 meta/response/scenario 和目标文件存在性
+都验证之后才写入；后面的坏调用不会让前面的请求已被半套改写。
+还拒绝夹具内的目录/叶软链与多硬链接文件，防止输出别名改写原种子。
+这是本地静态验证，不是同 UID 活跃攻击者隔离，也不是多个文件写入的跨进程事务。
 
-## 为什么不是"过期就红着"
+`provenance.json` 只含确定性信息：源提交、源 manifest、原请求/meta/响应完整 hash、
+合成请求指纹和 catalog 指纹。每条 `changed` 表示相对原请求是否不同，
+不是这次是否写盘。函数返回和命令的 `writtenFiles` 才是这次实际写入文件数，
+不写进 provenance。相同目录重复执行时字节、mtime、原始来历均不变，写入数为0；
+`adaptWireIn(root, false)` 只核对和计算，不写盘。过程不出网、不读凭据、不花钱。
 
-`--wire-in` 按请求字节逐字核对（`src/model/http.ts`），所以**改一句工具描述就会让这一份过期**。
-过期之后 `src/cli/chain.test.ts` 的序 1 不是"报出一处不同"，而是整条端到端验收（验收照过 · 产物
-逐字节相同 · 每条调用逐条对上 · 围栏 `full` + `bwrap+landlock` · 停因收敛）**一条都不再执行**，
-`full` 这道合并闸门长期红。那不是更严格，只是更瞎。
+## 验收口径
 
-所以口径拆成两句：
+合成回放可覆盖当前请求结构与历史响应解析的兼容性。它不能替代
+`src/model/http.ts` 的冻结历史录制规则，也不提供新的响应、usage、付费前缀、
+缓存收益、时延或全量 live 验收证据。工具目录变更仍需真正运行并录制新的提供方调用，
+这项门槛目前未完成；不得靠离线改齐把它报告为 full/live 验收通过。
 
-- **目录字节漂了就改齐**（这一份 · 可离线复算 · 来历写在这里）。
-  `src/cli/wire-in-catalog.test.ts` 在 **fast** 档盯着它：盘上这一份与当前目录不一致就当场红，
-  而不是等 `full` 档里的 real 测试。
-- **录下来的字节被改过就当场拒**（产品规则，一个字都没松）。`request.json` 改一个字节 →
-  `meta.json` 与它对不上 → 回放拒（`src/cli/chain.test.ts` 的「序 1 负对照」与
-  `src/cli/wire-in-catalog.test.ts` 的最后一条各在一档上守着这件事）。
+`wire-in-integrity.test.ts` 单独验证原始 transport 接受原请求、拒绝当前 catalog 的
+合成请求。`wire-in-catalog.test.ts` 和本分支 `chain.test.ts` 的适配请求消费是
+合成兼容覆盖，必须连同上述限制解读。产品 transport 的逐请求字节核对没有修改。
 
-## 这一份**不能**证明什么
-
-它不是一次新的真调用：响应、usage、缓存读数、时延全都是历史的。要新的证据就真跑一趟
-（`tools/record-wire-in.sh`），那要提供方、凭据与花钱的授权。
+```sh
+node tools/test-entry.js fast src/cli/wire-in-integrity.test.ts src/cli/wire-in-catalog.test.ts
+node tools/adapt-wire-in.ts
+```

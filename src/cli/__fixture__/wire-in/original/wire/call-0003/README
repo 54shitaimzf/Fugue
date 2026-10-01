@@ -1,0 +1,13 @@
+这一份是一次调用发出去与收回来的原始字节。取值顺序：
+
+1. `sha256sum -c request.sha256` —— 发出去的那一串与当时那一串是不是同一份。
+2. `meta.json` 的三条 `zone*Hash` 与同一步的 `prefix/assemble` 对：日志说"装配出来
+   是什么"，这一份说"发出去的是什么"。**两者不是同一串**时才要往下查。
+3. `meta.json` 的 `outcome` 与 `failure`：`done` 是走完的那一趟，`failed` 是断在半路
+   （`response.sse` 里是断之前收到的字节），`partial` 是既没走完也没留下原因（少见）。
+4. `response.sse` 是上游的原始字节：录一份夹具就是照它写的（`src/model/session.ts`）。
+
+**失败那一路也落**：这条命令的用处一半在"为什么没成"，所以 401/400 那一趟同样有
+`request.json` 与 `response.sse`（后者就是上游那句原话）。
+
+**它不在工作区里**（落进 `<realRoot>` 会被下一轮的 fork 当成漂移）。看完就删。
