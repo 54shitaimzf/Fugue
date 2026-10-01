@@ -68,9 +68,3 @@ export function createCachedWalkDetailed(view: WalkView, limits: WalkLimits): ()
     return { paths: [...result.paths], truncated: result.truncated, limits: [...result.limits] }
   }
 }
-
-/** 原有读口保留；详细状态是额外的句柄能力，不改冻结的 View 契约。 */
-export function createCachedWalk(view: WalkView, limits: WalkLimits): () => Promise<readonly string[]> {
-  const detailed = createCachedWalkDetailed(view, limits)
-  return async () => (await detailed()).paths
-}

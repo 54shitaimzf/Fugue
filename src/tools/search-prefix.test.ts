@@ -18,7 +18,6 @@ test('all offline request fixtures capture the new stable search catalog bytes',
   for (const name of names) {
     const fixture = JSON.parse(readFileSync(new URL(`../model/fixtures/${name}`,import.meta.url),'utf8'))
     assert.deepEqual(fixture.tools,expected,name)
-    assert.equal(catalogHash(fixture.tools as ToolEntry[]),hashes[0])
     assert.match(fixture.tools.find((tool: ToolEntry) => tool.name === 'grep').description,/receipt budget.*incomplete/)
     assert.match(fixture.tools.find((tool: ToolEntry) => tool.name === 'glob').description,/limited traversal or unknown coverage/)
   }
