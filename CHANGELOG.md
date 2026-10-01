@@ -13,6 +13,7 @@
 
 ### 技术细节
 
+- **减少索引构建的重复字符串分配**：先按48位UTF-16键去重，只为唯一trigram造字符串；canonical记录逐字节不变。增加多样语料对照与分项基准，不默认启用索引，见 [构建说明](docs/index-builder-keys.md)。
 - **接上可选的 blob 增量索引读句柄**：已有不可变 ID 先命中内存/磁盘，新增/损坏先回扫描，再由有限后台 Worker 读原字节重建；有界 LRU、明确 close/超时边界和机制统计。尚未接 grep/默认启用，真实 regex 仍要验证，见 [增量说明](docs/blob-index-lookup.md)。
 - **增加派生 blob 索引存储与重建**：版本化分片读是纯读 miss，可信原字节经内容地址核对后原子替换损坏记录；描述符锚、私有目录/文件与有界 no-follow 读取，危险缓存不可用时退档。尚未接搜索、没有全缓存配额声明，见 [存储说明](docs/blob-index-storage.md)。
 - **定义 blob 键控 trigram 索引格式 v1**：按 grep 同一解码语义构建 UTF-16 trigram，原 Git 内容地址绑定、排序去重、canonical 字节与校验和核对，明确保留空符号表。损坏/不支持的记录给 miss；持久存储与查询尚未接线，见 [格式说明](docs/blob-index-format.md)。
