@@ -5,7 +5,20 @@ import { encodeBlobIndex } from './index-format.ts'
 
 const store = createBlobIndexStore(workerData.root)
 let active = false
-parentPort?.on('message', async ({ blob, bytes, temporaryId }) => {
+parentPort?.on('message', async (message: unknown) => {
+  // `parentPort` 是本线程唯一的外部输入面，形状一律不信。写成参数解构会出事：
+  // async 函数的参数解构失败产生的是一个没人消费的 rejected promise（EventEmitter
+  // 不看回调的返回值），默认 unhandledRejection 模式下当场把线程打死——代价正好是
+  // 一个已经预热好的可复用 Worker，也就是这一笔的全部收益。回执方向
+  // （index-worker-reply.ts）本来就逐字段查过跨边界的形状，这一侧要对称。
+  const row = message !== null && typeof message === 'object' ? message as Record<string, unknown> : {}
+  const blob = typeof row.blob === 'string' ? row.blob : undefined
+  const bytes = row.bytes instanceof Uint8Array ? row.bytes : undefined
+  const temporaryId = typeof row.temporaryId === 'string' ? row.temporaryId : undefined
+  if (blob === undefined || bytes === undefined || temporaryId === undefined) {
+    parentPort?.postMessage({ ok: false, temporaryId })
+    return
+  }
   if (active) { parentPort?.postMessage({ ok: false, temporaryId }); return }
   active = true
   try {

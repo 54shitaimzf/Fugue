@@ -134,3 +134,47 @@ test('pool captures a relative root before method-time cwd changes', async () =>
     await pool.release(worker)
   } finally { process.chdir(originalCwd); await pool?.close() }
 })
+
+test('malformed host messages are refused without killing a reusable worker', async () => {
+  const root = tmpDir('fugue-worker-badmsg-')
+  const pool = createIndexWorkerPool(root, 1, 10000)
+  try {
+    const worker = pool.acquire(); assert.ok(worker)
+    // 一轮只等三件事里最先到的那一件：回执、线程报错、线程退出。坏形状打死了 Worker
+    // 也要当场给出判据，不能让这条用例挂在那里等一条永远不会来的消息。
+    function round(job: unknown, transfer: readonly ArrayBuffer[] = []): Promise<Record<string, unknown>> {
+      return new Promise((done) => {
+        const settle = (value: Record<string, unknown>) => {
+          worker.removeListener('message', onMessage)
+          worker.removeListener('error', onError)
+          worker.removeListener('exit', onExit)
+          done(value)
+        }
+        const onMessage = (value: unknown) => settle(value as Record<string, unknown>)
+        const onError = (error: Error) => settle({ dead: `error ${error.message}` })
+        const onExit = (code: number) => settle({ dead: `exit ${code}` })
+        worker.on('message', onMessage); worker.on('error', onError); worker.on('exit', onExit)
+        worker.postMessage(job, transfer as ArrayBuffer[])
+      })
+    }
+    const nonce = 'a'.repeat(24)
+    const malformed: unknown[] = [null, undefined, 0, 'not a job', {}, { blob: 'x'.repeat(40) },
+      { blob: 'x'.repeat(40), bytes: 'not bytes', temporaryId: nonce },
+      { blob: 42, bytes: Uint8Array.from([1]), temporaryId: nonce },
+      { blob: 'x'.repeat(40), bytes: Uint8Array.from([1]), temporaryId: 7 }]
+    for (const bad of malformed) {
+      // 参数解构失败产生的是一个没人消费的 rejected promise（EventEmitter 不看返回值），
+      // 默认 unhandledRejection 模式下当场打死线程——代价是一个已经预热好的可复用 Worker。
+      const refusal = await round(bad)
+      assert.equal(refusal.dead, undefined, `坏形状的消息不能打死 Worker：${String(bad)}`)
+      assert.equal(refusal.ok, false, String(bad))
+    }
+    assert.deepEqual(pool.stats(), { starts: 1, retained: 1, idle: 0 })
+    // 同一个 Worker 仍然能完成一次真实任务——复用正是这一笔的收益所在。
+    const bytes = Uint8Array.from(Buffer.from('still alive abc')), id = blob(bytes)
+    const reply = await round({ blob: id, bytes, temporaryId: 'b'.repeat(24) }, [bytes.buffer])
+    assert.equal(reply.ok, true)
+    assert.equal(reply.temporaryId, 'b'.repeat(24))
+    assert.equal(pool.stats().starts, 1, '不该因为坏消息换过 Worker')
+  } finally { await pool.close() }
+})
