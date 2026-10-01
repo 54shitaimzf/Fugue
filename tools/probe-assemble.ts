@@ -346,14 +346,17 @@ eq('两份声明的版本号', [SUBAGENT_PROTOCOL.version, HOLDER_PROTOCOL.versi
   {
     // 第二个证人：能力表与目录是**各自独立**声明的两份名字域（这一份不 import 目录）。
     // 它们同名同数，是「名字的域 == § 8.10 那张表」在两处各自成立，不是一处回声。
-    const capNames = ['view', 'execute', 'truth', 'orchestrate', 'log'].flatMap((l) => namesOn(l as Layer))
+    const capNames = ['view', 'execute', 'truth', 'log'].flatMap((l) => namesOn(l as Layer))
     sameNameSet('能力表那份名字与目录同名同数', capNames, [...TOOL_NAMES], ['能力表里的', '目录里的'])
   }
-  eq('工具目录的个数', TOOL_NAMES.length, 15)
+  // **12 个**：撤掉的委派那一族（`subagent` · `list_agents` · `send_message`）不进目录——今天契约
+  // 由 harness 派，不由主 agent 派，它们没有生产者（归档 § 5.24 的「撤」）。要立起来是另一件事，
+  // 见未来那一份文档。这四个层名与 `Layer` 逐字相同。
+  eq('工具目录的个数', TOOL_NAMES.length, 12)
   eq('工具目录进的是 `toolCatalog`，不是段序', [
     SUBAGENT_PROTOCOL.toolCatalog.length,
     SUBAGENT_PROTOCOL.segmentOrder.includes('工具目录' as SegmentId),
-  ], [15, false])
+  ], [12, false])
 }
 {
   const used = new Set(Object.values(SUBAGENT_PROTOCOL.renderers))
