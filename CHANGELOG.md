@@ -25,6 +25,8 @@
 
 ### 技术细节
 
+- **量清索引读取批大小的收益与预算退档**：开发量尺可对照四行与32/128行 scoped读取，单独报告unknown与付费disk恢复，增加有界entropy语料和参数/清理负对照；不改产品接线或默认策略，见 [量尺说明](docs/index-batch-groups.md)。
+
 - **增加只在一批内共享祖先的派生索引读口**：每叶保持完整原校验，结束重核祖先 epoch/root 名称绑定；四路、128条、字节和 gram 数独立封顶，失效回整批 unknown。尚未接 grep 或默认启用，隔离 reader 对照见 [scoped reader](docs/index-batch-reader.md)。
 - **修正索引基准的 reference 后端**：before 现在同时加载 reference host 与 lookup/store，而非只换 host 却继续共用当前后端；增加反例证明 reference lookup 真被调用，构造失败也收走临时语料。源 hash 与默认关闭的全扫对照保留，不改变产品查询。
 - **候选索引探测封顶四路只读 lane**：缩短已准备索引的串行磁盘等待，输出仍按原批顺序；检测 stale 后不再排队，已启动的口全部观察到收尾。16MB 超容量重复仍要读全部分片，默认保持关闭；完整对照、热路径取舍与准备边界见 [探测调度](docs/index-probes.md)。

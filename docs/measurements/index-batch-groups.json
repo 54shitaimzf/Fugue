@@ -1,0 +1,685 @@
+{
+  "boundary": "isolated generated-record mechanism comparison, no product activation or complete acceptance claim",
+  "matrices": {
+    "4-32": {
+      "node": "v24.19.0",
+      "files": 512,
+      "lines": 256,
+      "entropyChars": null,
+      "recoverUnknown": false,
+      "referenceBatchRows": 4,
+      "batchRows": 32,
+      "sourceBytes": 16037385,
+      "canonicalBytes": 1353771,
+      "retainedGrams": 204039,
+      "runs": 7,
+      "sourceHashes": {
+        "index-store.ts": "a94652ec580ef03cb34b9bc7c7943657b20aa216972d5d7eb57c69ee811cc681",
+        "index-format.ts": "b6b5848f183a7891cc6581612dac643d2954f554743cbdf4a0ff0fed52fb3ddb",
+        "benchmark": "6233ecc09175f7f8a7d308378930a37b80c173d92c98fd9f35543b5bba32e6ee"
+      },
+      "setupMs": 2879.4770590000003,
+      "beforeMedianMs": 324.96379699999943,
+      "afterMedianMs": 202.25134499999967,
+      "before": [
+        {
+          "ms": 404.2727829999999,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 539.4476770000001,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 788.847659,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 324.96379699999943,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 299.0991460000005,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 275.51945199999955,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 290.95854899999995,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        }
+      ],
+      "after": [
+        {
+          "ms": 247.81655499999988,
+          "calls": {
+            "open": 1104,
+            "stat": 1680,
+            "read": 1024,
+            "close": 1104
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 220.2299969999999,
+          "calls": {
+            "open": 1104,
+            "stat": 1680,
+            "read": 1024,
+            "close": 1104
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 480.7919320000001,
+          "calls": {
+            "open": 1104,
+            "stat": 1680,
+            "read": 1024,
+            "close": 1104
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 202.25134499999967,
+          "calls": {
+            "open": 1104,
+            "stat": 1680,
+            "read": 1024,
+            "close": 1104
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 163.46153500000037,
+          "calls": {
+            "open": 1104,
+            "stat": 1680,
+            "read": 1024,
+            "close": 1104
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 171.58550399999967,
+          "calls": {
+            "open": 1104,
+            "stat": 1680,
+            "read": 1024,
+            "close": 1104
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 194.45227800000066,
+          "calls": {
+            "open": 1104,
+            "stat": 1680,
+            "read": 1024,
+            "close": 1104
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        }
+      ],
+      "boundary": "own generated validated records; four leaf lanes on both sides; no persistent fd/cache; OS page cache primed; wrappers add overhead; API-call counts are not kernel syscall counts; unknownRecords count valid disk records skipped by aggregate budgets; recoverUnknown optionally rereads unavailable disk records with four scalar lanes for full-reference equivalence; sourceReads/builds are not measured because no lookup factory runs; no query/default/physical-cold acceptance"
+    },
+    "4-128": {
+      "node": "v24.19.0",
+      "files": 512,
+      "lines": 256,
+      "entropyChars": null,
+      "recoverUnknown": false,
+      "referenceBatchRows": 4,
+      "batchRows": 128,
+      "sourceBytes": 16037385,
+      "canonicalBytes": 1353771,
+      "retainedGrams": 204039,
+      "runs": 7,
+      "sourceHashes": {
+        "index-store.ts": "a94652ec580ef03cb34b9bc7c7943657b20aa216972d5d7eb57c69ee811cc681",
+        "index-format.ts": "b6b5848f183a7891cc6581612dac643d2954f554743cbdf4a0ff0fed52fb3ddb",
+        "benchmark": "6233ecc09175f7f8a7d308378930a37b80c173d92c98fd9f35543b5bba32e6ee"
+      },
+      "setupMs": 2364.556614,
+      "beforeMedianMs": 260.601173,
+      "afterMedianMs": 145.81316700000025,
+      "before": [
+        {
+          "ms": 275.8531130000001,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 597.8976239999997,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 242.8486210000001,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 207.71661099999983,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 245.65509799999927,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 262.32559200000014,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 260.601173,
+          "calls": {
+            "open": 1664,
+            "stat": 2688,
+            "read": 1024,
+            "close": 1664
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        }
+      ],
+      "after": [
+        {
+          "ms": 188.41667300000017,
+          "calls": {
+            "open": 1044,
+            "stat": 1572,
+            "read": 1024,
+            "close": 1044
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 500.2609070000003,
+          "calls": {
+            "open": 1044,
+            "stat": 1572,
+            "read": 1024,
+            "close": 1044
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 145.81316700000025,
+          "calls": {
+            "open": 1044,
+            "stat": 1572,
+            "read": 1024,
+            "close": 1044
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 127.3800510000001,
+          "calls": {
+            "open": 1044,
+            "stat": 1572,
+            "read": 1024,
+            "close": 1044
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 124.4279260000003,
+          "calls": {
+            "open": 1044,
+            "stat": 1572,
+            "read": 1024,
+            "close": 1044
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 144.59278399999948,
+          "calls": {
+            "open": 1044,
+            "stat": 1572,
+            "read": 1024,
+            "close": 1044
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 167.6628840000003,
+          "calls": {
+            "open": 1044,
+            "stat": 1572,
+            "read": 1024,
+            "close": 1044
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        }
+      ],
+      "boundary": "own generated validated records; four leaf lanes on both sides; no persistent fd/cache; OS page cache primed; wrappers add overhead; API-call counts are not kernel syscall counts; unknownRecords count valid disk records skipped by aggregate budgets; recoverUnknown optionally rereads unavailable disk records with four scalar lanes for full-reference equivalence; sourceReads/builds are not measured because no lookup factory runs; no query/default/physical-cold acceptance"
+    },
+    "budget-4-32": {
+      "node": "v24.19.0",
+      "files": 128,
+      "lines": 256,
+      "entropyChars": 50000,
+      "recoverUnknown": true,
+      "referenceBatchRows": 4,
+      "batchRows": 32,
+      "sourceBytes": 12800000,
+      "canonicalBytes": 57607981,
+      "retainedGrams": 6397317,
+      "runs": 5,
+      "sourceHashes": {
+        "index-store.ts": "a94652ec580ef03cb34b9bc7c7943657b20aa216972d5d7eb57c69ee811cc681",
+        "index-format.ts": "b6b5848f183a7891cc6581612dac643d2954f554743cbdf4a0ff0fed52fb3ddb",
+        "benchmark": "6233ecc09175f7f8a7d308378930a37b80c173d92c98fd9f35543b5bba32e6ee"
+      },
+      "setupMs": 12027.538719,
+      "beforeMedianMs": 2318.4066669999993,
+      "afterMedianMs": 2713.5779859999966,
+      "before": [
+        {
+          "ms": 2318.4066669999993,
+          "calls": {
+            "open": 416,
+            "stat": 672,
+            "read": 256,
+            "close": 416
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 2054.2472469999993,
+          "calls": {
+            "open": 416,
+            "stat": 672,
+            "read": 256,
+            "close": 416
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 1992.8717679999972,
+          "calls": {
+            "open": 416,
+            "stat": 672,
+            "read": 256,
+            "close": 416
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 3578.684436000003,
+          "calls": {
+            "open": 416,
+            "stat": 672,
+            "read": 256,
+            "close": 416
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 2435.900413999996,
+          "calls": {
+            "open": 416,
+            "stat": 672,
+            "read": 256,
+            "close": 416
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        }
+      ],
+      "after": [
+        {
+          "ms": 2872.382702000001,
+          "calls": {
+            "open": 564,
+            "stat": 756,
+            "read": 352,
+            "close": 564
+          },
+          "batchUnknownRecords": 48,
+          "fallbackReads": 48,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 2547.7168219999985,
+          "calls": {
+            "open": 564,
+            "stat": 756,
+            "read": 352,
+            "close": 564
+          },
+          "batchUnknownRecords": 48,
+          "fallbackReads": 48,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 2608.7117690000014,
+          "calls": {
+            "open": 564,
+            "stat": 756,
+            "read": 352,
+            "close": 564
+          },
+          "batchUnknownRecords": 48,
+          "fallbackReads": 48,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 2773.0448380000016,
+          "calls": {
+            "open": 564,
+            "stat": 756,
+            "read": 352,
+            "close": 564
+          },
+          "batchUnknownRecords": 48,
+          "fallbackReads": 48,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 2713.5779859999966,
+          "calls": {
+            "open": 564,
+            "stat": 756,
+            "read": 352,
+            "close": 564
+          },
+          "batchUnknownRecords": 48,
+          "fallbackReads": 48,
+          "unknownRecords": 0
+        }
+      ],
+      "boundary": "own generated validated records; four leaf lanes on both sides; no persistent fd/cache; OS page cache primed; wrappers add overhead; API-call counts are not kernel syscall counts; unknownRecords count valid disk records skipped by aggregate budgets; recoverUnknown optionally rereads unavailable disk records with four scalar lanes for full-reference equivalence; sourceReads/builds are not measured because no lookup factory runs; no query/default/physical-cold acceptance"
+    },
+    "budget-4-128": {
+      "node": "v24.19.0",
+      "files": 128,
+      "lines": 256,
+      "entropyChars": 50000,
+      "recoverUnknown": true,
+      "referenceBatchRows": 4,
+      "batchRows": 128,
+      "sourceBytes": 12800000,
+      "canonicalBytes": 57607981,
+      "retainedGrams": 6397317,
+      "runs": 5,
+      "sourceHashes": {
+        "index-store.ts": "a94652ec580ef03cb34b9bc7c7943657b20aa216972d5d7eb57c69ee811cc681",
+        "index-format.ts": "b6b5848f183a7891cc6581612dac643d2954f554743cbdf4a0ff0fed52fb3ddb",
+        "benchmark": "6233ecc09175f7f8a7d308378930a37b80c173d92c98fd9f35543b5bba32e6ee"
+      },
+      "setupMs": 9935.850548999999,
+      "beforeMedianMs": 2334.1758819999995,
+      "afterMedianMs": 2237.512445999997,
+      "before": [
+        {
+          "ms": 1946.4294800000007,
+          "calls": {
+            "open": 416,
+            "stat": 672,
+            "read": 256,
+            "close": 416
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 1997.6680000000015,
+          "calls": {
+            "open": 416,
+            "stat": 672,
+            "read": 256,
+            "close": 416
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 2334.1758819999995,
+          "calls": {
+            "open": 416,
+            "stat": 672,
+            "read": 256,
+            "close": 416
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 2468.3620630000005,
+          "calls": {
+            "open": 416,
+            "stat": 672,
+            "read": 256,
+            "close": 416
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 2771.696330999999,
+          "calls": {
+            "open": 416,
+            "stat": 672,
+            "read": 256,
+            "close": 416
+          },
+          "batchUnknownRecords": 0,
+          "fallbackReads": 0,
+          "unknownRecords": 0
+        }
+      ],
+      "after": [
+        {
+          "ms": 2233.42901,
+          "calls": {
+            "open": 909,
+            "stat": 1058,
+            "read": 290,
+            "close": 909
+          },
+          "batchUnknownRecords": 108,
+          "fallbackReads": 108,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 2228.443515000001,
+          "calls": {
+            "open": 909,
+            "stat": 1058,
+            "read": 290,
+            "close": 909
+          },
+          "batchUnknownRecords": 108,
+          "fallbackReads": 108,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 2279.1619839999985,
+          "calls": {
+            "open": 909,
+            "stat": 1058,
+            "read": 290,
+            "close": 909
+          },
+          "batchUnknownRecords": 108,
+          "fallbackReads": 108,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 2237.512445999997,
+          "calls": {
+            "open": 909,
+            "stat": 1058,
+            "read": 290,
+            "close": 909
+          },
+          "batchUnknownRecords": 108,
+          "fallbackReads": 108,
+          "unknownRecords": 0
+        },
+        {
+          "ms": 3379.3415110000024,
+          "calls": {
+            "open": 909,
+            "stat": 1058,
+            "read": 290,
+            "close": 909
+          },
+          "batchUnknownRecords": 108,
+          "fallbackReads": 108,
+          "unknownRecords": 0
+        }
+      ],
+      "boundary": "own generated validated records; four leaf lanes on both sides; no persistent fd/cache; OS page cache primed; wrappers add overhead; API-call counts are not kernel syscall counts; unknownRecords count valid disk records skipped by aggregate budgets; recoverUnknown optionally rereads unavailable disk records with four scalar lanes for full-reference equivalence; sourceReads/builds are not measured because no lookup factory runs; no query/default/physical-cold acceptance"
+    }
+  }
+}
