@@ -1,8 +1,8 @@
 // W10 的断言：视野的边界（PLAN § 5.17 的七条判据 · 架构 § 8.11 约束 3）。
 // 跑法：cd ~/fugue && node --test src/tools/w10.test.ts
-// ⑤ 那一条要跨两处工作区（事件联合在代码这一侧、计划在文档那一侧）：
+// ⑤ 那一条：事件联合与架构 § 8.1 两样都在本仓库里，所以缺省就真跑（不跳过）；归档 § 5.18 那一半
+//   住在文档工作区，够不到时脚本自己印一行说没查。要指过去就：
 //   FUGUE_PLAN=/mnt/c/Users/Administrator/Desktop/CodeWish/PLAN-ARCHIVE.md node --test src/tools/w10.test.ts
-//   FUGUE_TOOLS=/mnt/c/Users/Administrator/Desktop/CodeWish/tools （那两份校验脚本在哪）
 //
 //  ① 超上限的回执：头 4 KiB 与尾 4 KiB 逐字是原文的头尾（切点回退到完整字符，半个汉字都没有）；
 //     标记与定死的那句逐字相符，M · N · L 与原文逐个数对得上；回执 ≤ 8 KiB + 标记那一行
@@ -345,23 +345,22 @@ test('④ `exit_plan_mode` / `ask_user_question` 的回执里指的命令在命�
 
 // ── ⑤ 事件面双向对账 ──────────────────────────────────────────────────────────
 
-test('⑤ 事件联合的判别名与归档 § 5.18 那张表逐条相符（`tools/check-events.js`）', async () => {
-  const tools = process.env['FUGUE_TOOLS'] ?? '/mnt/c/Users/Administrator/Desktop/CodeWish/tools'
+test('⑤ 事件联合的判别名与架构 § 8.1 那一段逐条相符（`tools/check-events.js`）', async () => {
   const plan = process.env['FUGUE_PLAN'] ?? '/mnt/c/Users/Administrator/Desktop/CodeWish/PLAN-ARCHIVE.md'
-  const { existsSync } = await import('node:fs')
-  if (!existsSync(`${tools}/check-events.js`) || !existsSync(plan)) {
-    console.log(`⑤ 跳过（跨工作区那两份不在：${tools}/check-events.js · ${plan}）——用 FUGUE_TOOLS / FUGUE_PLAN 指过去`)
-    return
-  }
-  const got = spawnSync('node', [`${tools}/check-events.js`, 'src/log/events.ts', plan], { cwd: process.cwd(), encoding: 'utf8' })
+  const got = spawnSync('node', ['tools/check-events.js', plan], { cwd: process.cwd(), encoding: 'utf8' })
   assert.equal(got.status, 0, `check-events.js 没通过：\n${got.stdout}\n${got.stderr}`)
   // **28 条**：C4 那一格加了 `round/approve`（放行那一笔）——事件面到这里冻住（TUI 的读面）。
+  // 架构那一半**无条件**：事件联合与架构篇两样都在本仓库里（`src/log/events.ts` ·
+  // `design/ARCHITECTURE.md`），所以这一条在任何一台机器上、在 CI 上都真跑。2026-10-01 之前
+  // 两张表都住文档工作区，够不到就整条跳过——那是"静默通过"，不是地板。
   assert.match(got.stdout, /代码里 28 条/, '代码那一侧该是 28 条')
-  assert.match(got.stdout, /计划里 28 条/, '计划那一侧该是 28 条')
-  assert.match(got.stdout, /每一条都在/, '两向都要相符')
-  // 架构 § 8.1 那一份也对着代码数（同一个联合的**第二张**散文表——它漂过一次，少 6 条）
   assert.match(got.stdout, /架构里 28 条/, '架构 § 8.1 那一侧也该是 28 条')
-  console.log(`⑤ 读数：${got.stdout.split('\n').filter((l) => l.includes('条') || l.includes('相符')).map((l) => l.trim()).join(' · ')}`)
+  assert.match(got.stdout, /代码里每一条都在架构那一段里/, '两向都要相符')
+  assert.match(got.stdout, /架构那一段里每一条都在代码里/, '两向都要相符')
+  // 归档那一半（§ 5.18 那张三面表，同一个联合的**第二张**散文表——它漂过一次，漏 7 条）住在
+  // 文档工作区：够得到就查，够不到**印一行说出来**。两条路都断言，不留"什么都不说也通过"的路。
+  assert.match(got.stdout, /(计划里 28 条|归档那张表不在场)/, '归档那一半要么查了，要么说清没查')
+  console.log(`⑤ 读数：${got.stdout.split('\n').filter((l) => l.includes('条') || l.includes('不在场')).map((l) => l.trim()).join(' · ')}`)
 })
 
 // ── ⑥ 交接两句去系统内容 ───────────────────────────────────────────────────────
