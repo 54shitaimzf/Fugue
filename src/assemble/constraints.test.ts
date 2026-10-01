@@ -231,20 +231,26 @@ test('⑤ 正对照：一份干净的输入四条一处都不报', () => {
 /** 一个临时工作区根：项目方针 · 配置 · 一个提交 · 一条 agent 分支（`--agent` 那一栏要它存在）。 */
 function fixtureRoot(tag: string): string {
   const root = mkdtempSync(join(tmpdir(), `fugue-z6-${tag}-`))
-  const seed = join(root, '外头的一份.txt')
-  writeFileSync(join(root, 'AGENTS.md'), '# 项目方针\n\n- 一条方针。\n')
-  writeFileSync(seed, 'seed\n')
-  mkdirSync(join(root, '.fugue'), { recursive: true })
-  writeFileSync(join(root, '.fugue', 'config'), JSON.stringify({ platform: 'linux', workspace: 'fugue', config: { net: 'none' } }))
-  const cli = (...args: string[]): void => {
-    const r = spawnSync(process.execPath, [CLI, '--root', root, ...args], { encoding: 'utf8' })
-    assert.equal(r.status, 0, `fixture 那一步没跑成（${args.join(' ')}）：${r.stderr}`)
+  // 夹具半路挂掉也要收走临时目录：mkdtemp 与调用方的 try 之间那段 setup，是这条漏的洞口。
+  try {
+    const seed = join(root, '外头的一份.txt')
+    writeFileSync(join(root, 'AGENTS.md'), '# 项目方针\n\n- 一条方针。\n')
+    writeFileSync(seed, 'seed\n')
+    mkdirSync(join(root, '.fugue'), { recursive: true })
+    writeFileSync(join(root, '.fugue', 'config'), JSON.stringify({ platform: 'linux', workspace: 'fugue', config: { net: 'none' } }))
+    const cli = (...args: string[]): void => {
+      const r = spawnSync(process.execPath, [CLI, '--root', root, ...args], { encoding: 'utf8' })
+      assert.equal(r.status, 0, `fixture 那一步没跑成（${args.join(' ')}）：${r.stderr}`)
+    }
+    run('git', ['init', '-q'], root)
+    cli('write', 'seed.txt', '--from', seed)
+    cli('commit', '-m', '起点')
+    cli('branch', 'main', '--agent', 'agent-2')
+    return root
+  } catch (err) {
+    rmSync(root, { recursive: true, force: true })
+    throw err
   }
-  run('git', ['init', '-q'], root)
-  cli('write', 'seed.txt', '--from', seed)
-  cli('commit', '-m', '起点')
-  cli('branch', 'main', '--agent', 'agent-2')
-  return root
 }
 
 /** 跑一条外部命令（fixture 建仓库用）。 */
