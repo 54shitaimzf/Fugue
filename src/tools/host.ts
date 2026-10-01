@@ -41,15 +41,15 @@ import type { RefHead } from '../round/head.ts'
 import { isMounted, unmountOverlay } from '../materialize/mount.ts'
 import { matParts } from '../roots/paths.ts'
 import { lowerAt } from '../view/lower.ts'
-import { createCachedWalkDetailed } from './walk.ts'
+import { WALK_LIMITS, createCachedWalkDetailed } from './walk.ts'
 import type { WalkResult } from './walk.ts'
 import type { Reclaim, DeclaredSet } from '../execute/reclaim.ts'
 import type { AbsPath } from '../terms.ts'
 
 /** 走多远就停。**两条都是必须的**：软链穿过去就绕开了路径围栏（§ 8.4 的 `through-symlink`），
  * 而不封顶的深树能把一步走成挂死。 */
-const MAX_DEPTH = 24
-const MAX_ROWS = 5000
+const MAX_DEPTH = WALK_LIMITS.maxDepth
+const MAX_ROWS = WALK_LIMITS.maxRows
 
 /** 落日志与提交要的那一半（读与写视图那一半在 `view` 里）。 */
 export interface HostActions {
@@ -167,6 +167,11 @@ function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Prom
   return (ids) => (fn as (ids: readonly BlobId[]) => Promise<void>).call(truth, ids)
 }
 
+export interface ToolHostHandle extends ToolHost {
+  /** 原有 walk 的同一次遍历，加上不完整枚举的原因；状态不代表遗漏文件数。 */
+  walkDetailed(): Promise<WalkResult>
+}
+
 /**
  * 一份 `ToolHost`。
  *
@@ -174,11 +179,6 @@ function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Prom
  * `roots` 只用来过围栏——**它不拼物理路径**：这一档里文件的字节住在视图的上层，不在物化出来的
  * 那棵树上（`B6` 把"执行前物化"接上时，`bash` 那一条才真的落在树里）。
  */
-export interface ToolHostHandle extends ToolHost {
-  /** 原有 walk 的同一次遍历，加上不完整枚举的原因；状态不代表遗漏文件数。 */
-  walkDetailed(): Promise<WalkResult>
-}
-
 export function createToolHost(view: View, roots: Roots, opts: HostOptions = {}): ToolHostHandle {
   const parts = opts.actions
   const blobIndex = opts.blobIndex

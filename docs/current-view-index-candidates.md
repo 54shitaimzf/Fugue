@@ -1,6 +1,6 @@
 # 当前视图的索引候选相交
 
-对应路线图 0.3.3 的「当前视图文件集合与 immutable blob 索引相交」。
+对应路线图 0.3.3「查询接线：trigram 候选 ∩ 视图 blob 集 → 缓存正则验证」里的**候选 ∩ 视图 blob 集**这一步：当前视图的文件集合与 immutable blob 索引相交。
 `src/search/current-view-candidates.ts` 是独立适配器；显式 host 接线见[查询接线](index-query.md)，
 默认仍关闭，索引构造归 lookup 的生命周期。
 
