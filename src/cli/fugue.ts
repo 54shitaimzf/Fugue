@@ -13,11 +13,12 @@
 // 分发与三个出口（`USAGE` · `driverSupport` · `main`），出口面逐字未动。
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { LogHeldError } from '../log/hold.ts'
 import { LogCorruptError, logDir, openLog } from '../log/log.ts'
 import type { WriterId } from '../terms.ts'
 import { HostError, assertHost } from '../roots/host.ts'
-import { USAGE, UsageError, emitFail, fail, parseArgv, unknownFlagsOf, usageFail } from './shared.ts'
+import { USAGE, UsageError, emitFail, emitJson, emitLine, fail, parseArgv, unknownFlagsOf, usageFail } from './shared.ts'
 import { FLAGS_OF } from './flags.ts'
 export { USAGE } from './shared.ts'
 export { driverSupport } from './cmd/round.ts'
@@ -54,12 +55,25 @@ async function run(argv: readonly string[]): Promise<number> {
   const { flags, positional, rest } = parseArgv(argv)
   const json = flags.has('json')
   const rootFlag = flags.get('root')
-  const root = typeof rootFlag === 'string' ? rootFlag : process.cwd()
   const cmd = positional[0]
 
   // `--help` 是一条成功的命令；什么都不给是用法错——两者的退出码不一样。
   if (flags.has('help')) {
     process.stdout.write(USAGE)
+    return 0
+  }
+  // 安装版本与工作区无关：在落点探测、开日志之前读，只认安装目录里的 package.json。
+  if (flags.has('version')) {
+    const bad = unknownFlagsOf('--version', flags, ['version', 'root', 'json', 'help'])
+    if (bad !== null) return usageFail(bad, json)
+    if (flags.get('version') !== true) return usageFail('--version 不取值', json)
+    if (rootFlag === true || rootFlag === '') return usageFail('--root 需要一个目录值', json)
+    if (positional.length > 0 || rest.length > 0) {
+      return usageFail('--version 单独使用，不接命令或其他参数', json)
+    }
+    const { name, version } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
+    if (json) emitJson({ name, version })
+    else emitLine(`${name} ${version}`)
     return 0
   }
   if (cmd === undefined) return usageFail('需要一个命令', json)
@@ -72,7 +86,8 @@ async function run(argv: readonly string[]): Promise<number> {
   // 落点先探（架构 § 15.7 的 E1）。**E1 是硬要求，所以这里是拒绝启动，不是降级运行**：
   // 落在 9p / drvfs 那一类跨内核的落点上时，失败模式是静默的（§ 15.8 的"不成立"档）。
   // 根还不存在时探它最近的祖先（`host.ts`），所以这条检查不依赖"目录已经建好"；
-  // `--help` 在上面，不受影响。
+  // `--help` 与 `--version` 在上面，不受影响。
+  const root = typeof rootFlag === 'string' ? rootFlag : process.cwd()
   try {
     assertHost(root)
   } catch (err) {
