@@ -13,6 +13,7 @@
 
 ### 技术细节
 
+- **缓存有界的不可变gram知识**：只从受控完整表学习必要项，未知回完整表/扫描；跨完整表LRU的重复查询减少盘解析，独立事实预算与close清理。新/冷query仍有开销，默认索引不启用，见 [知识层说明](docs/index-gram-facts.md)。
 - **复用有限的后台索引Worker**：每句柄有界存量、nonce逐任务关联、失败/取消退休、空闲退出与显式close；准备更快但首miss前台竞争回归仍披露，默认索引继续关闭，见 [复用说明](docs/index-worker-reuse.md)。
 - **减少索引构建的重复字符串分配**：先按48位UTF-16键去重，只为唯一trigram造字符串；canonical记录逐字节不变。增加多样语料对照与分项基准，不默认启用索引，见 [构建说明](docs/index-builder-keys.md)。
 - **接上可选的 blob 增量索引读句柄**：已有不可变 ID 先命中内存/磁盘，新增/损坏先回扫描，再由有限后台 Worker 读原字节重建；有界 LRU、明确 close/超时边界和机制统计。尚未接 grep/默认启用，真实 regex 仍要验证，见 [增量说明](docs/blob-index-lookup.md)。

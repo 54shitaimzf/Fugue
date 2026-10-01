@@ -9,6 +9,8 @@ import type { BlobIndex } from './index-format.ts'
 import { copyIndexSource } from './index-source.ts'
 import { createIndexWorkerPool } from './index-worker-pool.ts'
 import { decodeIndexWorkerReply } from './index-worker-reply.ts'
+import { createIndexFactCache } from './index-gram-facts.ts'
+import type { IndexFactOptions } from './index-gram-facts.ts'
 
 export interface BlobIndexLookup {
   mightContain(blob: BlobId, required: readonly string[]): Promise<boolean | null>
@@ -19,6 +21,8 @@ export interface IndexLookupStats {
   readonly unsavedBuilds: number; readonly scanFallbacks: number; readonly evictions: number
   readonly entries: number; readonly grams: number; readonly serializedBytes: number; readonly pending: number; readonly workers: number
   readonly workerStarts: number; readonly retainedWorkers: number; readonly idleWorkers: number
+  readonly factHits: number; readonly factEntries: number; readonly factKeys: number
+  readonly factLogicalBytes: number; readonly factEvictions: number; readonly factConflicts: number
 }
 export interface IndexLookupHandle extends BlobIndexLookup {
   stats(): IndexLookupStats
@@ -30,6 +34,7 @@ export interface IndexLookupOptions {
   readonly maxRecords?: number; readonly maxGrams?: number
   readonly maxSerializedBytes?: number; readonly maxPending?: number
   readonly maxBuildMs?: number; readonly workerIdleMs?: number; readonly signal?: AbortSignal
+  readonly facts?: IndexFactOptions | false
 }
 interface PreparedIndex { readonly grams: ReadonlySet<number>; readonly serializedBytes: number }
 interface LoadTask {
@@ -60,11 +65,14 @@ export function createBlobIndexLookup(
   const maxBuildMs = limit(options.maxBuildMs, 60_000, 120_000, 'build-time')
   const workerIdleMs = limit(options.workerIdleMs, 10_000, 60_000, 'worker-idle-time')
   const pool = createIndexWorkerPool(selectedRoot, maxPending, workerIdleMs)
+  const factOptions = options.facts === false ? { maxBlobs: 0 } : options.facts
+  // 既有任一保留预算为0时也不偷偷启用第二份保留缓存。
+  const facts = createIndexFactCache(maxRecords === 0 || maxGrams === 0 || maxBytes === 0 ? { maxBlobs: 0 } : factOptions)
   const store = createBlobIndexStore(selectedRoot)
   const cache = new Map<BlobId, PreparedIndex>()
   const pending = new Map<BlobId, LoadTask>()
   const counters = { queries: 0, memoryHits: 0, sharedLoads: 0, diskHits: 0,
-    sourceReads: 0, builds: 0, unsavedBuilds: 0, scanFallbacks: 0, evictions: 0 }
+    sourceReads: 0, builds: 0, factHits: 0, unsavedBuilds: 0, scanFallbacks: 0, evictions: 0 }
   let grams = 0, serializedBytes = 0, closed = false
   let closing: Promise<void> | undefined
 
@@ -173,7 +181,7 @@ export function createBlobIndexLookup(
     closing = (async () => {
       await Promise.all([...pending.values()].map(cancel))
       await pool.close()
-      cache.clear(); grams = 0; serializedBytes = 0
+      cache.clear(); facts.clear(); grams = 0; serializedBytes = 0
     })()
     return closing
   }
@@ -192,11 +200,16 @@ export function createBlobIndexLookup(
         if (typeof gram !== 'string' || gram.length !== 3) { counters.scanFallbacks++; return null }
         keys.push(gramKey(gram))
       }
+      const known = facts.query(blob, keys)
+      if (known !== null) { counters.factHits++; return known }
       const index = await lookup(blob)
-      if (index === null) { counters.scanFallbacks++; return null }
-      return keys.every((key) => index.grams.has(key))
+      if (closed || index === null) { counters.scanFallbacks++; return null }
+      // 只从完整受控表学习；未知/失败/source miss绝不灌入事实缓存。
+      const observations = keys.map((key) => [key, index.grams.has(key)] as const)
+      facts.remember(blob, observations)
+      return observations.every(([, present]) => present)
     },
-    stats() { const workers = pool.stats(); return { workerStarts: workers.starts, retainedWorkers: workers.retained, idleWorkers: workers.idle, ...counters, entries: cache.size, grams, serializedBytes, pending: pending.size, workers: [...pending.values()].filter((task) => task.worker !== undefined && task.worker.threadId !== -1).length } },
+    stats() { const workers = pool.stats(), knowledge = facts.stats(); return { factEntries: knowledge.blobs, factKeys: knowledge.facts, factLogicalBytes: knowledge.logicalBytes, factEvictions: knowledge.evictions, factConflicts: knowledge.conflicts, workerStarts: workers.starts, retainedWorkers: workers.retained, idleWorkers: workers.idle, ...counters, entries: cache.size, grams, serializedBytes, pending: pending.size, workers: [...pending.values()].filter((task) => task.worker !== undefined && task.worker.threadId !== -1).length } },
     async drain() {
       for (;;) { const tasks = [...pending.values()]; if (tasks.length === 0) return; await Promise.all(tasks.map((task) => task.done)) }
     },
