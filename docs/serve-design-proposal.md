@@ -11,7 +11,8 @@
 - 只读 status 与日志尾随不领写者序号、不持有 round.lock；只从既有 git/M0 推导。
 - 变更命令共用既有命令语义，不再做一份 serve 私有状态机。一次变更由同一串行入口执行，
   写句柄整个命令寿命持有该 writer 的栅栏，不是只在 append 时持锁。`round.lock`
-  就是 M0 的 `writer=round` 栅栏（`logFileOf(root, writer) + ".lock"`），**不是另加一把轮锁**。
+  就是 M0 的 `writer=round` 栅栏（`lockFileOf(root, writer)`，即
+  `<root>/.fugue/log/<writer>.lock`——与日志同目录同名、只换后缀），**不是另加一把轮锁**。
   同一已接受写命令不能重复获取这把锁、嵌套打开写句柄，或在命令的多个步骤之间释放后再拿。
   serve 不把所有 writer 变成一个全局写者，也不把进程驻留等同于永久锁定整轮。
 - 同一轮另一个变更请求遇锁返回明确的 busy，不抢锁、不推测锁过期、不绕到直接日志追加。
