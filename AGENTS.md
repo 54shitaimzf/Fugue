@@ -37,7 +37,7 @@ node tools/test-entry.js
 - **real 组**：依赖真实环境的测试，比如要用 `bwrap`、C 编译器 `cc`、真实网络端口或真实文件挂载。
 - **fast 组**：其余所有测试。
 
-运行方式是 `node tools/test-entry.js [all|fast|real]`，不写参数就是 `all`，跑全部测试，CI 用的也是这个。
+运行方式是 `node tools/test-entry.js [all|fast|real]`，不写参数就是 `all`，跑全部测试；CI 的三个 job（见下面 CI 一节）也走这个入口，各自取不同的组。
 
 怎么把一个测试文件标成 real 组？在文件第一行写上 `// tier: real —— …`，后面注明它依赖了什么（bwrap、cc、真实端口、真实挂载等）。没写这行的文件自动归入 fast 组。规则是：
 
@@ -166,11 +166,15 @@ ZZEOF
 
 ### CI
 
-CI 只有一个流程（`.github/workflows/test.yml`）：在 `ubuntu-latest` 上用 Node 24 运行 `node tools/test-entry.js`。
+CI 只有一个流程文件（`.github/workflows/test.yml`），在 `ubuntu-latest` 上用 Node 24 跑，分成三个 job：
 
-**它在分支 push 和 PR 时触发，推送标签时不触发。** 为此配置里必须同时写 `branches: ['**']` 和 `tags-ignore: ['**']`。如果只写 `tags-ignore`，分支的 push 也不会再触发 CI，而且不会有任何提示。
+- **`fast`**：每次 push 和 PR 都跑，只跑 fast 组，**不安装 `bwrap`**——fast 组按定义不碰真依赖，分组判据要是破了，就让它在 CI 上当场红，而不是被安装步骤盖过去。
+- **`full`**：在 PR 上跑，fast 组 + real 组一起，并把每组的墙钟时间存成 artifact `ci-timing`（`if: always()`，红了的那趟也存）。
+- **`audit`**：每晚和手动触发时跑，全量兜底 + 变异审计（在干净树上改一处算子，看测试红不红），**只报不挡**；报告存成 artifact `mutation-audit`。
 
-仓库本身没有依赖，所以 CI 不需要装依赖。流水线里唯一的安装步骤是准备运行环境：安装 `bubblewrap`（Ubuntu 镜像里没有），并解除 Ubuntu 24.04 对非特权用户命名空间的限制。少了这一步，`src/execute/degraded.test.ts` 的第 ④ 个测试会失败。
+**触发规则：**分支 push 和 PR 会触发，推送标签时不触发。为此配置里必须同时写 `branches: ['**']` 和 `tags-ignore: ['**']`。如果只写 `tags-ignore`，分支的 push 也不会再触发 CI，而且不会有任何提示。（这两段理由就写在 `test.yml` 头部，改之前先读。）
+
+仓库本身没有依赖，所以 CI 不需要装依赖。`full` 和 `audit` 里唯一的安装步骤是准备运行环境：安装 `bubblewrap`（Ubuntu 镜像里没有），并解除 Ubuntu 24.04 对非特权用户命名空间的限制。少了这一步，`src/execute/degraded.test.ts` 的第 ④ 个测试会失败。
 
 推送之前，请先在本地用同一条命令跑一遍测试。
 
