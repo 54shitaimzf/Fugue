@@ -13,7 +13,14 @@ import { test } from 'node:test'
 import { tmpDir } from '../../test/helpers/tmp.ts'
 import { waitUntil } from '../../test/helpers/wait.ts'
 import { logDir, openLog } from '../log/log.ts'
-import { kindOf, openTruth, RefConflictError, RefNotCommitError, RefNotFoundError } from './truth.ts'
+import {
+  DEFAULT_BLOB_CACHE_BYTES,
+  kindOf,
+  openTruth,
+  RefConflictError,
+  RefNotCommitError,
+  RefNotFoundError,
+} from './truth.ts'
 import type { TreeEntry } from './contract.ts'
 import type { AgentId, BlobId, CommitId, RefName, WriterId } from '../terms.ts'
 
@@ -247,7 +254,8 @@ test('退化档：批量子进程被杀 → 退回逐次读，读数一个不差
   for (let i = 0; i < 50; i++) ids.push(await writer.putBlob(Buffer.from(`降级 ${i}\n`)))
   await writer.close()
 
-  const t = openTruth(root)
+  // **这一条量的是读档位那一维**，所以把 blob 缓存显式关掉：缓存与退化档并存是格 2 另一条的事。
+  const t = openTruth(root, { blobCacheBytes: 0 })
 
   ctx.after(() => t.close())
   assert.equal((await t.getBlob(ids[0])).toString(), '降级 0\n')
@@ -515,6 +523,204 @@ test('mergeTree：判据是退出码；冲突时不给出 tree', async (ctx) => 
     /退出码 1|not something we can merge/,
     '不存在的提交不是"冲突"，要显式失败',
   )
+  await t.close()
+})
+
+// ────────────────────────────────── blob 缓存与 info 小表（0.2.4）
+
+test('格 2 · blob 缓存：同一 blob 二次 getBlob / readAt → gitRequests 不涨；出口仍是拷贝', async (ctx) => {
+  const root = tmpRoot()
+  const w = openTruth(root)
+  ctx.after(() => w.close())
+  const body = Buffer.from('缓存的那一份\n')
+  const id = await w.putBlob(body)
+  const c = await w.commit(await w.putTree([{ name: 'a.txt', mode: 0o100644, id }]), [], '缓存')
+
+  // 换一个句柄：`putBlob` 顺手回填的那一份不在这个句柄里，读一次才是真的冷读。
+  const t = openTruth(root)
+  ctx.after(() => t.close())
+  const cold = t.stats().gitRequests
+  const first = await t.getBlob(id)
+  const afterFirst = t.stats().gitRequests
+  assert.deepEqual(Buffer.from(first), body, '第一次读要给对字节')
+  assert.equal(afterFirst - cold, 1, `第一次读该有且只有一次 contents 往返，实际 ${afterFirst - cold}`)
+
+  // **第二次读：一个请求都不该发**——判据就是计数器。
+  const again = await t.getBlob(id)
+  assert.equal(t.stats().gitRequests, afterFirst, '同一 blob 二次 getBlob 不该再发请求')
+  assert.deepEqual(Buffer.from(again), body)
+  assert.equal(t.stats().blobHits, 1)
+  assert.equal(t.stats().blobMisses, 1)
+
+  // `readAt` 走的是同一条缓存（同一个 BlobId）。
+  await t.readAt(c, 'a.txt')
+  const afterRead = t.stats().gitRequests
+  await t.readAt(c, 'a.txt')
+  assert.equal(t.stats().gitRequests, afterRead, '同一 blob 二次 readAt 不该再发请求')
+  assert.equal(t.stats().blobHits, 3)
+
+  // **出口仍是拷贝**：调用方改自己手里那份，影响不到后面每一次读（`truth.ts` 那条理由原样成立）。
+  const mine = await t.getBlob(id)
+  mine[0] = 0x58
+  assert.deepEqual(Buffer.from(await t.getBlob(id)), body, '改过手里的字节之后，下一次读还是原样')
+  const two = await t.getBlob(id)
+  const three = await t.getBlob(id)
+  two[1] = 0x59
+  assert.deepEqual(Buffer.from(three), body, '改一份影响不到另一份')
+  assert.deepEqual(Buffer.from(await t.getBlob(id)), body, '也影响不到缓存里那一份')
+  assert.equal(t.stats().blobEntries, 1)
+  assert.equal(t.stats().blobBytes, body.length)
+
+  // 读路径上的每一处都经它：`statAt` 的 info 与 `listAt` 的批量 info 都先查 info 小表。
+  // **先把树那两趟走完再量**（blob 缓存不管 tree/commit，那是 `trees`/`commitTrees` 的事）。
+  await t.readAt(c, 'a.txt')
+  const s0 = t.stats().gitRequests
+  assert.equal(await t.statAt(c, '没有这个'), null)
+  assert.equal(t.stats().gitRequests, s0, '查一条不存在的路径不该发请求')
+
+  // `statAt` 的 info：**第一次问 git 一次，第二次一个请求都不发**。
+  const s1 = t.stats().gitRequests
+  const m1 = await t.statAt(c, 'a.txt')
+  const afterInfo = t.stats().gitRequests
+  assert.equal(afterInfo - s1, 1, `info 第一次该正好问一次，实际 ${afterInfo - s1}`)
+
+  assert.equal(m1?.size, body.length)
+  const m2 = await t.statAt(c, 'a.txt')
+  assert.equal(t.stats().gitRequests, afterInfo, 'statAt 第二次（info 小表热了）不该再发请求')
+  assert.deepEqual({ size: m2?.size, mode: m2?.mode }, { size: body.length, mode: 0o100644 })
+
+  // `listAt` 的批量 info：同一个目录第二次列，一个请求都不发。
+  const l1 = await t.listAt(c, '')
+  assert.equal(l1.length, 1)
+  const afterList = t.stats().gitRequests
+  const hitsAfterFirstList = t.stats().infoHits
+  await t.listAt(c, '')
+  assert.equal(t.stats().gitRequests, afterList, 'listAt 第二次不该再发请求')
+  assert.equal(t.stats().infoHits, hitsAfterFirstList + 1, '第二趟 listAt 走的是缓存')
+  assert.equal(t.stats().infoMisses, 1, 'info 只问过 git 一次')
+  assert.equal(t.stats().infoEntries, 1, 'a.txt 的 info 只有一条')
+  assert.equal(t.stats().blobCacheBytes, DEFAULT_BLOB_CACHE_BYTES, '缺省容量就是那个常数')
+  await t.close()
+})
+
+test('格 2 · 容量 0 是直通：与改前同款行为（每次读都发请求），出口纪律不变', async (ctx) => {
+  const root = tmpRoot()
+  const w = openTruth(root)
+  ctx.after(() => w.close())
+  const one = await w.putBlob(Buffer.from('甲\n'))
+  const two = await w.putBlob(Buffer.from('乙\n'))
+  const c = await w.commit(
+    await w.putTree([
+      { name: 'a.txt', mode: 0o100644, id: one },
+      { name: 'b.txt', mode: 0o100644, id: two },
+    ]),
+    [],
+    '容量 0',
+  )
+
+  const t = openTruth(root, { blobCacheBytes: 0 })
+  ctx.after(() => t.close())
+  assert.equal(t.stats().blobCacheBytes, 0)
+  const start = t.stats().gitRequests
+  await t.readAt(c, 'a.txt')
+  const warm = t.stats().gitRequests
+  await t.readAt(c, 'a.txt')
+  await t.getBlob(two)
+  assert.equal(t.stats().gitRequests - warm, 2, '容量 0：两次读就是两次 blob contents 往返（与改前同款）')
+  assert.ok(t.stats().gitRequests - start >= 3, '第一次读还要走一遍提交与根树')
+
+  // 与缺省档对照：**同一串读，少一次往返**，其余一模一样。
+  const warmReads = t.stats().gitRequests - warm
+  const def = openTruth(root)
+  ctx.after(() => def.close())
+  await def.readAt(c, 'a.txt')
+  const defWarm = def.stats().gitRequests
+  await def.readAt(c, 'a.txt')
+  await def.getBlob(two)
+  assert.equal(def.stats().gitRequests - defWarm, warmReads - 1, '缺省档比容量 0 少一次往返：a.txt 命中缓存')
+  assert.equal(t.stats().blobEntries, 0)
+  assert.equal(t.stats().blobBytes, 0)
+  assert.equal(t.stats().blobHits, 0)
+  assert.equal(t.stats().blobMisses, 3, '每一次未命中都记在账上')
+
+  const mine = await t.getBlob(one)
+  mine[0] = 0x58
+  assert.deepEqual(Buffer.from(await t.getBlob(one)), Buffer.from('甲\n'), '出口仍是独立的一份')
+
+  // info 小表**不跟着 blob 容量走**：它没有"关掉"这一档（条目几十字节，先例不设上限），
+  // 所以在容量 0 的档位上它照常省往返——这是有意的，不是漏掉。
+  const one1 = await t.statAt(c, 'a.txt')
+  const infoStart = t.stats().gitRequests
+  const one2 = await t.statAt(c, 'a.txt')
+  assert.equal(t.stats().gitRequests, infoStart, 'info 小表与 blob 缓存容量无关')
+  assert.equal(one2?.size, one1?.size, '读出来的形状还得是那一份')
+  await t.close()
+})
+
+test('格 2 · 超大单条不缓存：存量一个字节都不动；`putBlob` 顺手回填的那一份读得回来', async (ctx) => {
+  const root = tmpRoot()
+  const t = openTruth(root, { blobCacheBytes: 64 })
+  ctx.after(() => t.close())
+  const small = await t.putBlob(Buffer.from('小\n'))
+  const huge = await t.putBlob(Buffer.from('大'.repeat(200)))
+  assert.equal(t.stats().blobCacheBytes, 64)
+  assert.equal(t.stats().blobEntries, 1, '放得下的那一条在缓存里')
+  assert.equal(t.stats().blobBytes, Buffer.byteLength('小\n'))
+  // **回填是顺手做的**：这一条刚写出来的 blob 读回来不该再发请求。
+  const before = t.stats().gitRequests
+  assert.deepEqual(Buffer.from(await t.getBlob(small)), Buffer.from('小\n'))
+  assert.equal(t.stats().gitRequests, before, 'putBlob 回填之后读它不该发请求')
+
+  const start = t.stats().gitRequests
+  assert.deepEqual(Buffer.from(await t.getBlob(huge)), Buffer.from('大'.repeat(200)))
+  assert.equal(t.stats().gitRequests - start, 1, '放不下的那一条照旧问 git')
+  assert.equal(t.stats().blobEntries, 1, '它不该把小的那条挤掉')
+  assert.equal(t.stats().blobBytes, Buffer.byteLength('小\n'))
+  await t.close()
+})
+
+test('格 2 · 不存在的对象不缓存：后来写出来的那个 blob 照样读得到', async (ctx) => {
+  const root = tmpRoot()
+  const t = openTruth(root)
+  ctx.after(() => t.close())
+  // 先问一个一定不在的对象（全零 oid）：报错是应当的，而**"不在"这件事不许被记下来**。
+  const ghost = '0'.repeat(40) as BlobId
+  await assert.rejects(() => t.getBlob(ghost), /不见了/)
+  const later = await t.putBlob(Buffer.from('后来才写\n'))
+  const after = t.stats().gitRequests
+  assert.deepEqual(Buffer.from(await t.getBlob(later)), Buffer.from('后来才写\n'))
+  assert.equal(t.stats().gitRequests, after, '回填之后读它不该发请求')
+  assert.equal(t.stats().blobEntries, 1, '只有真读到的那一条在缓存里')
+  await t.close()
+})
+
+test('格 2 · 批量子进程被 SIGKILL 之后，缓存与退化档并存：读数一个不差', async (ctx) => {
+  const root = tmpRoot()
+  const w = openTruth(root)
+  ctx.after(() => w.close())
+  const ids: BlobId[] = []
+  for (let i = 0; i < 8; i++) ids.push(await w.putBlob(Buffer.from(`降级缓存 ${i}\n`)))
+  await w.close()
+
+  const t = openTruth(root)
+  ctx.after(() => t.close())
+  assert.equal(Buffer.from(await t.getBlob(ids[0])).toString(), '降级缓存 0\n')
+  const kids = gitChildren()
+  assert.equal(kids.length, 1, `应当恰好有一个 cat-file 子进程在跑，实际 ${kids.length}`)
+  process.kill(kids[0], 'SIGKILL')
+  await waitUntil(() => gitChildren().length === 0, 10_000, '被 SIGKILL 的 cat-file 子进程退场')
+
+  for (let i = 1; i < 8; i++) {
+    assert.equal(Buffer.from(await t.getBlob(ids[i])).toString(), `降级缓存 ${i}\n`, `第 ${i} 个`)
+  }
+  assert.equal(t.stats().readTier, 'oneshot', '批量子进程死了之后应当报逐次读')
+  assert.equal(t.stats().gitSpawns, 1 + 7, '退化之后每个未命中的读各起一个进程——变慢，不是跑不起来')
+  // **缓存就在退化档底下照常工作**：命中过的那些一条进程都不再起。
+  const before = t.stats().gitSpawns
+  for (let i = 0; i < 8; i++) {
+    assert.equal(Buffer.from(await t.getBlob(ids[i])).toString(), `降级缓存 ${i}\n`)
+  }
+  assert.equal(t.stats().gitSpawns, before, '退化档第二次读全部命中缓存，一个进程都不再起')
   await t.close()
 })
 
