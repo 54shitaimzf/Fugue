@@ -14,7 +14,7 @@
 //      原文里的 `\x1b` 印成 `^[`（显示改了，原文一个字节不改）。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { widthOf } from './glyph.ts'
+import { cutAt, widthOf } from './glyph.ts'
 import {
   EMPTY_DRAFT,
   INPUT_ROWS,
@@ -295,4 +295,27 @@ test('② 宽字符提前折行：光标在下一簇前时跟到下一行，不�
   // 最后一行没有下一簇可移到下一行：未占满时仍留在内容末尾。
   assert.deepEqual(inputFrameOf({ e: typed('abc'), prompt: '> ', width: 6 }).caret, { row: 0, col: 5 })
   assert.deepEqual(inputFrameOf({ e: typed('abcd'), prompt: '> ', width: 6 }).caret, { row: 1, col: 2 })
+})
+
+test('长输入硬折行：逐簇单趟结果与原来的逐段切法一致，空格与原文不丢', () => {
+  const samples = ['', ' abc  中文 👨‍👩‍👧 e\u0301 🇨🇳 👍🏽 '.repeat(15), 'x'.repeat(600), '\u0301abc中文', 'a\tb\n中']
+  for (const text of samples) {
+    const e = typed(text)
+    const display = displayOf(e.draft)
+    for (const width of [1, 2, 3, 4, 7, 80]) {
+      const reference: string[] = []
+      let rest = display
+      while (rest !== '') {
+        const cut = cutAt(rest, width)
+        reference.push(rest.slice(0, cut))
+        rest = rest.slice(cut)
+      }
+      if (reference.length === 0) reference.push('')
+      const f = inputFrameOf({ e, prompt: '', width, rows: display.length * 2 + 2 })
+      // 满行的末尾光标可能需要额外空行；它不改变非空内容。
+      assert.deepEqual(f.rows.filter((r) => r !== ''), reference.filter((r) => r !== ''))
+      assert.equal(f.rows.join(''), display)
+      assert.equal(submitOf(e), text)
+    }
+  }
 })
