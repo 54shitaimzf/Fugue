@@ -19,7 +19,6 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { RendererId, SegmentId, SegmentValue, Zone } from '../src/assemble/contract.ts'
@@ -34,18 +33,11 @@ import { render } from '../src/assemble/render.ts'
 const REPO = fileURLToPath(new URL('..', import.meta.url))
 
 /**
- * 文档工作区：它**不在这台机器上**（NTFS，架构 § 6 那张表），所以三处候选逐个试。
- * 一个都够不到时，下面第二、第四两节里的"与架构对照"那几条**报出来并跳过**——模式与 S2 的
- * "宿主上那个二进制不在"同一档：缺的是取证的那一半，不是这一跑。
+ * 架构篇**住在本仓库里**（`design/ARCHITECTURE.md`，2026-10-01 从文档工作区搬入）——
+ * 所以不再有"三处候选逐个试"那一套。`FUGUE_ARCH` 指到别处、或那一份不在时，
+ * 下面第二、第四两节里的"与架构对照"那几条**报出来并跳过**：缺的是取证的那一半，不是这一跑。
  */
-const DOCS_CANDIDATES = [
-  join(REPO, '..', 'CodeWish'),
-  '/mnt/c/Users/Administrator/Desktop/CodeWish',
-  join(homedir(), 'Desktop', 'CodeWish'),
-]
-const docsHit = DOCS_CANDIDATES.find((p) => existsSync(join(p, 'ARCHITECTURE.md')))
-const DOCS = process.env.FUGUE_DOCS ?? docsHit ?? DOCS_CANDIDATES[1]
-const ARCH = join(DOCS, 'ARCHITECTURE.md')
+const ARCH = process.env.FUGUE_ARCH ?? join(REPO, 'design', 'ARCHITECTURE.md')
 const haveArch = existsSync(ARCH)
 
 let failed = 0
@@ -262,7 +254,7 @@ if (haveArch) {
     '凝聚前最近几次原文',
   ])
 } else {
-  note(`架构那两份表没对照：够不到 ${ARCH}（试过 ${DOCS_CANDIDATES.join(' · ')}）`)
+  note(`架构那两份表没对照：够不到 ${ARCH}`)
 }
 {
   // 持轮者独占的那两段只该在 `HOLDER_B` 里出现一次：两份 B 区段表的交集就是它们共用的那四段，
@@ -354,14 +346,17 @@ eq('两份声明的版本号', [SUBAGENT_PROTOCOL.version, HOLDER_PROTOCOL.versi
   {
     // 第二个证人：能力表与目录是**各自独立**声明的两份名字域（这一份不 import 目录）。
     // 它们同名同数，是「名字的域 == § 8.10 那张表」在两处各自成立，不是一处回声。
-    const capNames = ['view', 'execute', 'truth', 'orchestrate', 'log'].flatMap((l) => namesOn(l as Layer))
+    const capNames = ['view', 'execute', 'truth', 'log'].flatMap((l) => namesOn(l as Layer))
     sameNameSet('能力表那份名字与目录同名同数', capNames, [...TOOL_NAMES], ['能力表里的', '目录里的'])
   }
-  eq('工具目录的个数', TOOL_NAMES.length, 15)
+  // **12 个**：撤掉的委派那一族（`subagent` · `list_agents` · `send_message`）不进目录——今天契约
+  // 由 harness 派，不由主 agent 派，它们没有生产者（归档 § 5.24 的「撤」）。要立起来是另一件事，
+  // 见未来那一份文档。这四个层名与 `Layer` 逐字相同。
+  eq('工具目录的个数', TOOL_NAMES.length, 12)
   eq('工具目录进的是 `toolCatalog`，不是段序', [
     SUBAGENT_PROTOCOL.toolCatalog.length,
     SUBAGENT_PROTOCOL.segmentOrder.includes('工具目录' as SegmentId),
-  ], [15, false])
+  ], [12, false])
 }
 {
   const used = new Set(Object.values(SUBAGENT_PROTOCOL.renderers))
