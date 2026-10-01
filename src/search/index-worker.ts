@@ -10,7 +10,7 @@ parentPort?.on('message', async ({ blob, bytes, temporaryId }) => {
   active = true
   try {
     const result = await store.rebuild(blob, bytes, temporaryId)
-    if (result.index === null) parentPort?.postMessage({ ok: false, temporaryId })
+    if (result.index === null) parentPort?.postMessage({ ok: false, temporaryId, unindexable: result.unindexable === true })
     else {
       const keys = Float64Array.from(result.index.tables.trigrams, (gram) =>
         gram.charCodeAt(0) * 0x1_0000_0000 + gram.charCodeAt(1) * 0x1_0000 + gram.charCodeAt(2))

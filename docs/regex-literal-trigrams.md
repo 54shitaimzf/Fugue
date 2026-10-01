@@ -6,6 +6,9 @@
 `requiredLiteralTrigrams(pattern, flags)` 只在能证明每个真匹配都必须包含某段 literal 时，
 返回非空的三元组条件；无法证明返回 `null`，后续调用方必须回到完整扫描。
 它接受的是 `new RegExp(pattern)` 的模式字符串，不是 `/…/flags` 形式的代码。
+`flags` **必传、没有缺省值**，而且必须从编译这条 RegExp 的同一处传进来：全部安全性建立在
+「任何 flags 都退回 `null`」之上，而 `i` 是致命的（`/hello/i` 匹配 `"HELLO"`，但 `hel` 不是
+`"HELLO"` 的子串）。漏传的实参是 `undefined`，当场退回扫描，而不是替调用方声称「没有 flags」。
 
 ## 支持与退回
 
@@ -17,8 +20,14 @@
 - 最多返回 128 个去重、有序的必需三元组。只选一个必需子集仍安全，少取只会多扫，不会漏掉真匹配
 
 三元组按解码后的 JavaScript UTF-16 code units 取，不按 UTF-8 原始字节或 Unicode code points。
-这与索引格式和现有 `Buffer.toString('utf8')` / `RegExp` 相同。emoji 的 surrogate 边界和非法 UTF-8
+这与现有 `Buffer.toString('utf8')` / `RegExp` 的解码口径相同。emoji 的 surrogate 边界和非法 UTF-8
 的替代字符都保留这个口径；JSON 可以表示三元组里的孤立 surrogate，不另外做 NFC 等归一化。
+
+**索引落盘格式尚不存在**（路线图 0.3.1），所以这里不能声称「与索引格式相同」。接线的前置
+条件是它采用同一字母表：若索引按 UTF-8 字节切 gram，本模块产出的含孤立 surrogate 的
+3-code-unit 三元组（测试里 `'\ud800abc'` / `'abc\udc00'` 这一档）就会变成永远匹配不上的
+**假必需条件**，直接导致漏命中——那就不得接线。这条口径要在 0.3.1 定格式时当成输入，
+而不是接线时才发现的冲突。
 
 ## 调用方纪律
 
@@ -34,5 +43,13 @@ node tools/test-entry.js fast src/search/regex-literal.test.ts
 ```
 
 测试包含字面量/锚点/转义标点、可省末字、选择、lookaround/flags/反向引用的退回、
-emoji/替代字符/孤立 surrogate、工作预算，以及 3,000 个固定种子的 matcher ⇒ gram 包含矩阵。
+漏传 flags 必须退回扫描、emoji/替代字符/孤立 surrogate、工作预算（阈值直接 import 常量，
+不写字面量），以及两个固定种子的矩阵：
+3,000 轮的「整段转义 literal ⇒ 命中行含全部必需 gram」（验不多取），以及 2,000 轮的
+**对抗矩阵**——直接拼提取器会接受的 token（转义标点 + 内外锚点），subject 从那段 literal
+变异而来（删一个 · 换一个 · 插一个 · 加前后缀；纯随机串几乎永不命中，断言会空跑），
+只检命中的那些，并对接受数与真正命中的 subject 数都下了非空跑断言
+（本机读数：2,000 轮全部被接受，26,191 个命中 subject 进了 gram 断言）。
+另有一条结构化的插入测试：往一段已接受的 literal 的 7 个位点各插 11 种元字符，全部必须
+退回扫描——它替掉了原先只靠手写清单覆盖的几个点位。
 null 的未实现接缝负对照抓住了正向字面量与 Unicode 条件的缺口；不以速度常数作断言。
