@@ -17,6 +17,7 @@
 - **测试入口支持点名文件**：`node tools/test-entry.js fast src/a.test.ts …`——只跑点名的那些（必须落在所选档里，点错当场红）。预筛那一趟走的就是它，仍是同一条路。审计报告 schema 1 → 2（`killedBy` · `prefilterKilled` · `laneRuns` · `priority` 等）。
 - **这份日志统一骨架**：历史版本段（0.1.0–0.2.4）按「类型分节 · 条目动词开头 · 结尾对比链接」重排；所有数字、链接、日期、命令原样，改前/改后的事实清单见提交序列；六份 Release 正文同步更新。
 - 快档补上两处判据：测试夹具半路挂掉也收走临时目录（PR [#17](https://github.com/54shitaimzf/Fugue/pull/17)）· 两条错误信息格式的断言（PR [#18](https://github.com/54shitaimzf/Fugue/pull/18)）。
+- **设计文档搬进仓库**：架构篇 · 版本路线图 · 目标总表 · 随笔《Agent 重架构》从文档工作区搬进 `design/`，跟着代码走——此前仓库 `AGENTS.md` 的「提交信息要求」要求写明"对应架构文档里的哪条要求"，而那一篇在任何一台别的机器上都够不到。落地计划 · 归档 · 工作区约定留在文档工作区（判据是"读者是谁"：进仓库的是读者不是我们的那几份）。`tools/check-targets.js` 随架构篇与目标篇搬进仓库、改读 `design/`；`tools/probe-assemble.ts` 的三处候选路径表删掉。
 
 ## [0.2.4] - 2026-10-01
 
