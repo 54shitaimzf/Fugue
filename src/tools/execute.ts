@@ -19,7 +19,7 @@ import type { Capability, Denied } from '../capability/table.ts'
 // 不 import 视图那边——这一层的头注写着"不认识视图"，而这条规矩两层共用，所以它有一条自己的家。
 import { PathShapeError } from '../path-shape.ts'
 import { lineCount } from './receipt.ts'
-import { textWindowOf, numberedWindowOf } from './read-window.ts'
+import { textWindowOf, numberedWindowOf, windowNoteOf } from './read-window.ts'
 import type { ReadWindow, ReadText } from './read-window.ts'
 import type { WalkResult } from './walk.ts'
 import { SearchRows, searchLines, SEARCH_PREFETCH_ROWS, SEARCH_PREFETCH_MAX_ROWS } from './search-receipt.ts'
@@ -365,12 +365,19 @@ const readFace: ToolFn = async (args, host) => {
       got = raw === null ? null : { ...textWindowOf(raw.bytes, window), mode: raw.mode }
     }
     if (got === null) return no(`no ${path} in the view (unreadable reads as absent — this layer does not tell the two apart).`)
-    return ok(`${path} (${got.byteLength} bytes · ${got.lines} lines · mode ${got.mode.toString(8)})\n${numberedWindowOf(got, offset)}`)
+    // **头里点出窗口**（`windowNoteOf`）：头里那两个数是整文件的，而截断标记里那两个是这一条
+    // 回执的——不点明的话一条回执里就有两套各差一倍的数，谁都不知道哪个说的是哪件事。
+    return ok(
+      `${path} (${got.byteLength} bytes · ${got.lines} lines · mode ${got.mode.toString(8)}${windowNoteOf(got, offset)})\n` +
+        numberedWindowOf(got, offset),
+    )
   }
   const got = await host.readBytes(path)
   if (got === null) return no(`no ${path} in the view (unreadable reads as absent — this layer does not tell the two apart).`)
   const body = utf8Of(got.bytes)
   // 整文件读保持原样：统计和回执截断仍用 receipt.ts 的共同口径。
+  // **这一档不带行号**，所以目录里那句描述只许把行号挂在切片那一档上（架构 § 8.10 只公布能
+  // 兑现的选项）——两种格式混在一个 `read` 里的时候，模型拿到的 `old_string` 就带着 `N\t`。
   const lines = lineCount(body)
   return ok(
     `${path} (${got.bytes.byteLength} bytes · ${lines} lines · mode ${got.mode.toString(8)})\n${body}`,
@@ -413,8 +420,42 @@ const readImageFace: ToolFn = async (args, host) => {
 }
 
 /**
- * 走一遍树。**走法归宿主**（`walk`）：它知道哪些行是目录、哪些是软链、能走多深。这一层只
- * 拿结果去配 `glob` 的语法（`**` 要不要跨 `/` 是模式那边的事）。
+ * 发现类那两条工具的**范围**：一条相对路径，可以指目录（含其后代），也可以直接指一条文件。
+ *
+ * **尾斜杠在这里归一掉**：`path: 'src/'` 不归一的话 `dir + '/'` 成了 `'src//'`、`path === dir`
+ * 也不成立，候选集于是是空集。而空集在发现类工具上**看起来只是"真没有"**——一个字的错都不报。
+ */
+function scopeOf(raw: string | null, fallback: string): string {
+  return (raw ?? fallback).replace(/\/+$/, '')
+}
+
+/** 这条路径在范围里吗。空范围 = 整个视图；范围指到一条文件时它自己也算在内。 */
+function inScope(path: string, dir: string): boolean {
+  return dir === '' || path === dir || path.startsWith(dir + '/')
+}
+
+/**
+ * 路径模式**在范围内也配一次**（视图根相对的那一份之外）。
+ *
+ * `path: 'src'` 或 `cwd: 'src'` 之下，模型给的最自然的那个模式是 `*.ts`——它说的是"范围里的
+ * 文件名"，而视图根相对的路径是 `src/a.ts`，`^[^/]*\.ts$` 配不上。这一条坑在 `glob` 工具上
+ * 真烧过一格（见 `globToRe` 的注释：模型先 `find` 看见 `./count.ts`，再用惯常模式问 `glob`
+ * 拿到空列表，四步全在 `find`/`ls`，写 0 条），而且**这一条不报错**。
+ *
+ * 两边取并：既认"从视图根看是这样"，也认"从范围里看是这样"。
+ */
+function matchesInScope(re: RegExp, path: string, dir: string): boolean {
+  if (re.test(path)) return true
+  return dir !== '' && path.length > dir.length && re.test(path.slice(dir.length + 1))
+}
+
+/**
+ * 走一遍树**并带回这一趟枚举全不全**。
+ *
+ * 详细读口（`walkDetailed`）在场时它说得出"碰了哪个上限"；不在场时**完整性是"不知道"**
+ * （`known: false`），不是"完整"——回执那一层据此说 `Enumeration completeness unavailable`，
+ * 而不是替一次没做过的枚举打包票。生产宿主（`createToolHost`）一定带这个读口，`known: false`
+ * 那一支只有旧宿主与夹具走得到。
  */
 async function searchWalk(host: ToolHost): Promise<{ readonly paths: readonly string[]; readonly coverage: SearchCoverage }> {
   if (host.walkDetailed !== undefined) {
@@ -424,23 +465,30 @@ async function searchWalk(host: ToolHost): Promise<{ readonly paths: readonly st
   return { paths: await host.walk(), coverage: { known: false, truncated: false, limits: [] } }
 }
 
+/**
+ * 走一遍树。**走法归宿主**（`walk`）：它知道哪些行是目录、哪些是软链、能走多深。这一层只
+ * 拿结果去配 `glob` 的语法（`**` 要不要跨 `/` 是模式那边的事）。
+ */
 const globFace: ToolFn = async (args, host) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('glob', 'pattern')
-  const dir = text(args, 'path') ?? ''
+  const dir = scopeOf(text(args, 'path'), '')
   const all = await searchWalk(host)
   const re = globToRe(pattern)
+  // **路径匹配一个文件都不读**：枚举完整时命中总数是白捡的，所以先数出来、再截前缀。
+  // 丢掉它就等于把可知的数说成 unknown，而模型最需要的恰好是"一共匹配 5000 条、我该收紧"。
+  const hit = all.paths.filter((path) => inScope(path, dir) && matchesInScope(re, path, dir))
   const rows = new SearchRows()
-  for (const path of all.paths) {
-    if ((dir === '' || path.startsWith(dir + '/')) && re.test(path) && !rows.add(path)) break
-  }
-  return ok(rows.render('paths',`no path matches ${pattern}.`,all.coverage))
+  for (const path of hit) if (!rows.add(path)) break
+  // 枚举自己不全（或完整性未知）的时候 `hit.length` 不是总数，那一档仍然不报。
+  const total = all.coverage.known && !all.coverage.truncated ? hit.length : null
+  return ok(rows.render('paths',`no path matches ${pattern}.`,all.coverage,total))
 }
 
 const grepFace: ToolFn = async (args, host, ctx) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('grep', 'pattern')
-  const dir = text(args, 'path') ?? ctx.cwd
+  const dir = scopeOf(text(args, 'path'), ctx.cwd)
   const mode = args.output_mode === undefined ? 'content' : args.output_mode
   if (mode !== 'content' && mode !== 'files_with_matches' && mode !== 'count') {
     return no('grep output_mode must be content, files_with_matches, or count.')
@@ -457,8 +505,7 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   const pathPattern = typeof args.glob === 'string' ? globToRe(args.glob) : null
   const walked = await searchWalk(host)
   const all = walked.paths.filter(path =>
-    (dir === '' || path === dir || path.startsWith(dir + '/')) &&
-    (pathPattern === null || pathPattern.test(path)),
+    inScope(path, dir) && (pathPattern === null || matchesInScope(pathPattern, path, dir)),
   )
   // 只预取筛后的候选。可选口缺席时仍逐文件读；失败仍由真源读口报出。
   let prefetch: ((paths: readonly string[]) => Promise<void>) | undefined

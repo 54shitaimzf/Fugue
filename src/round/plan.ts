@@ -245,7 +245,7 @@ function holderRefusalOf(name: string, planPath?: RelPath): string | undefined {
  * 搬去了那一份**：两格念同一个数、同一处减法，只有这半句不同——持轮者要的是那份草案，契约那一格
  * 要的是产物落下去（`driver.ts` 的 `AGENT_LAND_NOW`）。
  */
-const HOLDER_LAND_NOW =
+export const HOLDER_LAND_NOW =
   'Write the draft now — landing one section is enough to start, but every key that section needs must be there.'
 
 /** `holderFace` 的那一栏：模型说了"预备态做完了"那一下，以及**这一趟的写入面**（拒的话要指得出它）。 */
