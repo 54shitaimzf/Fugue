@@ -311,7 +311,7 @@ WBASE=$(head_tree "$W")
 check "持轮者靶子的底树" "40" "$(printf %s "$WBASE" | wc -c | tr -d ' ')"
 
 # 地板那一档：**照夹具那份 `scenario.json` 搭**（base 铺开 + 一个提交 + 那三条配置）——`round run
-# --wire-in` 绑的就是录制那一版的请求字节，多设一条配置 A 区就变了（这正是它该有的牙）。
+# --wire-in` 绑的就是录制那一版的请求字节，多设一条配置 A 区就变了（这正是它该有的判据）。
 mkdir -p "$FW/.git/info"
 printf '.fugue/\n' > "$FW/.git/info/exclude"
 node -e '
@@ -464,7 +464,7 @@ else
   check "⑤ 处境照旧" "Planning" "$(laststate)"
   check "⑤ 门停着：日志里 contract/issue 条数" "0" "$(logcount 'contract/issue')"
   # 会话记录那两份是 ① 写下的（人那句 + 持轮者那段理解）；预备态那一趟**一份都不写**——这一句
-  # 原话在日志里出现 0 次（"不另存"的牙）。它在视图里，不在工作树上。
+  # 原话在日志里出现 0 次（"不另存"的判据）。它在视图里，不在工作树上。
   check "⑤ 会话记录只被 ① 写过（人 + 持轮者两笔）" "2" "$(node "$T/s9.js" writes "$W/.fugue/log/round.jsonl" '.fugue/session/r1.jsonl')"
   check "⑤ 那句原话不落日志" "0" "$(loghas '为什么这么拆再写清楚一点')"
 fi

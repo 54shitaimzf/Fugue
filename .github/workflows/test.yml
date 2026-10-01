@@ -117,7 +117,7 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: node --version && git --version && bwrap --version
       - run: node tools/test-entry.js all
-      # 变异审计：把源码里的一处算子改掉，看快档红不红——不红的那一处就是"这条断言没牙"。
+      # 变异审计：把源码里的一处算子改掉，看快档红不红——不红的那一处就是"这个变异存活了"。
       # **全量兜底红了也照跑**：它的产出是报告，不是门。口径（靶子 · 算子 · 时限 · 轮转）在
       # tools/mutation-audit.js 顶上；`--budget-ms` 到点就停，跑多少算多少、剩下的如实报。
       - if: always()

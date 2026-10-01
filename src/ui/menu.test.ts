@@ -81,7 +81,7 @@ test('① 菜单里的命令集合与 `FLAGS_OF` 的键集合逐字相同（负�
     colOf(mixed[1] as string, '说明二'),
     `说明该起在同一显示列（量的是宽度，不是字符数）：${JSON.stringify(mixed)}`,
   )
-  // **负对照**：手抄一份"看着像那么回事"的目录（上一版那种写法）与表当场对不上——那把尺的牙。
+  // **负对照**：手抄一份"看着像那么回事"的目录（上一版那种写法）与表当场对不上——这把尺抓得住。
   const handWritten = ['log', 'status', 'watch', 'tui', 'doctor']
   assert.notDeepEqual(handWritten, keys, '手抄那一份与表对不上')
   const missing = keys.filter((k) => !handWritten.includes(k))

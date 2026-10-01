@@ -663,7 +663,7 @@ test('⑫ `--agent` 那一档与界面「切过去」读的是同一批行（T8�
   )
   assert.deepEqual(viaFlag, viaUi, '命令面那一档与界面那一档不是同一份读数')
   const whole = await readings(fake, {})
-  assert.notDeepEqual(whole, viaUi, '负对照：整份账那一档与只读那一格那一档相同——那这一条没有牙')
+  assert.notDeepEqual(whole, viaUi, '负对照：整份账那一档与只读那一格那一档相同——那这一条就抓不住')
   assert.notDeepEqual(viaFlag, whole, '同一句的另一种说法：滤过的那一份与整份账不同')
   console.log(
     '⑫ 读数：--agent 那一档与界面切过去那一档逐字段相同（' +

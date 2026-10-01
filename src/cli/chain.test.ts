@@ -433,7 +433,7 @@ test('--dump-wire 的守卫：落在工作区里当场拒（并给出两条路�
 //
 // 夹具是**真响应**（`src/cli/__fixture__/wire-in/`·录的那一趟：`写一份 notes.md` · 一格 ·
 // `--max-steps 4` · 三份调用 · 停因**收敛**）。`scenario.json` 是录制那个工作区的全部输入——
-// 回放要照着搭同一个工作区，工作区不同则前缀不同，而前缀不同就会当场拒（这正是它该有的牙）。
+// 回放要照着搭同一个工作区，工作区不同则前缀不同，而前缀不同就会当场拒（这正是它该有的判据）。
 const WIRE_IN_DIR = fileURLToPath(new URL('./__fixture__/wire-in/', import.meta.url))
 
 interface WireScenario {

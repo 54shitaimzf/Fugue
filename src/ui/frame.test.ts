@@ -7,7 +7,7 @@
 //      是 `width`（框对得上，中日韩宽字符那把尺没错）。
 //   ② **负对照 · 左栏**：账里多一条 `round/state`（一条图上真的走得到的边）→ 左栏变、
 //      **右栏逐字节不变**；账尾那条会动——它是全账的读数，不属于任何一栏（那一栏的分工就写在
-//      `frame.ts` 的头注里，这一条是它的牙）。
+//      `frame.ts` 的头注里，这一条是它的判据）。
 //   ③ **负对照 · 右栏**：账里多一条 `merge/attempt`（冲突 2）→ **左栏逐字节不变**、右栏变。
 //   ④ **两栏都动的那一条也是对的**：多一次 `llm/call` → 两栏都变（调用次数在左栏"每一格"与
 //      右栏"用量"各有一处口径）。它说明两栏不是按事件类型分的，是按**读法**分的。
@@ -290,7 +290,7 @@ test('⑦ `windowOf`：装得下就全印 · 选中的一定在窗里 · 上下�
   assert.deepEqual(windowOf(30, 15, 4), { from: 14, count: 3, above: 14, below: 13, summary: true }, '中间那一条')
   assert.deepEqual(windowOf(30, 0, 4), { from: 0, count: 3, above: 0, below: 27, summary: true }, '贴着头（不往回滚）')
   assert.deepEqual(windowOf(30, 29, 4), { from: 27, count: 3, above: 27, below: 0, summary: true }, '贴着尾')
-  // 选中的那一条一定在窗里（这一条是这一段的牙：翻到哪一条都看得见）。
+  // 选中的那一条一定在窗里（这一条是这一段的判据：翻到哪一条都看得见）。
   for (const sel of [0, 1, 14, 15, 28, 29]) {
     const w = windowOf(30, sel, 4)
     assert.ok(sel >= w.from && sel < w.from + w.count, `选中第 ${sel + 1} 条时它不在窗里：${JSON.stringify(w)}`)

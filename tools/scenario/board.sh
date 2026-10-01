@@ -2,7 +2,7 @@
 # **样本盘**：把"这一版到底改对了没有"变成一个不依赖模型的读数。
 #
 # 跑法（cd ~/fugue）：
-#   sh tools/scenario/board.sh --selftest                 # 离线：判据自己有牙没有（不花钱）
+#   sh tools/scenario/board.sh --selftest                 # 离线：判据自己抓不抓得住（不花钱）
 #   sh tools/scenario/board.sh --stub                     # 打桩档：机制烟测（不出网）
 #   sh tools/scenario/board.sh --live --runs 3            # 真档：每一案连跑 3 趟，逐趟判已知答案
 #   sh tools/scenario/board.sh --live --runs 5 --gate-only    # 只跑到门口：门退回率多样本（一趟 ≈ 一次持轮者那一趟）
@@ -90,7 +90,7 @@ ok() { MACH_PASS=$((MACH_PASS + 1)); printf '  ok   %s\n' "$1"; }
 bad() { MACH_FAIL=$((MACH_FAIL + 1)); printf '  FAIL %s\n' "$1"; }
 
 if [ "$MODE" = selftest ]; then
-  echo "=== 判据自己有牙没有（离线 · 不花钱）==="
+  echo "=== 判据自己抓不抓得住（离线 · 不花钱）==="
   node tools/scenario/board-node.ts selftest "$CASES"
   exit $?
 fi
@@ -262,7 +262,7 @@ run_one() { # run_one <案名> <case-N> <趟>
 
 echo "=== 样本盘：$CASES（$([ "$LIVE" = yes ] && echo 真档 || echo 打桩档) · 每案 $RUNS 趟$([ -n "$MAXOVERRIDE" ] && echo " · 上界覆盖 $MAXOVERRIDE"）)==="
 echo
-echo "=== 一 · 判据自己有牙没有（离线 · 不花钱）==="
+echo "=== 一 · 判据自己抓不抓得住（离线 · 不花钱）==="
 node tools/scenario/board-node.ts selftest "$CASES" || bad "判据自检"
 echo
 echo "=== 二 · 逐案跑（$([ "$LIVE" = yes ] && echo "真档 · 花钱" || echo 打桩档)）==="

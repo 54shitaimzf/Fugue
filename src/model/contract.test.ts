@@ -140,7 +140,7 @@ test('③ 凭据是一个引用：只收环境变量的名字或工作区外的�
     assert.equal('auth' in p, false, `${id} 的声明里不该有 auth 那一格（凭据住配置的 credentials 键）`)
   }
 
-  // 形状那一档有牙齿：一串像凭据的**值**进不来（含小写字母或连字符就不是环境变量名）。
+  // 形状那一档拦得住：一串像凭据的**值**进不来（含小写字母或连字符就不是环境变量名）。
   assert.deepEqual(
     [
       isAuthRef({ from: 'env', name: 'DEEPSEEK_API_KEY' }),
@@ -288,7 +288,7 @@ test('⑤ 估账与余量：contextLimit 接进 seedLimitOf，超限报"超了�
   // **这一处从序 29 起可证伪了**：声明里那一个上限是上游说的 1 048 576，而 `DEFAULT_MODEL_LIMIT`
   // 是**这一份的缺省**（"不是任何一个模型的声明"，`types.ts` 那一行写着）——两个数不再相等，于是
   // "命令面漏递一处"这件事在读数上看得见了（原先两个数一样，漏递一个字节都不变）。
-  // 算式那一层本来就有牙（`round/start.test.ts` ⑥）；这一条补的是**接线**那一层的牙。
+  // 算式那一层本来就抓得住（`round/start.test.ts` ⑥）；这一条管的是**接线**那一层。
   const declaredLimit = defaultModelOf(BUILTIN_CATALOG).contextLimit
   assert.notEqual(declaredLimit, DEFAULT_MODEL_LIMIT, '两个数一样的话，漏递一处在读数上看不出来')
   assert.notEqual(seedLimitOf({ modelLimit: declaredLimit }), seedLimitOf({}), '递与不递的种子上限该不同')

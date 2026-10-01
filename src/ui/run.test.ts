@@ -12,7 +12,7 @@
 //   ③ **账逐字节相同**（真子进程 · 夹具档 · 不花钱）：一个停在门口的靶子拷成两半，一半手敲
 //      `round go`、一半给界面那一行字（真 `openRun` → 真子进程），两份账逐字节相同；**负对照**：
 //      界面自己往账上写一条 `round/approve` 的那一版，账与手敲的那一版不同（而且契约一条都没发
-//      出去）——这一条就是"界面不写日志、不持写句柄"那把尺的牙。
+//      出去）——这一条就是"界面不写日志、不持写句柄"那把尺的判据。
 //   ④ **请它停下**（`T5` 取消链第二级）：没在跑的时候一个信号都不发 · 跑着的时候信号递到子进程
 //      手里 · **请了不等于停了**（`running` 要等它真死）· 被信号杀掉的那一趟收尾是"退出码没有"。
 //   ⑤ **有界地补一刀**（`T7`）：`SIGINT` 之后那一趟还没死就补一发 `SIGKILL`（同一个口递下去）；
@@ -288,7 +288,7 @@ test('③ 界面那一行字与手敲 round go 落下的账逐字节相同（负
   await log.append('round' as WriterId, { t: 'round/approve', round: brand('r1'), fingerprint: 'naive', contracts: [] })
   await log.close()
   const c = accountOf(naive)
-  assert.notDeepEqual(c, a, '界面自己写的那一版与手敲的那一版账相同——这把尺没有牙')
+  assert.notDeepEqual(c, a, '界面自己写的那一版与手敲的那一版账相同——那这条判据就抓不住')
   assert.equal(types(c).includes('contract/issue'), false, '自己写一条放行就把契约发出去了？')
 
   console.log(
@@ -344,7 +344,7 @@ test('④ 请它停下：没在跑就一个信号都不发 · 跑着时递到子
       settle()
     },
   })
-  // 空闲那一下：什么都没发生。这一条是"弹层开着时 `Esc` 只关弹层"在**这一头**的牙——链说 overlay，
+  // 空闲那一下：什么都没发生。这一条是"弹层开着时 `Esc` 只关弹层"在**这一头**的判据——链说 overlay，
   // 这一头就不该冒出信号来。
   assert.equal(run.stop(), false, '没在跑：什么都不做（返回 false，于是调用方不必自己先判 running）')
   assert.deepEqual(h.signals, [], '没在跑的那一下一个信号都不许发出去')

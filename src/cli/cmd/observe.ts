@@ -298,7 +298,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     emit: emitLine,
     mode,
     view: stage.view,
-    // `--tail N`（U15）：首趟只写尾部 N 条——跳过的前几条按「已写出去」记，前缀牙照走。
+    // `--tail N`（U15）：首趟只写尾部 N 条——跳过的前几条按「已写出去」记，前缀检查照走。
     reveal: tail,
     // 账往前动一条就问一次（`T6`）：树跟上 · 阅读面折尾 · 门口那批按族重算——整套在舞台里。
     onAdvance: stage.onAdvance,

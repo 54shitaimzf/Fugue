@@ -380,7 +380,7 @@ test('④ 读草案 → 契约集合：逐节的 seed 接上 · 缺键当场退�
     '构造次序：调查型在前',
   )
   // **逐节的 `seed` 按同一个次序接上**：调查型那一节拿的是第一份种子。
-  // 这一条就是"两份次序不是同一个"那个地雷的牙：按 agent 名单取种子就错开一格。
+  // 这一条就是"两份次序不是同一个"那个地雷的判据：按 agent 名单取种子就错开一格。
   assert.deepEqual(
     built.contracts.map((c) => [...c.seed]),
     [[...S0], [...S1], [...S2]],
@@ -446,7 +446,7 @@ test('④ 读草案 → 契约集合：逐节的 seed 接上 · 缺键当场退�
   const empty = await gateOf({ from: 'draft', goal: '一个都没绑', text: unbound, where }, gateDeps({ actions: {} }))
   assert.equal(empty.held, false)
   assert.match(empty.problems[0] ?? '', /配置里一个动作都没绑/)
-  // 而绑上之后同一份草案就停得下来（牙在"绑不绑"这一条上）。
+  // 而绑上之后同一份草案就停得下来（判据在"绑不绑"这一条上）。
   const boundText = draftOfText([
     {
       kind: 'implement',
