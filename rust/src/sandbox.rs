@@ -61,6 +61,8 @@ fn env(v:Option<&Value>)->Result<BTreeMap<String,String>>{let Some(v)=v else{ret
 fn binding(doc:&Value,name:&str)->Result<B>{execution_doc(doc)?;if name.is_empty()||name.len()>255||name.contains(['.','/','\0']){return Err(e("invalid action name"))}let a=config::get(doc,"actions")?.and_then(Value::as_object).ok_or_else(||e("no actions are configured"))?;let v=a.get(name).ok_or_else(||e(format!("unbound action {name}")))?.as_object().ok_or_else(||e("action binding must be an object"))?;for k in v.keys(){if !["argv","doc","cwd","outputs","cache","env","net"].contains(&k.as_str()){return Err(e(format!("unknown action binding field {k}")))}}if v.get("doc").is_some_and(|v|!v.is_string()||v.as_str().is_some_and(|s|s.len()>16384||s.contains('\0'))){return Err(e("action doc must be a bounded string"))}let argv=strings(v.get("argv"),"argv")?;if argv.is_empty(){return Err(e("action argv is empty"))}let cwd=v.get("cwd").map(|v|v.as_str().ok_or_else(||e("action cwd must be a string"))).transpose()?.unwrap_or("").to_string();if !cwd.is_empty(){util::rel(&cwd)?}let outputs=strings(v.get("outputs"),"outputs")?;let cache=strings(v.get("cache"),"cache")?;for p in outputs.iter().chain(&cache){util::rel(p)?}let net=v.get("net").map(|v|v.as_str().ok_or_else(||e("net must be none or host"))).transpose()?.unwrap_or("none");if !["none","host"].contains(&net){return Err(e("net must be none or host"))}Ok(B{argv,cwd,outputs,cache,env:env(v.get("env"))?,net:net.into()})}
 const REACH_DEFAULT:[&str;6]=["/usr","/etc/ld.so.cache","/etc/ssl/certs","/etc/ssl/openssl.cnf","/etc/alternatives","/etc/resolv.conf"];
 const RESOLVER_BYTES:u64=64*1024;
+const PASSWD_BYTES:u64=64*1024;
+const SYSTEMD_RESOLVERS:[&str;2]=["/run/systemd/resolve/stub-resolv.conf","/run/systemd/resolve/resolv.conf"];
 fn normal_system_path(p:&str)->bool{p.starts_with('/')&&!p.ends_with('/')&&!p.contains('\0')&&!p.split('/').skip(1).any(|s|s.is_empty()||s=="."||s=="..")}
 fn public_system_path(p:&str)->bool{
     normal_system_path(p)&&(["/usr","/etc/ssl/certs","/etc/alternatives"].iter().any(|q|p==*q||p.strip_prefix(q).is_some_and(|s|s.starts_with('/')))
@@ -82,12 +84,184 @@ fn reach_path_policy(p:&str,actual:&str)->Result<bool>{
     Ok(actual=="/etc/resolv.conf")
 }
 fn reach_metadata_policy(resolver:bool,system_uid:u32,uid:u32,mode:u32,size:u64)->Result<()>{
-    // /usr's owner is the system-owner reference, including mapped containers.
+    // /usr's owner is the default reference, including mapped containers. The
+    // exact runtime resolver helper may authenticate one service owner instead.
     if uid!=system_uid||mode&0o022!=0{return Err(e("untrusted writable reach root"))}
     if !matches!(mode&libc::S_IFMT,libc::S_IFREG|libc::S_IFDIR){return Err(e("special reach root refused"))}
     // Resolver configuration is public, small and regular. Reject private files
     // as well as sockets/devices/FIFOs without opening or reading their contents.
     if resolver&&(mode&libc::S_IFMT!=libc::S_IFREG||mode&0o044!=0o044||size>RESOLVER_BYTES){return Err(e("private, non-regular or oversized resolver file refused"))}
+    Ok(())
+}
+fn trusted_public_directory(m:&std::fs::Metadata,owner:u32)->Result<()>{
+    if !m.is_dir()||m.uid()!=owner||m.mode()&0o022!=0||m.mode()&0o055!=0o055{
+        return Err(e("untrusted or private resolver ancestor"))
+    }
+    Ok(())
+}
+fn passwd_service_uid(bytes:&[u8])->Result<u32>{
+    if bytes.len() as u64>PASSWD_BYTES{return Err(e("resolver service database exceeds budget"))}
+    if bytes.iter().any(|b|b.is_ascii_control()&&*b!=b'\n'){
+        return Err(e("malformed resolver service database"))
+    }
+    let text=std::str::from_utf8(bytes).map_err(|_|e("malformed resolver service database"))?;
+    let mut selected=None;
+    let mut owners=Vec::new();
+    let mut names=BTreeSet::new();
+    for line in text.lines(){
+        if line.is_empty(){continue}
+        if line.bytes().any(|b|b.is_ascii_control()){
+            return Err(e("malformed resolver service database"))
+        }
+        let fields=line.split(':').collect::<Vec<_>>();
+        if fields.len()!=7||fields[0].is_empty()||!names.insert(fields[0]){
+            return Err(e("ambiguous or malformed resolver service database"))
+        }
+        let number=|value:&str|->Result<u32>{
+            if value.is_empty()||!value.bytes().all(|b|b.is_ascii_digit()){
+                return Err(e("malformed resolver service database"))
+            }
+            value.parse::<u32>().ok().filter(|uid|*uid!=u32::MAX)
+                .ok_or_else(||e("malformed resolver service database"))
+        };
+        let uid=number(fields[2])?;
+        number(fields[3])?;
+        owners.push(uid);
+        if fields[0]=="systemd-resolve"{selected=Some(uid)}
+    }
+    let uid=selected.ok_or_else(||e("trusted resolver service record missing"))?;
+    if owners.iter().filter(|owner|**owner==uid).count()!=1{
+        return Err(e("ambiguous resolver service ownership"))
+    }
+    Ok(uid)
+}
+fn trusted_resolver_service_uid(root:&D,system_uid:u32)->Result<u32>{
+    // Authenticate the fixed account from a bounded public local database. Do
+    // not call NSS/getpwnam, consult shadow, or include database data in errors.
+    trusted_public_directory(&root.0.metadata()?,system_uid)?;
+    let etc=root.child("etc",false)?;
+    trusted_public_directory(&etc.0.metadata()?,system_uid)?;
+    let name=n("passwd")?;
+    let fd=unsafe{libc::openat(etc.0.as_raw_fd(),name.as_ptr(),libc::O_RDONLY|libc::O_NOFOLLOW|libc::O_NONBLOCK|libc::O_CLOEXEC)};
+    if fd<0{return Err(e("public resolver service database unavailable"))}
+    let mut file=unsafe{File::from_raw_fd(fd)};
+    let before=file.metadata()?;
+    if !before.is_file()||before.uid()!=system_uid||before.mode()&0o022!=0
+        ||before.mode()&0o044!=0o044||before.nlink()!=1||before.len()>PASSWD_BYTES{
+        return Err(e("untrusted, private or oversized resolver service database"))
+    }
+    let mut bytes=Vec::new();
+    std::io::Read::by_ref(&mut file).take(PASSWD_BYTES+1).read_to_end(&mut bytes)?;
+    let after=file.metadata()?;
+    if bytes.len() as u64!=before.len()||bytes.len() as u64>PASSWD_BYTES
+        ||(before.dev(),before.ino(),before.uid(),before.gid(),before.mode(),before.nlink(),before.len(),before.mtime(),before.mtime_nsec(),before.ctime(),before.ctime_nsec())
+          !=(after.dev(),after.ino(),after.uid(),after.gid(),after.mode(),after.nlink(),after.len(),after.mtime(),after.mtime_nsec(),after.ctime(),after.ctime_nsec()){
+        return Err(e("resolver service database changed during bounded read"))
+    }
+    passwd_service_uid(&bytes)
+}
+fn runtime_resolver_owner(system_uid:u32,uid:u32,lookup:impl FnOnce()->Result<u32>)->Result<u32>{
+    if uid==system_uid{return Ok(system_uid)}
+    let service=lookup()?;
+    if uid!=service{return Err(e("untrusted runtime resolver owner"))}
+    Ok(service)
+}
+fn runtime_resolver_file(root:&D,actual:&str,system_uid:u32,read:bool)->Result<(File,u32)>{
+    if !SYSTEMD_RESOLVERS.contains(&actual){return Err(e("unapproved runtime resolver file"))}
+    // Upstream runs as User=systemd-resolve, creates RuntimeDirectory=systemd/resolve,
+    // and writes only these two public 0644 files. Their UID is never hardcoded.
+    // https://github.com/systemd/systemd/blob/v255/units/systemd-resolved.service.in
+    // https://github.com/systemd/systemd/blob/v255/src/resolve/resolved-resolv-conf.c
+    trusted_public_directory(&root.0.metadata()?,system_uid)?;
+    let etc=root.child("etc",false)?;
+    trusted_public_directory(&etc.0.metadata()?,system_uid)?;
+    let alias=etc.meta("resolv.conf")?.ok_or_else(||e("public resolver alias missing"))?;
+    if alias.st_uid!=system_uid||!matches!(alias.st_mode&libc::S_IFMT,libc::S_IFLNK|libc::S_IFREG){
+        return Err(e("untrusted public resolver alias"))
+    }
+    let run=root.child("run",false)?;
+    trusted_public_directory(&run.0.metadata()?,system_uid)?;
+    let systemd=run.child("systemd",false)?;
+    trusted_public_directory(&systemd.0.metadata()?,system_uid)?;
+    let resolve=systemd.child("resolve",false)?;
+    let parent=resolve.0.metadata()?;
+    let mut service_uid=None;
+    if parent.uid()!=system_uid{service_uid=Some(trusted_resolver_service_uid(root,system_uid)?)}
+    trusted_public_directory(&parent,service_uid.unwrap_or(system_uid))?;
+    let name=n(actual.rsplit('/').next().ok_or_else(||e("missing runtime resolver name"))?)?;
+    // Policy/doctor use O_PATH and never read DNS contents. Execution opens a
+    // nonblocking no-follow descriptor and validates it before any read.
+    let access=if read{libc::O_RDONLY|libc::O_NONBLOCK}else{libc::O_PATH};
+    let fd=unsafe{libc::openat(resolve.0.as_raw_fd(),name.as_ptr(),access|libc::O_NOFOLLOW|libc::O_CLOEXEC)};
+    if fd<0{return Err(e("public runtime resolver file unavailable"))}
+    let file=unsafe{File::from_raw_fd(fd)};
+    let m=file.metadata()?;
+    let owner=runtime_resolver_owner(system_uid,m.uid(),||match service_uid{
+        Some(uid)=>Ok(uid),None=>trusted_resolver_service_uid(root,system_uid)
+    })?;
+    reach_metadata_policy(true,owner,m.uid(),m.mode(),m.len())?;
+    Ok((file,owner))
+}
+fn runtime_resolver_metadata(root:&D,actual:&str,system_uid:u32)->Result<(std::fs::Metadata,u32)>{
+    let (file,owner)=runtime_resolver_file(root,actual,system_uid,false)?;
+    Ok((file.metadata()?,owner))
+}
+fn resolver_snapshot_file(root:&D,actual:&str,system_uid:u32)->Result<(File,u32)>{
+    reach_path_policy("/etc/resolv.conf",actual)?;
+    if SYSTEMD_RESOLVERS.contains(&actual){return runtime_resolver_file(root,actual,system_uid,true)}
+    let mut directory=D(root.0.try_clone()?);
+    trusted_public_directory(&directory.0.metadata()?,system_uid)?;
+    let mut parts=actual.trim_start_matches('/').split('/').peekable();
+    while let Some(part)=parts.next(){
+        if parts.peek().is_some(){
+            directory=directory.child(part,false)?;
+            trusted_public_directory(&directory.0.metadata()?,system_uid)?;
+        }else{
+            let name=n(part)?;
+            let fd=unsafe{libc::openat(directory.0.as_raw_fd(),name.as_ptr(),libc::O_RDONLY|libc::O_NONBLOCK|libc::O_NOFOLLOW|libc::O_CLOEXEC)};
+            if fd<0{return Err(e("public resolver snapshot source unavailable"))}
+            let file=unsafe{File::from_raw_fd(fd)};
+            let m=file.metadata()?;
+            reach_metadata_policy(true,system_uid,m.uid(),m.mode(),m.len())?;
+            return Ok((file,system_uid))
+        }
+    }
+    Err(e("public resolver snapshot source missing"))
+}
+fn read_resolver_snapshot(mut file:File,owner:u32)->Result<Vec<u8>>{
+    let before=file.metadata()?;
+    reach_metadata_policy(true,owner,before.uid(),before.mode(),before.len())?;
+    let mut bytes=Vec::new();
+    std::io::Read::by_ref(&mut file).take(RESOLVER_BYTES+1).read_to_end(&mut bytes)?;
+    let after=file.metadata()?;
+    if bytes.len() as u64!=before.len()||bytes.len() as u64>RESOLVER_BYTES
+        ||(before.dev(),before.ino(),before.uid(),before.gid(),before.mode(),before.nlink(),before.len(),before.mtime(),before.mtime_nsec(),before.ctime(),before.ctime_nsec())
+          !=(after.dev(),after.ino(),after.uid(),after.gid(),after.mode(),after.nlink(),after.len(),after.mtime(),after.mtime_nsec(),after.ctime(),after.ctime_nsec()){
+        return Err(e("public resolver changed during bounded snapshot"))
+    }
+    Ok(bytes)
+}
+fn resolver_snapshot(paths:&[String])->Result<Option<Vec<u8>>>{
+    if !paths.iter().any(|p|p=="/etc/resolv.conf"){return Ok(None)}
+    let actual=std::fs::canonicalize("/etc/resolv.conf")?;
+    let actual=actual.to_str().ok_or_else(||e("non-UTF8 canonical resolver path"))?;
+    let system_uid=std::fs::metadata("/usr")?.uid();
+    let (file,owner)=resolver_snapshot_file(&D::open(Path::new("/"))?,actual,system_uid)?;
+    Ok(Some(read_resolver_snapshot(file,owner)?))
+}
+fn store_resolver_snapshot(parent:&D,name:&str,bytes:&[u8])->Result<()>{
+    if bytes.len() as u64>RESOLVER_BYTES{return Err(e("public resolver snapshot exceeds budget"))}
+    let snapshot=parent.child(name,true)?;
+    snapshot.put("resolv.conf",&Entry{kind:"file".into(),mode:0o100644,id:String::new()},bytes)?;
+    snapshot.chmod("resolv.conf",0o444)
+}
+fn bind_reach_roots(command:&mut Command,paths:&[String],resolver:Option<&Path>)->Result<()>{
+    for path in paths{
+        if path=="/etc/resolv.conf"{
+            let snapshot=resolver.ok_or_else(||e("public resolver snapshot missing"))?;
+            command.arg("--ro-bind").arg(snapshot).arg("/etc/resolv.conf");
+        }else{command.args(["--ro-bind",path,path]);}
+    }
     Ok(())
 }
 fn reach(doc:&Value)->Result<Vec<String>>{
@@ -98,9 +272,16 @@ fn reach(doc:&Value)->Result<Vec<String>>{
     for p in a{
         if !public_system_path(&p){return Err(e("unsafe reach root: use public system paths or an explicitly named /opt toolchain; broad /opt and SSL private reach are refused"))}
         let actual=std::fs::canonicalize(&p)?;
-        let resolver=reach_path_policy(&p,actual.to_str().ok_or_else(||e("non-UTF8 canonical reach path"))?)?;
-        let m=std::fs::metadata(&actual)?;
-        reach_metadata_policy(resolver,system_uid,m.uid(),m.mode(),m.len())?;
+        let actual_text=actual.to_str().ok_or_else(||e("non-UTF8 canonical reach path"))?;
+        let resolver=reach_path_policy(&p,actual_text)?;
+        let (m,owner)=if p=="/etc/resolv.conf"&&SYSTEMD_RESOLVERS.contains(&actual_text){
+            runtime_resolver_metadata(&D::open(Path::new("/"))?,actual_text,system_uid)?
+        }else{(std::fs::symlink_metadata(&actual)?,system_uid)};
+        reach_metadata_policy(resolver,owner,m.uid(),m.mode(),m.len()).map_err(|error|{
+            // These labels contain fixed public paths only, never metadata IDs,
+            // user paths, DNS contents, or service database fields.
+            if REACH_DEFAULT.contains(&p.as_str()){e(format!("{} at public reach {p}",error.message))}else{error}
+        })?;
         b.push(p)
     }
     Ok(b)
@@ -128,7 +309,7 @@ struct End<'a>{root:&'a Path,w:&'a str,step:String,now:Instant,done:bool}impl Dr
 fn reclaim_receipt(root:&Path,w:&str,paths:&[String],changed:&[String],denied:bool)->Result<()> {if denied&&!changed.is_empty(){return Err(e("discarded reclaim cannot report imported changes"))}journal::append(root,w,json!({"t":"mat/reclaim","agent":w,"paths":paths,"changed":changed,"denied":denied}))?;Ok(())}
 
 fn apply_reclaim(v:&View,c:&BTreeMap<String,Option<Entry>>)->Result<()>{let mut q=v.clone();q.apply_batch(c)?;Ok(())}
-fn run0(root:&Path,w:&str,action:&str,b:B,doc:&Value,o:&Value,mut en:BTreeMap<String,String>)->Result<Value>{let now=Instant::now();let range=config::get(doc,"ports.range")?.map(|v|v.as_str().ok_or_else(||e("ports.range must be a string"))).transpose()?.unwrap_or("31000-31099");let(a,z)=range.split_once('-').ok_or_else(||e("ports.range must be LO-HI"))?;let a=a.parse::<u32>().map_err(|_|e("invalid ports.range"))?;let z=z.parse::<u32>().map_err(|_|e("invalid ports.range"))?;if a==0||z>65535||a>z{return Err(e("invalid ports.range bounds"))}let writers=journal::merged(root)?.into_iter().map(|r|r.writer).collect::<BTreeSet<_>>();let at=writers.iter().position(|s|s==w).unwrap_or(writers.len()) as u32;let port=a.checked_add(at.checked_mul(4).ok_or_else(||e("port pool overflow"))?).ok_or_else(||e("port pool overflow"))?;if port.checked_add(3).is_none_or(|p|p>z){return Err(e("port pool exhausted"))}en.insert("PORT".into(),port.to_string());en.insert("PORTS".into(),format!("{port}-{}",port+3));if b.argv.is_empty()||b.argv.iter().map(String::len).sum::<usize>()>1024*1024{return Err(e("empty or oversized command argv"))}let ms=match o.get("timeout_ms"){None=>60_000,Some(v)=>v.as_u64().filter(|n|*n>0&&*n<=300_000).ok_or_else(||e("timeout_ms must be 1..300000"))?};let scope=o.get("__write_scope").map(|_|arrayopt(o,"__write_scope")).transpose()?;if let Some(s)=&scope{for p in &b.outputs{if !s.iter().any(|q|sub(p,q)){return Err(e(format!("action output {p} exceeds contract write scope")))}}}let(ok,note)=probe()?;let pol=pol(doc,Some(&b),o,ok,&note)?;let step=match o.get("__step").or_else(||o.get("step")){None=>"0".into(),Some(Value::String(s)) if !s.is_empty()&&s.bytes().all(|b|b.is_ascii_digit())&&s.parse::<u64>().is_ok()=>s.clone(),Some(v) if v.as_u64().is_some()=>v.as_u64().unwrap_or(0).to_string(),_=>return Err(e("step must be a nonnegative integer"))};journal::append(root,w,json!({"t":"run/start","agent":w,"step":step,"action":action,"argv0":b.argv[0],"argv":b.argv,"cwd":b.cwd}))?;let mut end=End{root,w,step:step.clone(),now,done:false};if !ok{journal::append(root,w,json!({"t":"bound/deny","agent":w,"path":b.cwd,"space":"physical","rule":"sandbox-unavailable"}))?;journal::append(root,w,json!({"t":"run/end","agent":w,"step":step,"exit":126,"ms":now.elapsed().as_millis(),"denied":true}))?;end.done=true;return Ok(json!({"exit":126,"ms":now.elapsed().as_millis(),"denied":true,"enforcement":"blocked","stdout":"","stderr":format!("sandbox refused: {note}; no command was executed"),"reclaimed":[],"undeclared":[]}))}journal::append(root,w,json!({"t":"run/confined","agent":w,"mode":pol["mode"],"enforcement":"full","mechanism":"bwrap","net":b.net,"layers":["bwrap","landlock","seccomp"],"writableRoots":pol["writableRoots"],"reach":pol["reach"],"env":{"inherit":"none","keys":en.keys().collect::<Vec<_>>()}}))?;let v=View::load(root,w,None)?;let s=state(root,w)?;if s.base.is_none(){let base=v.base.as_deref().ok_or_else(||e("cannot execute an unbased view"))?;fork0(root,w,base,&json!({"strategy":"copy"}))?;}ensure0(root,w,None)?;let g=Git::open(root)?;let at=coord(root,w)?;let d=md(root,w,false)?;let work=format!("exec-{}-{}",std::process::id(),Q.fetch_add(1,Ordering::Relaxed));let stage=d.child(&work,true)?;let result=(||->Result<Value>{tree(&g,&stage,&v.entries)?;let mf=matscan(root,w,&state(root,w)?,&g)?;for(p,a)in &v.entries{if !x(p){if let Some(f)=mf.get(p){if same(Some(f),a,&g)?{timeof(&stage,p,f)?;}}}}for p in &b.cache{if v.entries.keys().any(|k|sub(k,p)||sub(p,k))||b.outputs.iter().any(|q|sub(q,p)||sub(p,q)){return Err(e("cache declaration overlaps tracked input or reclaimed output"))}}let cache_root=d.child("cache",true)?;let bound=cache_root.child("bound",true)?;for p in tops(b.cache.clone()){if let Ok(src)=bound.at(&p,false){let cached=scan(&src,&p,0,&mut 0usize)?;for(k,f)in cached{let a=Entry{kind:f.kind.clone(),mode:util::git_mode(f.mode)?,id:String::new()};let bytes=f.bytes.as_ref().ok_or_else(||e("special file in persistent cache"))?;stage.put(&k,&a,bytes)?;timeof(&stage,&k,&f)?;}}}let writable=pol["mode"]=="workspace-write";let declared=prepare(&stage,&v,&b,writable)?;if !b.cwd.is_empty(){stage.at(&b.cwd,false)?;}let home=d.child("cache",true)?;home.child("xdg-cache",true)?;let temp=d.child("tmp",true)?;let _=(home,temp);let bw=bwrap()?;let exe=executable()?;let path=at.join(&work);let mut q=Command::new(bw);q.args(ns()).args(["--hostname","fugue"]);if b.net=="host"{q.arg("--share-net");}for p in reach(doc)?{q.args(["--ro-bind",&p,&p]);}for(a,b)in [("usr/bin","/bin"),("usr/sbin","/sbin"),("usr/lib","/lib"),("usr/lib64","/lib64")]{q.args(["--symlink",a,b]);}q.args(["--proc","/proc","--dev","/dev","--size","67108864","--tmpfs","/cache","--size","67108864","--tmpfs","/tmp"]).arg(if writable{"--bind"}else{"--ro-bind"}).arg(&path).arg("/work");let mut rw=vec!["/cache".to_string(),"/tmp".to_string()];if writable{rw.push("/work".into());}else{for p in &declared{q.arg("--bind").arg(path.join(p)).arg(format!("/work/{p}"));rw.push(format!("/work/{p}"));}}q.arg("--ro-bind").arg(exe).arg("/fugue-guard").args(["--remount-ro","/","--clearenv"]);for(k,v)in &en{q.args(["--setenv",k,v]);}q.args(["--chdir",&if b.cwd.is_empty(){"/work".into()}else{format!("/work/{}",b.cwd)},"--","/fugue-guard","__fugue-guard"]);for p in rw{q.args(["--rw",&p]);}q.arg("--").args(&b.argv);let r=bounded(q,ms)?;let fs=scan(&stage,"",0,&mut 0usize)?;let(changes,undeclared,mut reclaimed)=collect(&v,&fs,&b,scope.as_deref(),&g)?;let denied=!undeclared.is_empty()||r.limit||r.timeout||r.err.contains("fugue guard refused")||["EROFS","Read-only file system","Permission denied","Operation not permitted"].iter().any(|s|r.err.contains(s));let mut err=r.err;let mut exit=r.exit;if !undeclared.is_empty(){exit=126;err.push_str(&format!("\nundeclared writes refused and discarded: {}",undeclared.join(", ")));reclaim_receipt(root,w,&undeclared,&[],true)?;}if r.limit{exit=125;err.push_str("\noutput budget exceeded; outputs discarded");}if r.timeout{exit=124;err.push_str("\ncommand timed out; outputs discarded");}stale(root,w,&v)?;if !denied&&!b.cache.is_empty(){let name=format!("bound-stage-{}-{}",std::process::id(),Q.fetch_add(1,Ordering::Relaxed));let dest=cache_root.child(&name,true)?;for(p,f)in &fs{if !b.cache.iter().any(|q|sub(p,q)){continue}let bytes=f.bytes.as_ref().ok_or_else(||e("special cache file refused"))?;dest.put(p,&Entry{kind:f.kind.clone(),mode:util::git_mode(f.mode)?,id:String::new()},bytes)?;timeof(&dest,p,f)?;}cache_root.rm("bound-old",0)?;cache_root.mv("bound","bound-old")?;cache_root.mv(&name,"bound")?;cache_root.rm("bound-old",0)?;}if !denied&&!changes.is_empty(){apply_reclaim(&v,&changes)?;reclaim_receipt(root,w,&reclaimed,&reclaimed,false)?;}else if denied{reclaimed.clear();}Ok(json!({"exit":exit,"ms":now.elapsed().as_millis(),"denied":denied,"enforcement":"full","stdout":r.out,"stderr":err,"reclaimed":reclaimed,"undeclared":undeclared}))})();let clean=d.rm(&work,0);let mut out=match result{Ok(v)=>v,Err(z)=>{journal::append(root,w,json!({"t":"bound/deny","agent":w,"path":b.cwd,"space":"physical","rule":"execution-validation"}))?;json!({"exit":126,"ms":now.elapsed().as_millis(),"denied":true,"enforcement":"full","stdout":"","stderr":format!("sandbox refused: {}",z.message),"reclaimed":[],"undeclared":[]})}};if let Err(z)=clean{out["exit"]=json!(126);out["denied"]=json!(true);out["stderr"]=json!(format!("{}\ncleanup failed: {}",out["stderr"].as_str().unwrap_or(""),z.message));}journal::append(root,w,json!({"t":"run/end","agent":w,"step":step,"exit":out["exit"],"ms":now.elapsed().as_millis(),"denied":out["denied"]}))?;end.done=true;Ok(out)}
+fn run0(root:&Path,w:&str,action:&str,b:B,doc:&Value,o:&Value,mut en:BTreeMap<String,String>)->Result<Value>{let now=Instant::now();let range=config::get(doc,"ports.range")?.map(|v|v.as_str().ok_or_else(||e("ports.range must be a string"))).transpose()?.unwrap_or("31000-31099");let(a,z)=range.split_once('-').ok_or_else(||e("ports.range must be LO-HI"))?;let a=a.parse::<u32>().map_err(|_|e("invalid ports.range"))?;let z=z.parse::<u32>().map_err(|_|e("invalid ports.range"))?;if a==0||z>65535||a>z{return Err(e("invalid ports.range bounds"))}let writers=journal::merged(root)?.into_iter().map(|r|r.writer).collect::<BTreeSet<_>>();let at=writers.iter().position(|s|s==w).unwrap_or(writers.len()) as u32;let port=a.checked_add(at.checked_mul(4).ok_or_else(||e("port pool overflow"))?).ok_or_else(||e("port pool overflow"))?;if port.checked_add(3).is_none_or(|p|p>z){return Err(e("port pool exhausted"))}en.insert("PORT".into(),port.to_string());en.insert("PORTS".into(),format!("{port}-{}",port+3));if b.argv.is_empty()||b.argv.iter().map(String::len).sum::<usize>()>1024*1024{return Err(e("empty or oversized command argv"))}let ms=match o.get("timeout_ms"){None=>60_000,Some(v)=>v.as_u64().filter(|n|*n>0&&*n<=300_000).ok_or_else(||e("timeout_ms must be 1..300000"))?};let scope=o.get("__write_scope").map(|_|arrayopt(o,"__write_scope")).transpose()?;if let Some(s)=&scope{for p in &b.outputs{if !s.iter().any(|q|sub(p,q)){return Err(e(format!("action output {p} exceeds contract write scope")))}}}let(ok,note)=probe()?;let pol=pol(doc,Some(&b),o,ok,&note)?;let step=match o.get("__step").or_else(||o.get("step")){None=>"0".into(),Some(Value::String(s)) if !s.is_empty()&&s.bytes().all(|b|b.is_ascii_digit())&&s.parse::<u64>().is_ok()=>s.clone(),Some(v) if v.as_u64().is_some()=>v.as_u64().unwrap_or(0).to_string(),_=>return Err(e("step must be a nonnegative integer"))};journal::append(root,w,json!({"t":"run/start","agent":w,"step":step,"action":action,"argv0":b.argv[0],"argv":b.argv,"cwd":b.cwd}))?;let mut end=End{root,w,step:step.clone(),now,done:false};if !ok{journal::append(root,w,json!({"t":"bound/deny","agent":w,"path":b.cwd,"space":"physical","rule":"sandbox-unavailable"}))?;journal::append(root,w,json!({"t":"run/end","agent":w,"step":step,"exit":126,"ms":now.elapsed().as_millis(),"denied":true}))?;end.done=true;return Ok(json!({"exit":126,"ms":now.elapsed().as_millis(),"denied":true,"enforcement":"blocked","stdout":"","stderr":format!("sandbox refused: {note}; no command was executed"),"reclaimed":[],"undeclared":[]}))}journal::append(root,w,json!({"t":"run/confined","agent":w,"mode":pol["mode"],"enforcement":"full","mechanism":"bwrap","net":b.net,"layers":["bwrap","landlock","seccomp"],"writableRoots":pol["writableRoots"],"reach":pol["reach"],"env":{"inherit":"none","keys":en.keys().collect::<Vec<_>>()}}))?;let v=View::load(root,w,None)?;let s=state(root,w)?;if s.base.is_none(){let base=v.base.as_deref().ok_or_else(||e("cannot execute an unbased view"))?;fork0(root,w,base,&json!({"strategy":"copy"}))?;}ensure0(root,w,None)?;let g=Git::open(root)?;let at=coord(root,w)?;let d=md(root,w,false)?;let work=format!("exec-{}-{}",std::process::id(),Q.fetch_add(1,Ordering::Relaxed));let stage=d.child(&work,true)?;let resolver_name=format!("{work}-resolver");let result=(||->Result<Value>{let reach_roots=reach(doc)?;let resolver=match resolver_snapshot(&reach_roots)?{Some(bytes)=>{store_resolver_snapshot(&d,&resolver_name,&bytes)?;Some(at.join(&resolver_name).join("resolv.conf"))},None=>None};tree(&g,&stage,&v.entries)?;let mf=matscan(root,w,&state(root,w)?,&g)?;for(p,a)in &v.entries{if !x(p){if let Some(f)=mf.get(p){if same(Some(f),a,&g)?{timeof(&stage,p,f)?;}}}}for p in &b.cache{if v.entries.keys().any(|k|sub(k,p)||sub(p,k))||b.outputs.iter().any(|q|sub(q,p)||sub(p,q)){return Err(e("cache declaration overlaps tracked input or reclaimed output"))}}let cache_root=d.child("cache",true)?;let bound=cache_root.child("bound",true)?;for p in tops(b.cache.clone()){if let Ok(src)=bound.at(&p,false){let cached=scan(&src,&p,0,&mut 0usize)?;for(k,f)in cached{let a=Entry{kind:f.kind.clone(),mode:util::git_mode(f.mode)?,id:String::new()};let bytes=f.bytes.as_ref().ok_or_else(||e("special file in persistent cache"))?;stage.put(&k,&a,bytes)?;timeof(&stage,&k,&f)?;}}}let writable=pol["mode"]=="workspace-write";let declared=prepare(&stage,&v,&b,writable)?;if !b.cwd.is_empty(){stage.at(&b.cwd,false)?;}let home=d.child("cache",true)?;home.child("xdg-cache",true)?;let temp=d.child("tmp",true)?;let _=(home,temp);let bw=bwrap()?;let exe=executable()?;let path=at.join(&work);let mut q=Command::new(bw);q.args(ns()).args(["--hostname","fugue"]);if b.net=="host"{q.arg("--share-net");}bind_reach_roots(&mut q,&reach_roots,resolver.as_deref())?;for(a,b)in [("usr/bin","/bin"),("usr/sbin","/sbin"),("usr/lib","/lib"),("usr/lib64","/lib64")]{q.args(["--symlink",a,b]);}q.args(["--proc","/proc","--dev","/dev","--size","67108864","--tmpfs","/cache","--size","67108864","--tmpfs","/tmp"]).arg(if writable{"--bind"}else{"--ro-bind"}).arg(&path).arg("/work");let mut rw=vec!["/cache".to_string(),"/tmp".to_string()];if writable{rw.push("/work".into());}else{for p in &declared{q.arg("--bind").arg(path.join(p)).arg(format!("/work/{p}"));rw.push(format!("/work/{p}"));}}q.arg("--ro-bind").arg(exe).arg("/fugue-guard").args(["--remount-ro","/","--clearenv"]);for(k,v)in &en{q.args(["--setenv",k,v]);}q.args(["--chdir",&if b.cwd.is_empty(){"/work".into()}else{format!("/work/{}",b.cwd)},"--","/fugue-guard","__fugue-guard"]);for p in rw{q.args(["--rw",&p]);}q.arg("--").args(&b.argv);let r=bounded(q,ms)?;let fs=scan(&stage,"",0,&mut 0usize)?;let(changes,undeclared,mut reclaimed)=collect(&v,&fs,&b,scope.as_deref(),&g)?;let denied=!undeclared.is_empty()||r.limit||r.timeout||r.err.contains("fugue guard refused")||["EROFS","Read-only file system","Permission denied","Operation not permitted"].iter().any(|s|r.err.contains(s));let mut err=r.err;let mut exit=r.exit;if !undeclared.is_empty(){exit=126;err.push_str(&format!("\nundeclared writes refused and discarded: {}",undeclared.join(", ")));reclaim_receipt(root,w,&undeclared,&[],true)?;}if r.limit{exit=125;err.push_str("\noutput budget exceeded; outputs discarded");}if r.timeout{exit=124;err.push_str("\ncommand timed out; outputs discarded");}stale(root,w,&v)?;if !denied&&!b.cache.is_empty(){let name=format!("bound-stage-{}-{}",std::process::id(),Q.fetch_add(1,Ordering::Relaxed));let dest=cache_root.child(&name,true)?;for(p,f)in &fs{if !b.cache.iter().any(|q|sub(p,q)){continue}let bytes=f.bytes.as_ref().ok_or_else(||e("special cache file refused"))?;dest.put(p,&Entry{kind:f.kind.clone(),mode:util::git_mode(f.mode)?,id:String::new()},bytes)?;timeof(&dest,p,f)?;}cache_root.rm("bound-old",0)?;cache_root.mv("bound","bound-old")?;cache_root.mv(&name,"bound")?;cache_root.rm("bound-old",0)?;}if !denied&&!changes.is_empty(){apply_reclaim(&v,&changes)?;reclaim_receipt(root,w,&reclaimed,&reclaimed,false)?;}else if denied{reclaimed.clear();}Ok(json!({"exit":exit,"ms":now.elapsed().as_millis(),"denied":denied,"enforcement":"full","stdout":r.out,"stderr":err,"reclaimed":reclaimed,"undeclared":undeclared}))})();let clean=d.rm(&work,0);let resolver_clean=d.rm(&resolver_name,0);let clean=clean.and(resolver_clean);let mut out=match result{Ok(v)=>v,Err(z)=>{journal::append(root,w,json!({"t":"bound/deny","agent":w,"path":b.cwd,"space":"physical","rule":"execution-validation"}))?;json!({"exit":126,"ms":now.elapsed().as_millis(),"denied":true,"enforcement":"full","stdout":"","stderr":format!("sandbox refused: {}",z.message),"reclaimed":[],"undeclared":[]})}};if let Err(z)=clean{out["exit"]=json!(126);out["denied"]=json!(true);out["stderr"]=json!(format!("{}\ncleanup failed: {}",out["stderr"].as_str().unwrap_or(""),z.message));}journal::append(root,w,json!({"t":"run/end","agent":w,"step":step,"exit":out["exit"],"ms":now.elapsed().as_millis(),"denied":out["denied"]}))?;end.done=true;Ok(out)}
 fn first_version(line:&str)->String{let mut n=line.len().min(4096);while !line.is_char_boundary(n){n-=1}line[..n].to_string()}
 
 fn version_argv(a:&[String])->Result<Option<PathBuf>>{if a.len()!=2{return Ok(None)}let name=Path::new(&a[0]).file_name().and_then(OsStr::to_str).unwrap_or("");if !["git","bwrap","gcc","g++","cc","c++","clang","clang++","cmake","make","ninja","node","python3","rustc","cargo","go","javac","java"].contains(&name){return Ok(None)}let valid=if ["java","javac"].contains(&name){a[1]=="-version"}else if name=="go"{a[1]=="version"}else{a[1]=="--version"};if !valid{return Ok(None)}let p=if a[0].contains('/') {let p=PathBuf::from(&a[0]);if p!=Path::new("/usr/bin").join(name)&&p!=Path::new("/bin").join(name){return Ok(None)}p}else{Path::new("/usr/bin").join(name)};let p=match std::fs::canonicalize(p){Ok(p)=>p,Err(z) if z.kind()==std::io::ErrorKind::NotFound=>return Ok(None),Err(z)=>return Err(z.into())};if !p.starts_with("/usr"){return Ok(None)}let uid=std::fs::metadata("/usr")?.uid();let mut q=p.as_path();loop{let m=std::fs::symlink_metadata(q)?;if m.uid()!=uid||m.mode()&0o022!=0||m.file_type().is_symlink(){return Err(e("untrusted public toolchain executable/ancestor"))}if q==Path::new("/usr"){break}q=q.parent().ok_or_else(||e("toolchain path ancestor missing"))?;}let m=std::fs::metadata(&p)?;if !m.is_file()||m.mode()&0o111==0{return Err(e("toolchain executable is not a trusted executable file"))}Ok(Some(p))}
@@ -241,6 +422,225 @@ mod system_path_policy_tests {
         for mode in [0o666,0o664,0o600]{std::fs::set_permissions(&p,std::fs::Permissions::from_mode(mode)).unwrap();assert!(check_fixture(d.path(),"/etc/resolv.conf").is_err())}
         std::fs::set_permissions(&p,std::fs::Permissions::from_mode(0o644)).unwrap();OpenOptions::new().write(true).open(&p).unwrap().set_len(RESOLVER_BYTES+1).unwrap();assert!(check_fixture(d.path(),"/etc/resolv.conf").is_err());
         std::fs::remove_file(&p).unwrap();let name=c(p.as_os_str()).unwrap();assert_eq!(unsafe{libc::mkfifo(name.as_ptr(),0o644)},0);assert!(check_fixture(d.path(),"/etc/resolv.conf").is_err());
+    }
+
+    fn public_database_fixture()->tempfile::TempDir{
+        let d=fixture();
+        std::fs::set_permissions(d.path(),std::fs::Permissions::from_mode(0o755)).unwrap();
+        for path in ["etc","run","run/systemd","run/systemd/resolve"]{
+            let path=d.path().join(path);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::set_permissions(path,std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let passwd=d.path().join("etc/passwd");
+        std::fs::write(&passwd,b"root:x:0:0:root:/root:/bin/sh\nsystemd-resolve:x:123:123:Resolver:/:/usr/sbin/nologin\n").unwrap();
+        std::fs::set_permissions(passwd,std::fs::Permissions::from_mode(0o644)).unwrap();
+        put_fixture(d.path(),"run/systemd/resolve/stub-resolv.conf");
+        symlink("../run/systemd/resolve/stub-resolv.conf",d.path().join("etc/resolv.conf")).unwrap();
+        d
+    }
+
+    #[test]
+    fn service_record_is_exact_and_has_unambiguous_decimal_owner(){
+        let valid=b"root:x:0:0:root:/root:/bin/sh\nsystemd-resolve:x:123:123:Resolver:/:/usr/sbin/nologin\n";
+        assert_eq!(passwd_service_uid(valid).unwrap(),123);
+        assert_eq!(passwd_service_uid(b"root:x:65534:65534::/:/bin/sh\nsystemd-resolve:x:456:456::/:/bin/false\n").unwrap(),456);
+        for invalid in [
+            "root:x:0:0::/:/bin/sh\n",
+            "systemd-resolved:x:123:123::/:/bin/false\n",
+            "systemd-resolve:x:123:123::/:/bin/false\nsystemd-resolve:x:124:124::/:/bin/false\n",
+            "systemd-resolve:x:123:123::/:/bin/false\nother:x:123:124::/:/bin/false\n",
+            "systemd-resolve:x:+123:123::/:/bin/false\n",
+            "systemd-resolve:x:-1:123::/:/bin/false\n",
+            "systemd-resolve:x:4294967295:123::/:/bin/false\n",
+            "systemd-resolve:x:4294967296:123::/:/bin/false\n",
+            "systemd-resolve:x:123:no::/:/bin/false\n",
+            "systemd-resolve:x:123:123::/\n",
+            "systemd-resolve:x:123:123::/:/bin/false:extra\n",
+            "systemd-resolve:x:123:123::/:/bin/false\r\n",
+            "systemd-resolve:x:123:123::/:/bin/false\0\n",
+            "malformed\nsystemd-resolve:x:123:123::/:/bin/false\n",
+        ]{
+            assert!(passwd_service_uid(invalid.as_bytes()).is_err());
+        }
+        assert!(passwd_service_uid(&[0xff]).is_err());
+        assert!(passwd_service_uid(&vec![b'a';PASSWD_BYTES as usize+1]).is_err());
+    }
+
+    #[test]
+    fn service_lookup_reads_only_bounded_public_nofollow_database(){
+        let d=public_database_fixture();
+        let root=D::open(d.path()).unwrap();
+        let owner=root.0.metadata().unwrap().uid();
+        assert_eq!(trusted_resolver_service_uid(&root,owner).unwrap(),123);
+        let passwd=d.path().join("etc/passwd");
+        for mode in [0o600,0o640,0o604,0o664,0o666]{
+            std::fs::set_permissions(&passwd,std::fs::Permissions::from_mode(mode)).unwrap();
+            assert!(trusted_resolver_service_uid(&root,owner).is_err());
+        }
+        std::fs::set_permissions(&passwd,std::fs::Permissions::from_mode(0o644)).unwrap();
+        OpenOptions::new().write(true).open(&passwd).unwrap().set_len(PASSWD_BYTES+1).unwrap();
+        assert!(trusted_resolver_service_uid(&root,owner).is_err());
+        std::fs::remove_file(&passwd).unwrap();
+        put_fixture(d.path(),"etc/other");
+        symlink("other",&passwd).unwrap();
+        assert!(trusted_resolver_service_uid(&root,owner).is_err());
+        std::fs::remove_file(&passwd).unwrap();
+        let name=c(passwd.as_os_str()).unwrap();
+        assert_eq!(unsafe{libc::mkfifo(name.as_ptr(),0o644)},0);
+        assert!(trusted_resolver_service_uid(&root,owner).is_err());
+    }
+
+    #[test]
+    fn service_lookup_rejects_untrusted_or_symlinked_ancestors(){
+        let d=public_database_fixture();
+        let root=D::open(d.path()).unwrap();
+        let owner=root.0.metadata().unwrap().uid();
+        for mode in [0o777,0o775,0o700]{
+            std::fs::set_permissions(d.path().join("etc"),std::fs::Permissions::from_mode(mode)).unwrap();
+            assert!(trusted_resolver_service_uid(&root,owner).is_err());
+        }
+        std::fs::set_permissions(d.path().join("etc"),std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(d.path().join("etc"),d.path().join("elsewhere")).unwrap();
+        symlink("elsewhere",d.path().join("etc")).unwrap();
+        assert!(trusted_resolver_service_uid(&root,owner).is_err());
+    }
+
+    #[test]
+    fn runtime_scope_remains_exact_and_root_owned_files_need_no_service_lookup(){
+        let d=public_database_fixture();
+        let root=D::open(d.path()).unwrap();
+        let owner=root.0.metadata().unwrap().uid();
+        std::fs::remove_file(d.path().join("etc/passwd")).unwrap();
+        assert!(runtime_resolver_metadata(&root,SYSTEMD_RESOLVERS[0],owner).is_ok());
+        for path in ["/run","/run/systemd/resolve","/run/systemd/resolve/private.conf","/run/systemd/resolve/stub-resolv.conf/child","/etc/resolv.conf","/usr/lib/systemd/resolv.conf"]{
+            assert!(runtime_resolver_metadata(&root,path,owner).is_err());
+        }
+    }
+
+    #[test]
+    fn runtime_validation_rejects_private_writable_special_and_symlink_leaves(){
+        let d=public_database_fixture();
+        let root=D::open(d.path()).unwrap();
+        let owner=root.0.metadata().unwrap().uid();
+        let resolver=d.path().join("run/systemd/resolve/stub-resolv.conf");
+        for mode in [0o600,0o640,0o664,0o666]{
+            std::fs::set_permissions(&resolver,std::fs::Permissions::from_mode(mode)).unwrap();
+            assert!(runtime_resolver_metadata(&root,SYSTEMD_RESOLVERS[0],owner).is_err());
+        }
+        std::fs::remove_file(&resolver).unwrap();
+        symlink("../../../../etc/passwd",&resolver).unwrap();
+        assert!(runtime_resolver_metadata(&root,SYSTEMD_RESOLVERS[0],owner).is_err());
+        std::fs::remove_file(&resolver).unwrap();
+        let name=c(resolver.as_os_str()).unwrap();
+        assert_eq!(unsafe{libc::mkfifo(name.as_ptr(),0o644)},0);
+        assert!(runtime_resolver_metadata(&root,SYSTEMD_RESOLVERS[0],owner).is_err());
+    }
+
+    #[test]
+    fn runtime_validation_rejects_writable_and_symlinked_parent_directories(){
+        let d=public_database_fixture();
+        let root=D::open(d.path()).unwrap();
+        let owner=root.0.metadata().unwrap().uid();
+        for path in ["run","run/systemd","run/systemd/resolve"]{
+            let path=d.path().join(path);
+            std::fs::set_permissions(&path,std::fs::Permissions::from_mode(0o775)).unwrap();
+            assert!(runtime_resolver_metadata(&root,SYSTEMD_RESOLVERS[0],owner).is_err());
+            std::fs::set_permissions(path,std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::rename(d.path().join("run/systemd/resolve"),d.path().join("run/systemd/other")).unwrap();
+        symlink("other",d.path().join("run/systemd/resolve")).unwrap();
+        assert!(runtime_resolver_metadata(&root,SYSTEMD_RESOLVERS[0],owner).is_err());
+    }
+
+    #[test]
+    fn runtime_owner_accepts_only_system_reference_or_authenticated_service(){
+        for system in [0,65534]{
+            assert_eq!(runtime_resolver_owner(system,system,||panic!("system owner must not consult service database")).unwrap(),system);
+            assert_eq!(runtime_resolver_owner(system,123,||passwd_service_uid(b"systemd-resolve:x:123:123::/:/bin/false\n")).unwrap(),123);
+            assert!(runtime_resolver_owner(system,1000,||Ok(123)).is_err());
+            assert!(runtime_resolver_owner(system,123,||passwd_service_uid(b"other:x:123:123::/:/bin/false\n")).is_err());
+            assert!(runtime_resolver_owner(system,123,||passwd_service_uid(b"systemd-resolve:x:123:123::/:/bin/false\nalias:x:123:123::/:/bin/false\n")).is_err());
+        }
+    }
+
+    #[test]
+    fn snapshot_uses_validated_descriptor_when_runtime_leaf_is_replaced(){
+        let d=public_database_fixture();
+        let root=D::open(d.path()).unwrap();
+        let owner=root.0.metadata().unwrap().uid();
+        let (file,owner)=resolver_snapshot_file(&root,SYSTEMD_RESOLVERS[0],owner).unwrap();
+        let resolver=d.path().join("run/systemd/resolve/stub-resolv.conf");
+        put_fixture(d.path(),"etc/private");
+        let private=d.path().join("etc/private");
+        std::fs::write(&private,b"PRIVATE_REPLACEMENT_SENTINEL").unwrap();
+        std::fs::set_permissions(private,std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::remove_file(&resolver).unwrap();
+        symlink("../../../etc/private",&resolver).unwrap();
+        assert_eq!(read_resolver_snapshot(file,owner).unwrap(),b"nameserver 127.0.0.53\n");
+        let error=resolver_snapshot_file(&root,SYSTEMD_RESOLVERS[0],owner).err().unwrap();
+        assert!(!error.message.contains("PRIVATE_REPLACEMENT_SENTINEL"));
+    }
+
+    #[test]
+    fn snapshot_revalidates_public_mode_and_size_before_reading(){
+        let d=public_database_fixture();
+        let root=D::open(d.path()).unwrap();
+        let owner=root.0.metadata().unwrap().uid();
+        let resolver=d.path().join("run/systemd/resolve/stub-resolv.conf");
+        let (file,owner)=resolver_snapshot_file(&root,SYSTEMD_RESOLVERS[0],owner).unwrap();
+        std::fs::set_permissions(&resolver,std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(read_resolver_snapshot(file,owner).is_err());
+        std::fs::set_permissions(&resolver,std::fs::Permissions::from_mode(0o644)).unwrap();
+        let (file,owner)=resolver_snapshot_file(&root,SYSTEMD_RESOLVERS[0],owner).unwrap();
+        OpenOptions::new().write(true).open(resolver).unwrap().set_len(RESOLVER_BYTES+1).unwrap();
+        assert!(read_resolver_snapshot(file,owner).is_err());
+    }
+
+    #[test]
+    fn snapshot_static_sources_remain_exact_public_and_nofollow(){
+        let d=public_database_fixture();
+        let root=D::open(d.path()).unwrap();
+        let owner=root.0.metadata().unwrap().uid();
+        put_fixture(d.path(),"etc/static");
+        assert!(resolver_snapshot_file(&root,"/etc/static",owner).is_err());
+        assert!(resolver_snapshot_file(&root,"/etc/resolv.conf",owner).is_err());
+        std::fs::remove_file(d.path().join("etc/resolv.conf")).unwrap();
+        put_fixture(d.path(),"etc/resolv.conf");
+        let (file,owner)=resolver_snapshot_file(&root,"/etc/resolv.conf",owner).unwrap();
+        assert_eq!(read_resolver_snapshot(file,owner).unwrap(),b"nameserver 127.0.0.53\n");
+        assert_eq!(resolver_snapshot(&["/usr".into()]).unwrap(),None);
+    }
+
+    #[test]
+    fn execution_binds_only_private_snapshot_at_public_resolver_destination(){
+        let roots=vec!["/usr".into(),"/etc/resolv.conf".into()];
+        let snapshot=Path::new("/private-execution/resolv.conf");
+        let mut command=Command::new("/usr/bin/bwrap");
+        bind_reach_roots(&mut command,&roots,Some(snapshot)).unwrap();
+        let args=command.get_args().collect::<Vec<_>>();
+        assert_eq!(args,vec![OsStr::new("--ro-bind"),OsStr::new("/usr"),OsStr::new("/usr"),OsStr::new("--ro-bind"),snapshot.as_os_str(),OsStr::new("/etc/resolv.conf")]);
+        assert!(bind_reach_roots(&mut Command::new("/usr/bin/bwrap"),&roots,None).is_err());
+    }
+
+    #[test]
+    fn execution_snapshot_is_private_immutable_separate_and_recoverably_cleaned(){
+        let d=fixture();
+        let parent=D::open(d.path()).unwrap();
+        parent.child("exec-work",true).unwrap();
+        store_resolver_snapshot(&parent,"exec-work-resolver",b"nameserver 127.0.0.53\n").unwrap();
+        let directory=std::fs::metadata(d.path().join("exec-work-resolver")).unwrap();
+        let file=d.path().join("exec-work-resolver/resolv.conf");
+        let metadata=std::fs::metadata(&file).unwrap();
+        assert_eq!(directory.mode()&0o777,0o700);
+        assert_eq!(metadata.mode()&0o777,0o444);
+        assert_eq!(metadata.nlink(),1);
+        assert_eq!(std::fs::read(&file).unwrap(),b"nameserver 127.0.0.53\n");
+        assert!(!d.path().join("exec-work/resolv.conf").exists());
+        parent.rm("exec-work-resolver",0).unwrap();
+        assert!(!file.exists());
+        assert!(store_resolver_snapshot(&parent,"exec-too-large",&vec![0;RESOLVER_BYTES as usize+1]).is_err());
+        assert!(!d.path().join("exec-too-large").exists());
     }
 }
 

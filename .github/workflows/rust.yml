@@ -20,6 +20,15 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq bubblewrap
+      - name: Inspect public system path metadata
+        run: |
+          for path in /usr /etc/ld.so.cache /etc/ssl/certs /etc/ssl/openssl.cnf /etc/alternatives /etc/resolv.conf; do
+            if [ -e "$path" ]; then
+              printf 'public-root: %s\n' "$path"
+              realpath -- "$path"
+              stat -Lc 'uid=%u gid=%g mode=%a type=%F size=%s path=%n' -- "$path"
+            fi
+          done
       - name: Require Rust tooling
         run: rustup component add clippy
       - name: Native checks and independent upstream oracle
