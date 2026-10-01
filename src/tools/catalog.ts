@@ -110,7 +110,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'glob',
-    description: 'Find files by path pattern and return the matching paths. Use it when you know part of a file name but not where it is; to search contents use grep. Searches from this step\'s working directory by default.',
+    description: 'Find files by path pattern and return the matching paths. Use it when you know part of a file name but not where it is; to search contents use grep. Searches from this step\'s working directory by default. Results stop at the receipt budget; limited traversal or unknown coverage is reported, so an incomplete result is not proof of absence.',
     parameters: {
       type: 'object',
       properties: {
@@ -123,7 +123,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'grep',
-    description: 'Find files by content and return matching lines, file names, or counts (output_mode picks which; use content when unsure). To search paths rather than contents use glob.',
+    description: 'Find files by content and return matching lines, file names, or counts (output_mode picks which; use content when unsure). To search paths rather than contents use glob. Results stop at the receipt budget and say when incomplete; unvisited matches are unknown. Narrow the pattern or path for more results.',
     parameters: {
       type: 'object',
       properties: {

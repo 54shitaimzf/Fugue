@@ -19,6 +19,12 @@ import type { Capability, Denied } from '../capability/table.ts'
 // 不 import 视图那边——这一层的头注写着"不认识视图"，而这条规矩两层共用，所以它有一条自己的家。
 import { PathShapeError } from '../path-shape.ts'
 import { lineCount } from './receipt.ts'
+import { textWindowOf, numberedWindowOf } from './read-window.ts'
+import type { ReadWindow, ReadText } from './read-window.ts'
+import type { WalkResult } from './walk.ts'
+import { SearchRows, searchLines, SEARCH_PREFETCH_ROWS, SEARCH_PREFETCH_MAX_ROWS } from './search-receipt.ts'
+import type { SearchCoverage } from './search-receipt.ts'
+import { requiredLiteralTrigrams } from '../search/regex-literal.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -60,6 +66,8 @@ export interface ToolHost {
    * 文本工具自己在这一层解（`utf8Of`），二进制工具原样拿走。
    */
   readBytes(rel: string): Promise<{ readonly bytes: Uint8Array; readonly mode: number } | null>
+  /** 行窗口的可选读口：只解选中那段文本。缺席时由 readBytes 原样退回；图像/整文件仍走字节口。 */
+  readonly readTextWindow?: (rel: string, window: ReadWindow) => Promise<(ReadText & { readonly mode: number }) | null>
   writeBytes(rel: string, bytes: Uint8Array): Promise<{ readonly rev: number }>
   /**
    * 列一层。**只列直接的孩子，不递归**——递归是另一条（`walk`），因为"走多深"这件事
@@ -73,6 +81,10 @@ export interface ToolHost {
    * 那一条），而不封顶的深树能把一步走成挂死。两条都由实现那一侧封——这一层只消费结果。
    */
   walk(): Promise<readonly string[]>
+  /** 可选详细读口；缺席时枚举完整性未知，不把截掉的候选说成没有匹配。 */
+  readonly walkDetailed?: () => Promise<WalkResult>
+  /** 可选辅助候选过滤。仅接收必需的三元组，缺席/失败/坏结果都按原批扫描。 */
+  readonly filterCandidates?: (paths: readonly string[], required: readonly string[]) => Promise<readonly string[]>
   /**
    * **把这几条路径的内容先取回一层来**（这一站加的，可选）。它是一道**缝**：实现了就在这一层
    * 批量取（一条 `objectMany('contents', …)`），没实现就照旧"用一条读一条"——**预取缺席 =
@@ -337,11 +349,31 @@ const PATH_TOOLS: readonly string[] = ['read', 'write', 'edit', 'read_image']
 const readFace: ToolFn = async (args, host) => {
   const path = text(args, 'path')
   if (path === null) return missing('read', 'path')
+  const hasWindow = args.offset !== undefined || args.limit !== undefined
+  if (hasWindow) {
+    const offset = args.offset === undefined ? 1 : args.offset
+    const limit = args.limit
+    if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 1) {
+      return no('read offset must be a positive safe integer (1-based).')
+    }
+    if (limit !== undefined && (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 0)) {
+      return no('read limit must be a nonnegative safe integer.')
+    }
+    const window: ReadWindow = { offset, ...(limit === undefined ? {} : { limit }) }
+    let got: (ReadText & { readonly mode: number }) | null
+    if (host.readTextWindow !== undefined) {
+      got = await host.readTextWindow(path, window)
+    } else {
+      const raw = await host.readBytes(path)
+      got = raw === null ? null : { ...textWindowOf(raw.bytes, window), mode: raw.mode }
+    }
+    if (got === null) return no(`no ${path} in the view (unreadable reads as absent — this layer does not tell the two apart).`)
+    return ok(`${path} (${got.byteLength} bytes · ${got.lines} lines · mode ${got.mode.toString(8)})\n${numberedWindowOf(got, offset)}`)
+  }
   const got = await host.readBytes(path)
   if (got === null) return no(`no ${path} in the view (unreadable reads as absent — this layer does not tell the two apart).`)
   const body = utf8Of(got.bytes)
-  // **行数走 `receipt.ts` 那一处**：这一行里的「L 行」与截断标记里的「共 L 行」必须是同一个数
-  // ——两处各算一次，两个数就迟早不一样（施工当场撞到过：头里 401 行、标记里 400 行）。
+  // 整文件读保持原样：统计和回执截断仍用 receipt.ts 的共同口径。
   const lines = lineCount(body)
   return ok(
     `${path} (${got.bytes.byteLength} bytes · ${lines} lines · mode ${got.mode.toString(8)})\n${body}`,
@@ -387,51 +419,104 @@ const readImageFace: ToolFn = async (args, host) => {
  * 走一遍树。**走法归宿主**（`walk`）：它知道哪些行是目录、哪些是软链、能走多深。这一层只
  * 拿结果去配 `glob` 的语法（`**` 要不要跨 `/` 是模式那边的事）。
  */
+async function searchWalk(host: ToolHost): Promise<{ readonly paths: readonly string[]; readonly coverage: SearchCoverage }> {
+  if (host.walkDetailed !== undefined) {
+    const got = await host.walkDetailed()
+    return { paths: got.paths, coverage: { known: true, truncated: got.truncated, limits: got.limits } }
+  }
+  return { paths: await host.walk(), coverage: { known: false, truncated: false, limits: [] } }
+}
+
 const globFace: ToolFn = async (args, host) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('glob', 'pattern')
   const dir = text(args, 'path') ?? ''
-  const all = await host.walk()
+  const all = await searchWalk(host)
   const re = globToRe(pattern)
-  const hit = all.filter((p) => (dir === '' || p.startsWith(dir + '/')) && re.test(p))
-  return ok(hit.length === 0 ? `no path matches ${pattern}.` : `${hit.length} paths:\n${hit.join('\n')}`)
+  const rows = new SearchRows()
+  for (const path of all.paths) {
+    if ((dir === '' || path.startsWith(dir + '/')) && re.test(path) && !rows.add(path)) break
+  }
+  return ok(rows.render('paths',`no path matches ${pattern}.`,all.coverage))
+}
+
+async function indexedCandidates(host: ToolHost, paths: readonly string[], required: readonly string[] | null): Promise<readonly string[]> {
+  const original = [...paths]
+  if (required === null) return original
+  try {
+    if (typeof host.filterCandidates !== 'function') return original
+    // 可选提供者拿独立冻结副本；失败回原批，不能改原批/后续查询条件。
+    const filtered = await host.filterCandidates(Object.freeze([...original]), Object.freeze([...required]))
+    if (!Array.isArray(filtered)) return original
+    const allowed = new Set(original)
+    const kept = new Set<string>()
+    for (const path of filtered) {
+      if (typeof path !== 'string' || !allowed.has(path) || kept.has(path)) return original
+      kept.add(path)
+    }
+    // 可选实现不许重排/注入路径；数据来源和逐行匹配仍在原路径上。
+    return original.filter(path => kept.has(path))
+  } catch {
+    return original
+  }
 }
 
 const grepFace: ToolFn = async (args, host, ctx) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('grep', 'pattern')
   const dir = text(args, 'path') ?? ctx.cwd
+  const mode = args.output_mode === undefined ? 'content' : args.output_mode
+  if (mode !== 'content' && mode !== 'files_with_matches' && mode !== 'count') {
+    return no('grep output_mode must be content, files_with_matches, or count.')
+  }
+  if (args.glob !== undefined && typeof args.glob !== 'string') {
+    return no('grep glob must be a path-pattern string.')
+  }
   let re: RegExp
   try {
     re = new RegExp(pattern)
   } catch (err) {
     return no(`that is not a regular expression: ${(err as Error).message}`)
   }
-  const all = await host.walk()
-  // **先按一次批量把候选的内容取回来**：它是提示，缺席或失败都退回今天的逐文件读
-  // ——这台宿主没有那道缝（测试夹具）、或者那一层没接上真源，都只是慢一点。
-  //
-  // **读那道缝这件事自己包在 try 里**：`host` 可能是负对照那种"读任何字段都抛"的假体
-  // （`execute.test.ts` 的 ①d 用它），那种宿主上"没有这道缝"该走缺席那一条，不该把这一趟打死。
+  const required = requiredLiteralTrigrams(pattern, re.flags)
+  const pathPattern = typeof args.glob === 'string' ? globToRe(args.glob) : null
+  const walked = await searchWalk(host)
+  const all = walked.paths.filter(path =>
+    (dir === '' || path === dir || path.startsWith(dir + '/')) &&
+    (pathPattern === null || pathPattern.test(path)),
+  )
+  // 只预取筛后的候选。可选口缺席时仍逐文件读；失败仍由真源读口报出。
   let prefetch: ((paths: readonly string[]) => Promise<void>) | undefined
   try {
     prefetch = host.prefetch
   } catch {
     prefetch = undefined
   }
-  if (prefetch !== undefined) await prefetch(all)
-  const hits: string[] = []
-  for (const path of all) {
-    if (dir !== '' && !path.startsWith(dir + '/')) continue
-    const got = await host.readBytes(path)
-    if (got === null) continue
-    utf8Of(got.bytes)
-      .split('\n')
-      .forEach((line, i) => {
-        if (re.test(line)) hits.push(`${path}:${i + 1}:${line}`)
-      })
+  const rows = new SearchRows()
+  let batchRows = SEARCH_PREFETCH_ROWS
+  scan: for (let at = 0; at < all.length;) {
+    const batch = all.slice(at, at + batchRows)
+    at += batch.length
+    // 候选过滤也只做当前批；索引 miss 不许提前枚举/读取后面的全树。
+    const candidates = await indexedCandidates(host, batch, required)
+    if (prefetch !== undefined) await prefetch(candidates)
+    for (const path of candidates) {
+      const got = await host.readBytes(path)
+      if (got === null) continue
+      let count = 0
+      for (const { line, number } of searchLines(utf8Of(got.bytes))) {
+        if (!re.test(line)) continue
+        count += 1
+        if (mode === 'content' && !rows.add(`${path}:${number}:${line}`)) break scan
+        if (mode === 'files_with_matches') break
+      }
+      // count 只提交扫描完这个文件后的精确数，未扫文件不冒充计过了。
+      if (count > 0 && mode !== 'content' && !rows.add(mode === 'count' ? `${path}:${count}` : path)) break scan
+    }
+    // 首批小探针保住密集命中；回执还空时减少后续冷批请求，接近满时继续小批。
+    batchRows = rows.fillRatio < 0.25 ? SEARCH_PREFETCH_MAX_ROWS : SEARCH_PREFETCH_ROWS
   }
-  return ok(hits.length === 0 ? `no line matches ${pattern}.` : `${hits.length} lines:\n${hits.join('\n')}`)
+  return ok(rows.render(mode === 'content' ? 'lines' : 'paths', `no line matches ${pattern}.`, walked.coverage))
 }
 
 // ── 执行类那两个 ───────────────────────────────────────────────────────────────

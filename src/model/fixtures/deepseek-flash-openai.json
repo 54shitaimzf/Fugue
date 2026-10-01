@@ -128,7 +128,7 @@
     },
     {
       "name": "glob",
-      "description": "Find files by path pattern and return the matching paths. Use it when you know part of a file name but not where it is; to search contents use grep. Searches from this step's working directory by default.",
+      "description": "Find files by path pattern and return the matching paths. Use it when you know part of a file name but not where it is; to search contents use grep. Searches from this step's working directory by default. Results stop at the receipt budget; limited traversal or unknown coverage is reported, so an incomplete result is not proof of absence.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -149,7 +149,7 @@
     },
     {
       "name": "grep",
-      "description": "Find files by content and return matching lines, file names, or counts (output_mode picks which; use content when unsure). To search paths rather than contents use glob.",
+      "description": "Find files by content and return matching lines, file names, or counts (output_mode picks which; use content when unsure). To search paths rather than contents use glob. Results stop at the receipt budget and say when incomplete; unvisited matches are unknown. Narrow the pattern or path for more results.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -351,8 +351,8 @@
     "thinking": "high",
     "maxTokens": 32768
   },
-  "bodyHash": "565e2f100856ffda",
-  "bytes": 9178,
+  "bodyHash": "ccee8e3290d178d8",
+  "bytes": 9450,
   "response": "data: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"先看一眼工作树。\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_fixture_01\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"command\\\":\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"ls -la\\\",\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"timeout_ms\\\":\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"10000}\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_fixture_02\",\"type\":\"function\",\"function\":{\"name\":\"glob\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"function\":{\"arguments\":\"{\\\"pattern\\\":\\\"**/*.\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"function\":{\"arguments\":\"ts\\\"}\"}}]},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: {\"id\":\"chatcmpl-fixture-01\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"deepseek-flash\",\"choices\":[],\"usage\":{\"prompt_tokens\":24088,\"completion_tokens\":64,\"prompt_tokens_details\":{\"cached_tokens\":24000},\"prompt_cache_hit_tokens\":24000,\"prompt_cache_miss_tokens\":88}}\n\ndata: [DONE]\n\n",
   "record": {
     "usage": {
