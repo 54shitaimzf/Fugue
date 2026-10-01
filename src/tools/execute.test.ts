@@ -866,6 +866,24 @@ test('格 3 · 地板：容量 0 + 预取缺席 + oneshot 三者同开，回执�
   }
 })
 
+test('格 3 · 预取：自适应批次按字节封顶——72 KiB 的文件不许把 8 MiB 的缓存撑爆再逐条重取', async () => {
+  // 128 条 × 72 KiB = 9 MiB > 8 MiB 的缺省缓存：一批取回来的前几条在读到它们之前就被后几条挤出去，
+  // 读那一侧于是逐条重取（实测冷请求 12 → 135）。预取是提示，**提示不许比它省下的还贵**。
+  const files: Record<string, string> = {}
+  for (let i = 0; i < 256; i++) files[`f${String(i).padStart(3, '0')}.txt`] = `${i} `.padEnd(72 * 1024 - 1, 'x') + '\n' // 内容各异：同内容会被去重成一个 blob
+  const b = await lowerBench(files)
+  try {
+    const before = b.truth.stats().gitRequests
+    const out = await face('grep', { pattern: 'no-such-token' }, b.host)
+    const cost = b.truth.stats().gitRequests - before
+    assert.equal(out.ok, true)
+    assert.equal(out.output, 'no line matches no-such-token.')
+    assert.ok(cost <= 25, `256 个文件的冷搜索该是几批而不是逐条：实际 ${cost} 次请求`)
+  } finally {
+    await b.close()
+  }
+})
+
 test('格 3 · 预取：一批把候选的内容取回来，此后逐文件读全命中', async () => {
 
   // **无预取那一档**：从产品宿主上摘掉那一栏，就是今天的逐文件读。

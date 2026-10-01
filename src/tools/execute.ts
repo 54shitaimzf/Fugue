@@ -89,8 +89,11 @@ export interface ToolHost {
    *
    * 它是**提示，不是承诺**：谁也不许依赖"调过之后一定命中"（上层可能是空的 · 容量可能不够），
    * 读那一侧照旧按"读不到就问"的顺序走。`grep` 在逐文件读之前调它一次。
+   *
+   * 返回值是**覆盖到的前缀长度**（缺省 = 全部）：实现按字节封顶时只取得回前面那几条，`grep`
+   * 就只读这一段、下一轮从没覆盖的地方起重新成批——而不是把整批读完、让没取的那些各走一趟。
    */
-  readonly prefetch?: (paths: readonly string[]) => Promise<void>
+  readonly prefetch?: (paths: readonly string[]) => Promise<void | number>
   readonly edit: (rel: string, raw: EditRaw) => Promise<{ readonly rev: number; readonly changed: boolean }>
   /**
    * **执行面在哪儿**：这一格的物化根（绝对路径，一格一个）。`bash` / `run_action` 跑在那儿。
@@ -508,7 +511,7 @@ const grepFace: ToolFn = async (args, host, ctx) => {
     inScope(path, dir) && (pathPattern === null || matchesInScope(pathPattern, path, dir)),
   )
   // 只预取筛后的候选。可选口缺席时仍逐文件读；失败仍由真源读口报出。
-  let prefetch: ((paths: readonly string[]) => Promise<void>) | undefined
+  let prefetch: ((paths: readonly string[]) => Promise<void | number>) | undefined
   try {
     prefetch = host.prefetch
   } catch {
@@ -517,10 +520,14 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   const rows = new SearchRows()
   let batchRows = SEARCH_PREFETCH_ROWS
   scan: for (let at = 0; at < all.length;) {
-    const batch = all.slice(at, at + batchRows)
+    let batch = all.slice(at, at + batchRows)
+    // 最多预取当前批；回执够了以后不再预取后面整棵树。预取按字节封顶时只覆盖前缀，读也只读前缀
+    // （至少一个，保证前进）；没覆盖的留给下一轮重新成批。
+    if (prefetch !== undefined) {
+      const covered = await prefetch(batch)
+      if (typeof covered === 'number') batch = batch.slice(0, Math.max(1, Math.min(covered, batch.length)))
+    }
     at += batch.length
-    // 最多预取当前批；回执够了以后不再预取后面整棵树。
-    if (prefetch !== undefined) await prefetch(batch)
     for (const path of batch) {
       const got = await host.readBytes(path)
       if (got === null) continue
