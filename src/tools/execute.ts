@@ -19,6 +19,8 @@ import type { Capability, Denied } from '../capability/table.ts'
 // 不 import 视图那边——这一层的头注写着"不认识视图"，而这条规矩两层共用，所以它有一条自己的家。
 import { PathShapeError } from '../path-shape.ts'
 import { lineCount } from './receipt.ts'
+import { textWindowOf, numberedWindowOf } from './read-window.ts'
+import type { ReadWindow, ReadText } from './read-window.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -60,6 +62,8 @@ export interface ToolHost {
    * 文本工具自己在这一层解（`utf8Of`），二进制工具原样拿走。
    */
   readBytes(rel: string): Promise<{ readonly bytes: Uint8Array; readonly mode: number } | null>
+  /** 行窗口的可选读口：只解选中那段文本。缺席时由 readBytes 原样退回；图像/整文件仍走字节口。 */
+  readonly readTextWindow?: (rel: string, window: ReadWindow) => Promise<(ReadText & { readonly mode: number }) | null>
   writeBytes(rel: string, bytes: Uint8Array): Promise<{ readonly rev: number }>
   /**
    * 列一层。**只列直接的孩子，不递归**——递归是另一条（`walk`），因为"走多深"这件事
@@ -337,11 +341,31 @@ const PATH_TOOLS: readonly string[] = ['read', 'write', 'edit', 'read_image']
 const readFace: ToolFn = async (args, host) => {
   const path = text(args, 'path')
   if (path === null) return missing('read', 'path')
+  const hasWindow = args.offset !== undefined || args.limit !== undefined
+  if (hasWindow) {
+    const offset = args.offset === undefined ? 1 : args.offset
+    const limit = args.limit
+    if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 1) {
+      return no('read offset must be a positive safe integer (1-based).')
+    }
+    if (limit !== undefined && (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 0)) {
+      return no('read limit must be a nonnegative safe integer.')
+    }
+    const window: ReadWindow = { offset, ...(limit === undefined ? {} : { limit }) }
+    let got: (ReadText & { readonly mode: number }) | null
+    if (host.readTextWindow !== undefined) {
+      got = await host.readTextWindow(path, window)
+    } else {
+      const raw = await host.readBytes(path)
+      got = raw === null ? null : { ...textWindowOf(raw.bytes, window), mode: raw.mode }
+    }
+    if (got === null) return no(`no ${path} in the view (unreadable reads as absent — this layer does not tell the two apart).`)
+    return ok(`${path} (${got.byteLength} bytes · ${got.lines} lines · mode ${got.mode.toString(8)})\n${numberedWindowOf(got, offset)}`)
+  }
   const got = await host.readBytes(path)
   if (got === null) return no(`no ${path} in the view (unreadable reads as absent — this layer does not tell the two apart).`)
   const body = utf8Of(got.bytes)
-  // **行数走 `receipt.ts` 那一处**：这一行里的「L 行」与截断标记里的「共 L 行」必须是同一个数
-  // ——两处各算一次，两个数就迟早不一样（施工当场撞到过：头里 401 行、标记里 400 行）。
+  // 整文件读保持原样：统计和回执截断仍用 receipt.ts 的共同口径。
   const lines = lineCount(body)
   return ok(
     `${path} (${got.bytes.byteLength} bytes · ${lines} lines · mode ${got.mode.toString(8)})\n${body}`,

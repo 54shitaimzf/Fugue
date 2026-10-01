@@ -19,6 +19,7 @@ import type { Denied as FenceDenied, Roots } from '../roots/contract.ts'
 import { applyEdit } from '../view/edit.ts'
 import { snapshotOf } from '../view/snapshot.ts'
 import type { View } from '../view/contract.ts'
+import { textWindowOf } from './read-window.ts'
 import { checkpoint } from '../checkpoint.ts'
 import type { RunReply } from './execute.ts'
 import type { ActionAsk, AskItem, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, ToolHost, ToolListing } from './execute.ts'
@@ -532,6 +533,11 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
   }
   return {
     readBytes: readBytesOf,
+    async readTextWindow(rel, window) {
+      // 和字节读共用路径检查/视图，不建立第二个来源；仅把 UTF-8 解码下推到选中的行段。
+      const got = await readBytesOf(rel)
+      return got === null ? null : { ...textWindowOf(got.bytes, window), mode: got.mode }
+    },
     execCwd,
     writeBytes: writeBytesOf,
 
