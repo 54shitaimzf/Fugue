@@ -154,15 +154,24 @@ async function listWriters(root: string): Promise<WriterId[]> {
 }
 
 /**
- * 从文件尾取回该 writer 的下一个序号。**只读一个窗口**，不读整份日志——
+ * 写者准备时从文件尾取回序号，必要时去掉未提交尾段。**只读一个窗口**，不读整份日志——
  * 追加的代价因此与已有日志的长度无关（架构 § 9.4 的重建代价上界）。
  */
 async function tailSeq(fh: FileHandle, w: WriterId): Promise<LogSeq> {
   const st = await fh.stat()
   if (st.size === 0) return 0
-  const want = Math.min(st.size, TAIL_WINDOW)
+  const want = Math.min(st.size, TAIL_WINDOW), start = st.size - want
   const buf = Buffer.alloc(want)
-  await fh.read(buf, 0, want, st.size - want)
+  let used = 0
+  while (used < want) {
+    const read = await fh.read(buf, used, want - used, start + used)
+    if (read.bytesRead === 0) break
+    used += read.bytesRead
+  }
+  if (used !== want) throw new LogCorruptError(w, 0, '日志尾部在读取中改变，拒绝恢复')
+  // 截点必须来自原字节；UTF8半码点解码成替换符以后，字符串长度不再是磁盘坐标。
+  const lastNewline = buf.lastIndexOf(0x0a)
+  const completeEnd = lastNewline === -1 ? 0 : start + lastNewline + 1
   let text = buf.toString('utf8')
   if (want < st.size) {
     // 窗口的第一行可能被切断，丢掉它。
@@ -170,18 +179,29 @@ async function tailSeq(fh: FileHandle, w: WriterId): Promise<LogSeq> {
     text = nl === -1 ? '' : text.slice(nl + 1)
   }
   const complete = text.endsWith('\n') ? text : text.slice(0, text.lastIndexOf('\n') + 1)
+  let seq: LogSeq = 0
   if (complete.length === 0) {
-    // 窗口里一条完整行都没有。两种情形必须分开：整份文件就是一条半行（崩溃在第一
-    // 次追加的中间，序号从 1 起）；或者窗口比一行还短——那就不能猜。
+    // 完整窗口内没有行，不能猜已有前缀；只有整份文件都是首条半行时才可恢复为空。
     if (want < st.size) {
       throw new LogCorruptError(w, 0, `尾部 ${TAIL_WINDOW} 字节内没有完整行，无法确定下一个序号`)
     }
-    return 0
+  } else {
+    const last = complete.slice(0, -1)
+    const d = decodeLine(last.slice(last.lastIndexOf('\n') + 1))
+    if (!d.ok) throw new LogCorruptError(w, 0, `日志尾部不可解析：${d.reason}`)
+    if (d.pos.writer !== w) throw new LogCorruptError(w, 0, `信封里的 writer 与文件名不符：${JSON.stringify(d.pos.writer)}`)
+    seq = d.pos.seq
   }
-  const last = complete.slice(0, -1)
-  const d = decodeLine(last.slice(last.lastIndexOf('\n') + 1))
-  if (!d.ok) throw new LogCorruptError(w, 0, `日志尾部不可解析：${d.reason}`)
-  return d.pos.seq
+  // 先验证最后完整行，再动未提交尾段；拒绝时不能顺手删掉诊断证据。
+  if (completeEnd < st.size) {
+    const now = await fh.stat()
+    if (now.size !== st.size || now.mtimeMs !== st.mtimeMs || now.ctimeMs !== st.ctimeMs) {
+      throw new LogCorruptError(w, 0, '日志尾部在恢复前改变，拒绝截断')
+    }
+    await fh.truncate(completeEnd)
+    // truncate完成后O_APPEND按新EOF写；flush仍在append里遵守调用方的sync档。
+  }
+  return seq
 }
 
 interface WriterState {
@@ -195,6 +215,10 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
   const sync: SyncLevel = opts.sync ?? 'batch'
   const batchEvery = opts.batchEvery ?? DEFAULT_BATCH_EVERY
   const writers = new Map<WriterId, WriterState>()
+  const initializing = new Map<WriterId, Promise<WriterState>>()
+  const appending = new Set<Promise<LogSeq>>()
+  let closed = false
+  let closing: Promise<void> | undefined
   // **拿不到就当场抛**——不等一个不知道多久的持者（`hold.ts` 的头一段）。
   const hold: Hold | null = opts.write === undefined ? null : holdWriter(root, opts.write)
 
@@ -227,22 +251,27 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
     return rows
   }
 
-  async function state(w: WriterId): Promise<WriterState> {
+  function state(w: WriterId): Promise<WriterState> {
     const hit = writers.get(w)
-    if (hit) return hit
+    if (hit) return Promise.resolve(hit)
+    const pending = initializing.get(w)
+    if (pending) return pending
     const file = logFileOf(root, w)
-    await mkdir(dirname(file), { recursive: true })
-    const fh = await open(file, 'a+')
-    let nextSeq: LogSeq
-    try {
-      nextSeq = (await tailSeq(fh, w)) + 1
-    } catch (err) {
-      await fh.close()
-      throw err
-    }
-    const s: WriterState = { fh, nextSeq, sinceSync: 0, chain: Promise.resolve() }
-    writers.set(w, s)
-    return s
+    const opening = (async () => {
+      await mkdir(dirname(file), { recursive: true })
+      const fh = await open(file, 'a+')
+      let nextSeq: LogSeq
+      try { nextSeq = (await tailSeq(fh, w)) + 1 }
+      catch (err) { await fh.close(); throw err }
+      const s: WriterState = { fh, nextSeq, sinceSync: 0, chain: Promise.resolve() }
+      writers.set(w, s)
+      return s
+    })()
+    initializing.set(w, opening)
+    // 两个settle分支都只删自己的初始化；失败不成为永久缓存，后一次可重试。
+    const settled = () => { if (initializing.get(w) === opening) initializing.delete(w) }
+    void opening.then(settled, settled)
+    return opening
   }
 
   /** 同一个 writer 内序号必须唯一且有序，所以它的追加串成一条链；跨 writer 不串。 */
@@ -255,25 +284,32 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
     return run
   }
 
-  async function append(w: WriterId, e: LogEvent): Promise<LogSeq> {
-    // 持着 a1 的锁却往 a2 里追加，是"一次命令一个 writer"这条规矩被违反——当面报出来。
-    if (hold !== null && hold.writer !== w) {
-      throw new Error(
-        `这条句柄持的是 ${hold.writer} 的锁，却要往 ${w} 的日志里追加：一次命令只写一个 writer`,
-      )
-    }
-    const s = await state(w)
-    return serialize(s, async () => {
-      const seq = s.nextSeq
-      await s.fh.write(encodeEvent(seq, w, e) + '\n')
-      s.nextSeq = seq + 1
-      s.sinceSync++
-      if (sync === 'each' || (sync === 'batch' && s.sinceSync >= batchEvery)) {
-        await s.fh.sync()
-        s.sinceSync = 0
+  function append(w: WriterId, e: LogEvent): Promise<LogSeq> {
+    if (closed) return Promise.reject(new Error('日志句柄已关闭，不能追加'))
+    const operation = (async () => {
+      // 持着 a1 的锁却往 a2 里追加，是"一次命令一个 writer"这条规矩被违反——当面报出来。
+      if (hold !== null && hold.writer !== w) {
+        throw new Error(
+          `这条句柄持的是 ${hold.writer} 的锁，却要往 ${w} 的日志里追加：一次命令只写一个 writer`,
+        )
       }
-      return seq
-    })
+      const s = await state(w)
+      return serialize(s, async () => {
+        const seq = s.nextSeq
+        await s.fh.write(encodeEvent(seq, w, e) + '\n')
+        s.nextSeq = seq + 1
+        s.sinceSync++
+        if (sync === 'each' || (sync === 'batch' && s.sinceSync >= batchEvery)) {
+          await s.fh.sync()
+          s.sinceSync = 0
+        }
+        return seq
+      })
+    })()
+    appending.add(operation)
+    const settled = () => { appending.delete(operation) }
+    void operation.then(settled, settled)
+    return operation
   }
 
   async function* readByWriter(w: WriterId, fromSeq: LogSeq = 0): AsyncGenerator<LogEvent> {
@@ -311,11 +347,18 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
     }
   }
 
-  async function close(): Promise<void> {
-    const all = [...writers.values()]
-    writers.clear()
-    await Promise.all(all.map((s) => s.fh.close().catch(() => undefined)))
-    if (hold !== null) hold.release()
+  function close(): Promise<void> {
+    if (closing !== undefined) return closing
+    closed = true
+    closing = (async () => {
+      // 接受过的append包含初始化/恢复；全部结清后才能关fd与释放同writer栅栏。
+      await Promise.allSettled([...appending])
+      const all = [...writers.values()]
+      writers.clear()
+      await Promise.all(all.map((s) => s.fh.close().catch(() => undefined)))
+      if (hold !== null) hold.release()
+    })()
+    return closing
   }
 
   return { append, readByWriter, readMerged, writers: () => listWriters(root), close }
