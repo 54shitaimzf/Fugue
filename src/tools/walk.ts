@@ -9,6 +9,9 @@ interface WalkLimits {
   readonly maxRows: number
 }
 
+/** 产品宿主的枚举上限：`host.ts` 的 `walk` 与 `leavesUnder` 共用这一份，测试也从这里取，不另写一遍。 */
+export const WALK_LIMITS: WalkLimits = Object.freeze({ maxDepth: 24, maxRows: 5000 })
+
 export interface WalkResult {
   readonly paths: readonly string[]
   /** Enumeration stopped before examining a file or subtree; omitted file count is unknown. */
