@@ -9,6 +9,11 @@
 - 完整枚举且未碰结果预算时，小结果逐字节保持原样，空结果仍说 `no line/path matches …`。
 - 已发现但放不下的命中如实报 `results are incomplete`；刚好填满预算就停时，后续有没有命中尚未查明，报 `further matches and completeness are unknown`。
 - 命中列表是前缀，头里说 `N lines/paths shown`。不编造未扫描的总命中数、遗漏字节数或遗漏文件数。
+- **总数确实知道的时候要报出来**：`glob` 只配路径、一个文件都不读，所以枚举完整时命中总数是白捡的——
+  头里说 `N of M paths shown`，说明里说 `M-N more paths are not shown`，**不说** `Further matches are unknown`。
+  把可知的数说成未知与"不猜未知"是两件事，而模型最需要的恰好是"这个模式一共匹配 5,000 条、我该收紧"。
+  枚举自己不全（或完整性未知）时 `M` 不是总数，那一档仍然只报前缀与未知。
+  `grep` 的 `content` / `count` / `files_with_matches` 一律不报总数：不读完文件确实不知道还有多少命中。
 - 第一条命中就过长时给完整 UTF-8 前缀，并说 `Last result line shortened`；保留完整字符，不劈开汉字/emoji。
 - `count` 对已经完整扫描并显示的文件给精确匹配行数，早停只发生在文件结果行之间。文件名档只需找出文件内第一条匹配。
 - 行迭代保留旧 grep 的末尾 LF 空段和空文件一段语义；不预先拆出整文件行数组。
@@ -16,8 +21,20 @@
 - 旧宿主没有详细枚举读口时如实报 `Enumeration completeness unavailable`。这是不知道，不能假报完整。
 
 候选边界仍由原宿主维护：不跟软链，深度 24，最多 5,000 条文件。详细状态来自
-[walk 限制读口](walk-limits.md)，不改冻结的 View/Truth 契约。搜索结果正文预算为 7,680 字节，
-为头、说明、运行时步预算留 512 字节；最终仍过统一 `capReceipt` 出口。没有 cgroup/内核安全配置变化。
+[walk 限制读口](walk-limits.md)，不改冻结的 View/Truth 契约。最终仍过统一 `capReceipt` 出口。
+没有 cgroup/内核安全配置变化。
+
+**结果行的预算是算出来的，不是拍出来的**（`src/tools/search-receipt.ts` 的 `SEARCH_ROW_BYTES`）：
+8,192 减去「说明块最长那一份（四条全上 + 每条一个换行）333 字节」「结果头最长那一份
+（`N of M paths shown:` + 换行，两个数各留 7 位）32 字节」「运行时在回执后面追加的那一句
+（`stepsLeftTail`）留 256 字节」= **7,571 字节**。
+
+原先写的是 `MAX_RECEIPT_BYTES - 512`，而最坏情况下实测只剩 **42 字节**余量：说明措辞再长一句、
+或者 `AGENT_LAND_NOW` 改一句话就越界，搜索回执就被 `capReceipt` 中段截掉——正是这一单元声称要
+避免的那件事。而且**没有一条测试能发现它**：`w10.test.ts` 的字节断言都落在追加那一句**之前**的
+face 输出上。`search-stop.test.ts` 的「the row budget leaves room for the worst case …」把这件事
+钉成断言：最坏说明集的 `render` 结果拼上真正的 `stepsLeftTail`，`capReceipt` 一个字节都不许动它，
+并对着 `driver.ts` / `plan.ts` 两处真正的收工句子核 256 这个留量。
 
 ## 预取成本与实测取舍
 

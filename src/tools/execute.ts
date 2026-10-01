@@ -450,8 +450,12 @@ function matchesInScope(re: RegExp, path: string, dir: string): boolean {
 }
 
 /**
- * 走一遍树。**走法归宿主**（`walk`）：它知道哪些行是目录、哪些是软链、能走多深。这一层只
- * 拿结果去配 `glob` 的语法（`**` 要不要跨 `/` 是模式那边的事）。
+ * 走一遍树**并带回这一趟枚举全不全**。
+ *
+ * 详细读口（`walkDetailed`）在场时它说得出"碰了哪个上限"；不在场时**完整性是"不知道"**
+ * （`known: false`），不是"完整"——回执那一层据此说 `Enumeration completeness unavailable`，
+ * 而不是替一次没做过的枚举打包票。生产宿主（`createToolHost`）一定带这个读口，`known: false`
+ * 那一支只有旧宿主与夹具走得到。
  */
 async function searchWalk(host: ToolHost): Promise<{ readonly paths: readonly string[]; readonly coverage: SearchCoverage }> {
   if (host.walkDetailed !== undefined) {
@@ -461,17 +465,24 @@ async function searchWalk(host: ToolHost): Promise<{ readonly paths: readonly st
   return { paths: await host.walk(), coverage: { known: false, truncated: false, limits: [] } }
 }
 
+/**
+ * 走一遍树。**走法归宿主**（`walk`）：它知道哪些行是目录、哪些是软链、能走多深。这一层只
+ * 拿结果去配 `glob` 的语法（`**` 要不要跨 `/` 是模式那边的事）。
+ */
 const globFace: ToolFn = async (args, host) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('glob', 'pattern')
   const dir = scopeOf(text(args, 'path'), '')
   const all = await searchWalk(host)
   const re = globToRe(pattern)
+  // **路径匹配一个文件都不读**：枚举完整时命中总数是白捡的，所以先数出来、再截前缀。
+  // 丢掉它就等于把可知的数说成 unknown，而模型最需要的恰好是"一共匹配 5000 条、我该收紧"。
+  const hit = all.paths.filter((path) => inScope(path, dir) && matchesInScope(re, path, dir))
   const rows = new SearchRows()
-  for (const path of all.paths) {
-    if (inScope(path, dir) && matchesInScope(re, path, dir) && !rows.add(path)) break
-  }
-  return ok(rows.render('paths',`no path matches ${pattern}.`,all.coverage))
+  for (const path of hit) if (!rows.add(path)) break
+  // 枚举自己不全（或完整性未知）的时候 `hit.length` 不是总数，那一档仍然不报。
+  const total = all.coverage.known && !all.coverage.truncated ? hit.length : null
+  return ok(rows.render('paths',`no path matches ${pattern}.`,all.coverage,total))
 }
 
 const grepFace: ToolFn = async (args, host, ctx) => {
