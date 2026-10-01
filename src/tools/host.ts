@@ -38,6 +38,7 @@ import type { RefHead } from '../round/head.ts'
 import { isMounted, unmountOverlay } from '../materialize/mount.ts'
 import { matParts } from '../roots/paths.ts'
 import { lowerAt } from '../view/lower.ts'
+import { createCachedWalk } from './walk.ts'
 import type { Reclaim, DeclaredSet } from '../execute/reclaim.ts'
 import type { AbsPath } from '../terms.ts'
 
@@ -249,22 +250,8 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     await blobs(out)
   }
 
-  async function walk(): Promise<readonly string[]> {
-    const out: string[] = []
-    const step = async (dir: string, depth: number): Promise<void> => {
-      if (depth > MAX_DEPTH || out.length >= MAX_ROWS) return
-      const rows = await view.list(dir as RelPath)
-      for (const row of rows) {
-        if (out.length >= MAX_ROWS) return
-        const path = dir === '' ? row.name : `${dir}/${row.name}`
-        // **软链不跟**：它指向的东西不在视图的可达集里（§ 8.4 的 `through-symlink`）。
-        if (row.kind === 'dir') await step(path, depth + 1)
-        else if (row.kind === 'file') out.push(path)
-      }
-    }
-    await step('', 0)
-    return out
-  }
+  // 清单随视图代失效；MAX_ROWS/深度与不跟软链的原语义保持不变。
+  const walk = createCachedWalk(view, { maxDepth: MAX_DEPTH, maxRows: MAX_ROWS })
 
   // ── 执行面（W8：视图是读面，物化根是执行面）──────────────────────────
   //
