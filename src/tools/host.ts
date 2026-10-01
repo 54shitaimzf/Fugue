@@ -14,7 +14,7 @@ import type { Truth } from '../truth/contract.ts'
 import type { TreeEntry } from '../entries.ts'
 import { normMode } from '../delta.ts'
 import type { Delta } from '../delta.ts'
-import type { AgentId, CommitId, RelPath, ViewRev, WriterId } from '../terms.ts'
+import type { AgentId, BlobId, CommitId, RelPath, ViewRev, WriterId } from '../terms.ts'
 import type { Denied as FenceDenied, Roots } from '../roots/contract.ts'
 import { applyEdit } from '../view/edit.ts'
 import { snapshotOf } from '../view/snapshot.ts'
@@ -139,6 +139,19 @@ export interface HostOptions {
 }
 
 /**
+ * `actions.truth` 上那道"一次批量把这几条 blob 取回来"的缝，**有才用**。
+ *
+ * 判据是运行时那一问：真源那一层是 `TruthHandle` 时它有 `prefetchBlobs`，而**冻结的 `Truth`
+ * 契约（架构 § 8.2）一个字不动**——加方法只落在句柄层（先例 `stats()`/`close()`）。夹具里那些
+ * 不带这一栏的假体在这里拿到 `undefined`，预取于是缺席，grep 退回逐文件读。
+ */
+function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Promise<void>) | undefined {
+  const fn = (truth as unknown as { prefetchBlobs?: unknown } | undefined)?.prefetchBlobs
+  if (typeof fn !== 'function') return undefined
+  return (ids) => (fn as (ids: readonly BlobId[]) => Promise<void>).call(truth, ids)
+}
+
+/**
  * 一份 `ToolHost`。
  *
  * `view` 是读与写的唯一去处（写走 `view/edit.ts` 那一份：blob → 日志 → 内存，顺序在那儿）；
@@ -206,6 +219,35 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     return { bytes, mode: normMode(meta.mode) }
   }
 
+
+  /**
+   * **把这几条路径的内容先取回一层来**（这一站加的）。id 从 `view.stat` 拿（`EntryMeta.id` 就是
+
+   * 那个 blob）——info 小表热了之后这一步是内存操作，一次收集、一次批量。
+   *
+   * **没有真源（夹具档）就是缺席**：这里直接返回，grep 退回逐文件读。
+   */
+  async function prefetchNow(paths: readonly string[]): Promise<void> {
+    const blobs = prefetchOf(opts.actions?.truth)
+    if (blobs === undefined) return
+    const metas = await Promise.all(
+      paths.map(async (rel) => {
+        try {
+          return await view.stat(rel as RelPath)
+        } catch {
+          // 路径形状不对（或视图那一层不认这一条）——预取是提示，跳过它，读那一侧照旧会报。
+          return null
+        }
+      }),
+    )
+    const out: BlobId[] = []
+    for (const meta of metas) {
+      const id = meta === null || meta.kind !== 'file' ? undefined : meta.id
+      if (id === undefined || id === null || id === '') continue
+      out.push(id as BlobId)
+    }
+    await blobs(out)
+  }
 
   async function walk(): Promise<readonly string[]> {
     const out: string[] = []
@@ -529,8 +571,10 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     },
 
     walk,
+    prefetch: prefetchNow,
 
     async run(ask: RunAsk) {
+
       return runWith(ask, shellArgv(ask.command), ask.cwd)
     },
 

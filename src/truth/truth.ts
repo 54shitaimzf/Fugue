@@ -6,11 +6,34 @@
 //
 // 形状：blob 与 tree 都是**不可变、内容寻址**的对象，所以读路径上的缓存永远有效，
 // 不需要失效逻辑——`trees` 与 `commitTrees` 因此是纯粹的加速项。
+//
+// 这一站给读路径补上第三处缓存（前两处是 `trees` 与 `commitTrees`，它们存的是**解析过的**
+// 形状）：
+//
+//   · **blob 字节进一张按字节封顶的 LRU**（`blobCache`，键是 `BlobId`）。它只装 blob 的原始
+//     字节——tree/commit 的原始字节不进，那两个已经有解析形式的缓存，重复存白占容量。
+//   · **info 小表**（`infoOf`，id → {type, size}）：`statAt` 的单条 info 与 `listAt` 的批量
+//     info 都先查它。条目只有几十字节，所以不设上限（先例就是上面那两处）；**miss 不缓存**
+//     ——blob 随后可能被 `putBlob` 写出来，缓存一个"不在"会把后来的命中错报成不在。
+//   · **先滤后发**：凡是批量 info 与批量预取，发之前先把缓存里已有的 id 滤掉，不然热路径
+//     照样发满额往返。
+//
+// 这三处都是**派生体，不是第二处真源**：清空随时安全，容量 0 就是直通（地板 = 变慢，不是
+// 跑不起来）。跨进程不共享、不落盘——「单次进程 + 每次重建」没有被破坏。
 import { GitError, openGit, type GitHandle, type ReadTier } from './git.ts'
 import type { Conflict, ConflictStage, Truth } from './contract.ts'
 import type { DirEntry, EntryKind, EntryMeta, ObjectId, TreeEntry } from '../entries.ts'
 import type { BlobId, CommitId, RefName, RelPath, TreeId } from '../terms.ts'
+import { BlobLru } from './blob-lru.ts'
 
+/**
+ * 一个句柄读得到的那点账：git 那一侧（起过多少进程 · 发过多少请求 · 当前读档位）与本句柄
+ * 自己的缓存（blob · info 两张表）。
+ *
+ * **缓存字段是这一站起加的，单独一段**：它们是"这一层省下了什么"的归因读数——判据是
+ * `gitRequests` **不涨**，而这里的 hit/miss/evicted 说明那个"不涨"是怎么来的。旧的三个字段
+ * 一个不改（它们是别的断言的判据）。
+ */
 export interface TruthStats {
   /** 这个句柄起过多少个 git 进程。 */
   gitSpawns: number
@@ -18,6 +41,24 @@ export interface TruthStats {
   gitRequests: number
   /** 当前实际在用的读档位。 */
   readTier: ReadTier
+  /** blob 字节缓存：命中的次数（命中 = 没向 git 发这一条请求）。 */
+  blobHits: number
+  /** blob 字节缓存：未命中的次数（未命中才会去问 git；容量 0 时每一次都记在这里）。 */
+  blobMisses: number
+  /** blob 字节缓存：当前装了几条。 */
+  blobEntries: number
+  /** blob 字节缓存：当前装了多少字节（恒 ≤ `blobCacheBytes`）。 */
+  blobBytes: number
+  /** blob 字节缓存：因为容量不够被挤掉的条数。 */
+  blobEvictions: number
+  /** 当前生效的 blob 缓存容量（字节）。0 = 直通。 */
+  blobCacheBytes: number
+  /** info 小表：命中的次数。 */
+  infoHits: number
+  /** info 小表：未命中的次数（对象不在**不记**——那一条不缓存）。 */
+  infoMisses: number
+  /** info 小表：当前装了几条。 */
+  infoEntries: number
 }
 
 /** `advance` 输掉了 CAS。**这不是异常情况，是那把锁的全部意义**：并发推进同一 ref 时恰一个成功。 */
@@ -139,14 +180,41 @@ function emptyNode(): DirNode {
   return { files: new Map(), dirs: new Map() }
 }
 
-/** `read` 选的是读的档位：`batch`（默认）或 `oneshot`（退化档，见 git.ts）。 */
+/**
+ * blob 缓存的缺省容量：**8 MiB**。
+ *
+ * 出处是量出来的，不是拍的：本仓 `src/` 的工作集 3.79 MB（254 个文件 · 20 核 ext4 实测），
+ * 一轮 `grep` 要读的就是这个量级；取"覆盖一个仓的工作集"的两倍再向上取到 2 的幂，得到 8 MiB。
+ * 它是一条**缺省**，不是常数条款：`blobCacheBytes` 给多少就按多少算，给 0 就是直通。
+ */
+export const DEFAULT_BLOB_CACHE_BYTES = 8 * 1024 * 1024
+
+/**
+ * 一次 `objectMany` 里塞多少条。批量请求是一趟往返，但**回载的字节要在内存里同时活着**，
+ * 所以按条数分块而不是一次全发。这个数不参与任何断言（预取是提示，不是承诺）。
+ */
+const OBJECT_MANY_CHUNK = 256
+
+/**
+ * `read` 选的是读的档位：`batch`（默认）或 `oneshot`（退化档，见 git.ts）。
+ * `blobCacheBytes` 是 blob 字节缓存的上限（缺省 `DEFAULT_BLOB_CACHE_BYTES`，**显式给 0 即关**）。
+ */
 export interface TruthOptions {
   read?: ReadTier
+  blobCacheBytes?: number
 }
 
 export interface TruthHandle extends Truth {
   close(): Promise<void>
   stats(): TruthStats
+  /**
+   * **一次往返把这几条 blob 的字节取回来放进缓存。**
+   *
+   * 它是**提示，不是承诺**：谁也不许依赖"调过之后一定命中"（换句柄、换档位、容量不够都会
+   * 让它落空），调用方照旧按"读不到就问"的顺序走。已缓存的 id 在这里被滤掉——热路径上
+   * 这一步省的正是"满额往返"。
+   */
+  prefetchBlobs(ids: readonly BlobId[]): Promise<void>
 }
 
 export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
@@ -156,6 +224,15 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
   const trees = new Map<string, RawEntry[]>()
   /** 提交不可变 → 同样永远有效。 */
   const commitTrees = new Map<string, string>()
+  /**
+   * blob 字节：内容寻址 ⇒ 不需要失效逻辑，只需要一个上限。`trees`/`commitTrees` 存的是
+   * **解析过的形状**（条目数组、一个 tree id），这里是**原始字节**，所以它按字节封顶。
+   */
+  const blobCache = new BlobLru(opts.blobCacheBytes ?? DEFAULT_BLOB_CACHE_BYTES)
+  /** id → {type, size}。**对象不在不记**（blob 随后可能被写出来）。 */
+  const infoOf = new Map<string, { type: string; size: number }>()
+  let infoHits = 0
+  let infoMisses = 0
 
   function hashBytesOf(id: string): number {
     const n = id.length / 2
@@ -167,6 +244,73 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
     const r = await git.object(want, id)
     if (r === null) throw new Error(`${what}不见了：${id}`)
     return r.body
+  }
+
+  /**
+   * 一条 blob 的字节：**缓存里有就直接给，没有才去问 git，拿回来顺手填进去**。
+   *
+   * 返回的是缓存里那一份**本身**（不是拷贝）——所以它只给本模块内部用：出口那两处
+   * （`getBlob` / `readAt`）照旧各拷一份再交出去，纪律不变。
+   */
+  async function blobBytesOf(id: string, what: string): Promise<Uint8Array> {
+    const hit = blobCache.get(id)
+    if (hit !== undefined) return hit
+    const r = await git.object('contents', id)
+    if (r === null) throw new Error(`${what}不见了：${id}`)
+    // **填缓存之前必须换成独立的一份**：`parseReply` 交出来的 body 是那块读缓冲区的一个
+    // 视图（`subarray`），直接存进去会让整块流缓冲被一条 blob 拖着不放。
+    blobCache.set(id, r.body)
+    return r.body
+  }
+
+  /** info 小表那一趟：查得到就用，查不到就发一次单条 info（**对象不在不填**）。 */
+  async function infoOfId(id: string): Promise<{ type: string; size: number } | null> {
+    const hit = infoOf.get(id)
+    if (hit !== undefined) {
+      infoHits++
+      return hit
+    }
+    infoMisses++
+    const r = await git.object('info', id)
+    if (r === null) return null
+    const row = { type: r.type, size: r.size }
+    infoOf.set(id, row)
+    return row
+  }
+
+  /** 一批 id 的 info：**先滤后发**（缓存里已有的不发），回来的逐条填表。 */
+  async function infoOfMany(ids: readonly string[]): Promise<Array<{ type: string; size: number } | null>> {
+    const want: string[] = []
+    const seen = new Set<string>()
+    for (const id of ids) {
+      if (infoOf.has(id)) {
+        infoHits++
+        continue
+      }
+      if (seen.has(id)) continue
+      seen.add(id)
+      want.push(id)
+    }
+    const out = new Map<string, { type: string; size: number }>()
+    for (let i = 0; i < want.length; i += OBJECT_MANY_CHUNK) {
+      const chunk = want.slice(i, i + OBJECT_MANY_CHUNK)
+      infoMisses += chunk.length
+      const replies = await git.objectMany(
+        'info',
+        chunk,
+      )
+      for (const [j, id] of chunk.entries()) {
+        const r = replies[j]
+        if (r === null) continue
+        const row = { type: r.type, size: r.size }
+        infoOf.set(id, row)
+        out.set(id, row)
+      }
+    }
+    return ids.map((id) => {
+      const row = infoOf.get(id)
+      return row === undefined ? null : row
+    })
   }
 
   async function treeOf(commit: CommitId): Promise<string> {
@@ -325,7 +469,11 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
   return {
     async putBlob(bytes: Uint8Array): Promise<BlobId> {
       const out = await git.run(['hash-object', '-w', '--stdin'], bytes)
-      return out.toString('utf8').trim() as BlobId
+      const id = out.toString('utf8').trim() as BlobId
+      // **字节就在手里，顺手回填缓存**：零成本，而且这一条之后多半会被立刻读回来
+      // （`write` 之后 `read`、提交之后重放）。存不下（容量 0 / 超容量）时 `set` 自己拒。
+      blobCache.set(id, bytes)
+      return id
     },
 
     putTree,
@@ -339,9 +487,9 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
     },
 
     async getBlob(id: BlobId): Promise<Uint8Array> {
-      // 拷一份再交出去：批量子进程那块缓冲区是本模块的内部状态，不该由调用者手里的
-      // 视图继续指着。
-      return Buffer.from(await need('contents', id, 'blob'))
+      // 拷一份再交出去：缓存里那一份（或批量子进程那块缓冲区）是本模块的内部状态，不该由
+      // 调用者手里的视图继续指着。
+      return Buffer.from(await blobBytesOf(id, 'blob'))
     },
 
     async statAt(commit: CommitId, path: RelPath): Promise<EntryMeta | null> {
@@ -349,7 +497,7 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
       if (hit === null) return null
       const kind = kindOf(hit.mode)
       const sized = kind === 'file' || kind === 'symlink'
-      const r = sized ? await git.object('info', hit.id) : null
+      const r = sized ? await infoOfId(hit.id) : null
       if (sized && r === null) throw new Error(`对象不见了：${hit.id}`)
       return { kind, mode: hit.mode, size: r === null ? 0 : r.size, id: hit.id }
     },
@@ -361,7 +509,8 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
       // 目录没有字节；gitlink 指的是另一个仓库的一个提交，把它那个提交对象的字节当成
       // 这个路径的内容交出去是错的。
       if (kind === 'dir' || kind === 'gitlink') return null
-      return Buffer.from(await need('contents', hit.id, 'blob'))
+      // 与 `getBlob` 同一条出口纪律：拷一份再交出去。
+      return Buffer.from(await blobBytesOf(hit.id, 'blob'))
     },
 
     async listAt(commit: CommitId, dir: RelPath): Promise<DirEntry[]> {
@@ -373,13 +522,10 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
         const k = kindOf(e.mode)
         return k === 'file' || k === 'symlink'
       })
-      const replies = await git.objectMany(
-        'info',
-        sized.map((e) => e.id),
-      )
+      const rows = await infoOfMany(sized.map((e) => e.id))
       const sizes = new Map<string, number>()
       for (const [i, e] of sized.entries()) {
-        const r = replies[i]
+        const r = rows[i]
         if (r === null) throw new Error(`条目 ${e.name} 的对象不见了：${e.id}`)
         sizes.set(e.id, r.size)
       }
@@ -391,6 +537,27 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
         }
         return { name: e.name, kind, mode: e.mode, size: size ?? 0, id: e.id }
       })
+    },
+
+    async prefetchBlobs(ids: readonly BlobId[]): Promise<void> {
+      const want: string[] = []
+      const seen = new Set<string>()
+      for (const id of ids) {
+        // **先滤后发**：已经在缓存里的不发（热路径上这一步省的正是满额往返）。
+        if (blobCache.has(id)) continue
+        if (seen.has(id)) continue
+        seen.add(id)
+        want.push(id)
+      }
+      for (let i = 0; i < want.length; i += OBJECT_MANY_CHUNK) {
+        const chunk = want.slice(i, i + OBJECT_MANY_CHUNK)
+        const replies = await git.objectMany('contents', chunk)
+        for (const [j, id] of chunk.entries()) {
+          const r = replies[j]
+          if (r === null) continue
+          blobCache.set(id, r.body)
+        }
+      }
     },
 
     async advance(ref: RefName, to: CommitId, expectedOld: CommitId | null): Promise<void> {
@@ -439,6 +606,15 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
       gitSpawns: git.spawns(),
       gitRequests: git.requests(),
       readTier: git.readTier(),
+      blobHits: blobCache.hits,
+      blobMisses: blobCache.misses,
+      blobEntries: blobCache.size,
+      blobBytes: blobCache.bytes,
+      blobEvictions: blobCache.evictions,
+      blobCacheBytes: blobCache.capacityBytes,
+      infoHits,
+      infoMisses,
+      infoEntries: infoOf.size,
     }),
   }
 }

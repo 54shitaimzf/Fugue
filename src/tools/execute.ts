@@ -73,6 +73,15 @@ export interface ToolHost {
    * 那一条），而不封顶的深树能把一步走成挂死。两条都由实现那一侧封——这一层只消费结果。
    */
   walk(): Promise<readonly string[]>
+  /**
+   * **把这几条路径的内容先取回一层来**（这一站加的，可选）。它是一道**缝**：实现了就在这一层
+   * 批量取（一条 `objectMany('contents', …)`），没实现就照旧"用一条读一条"——**预取缺席 =
+   * 退回逐文件读**，不是坏掉（AGENTS 第五节的地板判据）。
+   *
+   * 它是**提示，不是承诺**：谁也不许依赖"调过之后一定命中"（上层可能是空的 · 容量可能不够），
+   * 读那一侧照旧按"读不到就问"的顺序走。`grep` 在逐文件读之前调它一次。
+   */
+  readonly prefetch?: (paths: readonly string[]) => Promise<void>
   readonly edit: (rel: string, raw: EditRaw) => Promise<{ readonly rev: number; readonly changed: boolean }>
   /**
    * **执行面在哪儿**：这一格的物化根（绝对路径，一格一个）。`bash` / `run_action` 跑在那儿。
@@ -399,6 +408,18 @@ const grepFace: ToolFn = async (args, host, ctx) => {
     return no(`that is not a regular expression: ${(err as Error).message}`)
   }
   const all = await host.walk()
+  // **先按一次批量把候选的内容取回来**：它是提示，缺席或失败都退回今天的逐文件读
+  // ——这台宿主没有那道缝（测试夹具）、或者那一层没接上真源，都只是慢一点。
+  //
+  // **读那道缝这件事自己包在 try 里**：`host` 可能是负对照那种"读任何字段都抛"的假体
+  // （`execute.test.ts` 的 ①d 用它），那种宿主上"没有这道缝"该走缺席那一条，不该把这一趟打死。
+  let prefetch: ((paths: readonly string[]) => Promise<void>) | undefined
+  try {
+    prefetch = host.prefetch
+  } catch {
+    prefetch = undefined
+  }
+  if (prefetch !== undefined) await prefetch(all)
   const hits: string[] = []
   for (const path of all) {
     if (dir !== '' && !path.startsWith(dir + '/')) continue

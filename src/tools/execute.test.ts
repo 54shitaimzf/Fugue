@@ -8,6 +8,9 @@
 //   ④ **假模型驱动 读 → 写 → 检查点，走到一次真提交**，而**真工作树一个文件都没多**
 //   ⑤ 负对照：字节那一栏改成"读回来的 UTF-8 文本相同"→ 一条非法序列就把它变红
 //   ⑨ **模型读到的每一个字节都是英文**（口径：谁读谁的语言——人读的走中文 · 见证 § 8.11）
+//   格 3 **`grep` 的候选先按一批取回内容**：冷的那一趟请求数不随文件数线性涨，
+//   热的那一趟一次都不发；这道缝缺席时退回逐文件读（回执逐字节不变）
+
 import assert from 'node:assert/strict'
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -40,6 +43,7 @@ import { capReceipt } from './receipt.ts'
 import type { ToolHost } from './execute.ts'
 import { createToolHost } from './host.ts'
 import { refHeadOf } from '../round/head.ts'
+import type { TreeEntry } from '../entries.ts'
 
 const AGENT = 'agent-1' as AgentId
 const CATALOG = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
@@ -767,5 +771,141 @@ test('⑨ 模型读到的回执里没有一个汉字（正文那几格只看头�
     console.log('⑨ 读数：回执 21 条（含失败路）· 路径形状 6 条 · 围栏 3 条 · 截断标记 1 条——一个汉字都没有')
   } finally {
     await b.close()
+  }
+})
+// ── 格 3 · 预取：缓存与批量取在工具这一层的落点 ──────────────────────────────────
+
+/**
+ * 一份**从提交起**的台子：内容在下层（对象库里），所以 `grep` 的每一次读都要经真源。
+ *
+ * 与 `bench()` 的差别有两处：那台的字节在视图上层（本格写过的），读起来是内存直给，量不到
+ * 预取；这一台先把文件提交下去，再按那个提交开视图，于是"逐文件读"真的落到 M1。
+ *
+ * **建语料那个句柄用完就关**：`putBlob` 会顺手把字节回填进它自己的缓存，留着它当测量句柄，
+ * 缓存一开始就是热的，什么都量不到。回来这一份句柄从零起。
+ */
+interface LowerBench {
+  readonly truth: TruthHandle
+  readonly host: ToolHost
+  readonly close: () => Promise<void>
+}
+
+async function lowerBench(
+  files: Record<string, string>,
+  opts: { readonly cache?: number; readonly read?: 'batch' | 'oneshot' } = {},
+): Promise<LowerBench> {
+  const root = mkdtempSync(join(tmpdir(), 'fugue-b5-lower-'))
+  const init = spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' })
+  assert.equal(init.status, 0, init.stderr)
+  const build = openTruth(root)
+  const entries: TreeEntry[] = []
+  for (const [name, body] of Object.entries(files)) {
+    entries.push({ name, mode: 0o100644, id: await build.putBlob(new Uint8Array(Buffer.from(body, 'utf8'))) })
+  }
+  const base = await build.commit(await build.putTree(entries), [], '底')
+  await build.close()
+
+  const log = openLog(root, { write: AGENT as WriterId, sync: 'each' })
+  const measure = openTruth(root, {
+    ...(opts.cache === undefined ? {} : { blobCacheBytes: opts.cache }),
+    ...(opts.read === undefined ? {} : { read: opts.read }),
+  })
+  const view = await loadView(log, AGENT as WriterId, { lower: lowerAt(measure, base) })
+  const host = createToolHost(view, createRoots(root as never), {
+    actions: { writer: AGENT as WriterId, log, truth: measure, head: await refHeadOf(log, AGENT as WriterId, base) },
+  })
+  return {
+    truth: measure,
+    host,
+    close: async () => {
+      await log.close()
+      await measure.close()
+      rmSync(root, { recursive: true, force: true })
+    },
+  }
+}
+
+/** 30 个文件散在 6 个目录下（连根共 7 个目录）：逐文件读与批量取的差别在这里看得出来。 */
+function lowerCorpus(): Record<string, string> {
+  const files: Record<string, string> = {}
+  for (let i = 0; i < 30; i++) {
+    files[`d${i % 6}/f${String(i).padStart(2, '0')}.txt`] = `第 ${i} 行\n这一行带个记号\n`
+  }
+  return files
+}
+
+test('格 3 · 地板：容量 0 + 预取缺席 + oneshot 三者同开，回执与缺省档逐字节相同', async () => {
+  // **这三样是本站在两个方向上留的退化档**：容量 0（缓存关）· 预取缺席（没有那道缝）·
+  // `oneshot`（批量子进程那一档不要）。它们任意组合都必须**跑得起来**——判据是回执不变。
+  const floor = await lowerBench(lowerCorpus(), { cache: 0, read: 'oneshot' })
+  const floorHost = (({ prefetch, ...rest }) => rest)(floor.host)
+  assert.equal(floor.host.prefetch === undefined, false)
+  try {
+    const before = floor.truth.stats().gitRequests
+    const out = await face('grep', { pattern: '记号' }, floorHost as ToolHost)
+    const cost = floor.truth.stats().gitRequests - before
+    assert.equal(out.ok, true)
+    assert.equal(out.output.split('\n').length - 1, 30, `三样同开也要搜到 30 行：${out.output.slice(0, 120)}`)
+    assert.equal(floor.truth.stats().readTier, 'oneshot', '显式选了退化档，就该在退化档上')
+    assert.equal(floor.truth.stats().blobEntries, 0, '容量 0 一条都不存')
+    assert.ok(cost >= 30, `三样同开就是逐文件读：实际 ${cost}`)
+    assert.ok(cost <= 45, `但也不该炸开：实际 ${cost}（每个文件一趟 + 走树那几趟）`)
+
+    // 与缺省档（缓存开着 · 预取在位 · 批量档）的回执**逐字节相同**。
+    const full = await lowerBench(lowerCorpus())
+    try {
+      const ref = await face('grep', { pattern: '记号' }, full.host)
+      assert.equal(out.output, ref.output, '三样同开与缺省档的回执必须逐字节相同')
+      assert.ok(full.truth.stats().readTier !== 'oneshot')
+    } finally {
+      await full.close()
+    }
+    console.log(`格 3 地板读数：三者同开（容量 0 · 无预取 · oneshot）30 个文件 ${cost} 次请求，回执与缺省档逐字节相同`)
+  } finally {
+    await floor.close()
+  }
+})
+
+test('格 3 · 预取：一批把候选的内容取回来，此后逐文件读全命中', async () => {
+
+  // **无预取那一档**：从产品宿主上摘掉那一栏，就是今天的逐文件读。
+  const b = await lowerBench(lowerCorpus())
+  let bareCost = 0
+  let bareOut: { ok: boolean; output: string }
+  try {
+    const { prefetch, ...bare } = b.host
+    assert.equal(typeof prefetch, 'function', '产品那一份宿主该有这道缝')
+    const before = b.truth.stats().gitRequests
+    bareOut = await face('grep', { pattern: '记号' }, bare as ToolHost)
+    bareCost = b.truth.stats().gitRequests - before
+    assert.equal(bareOut.ok, true)
+    assert.equal(bareOut.output.split('\n').length - 1, 30, `缺席那一档也要搜到 30 行：${bareOut.output.slice(0, 120)}`)
+    assert.ok(bareCost >= 40, `没有预取那一档该是每个文件各走一趟 contents，实际 ${bareCost}`)
+  } finally {
+    await b.close()
+  }
+
+  // **有预取那一档**：另起一台（新句柄、缓存从零起），同一份语料、同一个模式。
+  const c = await lowerBench(lowerCorpus())
+  try {
+    const before = c.truth.stats().gitRequests
+    const out = await face('grep', { pattern: '记号' }, c.host)
+    const coldCost = c.truth.stats().gitRequests - before
+    assert.equal(out.ok, true)
+    assert.equal(out.output, bareOut.output, '预取不许改变回执——逐字节相同')
+    // **判据**：30 个文件的内容是被**一批**取回来的，不是一条一条。差的那 29 趟就是这一条。
+    assert.ok(coldCost <= bareCost - 24, `有预取那一档的冷读该少掉那一批的 29 趟：无预取 ${bareCost} → 有预取 ${coldCost}`)
+    assert.ok(c.truth.stats().blobEntries >= 30, `那一批该把 30 条内容装进缓存，实际 ${c.truth.stats().blobEntries}`)
+
+    // **热的那一趟一个请求都不发**：内容已经在缓存里了。
+    const hotBefore = c.truth.stats().gitRequests
+    const hot = await face('grep', { pattern: '记号' }, c.host)
+    assert.equal(hot.output, out.output, '热的那一趟回执也逐字节相同')
+    assert.equal(c.truth.stats().gitRequests, hotBefore, `热 grep 不该再问 git，实际 ${c.truth.stats().gitRequests - hotBefore}`)
+    console.log(
+      `格 3 读数：30 个文件 / 7 个目录 · 冷 grep 的请求数 无预取 ${bareCost} → 有预取 ${coldCost}（热的那趟 0）`,
+    )
+  } finally {
+    await c.close()
   }
 })
