@@ -21,6 +21,9 @@ import { PathShapeError } from '../path-shape.ts'
 import { lineCount } from './receipt.ts'
 import { textWindowOf, numberedWindowOf } from './read-window.ts'
 import type { ReadWindow, ReadText } from './read-window.ts'
+import type { WalkResult } from './walk.ts'
+import { SearchRows, searchLines, SEARCH_PREFETCH_ROWS } from './search-receipt.ts'
+import type { SearchCoverage } from './search-receipt.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -77,6 +80,8 @@ export interface ToolHost {
    * 那一条），而不封顶的深树能把一步走成挂死。两条都由实现那一侧封——这一层只消费结果。
    */
   walk(): Promise<readonly string[]>
+  /** 可选详细读口；缺席时枚举完整性未知，不把截掉的候选说成没有匹配。 */
+  readonly walkDetailed?: () => Promise<WalkResult>
   /**
    * **把这几条路径的内容先取回一层来**（这一站加的，可选）。它是一道**缝**：实现了就在这一层
    * 批量取（一条 `objectMany('contents', …)`），没实现就照旧"用一条读一条"——**预取缺席 =
@@ -411,14 +416,25 @@ const readImageFace: ToolFn = async (args, host) => {
  * 走一遍树。**走法归宿主**（`walk`）：它知道哪些行是目录、哪些是软链、能走多深。这一层只
  * 拿结果去配 `glob` 的语法（`**` 要不要跨 `/` 是模式那边的事）。
  */
+async function searchWalk(host: ToolHost): Promise<{ readonly paths: readonly string[]; readonly coverage: SearchCoverage }> {
+  if (host.walkDetailed !== undefined) {
+    const got = await host.walkDetailed()
+    return { paths: got.paths, coverage: { known: true, truncated: got.truncated, limits: got.limits } }
+  }
+  return { paths: await host.walk(), coverage: { known: false, truncated: false, limits: [] } }
+}
+
 const globFace: ToolFn = async (args, host) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('glob', 'pattern')
   const dir = text(args, 'path') ?? ''
-  const all = await host.walk()
+  const all = await searchWalk(host)
   const re = globToRe(pattern)
-  const hit = all.filter((p) => (dir === '' || p.startsWith(dir + '/')) && re.test(p))
-  return ok(hit.length === 0 ? `no path matches ${pattern}.` : `${hit.length} paths:\n${hit.join('\n')}`)
+  const rows = new SearchRows()
+  for (const path of all.paths) {
+    if ((dir === '' || path.startsWith(dir + '/')) && re.test(path) && !rows.add(path)) break
+  }
+  return ok(rows.render('paths',`no path matches ${pattern}.`,all.coverage))
 }
 
 const grepFace: ToolFn = async (args, host, ctx) => {
@@ -439,7 +455,8 @@ const grepFace: ToolFn = async (args, host, ctx) => {
     return no(`that is not a regular expression: ${(err as Error).message}`)
   }
   const pathPattern = typeof args.glob === 'string' ? globToRe(args.glob) : null
-  const all = (await host.walk()).filter(path =>
+  const walked = await searchWalk(host)
+  const all = walked.paths.filter(path =>
     (dir === '' || path === dir || path.startsWith(dir + '/')) &&
     (pathPattern === null || pathPattern.test(path)),
   )
@@ -450,25 +467,26 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   } catch {
     prefetch = undefined
   }
-  if (prefetch !== undefined) await prefetch(all)
-  const hits: string[] = []
-  for (const path of all) {
-    const got = await host.readBytes(path)
-    if (got === null) continue
-    let count = 0
-    const lines = utf8Of(got.bytes).split('\n')
-    for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index]!
-      if (!re.test(line)) continue
-      count += 1
-      if (mode === 'content') hits.push(`${path}:${index + 1}:${line}`)
-      // 文件名模式只要证实存在一条匹配，不必再数其余行。
-      if (mode === 'files_with_matches') break
+  const rows = new SearchRows()
+  scan: for (let at = 0; at < all.length; at += SEARCH_PREFETCH_ROWS) {
+    const batch = all.slice(at, at + SEARCH_PREFETCH_ROWS)
+    // 最多预取当前批；回执够了以后不再预取后面整棵树。
+    if (prefetch !== undefined) await prefetch(batch)
+    for (const path of batch) {
+      const got = await host.readBytes(path)
+      if (got === null) continue
+      let count = 0
+      for (const { line, number } of searchLines(utf8Of(got.bytes))) {
+        if (!re.test(line)) continue
+        count += 1
+        if (mode === 'content' && !rows.add(`${path}:${number}:${line}`)) break scan
+        if (mode === 'files_with_matches') break
+      }
+      // count 只提交扫描完这个文件后的精确数，未扫文件不冒充计过了。
+      if (count > 0 && mode !== 'content' && !rows.add(mode === 'count' ? `${path}:${count}` : path)) break scan
     }
-    if (count > 0 && mode !== 'content') hits.push(mode === 'count' ? `${path}:${count}` : path)
   }
-  const label = mode === 'content' ? 'lines' : 'paths'
-  return ok(hits.length === 0 ? `no line matches ${pattern}.` : `${hits.length} ${label}:\n${hits.join('\n')}`)
+  return ok(rows.render(mode === 'content' ? 'lines' : 'paths', `no line matches ${pattern}.`, walked.coverage))
 }
 
 // ── 执行类那两个 ───────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ function hostFor(files: Record<string,string>) {
   const batches: string[][] = []
   const host = {
     walk: async () => Object.keys(files),
+    walkDetailed: async () => ({ paths:Object.keys(files),truncated:false,limits:[] }),
     readBytes: async (path:string) => { reads.push(path); return { bytes:Buffer.from(files[path]!), mode:0o100644 } },
     prefetch: async (paths:readonly string[]) => { batches.push([...paths]) },
   } as ToolHost
@@ -59,6 +60,6 @@ test('grep default content stays byte-identical, including trailing blank and in
   assert.equal((await grep({ pattern:'hit' },b.host,ctx)).output,`${expected.length} lines:\n${expected.join('\n')}`)
   assert.equal((await grep({ pattern:'^$',path:'a',output_mode:'count' },b.host,ctx)).output,'1 paths:\na:2')
   const raw = Buffer.from([0xff,0x68,0x69,0x74,10])
-  const binaryHost = { walk:async () => ['raw'],readBytes:async () => ({ bytes:raw,mode:0o100644 }) } as ToolHost
+  const binaryHost = { walk:async () => ['raw'],walkDetailed:async () => ({ paths:['raw'],truncated:false,limits:[] }),readBytes:async () => ({ bytes:raw,mode:0o100644 }) } as ToolHost
   assert.equal((await grep({ pattern:'hit' },binaryHost,ctx)).output,'1 lines:\nraw:1:�hit')
 })
