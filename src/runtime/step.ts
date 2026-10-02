@@ -44,6 +44,7 @@ import { sourcesFor, turnText } from '../assemble/sources.ts'
 import { promptCacheFor } from '../model/contract.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
+import type { AskItem } from '../tools/execute.ts'
 import type { ModelId } from '../terms.ts'
 
 /**
@@ -102,6 +103,11 @@ export interface ToolResult {
    * 也不是失败。判据还是那条：停因要能说得清是"收敛"。
    */
   readonly halt?: boolean
+  /**
+   * **这一趟从别的格带回来的问题**（U18 甲案）。与 `halt` 同一档：一次调用的一件结构化的事，
+   * 由执行器那一侧递上来，运行时**不认识它是问谁**——只把它原样带出这一步（`StepResult.asks`）。
+   */
+  readonly asks?: readonly AskItem[]
 }
 
 /** 怎么执行一次工具调用。**这一层不认识沙箱**：策略 · 围栏 · 视图都在实现那一侧（`B5`）。 */
@@ -184,6 +190,11 @@ export interface StepResult {
   readonly next: AssembleState
   /** 这一步落的那些事件的位置（按落下去的顺序）。**每一步两条**（`prefix/assemble` · `llm/call`）。 */
   readonly seqs: readonly LogSeq[]
+  /**
+   * 这一步里那几条工具**从别的格带回来的问题**（U18 甲案：`ask_user_question` 在子 agent 那一格
+   * 的出口）。空/缺席都是"这一步没有"——轮次那一层据此收下并裁断。
+   */
+  readonly asks?: readonly AskItem[]
 }
 
 /**
@@ -449,6 +460,8 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     // ── 4. 执行那几条工具调用。**这一层不认识沙箱**：执行器是注入的。
     /** 这一趟里有没有工具叫停（停在门口那一档）。 */
     let halted = false
+    /** 这一趟里那几条工具带回来的问题（U18 甲案）。 */
+    const raised: AskItem[] = []
     /** 这一步的往返：调了哪几条 · 每条回了什么（发原生轮次与渲染 C 区用的是同一份）。 */
     const done: { readonly id: string | null; readonly name: string; readonly arguments: string; readonly output: string; readonly isError: boolean }[] =
       []
@@ -471,6 +484,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         }
       }
       if (r.halt === true) halted = true
+      if (r.asks !== undefined) raised.push(...r.asks)
       done.push({ id: one.id, name: one.name, arguments: one.arguments, output: r.output, isError: !r.ok })
     }
 
@@ -493,7 +507,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
           lastStep: turnText(turnOf(said, done, call.thinking)),
           turns: [...(h.state.turns ?? []), turnOf(said, done, call.thinking)],
         }
-    return { outcome, next, seqs }
+    return { outcome, next, seqs, ...(raised.length === 0 ? {} : { asks: raised }) }
   }
 
   return {

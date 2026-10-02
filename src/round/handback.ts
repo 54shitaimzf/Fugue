@@ -28,7 +28,8 @@ import type { CallModel, RuntimeRequest } from '../runtime/step.ts'
 import { digestOf } from '../runtime/restart.ts'
 import type { AskItem } from '../tools/execute.ts'
 import type { AgentId, AskTier, ContractId } from '../terms.ts'
-import type { LogEvent } from '../log/events.ts'
+import type { Log, LogEvent } from '../log/events.ts'
+import type { WriterId } from '../terms.ts'
 
 // 三档的名字住 `terms.ts`（那份事件联合只依赖它）；这一份转发，消费者引这里或引那里是同一个词。
 export type { AskTier }
@@ -286,6 +287,65 @@ export function rulingEventOf(agent: AgentId, asked: string, verdict: AskVerdict
     digest: digestOf(body),
     body,
   }
+}
+
+/**
+ * **轮内收下那一趟**：接住 → 一次裁断 → 判决落事件 → 进人那一档**问题原样**转到人那道门口。
+ *
+ * 三件事的顺序就是规格的顺序（路线图 0.2.7 行 ②）：问题先落 `ask/raised`（重放读得到"谁问了
+ * 什么"），再裁（读的是 A 区 · 契约 · 问题 · 尺那四样），判决落 `ask/ruling`；进人那一档再补一条
+ * `holder/ask`——**正文与 `ask/raised` 那一份逐字节相同**（"问题原样转给该进的人，不是丢"）。
+ *
+ * 判不了的那一档走同一条：`forwarded` 恒真，于是它一样转出去。**这里没有第二条分支**——"判不出来"
+ * 只有一个去处。
+ *
+ * 返回值里那一句 `note` 是**给那一格的下一步看的**：结论（判词）进它 C 区那一栏，推敲不进。
+ */
+export interface TakeAsksInput {
+  readonly log: Log
+  readonly writer: WriterId
+  readonly agent: AgentId
+  readonly contract: Contract
+  readonly task: AssembleState['task']
+  readonly asks: readonly AskItem[]
+  /** 复用的 A 区字节（`prefixOf(handle).zoneA`：真方针 + 系统状态 + 代码树）。 */
+  readonly aZone: Uint8Array
+  readonly call: CallModel
+  readonly target: Target
+  readonly adapter: WireAdapter
+  readonly model: string
+  readonly signal?: AbortSignal
+}
+
+export interface TakeAsksResult {
+  readonly verdict: AskVerdict
+  readonly asked: string
+  /** 进那一格下一步 C 区的那一句：**只带结论**（判词），不带推敲。 */
+  readonly note: string
+}
+
+export async function takeAsks(input: TakeAsksInput): Promise<TakeAsksResult> {
+  const raised = raisedEventOf(input.agent, input.contract.id as ContractId, input.asks)
+  await input.log.append(input.writer, raised)
+  const verdict = await adjudicateAsk(
+    { aZone: input.aZone, contract: input.contract, task: input.task, asks: input.asks },
+    {
+      call: input.call,
+      target: input.target,
+      adapter: input.adapter,
+      model: input.model,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    },
+  )
+  await input.log.append(input.writer, rulingEventOf(input.agent, raised.digest, verdict))
+  if (verdict.forwarded) {
+    // **问题原样转出去**：同一条正文（连 `digest` 都相同）——转出去的是那一问，不是它的摘要。
+    await input.log.append(input.writer, { t: 'holder/ask', agent: input.agent, digest: raised.digest, body: raised.body })
+  }
+  const note = verdict.forwarded
+    ? `Ask carried back from this cell was forwarded to a person (${verdict.tier ?? 'unjudged'} · ruler ${verdict.ruler}): ${verdict.ruling}`
+    : `Ask carried back from this cell was settled inside the contract (ruler ${verdict.ruler}): ${verdict.ruling}`
+  return { verdict, asked: raised.digest, note }
 }
 
 /**

@@ -6,13 +6,18 @@
 // 这一份量的是**机制**（尺 · 裁断 · 判决 · 事件形状），不是接线：接线那一条（谁在什么时候叫它）
 // 在驱动那一层的断言里。两条各能红，缺一条这一站不算数。
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import type { Contract } from '../contract/types.ts'
+import type { LogEvent } from '../log/events.ts'
+import { openLog } from '../log/log.ts'
 import type { ModelEvent } from '../model/contract.ts'
 import { wireNamed } from '../model/wire/registry.ts'
 import type { CallModel, RuntimeRequest } from '../runtime/step.ts'
 import type { AskItem } from '../tools/execute.ts'
-import type { AgentId, ContractId } from '../terms.ts'
+import type { AgentId, ContractId, WriterId } from '../terms.ts'
 import {
   ASK_RULER,
   ASK_RULER_TEXT,
@@ -24,6 +29,7 @@ import {
   raisedEventOf,
   rulingEventOf,
   selfTiers,
+  takeAsks,
   unansweredAsks,
   verdictOf,
 } from './handback.ts'
@@ -232,4 +238,76 @@ test('⑥ 判词：三档各自的判词都落在判决里 · 退化路那句如
   assert.equal(gone.tier, null)
   assert.equal(gone.forwarded, true)
   console.log('⑥ 读数：三档判词各一条 · 退化路那条带 why')
+})
+
+// ── ⑦ 落在日志里的那一趟：接住 · 判决 · 进人那一档才敲门 ──────────────────────
+
+/**
+ * 这一条量的是**落账那一趟**（`takeAsks`）：接住那一条 · 判决那一条都进日志，进人那一档
+ * 才多敲一下门，转出去的正文与接住的**逐字节相同**，而进 C 区的那一句只带判词。
+ * 接线（谁在什么时候叫它）在驱动那一层；这一层在 fast 档里守着，改这一处当场红。
+ */
+test('⑦ 落账：接住 + 判决两条都进日志 · 自决那一档不敲门 · 进人那一档原样转出去', async () => {
+  const aZone = new TextEncoder().encode('# policy\n真方针的字节\n')
+  const run = async (tier: 'contract' | 'design'): Promise<LogEvent[]> => {
+    const root = mkdtempSync(join(tmpdir(), 'fugue-ask-'))
+    try {
+      const log = openLog(root, { sync: 'never' })
+      const r = await takeAsks({
+        log,
+        writer: 'w1' as WriterId,
+        agent: AGENT,
+        contract: CONTRACT,
+        task: TASK,
+        asks: ASKS,
+        aZone,
+        call: recordingModel([reply(`tier: ${tier}\nruling: ${tier} 那一档的判词。`)], []),
+        target: TARGET,
+        adapter: ADAPTER,
+        model: 'fixture-model',
+      })
+      assert.equal(r.verdict.tier, tier)
+      // 进那一格下一步 C 区的那一句**只带结论**：`tier:` 那两行是推敲，一个字都不许进去。
+      assert.ok(!r.note.includes('tier:'), '进 C 区那一句带上了推敲')
+      const out: LogEvent[] = []
+      for await (const { e } of log.readMerged()) out.push(e)
+      const raised = out.find((e) => e.t === 'ask/raised')
+      const ruling = out.find((e) => e.t === 'ask/ruling')
+      assert.ok(raised !== undefined && raised.t === 'ask/raised', '日志里没有被接住的那一条')
+      assert.ok(ruling !== undefined && ruling.t === 'ask/ruling', '日志里没有判决那一条')
+      // 判决指得回被接住的那一问：同一问只裁一次。
+      assert.equal(ruling.asked, raised.digest)
+      assert.equal(r.asked, raised.digest)
+      return out
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+
+  // 契约自己那一档：**自决**——两条落账，人的门口一条不发。
+  const settled = await run('contract')
+  assert.deepEqual(
+    settled.map((e) => e.t),
+    ['ask/raised', 'ask/ruling'],
+  )
+  const ruler = settled.find((e) => e.t === 'ask/ruling')
+  assert.ok(ruler !== undefined && ruler.t === 'ask/ruling')
+  assert.equal(ruler.forwarded, false)
+  assert.equal(ruler.ruler, ASK_RULER_VERSION)
+
+  // 设计预期那一档：**进人**——多一条 `holder/ask`，正文与接住的逐字节相同。
+  const carried = await run('design')
+  assert.deepEqual(
+    carried.map((e) => e.t),
+    ['ask/raised', 'ask/ruling', 'holder/ask'],
+  )
+  const a = carried.find((e) => e.t === 'ask/raised')
+  const b = carried.find((e) => e.t === 'holder/ask')
+  assert.ok(a !== undefined && a.t === 'ask/raised')
+  assert.ok(b !== undefined && b.t === 'holder/ask')
+  assert.equal(b.body, a.body, '转出去的正文与接住的那一条不是逐字节相同')
+  assert.equal(b.digest, a.digest)
+  console.log(
+    `⑦ 读数：contract → ${settled.map((e) => e.t).join(' · ')}｜design → ${carried.map((e) => e.t).join(' · ')} · 转出去的正文 ${b.body.length} 字节逐字节相同`,
+  )
 })

@@ -702,15 +702,28 @@ test('⑧ exit_plan_mode：持轮者落 holder/plan 并停在门口；子 agent 
 //
 // 三条各盯一样：落点（落 `holder/ask`，而契约一个都不发）· 停（与 `exit_plan_mode` 共用同一个
 // "停"，不引入异步等待那种持久态）· 上限（问多了不是更周全，是让人没法答——当场拒并给去路）。
-test('⑨ ask_user_question：持轮者落 holder/ask 并停在同一道门口；问超了当场拒', async () => {
+test('⑨ ask_user_question：持轮者落 holder/ask 并停在同一道门口；子 agent 那一趟把问题带回去；问超了当场拒', async () => {
   const b = await bench()
   try {
     const before = worktreeOf(b.root)
 
-    // 子 agent：角色不对，回一句指得出出路的话。
-    const asSub = await face('ask_user_question', { questions: [{ question: '要不要删掉它？' }] }, b.host, '', false)
-    assert.equal(asSub.ok, false, asSub.output)
-    assert.match(asSub.output, /not your cell's job/)
+    // 子 agent：**不拒**——问题原样带回去那一栏（U18 甲案：问人的门在持轮者那一格），并说清
+    // 判决到它下一步才回来。带上来的那一批一个字段都不改，而工具面这一层**不落事件**（落账归
+    // 轮次那一层：`ask/raised` · `ask/ruling`，见 `round/handback.ts`）。
+    const asSub = await face(
+      'ask_user_question',
+      { questions: [{ question: '要不要删掉它？', header: '删除' }] },
+      b.host,
+      '',
+      false,
+    )
+    assert.equal(asSub.ok, true, asSub.output)
+    assert.equal(asSub.halt, undefined, '带回去不是"这一格到这儿为止"：它还有别的活要干')
+    assert.equal(asSub.asks?.length, 1, '问题没有被带回去')
+    assert.equal(asSub.asks?.[0]?.question, '要不要删掉它？', '带回去的问题被改过')
+    assert.equal(asSub.asks?.[0]?.header, '删除', '带回去的问题掉了一栏')
+    assert.match(asSub.output, /holder cell/, `那句没说清带去给谁：${asSub.output}`)
+    assert.match(asSub.output, /next step/, `那句没说清判决什么时候回来：${asSub.output}`)
 
     // 问超了：当场拒，话里指得出去处（不是静默截断成前四个）。
     const tooMany = await face(

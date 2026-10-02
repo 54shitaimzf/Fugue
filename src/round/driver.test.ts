@@ -42,7 +42,7 @@ import type { Contract } from '../contract/types.ts'
 import { runRound } from './execute.ts'
 import { entriesOf } from '../merge/accept.ts'
 import type { RoundRun, RoundRunDeps, Stub } from './execute.ts'
-import { commitView, noDriver, openRefHead, realDriver, stubDriver } from './driver.ts'
+import { commitView, noDriver, openRefHead, realDriver, runAgentOnce, stubDriver } from './driver.ts'
 import { refHeadOf } from './head.ts'
 import { RefConflictError } from '../truth/truth.ts'
 
@@ -350,6 +350,105 @@ function stubOf(b: Bench): Stub {
     },
   }
 }
+
+// ── U2b · 那一格在轮内发问：轮内收下 · 判决落账 · 进人那一档原样转出去 ─────────────
+//
+// 出处：架构 § 23 的 U18 那一格 · 路线图 0.2.7 行 ② 的甲案（持轮者轮内收下 · 不积累上下文的一次性
+// 裁断 · 判决落事件 · 推敲不进任何人 C 区 · 退化路全转发）。这一条量的是**接线**：工具面把问题
+// 带回来（`asks` 那一栏）→ 驱动那一层接住并裁断 → 两条事件落账 → 进人那一档敲人那道门。
+//
+// 机制那四条（尺 · 判决 · 不积累上下文 · 退化路）各有一条断言，在 `round/handback.test.ts`。
+
+/** 一个把请求留下的假模型：**判词有没有进那一格下一步的 C 区、推敲有没有进去**要量它。 */
+function askingModel(scripts: readonly (readonly ModelEvent[])[], seen: RuntimeRequest[]): CallModel {
+  const inner = scriptedModel(scripts)
+  return (req) => {
+    seen.push(req)
+    return inner(req, new AbortController().signal)
+  }
+}
+
+/** 三趟脚本：那一格发问 · 裁断那一次的回答 · 那一格接着说完了。 */
+function askScripts(verdict: string): readonly (readonly ModelEvent[])[] {
+  return [
+    [
+      ...callOne(0, 'q1', 'ask_user_question', { questions: [{ question: '这条路径归我还是归另一格？', header: '地界' }] }),
+      { t: 'usage', usage: USAGE },
+      { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+    ],
+    [
+      { t: 'delta', text: verdict },
+      { t: 'usage', usage: USAGE },
+      { t: 'stop', reason: 'end-turn', raw: 'end_turn' },
+    ],
+    [
+      { t: 'delta', text: '接着干。' },
+      { t: 'usage', usage: USAGE },
+      { t: 'stop', reason: 'end-turn', raw: 'end_turn' },
+    ],
+  ]
+}
+
+test('U2b · 轮内收下：问题落 ask/raised · 判决落 ask/ruling · 契约那一档的判词进下一步 C 区 · 不敲人的门', async () => {
+  const b = await bench()
+  try {
+    const seen: RuntimeRequest[] = []
+    const call = askingModel(askScripts('tier: contract\nruling: 归你，按最小改动落 a.ts。'), seen)
+    const r = await runAgentOnce(askOf(b, call), {})
+    assert.ok(r.commit.length > 0, '这一格该照常交出一个提交')
+
+    const rows = await eventsOf(b.root, [AGENT])
+    const raised = rows.filter((e) => e.t === 'ask/raised')
+    const ruling = rows.filter((e) => e.t === 'ask/ruling')
+    assert.equal(raised.length, 1, `ask/raised 有 ${raised.length} 条——问题被接住那一下该恰好一条`)
+    assert.equal(ruling.length, 1, `ask/ruling 有 ${ruling.length} 条——判决该恰好一条`)
+    const asked = raised[0] as Extract<LogEvent, { t: 'ask/raised' }>
+    const one = ruling[0] as Extract<LogEvent, { t: 'ask/ruling' }>
+    assert.match(asked.body, /归我还是归另一格/, '接住那一条里没有问题的原文')
+    assert.equal(one.forwarded, false, '契约内那一档不该进人')
+    assert.equal(one.tier, 'contract')
+    assert.equal(one.ruler, 'ask-ruler-1', '判决没记下是按哪把尺量的')
+    assert.equal(one.asked, asked.digest, '判决没指回被接住的那一问')
+    assert.match((JSON.parse(one.body) as { ruling: string }).ruling, /最小改动/)
+    assert.equal(rows.some((e) => e.t === 'holder/ask'), false, '契约内那一档不该敲人那道门')
+
+    // **判词进那一格下一步的 C 区（`信号摘要`）；推敲不进**：原始回复那两行（`tier:` 那一行）的
+    // 痕迹一个都到不了——裁断那一次的上下文与回复哪儿都不落。
+    assert.equal(seen.length, 3, `这一趟该恰好三次调用（发问 · 裁断 · 接着说），实得 ${seen.length}`)
+    assert.equal((seen[1] as RuntimeRequest).prefix.zoneC.length, 0, '裁断那一次的 C 区不是空的')
+    assert.deepEqual((seen[1] as RuntimeRequest).tools, [], '裁断那一次公布了工具')
+    const cZone = new TextDecoder().decode((seen[2] as RuntimeRequest).prefix.zoneC)
+    assert.match(cZone, /最小改动/, `判词没进那一格下一步的 C 区：${cZone.slice(0, 200)}`)
+    assert.ok(!cZone.includes('tier:'), `推敲进了那一格的 C 区：${cZone.slice(0, 300)}`)
+    console.log('U2b 读数：ask/raised 1 · ask/ruling 1（contract · forwarded false）· 判词进了下一步的 C 区 · 原始回复没进去')
+  } finally {
+    await b.close()
+  }
+})
+
+test('U2b · 进人那一档：问题原样转到人那道门口（body 与 ask/raised 逐字节相同）', async () => {
+  const b = await bench()
+  try {
+    const call = scriptedModel(askScripts('tier: design\nruling: 要不要把「分」这个单位从契约里去掉，得人定。'))
+    await runAgentOnce(askOf(b, call), {})
+    const rows = await eventsOf(b.root, [AGENT])
+    const raised = rows.filter((e) => e.t === 'ask/raised')
+    const ruling = rows.filter((e) => e.t === 'ask/ruling')
+    const door = rows.filter((e) => e.t === 'holder/ask')
+    assert.equal(ruling.length, 1)
+    assert.equal((ruling[0] as Extract<LogEvent, { t: 'ask/ruling' }>).forwarded, true, '设计预期那一档该进人')
+    assert.equal((ruling[0] as Extract<LogEvent, { t: 'ask/ruling' }>).tier, 'design')
+    assert.equal(door.length, 1, `进人那一档该敲一次门，实敲 ${door.length} 次`)
+    assert.equal(
+      (door[0] as Extract<LogEvent, { t: 'holder/ask' }>).body,
+      (raised[0] as Extract<LogEvent, { t: 'ask/raised' }>).body,
+      '转出去的问题不是原样那一份',
+    )
+    console.log('U2b 读数：进人那一档 → holder/ask 一条，正文与 ask/raised 逐字节相同')
+  } finally {
+    await b.close()
+  }
+})
 
 async function eventsOf(root: string, writers: readonly string[] = ['round', 'agent-1']): Promise<LogEvent[]> {
   const log = openLog(root)
