@@ -32,7 +32,8 @@
 import type { Delta } from '../delta.ts'
 import { FAMILY_KIND } from './stream.ts'
 import { permanentLinesOf } from './stream.ts'
-import { clip, cutAt, widthOf } from './glyph.ts'
+import { clip, clustersOf } from './glyph.ts'
+import type { Cluster } from './glyph.ts'
 import type { StatusRow } from '../probe/status.ts'
 
 /**
@@ -477,20 +478,38 @@ export function escapeOf(s: string): string {
  *
  * 与 `glyph.ts` 那把通用折行**刻意不共用**：`wrap` 折在词尾、还会吃分隔符与空白（`trimEnd` ·
  * `trimStart` · 行首那个 `· `），那是给面板读数用的——读数短，折在词尾好看；正文折了要**拼得
- * 回来**（`read.test.ts` ⑦ 的往返断言），一个空格都不许少。切点仍用 `glyph.ts` 的 `cutAt`
- * （整簇切）——尺只有一把，一个 emoji 不许被拆成两半。
+ * 回来**（`read.test.ts` ⑦ 的往返断言），一个空格都不许少。切点整簇——尺只有一把，一个 emoji
+ * 不许被拆成两半。
  *
- * `cols <= 0`（量不到列宽那一档）时原样一行出去，不折也不报错。
+ * **整行只聚簇一次。** 这是这一份的**形状**，不是优化：`cutAt` / `widthOf` 每一次都从头聚一遍，
+ * 拿它们在一行里循环就是 O(长度² ÷ 列宽)。实测（0.2.8 补记那一趟，`faceRowsOf` 一份 200 条
+ * 4008 字符的 `view/write`、20 列）：逐段聚簇那一版一次调用 6 秒以上——那是**慢**，不是红，
+ * 所以它没有一条"回到旧版必红"的断言，读数记在提交信息里。聚一次之后同一份夹具
+ * （200 条 · 20 列 · 40 080 物理行）是数十毫秒。
+ *
+ * `cols <= 0`（量不到列宽那一档）时原样一行出去，不折也不报错；一整个簇比 `cols` 还宽时放它一个
+ * （整簇切——不许原地打转，也不许把它吃掉）。
  */
 export function readWrap(s: string, cols: number): readonly string[] {
   const text = escapeOf(s)
-  if (cols <= 0 || widthOf(text) <= cols) return [text]
+  if (cols <= 0 || text === '') return [text]
+  const cs = clustersOf(text)
+  let total = 0
+  for (const c of cs) total += c.width
+  if (total <= cols) return [text]
   const out: string[] = []
-  let rest = text
-  while (rest !== '') {
-    const cut = cutAt(rest, cols)
-    out.push(rest.slice(0, cut))
-    rest = rest.slice(cut)
+  let at = 0
+  while (at < cs.length) {
+    let used = 0
+    let end = at
+    while (end < cs.length && used + (cs[end] as Cluster).width <= cols) {
+      used += (cs[end] as Cluster).width
+      end += 1
+    }
+    // 一整个簇比 `cols` 还宽：放它一个（不拆簇 · 也不吃它）。
+    if (end === at) end = at + 1
+    out.push(cs.slice(at, end).map((c) => c.text).join(''))
+    at = end
   }
   return out
 }

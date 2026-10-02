@@ -348,3 +348,30 @@ test('⑦ 折行与洁净：物理行拼回原文逐字节相等 · 切点整簇
   assert.notEqual(wrap('a  b · c', 3).join(''), 'a  b · c', '通用折行吃空白与 `· `——正文不能走它')
   assert.ok(wrap('a\x1bb', 40).join('').includes('\x1b'), '通用折行不转义：ESC 原样落终端（这一面自己转义）')
 })
+// ── ⑧ 折行改写（U1 补记）：整行只聚簇一次（长行照样是线性） ─────────────────────────────
+test('⑧ 折行改写（U1 补记）：长行照样逐字节往返 · 行数就是列宽除出来的那个数', () => {
+  // **值这一半照旧**：一行多长都拼得回来、每一行都在列宽里、行数就是除出来的那个数。
+  for (const n of [4008, 40_080]) {
+    const long = 'x'.repeat(n)
+    for (const cols of [20, 37, 80]) {
+      const lines = readWrap(long, cols)
+      assert.equal(lines.join(''), long, `${n} 字符 @ ${cols} 列：拼回来逐字节相等`)
+      assert.equal(lines.length, Math.ceil(n / cols), `${n} 字符 @ ${cols} 列：行数就是除出来的那个数`)
+      for (const one of lines) assert.ok(widthOf(one) <= cols, `超宽：${one.length}`)
+    }
+  }
+  const mixed = '中文与 emoji 👩‍💻 混排'.repeat(400)
+  const mixedRows = readWrap(mixed, 24)
+  assert.equal(mixedRows.join(''), mixed, '混排的长行也逐字节往返')
+  assert.ok(mixedRows.every((l) => widthOf(l) <= 24), '混排的每一行都在列宽里（宽簇不拆）')
+  console.log(
+    `⑧ 读数：4008 字符 @ 20 列 ${readWrap('x'.repeat(4008), 20).length} 行 · ` +
+      `40080 字符 @ 20 列 ${readWrap('x'.repeat(40_080), 20).length} 行 · 混排 ${mixed.length} 字符 @ 24 列 ${mixedRows.length} 行`,
+  )
+
+  // **"长度不炸"这一条是这份折法的形状**（整行只聚簇一次），**它的对手是"慢"，不是"红"**：
+  // 逐段调 `cutAt`/`widthOf` 那一版上面这些值照样全对，只是一次调用 6 秒以上（实测：一份 200 条
+  // 4008 字符的 `view/write`、20 列，`faceRowsOf` 一次 >6 s）。所以这一格没有"回到旧版必红"的
+  // 断言——读数记在提交信息里，口径写在 `readWrap` 的头注上（什么条件下改主意：那些读数回到秒级
+  // 就说明有人把它写回逐段聚簇了）。
+})
