@@ -180,7 +180,13 @@ const PATH_ARGS: Readonly<Record<string, readonly string[]>> = {
   run_action: ['cwd'],
 }
 
-const says = (r: FaceResult): ToolResult => ({ ok: r.ok, output: r.output, ...(r.halt === true ? { halt: true } : {}) })
+const says = (r: FaceResult): ToolResult => ({
+  ok: r.ok,
+  output: r.output,
+  ...(r.halt === true ? { halt: true } : {}),
+  // **带回去的问题原样往上递**（U18 甲案）：它与 `halt` 同一档——一件结构化的事，不是回执里的一句话。
+  ...(r.asks === undefined ? {} : { asks: r.asks }),
+})
 
 /**
  * 派发一次工具调用。**它是第 4 步唯一的实现。**

@@ -13,7 +13,7 @@
 //      一行历史，而渲染里没有那一行的写法）。
 //   ④ **一条事件 = 一行**：夹着只计数那几族的账 → 进历史的行逐字等于那一份原文、按到达序；
 //      正文里带换行的折成一行；截断**按族**（U10b：意图与交接信 80，兜 `BODY_CHARS`=40）。
-//   ⑤ **一族一行都不少**：夹具覆盖 28 族，进历史的正好那 10 族——每一行带账上的坐标
+//   ⑤ **一族一行都不少**：夹具覆盖 30 族，进历史的正好那 10 族——每一行带账上的坐标
 //      `(writer, seq)` · 不是空行 · 没有 `undefined`。新增一族而这里没跟上，①与这一条都会红。
 //   ⑥ **纯**：同一份行两次逐字节相同、进去的 rows 一个字段都没被改；空账给空历史。
 import assert from 'node:assert/strict'
@@ -39,7 +39,7 @@ function reset(): void {
 }
 
 /**
- * 联合里那 28 个族名。**与 `tools/check-events.js` 同一把尺**：源码里 `t: 'x/y'` 全抽出来，
+ * 联合里那 30 个族名。**与 `tools/check-events.js` 同一把尺**：源码里 `t: 'x/y'` 全抽出来，
  * 外加不带斜杠的那一族 `signal`（它在联合里的写法与别的族不同）。
  */
 function familiesInSource(): string[] {
@@ -77,7 +77,7 @@ function llmCall(agent: string, step: string): LogEvent {
 }
 
 /**
- * 28 族各一条。**族名从事件自己读**（`e.t`）——测试拿它这份夹具的族与源码那把尺对，
+ * 30 族各一条。**族名从事件自己读**（`e.t`）——测试拿它这份夹具的族与源码那把尺对，
  * 于是"联合长了一族而夹具没跟上"也是红的。
  */
 function oneOfEach(): StatusRow[] {
@@ -126,6 +126,14 @@ function oneOfEach(): StatusRow[] {
     row({ t: 'holder/todos', agent: brand('round'), digest: 'd5', body: '1 写 src/report.ts' }),
     row({ t: 'holder/plan', agent: brand('round'), digest: 'd6', body: '预备态做完了' }),
     row({ t: 'holder/ask', agent: brand('round'), digest: 'd7', body: '这条约束与目标冲突' }),
+    row(
+      { t: 'ask/raised', agent: brand('agent/r1/1'), contract: brand('r1.implement.1'), digest: 'd8', body: '{"questions":[]}' },
+      'agent/r1/1',
+    ),
+    row(
+      { t: 'ask/ruling', agent: brand('agent/r1/1'), asked: 'd8', forwarded: true, tier: 'design', ruler: 'ask-ruler-2', digest: 'd9', body: '{}' },
+      'agent/r1/1',
+    ),
     row({
       t: 'round/approve',
       round: brand('r1'),
@@ -200,10 +208,10 @@ const MIX_GOLDEN: readonly string[] = [
   'round 4 · 轮次 r1 · 合并接受 abcdef01… · 断言 3 条（过 2 / 没过 0 / 跑不起来 1）',
 ]
 
-test('① 表与联合逐字对得上：28 族一个不多一个不少', () => {
+test('① 表与联合逐字对得上：30 族一个不多一个不少', () => {
   const src = familiesInSource()
   assert.deepEqual([...Object.keys(FAMILY_KIND)].sort(), src, '表的键与联合的族名不逐字相同（漏一族或多一族）')
-  assert.equal(src.length, 28, `联合该是 28 族，源码里数出 ${src.length} 族`)
+  assert.equal(src.length, 30, `联合该是 30 族，源码里数出 ${src.length} 族`)
   const permanent = src.filter((f) => FAMILY_KIND[f as EventFamily] === 'permanent')
   assert.equal(permanent.length, 10, `进历史的那几族该是 10 族，表里数出 ${permanent.length} 族`)
   assert.deepEqual([...unclassified(src)], [], '表漏了这一族（联合里有、表上没有）')
@@ -271,7 +279,7 @@ test('④ 一条事件一行：逐字等于那一份原文 · 按到达序 · �
   console.log(`④ 读数：${lines.length} 行逐字等于黄金 · 45 字不截（49 字全文）· 100 字截成 80+… · 兜的默认 ${BODY_CHARS}`)
 })
 
-test('⑤ 一族一行都不少：夹具覆盖 28 族、进历史的正好那 10 族', () => {
+test('⑤ 一族一行都不少：夹具覆盖 30 族、进历史的正好那 10 族', () => {
   const rows = oneOfEach()
   const families = [...new Set(rows.map((r) => r.e.t))].sort()
   assert.deepEqual(families, familiesInSource(), '夹具没覆盖到每一族（新长的一族没有被喂进来）')

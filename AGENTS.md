@@ -2,23 +2,23 @@
 
 这份文件写给要修改赋格本身的人（包括 AI 助手），说明开发环境、怎么跑测试、怎么把文件传进开发环境，以及写代码时的限制。
 
-**注意：这份文件不会自动加载。** 需要每次会话都自动生效的规则写在另一份 `AGENTS.md` 里，位置是文档工作区的 `/mnt/c/Users/Administrator/Desktop/CodeWish/AGENTS.md`。那一份会被 harness 自动读进每次会话的开头；这一份不会，因为 `dsh-agent-instructions` 只读取会话工作区所在路径上的文件，而本仓库在另一个目录。两份文件各管各的，内容不要互相复制。
+**注意：这份文件不会自动加载。** 需要每次会话都自动生效的规则写在另一份 `AGENTS.md` 里，位置是**文档工作区的根目录**——那是与本仓库分开的另一个目录（在这台机器上，它是 Windows 侧的桌面目录）。那一份会被 harness 自动读进每次会话的开头；这一份不会，因为 `dsh-agent-instructions` 只读取会话工作区所在路径上的文件，而本仓库在另一个目录。两份文件各管各的，内容不要互相复制。
 
 其他相关文档：
 
 - **规格就在本仓库里**（`design/`）：[架构](design/ARCHITECTURE.md)（这一版**是**什么；`§ 16`–`§ 18` 是语言分配原则 · Rust 演进路径 · 演进的操作纪律——**换语言或整体重写之前，先读这三节**）· [路线图](design/ROADMAP.md)（每个版本按什么顺序收尾、各要验证哪些数据）· [目标](design/TARGETS.md)（第一版之后做什么）· [随笔](design/RATIONALE.md)（为什么这么设计）。
-- 施工那两份不住在这里：落地计划（**正在做的那一站** · 单元怎么切 · 停点 · 审查纪律）与归档（已经落地的那一份）在文档工作区 `/mnt/c/Users/Administrator/Desktop/CodeWish/`（这个路径只在这台机器上成立）；**正文里按名字引用它们**——写「计划 § 4」「归档 § 5.20」，不写路径。
+- 施工那两份不住在这里：落地计划（**正在做的那一站** · 单元怎么切 · 停点 · 审查纪律）与归档（已经落地的那一份）在**文档工作区**（与本仓库分开的另一个目录，位置随机器变）；**正文里按名字引用它们**——写「计划 § 4」「归档 § 5.20」，不写路径。
 - 当前进度：直接看 `git log --oneline`
 
 ## 开发环境
 
-**仓库位置。** 仓库放在 WSL 的 ext4 分区上，路径是 `/home/ubuntu/fugue`（对应磁盘 `/dev/sdd`，也就是 Windows 上的 `D:\WSL_linux\ext4.vhdx` 文件）。
+**仓库位置。** 仓库放在 WSL 的 ext4 分区上，就是家目录下的 `fugue`（`~/fugue`）那一棵；那份 ext4 的实体是 Windows 侧的一个 vhdx 文件（它在哪、叫什么，跟着 WSL 的安装位置走，`wsl --list --verbose` 能看出它挂在哪个发行版名下），不是 Windows 上的普通目录。
 
-不要把仓库建在 `/mnt/c` 下面。那是 Windows 分区的挂载点（drvfs），创建小文件的速度大约慢 180 倍（见架构文档 15.7 节）。
+不要把仓库建在 Windows 分区（WSL 里挂成 drvfs 的那一处）下面。在小文件上，它的创建速度大约慢 180 倍（见架构文档 15.7 节）。
 
-**从 Windows 访问。** 在 Windows 里可以通过 `\\wsl.localhost\ubuntu-noble\home\ubuntu\fugue` 查看文件，但**只能读，不能写**。这条路径走的是 9p 协议，不支持硬链接，原子写入会直接报 `ENOTSUP` 错误。
+**从 Windows 访问。** 在 Windows 里可以通过 `\\wsl.localhost\<发行版名>\home\<用户名>\fugue` 查看文件（发行版名与用户名换成这台机器上的那两个），但**只能读，不能写**。这条路径走的是 9p 协议，不支持硬链接，原子写入会直接报 `ENOTSUP` 错误。
 
-**沙箱依赖。** 和沙箱有关的测试需要两样东西：`bwrap`（负责文件系统隔离）和 Linux 内核的 Landlock 功能（第二层保护）。本机的 `bwrap` 在 `/usr/bin/bwrap`。如果没装 `bwrap`，`src/execute/degraded.test.ts` 的第 ④ 个测试（检查「这台机器上有 bwrap」）会失败。CI 上的 `bwrap` 由流水线负责安装。
+**沙箱依赖。** 和沙箱有关的测试需要两样东西：`bwrap`（负责文件系统隔离）和 Linux 内核的 Landlock 功能（第二层保护）。本机的 `bwrap` 是系统包里的那一个（`command -v bwrap` 找得到的那个）。如果没装 `bwrap`，`src/execute/degraded.test.ts` 的第 ④ 个测试（检查「这台机器上有 bwrap」）会失败。CI 上的 `bwrap` 由流水线负责安装。
 
 ## 跑测试
 
@@ -139,14 +139,14 @@ Node 直接运行 `.ts` 文件时，只会简单地删掉类型标注（strip-on
 如果当前会话用的是 bash，直接用一次重定向就行：
 
 ```
-wsl -d ubuntu-noble -- bash -c 'cat > /home/ubuntu/fugue/src/x.ts' <<'ZZEOF'
+wsl -d ubuntu-noble -- bash -c 'cat > ~/fugue/src/x.ts' <<'ZZEOF'
 …文件内容，原样粘贴…
 ZZEOF
 ```
 
 这样做的好处是：文件内容通过**工具参数**传过去，不经过命令行解析，所以 `$` 这类字符不会被替换。而且在 `umask 022` 下，新文件的权限直接就是 644。
 
-如果会话用的不是 bash，可以在文档工作区里运行 `pwsh -File tools/wsl.ps1 put <临时目录> /home/ubuntu/fugue`。它会把文件复制进仓库、把权限设成 644，然后删掉临时目录。
+如果会话用的不是 bash，可以在文档工作区里运行 `pwsh -File tools/wsl.ps1 put <临时目录> <仓库根>`。仓库根那一栏写 WSL 侧的完整路径——`~` 别写在这一栏：它经 pwsh 传参会展开成 Windows 侧的用户目录，送不进仓库。它会把文件复制进仓库、把权限设成 644，然后删掉临时目录。
 
 ## 仓库结构
 

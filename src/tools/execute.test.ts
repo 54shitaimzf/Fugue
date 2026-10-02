@@ -251,6 +251,57 @@ test('③ glob 与 grep：`**` 跨 `/` · `*` 不跨 · grep 报行号', async (
   }
 })
 
+/**
+ * ③b 发现类那两条的「范围」那一栏：三处细节各一条断言。
+ *
+ * 抓住的变异：`scopeOf` 不折尾巴上的斜杠（`src/` 那个范围当场取不到东西）· `inScope` 少了
+ * "范围本身"那一项（指着文件时一个候选都没有）· `matchesInScope` 那一面拿掉（模式只写文件名
+ * 那一段时退回"没有匹配"）。负对照两条：范围外那一份不许进结果，`grep` 与 `glob` 各一条。
+ *
+ * 为什么单挑这三处：它们各自都表现为**空结果**——发现类工具取不到东西时报的是"没有匹配"，
+ * 看起来只是"那儿真没有"，模型会一直绕（真档上撞到过：四步全是 `find`/`ls`，草案 0 字节）。
+ */
+test('③b 范围那一栏：尾巴斜杠折掉 · 空范围是整个视图 · 范围指着文件时它自己也算 · 模式在范围里再配一次', async () => {
+  const b = await bench()
+  try {
+    await b.host.writeBytes('a.ts', new Uint8Array(Buffer.from('const a = 1\n', 'utf8')))
+    await b.host.writeBytes('src/b.ts', new Uint8Array(Buffer.from('const b = 2\n// 记号在 src\n', 'utf8')))
+    await b.host.writeBytes('src/deep/c.ts', new Uint8Array(Buffer.from('const c = 3\n', 'utf8')))
+
+    // 甲 · 尾巴上的斜杠折掉：`src/` 与 `src` 是同一次问法。
+    const slash = await face('glob', { pattern: '*.ts', path: 'src/' }, b.host)
+    const plain = await face('glob', { pattern: '*.ts', path: 'src' }, b.host)
+    assert.equal(slash.ok, true, slash.output)
+    assert.equal(slash.output, plain.output, '`src/` 与 `src` 该是同一个范围')
+    // 这一条同时量了"模式在范围里再配一次"：`*.ts` 配得上 `src/b.ts`，靠的正是相对范围那一面
+    // （`*` 不跨 `/`，所以更深处那一份不在）。
+    assert.deepEqual(slash.output.split('\n'), ['1 paths:', 'src/b.ts'], `范围与模式的相对面没生效：${slash.output}`)
+
+    // 乙 · 空范围 = 整个视图：不给 `path` 与给空串是同一次问法。
+    const whole = await face('glob', { pattern: '**/*.ts' }, b.host)
+    const empty = await face('glob', { pattern: '**/*.ts', path: '' }, b.host)
+    assert.equal(whole.ok, true)
+    assert.deepEqual(whole.output.split('\n').slice(1).sort(), ['a.ts', 'src/b.ts', 'src/deep/c.ts'])
+    assert.equal(empty.output, whole.output, '空串就是整个视图')
+
+    // 丙 · 范围指着一个文件：那个文件自己也在范围里。
+    const one = await face('grep', { pattern: '记号', path: 'src/b.ts' }, b.host)
+    assert.equal(one.ok, true)
+    assert.equal(one.output, '1 lines:\nsrc/b.ts:2:// 记号在 src', `指着文件时取不到它自己：${one.output}`)
+
+    // 负对照（两路）：范围外那一份不许进结果。
+    const away = await face('grep', { pattern: '记号', path: 'src/deep' }, b.host)
+    assert.match(away.output, /no line matches/, `范围外的内容进了 grep：${away.output}`)
+    const awayGlob = await face('glob', { pattern: '**/*.ts', path: 'src/deep' }, b.host)
+    assert.equal(awayGlob.output, '1 paths:\nsrc/deep/c.ts', `范围外的路径进了 glob：${awayGlob.output}`)
+    console.log(
+      `③b 读数：带斜杠的范围 → ${slash.output.replace('\n', '｜')} · 指着文件的范围 → ${one.output.replace('\n', '｜')}`,
+    )
+  } finally {
+    await b.close()
+  }
+})
+
 // ── ④ 假模型驱动 读 → 写 → 检查点，走到一次真提交 ────────────────────────────
 
 /** 一条工具调用（三段：起点 · 分片 · 收尾）。 */
@@ -651,15 +702,28 @@ test('⑧ exit_plan_mode：持轮者落 holder/plan 并停在门口；子 agent 
 //
 // 三条各盯一样：落点（落 `holder/ask`，而契约一个都不发）· 停（与 `exit_plan_mode` 共用同一个
 // "停"，不引入异步等待那种持久态）· 上限（问多了不是更周全，是让人没法答——当场拒并给去路）。
-test('⑨ ask_user_question：持轮者落 holder/ask 并停在同一道门口；问超了当场拒', async () => {
+test('⑨ ask_user_question：持轮者落 holder/ask 并停在同一道门口；子 agent 那一趟把问题带回去；问超了当场拒', async () => {
   const b = await bench()
   try {
     const before = worktreeOf(b.root)
 
-    // 子 agent：角色不对，回一句指得出出路的话。
-    const asSub = await face('ask_user_question', { questions: [{ question: '要不要删掉它？' }] }, b.host, '', false)
-    assert.equal(asSub.ok, false, asSub.output)
-    assert.match(asSub.output, /not your cell's job/)
+    // 子 agent：**不拒**——问题原样带回去那一栏（U18 甲案：问人的门在持轮者那一格），并说清
+    // 判决到它下一步才回来。带上来的那一批一个字段都不改，而工具面这一层**不落事件**（落账归
+    // 轮次那一层：`ask/raised` · `ask/ruling`，见 `round/handback.ts`）。
+    const asSub = await face(
+      'ask_user_question',
+      { questions: [{ question: '要不要删掉它？', header: '删除' }] },
+      b.host,
+      '',
+      false,
+    )
+    assert.equal(asSub.ok, true, asSub.output)
+    assert.equal(asSub.halt, undefined, '带回去不是"这一格到这儿为止"：它还有别的活要干')
+    assert.equal(asSub.asks?.length, 1, '问题没有被带回去')
+    assert.equal(asSub.asks?.[0]?.question, '要不要删掉它？', '带回去的问题被改过')
+    assert.equal(asSub.asks?.[0]?.header, '删除', '带回去的问题掉了一栏')
+    assert.match(asSub.output, /holder cell/, `那句没说清带去给谁：${asSub.output}`)
+    assert.match(asSub.output, /next step/, `那句没说清判决什么时候回来：${asSub.output}`)
 
     // 问超了：当场拒，话里指得出去处（不是静默截断成前四个）。
     const tooMany = await face(
@@ -904,6 +968,57 @@ test('格 3 · 预取：一批把候选的内容取回来，此后逐文件读�
     assert.equal(c.truth.stats().gitRequests, hotBefore, `热 grep 不该再问 git，实际 ${c.truth.stats().gitRequests - hotBefore}`)
     console.log(
       `格 3 读数：30 个文件 / 7 个目录 · 冷 grep 的请求数 无预取 ${bareCost} → 有预取 ${coldCost}（热的那趟 0）`,
+    )
+  } finally {
+    await c.close()
+  }
+})
+
+/**
+ * 格 3 · 预取只取范围内那几份：范围外的路径不进那一批，而**回执逐字节不变**。
+ *
+ * 抓住的变异：预取那一行回到"整棵树都先取回来"（范围外那 25 份又占上那一批）。同一条里还有
+ * 另一半：**收窄不许动结果**——结果那一路的判据在 grep 的循环里，预取只是提示。
+ */
+test('格 3 · 预取只取范围内那几份：范围外的路径不进那一批，回执逐字节不变', async () => {
+  const c = await lowerBench(lowerCorpus())
+  try {
+    const batches: string[][] = []
+    const raw = c.host.prefetch
+    assert.equal(typeof raw, 'function', '产品那一份宿主该有这道缝')
+    const host = {
+      ...c.host,
+      prefetch: async (paths: readonly string[]) => {
+        batches.push([...paths])
+        await raw(paths)
+      },
+    } as ToolHost
+
+    // 范围 `d0`：那一批里只许有 `d0/` 下面那 5 份（整棵树 30 份）。
+    const before = c.truth.stats().gitRequests
+    const scoped = await face('grep', { pattern: '记号', path: 'd0' }, host)
+    const scopedCost = c.truth.stats().gitRequests - before
+    assert.equal(scoped.ok, true, scoped.output)
+    assert.equal(scoped.output.split('\n').length - 1, 5, `范围里的行数不对：${scoped.output.slice(0, 160)}`)
+    assert.equal(batches.length, 1, `一趟 grep 该只发一批预取：发了 ${batches.length}`)
+    const batch = batches[0] ?? []
+    const away = batch.filter((p) => !p.startsWith('d0/'))
+    assert.deepEqual(away, [], `范围外的路径进了预取批：${away.slice(0, 5).join(' · ')}`)
+    assert.equal(batch.length, 5, `这一批该是范围内那 5 份：${batch.join(' · ')}`)
+
+    // 回执不变：同一份台上再问一次整个视图，把那 5 行挑出来，逐字节相同。
+    const whole = await face('grep', { pattern: '记号' }, host)
+    assert.deepEqual(
+      scoped.output.split('\n').slice(1).sort(),
+      whole.output
+        .split('\n')
+        .slice(1)
+        .filter((l) => l.startsWith('d0/'))
+        .sort(),
+      '收了范围之后的回执与整个视图里那几行不一致',
+    )
+    console.log(
+      `格 3 读数：范围 d0 的预取批 ${batch.length} 份（整棵树 30 份）· 那一趟 ${scopedCost} 次请求 · 回执 5 行与整个视图里那 5 行逐字节相同`,
     )
   } finally {
     await c.close()

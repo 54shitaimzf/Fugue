@@ -349,17 +349,19 @@ test('⑤ 事件联合的判别名与架构 § 8.1 那一段逐条相符（`tool
   const plan = process.env['FUGUE_PLAN'] ?? '/mnt/c/Users/Administrator/Desktop/CodeWish/PLAN-ARCHIVE.md'
   const got = spawnSync('node', ['tools/check-events.js', plan], { cwd: process.cwd(), encoding: 'utf8' })
   assert.equal(got.status, 0, `check-events.js 没通过：\n${got.stdout}\n${got.stderr}`)
-  // **28 条**：C4 那一格加了 `round/approve`（放行那一笔）——事件面到这里冻住（TUI 的读面）。
+  // **30 条**：C4 那一格加了 `round/approve`（放行那一笔）；0.2.7 的 U18 甲案又加了两条
+  // （`ask/raised` · `ask/ruling`：子 agent 的问题被轮内接住 · 持轮者对它的判决）。事件面到
+  // 这里冻住（TUI 的读面）。
   // 架构那一半**无条件**：事件联合与架构篇两样都在本仓库里（`src/log/events.ts` ·
   // `design/ARCHITECTURE.md`），所以这一条在任何一台机器上、在 CI 上都真跑。2026-10-01 之前
   // 两张表都住文档工作区，够不到就整条跳过——那是"静默通过"，不是地板。
-  assert.match(got.stdout, /代码里 28 条/, '代码那一侧该是 28 条')
-  assert.match(got.stdout, /架构里 28 条/, '架构 § 8.1 那一侧也该是 28 条')
+  assert.match(got.stdout, /代码里 30 条/, '代码那一侧该是 30 条')
+  assert.match(got.stdout, /架构里 30 条/, '架构 § 8.1 那一侧也该是 30 条')
   assert.match(got.stdout, /代码里每一条都在架构那一段里/, '两向都要相符')
   assert.match(got.stdout, /架构那一段里每一条都在代码里/, '两向都要相符')
   // 归档那一半（§ 5.18 那张三面表，同一个联合的**第二张**散文表——它漂过一次，漏 7 条）住在
   // 文档工作区：够得到就查，够不到**印一行说出来**。两条路都断言，不留"什么都不说也通过"的路。
-  assert.match(got.stdout, /(计划里 28 条|归档那张表不在场)/, '归档那一半要么查了，要么说清没查')
+  assert.match(got.stdout, /(计划里 30 条|归档那张表不在场)/, '归档那一半要么查了，要么说清没查')
   console.log(`⑤ 读数：${got.stdout.split('\n').filter((l) => l.includes('条') || l.includes('不在场')).map((l) => l.trim()).join(' · ')}`)
 })
 

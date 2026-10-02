@@ -8,6 +8,7 @@
 // 引用在直跑下被整体擦掉，tsc 下必炸）；底座词汇自此自足，不认识 model 那一侧。）
 import type {
   AgentId,
+  AskTier,
   AssertionResult,
   BlobId,
   BranchId,
@@ -154,6 +155,39 @@ export type LogEvent =
    * 由人开——所以它落事件、叫停，与 `holder/plan` 共用那一个"停"（不引入"异步等待"这种持久态）。
    */
   | { t: 'holder/ask'; agent: AgentId; digest: string; body: string }
+  /**
+   * **子 agent 的问题被轮内接住**（架构 § 23 的 U18 · 路线图 0.2.7 行 ② 的甲案）。
+   *
+   * 出处是那一格原先只得到的一句话：「这不是你这一格的事」（§ 8.4 纪律 2）——它要问人的时候，
+   * 问题得先在轮内被接住，再由持轮者拿到人面前。这一条就是"被接住"那一下：`body` 是那一批问题
+   * 的原文（`{questions: [...]}`，与 `ask/ruling` · `holder/ask` 同一份正文形状），`digest` 是它的
+   * 指纹——判决那一条的 `asked` 指回它。
+   *
+   * **它由轮次那一层落**（持轮者那一格在轮内收下的就是它），不是子 agent 自己往账上写：那一格
+   * 手里没有写句柄。
+   */
+  | { t: 'ask/raised'; agent: AgentId; contract: ContractId; digest: string; body: string }
+  /**
+   * **持轮者对那一问的判决**（U18 甲案：不积累上下文的一次性裁断）。
+   *
+   * **只带结论**：`tier`（三档之一，判不出来时这一栏不在）· `forwarded`（这一问进不进人）·
+   * `ruler`（**尺的版本**：这一条判决是按哪把尺量出来的）· `body`（结论的全文：档 · 判词 ·
+   * 走退化路时的由头）。**推敲不进这里**——判那一次读到的上下文与原始回复哪儿都不落（红线：
+   * 推敲不进任何人 C 区），所以重放读得到的是"判了什么"，读不到"它当时怎么想"。
+   *
+   * `asked` 指回 `ask/raised` 那一条的 `digest`：同一格可以问好几回，"这一条判决判的是哪一问"
+   * 要选得出来。
+   */
+  | {
+      t: 'ask/ruling'
+      agent: AgentId
+      asked: string
+      forwarded: boolean
+      tier?: AskTier
+      ruler: string
+      digest: string
+      body: string
+    }
   /**
    * **人放行了这一批**（`fugue round go`）：紧接着的那几条 `contract/issue` 就是它的兑现。
    *

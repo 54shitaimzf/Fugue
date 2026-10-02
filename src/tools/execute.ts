@@ -252,6 +252,14 @@ export interface FaceResult {
    * 由它自己说，不由运行时按名字分岔。
    */
   readonly halt?: boolean
+  /**
+   * **这一趟从别的格带回来的问题**（U18 甲案：子 agent 不问人——它问持轮者）。
+   *
+   * 与 `halt` 同一档：不是回执文本里的一句话，是**结构化的那一件事**——轮次那一层拿它去接住
+   * （落 `ask/raised` · 判 · 落 `ask/ruling`？后两样在 `round/handback.ts`），而回执文本只是
+   * 说给模型听的那一句。工具面这一层不认识尺，也不认识日志。
+   */
+  readonly asks?: readonly AskItem[]
 }
 
 const ok = (output: string): FaceResult => ({ ok: true, output })
@@ -424,23 +432,52 @@ const readImageFace: ToolFn = async (args, host) => {
 }
 
 /**
+ * 发现类那两条工具共用的「范围」那一栏（`path`）。**三句话，各管一处细节**：
+ *
+ *   · `scopeOf`：尾巴上的斜杠折掉——`src/` 与 `src` 说的是同一个范围，而两种写法模型都会给。
+ *   · `inScope`：**空范围是整个视图**（不给 `path` 就是把整棵树看一遍）；范围指着一个**文件**
+ *     时，那个文件自己也在范围里。原先这一处的判据只有 `startsWith(dir + '/')`，于是模型说
+ *     "就看这一份"（`path: 'src/b.ts'`）时一个候选都取不到，回一句"没有匹配"——看起来只是
+ *     "那儿真没有"。
+ *   · `matchesInScope`：模式按**相对范围**再配一次——`pattern: '*.ts'` + `path: 'src'` 这种
+ *     写法（范围给在参数里、模式只写文件名那一段）也配得上；同样的道理，取不到时它只会报
+ *     "没有匹配"。
+ *
+ * 三条都**只加不减**：没有 `path` 那一次问法与从前逐字节相同（空串那一档），带 `path` 的那些
+ * 只会比从前多取到东西，不会少。
+ */
+export function scopeOf(raw: string | null, fallback: string): string {
+  return (raw ?? fallback).replace(/\/+$/, '')
+}
+
+/** 这一条路径在不在这个范围里（空串 = 整个视图 · 范围本身那一条也在）。 */
+export function inScope(path: string, dir: string): boolean {
+  return dir === '' || path === dir || path.startsWith(dir + '/')
+}
+
+/** 在范围里再配一次模式：模式只写文件名那一段时（`*.ts` + 范围 `src`）也要配得上。 */
+export function matchesInScope(re: RegExp, path: string, dir: string): boolean {
+  return re.test(path) || (dir !== '' && path.length > dir.length && re.test(path.slice(dir.length + 1)))
+}
+
+/**
  * 走一遍树。**走法归宿主**（`walk`）：它知道哪些行是目录、哪些是软链、能走多深。这一层只
  * 拿结果去配 `glob` 的语法（`**` 要不要跨 `/` 是模式那边的事）。
  */
 const globFace: ToolFn = async (args, host) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('glob', 'pattern')
-  const dir = text(args, 'path') ?? ''
+  const dir = scopeOf(text(args, 'path'), '')
   const all = await host.walk()
   const re = globToRe(pattern)
-  const hit = all.filter((p) => (dir === '' || p.startsWith(dir + '/')) && re.test(p))
+  const hit = all.filter((p) => inScope(p, dir) && matchesInScope(re, p, dir))
   return ok(hit.length === 0 ? `no path matches ${pattern}.` : `${hit.length} paths:\n${hit.join('\n')}`)
 }
 
 const grepFace: ToolFn = async (args, host, ctx) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('grep', 'pattern')
-  const dir = text(args, 'path') ?? ctx.cwd
+  const dir = scopeOf(text(args, 'path'), ctx.cwd)
   let re: RegExp
   try {
     re = new RegExp(pattern)
@@ -459,10 +496,15 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   } catch {
     prefetch = undefined
   }
-  if (prefetch !== undefined) await prefetch(all)
+  // **候选先按范围收窄，再取那一批**：预取是"接下来要读的那几份先取回来"，范围外的不该占这一批
+  // ——一条窄范围加上一棵大树的问法上，差的就是几十上百份的内容。
+  //
+  // **收窄只改那一批，不改结果**：结果那一路的判据在下面那个循环里，它自己按范围判一次；预取
+  // 始终只是提示（缺席 · 失败 · 少几份，都只是慢一点）。
+  if (prefetch !== undefined) await prefetch(all.filter((p) => inScope(p, dir)))
   const hits: string[] = []
   for (const path of all) {
-    if (dir !== '' && !path.startsWith(dir + '/')) continue
+    if (!inScope(path, dir)) continue
     const got = await host.readBytes(path)
     if (got === null) continue
     utf8Of(got.bytes)
@@ -586,7 +628,19 @@ const askUserQuestionFace: ToolFn = async (args, host, ctx) => {
     })
   }
   if (!ctx.holder) {
-    return no('this is not your cell\'s job: you hold a contract, so do that one step — when something needs a human, carry the question back to the holder cell.')
+    // **子 agent 问的那一下：带回去，不是拒。** 这一格手里是一份契约（§ 8.4 纪律 2），而"问人"
+    // 那道门在持轮者那一格——所以这里把问题**原样**交给轮次那一层（`asks` 那一栏），由它在轮内
+    // 接住：判得了就判、判不了就原样转到人面前（架构 § 23 的 U18 · 路线图 0.2.7 行 ② 的甲案）。
+    //
+    // **不叫停**：这一格还有别的活要干，而"问了一句"不该让整格停在那儿——判决到它下一步的
+    // 那一栏里（结论，不是推敲）。
+    return {
+      ok: true,
+      asks,
+      output:
+        `carried back to the holder cell (${asks.length} question(s)) — it judges them inside this round and the ruling comes back in your next step. ` +
+        'If a question turns out to be one only a person can answer, it is forwarded to a person as it stands; keep doing what you can do cleanly and say in your conclusion what is waiting on that ruling.',
+    }
   }
   await host.askUser(asks)
   return {

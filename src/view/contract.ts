@@ -22,9 +22,17 @@ import type { DirEntry, EntryMeta } from '../entries.ts'
 import type { Log } from '../log/events.ts'
 import type { AgentId, BlobId, CommitId, LogSeq, RelPath, ViewRev } from '../terms.ts'
 
+/**
+ * 上层那一条的内容对象。**id 由下层给**（`Lower.putBlob`），视图一处都不自己算。
+ *
+ * 由头是一处真读数（`tools/probe-hashfmt.sh` 的 sha256 那一行）：内容地址的算法是**仓库的性质**，
+ * 不是视图的性质——同一串字节在 sha1 库与 sha256 库里是两个 id，而视图原先按 sha1 算了一份，
+ * 于是 sha256 库上 `mktree` 当场拒（`fatal: input format error`）。条目自己带着真源给的 id，
+ * "这个内容的对象叫什么"就只剩一处答法。
+ */
 export type Entry =
-  | { kind: 'file'; bytes: Uint8Array; mode: number }
-  | { kind: 'symlink'; target: string }
+  | { kind: 'file'; bytes: Uint8Array; mode: number; blob: BlobId }
+  | { kind: 'symlink'; target: string; blob: BlobId }
   | { kind: 'dir' }
 
 export type UpperEntry = Entry | { kind: 'tombstone' }
@@ -32,13 +40,22 @@ export type UpperEntry = Entry | { kind: 'tombstone' }
 /**
  * 视图需要的下层：一个提交处的三样读，加上按 id 取对象。
  *
- * **按 id 取对象不是路径读**：重放时事件里带的是 blob，内容必须能取回来。**全部是读**——
- * M2 从头到尾没有一处写路径，所以它不可能成为第二个真源。
+ * **按 id 取对象不是路径读**：重放时事件里带的是 blob，内容必须能取回来。这一份里**只有一处不是
+ * 读**——`putBlob`：它答的是"这串字节在对象库里叫什么"，而对象库是内容寻址的，写与不写都不改变
+ * 任何对象的身份。视图因此仍然不是第二处真源：它决定不了内容地址，只是把它取回来。
  */
 export interface Lower {
   /** 视图铺在哪个提交上。`null`：还没有提交，下层是空的。 */
   readonly base: CommitId | null
   readBlob(id: BlobId): Promise<Uint8Array>
+  /**
+   * 一串字节在对象库里的 id。**它是 `Entry.blob` 的取值处**（实现走 `Truth.putBlob`）。
+   *
+   * 为什么视图要问它，而不是自己算：算法是仓库的性质（sha1 / sha256 是两把尺）。记录里带着 id
+   * 的那两处（`view/write` 事件 · 文件快照条目）直接用记录里那一份；记录里没有的（`view/symlink`
+   * 事件 · 软链快照条目）只有这一条来源——一条 `target` 算不出对象地址来。
+   */
+  putBlob(bytes: Uint8Array): Promise<BlobId>
   stat(path: RelPath): Promise<EntryMeta | null>
   read(path: RelPath): Promise<Uint8Array | null>
   list(dir: RelPath): Promise<DirEntry[]>
