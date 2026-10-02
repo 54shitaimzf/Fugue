@@ -53,7 +53,7 @@ test('① 每个工具在表里恰好一行 · 每行落在一层上 · 能力�
 
   // 两个方向都要判：一个都没漏（名字表 → 表），也没有表外的名字（表 → 名字表）。
   assert.deepEqual(sorted(tools), sorted(TOOL_NAMES), '表与工具目录不是同一份名单')
-  assert.deepEqual(checkInvariant(CAPABILITY_TABLE, TOOL_NAMES), [], '载入时的核对对这份表有话说')
+  assert.deepEqual(checkInvariant(CAPABILITY_TABLE, TOOL_NAMES), [], '开发核对对这份表有话说')
 
   // 每行落在四层中的某一层：四层各至少一格，且没有第五层。
   const byLayer = new Map<Layer, string[]>(LAYERS.map((l) => [l, namesOn(l)]))
@@ -129,7 +129,7 @@ test('④ 声明集只挂在执行层：同在执行层，`bash` 与 `run_action
   }
 })
 
-test('⑤ 载入时的核对真的会炸：截短名字表，少的那一格当场报出来', () => {
+test('⑤ 开发核对检测两侧名表差异与声明集，不替代外部输入拒绝', () => {
   const short = TOOL_NAMES.slice(0, TOOL_NAMES.length - 1)
   const gone = TOOL_NAMES[TOOL_NAMES.length - 1]
   assert.ok(gone !== undefined)

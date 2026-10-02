@@ -1,13 +1,22 @@
 // 0.2.9 ①：开发诊断网的正反两半。只读声明、调用纯诊断函数，属于 fast。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { CAPABILITY_TABLE } from '../src/capability/table.ts'
+import { CAPABILITY_TABLE, TOOL_NAMES as CAPABILITY_NAMES } from '../src/capability/table.ts'
 import type { CapabilityRow } from '../src/capability/table.ts'
-import { TOOL_ENTRIES } from '../src/tools/catalog.ts'
+import { TOOL_ENTRIES, TOOL_NAMES, catalogHash } from '../src/tools/catalog.ts'
+import { HOLDER_PROTOCOL, SUBAGENT_PROTOCOL } from '../src/assemble/protocol.ts'
 import { checkCapabilityInvariants } from '../tools/check-invariants.ts'
 
 test('实际独立目录与能力表：跨文件对账为零违反', () => {
   assert.deepEqual(checkCapabilityInvariants(), [])
+})
+
+test('能力表的名字入口转发实际目录投影，不维护第二份字面量', () => {
+  assert.strictEqual(CAPABILITY_NAMES, TOOL_NAMES)
+  assert.deepEqual(CAPABILITY_NAMES, TOOL_ENTRIES.map(entry => entry.name))
+  assert.strictEqual(SUBAGENT_PROTOCOL.toolCatalog, TOOL_NAMES)
+  assert.strictEqual(HOLDER_PROTOCOL.toolCatalog, TOOL_NAMES)
+  assert.equal(catalogHash(TOOL_ENTRIES), '06266332e0410bcf', 'this internal consolidation must preserve published catalog bytes')
 })
 
 test('目录截短、能力表漏行与表外名字：各指得出失配的工具', () => {

@@ -7,33 +7,18 @@
 // 层不是标签，是四个开关：这里只写层，四个开关由 `inferences()` 一处算出来，消费方读推论、不读层。
 // 这一份之前一个格都没有，于是「执行类先物化」这类话在每个调用点各写一遍。
 //
-// **这张表以工具名为键，因此任何一格漏了都是当场炸。** 架构 § 8.9 的原话是「少了这一层都编译
-// 不过」：工具名只有 § 8.10 的工具目录一处定义，少一格就是编译期错误。这个仓库直跑 `.ts`
-// （strip-only · 不做类型检查），所以那条纪律在这里只能是**载入时的核对**（`checkInvariant`）——
-// 它读的是运行时的那份名字表，抓的是同一件事：少一格时行为静默地少一条。差别记在 Z2 的提交信息
-// 里：类型检查那一道闸没有，载入那一道有。
+// 工具名只在 § 8.10 的目录定义；这一份只定义它们所在的层。直跑 `.ts` 不做类型检查，
+// 跨文件完整性由 tools/check-invariants.ts 的正反断言守住，不再在产品模块载入时另跑一遍。
+// 外部输入仍由 lookup 的「未声明即拒」处理，这两条边界不同。
 //
 // **判定只读这一处。** `M3` 的路径投影器那一支回答「那把钥匙怎么在路径空间里落定」，这一支回答
 // 「这个工具落在哪层状态」。两者不要合：合了以后，加一个工具就要同时动路径空间。
 
+import { TOOL_NAMES } from '../tools/catalog.ts'
+export { TOOL_NAMES }
+
 /** 一层状态：架构 § 8.9 那五行，逐字。 */
 export type Layer = 'view' | 'execute' | 'truth' | 'log'
-
-/**
- * 一个工具名：架构 § 8.10 那张目录逐字，十二个。**这是它的唯一定义处。**
- *
- * 名字按类别分组（文件 · 执行 · 发现 · 待办 · 交互 · 计划 · 本架构新增），顺序不承重：
- * 前缀里的位置是提供方的事（架构 § 8.11：工具目录有位置，只是位置不由我们排）。
- */
-export const TOOL_NAMES: readonly string[] = [
-  'read', 'write', 'edit', 'read_image',
-  'bash',
-  'glob', 'grep',
-  'todo_write',
-  'ask_user_question',
-  'exit_plan_mode',
-  'checkpoint', 'run_action',
-]
 
 /**
  * 能力标识。**一格一个名字**，与工具名同域。
@@ -163,7 +148,7 @@ export function namesOn(layer: Layer): string[] {
 }
 
 /**
- * 载入时的核对：**这份表对得起那份名字表**（架构 § 8.9：任一格少了都「编译不过」）。
+ * 开发核对：**这份表对得起那份名字表**（架构 § 8.9：任一格少了都「编译不过」）。
  *
  * `names` 是参数而不是直接把 `TOOL_NAMES` 读进来：这条核对要能被指着一份截短的名字表跑（测试
  * 里那一条），否则「少一格会炸」这句话就没有一处量得到它。
@@ -178,11 +163,6 @@ export function checkInvariant(table: Readonly<Record<string, CapabilityRow>>, n
       .filter(([, row]) => row.decl && row.layer !== 'execute')
       .map(([t]) => `只有执行层能有声明集，而这一格不在执行层：${t}`),
   ]
-}
-
-const bad = checkInvariant(CAPABILITY_TABLE, TOOL_NAMES)
-if (bad.length > 0) {
-  throw new Error(`能力表与工具目录不一致：\n  ${bad.join('\n  ')}`)
 }
 
 /** 四条推论的名字与各自那一句话，给读表的人与走查用（架构 § 8.9 那张表逐字）。 */
