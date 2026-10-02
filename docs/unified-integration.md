@@ -16,7 +16,9 @@ cohort 的 `prepare(readBlob, options)` 复用完整不可变记录，只为新 
 查询仍只按当前 View 集合排除明确否定的候选，再用实际内容和原 regex 验证。
 
 汇总分支中的确定性预算负 memo 已有地址核验与 close 清空控制；未核验的超限回复继续未知/重试。
-取消清理保留无所有权证明的临时叶；只有独占创建且 inode 仍匹配的发布者清理自己的叶。合并中
+取消清理保留无所有权证明的临时叶。cohort 发布者清理时另核 inode；v1 发布者依据独占创建
+标记，在 rename 成功后立即撤销清理资格，并依赖同 UID 的受控命名空间，不声称同样的 inode
+复核。合并中
 仅删除重复的 `IndexStoreStats` 类型声明与过时 sweep 注释，不改变统计字段或可执行语句。
 
 历史输入明确分层：`wire-in/original` 固定保存 `e02fa524` 的请求、响应与 metadata，并钉住 manifest
