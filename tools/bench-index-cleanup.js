@@ -2,7 +2,7 @@
 export async function closeIndexBenchmark(index, log, truth) {
   try { await index?.close() }
   finally {
-    try { await log.close() }
-    finally { await truth.close() }
+    try { await log?.close() }
+    finally { await truth?.close() }
   }
 }
