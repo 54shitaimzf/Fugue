@@ -1,0 +1,172 @@
+{
+  "schema": 1,
+  "node": "v24.19.0",
+  "sourceHashes": {
+    "src/log/stream.ts": "5459de7176a850074e359082be88ccb5445e7a10d22696d199623c3a53c336e6",
+    "src/log/log.ts": "4d37059d6f4eabdf9ea43eee6d1ea7d8ba78beb97f55e9a50b4aaffc214b510e",
+    "src/log/envelope.ts": "d79a962d8dabe66454ddd68c371dd2b367663a9d2aeecdb32760599e1e93e9ca",
+    "src/probe/call-ledger.ts": "6b9c234cec17dd6eca33b12621e74a9839047aa1693aff53d424935460af2e7e"
+  },
+  "scriptSha256": "1a44f73dde5f763d0211ed9669b56baa966cafcdc12280dd735516aa4ca7c1e5",
+  "generated": {
+    "rows": 24000,
+    "bytes": 109823886,
+    "totalCalls": 300,
+    "retainedCalls": 5
+  },
+  "boundary": "Distinct processes, generated corpus in workspace filesystem, capped V8 heap; RSS includes native memory. Cached-first OS cache order, no latency conclusion.",
+  "results": {
+    "cached": {
+      "status": null,
+      "signal": "SIGABRT",
+      "error": null,
+      "heapLimitMiB": 32,
+      "value": null,
+      "failureStderr": "\n<--- Last few GCs --->\n\n[22:0xe0ec000]      143 ms: Mark-Compact 31.1 (64.3) -> 31.1 (64.3) MB, pooled: 0 MB, 2.50 / 0.00 ms  (average mu = 0.829, current mu = 0.713) allocation failure; scavenge might not succeed\n\nFATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\n----- Native stack trace -----\n\n 1: 0x75356c node::OOMErrorHandler(char const*, v8::OOMDetails const&) [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n 2: 0xc52cd0  [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n 3: 0xc52dbf  [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n 4: 0xef6695  [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n 5: 0xf07ffc  [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n 6: 0xedd4b3  [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n 7: 0xeb2604  [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n 8: 0xe9d4f8  [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n 9: 0xeb1a5e  [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n10: 0xec011b  [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n11: 0xc6e12d v8::String::NewFromUtf8(v8::Isolate*, char const*, v8::NewStringType, int) [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n12: 0xadfc59  [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n13: 0xadfe42 node::StringDecoder::DecodeData(v8::Isolate*, char const*, unsigned long*) [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n14: 0xae0356  [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n15: 0x1a0c08d  [/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node]\n"
+    },
+    "stream": {
+      "status": 0,
+      "signal": null,
+      "error": null,
+      "heapLimitMiB": 32,
+      "value": {
+        "ms": 4273.8551609999995,
+        "maxRssKiB": 69452,
+        "ledger": {
+          "schema": 1,
+          "tokenScope": "model-call",
+          "calls": [
+            {
+              "source": {
+                "writer": "a",
+                "seq": 80
+              },
+              "agent": "a",
+              "step": "1",
+              "model": "generated",
+              "wire": "openai-chat",
+              "publishedTools": 12,
+              "requestedTools": 0,
+              "usage": {
+                "inputTokens": 10,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": null,
+                "outputTokens": 2,
+                "reasoningTokens": null
+              },
+              "stop": "end-turn",
+              "status": null,
+              "attempts": null,
+              "toolMs": null,
+              "toolArgumentBytes": null,
+              "toolReceiptBytes": null
+            },
+            {
+              "source": {
+                "writer": "a",
+                "seq": 160
+              },
+              "agent": "a",
+              "step": "2",
+              "model": "generated",
+              "wire": "openai-chat",
+              "publishedTools": 12,
+              "requestedTools": 0,
+              "usage": {
+                "inputTokens": 10,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": null,
+                "outputTokens": 2,
+                "reasoningTokens": null
+              },
+              "stop": "end-turn",
+              "status": null,
+              "attempts": null,
+              "toolMs": null,
+              "toolArgumentBytes": null,
+              "toolReceiptBytes": null
+            },
+            {
+              "source": {
+                "writer": "a",
+                "seq": 240
+              },
+              "agent": "a",
+              "step": "3",
+              "model": "generated",
+              "wire": "openai-chat",
+              "publishedTools": 12,
+              "requestedTools": 0,
+              "usage": {
+                "inputTokens": 10,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": null,
+                "outputTokens": 2,
+                "reasoningTokens": null
+              },
+              "stop": "end-turn",
+              "status": null,
+              "attempts": null,
+              "toolMs": null,
+              "toolArgumentBytes": null,
+              "toolReceiptBytes": null
+            },
+            {
+              "source": {
+                "writer": "a",
+                "seq": 320
+              },
+              "agent": "a",
+              "step": "4",
+              "model": "generated",
+              "wire": "openai-chat",
+              "publishedTools": 12,
+              "requestedTools": 0,
+              "usage": {
+                "inputTokens": 10,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": null,
+                "outputTokens": 2,
+                "reasoningTokens": null
+              },
+              "stop": "end-turn",
+              "status": null,
+              "attempts": null,
+              "toolMs": null,
+              "toolArgumentBytes": null,
+              "toolReceiptBytes": null
+            },
+            {
+              "source": {
+                "writer": "a",
+                "seq": 400
+              },
+              "agent": "a",
+              "step": "5",
+              "model": "generated",
+              "wire": "openai-chat",
+              "publishedTools": 12,
+              "requestedTools": 0,
+              "usage": {
+                "inputTokens": 10,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": null,
+                "outputTokens": 2,
+                "reasoningTokens": null
+              },
+              "stop": "end-turn",
+              "status": null,
+              "attempts": null,
+              "toolMs": null,
+              "toolArgumentBytes": null,
+              "toolReceiptBytes": null
+            }
+          ],
+          "totalCalls": 300,
+          "truncated": true
+        }
+      },
+      "failureStderr": null
+    }
+  }
+}

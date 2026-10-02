@@ -1,0 +1,2214 @@
+{
+  "schema": 1,
+  "node": "v24.19.0",
+  "platform": "linux",
+  "before": {
+    "commit": "a73a1770ba77c0fb054fc7c91655103e57107ab2",
+    "hashes": {
+      "src/log/log.ts": "4d37059d6f4eabdf9ea43eee6d1ea7d8ba78beb97f55e9a50b4aaffc214b510e",
+      "src/log/envelope.ts": "d79a962d8dabe66454ddd68c371dd2b367663a9d2aeecdb32760599e1e93e9ca",
+      "src/probe/call-ledger.ts": "6b9c234cec17dd6eca33b12621e74a9839047aa1693aff53d424935460af2e7e"
+    }
+  },
+  "after": {
+    "commit": "9a4fd1d97925e12bc04830cb77d15f2eb03d5d9b",
+    "hashes": {
+      "src/log/log.ts": "4d37059d6f4eabdf9ea43eee6d1ea7d8ba78beb97f55e9a50b4aaffc214b510e",
+      "src/log/envelope.ts": "d79a962d8dabe66454ddd68c371dd2b367663a9d2aeecdb32760599e1e93e9ca",
+      "src/probe/call-ledger.ts": "6b9c234cec17dd6eca33b12621e74a9839047aa1693aff53d424935460af2e7e",
+      "src/log/stream.ts": "5459de7176a850074e359082be88ccb5445e7a10d22696d199623c3a53c336e6"
+    }
+  },
+  "scriptSha256": "d8b2fa34c7dee4b883bc2f6d6201a65d64d30abd5f45b3dc61e963b4e1de9339",
+  "generated": {
+    "writers": 8,
+    "rows": 24000,
+    "bytes": 42804200,
+    "maxRowBytes": 1823,
+    "corpusSha256": "b31886dfc535f3f6430d164e2b49f9433f02b864c29d70be900389c50cd90639",
+    "fullDeepEquality": true,
+    "referenceJsonSha256": "73162178f529c233eb67dce8dd9e42034ffd796184d48342fafe9f7b0e157dbf"
+  },
+  "trials": [
+    {
+      "run": 0,
+      "firstOrder": [
+        "cached",
+        "stream"
+      ],
+      "phases": {
+        "cached": {
+          "mode": "cached",
+          "fromSeq": 0,
+          "firstYieldMs": 906.8438499999993,
+          "totalMs": 1158.0879949999999,
+          "cpuUserMs": 1161.514,
+          "cpuSystemMs": 209.842,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 8,
+            "fileReadBytes": 42804200,
+            "chunkReads": 0,
+            "chunkReadBytes": 0,
+            "stats": 8,
+            "opens": 0
+          }
+        },
+        "stream": {
+          "mode": "stream",
+          "fromSeq": 0,
+          "firstYieldMs": 752.3247370000008,
+          "totalMs": 9290.378510999999,
+          "cpuUserMs": 4242.457,
+          "cpuSystemMs": 3759.04,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "stats": 194656,
+            "opens": 8
+          }
+        },
+        "streamRepeat": {
+          "mode": "stream",
+          "fromSeq": 0,
+          "firstYieldMs": 743.7073399999972,
+          "totalMs": 10064.525728,
+          "cpuUserMs": 4001.206,
+          "cpuSystemMs": 3788.923,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "stats": 194656,
+            "opens": 8
+          }
+        },
+        "cachedRepeat": {
+          "mode": "cached",
+          "fromSeq": 0,
+          "firstYieldMs": 62.986015000002226,
+          "totalMs": 294.43753899999865,
+          "cpuUserMs": 284.135,
+          "cpuSystemMs": 23.93,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 0,
+            "chunkReadBytes": 0,
+            "stats": 8,
+            "opens": 0
+          }
+        }
+      }
+    },
+    {
+      "run": 1,
+      "firstOrder": [
+        "stream",
+        "cached"
+      ],
+      "phases": {
+        "stream": {
+          "mode": "stream",
+          "fromSeq": 0,
+          "firstYieldMs": 979.8094739999942,
+          "totalMs": 10527.539475999998,
+          "cpuUserMs": 4308.76,
+          "cpuSystemMs": 4040.43,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "stats": 194656,
+            "opens": 8
+          }
+        },
+        "cached": {
+          "mode": "cached",
+          "fromSeq": 0,
+          "firstYieldMs": 911.1492369999978,
+          "totalMs": 1170.0224129999988,
+          "cpuUserMs": 1098.287,
+          "cpuSystemMs": 146.407,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 8,
+            "fileReadBytes": 42804200,
+            "chunkReads": 0,
+            "chunkReadBytes": 0,
+            "stats": 8,
+            "opens": 0
+          }
+        },
+        "cachedRepeat": {
+          "mode": "cached",
+          "fromSeq": 0,
+          "firstYieldMs": 2.8869869999980438,
+          "totalMs": 230.17150499999843,
+          "cpuUserMs": 248.215,
+          "cpuSystemMs": 0,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 0,
+            "chunkReadBytes": 0,
+            "stats": 8,
+            "opens": 0
+          }
+        },
+        "streamRepeat": {
+          "mode": "stream",
+          "fromSeq": 0,
+          "firstYieldMs": 749.5684849999961,
+          "totalMs": 12131.680448,
+          "cpuUserMs": 4558.815,
+          "cpuSystemMs": 4558.952,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "stats": 194656,
+            "opens": 8
+          }
+        }
+      }
+    },
+    {
+      "run": 2,
+      "firstOrder": [
+        "cached",
+        "stream"
+      ],
+      "phases": {
+        "cached": {
+          "mode": "cached",
+          "fromSeq": 0,
+          "firstYieldMs": 918.718700999998,
+          "totalMs": 1170.0420649999942,
+          "cpuUserMs": 1119.824,
+          "cpuSystemMs": 134.13,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 8,
+            "fileReadBytes": 42804200,
+            "chunkReads": 0,
+            "chunkReadBytes": 0,
+            "stats": 8,
+            "opens": 0
+          }
+        },
+        "stream": {
+          "mode": "stream",
+          "fromSeq": 0,
+          "firstYieldMs": 788.5566990000007,
+          "totalMs": 10908.541777999999,
+          "cpuUserMs": 4222.211,
+          "cpuSystemMs": 4349.563,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "stats": 194656,
+            "opens": 8
+          }
+        },
+        "streamRepeat": {
+          "mode": "stream",
+          "fromSeq": 0,
+          "firstYieldMs": 770.1155609999987,
+          "totalMs": 11738.983680999998,
+          "cpuUserMs": 4257.676,
+          "cpuSystemMs": 4237.661,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "stats": 194656,
+            "opens": 8
+          }
+        },
+        "cachedRepeat": {
+          "mode": "cached",
+          "fromSeq": 0,
+          "firstYieldMs": 1.2675949999975273,
+          "totalMs": 301.1062709999969,
+          "cpuUserMs": 275.722,
+          "cpuSystemMs": 27.277,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 0,
+            "chunkReadBytes": 0,
+            "stats": 8,
+            "opens": 0
+          }
+        }
+      }
+    }
+  ],
+  "suffix": {
+    "cached": {
+      "mode": "cached",
+      "fromSeq": 2959,
+      "firstYieldMs": 948.1704750000063,
+      "totalMs": 963.2618440000078,
+      "cpuUserMs": 816.452,
+      "cpuSystemMs": 230.929,
+      "rows": 328,
+      "resultHash": "4da1ea9afec2fc5fc90bc322f4ce62fc48e91f69f3ea120b9ab872f157be43e0",
+      "ledger": {
+        "schema": 1,
+        "tokenScope": "model-call",
+        "calls": [
+          {
+            "source": {
+              "writer": "w00",
+              "seq": 2960
+            },
+            "agent": "w00",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w01",
+              "seq": 2960
+            },
+            "agent": "w01",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w02",
+              "seq": 2960
+            },
+            "agent": "w02",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w03",
+              "seq": 2960
+            },
+            "agent": "w03",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w04",
+              "seq": 2960
+            },
+            "agent": "w04",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          }
+        ],
+        "totalCalls": 16,
+        "truncated": true
+      },
+      "io": {
+        "fileReads": 8,
+        "fileReadBytes": 42804200,
+        "chunkReads": 0,
+        "chunkReadBytes": 0,
+        "stats": 8,
+        "opens": 0
+      }
+    },
+    "stream": {
+      "mode": "stream",
+      "fromSeq": 2959,
+      "firstYieldMs": 1422.6401940000069,
+      "totalMs": 1531.2386680000054,
+      "cpuUserMs": 1300.139,
+      "cpuSystemMs": 125.723,
+      "rows": 328,
+      "resultHash": "4da1ea9afec2fc5fc90bc322f4ce62fc48e91f69f3ea120b9ab872f157be43e0",
+      "ledger": {
+        "schema": 1,
+        "tokenScope": "model-call",
+        "calls": [
+          {
+            "source": {
+              "writer": "w00",
+              "seq": 2960
+            },
+            "agent": "w00",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w01",
+              "seq": 2960
+            },
+            "agent": "w01",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w02",
+              "seq": 2960
+            },
+            "agent": "w02",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w03",
+              "seq": 2960
+            },
+            "agent": "w03",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w04",
+              "seq": 2960
+            },
+            "agent": "w04",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          }
+        ],
+        "totalCalls": 16,
+        "truncated": true
+      },
+      "io": {
+        "fileReads": 0,
+        "fileReadBytes": 0,
+        "chunkReads": 1312,
+        "chunkReadBytes": 85608400,
+        "stats": 5280,
+        "opens": 8
+      }
+    }
+  },
+  "negative": {
+    "cached": {
+      "yielded": 0,
+      "error": {
+        "name": "LogCorruptError",
+        "writer": "w07",
+        "line": 3001,
+        "reason": "seq 非法：undefined"
+      }
+    },
+    "stream": {
+      "yielded": 0,
+      "error": {
+        "name": "LogCorruptError",
+        "writer": "w07",
+        "line": 3001,
+        "reason": "seq 非法：undefined"
+      }
+    }
+  },
+  "logicalRetention": {
+    "kind": "source-derived algorithmic counts, not measured RSS or heap",
+    "cached": {
+      "retainedParsedRows": 24000,
+      "mergeRowReferences": 24000,
+      "wholeFileUtf8DecodeMaxInputBytes": 5350525
+    },
+    "stream": {
+      "maxMergeHeads": 8,
+      "maxActiveChunksBytes": 524288,
+      "corpusLineFragmentBoundBytes": 14584,
+      "allowedLineFragmentBoundBytes": 8388608,
+      "ledgerRows": 5,
+      "note": "Also bounded decode/concatenation temporaries and one validation row. Parts own copied bytes; paused iterators retain a 64KiB chunk per writer. Source counts do not describe GC, string layout, native allocator or RSS."
+    }
+  },
+  "boundary": "Generated immutable multiauthor corpus in workspace filesystem, not tmpfs. Same Node process, alternating first/repeat order, fresh cached handle per trial. OS page cache is not dropped; untimed equality warms it. Source original readers, developer-only I/O wrappers. Snapshot validates all complete rows before first yield and reads/decodes twice; cached repeat retains all parsed rows and does no source read. No latency/RSS conclusion inferred from logical retention."
+}

@@ -1,0 +1,538 @@
+{
+  "schema": 1,
+  "node": "v24.19.0",
+  "platform": "linux",
+  "before": {
+    "commit": "23852a690b59edaf4d5c5829a98fbff706adf84c",
+    "hashes": {
+      "src/log/log.ts": "4d37059d6f4eabdf9ea43eee6d1ea7d8ba78beb97f55e9a50b4aaffc214b510e",
+      "src/log/envelope.ts": "d79a962d8dabe66454ddd68c371dd2b367663a9d2aeecdb32760599e1e93e9ca",
+      "src/probe/call-ledger.ts": "6b9c234cec17dd6eca33b12621e74a9839047aa1693aff53d424935460af2e7e"
+    }
+  },
+  "after": {
+    "commit": "3b100685a9035455eb8038519d31c5f330dfa7b6",
+    "hashes": {
+      "src/log/log.ts": "4d37059d6f4eabdf9ea43eee6d1ea7d8ba78beb97f55e9a50b4aaffc214b510e",
+      "src/log/envelope.ts": "d79a962d8dabe66454ddd68c371dd2b367663a9d2aeecdb32760599e1e93e9ca",
+      "src/probe/call-ledger.ts": "6b9c234cec17dd6eca33b12621e74a9839047aa1693aff53d424935460af2e7e",
+      "src/log/stream.ts": "5459de7176a850074e359082be88ccb5445e7a10d22696d199623c3a53c336e6"
+    }
+  },
+  "scriptSha256": "4482262fa47f1950dc51fc895b9a9a1731c11880570f92916c21edd041f38b79",
+  "generated": {
+    "writers": 2,
+    "rows": 120,
+    "bytes": 215416,
+    "maxRowBytes": 1819,
+    "corpusSha256": "d4c925b423ffa8aa84533ec031cdd9dba132650aa87573a0fbbd66f0068c480d",
+    "fullDeepEquality": true,
+    "referenceJsonSha256": "7574ea30544014ca1955b66da917e93e6b7ebe6956a728f4530b51e56d095759"
+  },
+  "trials": [
+    {
+      "run": 0,
+      "firstOrder": [
+        "cached",
+        "stream"
+      ],
+      "phases": {
+        "cached": {
+          "mode": "cached",
+          "fromSeq": 0,
+          "firstYieldMs": 6.977929000000017,
+          "totalMs": 9.624652000000026,
+          "cpuUserMs": 8.325,
+          "cpuSystemMs": 0,
+          "rows": 120,
+          "resultHash": "fe8b5e7ade9b4819b0e89aa78c1a4ebfa9b9c8337eb95bcc7a32d6d5dde93499",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 2,
+            "truncated": false
+          },
+          "io": {
+            "fileReads": 2,
+            "fileReadBytes": 215416,
+            "chunkReads": 0,
+            "chunkReadBytes": 0,
+            "stats": 2,
+            "opens": 0
+          }
+        },
+        "stream": {
+          "mode": "stream",
+          "fromSeq": 0,
+          "firstYieldMs": 7.394987000000015,
+          "totalMs": 26.367984999999976,
+          "cpuUserMs": 18.106,
+          "cpuSystemMs": 5.646,
+          "rows": 120,
+          "resultHash": "fe8b5e7ade9b4819b0e89aa78c1a4ebfa9b9c8337eb95bcc7a32d6d5dde93499",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 2,
+            "truncated": false
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 8,
+            "chunkReadBytes": 430832,
+            "stats": 264,
+            "opens": 2
+          }
+        },
+        "streamRepeat": {
+          "mode": "stream",
+          "fromSeq": 0,
+          "firstYieldMs": 8.471761999999956,
+          "totalMs": 38.24969799999997,
+          "cpuUserMs": 30.21,
+          "cpuSystemMs": 1.428,
+          "rows": 120,
+          "resultHash": "fe8b5e7ade9b4819b0e89aa78c1a4ebfa9b9c8337eb95bcc7a32d6d5dde93499",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 2,
+            "truncated": false
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 8,
+            "chunkReadBytes": 430832,
+            "stats": 264,
+            "opens": 2
+          }
+        },
+        "cachedRepeat": {
+          "mode": "cached",
+          "fromSeq": 0,
+          "firstYieldMs": 0.45832999999998947,
+          "totalMs": 2.0712669999999775,
+          "cpuUserMs": 1.892,
+          "cpuSystemMs": 0.241,
+          "rows": 120,
+          "resultHash": "fe8b5e7ade9b4819b0e89aa78c1a4ebfa9b9c8337eb95bcc7a32d6d5dde93499",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 2,
+            "truncated": false
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 0,
+            "chunkReadBytes": 0,
+            "stats": 2,
+            "opens": 0
+          }
+        }
+      }
+    }
+  ],
+  "suffix": {
+    "cached": {
+      "mode": "cached",
+      "fromSeq": 19,
+      "firstYieldMs": 8.38857999999999,
+      "totalMs": 9.465673999999979,
+      "cpuUserMs": 4.628,
+      "cpuSystemMs": 4.859,
+      "rows": 82,
+      "resultHash": "65a810a4bd4bcc83f4d529eee315fe97d8eddbf68abcf1f8311bb0af260e4845",
+      "ledger": {
+        "schema": 1,
+        "tokenScope": "model-call",
+        "calls": [
+          {
+            "source": {
+              "writer": "w00",
+              "seq": 37
+            },
+            "agent": "w00",
+            "step": "37",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 1,
+            "usage": {
+              "inputTokens": 37,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w01",
+              "seq": 37
+            },
+            "agent": "w01",
+            "step": "37",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 1,
+            "usage": {
+              "inputTokens": 37,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          }
+        ],
+        "totalCalls": 2,
+        "truncated": false
+      },
+      "io": {
+        "fileReads": 2,
+        "fileReadBytes": 215416,
+        "chunkReads": 0,
+        "chunkReadBytes": 0,
+        "stats": 2,
+        "opens": 0
+      }
+    },
+    "stream": {
+      "mode": "stream",
+      "fromSeq": 19,
+      "firstYieldMs": 12.130919000000006,
+      "totalMs": 33.87069700000001,
+      "cpuUserMs": 26.008,
+      "cpuSystemMs": 0.831,
+      "rows": 82,
+      "resultHash": "65a810a4bd4bcc83f4d529eee315fe97d8eddbf68abcf1f8311bb0af260e4845",
+      "ledger": {
+        "schema": 1,
+        "tokenScope": "model-call",
+        "calls": [
+          {
+            "source": {
+              "writer": "w00",
+              "seq": 37
+            },
+            "agent": "w00",
+            "step": "37",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 1,
+            "usage": {
+              "inputTokens": 37,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w01",
+              "seq": 37
+            },
+            "agent": "w01",
+            "step": "37",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 1,
+            "usage": {
+              "inputTokens": 37,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          }
+        ],
+        "totalCalls": 2,
+        "truncated": false
+      },
+      "io": {
+        "fileReads": 0,
+        "fileReadBytes": 0,
+        "chunkReads": 8,
+        "chunkReadBytes": 430832,
+        "stats": 188,
+        "opens": 2
+      }
+    }
+  },
+  "negative": {
+    "cached": {
+      "yielded": 0,
+      "error": {
+        "name": "LogCorruptError",
+        "writer": "w01",
+        "line": 61,
+        "reason": "seq 非法：undefined"
+      }
+    },
+    "stream": {
+      "yielded": 0,
+      "error": {
+        "name": "LogCorruptError",
+        "writer": "w01",
+        "line": 61,
+        "reason": "seq 非法：undefined"
+      }
+    }
+  },
+  "logicalRetention": {
+    "kind": "source-derived algorithmic counts, not measured RSS or heap",
+    "cached": {
+      "retainedParsedRows": 120,
+      "mergeRowReferences": 120,
+      "wholeFileUtf8DecodeMaxInputBytes": 107708
+    },
+    "stream": {
+      "maxMergeHeads": 2,
+      "maxActiveChunksBytes": 131072,
+      "corpusLineFragmentBoundBytes": 3638,
+      "allowedLineFragmentBoundBytes": 2097152,
+      "ledgerRows": 5,
+      "note": "Also bounded decode/concatenation temporaries and one validation row. Parts own copied bytes; paused iterators retain a 64KiB chunk per writer. Source counts do not describe GC, string layout, native allocator or RSS."
+    }
+  },
+  "boundary": "Generated immutable multiauthor corpus in workspace filesystem, not tmpfs. Same Node process, alternating first/repeat order, fresh cached handle per trial. OS page cache is not dropped; untimed equality warms it. Source original readers, developer-only I/O wrappers. Snapshot validates all complete rows before first yield and reads/decodes twice; cached repeat retains all parsed rows and does no source read. No latency/RSS conclusion inferred from logical retention."
+}

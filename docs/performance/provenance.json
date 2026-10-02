@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "before": "a73a1770ba77c0fb054fc7c91655103e57107ab2",
+  "readerLocalImplementation": "5ca844a079219272c25e9498fef4519ddf4cf705",
+  "cohortLocalImplementation": "ab48c950b6836b74a1d1f652011199c81ba1d85e",
+  "immutablePublishedSource": "e8830bee58079adf588a1f14cd1f3fde078aa5d4",
+  "publishedSourceUrl": "https://github.com/54shitaimzf/Fugue/commit/e8830bee58079adf588a1f14cd1f3fde078aa5d4",
+  "sourceHashVerification": "Every measured after module hash matches immutable published source. Historical reader/cohort matrix hashes match exact archived measured-harness source copies; capped-heap script is unchanged. Repaired current harness hashes are recorded separately; repairs do not retroactively strengthen historical output-text-only cohort equality.",
+  "artifacts": {
+    "reader-paired.json": "f7854207a46b50676fd27f71edd723693b398ad5545f8c21e380e91bdb120441",
+    "reader-capped-heap.json": "caba2b4737c4756d898aff2d53b3052fb989a17f0cf7f9821d932cabfb64d59e",
+    "cohort-code-64.json": "94ed0ed8e3a8f8fc6f1f7361b8d087916b0747929ee0beb5b8904c11dd973347",
+    "cohort-code-512.json": "d74b1a7ce05439cef3c243321c05fac664c4595f0f621861e88fb7c81cd10792",
+    "cohort-mixed-512.json": "df32528f8781d63045ca82c500aaa296ea180aa079666bfe7808582d2ee9f064",
+    "cohort-entropy-512.json": "c90523310317c7955bfa4e09b4d8dfbf4ffe891baa5420e2349d02412122a822",
+    "environment-source-manifest.json": "883d0894d64e12b92a8c29513e432fb9430e7024177053681a7791c1a8a06322",
+    "harness-failure-checks.json": "df70aad286c8036d082325225e3e0309e806d6507bfb9b727ef4623bfa189d71",
+    "reader-repaired-smoke.json": "3a018ad5c969595b6d125e936a81047150a530d4f20503a8583543e7e22d4e19",
+    "cohort-repaired-smoke.json": "c74d4fbd0d0198128fc8aed97d284ee63e13d2a51379f8ff5541f4999c1c0b54"
+  },
+  "historicalMeasuredHarness": {
+    "bench-reader-paired.js": "d8b2fa34c7dee4b883bc2f6d6201a65d64d30abd5f45b3dc61e963b4e1de9339",
+    "bench-cohort-paired.js": "837ac8b43137f4467c792049bc18bf607bc94a4e3a532588b6fb3d665ab8e35d"
+  },
+  "repairedCurrentHarness": {
+    "tools/bench-reader-paired.js": "4482262fa47f1950dc51fc895b9a9a1731c11880570f92916c21edd041f38b79",
+    "tools/bench-cohort-paired.js": "41ea845a2eb480047b6203a307992f6938a9164f7764c436b96d06266d2fc8c4",
+    "tools/benchmark-cleanup.js": "ac42132e80df9e81a597a7f0be00a909b97de68a5e857baab370bf23e2f1e2ee",
+    "tools/check-batch-benchmark-owned.js": "584cf63234eb8718e6e6ca2e3679facd9f0f93cd7c2d434195e22b59e013ffe8",
+    "tools/bench-call-ledger.js": "1a44f73dde5f763d0211ed9669b56baa966cafcdc12280dd735516aa4ca7c1e5"
+  },
+  "historicalCohortEqualityScope": "All 64/512 timing matrices compare complete output text, not the omitted FaceResult.ok. Original fullReceiptEquality flag is overly broad; complete FaceResult equality and ok:true are verified only in current repaired smoke."
+}
