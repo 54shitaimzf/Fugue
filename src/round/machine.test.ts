@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import type { AgentId, RoundState } from '../terms.ts'
 import type { Branches, Cause, Edge, StepContext } from './machine.ts'
-import { EDGES, RETRY_DEFAULT, STATES, RoundStateError, abortEdges, allStopped, causesFrom, running, sayOf, step, trail, verdictCause } from './machine.ts'
+import { EDGES, RETRY_DEFAULT, STATES, RoundStateError, abortEdges, allStopped, causesFrom, running, sayOf, step, trail } from './machine.ts'
 
 const A = (n: number): AgentId => `r1/${n}` as AgentId
 
@@ -198,18 +198,15 @@ test('守卫与两个上界：意图没建立不走，打回超界才 Aborted', 
   assert.equal(step('Idle', 'land', { intent: true }), 'Planning')
 
   // 打回那两条分叉：还有余量就回 `Working`，超界才 `Aborted`（架构 § 8.13 图上那两条）。
-  assert.equal(verdictCause(false, 2), 'verdict-fail')
-  assert.equal(verdictCause(false, 1), 'verdict-fail')
-  assert.equal(verdictCause(false, 0), 'retry-exceeded')
-  assert.equal(verdictCause(true, 0), 'verdict-pass', '余量用完了但这次过了——照样进 Committed')
-  assert.equal(step('Verifying', verdictCause(false, 0)), 'Aborted')
-  assert.equal(step('Verifying', verdictCause(false, 1), { retryLeft: true }), 'Working')
+  // **事件名直接写在这里**（0.2.9 ⑤）：原先经由 `verdictCause(pass, retriesLeft)` 算出来，而那个
+  // 函数是 `round/execute.ts` 验收那一步的第二份实现、没有生产消费者——撤了。那条判据
+  // （没过 ∧ 有余量 → `verdict-fail`）在真跑的路上由 `cli/chain.test.ts` 的序 15 量着。
+  assert.equal(step('Verifying', 'verdict-fail', { retryLeft: true }), 'Working')
+  assert.equal(step('Verifying', 'retry-exceeded'), 'Aborted')
+  assert.equal(step('Verifying', 'verdict-pass'), 'Committed', '余量用完了但这次过了——照样进 Committed')
   // **缺省那一个数是 1**（架构 § 8.13）：第一遍没过回 `Working`，余量花完的第二遍才 `Aborted`。
   // 这一条量的是那个常量本身——命令行那一头怎么用它，在 `cli/chain.test.ts` 里量。
   assert.equal(RETRY_DEFAULT, 1)
-  assert.equal(step('Verifying', verdictCause(false, RETRY_DEFAULT), { retryLeft: true }), 'Working')
-  assert.equal(step('Verifying', verdictCause(false, RETRY_DEFAULT - 1)), 'Aborted')
-  assert.equal(step('Verifying', verdictCause(true, 0)), 'Committed')
   // 守卫真的在拦：说没余量就不走那一条。
   assert.throws(() => step('Verifying', 'verdict-fail', { retryLeft: false }), /还有重试余量/)
   // **两个上界各自独立**：接续上界（`Rebuilding` 那条线）不经过 `Verifying`，所以"持续接续"

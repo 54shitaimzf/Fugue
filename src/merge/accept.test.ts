@@ -350,3 +350,33 @@ test('嵌套保留前缀不妨碍兄弟文件正常推进', async () => {
     await t.close()
   }
 })
+
+test('advance 不白读整树：一趟问根的 `statAt` 都没调（0.2.9 ⑦ 撤掉的那一处）', async () => {
+  const { real, store } = scratch()
+  const t = openTruth(store)
+  try {
+    writeFileSync(join(real, 'a.txt'), '旧的\n')
+    const commit = await commitOf(t, { 'a.txt': '新的\n', 'dir/b.txt': '乙\n' }, [], '两个条目的树')
+    // 包一层真源：**只数"问整棵树"的那一问**。`treeOfCommit` 的实现就是 `statAt(commit, '')`
+    // （`Truth` 没有"给我这个提交的 tree"那一条），所以那一问就是白读那一处的指纹。
+    const wholeTree: string[] = []
+    const spied = new Proxy(t, {
+      get(target, prop) {
+        const v = Reflect.get(target, prop) as unknown
+        if (prop !== 'statAt') return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v
+        return async (c: CommitId, p: RelPath) => {
+          if (p === '') wholeTree.push(String(c))
+          return await target.statAt(c, p)
+        }
+      },
+    }) as TruthHandle
+
+    const out = await advance({ truth: spied, realRoot: real }, commit)
+    assert.deepEqual(wholeTree, [], 'advance 又问了一遍整棵树（0.2.9 ⑦ 撤掉的那处白读回来了）')
+    assert.deepEqual(out.written, ['a.txt', 'dir/b.txt'])
+    assert.equal(readFileSync(join(real, 'a.txt'), 'utf8'), '新的\n')
+    assert.equal(readFileSync(join(real, 'dir', 'b.txt'), 'utf8'), '乙\n')
+  } finally {
+    await t.close()
+  }
+})

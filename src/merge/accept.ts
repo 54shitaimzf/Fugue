@@ -26,7 +26,6 @@ import type { Assertion, AssertionResult, AssertionRun, Contract } from '../cont
 import { resultOf } from '../contract/types.ts'
 import { gitModeOf } from '../delta.ts'
 import { WORKSPACE_STATE } from '../materialize/diffstat.ts'
-import { treeOfCommit } from '../merge/merge.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { RefName } from '../terms.ts'
 import type { TreeEntry } from '../entries.ts'
@@ -152,11 +151,17 @@ export interface AdvanceDeps {
  *
  * **"不 touch 一致的"是承重的**：全量重写会让每一个文件的 mtime 都变，而 § 8.5 明说按修改时间
  * 判定新旧的工具链于是会重新编译整个项目——那是假失效。
+ *
+ * **这里原先有一趟白读**（0.2.9 ⑦ 撤了）：`const tree = await treeOfCommit(deps.truth, commit)`
+ * 紧接着一个 `void tree`——那一趟是 `truth.statAt(commit, '')`，也就是**问一遍整棵树的根**，
+ * 而它的结果一个字节都没进这一份的任何判断（下面要的那棵树是**逐目录 `listAt` 走出来**的）。
+ * 实测一次 git 子进程 6.7 ms，每轮落地白付一次。真源那一侧不动：`treeOfCommit` 在
+ * `merge/merge.ts` 里活着（折叠那一路要那个 tree id），断言在 `accept.test.ts`（包一层真源，
+ * 数"末一个参数是空串"的那一问）。
  */
 export async function advance(deps: AdvanceDeps, commit: CommitId): Promise<AdvanceResult> {
   const preserve = deps.preserve ?? WORKSPACE_STATE
   const root = deps.realRoot
-  const tree = await treeOfCommit(deps.truth, commit)
   const want = new Map<RelPath, { mode: number; bytes: Uint8Array | null; link: string | null }>()
   {
     const walk = async (dir: RelPath): Promise<void> => {
@@ -169,7 +174,6 @@ export async function advance(deps: AdvanceDeps, commit: CommitId): Promise<Adva
     }
     await walk('')
   }
-  void tree
 
   const skipped: RelPath[] = []
   const isPreserved = (rel: RelPath): boolean => preserve.some((s) => rel === s || rel.startsWith(`${s}/`))

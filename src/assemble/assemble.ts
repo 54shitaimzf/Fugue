@@ -30,7 +30,15 @@ import { render } from './render.ts'
 
 const UTF8 = new TextEncoder()
 
-/** 一段缺源时的空值：**按渲染规则**取，不是按段名取（段名在这里不该被认出来）。 */
+/**
+ * 这一段的键压根没给时的空值：**按渲染规则**取，不是按段名取（段名在这里不该被认出来）。
+ *
+ * **它是地板，不是造值**（0.2.9 ④）：调用方给的 `segments` 少一个键时，这里按渲染规则给空值，
+ * 让"少一段"变成前缀短一段，而不是把 `undefined` 渲染成字面量 `undefined` 继续算下去。
+ * 「这一段压根没有源」是另一件事——那一档在 `sourcesFor` 里当场红（源表盖不住段序由
+ * `tools/check-invariants.ts` 第三节守着）。**改主意的条件**：装配的输入里出现本该有值却是
+ * `undefined` 的段——那时这里挡住的是一次上层的漏写，该在 `sourcesFor` 那一层报出来。
+ */
 function emptyFor(id: RendererId): SegmentValue {
   switch (id) {
     case 'list':
@@ -43,7 +51,7 @@ function emptyFor(id: RendererId): SegmentValue {
   }
 }
 
-/** 一段 → 字节。缺源走空值；有源而渲染不动就抛 `RenderError`（那是段值的形状错了）。 */
+/** 一段 → 字节。这一段的键没给就走空值（上面那道地板）；给了而渲染不动就抛 `RenderError`（那是段值的形状错了）。 */
 function renderSegment(id: SegmentId, renderers: Readonly<Record<SegmentId, RendererId>>, v: SegmentValue | undefined): Uint8Array {
   return render(renderers[id], v ?? emptyFor(renderers[id]))
 }

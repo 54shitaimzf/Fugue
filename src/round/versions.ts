@@ -217,7 +217,15 @@ export interface VersionFace {
  * 出来是**哪一版**读不成，`lines` 是空的。
  */
 export function versionFaceOf(facts: RoundFacts, v: DistillVersion): VersionFace {
-  const version = versionIndexOf(facts, v.digest) ?? v.at
+  const version = versionIndexOf(facts, v.digest)
+  // **拿不出一版的号就当场红，不拿落点号顶上**（0.2.9 ④）：`version` 是**内容**的号（重落同一版
+  // 不涨号），`v.at` 是**落点**的号——两个不同的单位。原先那一句 `?? v.at` 在"这一版不在这条链上"
+  // 时静默印一个错的版本号，而那一栏（`版本：第 N 版`）是给人看的。负对照在 `versions.test.ts` ⑧。
+  if (version === null) {
+    throw new Error(
+      `这一版不在这一轮的链上（第 ${v.at} 次落地 · 指纹 ${v.digest}）：第几版是内容的号，链上没有它就算不出来`,
+    )
+  }
   const prev = v.at === 1 ? null : (facts.versions[v.at - 2] ?? null)
   const same = prev !== null && prev.digest === v.digest
   const basis = { version, landing: v.at, same }

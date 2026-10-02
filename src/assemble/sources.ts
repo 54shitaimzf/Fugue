@@ -10,9 +10,14 @@
 // 都不成立」）。子 agent 那份十一段、持轮者那份十二段，同一个函数、两份声明——两份值的差别
 // 不是代码里的分支，是传进来的协议（架构 § 8.11 末：「组装器的代码一行不改」）。
 //
-// **缺源不是异常，是空值**（PLAN § 5.6 的地板：代码树索引未建 · 工具目录那一档）。渲染规则
-// 决定空值长什么样（`render.ts` 的 `emptyFor`）：文本给空串、列表给空数组、围栏块给空数组、
-// JSON 给空对象。**判据是那一条：那个机制死掉的时候，系统是变慢，还是跑不起来。**
+// **读不出东西时给空值，不是异常**（PLAN § 5.6 的地板：代码树索引未建 · 工具目录那一档）。
+// 渲染规则决定空值长什么样（`render.ts` 的 `emptyFor`）：文本给空串、列表给空数组、围栏块给
+// 空数组、JSON 给空对象。**判据是那一条：那个机制死掉的时候，系统是变慢，还是跑不起来。**
+//
+// **而"这一段压根没有源"不是那一档**（0.2.9 ④）：`SOURCES` 以 `SegmentId` 这个封闭联合为键，
+// 十三个段全在里头，协议声明的段序也从同一个联合来——所以"没有源"只可能来自一次越界的 cast。
+// 原先那一支给它一个空值照跑，那是**造值**。判据搬进了 `tools/check-invariants.ts` 第三节
+// （每个协议声明的段都有一份源；负对照里塞一段没有源的段，当场红），这里不再兜底。
 //
 // **不是源的几样**：宿主绝对路径 · 主机名 · Signal 原文（架构 § 8.11 的约束 2 · 3 · 4）——
 // 这一份一个字段都不给它们留位置，所以它们进不了前缀。真正接上运行时的那些源（凝聚理解 ·
@@ -178,21 +183,10 @@ export function resolverFor(coords: readonly AgentCoord[]): AgentResolver {
   }
 }
 
-/** 这个渲染器收到空值时给什么：与 `render.ts` 的 `emptyFor` 同一个口径。 */
-function emptyFor(id: SegmentId, protocol: Protocol): SegmentValue {
-  switch (protocol.renderers[id]) {
-    case 'text':
-      return ''
-    case 'list':
-      return []
-    case 'file-block':
-      return []
-    case 'json':
-      return {}
-    default:
-      return ''
-  }
-}
+// **这里原先有一个 `emptyFor(id, protocol)`**：段序里出现一个没有源的段时，它按渲染规则给一个
+// 空值，装配照跑（0.2.9 ④ 撤了，理由见文件头那一段）。撤掉之后这个函数一个消费者都没有了，
+// 所以一并删掉——留着它就是"两处真相"（它与 `render.ts` 的 `emptyFor` 是同一口径的两份实现，
+// 而 `assemble()` 那一份才是路径上的那一份）。
 
 /**
  * 一份路径清单 → **去重之后的清单**（次序照第一次出现）。
@@ -422,8 +416,10 @@ export const SOURCE_IDS: readonly SegmentId[] = Object.keys(SOURCES) as SegmentI
 export function sourcesFor(protocol: Protocol, state: AssembleState, who: AgentCoord | null = HOLDER): Record<SegmentId, SegmentValue> {
   const out = {} as Record<SegmentId, SegmentValue>
   for (const id of protocol.segmentOrder) {
-    const rule = SOURCES[id]
-    out[id] = rule === undefined ? emptyFor(id, protocol) : rule.value(state, who)
+    // **没有兜底**（0.2.9 ④）：`SOURCES` 覆盖 `SegmentId` 的每一个字面量，而段序只可能由这个联合
+    // 构成——"盖住了"这件事由 `tools/check-invariants.ts` 第三节量（负对照可红）。所以这里直接取，
+    // 取不到是 TypeError 当场红，不是给一个空值继续装。
+    out[id] = SOURCES[id].value(state, who)
   }
   return out
 }

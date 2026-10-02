@@ -7,11 +7,12 @@
 // 层不是标签，是四个开关：这里只写层，四个开关由 `inferences()` 一处算出来，消费方读推论、不读层。
 // 这一份之前一个格都没有，于是「执行类先物化」这类话在每个调用点各写一遍。
 //
-// **这张表以工具名为键，因此任何一格漏了都是当场炸。** 架构 § 8.9 的原话是「少了这一层都编译
-// 不过」：工具名只有 § 8.10 的工具目录一处定义，少一格就是编译期错误。这个仓库直跑 `.ts`
-// （strip-only · 不做类型检查），所以那条纪律在这里只能是**载入时的核对**（`checkInvariant`）——
-// 它读的是运行时的那份名字表，抓的是同一件事：少一格时行为静默地少一条。差别记在 Z2 的提交信息
-// 里：类型检查那一道闸没有，载入那一道有。
+// **这张表以工具名为键，因此任何一格漏了，行为都会静默地少一条推论。** 架构 § 8.9 的原话是
+// 「少了这一层都编译不过」：工具名只有 § 8.10 的工具目录一处定义，少一格就是编译期错误。这个
+// 仓库直跑 `.ts`（strip-only · 不做类型检查），所以那句话的机器可读形态是**一张在测试里跑的网**
+// （`tools/check-invariants.ts` 第一节 · `checkInvariant` 就是它读的那条判据），不是载入时的
+// throw：原先那一句比的是**本文件里那份名字字面量**——自证，抓不住漂移（0.2.9 ②），而那份字面量
+// 也在 0.2.9 ⑤ 撤了：名字只有 `src/tools/catalog.ts` 的 `TOOL_ENTRIES` 一处，这一份读它。
 //
 // **判定只读这一处。** `M3` 的路径投影器那一支回答「那把钥匙怎么在路径空间里落定」，这一支回答
 // 「这个工具落在哪层状态」。两者不要合：合了以后，加一个工具就要同时动路径空间。
@@ -20,20 +21,18 @@
 export type Layer = 'view' | 'execute' | 'truth' | 'log'
 
 /**
- * 一个工具名：架构 § 8.10 那张目录逐字，十二个。**这是它的唯一定义处。**
+ * 那十二个工具的名字：**定义处不在这里**，在 `src/tools/catalog.ts` 的 `TOOL_ENTRIES`（架构
+ * § 8.10 那本目录：名字 · 描述 · `parameters`）。这一份以那套名字为键，所以它读那一处，
+ * **不另立一份**——转发一行是为了让 Z2 的消费者（测试 · 变异脚本）不必改 import。
  *
- * 名字按类别分组（文件 · 执行 · 发现 · 待办 · 交互 · 计划 · 本架构新增），顺序不承重：
- * 前缀里的位置是提供方的事（架构 § 8.11：工具目录有位置，只是位置不由我们排）。
+ * **顺序不承重**：这一份的核对比的是集合（`checkInvariant` 读的就是它）；后缀的字节序归
+ * § 8.10 硬纪律 2（跨状态逐字节稳定），不归"哪一处跟哪一处同序"。
+ *
+ * **这里原先有一份逐字的名字字面量**（0.2.9 ⑤ 撤了）：两份名字表不一致时前缀字节只是不同，
+ * 没有别的报错，而漂移不报错——所以名字只有一处。
  */
-export const TOOL_NAMES: readonly string[] = [
-  'read', 'write', 'edit', 'read_image',
-  'bash',
-  'glob', 'grep',
-  'todo_write',
-  'ask_user_question',
-  'exit_plan_mode',
-  'checkpoint', 'run_action',
-]
+export { TOOL_NAMES } from '../tools/catalog.ts'
+import { TOOL_NAMES } from '../tools/catalog.ts'
 
 /**
  * 能力标识。**一格一个名字**，与工具名同域。
@@ -180,10 +179,9 @@ export function checkInvariant(table: Readonly<Record<string, CapabilityRow>>, n
   ]
 }
 
-const bad = checkInvariant(CAPABILITY_TABLE, TOOL_NAMES)
-if (bad.length > 0) {
-  throw new Error(`能力表与工具目录不一致：\n  ${bad.join('\n  ')}`)
-}
+// **载入时那道核对搬走了**（0.2.9 ②）：这一份与工具目录是**两份各自独立声明的名字域**，判它们
+// 是不是同一份的地方在 `tools/check-invariants.ts` 第一节，挂在 `test/check-invariants.test.ts`
+// （fast 组）。`checkInvariant` 留着——判据本身没变，变的是谁在什么时候读它。
 
 /** 四条推论的名字与各自那一句话，给读表的人与走查用（架构 § 8.9 那张表逐字）。 */
 export const INFERENCES: Readonly<Record<InferenceId, string>> = {

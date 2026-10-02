@@ -3,10 +3,7 @@
 // （出处：架构 § 9.6 的装配行 · § 20 S6 的交付物 · PLAN § 5.8 的口径一）。`driverSupport`
 // 与 `wireFlagsOf` 还在 `fugue.ts`（轮次那一组，U4d 再动），它们从这一份接这三样。
 import { isAbsolute, relative, resolve } from 'node:path'
-import {
-  ConfigError,
-  readConfig,
-} from '../../config.ts'
+import { readConfig } from '../../config.ts'
 import type { ConfigDoc } from '../../config.ts'
 import { refFor } from '../../identity.ts'
 import { openTruth } from '../../truth/truth.ts'
@@ -115,7 +112,12 @@ export async function assembleCmd(
     }
     return violations.length === 0 ? 0 : 1
   } catch (err) {
-    if (err instanceof SourceError || err instanceof ConfigError || err instanceof Error) {
+    // **三个析取项里前两项是恒真的**（0.2.9 ③）：`SourceError` 与 `ConfigError` 都是
+    // `class … extends Error {}`（`assemble/sources.ts:155` · `config.ts:39`），所以
+    // `err instanceof Error` 早就把前两项包住了——留着它们的唯一效果是让人以为这里分了三种。
+    // 收敛成一项，行为一个字节不变：`cli/chain.test.ts` 的坏协议名那条 · `assemble/constraints.test.ts` ⑥
+    // 的三档拒绝，都是它的读数。
+    if (err instanceof Error) {
       return fail(err.message, json)
     }
     throw err
