@@ -577,7 +577,10 @@ test('③ 触发点到了落 agent/handoff，后继接着干完（同一条分�
     assert.equal(handoffs.length, 1, '日志里一条 agent/handoff')
     const h = handoffs[0]!
     assert.equal(h.agent, AGENT)
-    assert.match(String(h.successor), /^agent-1-\d+$/, `后继的名字：${h.successor}`)
+    // **逐字**：`driver.ts` 交接那一步算的是 `<前任>-<第几步 + 1>`，而这一趟的步号由脚本与触发点
+    // 定死，所以这里钉得住那个数（0.2.9 ⑤：`successorNameOf` 撤了，那条规则原先只有它那一份没有
+    // 消费者的实现与一条宽松的正则；规则现在只在生产那一处，断言在真跑出来的这一条上）。
+    assert.equal(h.successor, 'agent-1-2', `后继的名字：${h.successor}`)
     // **轮级状态那一栏没被动过**：这条事件里没有轮次号，也没有 `round/state` 跟着它。
     console.log(`③ 读数：交接 ${r.handoffs.length} 次 · 后继 ${String(h.successor)} · 停下来的话「${r.stopped}」`)
   } finally {

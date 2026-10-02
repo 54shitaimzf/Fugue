@@ -83,11 +83,15 @@ export const DRAFT_FIELDS: Readonly<Record<DraftKind, readonly string[]>> = {
 }
 
 /**
- * 载入时的核对：**两边的并集恰好是契约的字段表，且两边不相交。**
+ * 载入时的核对：**两边的并集恰好是契约的字段表。**
  *
  * 它为什么必须是当场炸：`DRAFT_FIELDS` 与 `NOT_IN_DRAFT` 分居两行，而"某个字段两边都没算进去"
  * 的后果**只有一种**——草案里那个键从此不必给，构造器却照旧要它（或者反过来）。前者的症状是
  * 每次派发都退回、指着一个模型没被要求给的键。
+ *
+ * **"两边不相交"那一条撤了**（0.2.9 ②）：`DRAFT_FIELDS` 是 `VARIANT_FIELDS` **减去**
+ * `NOT_IN_DRAFT` 算出来的，所以那个交集按构造恒为空——判它是拿自己核自己。并集那一条留在下面，
+ * 它量与 `VARIANT_FIELDS` 的关系，那一条不是自证。
  */
 for (const kind of DRAFT_KINDS) {
   const want = [...VARIANT_FIELDS[kind]].sort().join(' ')
@@ -98,8 +102,12 @@ for (const kind of DRAFT_KINDS) {
         `  契约是：${want}\n  草案该给的加系统的：${got}`,
     )
   }
-  const both = DRAFT_FIELDS[kind].filter((f) => NOT_IN_DRAFT[kind].includes(f))
-  if (both.length > 0) throw new Error(`这两栏都说要给（${kind}）：${both.join(' · ')}——一处说了算`)
+  // **这里原先还有一条"两边不相交"的核对**（0.2.9 ② 撤了）：`DRAFT_FIELDS` 是
+  // `VARIANT_FIELDS` 减出来的，那个交集按构造恒为空——判它是拿自己核自己。
+
+  // **下面这一条不要删**（0.2.9 蓝本的修正之一，原报告在这里判错了半条）：`kind` 一旦从
+  // `VARIANT_FIELDS` 里掉出去，`DRAFT_FIELDS` 跟着掉，而"这一节是哪一节"（`readSection` 那三处
+  // 分支、以及 `DraftSection.kind`）就失去唯一的接手人——它是那种"删了以后静默"的接口。
   if (!DRAFT_FIELDS[kind].includes('kind')) throw new Error(`${kind} 那一节的键域里没有 kind：判它是哪一节要靠它`)
   // **每一笔都要有一句形状**：那一句是发给模型的那段提示念的（`draftRuleTextOf`）——少一笔的
   // 症状是那一段里印出一个"（没有一句形状）"，而它不报错。与 `types.ts` 那条同一条纪律。

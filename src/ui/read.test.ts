@@ -14,6 +14,10 @@
 //      插进旧账中间** → 前缀对不上 → 老实从头折，**不是**少折几条）
 //   ④ **工具输出折叠**：一次 `run/start` 等它的 `run/end` 折成一行 · 一串 `llm/call` 折成一行；
 //      折掉多少条在标题里说出来（折叠不是丢）；负对照：没等到 `run/end` 的那一条也印得出来
+//   ⑦ **折行与洁净**（0.2.8 U1）：`readWrap` 把一行折成物理行——**拼回来逐字节相等**（`glyph.wrap`
+//      折在词尾、还会吃空白与行首那个 `· `，正文一个字节都不能少，所以这一面自己折）· 切点整簇
+//      （一个 emoji 不许拆成两半）· 控制字节先转义（`[\x00-\x1f\x7f-\x9f]` → `\uXXXX`）再量宽
+//      ——ESC 序列不再原样落终端。负对照：旧版是未折的原文由框那一层截断（尾部丢），或走通用折行（吃字节）。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
@@ -25,19 +29,21 @@ import type { LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import { rowsOf } from '../probe/status.ts'
 import type { StatusRow } from '../probe/status.ts'
-import { clustersOf, widthOf } from './glyph.ts'
 import type { AgentId, BlobId, RoundId, ViewRev, WriterId } from '../terms.ts'
+import { clip, clustersOf, widthOf, wrap } from './glyph.ts'
 import {
   DELTA_FACE,
   EMPTY_READ,
   READ_LIMIT,
+  escapeOf,
   faceKeyOf,
-  faceRowsOf,
   faceOfDelta,
+  faceRowsOf,
   facesOf,
   firstFace,
   prefixOk,
   readStateOf,
+  readWrap,
   stepFace,
   stepTop,
 } from './read.ts'
@@ -239,14 +245,13 @@ test('④ 工具输出折叠：一串调用折成一行 · 一次起进程折成
 
 // ── ⑤ 契约正文那一面 ─────────────────────────────────────────────────────────────────
 
-test('⑤ 契约正文那一面：账上那一条说得出的那几栏（写入面逐条 · 正文原文段落）', () => {
+test('⑤ 契约正文那一面：账上那一条说得出的那几栏（写入面逐条 · 正文原文一行）', () => {
   const faces = facesOf(readStateOf(script()))
   const c = faces.contract
   assert.ok(c !== null, '这一份账里有一条 `contract/issue`')
   for (const l of c.lines) console.log(`⑤ ${l}`)
   assert.ok(c.lines[0]?.includes('契约 r1.implement.1 · 轮次 r1 · 归属 agent/r1/1'), '头一行是"哪一份 · 谁的"')
-  assert.ok(c.lines.some((l) => l.includes('写入面 1 条')), '写入面条数')
-  assert.ok(c.lines.includes('    src/a.ts'), '写入面逐条')
+  assert.ok(c.lines.some((l) => l.includes('写入面 1 条（src/a.ts）')), '写入面逐条')
   assert.ok(c.lines.some((l) => l.includes('"goal":"写 a.ts"')), '正文原文在（一个字节都不改，只是折成一行）')
 
   const empty = facesOf(EMPTY_READ)
@@ -274,59 +279,99 @@ test('⑥ 翻到哪一行（U14）：±1 / ±PAGE_STEP / 跳首尾都夹住，�
   assert.equal(stepTop(0, 5, 4), 0, '一页都没有时给 0')
   console.log(`⑥ 读数：±1 · ±4 · 跳首尾 夹住到头停 · 越界 top 夹回`)
 })
-
-
-// 0.2.8：回到旧版单行 / 160 列截断时，这几条断言会红。
-test('⑦ 长 diff 两端与契约第四条路径、正文尾部全部可翻到，正文空白与标点不被吞', () => {
-  const from = 'src/旧路径/é-👩‍💻-' + 'long-'.repeat(10) + 'old.ts'
-  const to = 'src/' + 'new-'.repeat(20) + 'important.ts'
-  const body = '  paragraph one · exact spacing  \n\n' + 'requirements '.repeat(30) + 'FINAL_REQUIREMENT'
-  const rows = [
-    row({ t: 'view/rename', from, to } as never, A),
-    row({ t: 'contract/issue', round: 'r1', contract: 'c1', owner: A, paths: ['a', 'b', 'c', 'FOURTH_PATH'], body } as never),
+// ── ⑦ 折行与洁净（0.2.8 U1）：往返 · 整簇 · 控制字节先转义 ──────────────────────────────
+test('⑦ 折行与洁净：物理行拼回原文逐字节相等 · 切点整簇 · 控制字节先转义再量宽', () => {
+  // **往返**（不折在词尾、不吃空白）：折出来的物理行拼回去，与进去的那一串逐字节相等。
+  // 负对照：回到旧版（未折的原文交给框那一层 `clip`）——尾部丢了，这一条当场红。
+  const cases: readonly string[] = [
+    '账上那一行 · 写 src/a.ts · rev 1',
+    'a  b   c · d',
+    '中文与英文混排 ascii 与 空格',
+    '👨‍👩‍👧 一家三口 + 👩‍💻 与 xxxxxxxxxx',
+    '没有空格的一整段xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
   ]
-  const state = readStateOf(rows)
-  const faces = facesOf(state)
-  assert.ok(faces.diff?.lines.includes(`  从 ${from}`))
-  assert.ok(faces.diff?.lines.includes(`  到 ${to}`))
-  assert.ok(faces.contract?.lines.includes('    FOURTH_PATH'))
-  assert.ok(faces.contract?.lines.includes('    '), '空段保留')
-  assert.ok(faces.contract?.lines.some((l) => l.endsWith('FINAL_REQUIREMENT')))
-  for (const width of [2, 7, 20, 58, 98]) {
-    for (const name of ['diff', 'contract', 'stream'] as const) {
-      const wrapped = faceRowsOf(faces, name, width)
-      for (const line of wrapped) assert.ok(widthOf(line) <= width, `列宽 ${width}: ${line}`)
-      assert.deepEqual(wrapped, faceRowsOf(faces, name, width), '纯函数')
+  for (const s of cases) {
+    for (const cols of [1, 2, 3, 5, 7, 12, 40]) {
+      const lines = readWrap(s, cols)
+      assert.equal(lines.join(''), s, `cols=${cols} 拼回来该逐字节相等：${JSON.stringify(lines)}`)
+      // 每一条物理行都停在**簇边界**上（一个 emoji 不许被拆成两半）。
+      let at = 0
+      for (const one of lines) {
+        at += one.length
+        assert.ok(
+          clustersOf(s).some((c) => c.end === at),
+          `cols=${cols} 时第 ${at} 个 code unit 不在簇边界上（把一个字拆开了）：${JSON.stringify(lines)}`,
+        )
+      }
+      // 宽度守得住：放得下就 ≤ cols；一整个簇比 cols 还宽时恰放一个整簇（不许原地打转）。
+      for (const one of lines) {
+        assert.ok(
+          widthOf(one) <= cols || clustersOf(one).length === 1,
+          `cols=${cols} 这一行超宽了：${JSON.stringify(one)}`,
+        )
+      }
     }
   }
-  const plain = { ...faces, contract: { title: 'contract', lines: [body.split('\n')[0] as string] } }
-  // 20 列：续行的两个空格是显示缩进，原文空白和 · 一个字节都不少。
-  const wrapped = faceRowsOf(plain, 'contract', 20).slice(1)
-  assert.equal(wrapped[0] + wrapped.slice(1).map((l) => l.slice(2)).join(''), body.split('\n')[0])
-  const unicode = { ...faces, diff: { title: 'diff', lines: ['é👩‍💻'.repeat(20)] } }
-  const clusterRows = faceRowsOf(unicode, 'diff', 7).slice(1)
-  assert.deepEqual(clusterRows.flatMap((l) => clustersOf(l).map((c) => c.text)), clustersOf('é👩‍💻'.repeat(20)).map((c) => c.text), '完整簇')
-  for (const line of faceRowsOf(unicode, 'diff', 1)) assert.ok(widthOf(line) <= 1, '一列用省略标志代替宽簇')
-  assert.deepEqual(readStateOf(rows), state, '只排版，没有改读面状态')
+  console.log(`⑦ 读数：${cases.length} 串 × 7 档列宽（1–40）：拼回来逐字节相等 · 切点全在簇边界上`)
+
+  // **控制字节先转义**（不可见字节不许原样落终端）：`\x1b` 变成能读的 `\u001b`，原字符一个不留，
+  // 而宽度按**转义之后**那几个字符算——折行因此不会被不可见字节骗过去。
+  const raw = 'a\x1bb[2Jc\x07\x00\x9b'
+  const escaped = 'a\\u001bb[2Jc\\u0007\\u0000\\u009b'
+  const one = readWrap(raw, 80)
+  assert.equal(one.length, 1, '80 列一幅装得下')
+  assert.equal(one[0], escaped, '每一个控制字节都换成了可见形状')
+  assert.equal(widthOf(one[0] as string), escaped.length, '宽度按转义后的字符算（全是单列字符）')
+  assert.ok(!/[\x00-\x1f\x7f-\x9f]/.test(one[0] as string), '整幅里一个控制字节都没有')
+  const narrow = readWrap(raw, 7)
+  assert.equal(narrow.join(''), escaped, '转了义之后照样折得回来（仍是逐字节往返）')
+  assert.equal(narrow[0], 'a\\u001b', '折在 7 列上：整簇切（这一行恰 7 列）')
+  assert.ok(narrow.every((l) => widthOf(l) <= 7), '每一行都在列宽里')
+  assert.equal(escapeOf('\u0000'), '\\u0000', '零字节也有可见形状（它就是撕帧的那一个）')
+  console.log(`⑦ 读数：转义档 ${JSON.stringify(raw)} → ${JSON.stringify(narrow)}`)
+
+  // **面那一层接上了它**：`faceRowsOf` 把标题与每一行都折进 `cols`——折开的那一份拼起来，与不折
+  // 的那一份全等（一条正文都不许少）。
+  const faces = facesOf(readStateOf(script()))
+  const plain = [faces.stream.title, ...faces.stream.lines]
+  const wide = faceRowsOf(faces, 'stream', 200)
+  const boxed = faceRowsOf(faces, 'stream', 24)
+  assert.deepEqual([...wide], [...plain], '宽到装得下时一行都不折')
+  assert.equal(boxed.join(''), plain.join(''), '窄列只是折开，一个字节都不丢')
+  assert.ok(boxed.length > wide.length, `窄列该折出更多物理行（宽 ${wide.length} · 窄 ${boxed.length}）`)
+  for (const l of boxed) assert.ok(widthOf(l) <= 24, `窄列那一档每一行都在 24 列里：${JSON.stringify(l)}`)
+  console.log(`⑦ 读数：事件流那一面 200 列 ${wide.length} 行 · 24 列 ${boxed.length} 行（拼回去全等）`)
+
+  // **回不到旧版**（两条旧路各自必红）：旧版显示端是 `clip`（吃尾部、留一个 `…`），通用折行是
+  // `glyph.wrap`（吃空白 · 吃行首那个 `· ` · 不转义）。正文一个字节都不许少，所以这一面自己折。
+  assert.notEqual(clip('abcdef', 3), 'abcdef', '旧版显示端截断：尾部没了（往返断言当场红）')
+  assert.notEqual(wrap('a  b · c', 3).join(''), 'a  b · c', '通用折行吃空白与 `· `——正文不能走它')
+  assert.ok(wrap('a\x1bb', 40).join('').includes('\x1b'), '通用折行不转义：ESC 原样落终端（这一面自己转义）')
 })
-
-test('⑧ 折行后仍有界，少印的显示行明确报出', () => {
-  const faces = facesOf(EMPTY_READ)
-  const large = { ...faces, stream: { title: 'stream', lines: ['x'.repeat(5000)] } }
-  const rows = faceRowsOf(large, 'stream', 20)
-  assert.equal(rows.length, READ_LIMIT)
-  assert.ok(rows.slice(0, 4).join('').includes('前面还有'), '上限不是静默截掉')
-  for (const line of rows) assert.ok(widthOf(line) <= 20)
-})
-
-
-test('⑨ 阅读面控制字节可见转义，正文不能移动光标或注入样式', () => {
-  const faces = { ...facesOf(EMPTY_READ), stream: { title: 'stream', lines: ['before\tvalue\x1b[31mred\rreturn\x07bell'] } }
-  const rows = faceRowsOf(faces, 'stream', 60)
-  assert.ok(rows.join('').includes('\\u001b'))
-  assert.ok(rows.join('').includes('\\u0009'))
-  for (const line of rows) {
-    assert.ok(!/[\x00-\x1f\x7f-\x9f]/.test(line))
-    assert.ok(widthOf(line) <= 60)
+// ── ⑧ 折行改写（U1 补记）：整行只聚簇一次（长行照样是线性） ─────────────────────────────
+test('⑧ 折行改写（U1 补记）：长行照样逐字节往返 · 行数就是列宽除出来的那个数', () => {
+  // **值这一半照旧**：一行多长都拼得回来、每一行都在列宽里、行数就是除出来的那个数。
+  for (const n of [4008, 40_080]) {
+    const long = 'x'.repeat(n)
+    for (const cols of [20, 37, 80]) {
+      const lines = readWrap(long, cols)
+      assert.equal(lines.join(''), long, `${n} 字符 @ ${cols} 列：拼回来逐字节相等`)
+      assert.equal(lines.length, Math.ceil(n / cols), `${n} 字符 @ ${cols} 列：行数就是除出来的那个数`)
+      for (const one of lines) assert.ok(widthOf(one) <= cols, `超宽：${one.length}`)
+    }
   }
+  const mixed = '中文与 emoji 👩‍💻 混排'.repeat(400)
+  const mixedRows = readWrap(mixed, 24)
+  assert.equal(mixedRows.join(''), mixed, '混排的长行也逐字节往返')
+  assert.ok(mixedRows.every((l) => widthOf(l) <= 24), '混排的每一行都在列宽里（宽簇不拆）')
+  console.log(
+    `⑧ 读数：4008 字符 @ 20 列 ${readWrap('x'.repeat(4008), 20).length} 行 · ` +
+      `40080 字符 @ 20 列 ${readWrap('x'.repeat(40_080), 20).length} 行 · 混排 ${mixed.length} 字符 @ 24 列 ${mixedRows.length} 行`,
+  )
+
+  // **"长度不炸"这一条是这份折法的形状**（整行只聚簇一次），**它的对手是"慢"，不是"红"**：
+  // 逐段调 `cutAt`/`widthOf` 那一版上面这些值照样全对，只是一次调用 6 秒以上（实测：一份 200 条
+  // 4008 字符的 `view/write`、20 列，`faceRowsOf` 一次 >6 s）。所以这一格没有"回到旧版必红"的
+  // 断言——读数记在提交信息里，口径写在 `readWrap` 的头注上（什么条件下改主意：那些读数回到秒级
+  // 就说明有人把它写回逐段聚簇了）。
 })

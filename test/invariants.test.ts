@@ -5,7 +5,7 @@ import { CAPABILITY_TABLE, TOOL_NAMES as CAPABILITY_NAMES } from '../src/capabil
 import type { CapabilityRow } from '../src/capability/table.ts'
 import { TOOL_ENTRIES, TOOL_NAMES, catalogHash } from '../src/tools/catalog.ts'
 import { HOLDER_PROTOCOL, SUBAGENT_PROTOCOL } from '../src/assemble/protocol.ts'
-import { checkCapabilityInvariants } from '../tools/check-invariants.ts'
+import { checkCapabilityInvariants } from '../tools/capability-invariants.ts'
 
 test('实际独立目录与能力表：跨文件对账为零违反', () => {
   assert.deepEqual(checkCapabilityInvariants(), [])
@@ -44,9 +44,9 @@ test('已有工具带未知层：没有声明集也必须报出，不能只核�
 
 test('能力身份与声明集：内部常量的类型注解不是运行时证明', () => {
   const wrongIdentity = { ...CAPABILITY_TABLE, read: { ...CAPABILITY_TABLE.read!, capability: 'write' } }
-  assert.deepEqual(checkCapabilityInvariants(TOOL_ENTRIES, wrongIdentity), ['能力标识不是这一格的工具名：read → write'])
+  assert.deepEqual(checkCapabilityInvariants(TOOL_ENTRIES, wrongIdentity), ['能力标识不是这一格的工具名：read → write', '能力标识重名：write（read · write）'])
   const wrongDecl = { ...CAPABILITY_TABLE, read: { ...CAPABILITY_TABLE.read!, decl: true } }
   assert.deepEqual(checkCapabilityInvariants(TOOL_ENTRIES, wrongDecl), ['只有执行层能有声明集：read'])
-  const untypedDecl = { ...CAPABILITY_TABLE, read: { ...CAPABILITY_TABLE.read!, decl: 'false' } } as unknown as Readonly<Record<string, CapabilityRow>>
-  assert.deepEqual(checkCapabilityInvariants(TOOL_ENTRIES, untypedDecl), ['声明集标记不是布尔值：read'])
+  const untypedDecl = { ...CAPABILITY_TABLE, bash: { ...CAPABILITY_TABLE.bash!, decl: 'false' } } as unknown as Readonly<Record<string, CapabilityRow>>
+  assert.deepEqual(checkCapabilityInvariants(TOOL_ENTRIES, untypedDecl), ['声明集标记不是布尔值：bash'])
 })

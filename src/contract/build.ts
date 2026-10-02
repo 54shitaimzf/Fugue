@@ -26,7 +26,6 @@ import type { ActionName, BranchId, CommitId, ContractId, RelPath, RoundId } fro
 import type { Assertion, Contract, Evidence, ImplementContract, InvestigateContract, ResolveContract } from './types.ts'
 import {
   EVIDENCE_PREFIX,
-  VARIANT_FIELDS,
   checkContract,
   seedBudgetOf,
   seedLimitOf,
@@ -182,7 +181,19 @@ function validate(
   }
 }
 
-/** 这一份清单对不对得起三个变体的字段表。**载入时炸**，与 `types.ts` 那道封口同一条纪律。 */
+/**
+ * 这一份清单对不对得起三个变体的字段表。**它是判据，不是闸。**
+ *
+ * 读者是 `tools/check-invariants.ts` 第四节：拿产品这个构造器造出来的真契约（三个变体各若干份）
+ * 逐份量，另带两条负对照（给实现型多塞一个字段 · 从实现型里去掉一个必有的字段），两条都答得出。
+ * 它接的正是 `build()` 里原先那趟自证（0.2.9 ⑧ 尾句）守的那一档——**已知字段长在错的变体上**：
+ * `question` 挂在实现型上时 `checkContract` 认得这个字段、也认它有值域持有者，只有这一份表认得出
+ * 它不该在这一格。
+ *
+ * **另外两档不归它**，由 `build()` 里保留的那趟 `validate()` 当场拒：字段压根没有值域持有者
+ * （多塞 `retryLimit`），以及必有的字段掉了（`seed` 没了——`checkContract` 深一层读它时
+ * TypeError，也是当场红，只是话不好听）。
+ */
 export function variantFieldsMatch(fields: Readonly<Record<string, readonly string[]>>, got: readonly Contract[]): string[] {
   return got
     .map((c) => ({ c, want: [...(fields[c.kind] ?? [])].sort() }))
@@ -301,8 +312,13 @@ export function build(intent: Intent, deps: BuildDeps): Built {
     } satisfies ResolveContract)
   }
 
-  const bad = variantFieldsMatch(VARIANT_FIELDS, out)
-  if (bad.length > 0) throw new BuildError(`造出来的契约与三个变体的字段表对不上：\n  ${bad.join('\n  ')}`)
+  // **这里原先有一趟自证**（0.2.9 ⑧ 尾句撤了）：`variantFieldsMatch(VARIANT_FIELDS, out)`，不空就
+  // 抛 `BuildError`。它比的是**本模块刚 push 进去的那几个对象**与 `VARIANT_FIELDS` 那张表，而
+  // 那几个对象是 `satisfies ImplementContract` 这一类逐字写的——真状态上它不响，只在有人改字面量
+  // 又忘了改表时才响一次。判据搬进 `tools/check-invariants.ts` 第四节（拿真契约跑，两条负对照，
+  // 两个方向都答得出）；它守的就是"已知字段长在错的变体上"那一档。
+  // 下面那一趟 `validate()` **不动**：它读的是 `checkContract` 与 `FIELD_RULES`，管的是"这一份
+  // 契约本身成不成立"（跨字段关系 · 值的形状），那是产品路径上该当场拒的东西。
   validate(out, {
     seedTokens: tokens,
     seedLimit: limit,

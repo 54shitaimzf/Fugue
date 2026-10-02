@@ -9,9 +9,11 @@ import { readCatalog } from '../../model/catalog.ts'
 import { readings, readingsLines } from '../../probe/status.ts'
 import type { StatusRow } from '../../probe/status.ts'
 import { follow, readNew } from '../../probe/watch.ts'
-import { KEYMAP, hintLimitOf, hintLineOf, openKeys } from '../../ui/keymap.ts'
-import type { KeySource } from '../../ui/keymap.ts'
+import { KEYMAP, hintLimitOf, hintLineOf, keymapOf, openKeys } from '../../ui/keymap.ts'
+import type { KeySource, Keymap } from '../../ui/keymap.ts'
+import { readConfig } from '../../config.ts'
 import { openTui, tuiModeOf } from '../../ui/follow.ts'
+import { openExitHooks } from '../../ui/exit-hooks.ts'
 import type { Tui } from '../../ui/follow.ts'
 import { degradeNote, openTerm } from '../../ui/term.ts'
 import { themeOf } from '../../ui/theme.ts'
@@ -22,7 +24,6 @@ import { openRun } from '../../ui/run.ts'
 import type { RunLauncher } from '../../ui/run.ts'
 import { pendingOf } from '../../round/dispatch.ts'
 import { identFor } from '../../identity.ts'
-import { getConfig, readConfig } from '../../config.ts'
 import { actionCommandsOf, actionsTableOf } from './round.ts'
 import { emitJson, emitLine, usageFail } from '../shared.ts'
 
@@ -291,21 +292,21 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // 与 `ansiOf` 同一张表）。
   const degrade = degradeNote(process.env.TERM, process.stdout.isTTY)
   if (degrade !== null && !flags.has('once')) process.stderr.write(`${degrade}\n`)
-  // 先装收尾钩，再允许任何note/首帧进入alt screen或输入进入raw。
-  // 可见首帧之前的SIGTERM不能落回缺省杀进程路径，把终端留在另一块屏。
+  // **收尾钩子在首帧之前挂上**（0.2.8 U4）：`term` 一开出来就有一块地方要还回去（`--full` 那一档
+  // 第一帧进 alt screen，按键那一档还进了 raw mode），而这两条之前收到的 `SIGTERM` 会走缺省的杀
+  // 进程路径——那台终端被留在另一块屏上，得人 `reset`。`ui/exit-hooks.ts` 管这三条（`SIGTERM` ·
+  // `SIGHUP` · `exit`）；这个顺序由 `ui/exit-hooks.test.ts` ② 拿这一份的源码位置钉着。
   let keys: KeySource | null = null
-  // **每一条退出路径都要把终端还原回去**（计划 § 5.19 里 DECSTBM 那笔账在 raw mode 上是同一笔：
-  // 漏一条，那台终端就得人 `reset`）。四路：正常退 · `Ctrl-C`（raw mode 下走按键那一头）·
-  // `SIGTERM`/`SIGHUP` · 崩了（`exit` 那一钩，最后一次同步地把 raw mode 关掉）。
-  const onTerm = (): void => ac.abort()
-  if (mode === 'panel') {
-    process.on('SIGTERM', onTerm)
-    process.on('SIGHUP', onTerm)
-    process.once('exit', () => {
-      keys?.close()
-      term.close()
-    })
-  }
+  const hooks =
+    mode === 'panel'
+      ? openExitHooks(process, {
+          onSignal: () => ac.abort(),
+          onExit: () => {
+            keys?.close()
+            term.close()
+          },
+        })
+      : null
   // 接上那一档：读账 → 折帧 → 摆到那块地方，一路跟着（`ui/follow.ts`）。
   const tui = openTui({
     log,
@@ -338,19 +339,36 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     // 收尾那一下整套在舞台里（`stage.onRunDone`：说了什么 · 要退就退 · 跑完一趟起排队里下一条）。
     ui.go = openRun({ root, onLine: (line) => tui.note(line), onDone: stage.onRunDone })
     // 按键那一头：⓪–⑩ 分派整套在舞台里（`ui/stage.ts` 的 `onAction`），这一头只递。
-    keys = openKeys({ input: process.stdin, out: process.stdout, onAction: stage.onAction })
+    // 按键表（0.2.9 ⑧ 接线）：覆盖从 `ui.keys` 读，配错的那一格照缺省走、当场印出为什么。
+    // 配置文件读不动（坏 JSON · 坏形状）也不静默：stderr 说一声，按缺省表起——TUI 是看的东西，
+    // 不因为配置坏了就拒绝开。形状在读那一面已经核过，这里拿到的一定是「动作 → 键串」。
+    let km: Keymap = KEYMAP
+    try {
+      const doc = await readConfig(root)
+      const keys = (doc.ui as { keys?: Record<string, string> } | undefined)?.keys
+      km = keymapOf(keys ?? {})
+    } catch (err) {
+      process.stderr.write(`配置读不出来，按键按缺省表走：${(err as Error).message}
+`)
+    }
+    keys = openKeys({ input: process.stdin, out: process.stdout, onAction: stage.onAction, km })
     // 第一件事：把按键那一行印出来（写在面板上方；翻上去了按 `?` 再印一次）。
     // **stdin 不是终端就不印它**（`stdout` 是终端而 `stdin` 不是：面板照画，可按键收不到）——
     // 印一行"按 g 放行"而按下去没反应，是这一档最坏的一种体验。
     stage.setRaw(keys.raw)
+    for (const p of km.problems) tui.note(`键位 ${p.action} 配不了（${JSON.stringify(p.key)}）：${p.why}`)
     // 按键那一行**按屏幕宽度取前几条**（28 条接线的动作整行印出来 438 列，终端会折成五行）；
     // 剩下的那一句说清还有几条、去哪儿看全部（`Ctrl-P` 那一屏）。
     tui.note(
       keys.raw
-        ? hintLineOf(KEYMAP, hintLimitOf(term.columns))
+        ? hintLineOf(km, hintLimitOf(term.columns))
         : 'stdin 不是终端：这一档不收按键（输入行与弹层都在等按键，画出来是骗人）',
     )
   }
+  // **每一条退出路径都要把终端还原回去**（计划 § 5.19 里 DECSTBM 那笔账在 raw mode 上是同一笔：
+  // 漏一条，那台终端就得人 `reset`）。四路：正常退 · `Ctrl-C`（raw mode 下走按键那一头）·
+  // `SIGTERM`/`SIGHUP` · 崩了（`exit` 那一钩，最后一次同步地把 raw mode 关掉）。后两条由上面那组
+  // `openExitHooks` 挂着——**已经挂上了**（U4 把它挪到首帧之前），收尾在下面 `finally` 里摘。
   // 读账在 `try` 里：读炸了也要走到 `finally` 去把日志口与面板收干净。
   try {
     await tui.counts
@@ -359,8 +377,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     process.removeListener('SIGINT', onSig)
     if (mode === 'panel') {
       process.removeListener('SIGWINCH', onWin)
-      process.removeListener('SIGTERM', onTerm)
-      process.removeListener('SIGHUP', onTerm)
+      hooks?.close()
     }
     // **raw mode 先还原、面板再收走**：两条都幂等，正常退那一路与 `exit` 那一钩都走到这里。
     keys?.close()

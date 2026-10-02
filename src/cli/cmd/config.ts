@@ -23,6 +23,7 @@ import {
   writeSystemConfig,
 } from '../../config.ts'
 import { agentFor } from '../../identity.ts'
+import { keymapOf } from '../../ui/keymap.ts'
 import { createRoots } from '../../roots/roots.ts'
 import { resolve } from 'node:path'
 import { emitJson, emitLine, fail, modeOf, usageFail, writerOf } from '../shared.ts'
@@ -70,6 +71,38 @@ export async function config(
         )
       }
       const value = parseConfigValue(raw)
+      // `ui.keys` 的键值在**写**这一面就过一遍 `keymapOf`（0.2.9 ⑧ 接线：它从无消费者升格为
+      // 合法校验）。手改文件配错的那一档由 TUI 读那面逐格照缺省走并印出为什么；写时拦住并说
+      // 为什么，人才知道键串该怎么写。形状读那面也核，这里核语义。
+      const segs = keySegments(key)
+      if (segs[0] === 'ui' && segs[1] === 'keys') {
+        const over: Record<string, string> = {}
+        if (segs.length === 2) {
+          if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+            return fail('config set：ui.keys 要是一个「动作 → 键串」的对象', json)
+          }
+          for (const [a, k] of Object.entries(value)) {
+            if (typeof k !== 'string') {
+              return fail(`config set：ui.keys.${a} 的值要是键串 —— ${JSON.stringify(k)}`, json)
+            }
+            over[a] = k
+          }
+        } else if (segs.length === 3) {
+          if (typeof value !== 'string') {
+            return fail(`config set：ui.keys.${segs[2]} 的值要是键串 —— ${JSON.stringify(value)}`, json)
+          }
+          over[segs[2]] = value
+        } else {
+          return fail(`config set：ui.keys 下面没有更深一层 —— ${key}`, json)
+        }
+        const bad = keymapOf(over).problems
+        if (bad.length > 0) {
+          return fail(
+            `config set：这组键位配不了 —— ${bad.map((p) => `${p.action}: ${p.why}`).join('；')}`,
+            json,
+          )
+        }
+      }
       const out: Record<string, unknown> = { key, value }
       if (system) {
         const dir = defaultSystemDir()

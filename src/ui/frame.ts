@@ -48,6 +48,31 @@ export const MIN_TWO_COLUMN = 24 + 20 + 3
 /** 画得出框 + 账尾至少要几行：上下两条边 · 一行内容 · 一条分隔 · 一行账尾。 */
 export const MIN_HEIGHT = 5
 
+/**
+ * 画得出框至少要几列：左右两根竖线 + 框内一列。**出处是代码，不是直觉**：`ui/term.ts` 的列宽探测是
+ * `seen > 0` 就放行，1–2 列照样落进 `frameOf`。
+ *
+ * 那一档不加这道提示画出来是什么：3 列以下 `innerOf` 给 0，框内一列都没有——每一行都是 `││`（一个
+ * 字符都印不出来），1 列上连 `┌┐` 都比屏幕宽。与 `height < MIN_HEIGHT` **同一口径**：画不出框就说
+ * 出来，不给一个静默的空框（读面那条"少印要说出来"）。
+ *
+ * **U2 之后的那句老话不成立了**：`innerOf` 把 `width - 2` 夹成 0 之后，"负数进了 `repeat` 当场
+ * RangeError"这条已经不存在。守的东西因此收窄成一条——别印一个空框；出处与可达性一字未改。
+ */
+export const MIN_WIDTH = 3
+
+/**
+ * **框内那一栏**占几列（左右两根竖线各一列）。**这是它的唯一出处**——面板自己那一栏与舞台那几处
+ * 算列宽的地方（`stage.ts` 的输入行 · 门口那一块 · 树 · 阅读面）全从这一只推。
+ *
+ * 为什么要收成一处：第二把尺就是第二份真相，而它漂移的时候**不报错**——宽一列的那一份画不进框，
+ * `cell` 把它悄悄截掉，屏幕上只少一个字符。`width < 3` 时给 0（框都画不出来，那一档由 `frameOf`
+ * 的极窄提示兜住，见 `MIN_WIDTH`）。
+ */
+export function innerOf(width: number): number {
+  return Math.max(0, width - 2)
+}
+
 /** 一条读数的两栏。**它是这一份唯一的中间产物**——渲染与那三条对照都从它读。 */
 export interface FrameBody {
   /** 左栏那些行：处境。 */
@@ -74,9 +99,11 @@ export interface Frame {
 }
 
 /**
- * 行的角色（U20）：`border` 框线 · `body` 正文（树与读数）· `footer` 账尾 · `overlay` 临时那一层
- * （候选 · 门口那一块 · 排队）· `read` 阅读面正文 · `readHeading` 阅读标题。**只在地基这一层声明**——值是给终端那一层的
- * `theme` 查的键，排版本身不知道任何样式。
+ * 行的角色（U20；U3 加了 `readHeading`）：`border` 框线 · `body` 正文（树与读数）· `footer` 账尾 ·
+ * `overlay` 临时那一层（候选 · 门口那一块 · 排队）· `read` 阅读面正文 · `readHeading` 阅读面开着时
+ * **那个框的名字**。**只在地基这一层声明**——值是给终端那一层的 `theme` 查的键，排版本身不知道
+ * 任何样式。（**永久行与输入行不在这张表里**：U20 那条形状不动——永久行进终端历史要保持干净
+ * 流水，输入行是光标算术那一行。）
  */
 export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'read' | 'readHeading'
 
@@ -301,7 +328,11 @@ export function frameOf(o: FrameInput): Frame {
   const { width, height } = o
   const empty: Frame = { width, height, columns: { left: 0, right: 0 }, footer: '', lines: [], roles: [] }
   if (width <= 0 || height <= 0) return empty
-  if (width < 3) return { ...empty, lines: [cell('（这一屏太窄）', width)], roles: ['body'] }
+  if (width < MIN_WIDTH) {
+    // 极窄帧：画不出框就说出来。不加这一道，出来的是一整幅 `││`（框内 0 列）——那是静默的空帧。
+    const why = `（这一屏太窄：要 ${MIN_WIDTH} 列以上才画得出框，拿到的是 ${width} 列）`
+    return { ...empty, lines: [cell(why, width)], roles: ['body'] }
+  }
   if (height < MIN_HEIGHT) {
     // 画不出框就说出来，不静默给一个空帧（读面那一条：少印要说）。
     const why = `（这一屏太矮：要 ${MIN_HEIGHT} 行以上才画得出框与账尾，拿到的是 ${height} 行）`
@@ -309,13 +340,16 @@ export function frameOf(o: FrameInput): Frame {
   }
 
   const body = bodyOf(o)
-  const two = width >= MIN_TWO_COLUMN && body.left.length > 0 && body.right.length > 0
+  // 阅读面开着（下面那一栏有行）：**整块地方给它**，框也跟着收成单栏——那一刻左右两栏一个字节都
+  // 不印，还留着 `┬` 与「读数」那个栏名，只会让人以为右边的数在别处（框名见下面 `topName`）。
+  const readingOn = (o.read?.rows.length ?? 0) > 0
+  const two = !readingOn && width >= MIN_TWO_COLUMN && body.left.length > 0 && body.right.length > 0
   // **右栏拿大头（3/5）**（U10c）：读数那一栏是"数字 + 分子/分母"的长行（八元指标一条
   // 就是一句），40 列那档两栏对半时它截得最狠；处境那一栏的行短（轮次 · 状态 · 边），
   // 2/5 装得下。两根竖线加两头的框占 3 列，先扣再分。
-  const left = two ? Math.floor(((width - 3) * 2) / 5) : width - 2
+  const inner = innerOf(width)
+  const left = two ? Math.floor(((width - 3) * 2) / 5) : inner
   const right = two ? width - 3 - left : 0
-  const inner = width - 2
 
   // 内容那一栏：**先把每一行折进它那一栏的列宽**，再一行对一行（右边短的那些补空）；
   // 单栏那一档先把左栏印完再印右栏（同一个框，只是没有中间那根竖线）。
@@ -332,8 +366,11 @@ export function frameOf(o: FrameInput): Frame {
 
   // 账尾那条状态条：**一行**，超出就从右边截（`clip` 留 `…`，说了它被截过）。
   const footer = clip(footerOf(o.snapshot, o.permanent), inner)
-  // 框占上下两行，账尾占分隔 + 一行；装不下就先让账尾让位。
-  let withFooter = rows.length + 4 <= height
+  // 框占上下两行，账尾占分隔 + 一行；装不下就先让账尾让位。**阅读面开着时内容那一栏一个字节都
+  // 不印**（`content` 是空的），所以让它参与"装不装得下"的只有框与账尾自己——不留那条看不见的
+  // 依赖（阅读面能印几行，取决于被它盖住的那一栏折成几行）。
+  const used = readingOn ? 0 : rows.length
+  let withFooter = used + 4 <= height
   let budget = height - 2 - (withFooter ? 2 : 0)
   if (budget < 1) {
     withFooter = false
@@ -361,7 +398,6 @@ export function frameOf(o: FrameInput): Frame {
   // 这一份东西（"看一眼就走"），而 K 是恒定的（`ui/term.ts` 的行数账），挤在一起两边都读不下去。
   // 每一条变更都带着账上的坐标（`<writer> <seq> · `），所以"读的是哪一格"在这一栏里仍然看得见。
   const readAll = o.read?.rows ?? []
-  const readingOn = readAll.length > 0
   const readBody: string[] = []
   if (readingOn) {
     // 从 `top` 那一行起印；装不下时**末行换成"下面还有几行"**（不截中间那一截）。
@@ -369,6 +405,8 @@ export function frameOf(o: FrameInput): Frame {
     const count = Math.min(readAll.length - top, Math.max(1, budget))
     for (let i = top; i < top + count; i += 1) readBody.push(readAll[i] as string)
     const below = readAll.length - (top + count)
+    // **被这一句提示顶掉的那一行也算遗漏**（交接单判决 7）：末行本来要印第 `top + count` 行，它现在
+    // 被提示换了——这一行数的是"屏上没看见几行"，不是"游标之后还剩几行"。
     if (below > 0) readBody[readBody.length - 1] = `… 下面还有 ${below + 1} 行（↑↓ 翻 · Esc 收起）`
   }
   budget -= readBody.length
@@ -408,14 +446,16 @@ export function frameOf(o: FrameInput): Frame {
     ...content.map((x) => ({ ...x, role: 'body' as const })),
   ]
   if (dropped > 0) shown.push({ l: `… 还有 ${dropped} 行没印（这一屏 ${height} 行）`, r: '', role: 'body' })
-  for (const [i, one] of readBody.entries()) shown.push({ l: one, r: '', full: true, role: i === 0 && (o.read?.top ?? 0) === 0 ? 'readHeading' : 'read' })
+  for (const one of readBody) shown.push({ l: one, r: '', full: true, role: 'read' as const })
   for (const one of menuBody) shown.push({ l: one, r: '', full: true, role: 'overlay' as const })
   for (const one of gateBody) shown.push({ l: one, r: '', full: true, role: 'overlay' as const })
 
   const lines: string[] = []
   const roles: LineRole[] = []
-  lines.push(readingOn ? `┌${bar(inner, '阅读面')}┐` : `┌${bar(left, '处境')}${two ? `┬${bar(right, '读数')}` : ''}┐`)
-  roles.push('border')
+  // 框名（U3）：阅读面开着时那个框叫「阅读面」，它那一行报 `readHeading`（主题里是加粗）——整块
+  // 地方给的是它，框就得说它。两栏那一档照旧是「处境 / 读数」。
+  lines.push(`┌${bar(left, readingOn ? '阅读面' : '处境')}${two ? `┬${bar(right, '读数')}` : ''}┐`)
+  roles.push(readingOn ? 'readHeading' : 'border')
   for (const one of shown) {
     // 候选那一层**横贯整栏**（它是临时的一层，不参与左右两栏的分工）。
     if (one.full === true) {
@@ -427,12 +467,12 @@ export function frameOf(o: FrameInput): Frame {
     roles.push(one.role)
   }
   if (withFooter) {
-    lines.push(readingOn ? `├${'─'.repeat(inner)}┤` : `├${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┤`)
+    lines.push(`├${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┤`)
     roles.push('border')
     lines.push(`│${cell(footer, inner)}│`)
     roles.push('footer')
   }
-  lines.push(readingOn ? `└${'─'.repeat(inner)}┘` : `└${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┘`)
+  lines.push(`└${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┘`)
   roles.push('border')
   return { width, height, columns: { left, right }, footer, lines, roles }
 }

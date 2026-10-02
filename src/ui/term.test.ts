@@ -594,23 +594,28 @@ test('⑫ 主题地基（U20）：缺省与空表逐字节相同 · 有值恰那
   )
 })
 
-// ── ⑬ 默认主题（U22）：DEFAULT_THEME 行级角色被包 · 与无主题档的差恰是角色包裹 ──────────────
+// ── ⑬ 默认主题（U22）：DEFAULT_THEME 三族被包 · 与无主题档的差恰是角色包裹 ──────────────
 
-test('⑬ 默认主题（U22）：border 暗一档 · footer/overlay 加粗 · 与无主题档的差恰是角色包裹', () => {
-  // 带弹层的一份（overlay 那一族要在场）：菜单开着——三族角色这才凑齐。
+test('⑬ 默认主题（U22 · U3）：暗一档与加粗两族 · 名单从 DEFAULT_THEME 推 · 与无主题档的差恰是角色包裹', () => {
+  // 四族角色都要在场：框线（border）· 账尾（footer）· 候选那一层（overlay）· 阅读面的框名
+  // （readHeading，U3 加的）——菜单与阅读面一起开着，四族这才凑齐。
   const W = 100
   const frame = frameOf({
     snapshot: SNAPSHOT,
     permanent: PERMANENT,
     width: W,
-    height: 16,
+    height: 20,
     menu: { rows: ['候选一 · round go', '候选二 · log'], sel: 0 },
+    read: { rows: ['标题 · 三面之一', '正文一', '正文二'], top: 0 },
   })
-  assert.ok(frame.roles.includes('overlay'), '菜单开着才有 overlay 那一族')
+  for (const role of ['border', 'footer', 'overlay', 'readHeading'] as const) {
+    assert.ok(frame.roles.includes(role), `这一帧里要有 ${role} 那一族（四族齐了，"恰是角色包裹"才量得动）`)
+  }
+  assert.ok(frame.roles.includes('read'), '阅读面正文那一族也在场（它不在表里——一行不动）')
 
   const drawWith = (theme: Readonly<Partial<Record<LineRole, string>>> | undefined): string => {
     const f = fakeOut({ columns: W })
-    const t = openTerm({ out: f, height: 16, term: 'xterm-256color', ...(theme === undefined ? {} : { theme }) })
+    const t = openTerm({ out: f, height: 20, term: 'xterm-256color', ...(theme === undefined ? {} : { theme }) })
     t.draw([], () => ({ rows: frame.lines, roles: frame.roles }))
     return streamOf(f)
   }
@@ -619,19 +624,29 @@ test('⑬ 默认主题（U22）：border 暗一档 · footer/overlay 加粗 · �
 
   // ① 与无主题档的差**恰是角色包裹**：整帧等于「panelOf 先补宽 · 再逐行按 DEFAULT_THEME 查表包裹」
   //    ——多出来的字节只有 SGR 对，没有任何别的东西（body/read 不在表里，一行不动）。
-  const styledRows = panelOf(frame.lines, 16, W).map((line, i) => {
+  const styledRows = panelOf(frame.lines, 20, W).map((line, i) => {
     const role = i < frame.roles.length ? frame.roles[i] : 'body'
     const sgr = DEFAULT_THEME[role]
     return sgr === undefined ? line : `${sgr}${line}${STYLE_OFF}`
   })
   assert.equal(themed, styledRows.map((r) => `\r${CLEAR_LINE}${r}\n`).join(''), '默认主题那一帧 = 逐行按角色包裹的那一份')
 
-  // ② 出现次数逐族钉：`2m` 恰 border 那么多次 · `1m` 恰 footer/overlay/readHeading 那么多次（一对没有多）。
-  const dimN = frame.roles.filter((r) => r === 'border').length
-  const boldN = frame.roles.filter((r) => r === 'overlay' || r === 'footer' || r === 'readHeading').length
-  assert.ok(dimN > 0 && boldN > 0, '三族角色都在场（这份帧画得出差别）')
-  assert.equal(themed.split('\x1b[2m').length - 1, dimN, `\\x1b[2m 恰 border 那么多次（该 ${dimN}）`)
-  assert.equal(themed.split('\x1b[1m').length - 1, boldN, `\\x1b[1m 恰 footer/overlay/readHeading 那么多次（该 ${boldN}）`)
+  // ② 出现次数逐族钉：**名单从 `DEFAULT_THEME` 推**（交接单判决 2——手抄一遍角色名，表动的时候
+  //    测试不跟动，于是漂移不报错）。`2m` 恰暗那一族那么多次 · `1m` 恰加粗那一族那么多次。
+  const roleNames = Object.keys(DEFAULT_THEME) as readonly LineRole[]
+  assert.equal(
+    roleNames.filter((r) => r === 'readHeading').length,
+    1,
+    '阅读面那个框名（U3）在表里——这一条是"表真的长了那一族"的判据',
+  )
+  const dimRoles = roleNames.filter((r) => DEFAULT_THEME[r] === '\x1b[2m')
+  const boldRoles = roleNames.filter((r) => DEFAULT_THEME[r] === '\x1b[1m')
+  assert.equal(dimRoles.length + boldRoles.length, roleNames.length, '表里只有这两族值（颜色属于后续的纪元）')
+  const dimN = frame.roles.filter((r) => dimRoles.includes(r)).length
+  const boldN = frame.roles.filter((r) => boldRoles.includes(r)).length
+  assert.ok(dimN > 0 && boldN > 0, '两族角色都在场（这份帧画得出差别）')
+  assert.equal(themed.split('\x1b[2m').length - 1, dimN, `\\x1b[2m 恰暗那一族那么多次（该 ${dimN}）`)
+  assert.equal(themed.split('\x1b[1m').length - 1, boldN, `\\x1b[1m 恰加粗那一族那么多次（该 ${boldN}）`)
 
   // ③ 屏幕可见内容与无主题档全等（SGR 零宽，模拟器跳过它之后屏幕上没有差）。
   assert.deepEqual(
@@ -641,7 +656,7 @@ test('⑬ 默认主题（U22）：border 暗一档 · footer/overlay 加粗 · �
   )
 
   console.log(
-    `⑬ 读数：${frame.lines.length} 行里 ${dimN} 行暗（border）· ${boldN} 行粗（footer/overlay/readHeading）· ` +
+    `⑬ 读数：${frame.lines.length} 行里 ${dimN} 行暗（${dimRoles.join('/')}）· ${boldN} 行粗（${boldRoles.join('/')}）· ` +
       `与无主题档差 ${themed.length - plain.length} 字节（全是 SGR 对）· 可见内容全等`,
   )
 })

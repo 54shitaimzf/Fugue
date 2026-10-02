@@ -56,7 +56,9 @@ try:
             except OSError as error:
                 if error.errno != errno.EIO:
                     raise
-        if not acted and b'\x1b[?1049h' in output and b'\x1b[?2004h' in output:
+        # The startup stop happens before asynchronous keymap loading enables raw/paste mode.
+        ready_bytes = b'\x1b[?1049h' in output and (args.startup_hook or b'\x1b[?2004h' in output)
+        if not acted and ready_bytes:
             if args.startup_hook:
                 stopped = os.waitid(os.P_PID, child.pid, os.WSTOPPED | os.WNOHANG | os.WNOWAIT)
                 if stopped is None:

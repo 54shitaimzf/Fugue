@@ -266,16 +266,12 @@ export function trail(steps: readonly (readonly [Cause, StepContext?])[]): Trail
  */
 export const RETRY_DEFAULT = 1
 
-/**
- * 验收那一步的判据（架构 § 8.13 图上那两条分叉）。**"超界"指的是重试上界，不是接续上界**——
- * 两个上界各自独立计数（§ 8.13.a），自重启走另一条路，不经过这里。
- *
- * 返回的是**事件**，不是状态：状态机只做转移，判决那一层在这里只把"该发哪一条事件"算出来。
- */
-export function verdictCause(pass: boolean, retriesLeft: number): Cause {
-  if (pass) return 'verdict-pass'
-  return retriesLeft > 0 ? 'verdict-fail' : 'retry-exceeded'
-}
+// **这里原先有一个 `verdictCause(pass, retriesLeft)`**（0.2.9 ⑤ 撤了）：它是"没过 ∧ 有余量 →
+// `verdict-fail`，没过 ∧ 余量用完 → `retry-exceeded`"这条判据的**第二份实现**，而**没有一处生产
+// 消费者调它**——真跑的那一处是 `round/execute.ts` 里验收那一步（`retriesLeft > 0 ? … : …`）。
+// 第二份抄本漂移时不报错，只会让这里的断言与真跑的那条路各说各话。判据留生产那一处，
+// 状态机这一侧的断言留 `machine.test.ts`（拿事件名直接喂 `step`），真跑那一侧的留
+// `cli/chain.test.ts` 的序 15（回边笔数与终点：`--retry` 不给回一次，`--retry 0` 直接 `Aborted`）。
 
 /** 图上写着的那一句话，给报告与走查印。 */
 export function sayOf(from: RoundState, to: RoundState): string {

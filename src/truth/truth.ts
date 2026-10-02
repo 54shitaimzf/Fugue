@@ -533,11 +533,17 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
       }
       return entries.map((e) => {
         const kind = kindOf(e.mode)
-        const size = sizes.get(e.id)
-        if ((kind === 'file' || kind === 'symlink') && size === undefined) {
-          throw new Error(`条目 ${e.name} 没拿到 size：${e.id}`)
+        // **分两支写，是因为那个 0 不是"拿不到就给个默认"**（0.2.9 ④ 到这里看过，结论：这一处
+        // 不是造值）。`entries.ts` 的 `EntryMeta.size` 那一句写着："dir 与 gitlink 恒为 0——
+        // 它们没有字节可数，这个 0 是形状要求的占位，不是读数"。所以非 blob 那一支就是 0，
+        // 而 blob 那一支取不到读数当场红——原先那句 `size ?? 0` 把两件事写成同一个形状，
+        // 读的人分不清"这是形状"还是"这是兜底"。
+        if (kind !== 'file' && kind !== 'symlink') {
+          return { name: e.name, kind, mode: e.mode, size: 0, id: e.id }
         }
-        return { name: e.name, kind, mode: e.mode, size: size ?? 0, id: e.id }
+        const size = sizes.get(e.id)
+        if (size === undefined) throw new Error(`条目 ${e.name} 没拿到 size：${e.id}`)
+        return { name: e.name, kind, mode: e.mode, size, id: e.id }
       })
     },
 

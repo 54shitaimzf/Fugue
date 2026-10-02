@@ -530,18 +530,33 @@ async function withAgentLog<T>(logOf: (a: AgentId) => Log, a: AgentId, fn: (l: L
 }
 
 /** 冲突时给"解决者"的那份契约值。**它不是构造器造的那一份**（那一份要提前知道冲突），
- * 而是"折到这一步才知道"的那一份——所以形状照 `resolve` 变体给，`conflictPaths` 就是实际冲突集。 */
-function resolveContractOf(contracts: readonly Contract[], conflictPaths: readonly RelPath[], base: CommitId): Contract {
+ * 而是"折到这一步才知道"的那一份——所以形状照 `resolve` 变体给，`conflictPaths` 就是实际冲突集。
+ *
+ * **身份从这一批的第一份契约抄过来，抄不到就当场红**（0.2.9 ④）：`id` · `agent` · `branch` 都
+ * 由分配器发（架构 § 8.12 那张值域持有者表），这一处不替它造。原先那三个兜底值——`'r1'` ·
+ * `'round'` · `'agent/round/0'`——是**系统里不存在的值**：它们把"这一批一份契约都没有"这件事
+ * 变成一份看起来合法的解决型契约，于是那一批的身份从此没有人知道。
+ *
+ * **导出是为了让这条边界有一条会红的断言**：判据在 `round/conflict.test.ts` ②（空批当场红，
+ * 三个假值一个都不出现），与它配对的正对照在 ①（真契约走一遍，身份逐字段等于第一份）。
+ */
+export function resolveContractOf(contracts: readonly Contract[], conflictPaths: readonly RelPath[], base: CommitId): Contract {
   const first = contracts[0]
+  if (first === undefined) {
+    throw new RoundRunError(
+      'merge',
+      '这一批一份契约都没有：解决型的身份从这批的第一份来（架构 § 8.12 的值域持有者：身份由分配器发，这里不替它造）',
+    )
+  }
   return {
     kind: 'resolve',
-    id: `${first?.id ?? 'r1'}#resolve`,
-    agent: (first?.agent ?? 'round') as AgentId,
-    branch: (first?.branch ?? 'agent/round/0') as BranchId,
+    id: `${first.id}#resolve`,
+    agent: first.agent,
+    branch: first.branch,
     goal: `解掉这些路径上的冲突：${conflictPaths.join(' · ')}`,
     base,
     conflictPaths: [...conflictPaths],
-    assertions: first === undefined || first.kind === 'investigate' ? [] : [...first.assertions],
+    assertions: first.kind === 'investigate' ? [] : [...first.assertions],
   }
 }
 

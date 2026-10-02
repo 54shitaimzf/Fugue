@@ -42,7 +42,10 @@ export class ConfigError extends Error {}
  * `workspace` 是 Z6 装配的 A 区系统状态那一栏之一（sources-state 的 projectConfig）——计划 § 5.20
  * 冻结清单漏了它，全量一跑被这张表拒出来（这正是这张表要抓的那类事），据实补进。
  * `credentials` 是凭据的引用表（P2c）：值是引用不是凭据，取值只在真出网那一步。
- * `toolchain` 是工具链的声明与探测读数（P3a）：声明两级可配，读数只写工作区级（materialize/toolchain.ts）。 */
+ * `toolchain` 是工具链的声明与探测读数（P3a）：声明两级可配，读数只写工作区级（materialize/toolchain.ts）。
+ * `ui` 是界面那一节（0.2.9 ⑧）：现在只有 `ui.keys` 一格——按键表的动作覆盖。形状在这份文件
+ * 里核；动作名与键名认不认得，由写那面（`config set` 过 `keymapOf`）与 TUI 读那面（`keymapOf`
+ * 逐格照缺省走并印出为什么）各自把关——语义不进这份文件。 */
 export const TOP_LEVEL_KEYS: readonly string[] = [
   'actions',
   'ports',
@@ -54,6 +57,7 @@ export const TOP_LEVEL_KEYS: readonly string[] = [
   'workspace',
   'credentials',
   'toolchain',
+  'ui',
 ]
 
 export function configFileOf(root: string): string {
@@ -111,6 +115,24 @@ function assertTopLevel(doc: ConfigDoc, file: string): void {
   }
 }
 
+/** `ui` 那一节的形状：`ui.keys` 若在，必须是「动作 → 键串」的对象。只挡"根本不是键位表"的
+ * 坏形状（与"没配过"分开）；动作名与键名认不认得是两级语义，各自在写那面与 TUI 读那面把关。 */
+function assertUiShape(doc: ConfigDoc, file: string): void {
+  const ui = doc.ui
+  if (ui === undefined) return
+  if (!isPlainObject(ui)) throw new ConfigError(`配置里的 ui 要是一个对象：${file}`)
+  const keys = ui.keys
+  if (keys === undefined) return
+  if (!isPlainObject(keys)) {
+    throw new ConfigError(`配置里的 ui.keys 要是一个「动作 → 键串」的对象：${file}`)
+  }
+  for (const [action, key] of Object.entries(keys)) {
+    if (typeof key !== 'string') {
+      throw new ConfigError(`配置里的 ui.keys.${action} 的值要是键串：${file} —— 收到 ${JSON.stringify(key)}`)
+    }
+  }
+}
+
 /**
  * 读一份配置文件。**不在 = `{}`**（还没配过是常态）；**读不动或解析不了 = 拒绝**。
  * 这两种情形必须分开：混起来就是把损坏静默成"什么都没配"。
@@ -134,6 +156,7 @@ async function readConfigFile(file: string): Promise<ConfigDoc> {
     throw new ConfigError(`配置的顶层要是一个对象：${file}`)
   }
   assertTopLevel(raw, file)
+  assertUiShape(raw, file)
   return raw
 }
 

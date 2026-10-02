@@ -26,7 +26,8 @@ function runTerminal(exit: string, entry = cli) {
 }
 function assertRestored(result: ReturnType<typeof runTerminal>, exit: string) {
   assert.equal(result.ready, true, result.output)
-  assert.equal(result.rawActive, true, result.output)
+  // Signals are queued at the first actual frame, before upstream's async keymap read.
+  assert.equal(result.rawActive, exit !== 'sigterm' && exit !== 'sighup', result.output)
   assert.equal(result.timedOut, false, result.output)
   assert.equal(result.restored, true, result.output)
   assert.equal(result.code, exit === 'bad-log' ? 1 : 0, result.output)

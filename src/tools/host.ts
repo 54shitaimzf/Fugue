@@ -489,9 +489,22 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
   }
 
   /**
+   * 这一格的声明集：`reclaim.declare()` 给的那两栏 + **这一格自己补的两个口**。
+   *
+   * 补这两个口的地方只有一处（`declaredNow()`，下面那个函数），所以这里把"两栏都给全"写进类型
+   * ——`DeclaredSet` 把那两栏写成可选，那是为 `createReclaim().declare()` 那种**裸声明集**留的
+   * （`cli/cmd/execute.ts` 那一侧走的就是裸的那一份）。类型写全了，消费点就不必再判"它有没有"
+   * ——原先那一判的假支正是 0.2.9 ④ 撤掉的那一处。
+   */
+  type FilledDeclaredSet = DeclaredSet & {
+    readonly isDeclared: (rel: RelPath) => readonly RelPath[]
+    readonly isTombstone: (p: RelPath) => boolean
+  }
+
+  /**
    * 这一格的声明集：**跑之前 `declare`，跑完 `collect`**——两个调用，中间的 `ensure` 不管它。
    */
-  function declaredNow(): DeclaredSet | null {
+  function declaredNow(): FilledDeclaredSet | null {
     const re = opts.reclaim
     if (re === undefined || opts.ownedPaths === undefined) return null
     const set = re.declare(view.id as unknown as AgentId, opts.ownedPaths)
@@ -542,11 +555,11 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
       //   · **视图里压根没有它**（先删、随后又在同名路径下建了目录那一类）。
       // 不跳的话，`applyEdit` 会当场报“删除 `<p>`：这个路径不存在”（本地实测撞到的就是它）。
       if (d.kind === 'delete') {
-        const tomb =
-          declared.isTombstone === undefined
-            ? view.state().upper.some((e) => e.kind === 'tombstone' && e.path === d.path)
-            : declared.isTombstone(d.path)
-        if (tomb || (await view.stat(d.path)) === null) continue
+        // **这里原先有一个"没有 `isTombstone` 就自己重算一遍"的兜底**（0.2.9 ④ 撤了）：
+        // `declaredNow()` 是这段里 `declared` 唯一的来源，而它两个口一起给（`FilledDeclaredSet`
+        // 就是把这件事写进类型的地方）——所以那一支按构造不可达，它只是把 `:470` 那个 lambda
+        // 逐字重算了一遍。留着它的效果是让读的人以为这里有两种声明集。
+        if (declared.isTombstone(d.path) || (await view.stat(d.path)) === null) continue
       }
       // 逐条走 `view/edit.ts` 那一份（blob → 日志 → 内存）——与 `write` 工具逐字节同一条路，
       // 所以“后写的赢”是结构，不是断言：最后落在视图里的那一版就是收尾提交的那一版。

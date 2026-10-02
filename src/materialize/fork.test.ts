@@ -233,6 +233,10 @@ test('② copy 档：全树哈希 == 该提交的 tree，且清单记的是变�
   try {
     const res = await fork({ roots, log, root: f.dir }, AGENT, f.commit, opts({ preferredStrategy: 'copy' }))
     assert.equal(res.strategy, 'copy')
+    // **`base` 原样回来**（0.2.9 ③）：`fork` 只把它记下来，不核、也不归一化（`fork.ts` 文件头上
+    // 那句"`base` 只记不验"）。调度那一侧原先有一句"回来的底不是钉住的那一个"就 throw，它是恒真
+    // 的——撤掉之后，那条性质由这一句量：谁把 `base` 归一化（比如改成当时的 HEAD），这里当场红。
+    assert.equal(res.base, f.commit, 'fork 回来的底不是传进去的那一个')
     assert.equal(res.mount, null)
     assert.ok((res.laid?.files ?? 0) >= 4, `铺了 ${res.laid?.files} 个文件`)
 

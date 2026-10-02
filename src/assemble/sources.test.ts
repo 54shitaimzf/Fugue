@@ -2,8 +2,9 @@
 // 次序 · 架构 § 8.12 的产物路径 · 架构 § 13.4 的 P2）。
 //
 //   ① **十二个段一个不少、一个不多**：`sourcesFor()` 的键域 == 这份协议声明的段序；两份协议
-//      合起来铺满十二段；每一段都渲染得出，四种渲染器各至少一条；缺源那一档给的是空值
-//      而不是异常（地板：代码树那一段缺源 → A 区少一段、仍然确定性）
+//      合起来铺满十二段；每一段都渲染得出，四种渲染器各至少一条；**状态里那一栏空着**给的是空值
+//      而不是异常（地板：代码树空着 → A 区少一段、仍然确定性）。**"这一段压根没有源"是另一件事**：
+//      0.2.9 ④ 撤掉 `emptyFor` 之后那一档当场红，由下面那道计数与 `tools/check-invariants.ts` 第三节守着
 //   ② **B 区的五段顺序照架构 § 8.11 那份声明逐字**（工作总目标 → 文件内容 → 提交序列 →
 //      交接提示词 → 我的任务）——顺序是承重的：它直接决定前缀字节序，而字节序是缓存命中的
 //      唯一杠杆
@@ -71,7 +72,7 @@ const AGENT_3: AgentCoord = { id: 'agent-3', branch: 'agent/r1/3', outputPaths: 
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 
-test('① 十二个段一个不少、一个不多 · 键域 == 这份协议的段序 · 缺源给空值', () => {
+test('① 十二个段一个不少、一个不多 · 键域 == 这份协议的段序 · 状态空着给空值，装配照跑', () => {
   assert.equal(SOURCE_IDS.length, 13, '两份协议合起来是十三个段名（架构 § 8.11 的两张表）')
   assert.equal(new Set(SOURCE_IDS).size, SOURCE_IDS.length, '段源里有重名')
 
@@ -94,17 +95,18 @@ test('① 十二个段一个不少、一个不多 · 键域 == 这份协议的�
   }
   assert.deepEqual([...kinds].sort(), ['file-block', 'json', 'list', 'text'], '四种渲染器没有各至少一条')
 
-  // 缺源那一档：代码树空着、系统状态空着——空值而不是异常，装配照跑。
+  // 状态空着那一档（地板）：代码树空着、系统状态空着——空值而不是异常，装配照跑。**这跟"这一段
+  // 压根没有源"不是一回事**：后者 0.2.9 ④ 之后当场红（网第三节，负对照读数在那次提交里）。
   const bare = stateWith({ codeTree: [], system: {} })
   const bareSegs = sourcesFor(SUBAGENT_PROTOCOL, bare, AGENT_2)
-  assert.deepEqual(bareSegs['代码树'], [], '缺源的列表段应当是空的')
-  assert.deepEqual(bareSegs['系统状态'], {}, '缺源的 json 段应当是空对象')
+  assert.deepEqual(bareSegs['代码树'], [], '状态空着的列表段应当是空的')
+  assert.deepEqual(bareSegs['系统状态'], {}, '状态空着的 json 段应当是空对象')
   assert.equal(render('list', bareSegs['代码树'] as SegmentValue).length, 0, '空的列表段渲染成空字节')
   assert.equal(render('json', bareSegs['系统状态'] as SegmentValue).length, 2, '空的 json 段渲染成 {}')
   const barePrefix = assemble({ protocol: SUBAGENT_PROTOCOL, model: DEFAULT_MODEL.id, segments: bareSegs })
   const richPrefix = assemble({ protocol: SUBAGENT_PROTOCOL, model: DEFAULT_MODEL.id, segments: sub })
-  assert.notEqual(hashOf(barePrefix.zoneA), hashOf(richPrefix.zoneA), '缺源那两段不进 A 区的话，A 区不该一样')
-  // 缺源那一档也是确定性的：同一份再装一次逐字节相同。
+  assert.notEqual(hashOf(barePrefix.zoneA), hashOf(richPrefix.zoneA), '空着那两段不进 A 区的话，A 区不该一样')
+  // 空着那一档也是确定性的：同一份再装一次逐字节相同。
   const again = assemble({ protocol: SUBAGENT_PROTOCOL, model: DEFAULT_MODEL.id, segments: sourcesFor(SUBAGENT_PROTOCOL, bare, AGENT_2) })
   assert.deepEqual(again.zoneA, barePrefix.zoneA)
 })

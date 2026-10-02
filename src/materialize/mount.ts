@@ -57,13 +57,24 @@ export interface Ran {
   stdout: string
 }
 
-/** 起一个进程，原样收它的退出码与 stderr（还有 stdout——探针要的那一份）。
+/**
+ * 起一个进程，原样收它的退出码与 stderr（还有 stdout——探针要的那一份）。
  * **不走 shell**：路径里有什么字符都不该被解释。这一层的子进程跑手就这一个：
- * 挂载 · sudo 探测 · 工具链探针（P3a，toolchain.ts）共用它。 */
+ * 挂载 · sudo 探测 · 工具链探针（P3a，toolchain.ts）共用它。
+ *
+ * **0.2.9 ④ 到这里看过，结论是这两个"非 0"撤不得——它们是地板，不是兜底造值。**
+ * `spawnSync` 起不动一个命令时给 `error`（`status` 是 `null`），被信号杀掉时也是 `status === null`；
+ * 两种都由这里翻成一个非 0 的数 + 那句原话。两个消费者靠的正是这个宽容：
+ *   · `sudoAvailable()` 见非 0 就答"不通"——`capability.ts` 据此把 overlayfs 与 whiteout 判成
+ *     `null`，`fork`/`ensure` 于是沿 `hardlink-ro` → `copy` 往下退（这是"变慢"，不是"跑不起来"）；
+ *   · `probeOnce()` 见非 0 就写一条 `null` 读数（工具链探针那一档的地板）。
+ * 把这两种情形改成 throw，掀掉的就是那两级地板。**什么条件下改主意**：`Ran` 长出"没跑成"与
+ * "跑成了、退出码是几"两栏，调用点各自按栏读——那时这里才谈得上分类。
+ */
 function run(argv: readonly string[]): Ran {
   const r = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8' })
-  if (r.error !== undefined && r.error !== null) {
-    return { status: 127, stderr: String((r.error as Error).message), stdout: '' }
+  if (r.error !== undefined) {
+    return { status: 127, stderr: `这个命令没起来：${String((r.error as Error).message)}`, stdout: '' }
   }
   return { status: r.status ?? 127, stderr: (r.stderr ?? '').trim(), stdout: r.stdout ?? '' }
 }

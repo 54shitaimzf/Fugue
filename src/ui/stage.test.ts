@@ -2,6 +2,9 @@
 // 舞台做了什么」。分派的判据本身住在它们各自的测试里（`cancel.test.ts` 的七级 · `gate.test.ts`
 // 的二段确认 · `queue.test.ts` 的入队形状），这里钉的是**接线**：舞台把哪一份处境喂给了判据、
 // 判据出来的那一级动作递没递到（press · stop · note · redraw）。
+//
+// ⑦（0.2.8 U2）量的是**列宽那一把尺**：阅读面折行用的列宽与框内宽是同一处（`frame.ts` 的
+// `innerOf`）——屏上印的与翻页数的是同一串物理行。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { StatusRow } from '../probe/status.ts'
@@ -9,10 +12,12 @@ import { gateFaceOf, lineOf } from './gate.ts'
 import type { GateFace } from './gate.ts'
 import { openStage, panelWantOf } from './stage.ts'
 import type { LineArgv, RunLauncher } from './run.ts'
+import { innerOf } from './frame.ts'
+import { widthOf } from './glyph.ts'
+import { faceRowsOf, facesOf, firstFace, readStateOf } from './read.ts'
 
 /** 假的那一只手（`RunLauncher` 的四样全记下来：起了什么 · 停过没有 · argv 现推）。 */
 interface Ctl {
-  columns: number
   readonly notes: string[]
   redraws: number
   readonly presses: { line: string; mode?: string }[]
@@ -28,14 +33,20 @@ interface Ctl {
  * `running` 与 `face` 可中途改（「那一趟跑完了」「门口停了一批」都是中途发生的事）。
  */
 function stageOf(
-  o: { face?: GateFace | null; rows?: readonly StatusRow[]; running?: boolean; termRows?: number } = {},
+  o: {
+    face?: GateFace | null
+    rows?: readonly StatusRow[]
+    running?: boolean
+    termRows?: number
+    /** 这一刻的终端列数（U2 的一把尺那一格要它随测试改）。缺省 80，与从前逐字节相同。 */
+    columns?: () => number
+  } = {},
 ): {
   stage: ReturnType<typeof openStage>
   ctl: Ctl
   tick: (ms: number) => void
 } {
   const ctl: Ctl = {
-    columns: 80,
     notes: [],
     redraws: 0,
     presses: [],
@@ -68,7 +79,7 @@ function stageOf(
     redraw: () => {
       ctl.redraws += 1
     },
-    columns: () => ctl.columns,
+    columns: o.columns ?? ((): number => 80),
     termRows: () => o.termRows,
     rows: () => ctl.rows,
     pendingFace: async () => ctl.face,
@@ -212,31 +223,43 @@ test('⑥ 面板高度按终端行数分账：输入那块不得与显示区等�
   stage.onAction({ action: 'cancel' })
   assert.equal(stage.heightWant(), 9, '收掉弹层回到缺省那一档')
 })
-
-
-test('⑥ 阅读面长行按物理行翻页，收窄再放宽仍能到首尾，Esc 收起', () => {
-  const path = 'src/' + 'long-component/'.repeat(16) + 'FINAL_PATH.ts'
-  const rows: StatusRow[] = [{ pos: { writer: 'agent/r1/1' as never, seq: 1 }, e: { t: 'view/write', path } as never }]
-  const { stage, ctl } = stageOf({ rows })
+// ── ⑦ 一把尺（0.2.8 U2）：阅读面折的列宽与框内宽是同一处 ────────────────────────────────
+test('⑦ 一把尺：舞台递给阅读面的列宽就是 `innerOf`——屏上印的与翻页数的是同一串', () => {
+  // 一条长得画不进框的路径：它折出来的物理行数跟着列宽走。
+  const LONG = `src/${'深/'.repeat(40)}a.ts`
+  const rows: readonly StatusRow[] = [
+    {
+      pos: { writer: 'round', seq: 1 },
+      e: { t: 'view/write' as never, agent: 'agent/r1/1' as never, path: LONG as never, rev: 1 as never, blob: 'b1' as never, mode: 0o100644 },
+    },
+    { pos: { writer: 'round', seq: 2 }, e: { t: 'view/remove' as never, agent: 'agent/r1/1' as never, path: 'src/b.ts' as never, rev: 2 as never } },
+  ]
+  let width = 30
+  const { stage } = stageOf({ rows, columns: () => width })
   stage.onAction({ action: 'read' })
-  const wide = stage.view().read
-  assert.ok(wide !== undefined)
-  ctl.columns = 20
-  const narrow = stage.view().read
-  assert.ok(narrow !== undefined && narrow.rows.length > wide.rows.length, 'resize 当帧重折显示行')
-  stage.onAction({ action: 'jumpLast' })
-  const end = stage.view().read
-  assert.equal(end?.top, (end?.rows.length ?? 0) - 1)
-  assert.ok(end?.rows.slice(-2).map((l) => l.slice(2)).join('').endsWith('FINAL_PATH.ts'), '长路径尾部的两行都在显示列表里')
-  assert.ok(end?.rows[end.top]?.endsWith('s'), '最后一个字符可到达')
-  stage.onAction({ action: 'historyOlder' })
-  assert.equal(stage.view().read?.top, (end?.top ?? 0) - 1, '上一条物理行')
-  ctl.columns = 100
-  const resized = stage.view().read
-  assert.ok((resized?.top ?? 0) < (resized?.rows.length ?? 0), '放宽后夹回界内')
-  stage.onAction({ action: 'jumpFirst' })
-  assert.equal(stage.view().read?.top, 0)
-  stage.onAction({ action: 'cancel' })
-  assert.equal(stage.view().read, undefined)
-  assert.deepEqual(ctl.presses, [], '阅读和翻行不起命令')
+
+  const faces = facesOf(readStateOf(rows))
+  const name = firstFace(faces)
+  assert.equal(name, 'diff', '这一份账有变更：先看 diff 那一面')
+  const want = faceRowsOf(faces, name, innerOf(30))
+  assert.deepEqual([...(stage.view().read?.rows ?? [])], [...want], '舞台按 `innerOf(columns)` 折，不是自己那一把尺')
+  assert.ok(want.some((l) => l.includes('深/')), '这一面真折到了那条长路径')
+  assert.ok(want.every((l) => widthOf(l) <= innerOf(30)), '每一行都画得进框')
+  console.log(`⑦ 读数：路径 ${LONG.length} 字符 → 30 列（框内 ${innerOf(30)}）折成 ${want.length} 行`)
+
+  // **负对照**：旧版那两把尺（显示端按框宽截断 · 滚动端按未折行行数数）——舞台递**未折行的原文**。
+  const raw = [faces.diff?.title ?? '', ...(faces.diff?.lines ?? [])]
+  assert.notDeepEqual([...raw], [...want], '未折行的那一串与折过的那一串对不上')
+  assert.ok(raw.some((l) => widthOf(l) > innerOf(30)), '旧版有画不进框的行（必被 `cell` 截掉尾巴）')
+  // 自己那一把尺（`columns` − 1）也对不上：漂移一列，屏幕上少一个字符且不报错。
+  assert.notDeepEqual([...faceRowsOf(faces, name, 30 - 1)], [...want], '两把尺差一列：折出来的行不一样')
+
+  // **窄 → 宽**：折的就是新列宽下那一串；`↓` 翻到底停在新那一串的末行上。
+  width = 200
+  const want2 = faceRowsOf(faces, name, innerOf(200))
+  assert.deepEqual([...(stage.view().read?.rows ?? [])], [...want2], '窄 → 宽：同一把尺重新折一遍')
+  assert.ok(want2.length < want.length, `宽了折得少（窄 ${want.length} · 宽 ${want2.length}）`)
+  for (let i = 0; i < 40; i += 1) stage.onAction({ action: 'historyNewer' })
+  assert.equal(stage.view().read?.top, want2.length - 1, '`↓` 翻到底：`top` 停在新列宽那一串的末行')
+  console.log(`⑦ 读数：200 列（框内 ${innerOf(200)}）折成 ${want2.length} 行 · 翻到底 top=${want2.length - 1}`)
 })
