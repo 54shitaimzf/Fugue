@@ -33,7 +33,7 @@ import type { LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import type { Roots } from '../roots/contract.ts'
 import { createRoots } from '../roots/roots.ts'
-import type { CommitId, RelPath, ViewRev } from '../terms.ts'
+import type { AbsPath, CommitId, RelPath, ViewRev } from '../terms.ts'
 import { openTruth } from '../truth/truth.ts'
 import type { View } from '../view/contract.ts'
 import { applyEdit } from '../view/edit.ts'
@@ -45,9 +45,10 @@ import type { MaterializeOptions } from './contract.ts'
 import { WORKSPACE_STATE, diffStat, scanTree } from './diffstat.ts'
 import { EnsureRefused, ensure } from './ensure.ts'
 import { fork } from './fork.ts'
-import { LandError, touchedBy } from './land.ts'
+import type { LandOptions } from './land.ts'
+import { LandError, landDeltas, touchedBy } from './land.ts'
 import { clearMaterialization, isMounted } from './mount.ts'
-import { matState } from './manifest.ts'
+import { manifestMap, matState } from './manifest.ts'
 import { removeTree } from './mount.ts'
 import { verifyMat } from './verify.ts'
 
@@ -121,6 +122,8 @@ interface Stage {
   readonly log: Awaited<ReturnType<typeof openLog>>
   edit(d: Delta): Promise<ViewRev>
   ensure(upTo?: ViewRev, opt?: MaterializeOptions): Promise<Awaited<ReturnType<typeof ensure>>>
+  /** 0.2.6 ②：`ensure` 落那一趟交给 `land.ts` 的那一份 options——手工摆中间态要用同一个形状。 */
+  landOptionsOf(merged: string, overlay: boolean): LandOptions
   events(): LogEvent[]
   close(): Promise<void>
 }
@@ -131,6 +134,24 @@ async function stage(f: Fixture): Promise<Stage> {
   const log = openLog(f.dir)
   const truth = openTruth(f.dir)
   const view = await loadView(log, AGENT, { lower: await lowerFor(truth, AGENT) })
+  /**
+   * 视图那一侧的读口。**一处定义**：`ensure` 那一趟用它，0.2.6 ② 的崩溃矩阵也照它手工摆中间态
+   * ——两边各写一份的话，夹具会悄悄跟错形状（这正是"形状变了夹具当场红"要防的那件事）。
+   * `rev` 是**活的**（每次现读）：视图每落一条 delta 它就往前动。
+   */
+  const viewReads = {
+    stat: (p: RelPath) => view.stat(p),
+    read: (p: RelPath) => view.read(p),
+    get rev(): ViewRev {
+      return view.rev
+    },
+    deltasSince: (from: ViewRev) => view.diff(from),
+    tombstones: (): readonly RelPath[] =>
+      view
+        .state()
+        .upper.filter((e) => e.kind === 'tombstone')
+        .map((e) => e.path),
+  }
   return {
     dir: f.dir,
     roots,
@@ -145,23 +166,24 @@ async function stage(f: Fixture): Promise<Stage> {
           log,
           root: f.dir,
           ...(opt === undefined ? {} : { opt }),
-          view: {
-            stat: (p: RelPath) => view.stat(p),
-            read: (p: RelPath) => view.read(p),
-            rev: view.rev,
-            deltasSince: (from: ViewRev) => view.diff(from),
-            tombstones: () =>
-              view
-                .state()
-                .upper.filter((e) => e.kind === 'tombstone')
-                .map((e) => e.path),
-          },
+          view: viewReads,
           // 清单的口径问的是**提交**，不是工作树（`land.ts` 文件头第六条）。夹具里两者一致。
           base: lowerAt(truth, f.commit),
         },
         AGENT,
         upTo ?? view.rev,
       ),
+    // **0.2.6 ②**：`ensure` 落那一趟交给 `land.ts` 的那一份。崩溃矩阵拿它把"落了一半"直接摆
+    // 出来——**不 hook 产品代码**，调的就是产品那个入口（`landDeltas`）。
+    landOptionsOf: (merged: string, overlay: boolean): LandOptions => ({
+      target: merged as AbsPath,
+      lower: f.dir as AbsPath,
+      base: lowerAt(truth, f.commit),
+      overlay,
+      whiteout: null,
+      pruneEmptyDirs: DEFAULT_MATERIALIZE.pruneEmptyDirs,
+      view: viewReads,
+    }),
     events: () => readEvents(f.dir),
     close: async () => {
       await log.close()
@@ -732,5 +754,148 @@ test('⑨ ensure 不接受一个还没到的 rev：那个号会污染"清单落�
   } finally {
     unmount(s)
     await s.close()
+  }
+})
+
+// ────────────────────────────────── 0.2.6 ② · 崩溃注入矩阵（落地那一族）
+
+/**
+ * **手工摆产品会写下的中间态**：`applyEntry` 逐条目「临时名 → rename」，崩在这中间留下的就是
+ * 「前几条落了、后几条没落」+ 一个残件。**不 hook 产品代码**——调的就是产品那个入口
+ * （`landDeltas`）把前一条落下去，再把残件摆出来；残件名照 `land.ts` 的 `tmpName` 那个形状
+ * （`.fugue-tmp-<pid>-<36 进制时刻>`，与目标同目录）。
+ *
+ * 每格三条（路线图 0.2.6 行）：**恢复成功**（再跑一次 `ensure` 把整批对完 · `verify-mat` 报 ok）·
+ * **旧状态没被改坏**（没被这一批碰过的路径四样逐字节不变）· **下一次操作照常成功**。
+ *
+ * **两族分档各一遍**：`copy` 与 `hardlink-ro`（PR15 审查件 § 2 采纳 2 的 `for hard in [false,true]`）。
+ * 机制将来给换入多加一步，这一族多一格就够——摆中间态靠的是 `landOptionsOf` 那一个口。
+ */
+for (const strategy of ['copy', 'hardlink-ro'] as const) {
+  test(`0.2.6 ② · 落地落了一半（${strategy} 档 · 含残件）：恢复成功 · 旧状态没坏 · 下一次照常`, async () => {
+    const f = fixture()
+    const s = await stage(f)
+    try {
+      const forked = await fork(
+        { roots: s.roots, log: s.log, root: f.dir },
+        AGENT,
+        f.commit,
+        opts(
+          strategy === 'hardlink-ro'
+            ? { preferredStrategy: 'hardlink-ro', readOnlyPaths: ['vendor'] }
+            : { preferredStrategy: 'copy' },
+        ),
+      )
+      assert.equal(forked.strategy, strategy, `这一格要的是 ${strategy} 档`)
+
+      // **旧状态**：这一批之前，树是什么样的（mtime · size · inode · hash 四样）。
+      const before = prints(forked.merged)
+      await s.edit({ kind: 'add', path: 'src/new.ts', bytes: Buffer.from('新的\n'), mode: 0o100644 })
+      await s.edit({ kind: 'modify', path: 'src/a.ts', bytes: Buffer.from('改写\n'), mode: 0o100644 })
+      await s.edit({ kind: 'delete', path: 'docs/manual.md' })
+
+      // 摆"落了一半"：**只落第一条**（产品崩在第一条之后），再把残件摆进目标同目录。
+      const deltas = s.view.diff(0)
+      assert.ok(deltas.length >= 3, `这一批要有几条可比：${deltas.length}`)
+      const half = await landDeltas(
+        s.landOptionsOf(forked.merged, false),
+        manifestMap(await matState(s.log, AGENT)),
+        deltas.slice(0, 1),
+      )
+      assert.ok(half.landed.length >= 1, `第一条该真落了盘：${JSON.stringify([...half.landed])}`)
+      const first = half.landed[0] as RelPath
+      const residue = join(dirname(join(forked.merged, first)), '.fugue-tmp-99999-zzzz')
+      writeFileSync(residue, '半个字节') // 崩在 write 与 rename 之间留下的那一份
+      assert.equal(existsSync(residue), true, '残件该在盘上——这一格的前提')
+
+      // ── 恢复：整批再落一遍（下一次 `ensure` 会做的那件事）。
+      const out = await s.ensure()
+      assert.ok(
+        out.untouched.includes(first),
+        `已经落下去的那一条要走 untouched——夹具与产品的对账口径对不上就红：${JSON.stringify(out.untouched)}`,
+      )
+      assert.equal(readFileSync(join(forked.merged, 'src/new.ts'), 'utf8'), '新的\n')
+      assert.equal(readFileSync(join(forked.merged, 'src/a.ts'), 'utf8'), '改写\n')
+      assert.equal(existsSync(join(forked.merged, 'docs/manual.md')), false)
+      await verifyOk(s, f)
+
+      // ── 旧状态没被改坏：没被这一批碰过的那些路径，四样逐字节不变。
+      const after = prints(forked.merged)
+      const touched = new Set<RelPath>(touchedBy(deltas))
+      const keep = [...after.keys()].filter((p) => !touched.has(p) && before.has(p))
+      assert.ok(keep.length >= 3, `没被碰过的叶子要有几条可比：${keep.length}`)
+      for (const p of keep) {
+        assert.equal(JSON.stringify(after.get(p)), JSON.stringify(before.get(p)), `${p} 没被这一批碰到，四样都该原样`)
+      }
+
+      // ── 下一次操作照常成功：再改一处、再 ensure 一次照落；再下一次是空操作。
+      await s.edit({ kind: 'add', path: 'src/after.ts', bytes: Buffer.from('之后的\n'), mode: 0o100644 })
+      const next = await s.ensure()
+      assert.deepEqual([...next.landed], ['src/after.ts'])
+      assert.equal(readFileSync(join(forked.merged, 'src/after.ts'), 'utf8'), '之后的\n')
+      assert.equal((await s.ensure()).noop, true, '已最新就是空操作')
+      await verifyOk(s, f)
+    } finally {
+      unmount(s)
+      await s.close()
+    }
+  })
+}
+
+/**
+ * **脱链**：同一个操作（只改模式）在两档落地根上必须表现**相反**。
+ *
+ * 判据是 **inode 号**——"脱链"是个行为词，用 inode 说出来才是可机械核对的一条
+ * （PR15 审查件 § 2 采纳 2 的原话：`materialized_strategy.rs:121`）。`copy` 档落地根是我们
+ * 自己抄的那一份，就地 `chmod` 不动 inode 也不动 mtime（按修改时间判定新旧的工具链不该白重建）；
+ * `hardlink-ro` 档里声明过的只读子树**与底共享 inode**，就地 `chmod` 会穿透到真源——那时内容
+ * 一样也得重写一遍（临时名 + rename 顺带断链）。
+ */
+test('0.2.6 ② · 脱链：copy 档就地 chmod（inode · mtime 不动）· hardlink-ro 档必须断链', async () => {
+  for (const strategy of ['copy', 'hardlink-ro'] as const) {
+    const f = fixture()
+    const s = await stage(f)
+    try {
+      const forked = await fork(
+        { roots: s.roots, log: s.log, root: f.dir },
+        AGENT,
+        f.commit,
+        opts(
+          strategy === 'hardlink-ro'
+            ? { preferredStrategy: 'hardlink-ro', readOnlyPaths: ['vendor'] }
+            : { preferredStrategy: 'copy' },
+        ),
+      )
+      assert.equal(forked.strategy, strategy)
+      // 挑一条**与底共享 inode** 的路径：hardlink-ro 档里只链声明过的只读子树（`vendor`）。
+      const rel: RelPath = strategy === 'hardlink-ro' ? 'vendor/lib.txt' : 'src/c.ts'
+      const shares = lstatSync(join(forked.merged, rel)).ino === lstatSync(join(f.dir, rel)).ino
+      assert.equal(
+        shares,
+        strategy === 'hardlink-ro',
+        `${strategy} 档：${rel} 与底的 inode ${shares ? '该共享' : '不该共享'}——这一格的前提`,
+      )
+
+      const before = prints(forked.merged).get(rel)
+      await s.edit({ kind: 'chmod', path: rel, mode: 0o100755 })
+      const out = await s.ensure()
+      assert.deepEqual([...out.landed], [rel], '模式变了，这一条要动盘')
+      assert.equal(lstatSync(join(forked.merged, rel)).mode & 0o7777, 0o755)
+      const after = prints(forked.merged).get(rel)
+      if (strategy === 'copy') {
+        assert.equal(after?.ino, before?.ino, 'copy 档：内容没变，就地 chmod——inode 不动')
+        assert.equal(after?.mtimeNs, before?.mtimeNs, 'copy 档：mtime 也不动')
+        assert.equal(after?.hash, before?.hash)
+      } else {
+        assert.notEqual(after?.ino, before?.ino, 'hardlink-ro 档：**脱链**——就地 chmod 改的是底那一份 inode')
+        assert.notEqual(after?.mtimeNs, before?.mtimeNs, 'hardlink-ro 档：重写一遍（临时名 + rename），mtime 跟着变')
+        // 而**底那一份一个字节没动**——这正是脱链要守的东西。
+        assert.equal(readFileSync(join(f.dir, rel), 'utf8'), 'vendored\n')
+        assert.equal(lstatSync(join(f.dir, rel)).mode & 0o7777, 0o644, '底那一份的模式没被穿透')
+      }
+    } finally {
+      unmount(s)
+      await s.close()
+    }
   }
 })

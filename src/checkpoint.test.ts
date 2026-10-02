@@ -5,14 +5,17 @@
 // 那一件事：这个操作不依赖任何一个面。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { test } from 'node:test'
 import { tmpDir } from '../test/helpers/tmp.ts'
 import { checkpoint } from './checkpoint.ts'
 import { refFor, agentFor } from './identity.ts'
-import { openLog } from './log/log.ts'
+import type { Log, LogEvent } from './log/events.ts'
+import { logFileOf, openLog } from './log/log.ts'
 import { openTruth, RefConflictError } from './truth/truth.ts'
+import type { Truth } from './truth/contract.ts'
 import type { TreeEntry } from './entries.ts'
 import type { AgentId, WriterId } from './terms.ts'
 
@@ -139,4 +142,127 @@ test('面外调用：日志的 writer 标识进得去，提交点回得来', asy
     expectedOld: r.commit,
   })
   assert.deepEqual(r2.parents, [r.commit])
+})
+
+// ────────────────────────────────── 0.2.6 ② · 崩溃注入矩阵（提交那一族）
+//
+// 出处：PR15 审查件 § 2 采纳 2——"它不去 hook 产品代码，而是**照着产品会写下的样子，手工把
+// 中间态摆出来**"；同一门手法在轮次那条路上摆了 CAS **之前**与**之后**各一格。
+//
+// **不 hook 产品代码**是怎么做到的：`checkpoint()` 要的 `Log` 与 `Truth` 是**从参数进来的**，
+// 所以一只 spy 转手就能把产品真调的顺序**量出来**——先跑一趟正常提交，把次序记下来，再照那个
+// 次序手工把两格摆出来。**形状一变这一格当场红**（量出来的那一串与写死的那一串对不上），
+// 这正是"夹具跟形状走"要的效果。
+
+/** 账文件此刻的原文（`logFileOf` 是 M0 自己那一处算文件名的口）。 */
+function logText(root: string, w: WriterId): string {
+  return readFileSync(logFileOf(root, w), 'utf8')
+}
+
+test('0.2.6 ② · checkpoint 的中间态两格：CAS 之前 / CAS 之后日志之前', async (ctx) => {
+  const root = tmpRoot()
+  const writer = 'agent/r1/1' as WriterId
+  const ref = refFor(writer)
+  const log = openLog(root, { sync: 'never' })
+  ctx.after(() => log.close())
+  const truth = openTruth(root)
+  ctx.after(() => truth.close())
+
+  const mk = async (what: string): Promise<TreeEntry[]> => {
+    const blob = await truth.putBlob(Buffer.from(`${what}\n`))
+    return [{ name: 'f.txt', mode: 0o100644, id: blob }]
+  }
+  const base = await checkpoint({ log, truth, writer, entries: await mk('基线'), rev: 1, msg: '基线', expectedOld: null })
+
+  // ── 一 · 把产品真调的顺序量出来（spy 只转手，不改一个字节的行为）。
+  const seen: string[] = []
+  const spyLog: Log = {
+    ...log,
+    append: (w, e) => {
+      seen.push('log.append')
+      return log.append(w, e)
+    },
+  }
+  const spyTruth: Truth = {
+    ...truth,
+    putTree: (es) => {
+      seen.push('truth.putTree')
+      return truth.putTree(es)
+    },
+    commit: (t, ps, m) => {
+      seen.push('truth.commit')
+      return truth.commit(t, ps, m)
+    },
+    advance: (r, c, o) => {
+      seen.push('truth.advance')
+      return truth.advance(r, c, o)
+    },
+  }
+  const second = await checkpoint({
+    log: spyLog,
+    truth: spyTruth,
+    writer,
+    entries: await mk('第二'),
+    rev: 2,
+    msg: '第二',
+    expectedOld: base.commit,
+  })
+  assert.deepEqual(
+    seen,
+    ['truth.putTree', 'truth.commit', 'truth.advance', 'log.append'],
+    '§ 9.3 的次序：对象 → CAS 推进 → 日志（**产品改了次序这一句就红**，下面两格照着的就是它）',
+  )
+
+  // ── 格 A · **CAS 之前**：对象落好了（tree 与 commit 都回来了），ref 没推进，账上没那一行。
+  const atA = logText(root, writer)
+  const treeA = await truth.putTree(await mk('A'))
+  const commitA = await truth.commit(treeA, [second.commit], 'A')
+  assert.equal(
+    Buffer.from((await truth.readAt(commitA, 'f.txt')) ?? []).toString(),
+    'A\n',
+    '对象真在盘上——这一格的前提就是"提交造出来了，只是没推进 ref"',
+  )
+  assert.equal(await truth.resolve(ref), second.commit, 'ref 还停在老地方：CAS 那一步没做')
+  assert.equal(logText(root, writer), atA, '账一个字节没动')
+  // **恢复成功**：下一次提交拿老 ref 当期望，照走——那半个提交没成事。
+  const stepA = await checkpoint({
+    log,
+    truth,
+    writer,
+    entries: await mk('A 之后'),
+    rev: 3,
+    msg: 'A 之后',
+    expectedOld: second.commit,
+  })
+  assert.deepEqual(stepA.parents, [second.commit], '接在**老 ref** 上')
+  assert.equal(await truth.resolve(ref), stepA.commit)
+  assert.ok(logText(root, writer).startsWith(atA), '旧状态没被改坏：账是接着往后长的')
+
+  // ── 格 B · **CAS 之后、日志之前**：ref 推到新提交了，账上还没有那一行。
+  const atB = logText(root, writer)
+  const treeB = await truth.putTree(await mk('B'))
+  const commitB = await truth.commit(treeB, [stepA.commit], 'B')
+  await truth.advance(ref, commitB, stepA.commit)
+  assert.equal(await truth.resolve(ref), commitB, 'ref 推到了新提交——这一格的前提')
+  assert.equal(logText(root, writer), atB, '账一个字节没动：那一行还没落')
+  // **恢复成功**：下一次提交拿**新 ref** 当期望，照走；账接着往后长。
+  const stepB = await checkpoint({
+    log,
+    truth,
+    writer,
+    entries: await mk('B 之后'),
+    rev: 4,
+    msg: 'B 之后',
+    expectedOld: commitB,
+  })
+  assert.deepEqual(stepB.parents, [commitB])
+  assert.ok(logText(root, writer).startsWith(atB), '旧状态没被改坏：账是接着往后长的')
+  assert.ok(logText(root, writer).length > atB.length, '**下一次操作照常成功**：账上多了一行')
+
+  // 账上一共四条：基线 · 第二 · A 之后 · B 之后。**两格各自那半个提交一条都不留**——
+  // § 9.3 把"日志"排在做 CAS **之后**，要躲的正是"输掉的那次也在权威来源里留下一行"。
+  const rows: LogEvent[] = []
+  for await (const e of log.readByWriter(writer)) rows.push(e)
+  assert.equal(rows.length, 4)
+  assert.equal(rows.every((e) => e.t === 'ckpt/commit'), true)
 })
