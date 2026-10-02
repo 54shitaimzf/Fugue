@@ -21,6 +21,8 @@
 //      （**不截中间**）· 不给它时整帧与从前逐字节相同（这一栏是加出来的，不是改出来的）。
 //   ⑩ **一把尺**（0.2.8 U2）：框内宽只有 `innerOf` 一个出处 · 长行**折开印**（旧版由 `cell` 截断，
 //      尾巴永远看不见）· `top` 数到的那一行就是屏上第一条正文。
+//   ⑪ **层次**（0.2.8 U3）：阅读面那一档收成单栏、框名换「阅读面」，那一行报 `readHeading`
+//      （主题里加粗）· 遗漏数算上被那句提示顶掉的一行（`below + 1`）。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
@@ -327,6 +329,12 @@ test('⑧ 阅读面那一栏：整块地方给它（树与内容都让位）· �
   assert.ok(all.lines.some((l) => l.includes('第一行')), '第二行也在')
   assert.ok(!all.lines.some((l) => l.includes('轮次 r1 · 状态')), '内容那一栏不印了（地方整块给正文）')
   assert.ok(!all.lines.some((l) => l.includes('主线（round）') || l.includes('格 agent/r1/1')), '树那几行也不印了')
+  // **框名与那一行的角色**（0.2.8 U3）：阅读面开着时那个框叫「阅读面」，头一行报 `readHeading`
+  // （主题里加粗）——整块地方给它，框就得说它。两栏那两根名字与中间那根竖线一起收掉。
+  assert.ok((all.lines[0] as string).includes('阅读面'), `头一行是框名：${all.lines[0]}`)
+  assert.equal(all.roles[0], 'readHeading', '框名那一行报 readHeading')
+  assert.ok(!all.lines.some((l) => l.includes('┬')), '阅读面那一档收成单栏（不留中间那根竖线）')
+  assert.ok(!all.lines.some((l) => l.includes('读数')), '右栏那个名字也不印了')
 
   // `top = 2`：头两行不印了（那正是"翻下去"的意思）。
   const scrolled = frameOf({ ...base, read: { rows, top: 2 } })
@@ -339,6 +347,12 @@ test('⑧ 阅读面那一栏：整块地方给它（树与内容都让位）· �
   const cut = frameOf({ ...base, read: { rows: ['标题', ...many], top: 0 } })
   const tailLine = cut.lines.find((l) => l.includes('下面还有'))
   assert.ok(tailLine !== undefined, '装不下时末行要说还剩几行')
+  // **遗漏数算上被那句提示顶掉的一行**（0.2.8 U3 · 判决 7）：这一面 61 行，屏上印了 `printed` 行，
+  // 其中**末行被提示换了**——没看见的是 61 − (印 − 1)。旧的写法（不加那一）在这一条上红。
+  const printed = cut.roles.filter((r) => r === 'read').length
+  const said = Number(/下面还有 (\d+) 行/.exec(tailLine as string)?.[1] ?? '0')
+  assert.equal(said, 61 - (printed - 1), `遗漏数要算上被顶掉的那一行（说 ${said} · 印了 ${printed}）`)
+  assert.notEqual(said, 61 - printed, '旧版（`below` 不加那一）在这一条上红')
   console.log(
     `⑧ 读数：${rows.length} 行全装得下（内容与树都让位）· \`top=2\` 起印第二行 · 61 行时末行「${tailLine?.replace(/[│ ]+$/, '').trim()}」`,
   )
@@ -368,8 +382,9 @@ test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账
   const bodyAt = f.lines.findIndex((l) => l.includes('轮次 r1 · 状态'))
   assert.ok(bodyAt >= 0 && f.roles[bodyAt] === 'body', '读数那一行报 body')
 
-  // 阅读面开着：正文那些行报 `read`（临时那一层的另一种）。
+  // 阅读面开着：框名那一行报 `readHeading`（U3），正文那些行报 `read`。
   const r = frameOf({ ...base, read: { rows: ['标题', '正文一'], top: 0 } })
+  assert.equal(r.roles[0], 'readHeading', '阅读面开着时框名那一行报 readHeading')
   const readAt = r.lines.findIndex((l) => l.includes('正文一'))
   assert.ok(readAt >= 0 && r.roles[readAt] === 'read', '阅读面正文报 read')
 
@@ -382,7 +397,7 @@ test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账
   console.log(
     `⑨ 读数：${f.lines.length} 行里 border ×${f.roles.filter((x) => x === 'border').length} · ` +
       `footer ×${f.roles.filter((x) => x === 'footer').length} · overlay ×${f.roles.filter((x) => x === 'overlay').length} · ` +
-      '其余 body · 阅读面行报 read · 矮帧报 body',
+      '其余 body · 阅读面框名报 readHeading · 阅读面正文报 read · 矮帧报 body',
   )
 })
 // ── ⑩ 一把尺（0.2.8 U2）：框内宽一个出处 · 长行折开印 · `top` 数到哪一行屏上就是哪一行 ──────────

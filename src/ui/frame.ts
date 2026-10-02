@@ -86,11 +86,13 @@ export interface Frame {
 }
 
 /**
- * 行的角色（U20）：`border` 框线 · `body` 正文（树与读数）· `footer` 账尾 · `overlay` 临时那一层
- * （候选 · 门口那一块 · 排队）· `read` 阅读面正文。**只在地基这一层声明**——值是给终端那一层的
- * `theme` 查的键，排版本身不知道任何样式。
+ * 行的角色（U20；U3 加了 `readHeading`）：`border` 框线 · `body` 正文（树与读数）· `footer` 账尾 ·
+ * `overlay` 临时那一层（候选 · 门口那一块 · 排队）· `read` 阅读面正文 · `readHeading` 阅读面开着时
+ * **那个框的名字**。**只在地基这一层声明**——值是给终端那一层的 `theme` 查的键，排版本身不知道
+ * 任何样式。（**永久行与输入行不在这张表里**：U20 那条形状不动——永久行进终端历史要保持干净
+ * 流水，输入行是光标算术那一行。）
  */
-export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'read'
+export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'read' | 'readHeading'
 
 export interface FrameInput {
   /** 读源一：那一刻的处境（`status --once` 印的那一份）。 */
@@ -320,7 +322,10 @@ export function frameOf(o: FrameInput): Frame {
   }
 
   const body = bodyOf(o)
-  const two = width >= MIN_TWO_COLUMN && body.left.length > 0 && body.right.length > 0
+  // 阅读面开着（下面那一栏有行）：**整块地方给它**，框也跟着收成单栏——那一刻左右两栏一个字节都
+  // 不印，还留着 `┬` 与「读数」那个栏名，只会让人以为右边的数在别处（框名见下面 `topName`）。
+  const readingOn = (o.read?.rows.length ?? 0) > 0
+  const two = !readingOn && width >= MIN_TWO_COLUMN && body.left.length > 0 && body.right.length > 0
   // **右栏拿大头（3/5）**（U10c）：读数那一栏是"数字 + 分子/分母"的长行（八元指标一条
   // 就是一句），40 列那档两栏对半时它截得最狠；处境那一栏的行短（轮次 · 状态 · 边），
   // 2/5 装得下。两根竖线加两头的框占 3 列，先扣再分。
@@ -343,8 +348,11 @@ export function frameOf(o: FrameInput): Frame {
 
   // 账尾那条状态条：**一行**，超出就从右边截（`clip` 留 `…`，说了它被截过）。
   const footer = clip(footerOf(o.snapshot, o.permanent), inner)
-  // 框占上下两行，账尾占分隔 + 一行；装不下就先让账尾让位。
-  let withFooter = rows.length + 4 <= height
+  // 框占上下两行，账尾占分隔 + 一行；装不下就先让账尾让位。**阅读面开着时内容那一栏一个字节都
+  // 不印**（`content` 是空的），所以让它参与"装不装得下"的只有框与账尾自己——不留那条看不见的
+  // 依赖（阅读面能印几行，取决于被它盖住的那一栏折成几行）。
+  const used = readingOn ? 0 : rows.length
+  let withFooter = used + 4 <= height
   let budget = height - 2 - (withFooter ? 2 : 0)
   if (budget < 1) {
     withFooter = false
@@ -372,7 +380,6 @@ export function frameOf(o: FrameInput): Frame {
   // 这一份东西（"看一眼就走"），而 K 是恒定的（`ui/term.ts` 的行数账），挤在一起两边都读不下去。
   // 每一条变更都带着账上的坐标（`<writer> <seq> · `），所以"读的是哪一格"在这一栏里仍然看得见。
   const readAll = o.read?.rows ?? []
-  const readingOn = readAll.length > 0
   const readBody: string[] = []
   if (readingOn) {
     // 从 `top` 那一行起印；装不下时**末行换成"下面还有几行"**（不截中间那一截）。
@@ -380,7 +387,9 @@ export function frameOf(o: FrameInput): Frame {
     const count = Math.min(readAll.length - top, Math.max(1, budget))
     for (let i = top; i < top + count; i += 1) readBody.push(readAll[i] as string)
     const below = readAll.length - (top + count)
-    if (below > 0) readBody[readBody.length - 1] = `… 下面还有 ${below} 行（↑↓ 翻 · Esc 收起）`
+    // **被这一句提示顶掉的那一行也算遗漏**（交接单判决 7）：末行本来要印第 `top + count` 行，它现在
+    // 被提示换了——这一行数的是"屏上没看见几行"，不是"游标之后还剩几行"。
+    if (below > 0) readBody[readBody.length - 1] = `… 下面还有 ${below + 1} 行（↑↓ 翻 · Esc 收起）`
   }
   budget -= readBody.length
 
@@ -425,8 +434,10 @@ export function frameOf(o: FrameInput): Frame {
 
   const lines: string[] = []
   const roles: LineRole[] = []
-  lines.push(`┌${bar(left, '处境')}${two ? `┬${bar(right, '读数')}` : ''}┐`)
-  roles.push('border')
+  // 框名（U3）：阅读面开着时那个框叫「阅读面」，它那一行报 `readHeading`（主题里是加粗）——整块
+  // 地方给的是它，框就得说它。两栏那一档照旧是「处境 / 读数」。
+  lines.push(`┌${bar(left, readingOn ? '阅读面' : '处境')}${two ? `┬${bar(right, '读数')}` : ''}┐`)
+  roles.push(readingOn ? 'readHeading' : 'border')
   for (const one of shown) {
     // 候选那一层**横贯整栏**（它是临时的一层，不参与左右两栏的分工）。
     if (one.full === true) {
