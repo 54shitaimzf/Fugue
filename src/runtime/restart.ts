@@ -192,7 +192,8 @@ export async function handoffAt(i: {
   return { handoff, prompt, seq, next: successorOf(i.state, prompt) }
 }
 
-/** 后继的名字：`<前任>-2` · `<前任>-3`……**同一个分支上的一个新 `AgentId`**。 */
-export function successorNameOf(agent: string, nth: number): string {
-  return nth <= 1 ? `${agent}-2` : `${agent}-${nth + 1}`
-}
+// **这里原先有一个 `successorNameOf(agent, nth)`**（0.2.9 ⑤ 撤了）：它算的是"后继叫
+// `<前任>-<第几次>`"这条命名规则的**第二份实现**，而这一份里**没有一处生产消费者调它**——真的
+// 那一处在 `round/driver.ts` 交接那一步（`const successor = \`${agent}-${steps + 1}\``，同一个
+// 分支上的一个新 `AgentId`）。名字只有一处定义，所以规则留生产那一处，断言搬到真跑出来的那条
+// `agent/handoff` 上（`round/driver.test.ts`，量的是逐字的后继名）。
