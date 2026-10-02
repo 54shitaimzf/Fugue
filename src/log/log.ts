@@ -154,23 +154,63 @@ async function listWriters(root: string): Promise<WriterId[]> {
 }
 
 /**
- * 从文件尾取回该 writer 的下一个序号。**只读一个窗口**，不读整份日志——
+ * 窗口里最后一条完整行的**字节终点**（窗口内坐标；加上窗口起点就是磁盘偏移）。`0` = 窗口里一条
+ * 完整行都没有。
+ *
+ * **不能拿字符串算这个位置**：窗口的第一行可能从半个码点中间开始，那段字节解出来是替换符
+ * （U+FFFD，三个字节），拿解出来的字符串再去量，坐标就整体挪了位。`\n` 在 UTF-8 里是单字节，
+ * 所以最后一个 `0x0a` 在字节里的位置就是它在磁盘上的位置——这一份量的就是它。
+ *
+ * 今天这条坐标只用来切出"完整的那一段"；将来那一步（截掉未提交的尾段）要拿它当文件偏移用，
+ * 所以现在就从原字节上取。
+ */
+export function completeEndOf(buf: Buffer): number {
+  const lastNewline = buf.lastIndexOf(0x0a)
+  return lastNewline === -1 ? 0 : lastNewline + 1
+}
+
+/**
+ * 把窗口读满，返回**真正读到的字节数**。
+ *
+ * **`read` 允许短读**（返回的字节数比要的少，甚至为 0），所以"读了一次"不等于"窗口在那儿"：
+ * 拿半份窗口去算序号，是在替这份日志猜。读到 0 就停下（提前到了文件尾，或者文件在读取中变短）
+ * ——拒不拒由调用方定，这一层只如实报数。
+ */
+export async function readFully(
+  fh: { read(buffer: Buffer, offset: number, length: number, position: number): Promise<{ bytesRead: number }> },
+  buf: Buffer,
+  start: number,
+): Promise<number> {
+  let used = 0
+  while (used < buf.length) {
+    const read = await fh.read(buf, used, buf.length - used, start + used)
+    if (read.bytesRead === 0) break
+    used += read.bytesRead
+  }
+  return used
+}
+
+/**
+ * 写者准备时从文件尾取回下一个序号。**只读一个窗口**，不读整份日志——
  * 追加的代价因此与已有日志的长度无关（架构 § 9.4 的重建代价上界）。
  */
 async function tailSeq(fh: FileHandle, w: WriterId): Promise<LogSeq> {
   const st = await fh.stat()
   if (st.size === 0) return 0
   const want = Math.min(st.size, TAIL_WINDOW)
+  const start = st.size - want
   const buf = Buffer.alloc(want)
-  await fh.read(buf, 0, want, st.size - want)
-  let text = buf.toString('utf8')
+  // **窗口要读满**：读不满就没有"这份日志的尾部"可谈（文件在读取中变短），那不是能猜的事。
+  const used = await readFully(fh, buf, start)
+  if (used !== want) throw new LogCorruptError(w, 0, '日志尾部在读取中改变，拒绝恢复')
+  // 完整的那一段从**原字节**上切（见 `completeEndOf`），不从解出来的字符串上切。
+  let text = buf.toString('utf8', 0, completeEndOf(buf))
   if (want < st.size) {
     // 窗口的第一行可能被切断，丢掉它。
     const nl = text.indexOf('\n')
     text = nl === -1 ? '' : text.slice(nl + 1)
   }
-  const complete = text.endsWith('\n') ? text : text.slice(0, text.lastIndexOf('\n') + 1)
-  if (complete.length === 0) {
+  if (text.length === 0) {
     // 窗口里一条完整行都没有。两种情形必须分开：整份文件就是一条半行（崩溃在第一
     // 次追加的中间，序号从 1 起）；或者窗口比一行还短——那就不能猜。
     if (want < st.size) {
@@ -178,9 +218,14 @@ async function tailSeq(fh: FileHandle, w: WriterId): Promise<LogSeq> {
     }
     return 0
   }
-  const last = complete.slice(0, -1)
+  const last = text.slice(0, -1)
   const d = decodeLine(last.slice(last.lastIndexOf('\n') + 1))
   if (!d.ok) throw new LogCorruptError(w, 0, `日志尾部不可解析：${d.reason}`)
+  // **信封里的 writer 也要与这一份文件名对得上**：读那一侧早就查（`parseWriterText`），写这一侧
+  // 原先不查——一份改名或拷错的日志会顺着别人的序号往下写，而那段序号区间不属于它。
+  if (d.pos.writer !== w) {
+    throw new LogCorruptError(w, 0, `信封里的 writer 与文件名不符：${JSON.stringify(d.pos.writer)}`)
+  }
   return d.pos.seq
 }
 
@@ -195,6 +240,10 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
   const sync: SyncLevel = opts.sync ?? 'batch'
   const batchEvery = opts.batchEvery ?? DEFAULT_BATCH_EVERY
   const writers = new Map<WriterId, WriterState>()
+  // **同一个 writer 只初始化一次**：两笔并发追加都走 `state(w)`，各开一个句柄、各自从尾部读一次
+  // 序号——两个句柄于是拿到同一个序号，而"同一 writer 内序号唯一"是承重的。在飞的初始化挂在这
+  // 一份表里，后来的人等它。
+  const initializing = new Map<WriterId, Promise<WriterState>>()
   // **拿不到就当场抛**——不等一个不知道多久的持者（`hold.ts` 的头一段）。
   const hold: Hold | null = opts.write === undefined ? null : holdWriter(root, opts.write)
 
@@ -227,22 +276,33 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
     return rows
   }
 
-  async function state(w: WriterId): Promise<WriterState> {
+  function state(w: WriterId): Promise<WriterState> {
     const hit = writers.get(w)
-    if (hit) return hit
+    if (hit !== undefined) return Promise.resolve(hit)
+    const pending = initializing.get(w)
+    if (pending !== undefined) return pending
     const file = logFileOf(root, w)
-    await mkdir(dirname(file), { recursive: true })
-    const fh = await open(file, 'a+')
-    let nextSeq: LogSeq
-    try {
-      nextSeq = (await tailSeq(fh, w)) + 1
-    } catch (err) {
-      await fh.close()
-      throw err
+    const opening = (async (): Promise<WriterState> => {
+      await mkdir(dirname(file), { recursive: true })
+      const fh = await open(file, 'a+')
+      let nextSeq: LogSeq
+      try {
+        nextSeq = (await tailSeq(fh, w)) + 1
+      } catch (err) {
+        await fh.close()
+        throw err
+      }
+      const s: WriterState = { fh, nextSeq, sinceSync: 0, chain: Promise.resolve() }
+      writers.set(w, s)
+      return s
+    })()
+    initializing.set(w, opening)
+    // **两个收尾分支都只删自己那一份**：失败不留在表里，后一次可以重试（谁的表谁收拾）。
+    const settled = (): void => {
+      if (initializing.get(w) === opening) initializing.delete(w)
     }
-    const s: WriterState = { fh, nextSeq, sinceSync: 0, chain: Promise.resolve() }
-    writers.set(w, s)
-    return s
+    void opening.then(settled, settled)
+    return opening
   }
 
   /** 同一个 writer 内序号必须唯一且有序，所以它的追加串成一条链；跨 writer 不串。 */
