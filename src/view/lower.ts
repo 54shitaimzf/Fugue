@@ -14,6 +14,8 @@ export function lowerAt(truth: Truth, base: CommitId | null): Lower {
   return {
     base,
     readBlob: (id: BlobId) => truth.getBlob(id),
+    // **id 的算法住真源那一侧**：视图不再自己拼 `blob <n>\0` 那一段，改问 git（内容寻址、幂等）。
+    putBlob: (bytes: Uint8Array) => truth.putBlob(bytes),
     stat: (path: RelPath): Promise<EntryMeta | null> =>
       base === null ? Promise.resolve(null) : truth.statAt(base, path),
     read: (path: RelPath): Promise<Uint8Array | null> =>

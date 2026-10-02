@@ -13,14 +13,20 @@ trap 'rm -rf "$W"' EXIT
 echo "git --version : $($GIT --version)"
 echo "本仓库格式    : $($GIT -C "$REPO" rev-parse --show-object-format)"
 
-# 同一个内容在两把尺下的 id：`view.ts` 的 `blobIdOf` 用的是 sha1 那一条。
+# 同一个内容在两把尺下是两个 id——**算法是仓库的性质**，所以视图那一侧不再自己算
+# （0.2.7 ③：条目带真源给的 id，`Lower.putBlob` 是唯一的取值处）。这一段留着是对照读数：
+# 两把尺确实不同，而 0.2.6 ⑤ 那张红读数就是拿第一把尺去对第二把库算出来的。
 node -e '
 const {createHash} = require("node:crypto")
 const b = Buffer.from("第一版\n")
-const h = createHash("sha1")
-h.update(Buffer.from("blob " + b.length + "\0", "utf8")); h.update(b)
-console.log("内容 第一版\\n 的两把 id：")
-console.log("  view.blobIdOf 算的（sha1 口径）:", h.digest("hex"))
+const one = (alg) => {
+  const h = createHash(alg)
+  h.update(Buffer.from("blob " + b.length + "\0", "utf8")); h.update(b)
+  return h.digest("hex")
+}
+console.log("内容 第一版\\n 在 sha1 与 sha256 两把尺下：")
+console.log("  sha1  :", one("sha1"))
+console.log("  sha256:", one("sha256"))
 '
 
 one() {
@@ -61,5 +67,7 @@ one sha256
 echo
 echo "########## 读数怎么读 ##########"
 echo "  · sha1 那一档是**对照**：同一串命令走通，HEAD 上看得见 a.txt。"
-echo "  · sha256 那一档里，日志自己记的 blob 是 64 位（git 给的），"
-echo "    而视图重建树时用的是自己算的 40 位——git 只认 64 位，于是当场拒。"
+echo "  · sha256 那一档现在与 sha1 那一档一样绿：commit EXIT=0 · refs/heads/main 建起来 ·"
+echo "    ls-tree 看得见 a.txt · 内容读得回来。"
+echo "  · 0.2.7 ③ 之前那一档红在 commit：视图按 sha1 自己算的 40 位 id 与库里 git 给的 64 位对不上"
+echo "    （fatal: input format error）。现在 id 一律由真源给（Lower.putBlob），视图一处不算。"
