@@ -22,7 +22,7 @@ import { crc32 } from 'node:zlib'
 import type { LogEvent } from './events.ts'
 import type { LogPos, LogSeq, WriterId } from '../terms.ts'
 
-// **这里原先有一个 `RESERVED` 与一趟逐事件的载荷扫描**（0.2.9 ⑥ 撤了）：载荷里出现 `seq` ·
+// **这里原先有一个 `RESERVED` 与一趟逐事件的载荷扫描**（清障批 ⑥ 撤了）：载荷里出现 `seq` ·
 // `writer` · `crc` · `t` 这四个信封字段之一时当场抛。撤它的理由与 ② 那一批同一条：它守的是
 // **我们自己两份声明之间**的一致性（`events.ts` 的联合 ↔ 这里的信封形状），而那一份里本来
 // 没有一格带这四个名字——于是那一趟在真状态上永远不响，只在有人往联合里加一个同名字段时才响
@@ -61,7 +61,7 @@ export function canonicalJson(value: unknown): string {
 /** 把一条事件编成一行（不含行终止符）。 */
 export function encodeEvent(seq: LogSeq, writer: WriterId, event: LogEvent): string {
   const { t, ...payload } = event as { t: string } & Record<string, unknown>
-  // **载荷里没有信封那四个键这件事不在这一趟判**（0.2.9 ⑥）：它是两份声明之间的事，判据在
+  // **载荷里没有信封那四个键这件事不在这一趟判**（清障批 ⑥）：它是两份声明之间的事，判据在
   // `tools/check-invariants.ts` 第五节。理由见上面那一段。
   const crc = crcHex(canonicalJson({ seq, writer, t, ...payload }))
   return JSON.stringify({ seq, writer, crc, t, ...payload })

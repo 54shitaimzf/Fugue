@@ -351,7 +351,7 @@ test('嵌套保留前缀不妨碍兄弟文件正常推进', async () => {
   }
 })
 
-test('advance 不白读整树：一趟问根的 `statAt` 都没调（0.2.9 ⑦ 撤掉的那一处）', async () => {
+test('advance 不白读整树：一趟问根的 `statAt` 都没调（清障批 ⑦ 撤掉的那一处）', async () => {
   const { real, store } = scratch()
   const t = openTruth(store)
   try {
@@ -372,7 +372,7 @@ test('advance 不白读整树：一趟问根的 `statAt` 都没调（0.2.9 ⑦ �
     }) as TruthHandle
 
     const out = await advance({ truth: spied, realRoot: real }, commit)
-    assert.deepEqual(wholeTree, [], 'advance 又问了一遍整棵树（0.2.9 ⑦ 撤掉的那处白读回来了）')
+    assert.deepEqual(wholeTree, [], 'advance 又问了一遍整棵树（清障批 ⑦ 撤掉的那处白读回来了）')
     assert.deepEqual(out.written, ['a.txt', 'dir/b.txt'])
     assert.equal(readFileSync(join(real, 'a.txt'), 'utf8'), '新的\n')
     assert.equal(readFileSync(join(real, 'dir', 'b.txt'), 'utf8'), '乙\n')

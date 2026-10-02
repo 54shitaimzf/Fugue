@@ -186,7 +186,7 @@ function validate(
  *
  * 读者是 `tools/check-invariants.ts` 第四节：拿产品这个构造器造出来的真契约（三个变体各若干份）
  * 逐份量，另带两条负对照（给实现型多塞一个字段 · 从实现型里去掉一个必有的字段），两条都答得出。
- * 它接的正是 `build()` 里原先那趟自证（0.2.9 ⑧ 尾句）守的那一档——**已知字段长在错的变体上**：
+ * 它接的正是 `build()` 里原先那趟自证（清障批 ⑧ 尾句）守的那一档——**已知字段长在错的变体上**：
  * `question` 挂在实现型上时 `checkContract` 认得这个字段、也认它有值域持有者，只有这一份表认得出
  * 它不该在这一格。
  *
@@ -312,7 +312,7 @@ export function build(intent: Intent, deps: BuildDeps): Built {
     } satisfies ResolveContract)
   }
 
-  // **这里原先有一趟自证**（0.2.9 ⑧ 尾句撤了）：`variantFieldsMatch(VARIANT_FIELDS, out)`，不空就
+  // **这里原先有一趟自证**（清障批 ⑧ 尾句撤了）：`variantFieldsMatch(VARIANT_FIELDS, out)`，不空就
   // 抛 `BuildError`。它比的是**本模块刚 push 进去的那几个对象**与 `VARIANT_FIELDS` 那张表，而
   // 那几个对象是 `satisfies ImplementContract` 这一类逐字写的——真状态上它不响，只在有人改字面量
   // 又忘了改表时才响一次。判据搬进 `tools/check-invariants.ts` 第四节（拿真契约跑，两条负对照，

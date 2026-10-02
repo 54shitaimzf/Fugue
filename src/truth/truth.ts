@@ -531,7 +531,7 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
       }
       return entries.map((e) => {
         const kind = kindOf(e.mode)
-        // **分两支写，是因为那个 0 不是"拿不到就给个默认"**（0.2.9 ④ 到这里看过，结论：这一处
+        // **分两支写，是因为那个 0 不是"拿不到就给个默认"**（清障批 ④ 到这里看过，结论：这一处
         // 不是造值）。`entries.ts` 的 `EntryMeta.size` 那一句写着："dir 与 gitlink 恒为 0——
         // 它们没有字节可数，这个 0 是形状要求的占位，不是读数"。所以非 blob 那一支就是 0，
         // 而 blob 那一支取不到读数当场红——原先那句 `size ?? 0` 把两件事写成同一个形状，

@@ -198,7 +198,7 @@ test('守卫与两个上界：意图没建立不走，打回超界才 Aborted', 
   assert.equal(step('Idle', 'land', { intent: true }), 'Planning')
 
   // 打回那两条分叉：还有余量就回 `Working`，超界才 `Aborted`（架构 § 8.13 图上那两条）。
-  // **事件名直接写在这里**（0.2.9 ⑤）：原先经由 `verdictCause(pass, retriesLeft)` 算出来，而那个
+  // **事件名直接写在这里**（清障批 ⑤）：原先经由 `verdictCause(pass, retriesLeft)` 算出来，而那个
   // 函数是 `round/execute.ts` 验收那一步的第二份实现、没有生产消费者——撤了。那条判据
   // （没过 ∧ 有余量 → `verdict-fail`）在真跑的路上由 `cli/chain.test.ts` 的序 15 量着。
   assert.equal(step('Verifying', 'verdict-fail', { retryLeft: true }), 'Working')
