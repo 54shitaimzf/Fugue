@@ -1,0 +1,8 @@
+{
+  "proofRawSha256": "c73f1a37a77d5632eee8fc894cd1eb3a0eb2bf97fa290f3cd28530735b91c882",
+  "executedHarnessSha256": "b31acae12b98c2b677a0e33c4ee21d5339e493f8aac7779156b9db9ce18200d2",
+  "priorNativeRawSha256": "cbeae66bac6f088001eb9c84642efa1ebb917b11f823090a0770dfe2ce2caf06",
+  "productSource": "2a721de1e33ac6f0c87a58577b4639de72b3856c",
+  "recordedDeveloperHead": "619dafe77955ea2118259c5e79cbf90a99d37f2b",
+  "note": "The complete2a source manifest is retained in provenance.json. Probe imports compare to that prior raw source graph before allocation. Fixture-only negative filter proof; no product edit or new baseline timing."
+}

@@ -33,13 +33,95 @@ test('balanced unquantified literal groups preserve concatenation across their b
 })
 
 test('unsupported or malformed group contents refuse the entire index condition', () => {
-  for (const pattern of ['rare(?:_hit)?', 'rare(_hit)*', 'rare(_hit)+', '(abc){1}', '(abc|xyz)',
-    '(?:abc|xyz)', '(abc*)', '(?:abc.)', '(?:[abc])', '(?=abc)', '(?!abc)', '(?<=abc)',
+  for (const pattern of ['rare(_hit)+', '(abc){1}', '(abc|xyz)',
+    '(?:abc|xyz)', '(abc*)', '(?:[abc])', '(?=abc)', '(?!abc)', '(?<=abc)',
     '(?<!abc)', '(?<name>abc)', '(?i:abc)', '(abc)\\1', '(?:\\wabc)', '(?:^abc)', '(abc$)',
     'abc)', '(abc', '(?:abc', '(?abc)', '(?:abc)$$']) {
     assert.equal(requiredLiteralTrigrams(pattern, ''), null, pattern)
   }
   for (const flags of ['i', 'm', 'u', 'g', 's', 'y', 'v']) assert.equal(requiredLiteralTrigrams('rare(?:_hit)', flags), null)
+})
+
+test('mandatory runs stop at optional children and variable atoms without false bridges', () => {
+  for (const pattern of ['rare(_hit)?', 'rare(?:_hit)*', '^(rare)(?:_hit)?$']) {
+    assert.deepEqual(requiredLiteralTrigrams(pattern, ''), ['are', 'rar'], pattern)
+  }
+  assert.deepEqual(requiredLiteralTrigrams('rare.*hit', ''), ['are', 'hit', 'rar'])
+  assert.deepEqual(requiredLiteralTrigrams('abc?def', ''), ['def'])
+  assert.equal(requiredLiteralTrigrams('ab(c)?de', ''), null)
+  assert.deepEqual(requiredLiteralTrigrams('foo(needle.*tail)?bar', ''), ['bar', 'foo'])
+  assert.deepEqual(requiredLiteralTrigrams('abc(?:x(y)?z)?def', ''), ['abc', 'def'])
+  assert.deepEqual(requiredLiteralTrigrams('abc()*def', ''), ['abc', 'def'])
+  assert.deepEqual(requiredLiteralTrigrams('abc.def', ''), ['abc', 'def'])
+  assert.deepEqual(requiredLiteralTrigrams('(?:abc.)', ''), ['abc'])
+  assert.equal(requiredLiteralTrigrams('(abc)*', ''), null)
+  assert.equal(requiredLiteralTrigrams('.*', ''), null)
+  // No flags means the quantifier applies to the LOW surrogate atom, not the whole emoji.
+  assert.deepEqual(requiredLiteralTrigrams('ab😀?def', ''), ['ab\ud83d', 'def'])
+  for (const subject of ['ab😀def', 'ab\ud83ddef']) {
+    assert.ok(new RegExp('ab😀?def').test(subject))
+    for (const gram of requiredLiteralTrigrams('ab😀?def', '')!) assert.ok(subject.includes(gram))
+  }
+})
+
+test('unsupported quantifiers and optional-group contents still refuse the whole condition', () => {
+  for (const pattern of ['?abc', '*abc', 'abc??', 'abc**', 'abc?*', 'abc*?', 'abc.*?', 'abc.+',
+    'abc{0}def', 'abc(?:x|y)?def', 'abc(?:x+)def', 'abc(?=x)?def', 'abc[xyz]?def', 'abc\\s*def']) {
+    assert.equal(requiredLiteralTrigrams(pattern, ''), null, pattern)
+  }
+  const invalidTail = 'x'.repeat(MAX_LITERAL_PATTERN_UNITS - 1) + '|'
+  assert.equal(requiredLiteralTrigrams(invalidTail, ''), null, 'early gram cap cannot hide an unsupported tail')
+})
+
+test('exhaustive variable-barrier subjects preserve every mandatory-run condition', () => {
+  const subjects = ['']
+  for (let length = 1; length <= 8; length++) {
+    for (let bits = 0; bits < 2 ** length; bits++) subjects.push(bits.toString(2).padStart(length, '0').replace(/0/g, 'a').replace(/1/g, 'b'))
+  }
+  let matching = 0, accepted = 0
+  for (const before of ['', 'ab', 'aab', 'abab']) {
+    for (const after of ['', 'ba', 'bba', 'baba']) {
+      for (const barrier of ['a?', 'b*', '.', '.*', '(ab)?', '(?:ab)*', '(?:a(b)?a)?', '()?', '(?:)']) {
+        for (const anchors of [false, true]) {
+          const pattern = (anchors ? '^' : '') + before + barrier + after + (anchors ? '$' : '')
+          const required = requiredLiteralTrigrams(pattern, '')
+          if (required === null) continue
+          accepted++
+          const regex = new RegExp(pattern)
+          for (const subject of subjects) {
+            if (!regex.test(subject)) continue
+            matching++
+            for (const gram of required) assert.ok(subject.includes(gram), JSON.stringify({ pattern, subject, gram }))
+          }
+        }
+      }
+    }
+  }
+  assert.ok(accepted > 100, `accepted conditions must be exercised: ${accepted}`)
+  assert.ok(matching > 1000, `true matches must be exercised: ${matching}`)
+})
+
+test('seeded Unicode optional subtrees never leak their conditions or bridge their neighbors', () => {
+  let seed = 0x3ab142
+  const next = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed }
+  const alphabet = ['a', '.', '$', '^', '(', ')', '|', '\\', '中', '😀', '�', '\ud800']
+  const word = () => Array.from({ length: 3 + next() % 5 }, () => alphabet[next() % alphabet.length]!).join('')
+  const escape = (literal: string) => literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  let matching = 0
+  for (let turn = 0; turn < 2000; turn++) {
+    const before = word(), middle = word(), after = word()
+    const optional = next() % 2 ? '?' : '*'
+    const pattern = '^' + escape(before) + '(' + escape(middle) + ')' + optional + escape(after) + '$'
+    const required = requiredLiteralTrigrams(pattern, '')
+    assert.ok(required !== null)
+    const regex = new RegExp(pattern)
+    for (const subject of [before + after, before + middle + after, before + middle + middle + after, before, after]) {
+      if (!regex.test(subject)) continue
+      matching++
+      for (const gram of required) assert.ok(subject.includes(gram), JSON.stringify({ pattern, subject, gram }))
+    }
+  }
+  assert.ok(matching >= 4000)
 })
 
 test('group admission is iterative and bounded without rejecting the original regex', () => {
@@ -201,7 +283,7 @@ test('a seeded adversarial matrix never requires a gram some matching string lac
 
 test('inserting unsupported regex syntax into an accepted literal forces the scan path', () => {
   assert.deepEqual(requiredLiteralTrigrams('abcabc', ''), ['abc', 'bca', 'cab'])
-  for (const meta of ['*', '?', '+', '|', '[a]', '(?:x)?', '(x)+', '{2}', '.', '(?=x)', '(?!x)']) {
+  for (const meta of ['+', '|', '[a]', '(?:x)+', '(x)+', '{2}', '(?=x)', '(?!x)']) {
     for (let at = 0; at <= 6; at++) {
       const pattern = 'abcabc'.slice(0, at) + meta + 'abcabc'.slice(at)
       assert.equal(requiredLiteralTrigrams(pattern, ''), null, pattern)

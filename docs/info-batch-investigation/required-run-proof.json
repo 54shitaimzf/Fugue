@@ -1,0 +1,142 @@
+{
+  "schema": 1,
+  "recordedHead": "619dafe77955ea2118259c5e79cbf90a99d37f2b",
+  "equivalentProductSource": "2a721de1e33ac6f0c87a58577b4639de72b3856c",
+  "sourceHashes": {
+    "src/tools/execute.ts": "df5a8a7a31de43027f03f0bc432be5b209557f48bff74ec0632690783241cfb4",
+    "src/tools/host.ts": "b4b3ced709a5650b4c0a09483fbe9442ffed487f2e0ed78e74d53a99baa7362e",
+    "src/tools/grep-verifier.ts": "99e38f5cddc3e1cb24fb78a0d24bdbe0f6f6588a0b455737690aa09db010e2de",
+    "src/tools/prefetch-plan.ts": "bbfe24a2835156601738a54ae4303eeeea0b852df88ed2998957ca6afbcb5c0f",
+    "src/tools/walk.ts": "27ac24c25c86e8a1e7f4f541baff82e8f0802114c23a5ffe4503c55dad0beaa0",
+    "src/search/view-cohort.ts": "e9bc441b15e1f9945c469db7b10a5b7531a797a45bf3517555772e3bb9c1b743",
+    "src/search/cohort-store.ts": "b0b4692e1bd36d7caa10720179dd95db9ebcb83a54bca265ac92de25877f493d",
+    "src/search/cohort-format.ts": "09734b5e789e3a32f27aa90de105285d0455e9e42b6b4e222ae3ebbd5bc3ca88",
+    "src/search/index-format.ts": "7074b2065aad9770c67990b1265ddbf55ef14d50a946954ce8fd6307bb2bcf83",
+    "src/search/regex-literal.ts": "a6cde402e4a0052c3715f0d526a370a0f81498146e0f52cb4c98e8a588d90881",
+    "src/truth/truth.ts": "ae8200c658284cdfe0fc620ab5b9d703d514ec274f1edaa828e390f9835c9f95",
+    "src/truth/git.ts": "5ebf031332af0a633911bae006428c0c3a79d418c08a49e9cd01861bd6ca00db",
+    "src/view/view.ts": "28b72704d977bd3396f67c12b6d243d2308b20f2f68684d5dc485a2131c58088",
+    "src/view/lower.ts": "31c9e4253f9b65524473998d2e9a21c0525639ae12d77f9f4a506a688b2ccac8",
+    "src/log/log.ts": "bece2dd33b50d54c8c5b08ebc9de86ff49ebafb616b430f30b3d0ea69e4bbcfc",
+    "src/round/head.ts": "c49f9ff50b7cbbfc11426e1c89af9fe244b55d7553ab03dfb7828ccf171c04dd",
+    "src/roots/roots.ts": "ad6091a3ea0f97ecbd4563c6a2a3359f5a5864848468dd8fcd85480295e18fa3"
+  },
+  "scriptSha256": "b31acae12b98c2b677a0e33c4ee21d5339e493f8aac7779156b9db9ce18200d2",
+  "priorRawSha256": "cbeae66bac6f088001eb9c84642efa1ebb917b11f823090a0770dfe2ce2caf06",
+  "corpusSha256": "98396c208e31e32abf35e36b0e7129b2ebe9d0b20b2f0d47ef294f40324cab4f",
+  "files": 512,
+  "bytes": 16777216,
+  "pattern": "rare(_hit)?",
+  "manuallyProvedMandatoryLiteral": "rare",
+  "requiredGrams": [
+    "are",
+    "rar"
+  ],
+  "preparation": {
+    "ms": 1160.4195470000004,
+    "indexDelta": {
+      "queries": 0,
+      "diskReads": 0,
+      "sourceReads": 512,
+      "reusedRecords": 0,
+      "prefetches": 4,
+      "builds": 1,
+      "fallbacks": 0,
+      "active": 0
+    }
+  },
+  "artifact": {
+    "bytes": 466926,
+    "sha256": "13ecfb7b23b134207e7a41947e9653fee2d9e7dbf3d4fd8072084accfbf7bca6"
+  },
+  "recordedNativeBaseline": {
+    "sourceReads": 512,
+    "ms": 165.3068170000006,
+    "receiptSha256": "d3cb715adc790e71f8197a01703f1d8c6a80350716aca02c66f55751651329af"
+  },
+  "proof": {
+    "walkDelta": {
+      "gitSpawns": 1,
+      "gitRequests": 5,
+      "blobHits": 0,
+      "blobMisses": 0,
+      "blobEntries": 0,
+      "blobBytes": 0,
+      "blobEvictions": 0,
+      "blobCacheBytes": 0,
+      "infoHits": 0,
+      "infoMisses": 512,
+      "infoEntries": 512
+    },
+    "filterDelta": {
+      "truth": {
+        "gitSpawns": 0,
+        "gitRequests": 0,
+        "blobHits": 0,
+        "blobMisses": 0,
+        "blobEntries": 0,
+        "blobBytes": 0,
+        "blobEvictions": 0,
+        "blobCacheBytes": 0,
+        "infoHits": 1024,
+        "infoMisses": 0,
+        "infoEntries": 0
+      },
+      "index": {
+        "queries": 4,
+        "diskReads": 1,
+        "sourceReads": 0,
+        "reusedRecords": 0,
+        "prefetches": 0,
+        "builds": 0,
+        "fallbacks": 0,
+        "active": 0
+      },
+      "store": {
+        "reads": 1,
+        "writes": 0,
+        "bytesRead": 466926,
+        "stored": 0,
+        "failures": 0,
+        "closeFailures": 0,
+        "active": 0
+      }
+    },
+    "survivors": [
+      "corpus/file-511"
+    ],
+    "unchangedRegexResult": {
+      "ok": true,
+      "output": "1 lines:\ncorpus/file-511:256:dense_hit f511 l255 const value = 42; xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx rare_hit "
+    },
+    "receiptSha256": "d3cb715adc790e71f8197a01703f1d8c6a80350716aca02c66f55751651329af",
+    "queryDelta": {
+      "truth": {
+        "gitSpawns": 0,
+        "gitRequests": 1,
+        "blobHits": 1,
+        "blobMisses": 0,
+        "blobEntries": 1,
+        "blobBytes": 32768,
+        "blobEvictions": 0,
+        "blobCacheBytes": 0,
+        "infoHits": 3,
+        "infoMisses": 0,
+        "infoEntries": 0
+      },
+      "verification": {
+        "hits": 0,
+        "misses": 1,
+        "sourceReads": 1,
+        "testedLines": 257,
+        "verifiedSources": 1,
+        "rejectedSources": 0,
+        "installed": 1,
+        "evictions": 0,
+        "entries": 1,
+        "bytes": 488
+      }
+    }
+  },
+  "boundary": "Single native bounded cohort admission mechanism proof on exact2a product bytes, linked to already-recorded native512-source quantified baseline. No baseline rerun, parser edit, new AST or production elision. Manual mandatory prefix is mathematically required by exact optional-suffix pattern. Counterfactual fixture changes only walkDetailed after original native eager enumeration and actual controlled cohort negatives; original regex/reader/prefetch stays unchanged. One survivor source reproduces complete baseline FaceResult. Setup/preparation/filtering separately observable; no end-to-end optimization timing or grammar-general safety certificate, default activation or cold50ms claim."
+}

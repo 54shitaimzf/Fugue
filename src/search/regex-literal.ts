@@ -14,10 +14,34 @@ function endsWithAnchor(pattern: string): boolean {
   return escapes % 2 === 0
 }
 
+interface LiteralFacts {
+  /** Non-null only when the entire child matches exactly this fixed text. */
+  readonly fixed: string | null
+  readonly runs: readonly string[]
+  readonly quantified: boolean
+}
+
+function sequenceFacts(children: readonly LiteralFacts[]): LiteralFacts {
+  const runs: string[] = []
+  let fixed = '', variable = false
+  for (const child of children) {
+    if (child.fixed !== null) fixed += child.fixed
+    else {
+      if (fixed !== '') runs.push(fixed)
+      fixed = ''
+      variable = true
+      runs.push(...child.runs)
+    }
+  }
+  if (!variable) return { fixed, runs: [], quantified: false }
+  if (fixed !== '') runs.push(fixed)
+  return { fixed: null, runs, quantified: false }
+}
+
 /**
- * 支持普通 literal、单个外层 ^/$、转义标点与不带量词的 literal 捕获/非捕获分组。
- * 分组只连接固定文本，不改变必需子串。量词、选择、类、其他分组、反向引用、
- * 字符/边界转义和任何 flags 都退回扫描。尤其不把一个量词后的 literal 当成必需的。
+ * 固定 literal/分组连接；dot 是未知字符边界，?/* 丢掉前一个完整 atom/group 的全部条件。
+ * 绝不跨可变/可选边界造连续 literal。其他量词、选择、类、分组、反向引用、
+ * 字符/边界转义和任何 flags 都退回扫描。
  * 返回非空的、去重有序的三个 UTF-16 code units；与 Buffer UTF-8 解码后的 JS RegExp 一致。
  *
  * `flags` **必传**，而且要从编译这条 RegExp 的同一处传进来：整个模块的安全性建立在「任何
@@ -30,36 +54,50 @@ export function requiredLiteralTrigrams(pattern: string, flags: string): readonl
   let source = pattern.startsWith('^') ? pattern.slice(1) : pattern
   if (endsWithAnchor(source)) source = source.slice(0, -1)
 
-  let literal = ''
-  let depth = 0
+  // One frame per group, at most 64 deep and 4096 source units in total.
+  const frames: LiteralFacts[][] = [[]]
   for (let at = 0; at < source.length; at++) {
     const char = source[at]!
+    const children = frames[frames.length - 1]!
     if (char === '\\') {
       at++
       const escaped = source[at]
       if (escaped === undefined || !ESCAPED_LITERAL.has(escaped)) return null
-      literal += escaped
+      children.push({ fixed: escaped, runs: [], quantified: false })
     } else if (char === '(') {
-      if (++depth > MAX_LITERAL_GROUP_DEPTH) return null
+      if (frames.length > MAX_LITERAL_GROUP_DEPTH) return null
       if (source[at + 1] === '?') {
         if (source[at + 2] !== ':') return null
         at += 2
       }
+      frames.push([])
     } else if (char === ')') {
-      if (depth === 0) return null
-      depth--
+      if (frames.length === 1) return null
+      const group = sequenceFacts(frames.pop()!)
+      frames[frames.length - 1]!.push(group)
+    } else if (char === '?' || char === '*') {
+      const child = children[children.length - 1]
+      if (child === undefined || child.quantified) return null
+      // Zero occurrences are possible, so NO fact from this child is mandatory.
+      children[children.length - 1] = { fixed: null, runs: [], quantified: true }
+    } else if (char === '.') {
+      children.push({ fixed: null, runs: [], quantified: false })
     } else {
       if (META.has(char)) return null
-      literal += char
+      children.push({ fixed: char, runs: [], quantified: false })
     }
   }
-  if (depth !== 0 || literal.length < 3) return null
+  if (frames.length !== 1) return null
+  const facts = sequenceFacts(frames[0]!)
+  const runs = facts.fixed === null ? facts.runs : [facts.fixed]
 
   const grams = new Set<string>()
-  for (let at = 0; at + 2 < literal.length; at++) {
-    grams.add(literal.slice(at, at + 3))
-    // 一个必需 gram 子集仍是安全的过滤条件，少取只会多扫描，不会漏掉真匹配。
-    if (grams.size >= MAX_REQUIRED_TRIGRAMS) break
+  collect: for (const literal of runs) {
+    for (let at = 0; at + 2 < literal.length; at++) {
+      grams.add(literal.slice(at, at + 3))
+      // A bounded mandatory subset only admits extra candidates, never excludes a match.
+      if (grams.size >= MAX_REQUIRED_TRIGRAMS) break collect
+    }
   }
-  return [...grams].sort()
+  return grams.size === 0 ? null : [...grams].sort()
 }

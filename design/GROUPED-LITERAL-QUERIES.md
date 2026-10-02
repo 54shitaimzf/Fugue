@@ -1,5 +1,7 @@
 # Mandatory literal groups in optional indexed grep
 
+This records the initial fixed-group extension. The current bounded optional/dot admission and its mandatory-run proof are described in [mandatory literal runs](MANDATORY-LITERAL-RUNS.md); its unsupported forms still preserve the scanner fallback.
+
 ROADMAP §4's 0.3.3 query equivalence requires every indexed exclusion to preserve the original regular expression's matches. The optional extractor now accepts balanced, unquantified capture groups `(...)` and noncapture groups `(?:...)` when their entire contents are literal concatenation. For example, `rare(?:_hit)`, `rare(_hit)` and `rare_hit` all require the same fixed substring. Their UTF-16 trigrams are therefore mandatory for every true native match, including trigrams crossing group boundaries.
 
 This is an index-admission subset. Alternation, every quantifier, character classes, dot, lookaround, named or modifier groups, backreferences, unknown escapes, internal anchors and all flags still return `null` for the whole pattern. The existing regex scanner handles those queries. The single optional outside `^`/`$` anchors and escaped punctuation keep their original meaning; escaped parentheses, dollar and pipe are literal text. Empty unquantified groups contribute no text. Fewer than three literal code units never produce an exclusion condition.

@@ -78,3 +78,7 @@ execute 文件出现一次已见 Node cloned-data 传输错误，随后 execute/
 随后维护固定[日志围栏的根与寿命](log-fence-ownership.md)：创建时解析绝对根，私有描述符固定取得的 inode，释放一次且只移除已证明的当前名字。可选查询扩展到[无量词纯字面组](../design/GROUPED-LITERAL-QUERIES.md)，不改变原生 regex 匹配，只扩展安全候选过滤；量词/分支回退、真实编辑失效与三档回执由新控制覆盖。两项均不改事件/索引格式或默认启用策略；组合的精确 CI 独立记录。
 
 [准备后冷查询剖面与分组配对](prepared-cold-profile/group-pair.md)保留实际执行的 f7/697 本地源码图：稀疏组的源读取512→1，密集早停和 entropy 准备拒绝仍有额外 metadata/墙钟成本。code 非捕获组54.5ms仍超过冷50ms目标；新围栏/组合源码不借用这份旧图的性能证书。
+
+随后候选提取增加[必需字面串](../design/MANDATORY-LITERAL-RUNS.md)：只保留 dot 与可选段两侧独立必需的连续文本，可选子树与虚假的相邻拼接均不参与排除。真实 View/原正则回执与编辑失效另验。[metadata 批次调查](info-batch-investigation/README.md)的512/1024实验没有稳定墙钟收益，生产256保持不变；[单个选择性机会](info-batch-investigation/required-run-proof.md)仅证明候选与回执，不作为本组合的计时证书。
+
+[原生配对读数](required-runs-pair/README.md)另记录固定本地2a→1623图：选择性源读取512→1，512条 eager metadata检查保留；code可选组62.1ms、mixed dot-star56.3ms仍超50ms，dense与不支持语法的代价不隐藏。证据的原图/回执指纹保持原样，不转借为本组合或默认索引的全域性能承诺。
