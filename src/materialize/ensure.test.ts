@@ -122,7 +122,7 @@ interface Stage {
   readonly log: Awaited<ReturnType<typeof openLog>>
   edit(d: Delta): Promise<ViewRev>
   ensure(upTo?: ViewRev, opt?: MaterializeOptions): Promise<Awaited<ReturnType<typeof ensure>>>
-  /** 0.2.6 ②：`ensure` 落那一趟交给 `land.ts` 的那一份 options——手工摆中间态要用同一个形状。 */
+  /** ② 崩溃注入矩阵：`ensure` 落那一趟交给 `land.ts` 的那一份 options——手工摆中间态要用同一个形状。 */
   landOptionsOf(merged: string, overlay: boolean): LandOptions
   events(): LogEvent[]
   close(): Promise<void>
@@ -135,7 +135,7 @@ async function stage(f: Fixture): Promise<Stage> {
   const truth = openTruth(f.dir)
   const view = await loadView(log, AGENT, { lower: await lowerFor(truth, AGENT) })
   /**
-   * 视图那一侧的读口。**一处定义**：`ensure` 那一趟用它，0.2.6 ② 的崩溃矩阵也照它手工摆中间态
+   * 视图那一侧的读口。**一处定义**：`ensure` 那一趟用它，崩溃矩阵也照它手工摆中间态
    * ——两边各写一份的话，夹具会悄悄跟错形状（这正是"形状变了夹具当场红"要防的那件事）。
    * `rev` 是**活的**（每次现读）：视图每落一条 delta 它就往前动。
    */
@@ -173,7 +173,7 @@ async function stage(f: Fixture): Promise<Stage> {
         AGENT,
         upTo ?? view.rev,
       ),
-    // **0.2.6 ②**：`ensure` 落那一趟交给 `land.ts` 的那一份。崩溃矩阵拿它把"落了一半"直接摆
+    // **② 崩溃注入矩阵**：`ensure` 落那一趟交给 `land.ts` 的那一份。崩溃矩阵拿它把"落了一半"直接摆
     // 出来——**不 hook 产品代码**，调的就是产品那个入口（`landDeltas`）。
     landOptionsOf: (merged: string, overlay: boolean): LandOptions => ({
       target: merged as AbsPath,
@@ -757,7 +757,7 @@ test('⑨ ensure 不接受一个还没到的 rev：那个号会污染"清单落�
   }
 })
 
-// ────────────────────────────────── 0.2.6 ② · 崩溃注入矩阵（落地那一族）
+// ────────────────────────────────── ② 崩溃注入矩阵（落地那一族）
 
 /**
  * **手工摆产品会写下的中间态**：`applyEntry` 逐条目「临时名 → rename」，崩在这中间留下的就是
@@ -765,14 +765,14 @@ test('⑨ ensure 不接受一个还没到的 rev：那个号会污染"清单落�
  * （`landDeltas`）把前一条落下去，再把残件摆出来；残件名照 `land.ts` 的 `tmpName` 那个形状
  * （`.fugue-tmp-<pid>-<36 进制时刻>`，与目标同目录）。
  *
- * 每格三条（路线图 0.2.6 行）：**恢复成功**（再跑一次 `ensure` 把整批对完 · `verify-mat` 报 ok）·
+ * 每格三条（路线图维护批那一行）：**恢复成功**（再跑一次 `ensure` 把整批对完 · `verify-mat` 报 ok）·
  * **旧状态没被改坏**（没被这一批碰过的路径四样逐字节不变）· **下一次操作照常成功**。
  *
  * **两族分档各一遍**：`copy` 与 `hardlink-ro`（PR15 审查件 § 2 采纳 2 的 `for hard in [false,true]`）。
  * 机制将来给换入多加一步，这一族多一格就够——摆中间态靠的是 `landOptionsOf` 那一个口。
  */
 for (const strategy of ['copy', 'hardlink-ro'] as const) {
-  test(`0.2.6 ② · 落地落了一半（${strategy} 档 · 含残件）：恢复成功 · 旧状态没坏 · 下一次照常`, async () => {
+  test(`② 崩溃注入矩阵 · 落地落了一半（${strategy} 档 · 含残件）：恢复成功 · 旧状态没坏 · 下一次照常`, async () => {
     const f = fixture()
     const s = await stage(f)
     try {
@@ -851,7 +851,7 @@ for (const strategy of ['copy', 'hardlink-ro'] as const) {
  * `hardlink-ro` 档里声明过的只读子树**与底共享 inode**，就地 `chmod` 会穿透到真源——那时内容
  * 一样也得重写一遍（临时名 + rename 顺带断链）。
  */
-test('0.2.6 ② · 脱链：copy 档就地 chmod（inode · mtime 不动）· hardlink-ro 档必须断链', async () => {
+test('② 崩溃注入矩阵 · 脱链：copy 档就地 chmod（inode · mtime 不动）· hardlink-ro 档必须断链', async () => {
   for (const strategy of ['copy', 'hardlink-ro'] as const) {
     const f = fixture()
     const s = await stage(f)

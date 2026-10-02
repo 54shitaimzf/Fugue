@@ -251,7 +251,7 @@ test('P1c · 声明 full 而实测层不齐：起跑前拒并指两条出路；�
   // `<root>/.fugue/bin`（工具链缓存，见 `materialize/toolchain.ts`）——那是探测机制自己的缓存，
   // 不是"这一次拒"动的。先跑一趟把它热起来，下面那两趟才是干净的对照。
   assert.equal(fugueEnv(noBwrap, root, '--json', 'policy').code, 1)
-  // **0.2.6 ④ · 拒了之后什么都没动**：起跑前拒是"一条路径都没动"。快照里**必含账文件字节**
+  // **④ · 拒了之后什么都没动**：起跑前拒是"一条路径都没动"。快照里**必含账文件字节**
   // （`.fugue/log` 下每一份 `.jsonl` 的原始字节），所以"账被顺手写了一条"这一类也抓得住。
   const beforePolicy = snapshotOf([root])
   const denied = fugueEnv(noBwrap, root, '--json', 'policy')

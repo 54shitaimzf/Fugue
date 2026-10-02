@@ -144,7 +144,7 @@ test('面外调用：日志的 writer 标识进得去，提交点回得来', asy
   assert.deepEqual(r2.parents, [r.commit])
 })
 
-// ────────────────────────────────── 0.2.6 ② · 崩溃注入矩阵（提交那一族）
+// ────────────────────────────────── ② 崩溃注入矩阵（提交那一族）
 //
 // 出处：PR15 审查件 § 2 采纳 2——"它不去 hook 产品代码，而是**照着产品会写下的样子，手工把
 // 中间态摆出来**"；同一门手法在轮次那条路上摆了 CAS **之前**与**之后**各一格。
@@ -159,7 +159,7 @@ function logText(root: string, w: WriterId): string {
   return readFileSync(logFileOf(root, w), 'utf8')
 }
 
-test('0.2.6 ② · checkpoint 的中间态两格：CAS 之前 / CAS 之后日志之前', async (ctx) => {
+test('② 崩溃注入矩阵 · checkpoint 的中间态两格：CAS 之前 / CAS 之后日志之前', async (ctx) => {
   const root = tmpRoot()
   const writer = 'agent/r1/1' as WriterId
   const ref = refFor(writer)
