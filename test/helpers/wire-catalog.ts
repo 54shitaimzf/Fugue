@@ -1,19 +1,6 @@
-// 回放夹具里那份**工具目录** → 当前 `catalog()` 的那一份，**离线**改齐（不碰网、不读凭据）。
-//
-// 为什么要有这一层。`--wire-in` 按**请求字节逐字**核对（`src/model/http.ts` 的 `wireInTransport`），
-// 而工具目录的描述是请求字节的一部分。于是每改一句描述，录下来的那份请求就过期，`src/cli/chain.test.ts`
-// 序 1（验收照过 · 产物逐字节 · 每条调用逐条对上 · 围栏 full · 停因收敛）**一条都不再执行**——
-// 合并闸门长期红，而这一轮唯一的端到端验收就这么没了。
-//
-// **这不是"重录"**：重录要真跑一趟（出网 · 凭据 · 花钱）。这一份只做一件可逐字节复算的事：
-// 把 `tools` 那一栏换成当前目录的投影，再按产品那把序列化器（`stableJson`）重写请求字节。
-// 响应（`response.sse`）· usage · timings · `messages` · 三区内容**一个字节都不碰**，
-// `provenance.json` 里把这件事写明白：请求是离线适配的，响应是历史的。
-//
-// **它必须跟着整份目录走，不是跟着某两条工具走。** 任何一条描述或 schema 改了都要在这里被照见，
-// 否则下一次漂移又得靠 `full` 档的 real 测试去发现（那已经是最贵的那一道）。
+// 额外的合成目录兼容回放；从不可变历史种子派生，不代替真实 live 录制验收。
 import { createHash } from 'node:crypto'
-import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync, lstatSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { hashOf } from '../../src/assemble/assemble.ts'
 import { CATALOG_STATES, catalog, catalogHash } from '../../src/tools/catalog.ts'
@@ -57,10 +44,11 @@ function zoneAOf(system: unknown): Uint8Array | null {
   return typeof system === 'string' ? Buffer.from(system, 'utf8') : null
 }
 
-/** 一条调用适配前后的账。`changed === false` 就是"盘上那一份已经与当前目录一致"。 */
+/** 一条调用相对历史种子的派生账。changed 不表示本次是否写盘。 */
 export interface AdaptedCall {
   readonly call: string
   readonly sourceRequestSha256: string
+  readonly sourceMetaSha256: string
   readonly requestSha256: string
   readonly requestHash: string
   readonly requestBytes: number
@@ -70,6 +58,8 @@ export interface AdaptedCall {
 
 export interface Adaptation {
   readonly kind: 'offline-catalog-adaptation'
+  readonly sourceCommit: string
+  readonly sourceManifestSha256: string
   readonly catalogHash: string
   readonly liveRequestSent: false
   readonly historicalResponseAndUsage: true
@@ -93,6 +83,7 @@ export function adaptedCallOf(at: string, name: string): AdaptedCall {
   return {
     call: name,
     sourceRequestSha256: sha256(old),
+    sourceMetaSha256: sha256(readFileSync(join(at, 'meta.json'))),
     requestSha256: sha256(body),
     requestHash: hashOf(body),
     requestBytes: body.length,
@@ -101,49 +92,88 @@ export function adaptedCallOf(at: string, name: string): AdaptedCall {
   }
 }
 
-/**
- * 把一个 `wire-in/` 目录就地改齐当前目录，并落一份 `provenance.json`。
- *
- * **派生栏一个不漏**：`request.json` · `request.sha256`（给 `sha256sum -c`）· `meta.json` 的
- * `requestBytes` / `requestHash`（回放与 `chain.test.ts` 逐条核的就是这两栏）· `zoneAHash`
- * （A 区从 `system` 复算；目录的描述今天不在 A 区里，所以它照理不会变——但这里**算一遍而不是
- * 假定它不变**）。`response.*` / `stop` / usage / timings 一栏都不动。
- */
-export function adaptWireIn(root: string, write: boolean = true): Adaptation {
-  const wire = join(root, 'wire')
-  const calls: AdaptedCall[] = []
-  for (const name of callsIn(wire)) {
-    const at = join(wire, name)
-    const got = adaptedCallOf(at, name)
-    calls.push(got)
-    if (!write) continue
-    const body = adaptedRequestOf(readFileSync(join(at, 'request.json')))
-    const meta = JSON.parse(readFileSync(join(at, 'meta.json'), 'utf8')) as Record<string, unknown>
+export interface AdaptationResult extends Adaptation {
+  /** 本次实际改写的文件数；不进入确定性的 provenance。 */
+  readonly writtenFiles: number
+}
+const ORIGINAL_COMMIT = 'e02fa524579bbd6332278e21a27b15c7b12c4b05'
+const ORIGINAL_MANIFEST_SHA256 = '62aa94ffd198b92a359e3fff5a42c40f1bbbae6119949fdf4b3e33d97da21a10'
+const ORIGINAL_FILE = /^(?:scenario\.json|wire\/call-\d{4}\/(?:README|meta\.json|request\.json|request\.sha256|response\.sse|response\.sha256))$/
+
+/** 本地静态别名拒绝：不跟随夹具内的目录/叶软链，不写共享inode。 */
+function plainFile(root: string, relative: string): void {
+  let path = root
+  if (!lstatSync(path).isDirectory()) throw new Error('fixture root is not a plain directory')
+  const parts = relative.split('/')
+  for (let at = 0; at < parts.length; at++) {
+    path = join(path, parts[at])
+    const meta = lstatSync(path)
+    if (at === parts.length - 1 ? !meta.isFile() || meta.nlink !== 1 : !meta.isDirectory()) {
+      throw new Error('aliased or unsupported fixture path: ' + relative)
+    }
+  }
+}
+
+/** 先验证全部种子与不可改写的响应/场景，失败时不写任何目标。 */
+export function adaptWireIn(root: string, write: boolean = true): AdaptationResult {
+  const original = join(root, 'original'), wire = join(root, 'wire')
+  plainFile(root, 'original/manifest.json')
+  const manifestBytes = readFileSync(join(original, 'manifest.json'))
+  const manifest = JSON.parse(manifestBytes.toString('utf8')) as { sourceCommit: string; files: Record<string, string> }
+  if (sha256(manifestBytes) !== ORIGINAL_MANIFEST_SHA256 || manifest.sourceCommit !== ORIGINAL_COMMIT || typeof manifest.files !== 'object' || manifest.files === null) {
+    throw new Error('missing or unsupported immutable wire source manifest')
+  }
+  for (const [path, hash] of Object.entries(manifest.files)) {
+    if (!ORIGINAL_FILE.test(path) || !/^[0-9a-f]{64}$/.test(hash)) throw new Error('invalid original evidence path')
+    plainFile(root, 'original/' + path); plainFile(root, path)
+    if (sha256(readFileSync(join(original, path))) !== hash) {
+      throw new Error('original wire evidence changed: ' + path)
+    }
+    if (!/\/(?:request\.json|request\.sha256|meta\.json)$/.test(path) &&
+        !readFileSync(join(root, path)).equals(readFileSync(join(original, path)))) {
+      throw new Error('historical response/scenario evidence changed: ' + path)
+    }
+  }
+  const names = callsIn(join(original, 'wire'))
+  if (names.length === 0 || JSON.stringify(names) !== JSON.stringify(callsIn(wire))) throw new Error('wire call set differs from original')
+  const calls: AdaptedCall[] = [], outputs = new Map<string, Uint8Array>()
+  for (const name of names) {
+    const seed = join(original, 'wire', name), target = join(wire, name)
+    for (const file of ['README', 'meta.json', 'request.json', 'request.sha256', 'response.sse', 'response.sha256']) {
+      if (!Object.hasOwn(manifest.files, `wire/${name}/${file}`)) throw new Error('incomplete original wire manifest')
+    }
+    const seedRequest = JSON.parse(readFileSync(join(seed, 'request.json'), 'utf8')) as Record<string, unknown>
+    const targetRequest = JSON.parse(readFileSync(join(target, 'request.json'), 'utf8')) as Record<string, unknown>
+    if (stableJson({ ...targetRequest, tools: seedRequest.tools }) !== stableJson(seedRequest)) {
+      throw new Error('historical noncatalog request evidence changed: ' + name)
+    }
+    const targetMeta = JSON.parse(readFileSync(join(target, 'meta.json'), 'utf8')) as Record<string, unknown>
+    const originalMeta = JSON.parse(readFileSync(join(seed, 'meta.json'), 'utf8')) as Record<string, unknown>
+    for (const field of ['requestBytes', 'requestHash', 'zoneAHash']) { delete targetMeta[field]; delete originalMeta[field] }
+    if (stableJson(targetMeta) !== stableJson(originalMeta)) throw new Error('historical metadata evidence changed: ' + name)
+    const got = adaptedCallOf(seed, name), body = adaptedRequestOf(readFileSync(join(seed, 'request.json')))
+    const meta = JSON.parse(readFileSync(join(seed, 'meta.json'), 'utf8')) as Record<string, unknown>
     const request = JSON.parse(Buffer.from(body).toString('utf8')) as Record<string, unknown>
     const zoneA = zoneAOf(request['system'])
-    writeFileSync(join(at, 'request.json'), body)
-    writeFileSync(join(at, 'request.sha256'), `${got.requestSha256}  request.json\n`)
-    writeFileSync(
-      join(at, 'meta.json'),
-      JSON.stringify(
-        {
-          ...meta,
-          requestBytes: got.requestBytes,
-          requestHash: got.requestHash,
-          ...(zoneA === null ? {} : { zoneAHash: hashOf(zoneA) }),
-        },
-        null,
-        2,
-      ) + '\n',
-    )
+    calls.push(got)
+    outputs.set(join(target, 'request.json'), body)
+    outputs.set(join(target, 'request.sha256'), Buffer.from(`${got.requestSha256}  request.json\n`))
+    outputs.set(join(target, 'meta.json'), Buffer.from(JSON.stringify({
+      ...meta, requestBytes: got.requestBytes, requestHash: got.requestHash,
+      ...(zoneA === null ? {} : { zoneAHash: hashOf(zoneA) }),
+    }, null, 2) + '\n'))
   }
   const adaptation: Adaptation = {
-    kind: 'offline-catalog-adaptation',
+    kind: 'offline-catalog-adaptation', sourceCommit: ORIGINAL_COMMIT,
+    sourceManifestSha256: sha256(manifestBytes),
     catalogHash: catalogHash(catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])),
-    liveRequestSent: false,
-    historicalResponseAndUsage: true,
-    calls,
+    liveRequestSent: false, historicalResponseAndUsage: true, calls,
   }
-  if (write) writeFileSync(join(root, 'provenance.json'), JSON.stringify(adaptation, null, 2) + '\n')
-  return adaptation
+  plainFile(root, 'provenance.json')
+  outputs.set(join(root, 'provenance.json'), Buffer.from(JSON.stringify(adaptation, null, 2) + '\n'))
+  // 所有目标存在与差异也先快照；最后一条坏了不能造成前面半套改写。
+  const updates = [...outputs].filter(([path, bytes]) => !readFileSync(path).equals(Buffer.from(bytes)))
+  if (write) for (const [path, bytes] of updates) writeFileSync(path, bytes)
+  const writtenFiles = write ? updates.length : 0
+  return { ...adaptation, writtenFiles }
 }

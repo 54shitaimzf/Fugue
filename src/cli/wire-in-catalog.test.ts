@@ -1,5 +1,5 @@
-// 回放夹具里的工具目录必须与当前 `catalog()` 一致——**在 fast 档就红**，而不是等 `full` 档里的
-// real 测试（`chain.test.ts` 序 1）整条验收不再执行。来历见 `__fixture__/wire-in/PROVENANCE.md`。
+// 合成目录兼容回放；响应/usage 是历史的，不是 live 重录或冻结历史验收的替代品。
+// 原始字节与拒绝当前目录的负对照由 wire-in-integrity.test.ts 单独守住。
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -18,7 +18,7 @@ const CALLS = callsIn(WIRE)
 /** `sha256sum -c` 认得的那一把（`*.sha256` 那两栏就是给它用的）。 */
 const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 
-test('每一份录下来的请求里的工具目录与当前 catalog() 逐字节一致（漂了就在 fast 档红）', () => {
+test('合成请求里的工具目录与当前 catalog() 逐字节一致（兼容覆盖）', () => {
   assert.ok(CALLS.length > 0, `${WIRE} 里一条调用都没有`)
   const entries = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
   const expected = entries.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }))
@@ -26,7 +26,7 @@ test('每一份录下来的请求里的工具目录与当前 catalog() 逐字节
     const bytes = readFileSync(join(WIRE, name, 'request.json'))
     const request = JSON.parse(bytes.toString('utf8')) as { tools: unknown }
     // 一 · 这一栏逐条对上（名字 · 描述 · schema 一个字段都不差）。
-    assert.deepEqual(request.tools, expected, `${name}：录下来的工具目录与当前 catalog() 不同`)
+    assert.deepEqual(request.tools, expected, `${name}：合成工具目录与当前 catalog() 不同`)
     // 二 · **整份请求的字节**与"按当前目录改齐"的结果相同：键序、转义、别的栏一个字节都不许漂。
     //      改了描述忘了跑 `node tools/adapt-wire-in.ts`，红在这一句。
     assert.ok(
