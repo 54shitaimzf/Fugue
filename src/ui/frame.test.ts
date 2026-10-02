@@ -12,20 +12,26 @@
 //   ④ **两栏都动的那一条也是对的**：多一次 `llm/call` → 两栏都变（调用次数在左栏"每一格"与
 //      右栏"用量"各有一处口径）。它说明两栏不是按事件类型分的，是按**读法**分的。
 //   ⑤ **地板**：窄了收成单栏（同一个框，少中间那根竖线，内容一行不少）· 矮了截断并说出还剩
-//      几行 · 三行都不到印一句"太矮"（不静默给空帧）· 尺寸给 0 给一个空帧。
+//      几行 · 三行都不到印一句"太矮"（不静默给空帧）· **三列都不到印一句"太窄"**（`innerOf` 给 0，
+//      `'─'.repeat` 会拿到负数）· 尺寸给 0 给一个空帧。
 //   ⑥ **纯**：同一份输入两次调用逐字节相同，而且进去的那一份快照一个字段都没被改。
 //   ⑦ **候选那一层开的窗**（`windowOf`，`T4` 的 `/` 菜单与 `Ctrl-P` 面板用它）：装得下就全印 · 装不下
 //      时**选中的那一条一定在窗里**（贴着头或贴着尾）· 上下各还剩几条数得出来 · 只剩一行可印时不留
 //      "还有几条"那一句（那一行留给候选）。
 //   ⑧ **阅读面那一栏**（`T9` 的 `ReadInput`）：给 `top` 就从那一行起印 · 装不下时末行说"下面还有几行"
 //      （**不截中间**）· 不给它时整帧与从前逐字节相同（这一栏是加出来的，不是改出来的）。
+//   ⑩ **一把尺**（0.2.8 U2）：框内宽只有 `innerOf` 一个出处 · 长行**折开印**（旧版由 `cell` 截断，
+//      尾巴永远看不见）· `top` 数到的那一行就是屏上第一条正文。
+//   ⑪ **层次**（0.2.8 U3）：阅读面那一档收成单栏、框名换「阅读面」，那一行报 `readHeading`
+//      （主题里加粗）· 遗漏数算上被那句提示顶掉的一行（`below + 1`）。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
 import { statusOf } from '../probe/status.ts'
-import { bodyOf, footerOf, frameOf, panelOf, windowOf } from './frame.ts'
+import { bodyOf, footerOf, frameOf, innerOf, panelOf, windowOf } from './frame.ts'
 import { clip, widthOf, wrap } from './glyph.ts'
+import { readWrap } from './read.ts'
 
 let seq = 0
 /** 一条事件（`round` 那一份上）。**seq 每次从 0 起**：两次折用的序号于是对得上。 */
@@ -244,12 +250,35 @@ test('⑤ 地板：窄了收单栏 · 矮了截断并说出剩几行 · 三行�
   assert.equal(tiny.lines.length, 1, '画不出框时只印一句')
   assert.match(tiny.lines[0] ?? '', /太矮/)
 
+  // 极窄（1–2 列）：**同一个口径**——`ui/term.ts` 的列宽探测是 `seen > 0` 就放行，1–2 列真会走到
+  // 这里。**负对照**：这道提示拿掉，`lines` 就不是一句而是十几行空框（框内 0 列，每行 `││`），
+  // 下面第一条当场红。U2 之前那一档还会以 `RangeError` 收场（`inner` 是负的，直接进了 `repeat`）；
+  // `innerOf` 把它夹成 0 之后那条抛错没有了——守卫守的因此是"别印一个静默的空框"。
+  for (const width of [1, 2]) {
+    const thin = frameOf({ snapshot, metrics: METRICS, report: REPORT, width, height: 20 })
+    assert.equal(thin.lines.length, 1, `${width} 列：只印一句（不是空帧）`)
+    assert.equal(thin.roles.length, 1, '窄帧里 roles 与 lines 也是平行的')
+    assert.equal(widthOf(thin.lines[0] as string), width, `${width} 列那一行不许超宽`)
+    // 1–2 列上**那一句原因自己也印不出来**（框内一列都没有），留下的是 `…`——与截断那一条同一个
+    // 记号，说的是"这里还有东西没印出来"。所以这一段的作用是**当场不抛**，不是把话说全。
+    assert.equal(
+      (thin.lines[0] as string).startsWith('…'),
+      true,
+      `${width} 列那一行是截断记号：${JSON.stringify(thin.lines[0])}`,
+    )
+  }
+  // 3 列是**边界**：画得出（框内恰一列），每一行仍是 3 列。
+  const edge = frameOf({ snapshot, metrics: METRICS, report: REPORT, width: 3, height: 20 })
+  assert.equal((edge.lines[0] as string).startsWith('┌'), true, `3 列该画得出框：${edge.lines[0]}`)
+  for (const l of edge.lines) assert.equal(widthOf(l), 3, `3 列那一档每一行都是 3 列：${JSON.stringify(l)}`)
+
   // 终端那一刻没给出尺寸：空帧（调用方那一侧的事）。
   assert.deepEqual(frameOf({ snapshot, width: 0, height: 0 }).lines, [])
 
   console.log(
     `⑤ 读数：40 列 → 单栏（右 0，${narrow.lines.length} 行，一处内容不少）· 8 行 → 「${(cut as string).split('│').map((x) => x.trim()).filter((x) => x !== '').join(' ｜ ')}」` +
-      ` · 3 行 → 「${(tiny.lines[0] as string).replace(/^│|│$/g, '').trim()}」· 0 列 0 行 → ${frameOf({ snapshot, width: 0, height: 0 }).lines.length} 行`,
+      ` · 3 行 → 「${(tiny.lines[0] as string).replace(/^│|│$/g, '').trim()}」· 0 列 0 行 → ${frameOf({ snapshot, width: 0, height: 0 }).lines.length} 行` +
+      ` · 1–2 列 → 「${(frameOf({ snapshot, width: 2, height: 20 }).lines[0] as string).replace(/^│|│$/g, '').trim()}」· 3 列 → 「${edge.lines[0]}」`,
   )
 })
 
@@ -324,6 +353,12 @@ test('⑧ 阅读面那一栏：整块地方给它（树与内容都让位）· �
   assert.ok(all.lines.some((l) => l.includes('第一行')), '第二行也在')
   assert.ok(!all.lines.some((l) => l.includes('轮次 r1 · 状态')), '内容那一栏不印了（地方整块给正文）')
   assert.ok(!all.lines.some((l) => l.includes('主线（round）') || l.includes('格 agent/r1/1')), '树那几行也不印了')
+  // **框名与那一行的角色**（0.2.8 U3）：阅读面开着时那个框叫「阅读面」，头一行报 `readHeading`
+  // （主题里加粗）——整块地方给它，框就得说它。两栏那两根名字与中间那根竖线一起收掉。
+  assert.ok((all.lines[0] as string).includes('阅读面'), `头一行是框名：${all.lines[0]}`)
+  assert.equal(all.roles[0], 'readHeading', '框名那一行报 readHeading')
+  assert.ok(!all.lines.some((l) => l.includes('┬')), '阅读面那一档收成单栏（不留中间那根竖线）')
+  assert.ok(!all.lines.some((l) => l.includes('读数')), '右栏那个名字也不印了')
 
   // `top = 2`：头两行不印了（那正是"翻下去"的意思）。
   const scrolled = frameOf({ ...base, read: { rows, top: 2 } })
@@ -336,6 +371,12 @@ test('⑧ 阅读面那一栏：整块地方给它（树与内容都让位）· �
   const cut = frameOf({ ...base, read: { rows: ['标题', ...many], top: 0 } })
   const tailLine = cut.lines.find((l) => l.includes('下面还有'))
   assert.ok(tailLine !== undefined, '装不下时末行要说还剩几行')
+  // **遗漏数算上被那句提示顶掉的一行**（0.2.8 U3 · 判决 7）：这一面 61 行，屏上印了 `printed` 行，
+  // 其中**末行被提示换了**——没看见的是 61 − (印 − 1)。旧的写法（不加那一）在这一条上红。
+  const printed = cut.roles.filter((r) => r === 'read').length
+  const said = Number(/下面还有 (\d+) 行/.exec(tailLine as string)?.[1] ?? '0')
+  assert.equal(said, 61 - (printed - 1), `遗漏数要算上被顶掉的那一行（说 ${said} · 印了 ${printed}）`)
+  assert.notEqual(said, 61 - printed, '旧版（`below` 不加那一）在这一条上红')
   console.log(
     `⑧ 读数：${rows.length} 行全装得下（内容与树都让位）· \`top=2\` 起印第二行 · 61 行时末行「${tailLine?.replace(/[│ ]+$/, '').trim()}」`,
   )
@@ -365,8 +406,9 @@ test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账
   const bodyAt = f.lines.findIndex((l) => l.includes('轮次 r1 · 状态'))
   assert.ok(bodyAt >= 0 && f.roles[bodyAt] === 'body', '读数那一行报 body')
 
-  // 阅读面开着：正文那些行报 `read`（临时那一层的另一种）。
+  // 阅读面开着：框名那一行报 `readHeading`（U3），正文那些行报 `read`。
   const r = frameOf({ ...base, read: { rows: ['标题', '正文一'], top: 0 } })
+  assert.equal(r.roles[0], 'readHeading', '阅读面开着时框名那一行报 readHeading')
   const readAt = r.lines.findIndex((l) => l.includes('正文一'))
   assert.ok(readAt >= 0 && r.roles[readAt] === 'read', '阅读面正文报 read')
 
@@ -379,6 +421,50 @@ test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账
   console.log(
     `⑨ 读数：${f.lines.length} 行里 border ×${f.roles.filter((x) => x === 'border').length} · ` +
       `footer ×${f.roles.filter((x) => x === 'footer').length} · overlay ×${f.roles.filter((x) => x === 'overlay').length} · ` +
-      '其余 body · 阅读面行报 read · 矮帧报 body',
+      '其余 body · 阅读面框名报 readHeading · 阅读面正文报 read · 矮帧报 body',
+  )
+})
+// ── ⑩ 一把尺（0.2.8 U2）：框内宽一个出处 · 长行折开印 · `top` 数到哪一行屏上就是哪一行 ──────────
+test('⑩ 一把尺：`innerOf` 是框内宽的唯一出处 · 长行折开印（旧版截断）· 翻到第几行屏上就是那一行', () => {
+  const base = { snapshot: snapshotOf(), metrics: METRICS, report: REPORT, height: 19 }
+
+  // **一个出处**：单栏那一档的左栏宽 = `innerOf(width)`；两栏那一档左 + 右 + 框那 3 列 = 整幅。
+  for (const width of [30, 60, 100, 137]) {
+    const f = frameOf({ ...base, width })
+    if (f.columns.right === 0) {
+      assert.equal(f.columns.left, innerOf(width), `单栏那一档左栏宽该是 innerOf(${width})`)
+    } else {
+      assert.equal(f.columns.left + f.columns.right + 3, width, `两栏 + 框 3 列 = 整幅（${width}）`)
+    }
+  }
+  assert.equal(innerOf(2), 0, '2 列时框内宽是 0（`─`.repeat 不许拿到负数）')
+  console.log(`⑩ 读数：innerOf(30)=${innerOf(30)} · innerOf(60)=${innerOf(60)} · innerOf(100)=${innerOf(100)}`)
+
+  // **长行折开印**：130 列的正文在 26 列的框里（框内 24），整条都看得见。旧版那一档舞台递的是
+  // **未折行的原文**，由框这一层 `cell` 截到 24 列——尾巴永远看不见，而 `top` 仍按 1 逻辑行 =
+  // 1 物理行数，"下面还有几行"跟着错。
+  const long = `一条很长的正文 ${'x'.repeat(120)} 尾巴`
+  const face = ['标题 · 长行', long, '短行']
+  const narrow = face.flatMap((l) => [...readWrap(l, innerOf(26))])
+  const wide = face.flatMap((l) => [...readWrap(l, innerOf(120))])
+  assert.ok(narrow.length > wide.length, `窄列折得多（窄 ${narrow.length} · 宽 ${wide.length}）`)
+  assert.equal(narrow.join(''), wide.join(''), '两档拼回来是同一份字节——折的只是行')
+
+  const f = frameOf({ ...base, width: 26, read: { rows: narrow, top: 0 } })
+  const shown = f.lines.filter((l) => l.startsWith('│')).map((l) => l.slice(1, -1).trimEnd())
+  assert.ok(shown.join('').includes(long), `整条正文都在屏上（一个字节都没被截）：${JSON.stringify(shown)}`)
+  // **负对照**：旧版那一串（未折行的原文）在同一个框里被截掉尾巴——上面那一条正是为它写的。
+  assert.notEqual(clip(long, innerOf(26)), long, '旧版走 `cell` → `clip`：尾巴没了')
+  assert.ok(face.some((l) => widthOf(l) > innerOf(26)), '旧版那一串里有画不进框的行')
+
+  // **翻到第几行**：`top` 数的是同一串物理行——屏上第一条正文就是 `rows[top]`。
+  for (const top of [0, 1, 4, narrow.length - 1]) {
+    const g = frameOf({ ...base, width: 26, read: { rows: narrow, top } })
+    const body = g.lines.filter((l) => l.startsWith('│')).map((l) => l.slice(1, -1).trimEnd())
+    assert.equal(body[0], narrow[top], `翻到第 ${top} 行：屏上第一条就是它`)
+  }
+  console.log(
+    `⑩ 读数：130 列的正文在框内 ${innerOf(26)} 列里折成 ${readWrap(long, innerOf(26)).length} 行（旧版只印头 ${innerOf(26)} 列）` +
+      ` · top 0/1/4/${narrow.length - 1} 屏上第一条都对得上`,
   )
 })

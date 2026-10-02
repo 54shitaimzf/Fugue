@@ -26,6 +26,7 @@ import type { ReadFaceName, ReadState } from './read.ts'
 import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
 import type { LineMode, RunLauncher, RunOutcome } from './run.ts'
+import { innerOf } from './frame.ts'
 import { K } from './term.ts'
 import type { ViewInput } from './term.ts'
 import { FLAGS_OF } from '../cli/flags.ts'
@@ -320,16 +321,25 @@ export function openStage(deps: StageDeps): Stage {
     if (advanceQueue) startNext()
     deps.redraw()
   }
+  /**
+   * 本帧**框内那一栏**的宽度（U2 的「一把尺」）：从 `frame.ts` 的 `innerOf` 推，与 `frameOf` 内部
+   * 算的是同一个数——`follow.ts` 递进去的 `width` 就是 `term.columns`，两边同源。
+   *
+   * 从前这里是三处各写一遍的 `deps.columns() - 1`（输入行 · 门口那一块 · 树），而框内宽是
+   * `columns - 2`：宽出去的那一列画不进框，`cell` 把它截掉——不报错，只少一个字符。收成一处之后
+   * 输入行比它自己的上界（`columns` − 1，`ui/term.ts` 头注写着）还严一列；那个上界仍然满足，
+   * 换来的是全站只有一个数。
+   */
+  const cols = (): number => innerOf(deps.columns())
   const view = (): ViewInput => {
     if (!showInput) return {}
-    // 宽度减一：终端上写满一整行会**自动换行**，那一下就把"上移几行"的算术打乱了（`ui/term.ts` 头注）。
-    const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: deps.columns() - 1 })
+    const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
     // 最下面那一栏：**门口那一块**（`T6`）与**排队那一行**（`T7`），都在面板那一栏的最下面（输入行
     // 还在它们下面）。两样都没有时一个字节都不占。
     const gateOn = gate !== null && !gateHidden
     const queueOn = queue.items.length > 0
     const bottomRows = [
-      ...(gateOn ? gateRowsOf({ face: gate as GateFace, view: gateView, columns: deps.columns() - 1 }) : []),
+      ...(gateOn ? gateRowsOf({ face: gate as GateFace, view: gateView, columns: cols() }) : []),
       ...(queueOn ? [queueRowOf(queue)] : []),
     ]
     const bottomPart =
@@ -337,7 +347,7 @@ export function openStage(deps: StageDeps): Stage {
         ? {}
         : { bottom: { rows: bottomRows, keep: (gateOn ? GATE_KEEP : 0) + (queueOn ? 1 : 0) } }
     // 树那一栏（`T8`，排在最上面）与"切到哪一格"（`focus`：`null` = 整份账）。
-    const navRows = navRowsOf(navNodes, navAt, deps.columns() - 1)
+    const navRows = navRowsOf(navNodes, navAt, cols())
     const navPart = navRows.length === 0 ? {} : { nav: { rows: navRows, sel: navAt } }
     // 阅读面那一栏（`T9`，排在内容那一栏最下面）：**开着才占地方**。三面是从 `readState` 排的版
     // （`facesOf` 不再折一次），看到第几行由 `reading.top` 说了算。
@@ -346,7 +356,7 @@ export function openStage(deps: StageDeps): Stage {
         ? {}
         : ((): { read: { rows: readonly string[]; top: number } } => {
             const faces = facesOf(readState)
-            const rows = faceRowsOf(faces, reading.face ?? firstFace(faces))
+            const rows = faceRowsOf(faces, reading.face ?? firstFace(faces), cols())
             const top = Math.max(0, Math.min(reading.top, Math.max(0, rows.length - 1)))
             return rows.length === 0 ? {} : { read: { rows, top } }
           })()
@@ -553,7 +563,8 @@ export function openStage(deps: StageDeps): Stage {
         return
       }
       if (d.action === 'historyOlder' || d.action === 'historyNewer') {
-        reading = { ...reading, top: stepTop(faceRowsOf(facesOf(readState), reading.face).length, reading.top, d.action === 'historyOlder' ? -1 : 1) }
+        const n = faceRowsOf(facesOf(readState), reading.face, cols()).length
+        reading = { ...reading, top: stepTop(n, reading.top, d.action === 'historyOlder' ? -1 : 1) }
         settle()
         return
       }
@@ -564,7 +575,7 @@ export function openStage(deps: StageDeps): Stage {
     if (d.action === 'pageUp' || d.action === 'pageDown' || d.action === 'jumpFirst' || d.action === 'jumpLast') {
       const back = d.action === 'pageUp' || d.action === 'jumpFirst'
       if (reading !== null) {
-        const n = faceRowsOf(facesOf(readState), reading.face).length
+        const n = faceRowsOf(facesOf(readState), reading.face, cols()).length
         // 跳首尾用一个够大的数一步到头（`stepTop` 夹得住）。
         const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -PAGE_STEP : PAGE_STEP
         reading = { ...reading, top: stepTop(n, reading.top, delta) }

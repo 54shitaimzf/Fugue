@@ -32,7 +32,8 @@
 import type { Delta } from '../delta.ts'
 import { FAMILY_KIND } from './stream.ts'
 import { permanentLinesOf } from './stream.ts'
-import { clip } from './glyph.ts'
+import { clip, clustersOf } from './glyph.ts'
+import type { Cluster } from './glyph.ts'
 import type { StatusRow } from '../probe/status.ts'
 
 /**
@@ -460,8 +461,67 @@ export function firstFace(faces: ReadFaces): ReadFaceName {
   return faces.diff !== null ? 'diff' : 'stream'
 }
 
-/** 那一面那几行（标题算第 0 行；`top` 是看到第几行起）。一面都没有时给空表。 */
-export function faceRowsOf(faces: ReadFaces, name: ReadFaceName): readonly string[] {
+/**
+ * 控制字节 → **可见形状**（`\uXXXX`）。转义之后它就是几个能读的字符，宽度也照这几个字符算。
+ *
+ * 为什么要有这一道：终端把 `\x1b` 当**一条序列的开头**——账上一条正文里混进一个不可见字节，
+ * 屏幕上从那个字节起整幅错位（`\x1b[2J` 是清屏 · `\x1b[?1049h` 是换一块屏）。不可见字节不许原样
+ * 落到终端上。只动 C0 与 C1（`[\x00-\x1f\x7f-\x9f]`），含 `\n`：账上一行正文本来就该是一行
+ * （`read.test.ts` ④ 那条"一行里没有换行"钉着它），真混进来了也转义，不许它撕开一帧。
+ */
+export function escapeOf(s: string): string {
+  return s.replace(/[\x00-\x1f\x7f-\x9f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+}
+
+/**
+ * 阅读面那一行的折法：**先转义、再按簇量宽折，一个字节都不吃**。
+ *
+ * 与 `glyph.ts` 那把通用折行**刻意不共用**：`wrap` 折在词尾、还会吃分隔符与空白（`trimEnd` ·
+ * `trimStart` · 行首那个 `· `），那是给面板读数用的——读数短，折在词尾好看；正文折了要**拼得
+ * 回来**（`read.test.ts` ⑦ 的往返断言），一个空格都不许少。切点整簇——尺只有一把，一个 emoji
+ * 不许被拆成两半。
+ *
+ * **整行只聚簇一次。** 这是这一份的**形状**，不是优化：`cutAt` / `widthOf` 每一次都从头聚一遍，
+ * 拿它们在一行里循环就是 O(长度² ÷ 列宽)。实测（0.2.8 补记那一趟，`faceRowsOf` 一份 200 条
+ * 4008 字符的 `view/write`、20 列）：逐段聚簇那一版一次调用 6 秒以上——那是**慢**，不是红，
+ * 所以它没有一条"回到旧版必红"的断言，读数记在提交信息里。聚一次之后同一份夹具
+ * （200 条 · 20 列 · 40 080 物理行）是数十毫秒。
+ *
+ * `cols <= 0`（量不到列宽那一档）时原样一行出去，不折也不报错；一整个簇比 `cols` 还宽时放它一个
+ * （整簇切——不许原地打转，也不许把它吃掉）。
+ */
+export function readWrap(s: string, cols: number): readonly string[] {
+  const text = escapeOf(s)
+  if (cols <= 0 || text === '') return [text]
+  const cs = clustersOf(text)
+  let total = 0
+  for (const c of cs) total += c.width
+  if (total <= cols) return [text]
+  const out: string[] = []
+  let at = 0
+  while (at < cs.length) {
+    let used = 0
+    let end = at
+    while (end < cs.length && used + (cs[end] as Cluster).width <= cols) {
+      used += (cs[end] as Cluster).width
+      end += 1
+    }
+    // 一整个簇比 `cols` 还宽：放它一个（不拆簇 · 也不吃它）。
+    if (end === at) end = at + 1
+    out.push(cs.slice(at, end).map((c) => c.text).join(''))
+    at = end
+  }
+  return out
+}
+
+/**
+ * 那一面那几行（标题算第 0 行；`top` 是看到第几行起）。一面都没有时给空表。
+ *
+ * `cols` 是**本帧框内那一栏的宽度**（`frame.ts` 的 `innerOf` 那一把尺）：每一行在这儿折成物理
+ * 行，于是**屏上印的**与**`top` 数的**是同一串行。两把尺（显示端按框宽截断 · 滚动端按未折行
+ * 行数数）是这一面最容易犯的错——翻下去的那几行与看见的那几行对不上，而且不报错。
+ */
+export function faceRowsOf(faces: ReadFaces, name: ReadFaceName, cols: number): readonly string[] {
   const one = faces[name]
-  return one === null ? [] : [one.title, ...one.lines]
+  return one === null ? [] : [one.title, ...one.lines].flatMap((l) => [...readWrap(l, cols)])
 }

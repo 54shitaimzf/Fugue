@@ -12,6 +12,7 @@ import { follow, readNew } from '../../probe/watch.ts'
 import { KEYMAP, hintLimitOf, hintLineOf, openKeys } from '../../ui/keymap.ts'
 import type { KeySource } from '../../ui/keymap.ts'
 import { openTui, tuiModeOf } from '../../ui/follow.ts'
+import { openExitHooks } from '../../ui/exit-hooks.ts'
 import type { Tui } from '../../ui/follow.ts'
 import { degradeNote, openTerm } from '../../ui/term.ts'
 import { themeOf } from '../../ui/theme.ts'
@@ -291,6 +292,21 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // 与 `ansiOf` 同一张表）。
   const degrade = degradeNote(process.env.TERM, process.stdout.isTTY)
   if (degrade !== null && !flags.has('once')) process.stderr.write(`${degrade}\n`)
+  // **收尾钩子在首帧之前挂上**（0.2.8 U4）：`term` 一开出来就有一块地方要还回去（`--full` 那一档
+  // 第一帧进 alt screen，按键那一档还进了 raw mode），而这两条之前收到的 `SIGTERM` 会走缺省的杀
+  // 进程路径——那台终端被留在另一块屏上，得人 `reset`。`ui/exit-hooks.ts` 管这三条（`SIGTERM` ·
+  // `SIGHUP` · `exit`）；这个顺序由 `ui/exit-hooks.test.ts` ② 拿这一份的源码位置钉着。
+  let keys: KeySource | null = null
+  const hooks =
+    mode === 'panel'
+      ? openExitHooks(process, {
+          onSignal: () => ac.abort(),
+          onExit: () => {
+            keys?.close()
+            term.close()
+          },
+        })
+      : null
   // 接上那一档：读账 → 折帧 → 摆到那块地方，一路跟着（`ui/follow.ts`）。
   const tui = openTui({
     log,
@@ -318,7 +334,6 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // ── `UI4` · 门那儿按一下（只在"面板"那一档）──────────────────────────────────────────
   // 按 `g` 起的是**一条命令**（`ui/run.ts` 的 `openRun` → 一个子进程），账由那个子进程写。界面手里
   // 没有写句柄这件事在**类型上**就成立：`openTui` 收的 `log` 只有 `readMerged` 那一半。
-  let keys: KeySource | null = null
   if (mode === 'panel') {
     // 子进程吐出来的行**走注记**（写在面板上方）：直接写 `stdout` 会在终端历史里插进半块面板。
     // 收尾那一下整套在舞台里（`stage.onRunDone`：说了什么 · 要退就退 · 跑完一趟起排队里下一条）。
@@ -339,16 +354,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   }
   // **每一条退出路径都要把终端还原回去**（计划 § 5.19 里 DECSTBM 那笔账在 raw mode 上是同一笔：
   // 漏一条，那台终端就得人 `reset`）。四路：正常退 · `Ctrl-C`（raw mode 下走按键那一头）·
-  // `SIGTERM`/`SIGHUP` · 崩了（`exit` 那一钩，最后一次同步地把 raw mode 关掉）。
-  const onTerm = (): void => ac.abort()
-  if (mode === 'panel') {
-    process.on('SIGTERM', onTerm)
-    process.on('SIGHUP', onTerm)
-    process.once('exit', () => {
-      keys?.close()
-      term.close()
-    })
-  }
+  // `SIGTERM`/`SIGHUP` · 崩了（`exit` 那一钩，最后一次同步地把 raw mode 关掉）。后两条由上面那组
+  // `openExitHooks` 挂着——**已经挂上了**（U4 把它挪到首帧之前），收尾在下面 `finally` 里摘。
   // 读账在 `try` 里：读炸了也要走到 `finally` 去把日志口与面板收干净。
   try {
     await tui.counts
@@ -357,8 +364,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     process.removeListener('SIGINT', onSig)
     if (mode === 'panel') {
       process.removeListener('SIGWINCH', onWin)
-      process.removeListener('SIGTERM', onTerm)
-      process.removeListener('SIGHUP', onTerm)
+      hooks?.close()
     }
     // **raw mode 先还原、面板再收走**：两条都幂等，正常退那一路与 `exit` 那一钩都走到这里。
     keys?.close()
