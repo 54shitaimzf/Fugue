@@ -72,3 +72,5 @@ execute 文件出现一次已见 Node cloned-data 传输错误，随后 execute/
 随后与官方 `f271ad2` 的同步只改变五份已审文档：凭据查找、命令速查差异与 s8/s9 演示清单均依上游校准；源码、历史录音与上述功能证据不变。
 
 随后维护批按官方 §10 补 `config ls` 和[配置文档诊断](configuration.md)，列两级合并后在场的键而非默认/schema 表；命令帮助补齐 assemble。C 约束新增[具名诊断见证](../design/CONSTRAINT-WITNESS.md)，以真实段边界比较积累正文，保留裸 Prefix 粗比法，不接发送路径。终端/status 的既有总量分别标明转移条数与图上步数，JSON/fold 字段不变。
+
+可选 grep 的[整批预取省略](../design/GREP-PREFETCH-READINESS.md)只在原候选全部拥有当前完整证明时生效；记录/代/原读口/原预取源任何变化都回原路径，部分命中不重新压缩前缀。实测[单链证据](prefetch-investigation/real-chain.md)保留精确 527→971 本地源图、冷退化和淘汰，热趟消除512个预取ID与5个Git批次；11.5–13.4ms并不是冷50ms或缺省启用的证书。当前组合自己的功能与CI另验，不重写历史指纹。

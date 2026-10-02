@@ -31,6 +31,7 @@ import { refuse } from './execute.ts'
 import { shellArgv } from './argv.ts'
 import { digestOf } from '../runtime/restart.ts'
 import { bindGrepVerifier } from './grep-verifier.ts'
+import { prefetchPlan } from './prefetch-plan.ts'
 import { lstatSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ForkStrategy } from '../terms.ts'
@@ -157,7 +158,7 @@ export interface HostOptions {
  * 72 KiB 的文件 128 条就是 9 MiB，一批取回来的前几条在读到它们之前就被后几条挤出去，
  * 读那一侧逐条重取（实测冷请求 12 → 134）。预取是提示，提示不许比它省下的还贵。
  */
-export const PREFETCH_BYTE_BUDGET = 4 * 1024 * 1024
+export { PREFETCH_BYTE_BUDGET } from './prefetch-plan.ts'
 
 /**
  * `actions.truth` 上那道"一次批量把这几条 blob 取回来"的缝，**有才用**。
@@ -268,22 +269,9 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
         }
       }),
     )
-    const out: BlobId[] = []
-    let bytes = 0
-    let covered = metas.length
-    for (const [at, meta] of metas.entries()) {
-      if (meta === null || meta.kind !== 'file') continue
-      const id = meta.id
-      if (id === undefined || id === null || id === '') continue
-      // 按字节封顶：自适应批次最多 128 条，条数不说明字节。超出预算就在这里切开，只报告前缀
-      // 覆盖到了——调用方只读这一段，其余下一轮重新成批；而不是把没取的那些留给逐条读。
-      // 第一条自己就超预算时 `at === 0`，`covered` 为 0：那一条逐个读（缓存装不下它也一样）。
-      if (bytes + meta.size > PREFETCH_BYTE_BUDGET) { covered = at; break }
-      bytes += meta.size
-      out.push(id as BlobId)
-    }
-    await blobs(out)
-    return covered
+    const plan = prefetchPlan(metas)
+    await blobs(plan.ids)
+    return plan.covered
   }
 
   // 清单随视图代失效；MAX_ROWS/深度与不跟软链的原语义保持不变。
@@ -710,7 +698,18 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
   }
   // Cached verification is part of the existing optional index pipeline. Plain
   // hosts retain their original read/decode/test path, without a new config knob.
-  if (blobIndex !== undefined || cohortIndex !== undefined) bindGrepVerifier(host, view)
+  if (blobIndex !== undefined || cohortIndex !== undefined) {
+    let plan: Parameters<typeof bindGrepVerifier>[2]
+    try {
+      const truth = opts.actions?.truth as (Truth & { readonly prefetchBlobs?: unknown }) | undefined
+      const original = truth?.prefetchBlobs
+      if (typeof original === 'function') plan = Object.freeze({
+        current: () => opts.actions?.truth === truth && truth?.prefetchBlobs === original,
+        covered: metas => prefetchPlan(metas).covered,
+      })
+    } catch { /* Unsupported hint ports keep their original loading path. */ }
+    bindGrepVerifier(host, view, plan)
+  }
   return host
 }
 

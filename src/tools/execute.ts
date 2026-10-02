@@ -25,7 +25,7 @@ import type { WalkResult } from './walk.ts'
 import { SearchRows, searchLines, SEARCH_PREFETCH_ROWS, SEARCH_PREFETCH_MAX_ROWS } from './search-receipt.ts'
 import type { SearchCoverage } from './search-receipt.ts'
 import { requiredLiteralTrigrams } from '../search/regex-literal.ts'
-import { hasGrepVerifier, verifiedGrepMatches } from './grep-verifier.ts'
+import { hasGrepVerifier, readyGrepBatch, verifiedGrepMatches } from './grep-verifier.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -576,12 +576,15 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   let batchRows = SEARCH_PREFETCH_ROWS
   scan: for (let at = 0; at < all.length;) {
     let batch = all.slice(at, at + batchRows)
+    // Prove ALL original paths before filtering; partial hits cannot compress prefix coverage.
+    const ready = prefetch !== undefined && hasGrepVerifier(host) ? await readyGrepBatch(host, batch, re) : undefined
     // 候选过滤也只做当前批；索引 miss 不许提前枚举/读取后面的全树。
     let candidates = await indexedCandidates(host, batch, required)
     // 最多预取当前批；回执够了以后不再预取后面整棵树。预取按字节封顶时只覆盖候选的前缀：读也只读
     // 这一段（至少一个，保证前进），批在第一条没覆盖的候选处截断，其余留给下一轮重新成批。
     if (prefetch !== undefined) {
-      const covered = await prefetch(candidates)
+      const planned = ready?.covered(candidates)
+      const covered = planned === undefined ? await prefetch(candidates) : planned
       // 可选口的数值只有稠密候选前缀计数这一种含义；坏形状仍扫描原批，不能跳过路径。
       if (typeof covered === 'number' && Number.isSafeInteger(covered) && covered >= 0 && covered <= candidates.length) {
         const kept = Math.max(1, Math.min(covered, candidates.length))

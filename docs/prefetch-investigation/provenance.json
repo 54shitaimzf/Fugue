@@ -1,0 +1,7 @@
+{
+  "sourceCommit": "527319e76a1780e668f47c95f340087a99170564",
+  "sourceTree": "b3c14b2703fa0d7738957b00eff78ae8095bcf9d",
+  "probeScriptSha256": "66b79cb3b375285b0aad897591bb036c0367f394ccdf368dd76fbaec0183bbd9",
+  "rawSha256": "f3eeb3573e6597c6a852abd4f08fef0e34dcd353c09a74e1df60fcba14832ec7",
+  "scope": "Single immutable generated warm counterfactual on exact527; no product optimization, matrix, default activation, provider or cold50ms certification. Every recorded source module/hash and script hash verified."
+}

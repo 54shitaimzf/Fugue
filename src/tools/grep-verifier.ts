@@ -2,9 +2,10 @@
 // No ToolHost fields, disk state or query/index activation are added here.
 import { createHash } from 'node:crypto'
 import type { BlobId, RelPath } from '../terms.ts'
+import type { EntryMeta } from '../entries.ts'
 import type { View } from '../view/contract.ts'
 import type { ToolHost } from './execute.ts'
-import { searchLines } from './search-receipt.ts'
+import { searchLines, SEARCH_PREFETCH_MAX_ROWS } from './search-receipt.ts'
 
 export const MAX_VERIFICATION_SOURCE_BYTES = 1024 * 1024
 export const MAX_VERIFICATION_RECORD_BYTES = 64 * 1024
@@ -20,6 +21,16 @@ export interface VerifiedGrepScan {
   readonly matches: Iterable<Match>
   /** Recheck after the tool's await, before consuming a cached negative. */
   current(): boolean
+}
+export interface VerifiedGrepBatch {
+  /** Recheck immediately before prefetch elision, after candidate filtering awaits. */
+  current(): boolean
+  /** The same concrete metadata prefix policy, for an ordered subset of the original proof. */
+  covered(paths: readonly string[]): number | undefined
+}
+type PrefixPlanner = {
+  current(): boolean
+  covered(metas: readonly EntryMeta[]): number | undefined
 }
 const prototype = RegExp.prototype
 const test = prototype.test, exec = prototype.exec
@@ -52,13 +63,16 @@ function matches(re: RegExp, text: string): Generator<Match> {
 interface Bound {
   readonly read: ToolHost['readBytes']
   scan(path: string, re: RegExp): Promise<VerifiedGrepScan | null | undefined>
+  ready(paths: readonly string[], re: RegExp): Promise<VerifiedGrepBatch | undefined>
   stats(): { hits: number; misses: number; sourceReads: number; testedLines: number; verifiedSources: number; rejectedSources: number; installed: number; evictions: number; entries: number; bytes: number }
 }
 const hosts = new WeakMap<ToolHost, Bound>()
 
 /** Construction-only binding. The exact object and its original reader own the cache. */
-export function bindGrepVerifier(host: ToolHost, view: View): void {
+export function bindGrepVerifier(host: ToolHost, view: View, prefixPlanner?: PrefixPlanner): void {
   const read = host.readBytes
+  let prefetch: ToolHost['prefetch']
+  try { prefetch = host.prefetch } catch { prefetch = undefined }
   const cache = new Map<string, CacheRecord>()
   let bytes = 0
   const counts = { hits: 0, misses: 0, sourceReads: 0, testedLines: 0, verifiedSources: 0, rejectedSources: 0, installed: 0, evictions: 0 }
@@ -79,6 +93,73 @@ export function bindGrepVerifier(host: ToolHost, view: View): void {
   }
   const bound: Bound = {
     read,
+    async ready(paths, re) {
+      // An empty cache has no proof; return before any additional metadata work for this batch.
+      if (cache.size === 0 || prefixPlanner === undefined || typeof prefetch !== 'function') return undefined
+      const pattern = patternOf(re)
+      if (pattern === null) return undefined
+      const captured: string[] = []
+      let mark: Mark
+      try {
+        if (!Array.isArray(paths)) return undefined
+        const count = paths.length
+        if (!Number.isSafeInteger(count) || count <= 0 || count > SEARCH_PREFETCH_MAX_ROWS) return undefined
+        for (let at = 0; at < count; at++) {
+          if (!Object.hasOwn(paths, at)) return undefined
+          const path = paths[at]
+          if (typeof path !== 'string') return undefined
+          captured.push(path)
+        }
+        mark = { base: view.base, rev: view.rev }
+      } catch { return undefined }
+      const keys: string[] = []
+      const metas = new Map<string, EntryMeta>()
+      const current = (): boolean => {
+        try {
+          const now = patternOf(re)
+          return host.readBytes === read && host.prefetch === prefetch && prefixPlanner.current() && !changed(mark) && now?.source === pattern.source && now.flags === pattern.flags &&
+            keys.every(key => cache.has(key))
+        } catch { return false }
+      }
+      // Metadata-only proof of every original candidate: no source, index, prefetch or cache installation.
+      try {
+        for (const path of captured) {
+          if (!current()) return undefined
+          const meta = await view.stat(path as RelPath)
+          if (!current() || meta?.kind !== 'file') return undefined
+          const id = meta.id
+          if (!blobId(id)) return undefined
+          const size = meta.size, mode = meta.mode
+          if (!Number.isSafeInteger(size) || size < 0) return undefined
+          const key = JSON.stringify([id, pattern.source, pattern.flags])
+          if (!cache.has(key)) return undefined
+          const prior = metas.get(path)
+          if (prior !== undefined && (prior.id !== id || prior.size !== size)) return undefined
+          metas.set(path, { kind: 'file', id, size, mode })
+          keys.push(key)
+        }
+      } catch { return undefined }
+      const covered = (paths: readonly string[]): number | undefined => {
+        try {
+          if (!current() || !Array.isArray(paths)) return undefined
+          const count = paths.length
+          if (!Number.isSafeInteger(count) || count < 0 || count > captured.length) return undefined
+          const selected: EntryMeta[] = []
+          let at = 0
+          for (let row = 0; row < count; row++) {
+            if (!Object.hasOwn(paths, row)) return undefined
+            const path = paths[row]
+            while (at < captured.length && captured[at] !== path) at++
+            if (at === captured.length) return undefined
+            at++
+            selected.push(metas.get(path)!)
+          }
+          const value = prefixPlanner.covered(selected)
+          return current() && typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= count ? value : undefined
+        } catch { return undefined }
+      }
+      return current() ? { current, covered } : undefined
+    },
     async scan(path, re) {
       const pattern = patternOf(re)
       if (pattern === null) return undefined
@@ -152,10 +233,19 @@ export function verifiedGrepMatches(host: ToolHost, path: string, re: RegExp): P
   const bound = hosts.get(host)
   return bound === undefined || host.readBytes !== bound.read ? Promise.resolve(undefined) : bound.scan(path, re)
 }
+/** Complete proof for every original batch candidate, never a loading verifier call. */
+export function readyGrepBatch(host: ToolHost, paths: readonly string[], re: RegExp): Promise<VerifiedGrepBatch | undefined> {
+  try {
+    const bound = hosts.get(host)
+    return bound === undefined || host.readBytes !== bound.read ? Promise.resolve(undefined) : bound.ready(paths, re)
+  } catch { return Promise.resolve(undefined) }
+}
 /** A synchronous check lets unbound default hosts keep their original awaits. */
 export function hasGrepVerifier(host: ToolHost): boolean {
-  const bound = hosts.get(host)
-  return bound !== undefined && host.readBytes === bound.read
+  try {
+    const bound = hosts.get(host)
+    return bound !== undefined && host.readBytes === bound.read
+  } catch { return false }
 }
 /** Developer observation only; no cache state is exposed through ToolHost. */
 export function grepVerificationStats(host: ToolHost): ReturnType<Bound['stats']> | null {
