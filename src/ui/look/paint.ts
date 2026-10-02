@@ -13,7 +13,13 @@
 //   · **`off` 档逐字节等于没有色位**：`paint(line, PALETTES.off)` 就是把片的字接起来，一个字节不多。
 //   · **三档同形**：哪一档上的色，剥掉 SGR 之后都是 `off` 档那一份（`strip`）——色位只加颜色，
 //     不改字、不改宽、不改行数。
+//   · **不可见字节不落到终端上**：片的字一进来就过 `read.ts` 的 `escapeOf`（C0 · C1 · 换行 →
+//     `\uXXXX`，与阅读面同一道转义）——账上的文件名 · 正文里混一个 ESC 就能清屏、换屏，混一个换行
+//     就撕开「1 逻辑行 = 1 物理行」。转义在**量宽之前**，所以列宽照转义后的那几个字符算；`escapeOf`
+//     是幂等的（转义出来的只有可见字符），`sp` · `fit` · `wrapLine` 三处入口各过一遍，谁绕过 `sp`
+//     手搓的片也逃不掉。
 import { clip, widthOf, wrap } from '../glyph.ts'
+import { escapeOf } from '../read.ts'
 import { STYLE_OFF } from '../term.ts'
 import type { Palette, Slot } from './palette.ts'
 
@@ -28,7 +34,12 @@ export type Line = readonly Span[]
 
 /** 一片（缺省是正文）。 */
 export function sp(text: string, slot: Slot = 'body'): Span {
-  return { text, slot }
+  return { text: escapeOf(text), slot }
+}
+
+/** 片的字过一遍转义（幂等）。 */
+function clean(line: Line): Line {
+  return line.map((s) => ({ text: escapeOf(s.text), slot: s.slot }))
 }
 
 /** 一行的字（片接起来，一个字节不改）。 */
@@ -83,8 +94,9 @@ function sliceLine(line: Line, from: number, to: number): Line {
  * 窄了补空格。**字与 `frame.ts` 的 `cell` 逐字节相同**（`clip` + 补空格）——变的只是 `…` 自己成了
  * 一片（`paint.test.ts` ① 拿生产那一把尺对着量）。
  */
-export function fit(line: Line, w: number): Line {
+export function fit(raw: Line, w: number): Line {
   if (w <= 0) return []
+  const line = clean(raw)
   const plain = textOf(line)
   const cut = clip(plain, w)
   const out: Span[] = []
@@ -112,7 +124,8 @@ const HANG_ROOM = 12
  *
  * 吃掉的只有空白与分隔符——字一个不少（`paint.test.ts` ③ 拿「去掉空白与 `·` 之后逐字相同」钉住）。
  */
-export function wrapLine(line: Line, w: number, hang = 0): readonly Line[] {
+export function wrapLine(raw: Line, w: number, hang = 0): readonly Line[] {
+  const line = clean(raw)
   const plain = textOf(line)
   if (w <= 0 || widthOf(plain) <= w) return [merge(line)]
   const lead = plain.length - plain.trimStart().length

@@ -153,6 +153,9 @@ export function lookOf(o: LookInput): readonly Line[] {
   const right = two && second !== undefined ? rowsOf(second.blocks, rw) : []
 
   // 预算：框四行（上边 · 账尾分隔 · 账尾 · 下边）是死的；提示行先让，弹层的预览再让，栏最后截。
+  // 连一行栏都放不下时（矮到 5–7 行）：**留住的那几行比栏的正文要紧**（门口的队列行与选项行是人
+  // 要按的东西）——栏整个收起（连框名那一截的 `┬` 与收栏那条线一起省掉），还放不下才从留住的那
+  // 几行头上让，末行（选项行）最后让。
   let hintRows = o.hint === undefined ? 0 : LAYOUT.hintGap + 1
   let wide = [...(o.wide ?? [])]
   const keep = Math.max(0, Math.min(o.wideKeep ?? 0, wide.length))
@@ -160,8 +163,10 @@ export function lookOf(o: LookInput): readonly Line[] {
   const spare = (): number => H - 4 - hintRows - (wide.length > 0 ? wide.length + 1 : 0)
   if (spare() < need) hintRows = 0
   while (spare() < Math.min(need, 2) && wide.length > keep) wide = wide.slice(1)
-  if (spare() < 1) wide = []
-  const bodyRows = Math.min(need, Math.max(1, spare()))
+  const collapse = spare() < 1 && wide.length > 0
+  if (collapse) while (wide.length > 1 && H - 4 - wide.length < 0) wide = wide.slice(1)
+  const cols = two && !collapse
+  const bodyRows = collapse ? 0 : Math.min(need, Math.max(1, spare()))
   const screen = [`这一屏 ${H} 行`]
   const l = capRows(left, bodyRows, first.fold ?? screen)
   const r = capRows(right, bodyRows, second?.fold ?? screen)
@@ -170,8 +175,8 @@ export function lookOf(o: LookInput): readonly Line[] {
   const v = muted(BOX.v)
   lines.push([
     muted(BOX.tl),
-    ...barOf(lw + pad, first.name, first.heading === true),
-    ...(two && second !== undefined ? [muted(BOX.tj), ...barOf(rw + pad, second.name, second.heading === true)] : []),
+    ...barOf(cols ? lw + pad : W - 2, first.name, first.heading === true),
+    ...(cols && second !== undefined ? [muted(BOX.tj), ...barOf(rw + pad, second.name, second.heading === true)] : []),
     muted(BOX.tr),
   ])
   for (let i = 0; i < bodyRows; i += 1) {
@@ -179,7 +184,7 @@ export function lookOf(o: LookInput): readonly Line[] {
   }
   // 栏到此为止：两栏那一档在这里把中间那根竖线收住（`┴`）——下面那几截都是横贯整栏的。
   const across = BOX.lj + BOX.h.repeat(W - 2) + BOX.rj
-  lines.push([muted(two ? BOX.lj + BOX.h.repeat(lw + pad) + BOX.bj + BOX.h.repeat(rw + pad) + BOX.rj : across)])
+  if (!collapse) lines.push([muted(cols ? BOX.lj + BOX.h.repeat(lw + pad) + BOX.bj + BOX.h.repeat(rw + pad) + BOX.rj : across)])
   if (wide.length > 0) {
     // 横贯整栏的那一块只截不折（与 `frame.ts` 同：门口那几行由 `gate.ts` 按宽先折好）。
     for (const one of wide) lines.push([v, air(), ...fit(one, W - 2 - pad), air(), v])

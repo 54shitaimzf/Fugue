@@ -330,3 +330,55 @@ test('⑧ 矮了先让提示行再截栏（多给一行就少藏一行）· 窄�
   assert.match(strip(draw({ ...BASE, width: 60, height: 4 }, '256')[0] ?? ''), /太矮/, '4 行：说一句太矮')
   console.log(`⑧ 读数：整帧 ${full.length} 行 · 截栏读数（高→藏）${readings.slice(0, 6).join(' · ')} …`)
 })
+
+test('⑨ 外部审查四条的回归：跳步按边数 · 只有收敛算成功 · 控制字节转义 · 矮屏留住门口那两行', () => {
+  // ① 跳步：图外那条（零步）不许减成负数；「原地说了一次」（零步）不许把真跳步抵掉。
+  const chain = (pairs: readonly (readonly [string, string])[]): readonly string[] => {
+    let seq = 0
+    const rows = pairs.map(([from, to]) => ({ pos: { writer: 'round', seq: (seq += 1) }, e: { t: 'round/state', round: 'r1', from, to } }) as never)
+    const snapshot = statusOf(rows)
+    return draw({ snapshot, width: 140 }, 'off')
+  }
+  const jumpOf = (lines: readonly string[]): string | null => /跳步 (-?\d+)/.exec(lines.join('\n'))?.[1] ?? null
+  assert.equal(jumpOf(chain([['Idle', 'Planning'], ['Aborted', 'Working']])), null, '图外那条：不该印「跳步 -1」')
+  assert.equal(jumpOf(chain([['Idle', 'Planning'], ['Planning', 'Planning'], ['Verifying', 'Rebuilding']])), '1', '原地那条不许抵掉真跳步')
+  assert.equal(jumpOf(chain([['Idle', 'Planning'], ['Aborted', 'Working'], ['Verifying', 'Rebuilding']])), '1', '图外 + 跳步：跳步照数')
+
+  // ② 停了不等于成了：只有「收敛」落成功格（+），别的停因落错误格（x）。判据那句原话从源码核。
+  for (const f of ['round/driver.ts', 'round/plan.ts']) {
+    assert.match(readFileSync(join(REPO, 'src', f), 'utf8'), /let stopped = '收敛'/, `${f} 里「收敛」那句原话变了，CONVERGED 要跟着改`)
+  }
+  const stopped = (why: string): Line[] => {
+    const rows: StatusRow[] = [
+      { pos: { writer: 'agent/r1/1', seq: 1 }, e: { t: 'agent/stop', agent: 'agent/r1/1' as never, steps: 3, stopped: why, handoffs: 0 } },
+    ]
+    return [...lookOf(sampleLookOf({ snapshot: statusOf(rows), width: 100 }))]
+  }
+  const agentRow = (lines: Line[]): Line => lines.find((l) => textOf(l).includes('格 agent/r1/1')) as Line
+  const ok = agentRow(stopped('收敛'))
+  const cut = agentRow(stopped('max-tokens：这一步的回复被截断'))
+  assert.ok(ok.some((s) => s.text === '+' && s.slot === 'ok'), '收敛：成功图标落成功格')
+  assert.ok(!cut.some((s) => s.slot === 'ok'), '没收住的停因不许有一片落成功格')
+  assert.ok(cut.some((s) => s.text === 'x' && s.slot === 'bad'), '没收住：失败图标落错误格')
+
+  // ③ 控制字节：文件名里的 ESC 与换行转成可见形状——off 档零 ESC，256 档的 ESC 全是 SGR，行行等宽。
+  const evil = '\x1b[2J\x1b]0;pwn\x07\n.png'
+  const read = { ...BASE, read: { rows: [captionOf(evil, 'ascii'), [sp(`round 9 · 写 ${evil}`)]] }, width: 80 }
+  const off = draw(read, 'off')
+  assert.ok(!off.join('').includes('\x1b'), 'off 档一个 ESC 都不许漏出去')
+  assert.ok(off.join('\n').includes('\\u001b[2J'), '转义成可见形状（与阅读面同一个 escapeOf）')
+  const deep = draw(read, '256').join('\n')
+  assert.equal(deep.replace(/\x1b\[[0-9;]*m/g, '').includes('\x1b'), false, '256 档：除了 SGR 不许有别的 ESC')
+  for (const l of off) assert.equal(widthOf(l), 80, '转义之后行行等宽（换行没把一帧撕开）')
+
+  // ④ 矮屏：5–7 行时门口那块末两行（队列行 · 选项行）留住，栏整个收起；5 行只放得下一行时留选项行。
+  const gate = { ...BASE, gate: { preview: ['实现：一句目标', '  写路径：a.ts'], queue: '还有 1 份等你点头', option: '放行一次(y) · 拒(n)' }, width: 100 }
+  for (const h of [5, 6, 7, 8]) {
+    const lines = draw({ ...gate, height: h }, 'off')
+    assert.ok(lines.length <= h, `高 ${h}：画了 ${lines.length} 行`)
+    for (const l of lines) assert.equal(widthOf(l), 100)
+    assert.ok(lines.some((l) => l.includes('放行一次(y)')), `高 ${h}：选项行（人要按的那一行）要在`)
+    if (h >= 6) assert.ok(lines.some((l) => l.includes('等你点头')), `高 ${h}：队列行也要在`)
+  }
+  console.log('⑨ 读数：跳步不出负数、不被原地抵掉 · 只有「收敛」是绿的 · 控制字节零泄漏 · 5–8 行门口那两行都在')
+})

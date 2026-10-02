@@ -6,6 +6,7 @@
 //   · 轮次的状态按图上的位置落格：`Committed` 成功 · `Aborted` 错误 · `Idle` 正文 · 其余（规划 ·
 //     派活 · 干活 · 验收 · 合并 · 重建）都是「运行中/等待」；
 //   · 计数只在**非零**时上色：冲突 · 没过 · 打回 · 拒——零个错误就不该是红的；过了几条是绿的；
+//   · 一格停了不等于成了：只有「收敛」落成功格，别的停因（预算 · 出错 · 步数上界）落错误格；
 //   · 边上的箭头与「（跳步，经 …）」那半句是骨架，弱化；分子/分母弱化；
 //   · 账尾 = 状态标记 + 永久行原文（`footerOf` 那一份，不另写）+ 靠右弱化的条数。
 //
@@ -43,6 +44,36 @@ function stateIcon(s: RoundState): IconName | null {
   return 'run'
 }
 
+/**
+ * 多走了几步（跳步）：**按边数**——每条「跳步，经 a · b」的边多走了（经过的步数 − 1）步。
+ *
+ * 不拿 `hops − transitions` 算（`frame.ts` 的 `bodyOf` 今天是这么算的）：图外那条（`unrouted`）记一条
+ * 转移、零步，减出来是负数（「跳步 -1」）；「原地说了一次」也是一条转移、零步，会把真跳步抵掉。
+ * 这两种边在快照里只以 `edges` 的那句话出现，所以从那句话数——措辞的出处是 `probe/status.ts` 的
+ * `renderRoute`，`look.test.ts` ⑨ 拿真折出来的快照钉着它。
+ */
+function skipsOf(edges: readonly string[]): number {
+  let n = 0
+  for (const e of edges) {
+    const via = /（跳步，经 (.+)）$/.exec(e)?.[1]
+    if (via !== undefined) n += via.split(' · ').length - 1
+  }
+  return n
+}
+
+/**
+ * 「停在收敛上」的那句原话——**只有它算成功**。`agent/stop.stopped` 是自由文本：收敛之外都是没收住
+ * 的原因（预算 · 调用出错 · 到了步数上界），出处 `round/driver.ts` 与 `round/plan.ts` 里
+ * `let stopped = '收敛'` 那一行（`look.test.ts` ⑨ 读源码钉着它）。
+ */
+const CONVERGED = '收敛'
+
+/** 一格停下来落哪一格色位 · 配哪个图标：没停 → 运行中；收敛 → 成功；别的原因 → 错误（没收住）。 */
+function stopOf(stopped: string | null): { readonly slot: Slot; readonly icon: IconName } {
+  if (stopped === null) return { slot: 'wait', icon: 'run' }
+  return stopped === CONVERGED ? { slot: 'ok', icon: 'ok' } : { slot: 'bad', icon: 'fail' }
+}
+
 /** 一个计数：非零才上那一格。 */
 function count(n: number, slot: Slot): Span {
   return sp(String(n), n > 0 ? slot : 'body')
@@ -59,7 +90,8 @@ function roundLine(r: RoundTrail, current: string | null): Line {
     [sp('状态 '), sp(r.state, stateSlot(r.state))],
     [sp(`转移 ${r.transitions} 条`)],
   ]
-  if (r.hops !== r.transitions) parts.push([sp(`跳步 ${r.hops - r.transitions}`)])
+  const skips = skipsOf(r.edges)
+  if (skips > 0) parts.push([sp(`跳步 ${skips}`)])
   parts.push([sp('打回 '), count(r.rejects, 'bad'), sp(' 次')])
   if (r.round === current) parts.push([sp('最近一条落在这一轮', 'muted')])
   return joinLine(parts)
@@ -71,10 +103,11 @@ function edgeLine(e: string): Line {
 }
 
 function agentLine(a: AgentStatus, icons: IconTier): Line {
+  const how = stopOf(a.stopped)
   const stop: Line =
-    a.stopped === null ? [sp('没停', 'wait')] : [sp(`${a.stopSteps ?? '?'} 步 · `), sp(a.stopped, 'ok')]
+    a.stopped === null ? [sp('没停', how.slot)] : [sp(`${a.stopSteps ?? '?'} 步 · `), sp(a.stopped, how.slot)]
   return [
-    ...iconSpans(a.stopped === null ? 'run' : 'ok', icons),
+    ...iconSpans(how.icon, icons),
     ...joinLine([
       [sp(`格 ${a.agent}`)],
       [sp(`调 ${a.calls} 次`)],
@@ -139,7 +172,7 @@ function navLinesOf(nodes: readonly NavNode[], at: number, s: StatusSnapshot, ic
   for (let i = win.from; i < win.from + win.count; i += 1) {
     const n = nodes[i] as NavNode
     const agent = s.agents.find((a) => a.agent === n.writer)
-    const icon: IconName = n.depth === 0 ? 'line' : agent === undefined ? 'agent' : agent.stopped === null ? 'run' : 'ok'
+    const icon: IconName = n.depth === 0 ? 'line' : agent === undefined ? 'agent' : stopOf(agent.stopped).icon
     const sel = i === at
     out.push([
       sp(sel ? '▸ ' : '  ', sel ? 'hit' : 'body'),
