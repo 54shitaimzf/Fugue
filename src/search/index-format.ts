@@ -54,12 +54,12 @@ function payloadOf(index: BlobIndex): BlobIndex {
     tables: { trigrams: [...index.tables.trigrams], symbols: null } }
 }
 
-/** 同样的字节永远同样的结果（超预算），与读源失败这类暂时故障分开：只有它值得被记住。 */
+/** 内容地址已核验后的确定性构建预算失败；接收前的源大小拒绝不属于永久负事实。 */
 export class IndexBudgetError extends Error {}
 
 export function buildBlobIndex(blob: BlobId, bytes: Uint8Array): BlobIndex {
   if (!isBlobId(blob)) throw new Error('index requires a complete lowercase Git blob ID')
-  if (bytes.byteLength > MAX_SOURCE_BYTES) throw new IndexBudgetError('index source byte budget exceeded')
+  if (bytes.byteLength > MAX_SOURCE_BYTES) throw new Error('index source byte budget exceeded')
   const source = Buffer.from(bytes)
   const hash = createHash(blob.length === 40 ? 'sha1' : 'sha256')
   hash.update(`blob ${source.byteLength}\0`)

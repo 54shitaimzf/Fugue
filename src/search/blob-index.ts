@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
 import type { BlobId } from '../terms.ts'
 import { cleanupIndexTemporary, createBlobIndexStore } from './index-store.ts'
-import { encodeBlobIndex, MAX_SOURCE_BYTES } from './index-format.ts'
+import { encodeBlobIndex } from './index-format.ts'
 import type { BlobIndex } from './index-format.ts'
 import { copyIndexSource } from './index-source.ts'
 import { createIndexWorkerPool } from './index-worker-pool.ts'
@@ -76,8 +76,8 @@ export function createBlobIndexLookup(
   const store = createBlobIndexStore(selectedRoot)
   const cache = new Map<BlobId, PreparedIndex>()
   const pending = new Map<BlobId, LoadTask>()
-  // 永久建不出来的 blob（二进制 · 超源/trigram 预算）：同样的字节永远同样的结果，记住就不会让每次
-  // grep 都重读原字节再起一个 Worker 白建。只记确定性失败；读源出错、超时、被取消都不记。
+  // 已核源地址的确定性trigram预算失败，记住可避免每次grep重读再起Worker。
+  // 接收时的超大回复尚未核地址，和读源出错、超时、取消一样保持可重试unknown。
   const unindexable = new Set<BlobId>()
   // `maxPending` 只管**构建**（读源 + Worker）：盘上已有记录的纯读命中不占构建名额，否则并发一到
   // 就把本该命中的查询退回扫描。探测本身另有固定上限（每份记录 ≤ MAX_INDEX_BYTES，16 份同时在飞）。
@@ -127,10 +127,8 @@ export function createBlobIndexLookup(
     const bytes = await source(task.blob, task.abort.signal)
     if (closed || task.canceled) return
     const ownedBytes = copyIndexSource(bytes)
-    if (ownedBytes === null) {
-      if (bytes instanceof Uint8Array && bytes.byteLength > MAX_SOURCE_BYTES) forget(task.blob)
-      return
-    }
+    // 接收预算只说明这次回复不能处理；尚未核BlobId，不能据此形成永久负事实。
+    if (ownedBytes === null) return
     const worker = pool.acquire()
     if (worker === null) return
     task.worker = worker; task.workerStarted = true
@@ -204,6 +202,7 @@ export function createBlobIndexLookup(
   function close(): Promise<void> {
     if (closing !== undefined) return closing
     closed = true
+    unindexable.clear()
     options.signal?.removeEventListener('abort', onAbort)
     closing = (async () => {
       await Promise.all([...pending.values()].map(cancel))
