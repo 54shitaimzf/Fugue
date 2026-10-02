@@ -1,5 +1,7 @@
 # 统一上游基线与路线图贡献
 
+当前有限审查入口见[候选完成面与剩余门](roadmap-review-gates.md)：精确 9a5 源码的 fast/full 已绿，现有 runner 的 ext4 冷读数已绑定 merge tree；冷50ms、缺省索引、逐工具成本事实与 serve 三项设计审批仍未收口。
+
 本分支以官方 `f271ad2fd6dc64e26bfa6a7d8a28d3f8d7c00ad5`（PR53 的机制、PR55 发布归档与 PR56 文档校准已合入）为最新实际祖先；此前基于 `ba77d765` 合入公开审查汇总
 `claude/fugue-roadmap-pr-review-c0t5od` 的 `a5010b8430286d803a5fcc625d2dff2a12a0d303`，
 再接入随后完成的增量 cohort 构建和真实 View/M0 验收。只持续更新

@@ -13,6 +13,8 @@
 
 ### 内部维护
 
+- 汇总 PR45 的有限审查面与后续门：保留精确 9a5 CI/ext4 报告、冷查询与 dense 退化、成本台账缺项和 serve 三项设计决策；不将候选全绿写成版本完成或缺省启用，见 [审查入口](docs/roadmap-review-gates.md)。
+
 - 现有 real 入口增加有界16MiB冷查询诊断：同一完整回执、原生预取与512项 eager info不变；两轮反转顺序，单行 stdout 记录真正的源/树/文件系统与准备费用，不改 CI 冻结 artifact、不按时间判红，见 [runner 读数边界](docs/ci-cold-diagnostic.md)。
 - 可选查询保留 `+` 至少一次重复中的必需字面条件，同时切断两侧连接；空固定组、叠加/惰性量词继续回扫描。多次重复、变长子组与短子组假拼接由原正则和真实 View 回执控制，见 [重复边界](design/MANDATORY-LITERAL-RUNS.md)。
 - 可选查询从 dot 与 `?`/`*` 可选段两侧提取真正必需的字面串：可选子树条件全部丢弃，不跨变长边界拼接；原正则仍核真实内容，未知语法/flags 继续全扫。真实 View 省略段、跨行假候选与编辑失效有回归控制，见 [必需字面串](design/MANDATORY-LITERAL-RUNS.md)。
