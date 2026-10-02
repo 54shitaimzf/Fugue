@@ -93,6 +93,9 @@ export const FAMILY_KIND: Readonly<Record<EventFamily, FamilyKind>> = {
   'holder/todos': 'transient',
   'holder/plan': 'transient',
   'holder/ask': 'transient',
+  // 七 · 子 agent 的问题与它的判决（U18 甲案）：与"问人"同一档——一行瞬态计数，正文在账上。
+  'ask/raised': 'transient',
+  'ask/ruling': 'transient',
 }
 
 /**
