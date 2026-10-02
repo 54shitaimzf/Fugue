@@ -488,7 +488,12 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   } catch {
     prefetch = undefined
   }
-  if (prefetch !== undefined) await prefetch(all)
+  // **候选先按范围收窄，再取那一批**：预取是"接下来要读的那几份先取回来"，范围外的不该占这一批
+  // ——一条窄范围加上一棵大树的问法上，差的就是几十上百份的内容。
+  //
+  // **收窄只改那一批，不改结果**：结果那一路的判据在下面那个循环里，它自己按范围判一次；预取
+  // 始终只是提示（缺席 · 失败 · 少几份，都只是慢一点）。
+  if (prefetch !== undefined) await prefetch(all.filter((p) => inScope(p, dir)))
   const hits: string[] = []
   for (const path of all) {
     if (!inScope(path, dir)) continue

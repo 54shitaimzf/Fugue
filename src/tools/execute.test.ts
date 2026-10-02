@@ -960,6 +960,57 @@ test('格 3 · 预取：一批把候选的内容取回来，此后逐文件读�
     await c.close()
   }
 })
+
+/**
+ * 格 3 · 预取只取范围内那几份：范围外的路径不进那一批，而**回执逐字节不变**。
+ *
+ * 抓住的变异：预取那一行回到"整棵树都先取回来"（范围外那 25 份又占上那一批）。同一条里还有
+ * 另一半：**收窄不许动结果**——结果那一路的判据在 grep 的循环里，预取只是提示。
+ */
+test('格 3 · 预取只取范围内那几份：范围外的路径不进那一批，回执逐字节不变', async () => {
+  const c = await lowerBench(lowerCorpus())
+  try {
+    const batches: string[][] = []
+    const raw = c.host.prefetch
+    assert.equal(typeof raw, 'function', '产品那一份宿主该有这道缝')
+    const host = {
+      ...c.host,
+      prefetch: async (paths: readonly string[]) => {
+        batches.push([...paths])
+        await raw(paths)
+      },
+    } as ToolHost
+
+    // 范围 `d0`：那一批里只许有 `d0/` 下面那 5 份（整棵树 30 份）。
+    const before = c.truth.stats().gitRequests
+    const scoped = await face('grep', { pattern: '记号', path: 'd0' }, host)
+    const scopedCost = c.truth.stats().gitRequests - before
+    assert.equal(scoped.ok, true, scoped.output)
+    assert.equal(scoped.output.split('\n').length - 1, 5, `范围里的行数不对：${scoped.output.slice(0, 160)}`)
+    assert.equal(batches.length, 1, `一趟 grep 该只发一批预取：发了 ${batches.length}`)
+    const batch = batches[0] ?? []
+    const away = batch.filter((p) => !p.startsWith('d0/'))
+    assert.deepEqual(away, [], `范围外的路径进了预取批：${away.slice(0, 5).join(' · ')}`)
+    assert.equal(batch.length, 5, `这一批该是范围内那 5 份：${batch.join(' · ')}`)
+
+    // 回执不变：同一份台上再问一次整个视图，把那 5 行挑出来，逐字节相同。
+    const whole = await face('grep', { pattern: '记号' }, host)
+    assert.deepEqual(
+      scoped.output.split('\n').slice(1).sort(),
+      whole.output
+        .split('\n')
+        .slice(1)
+        .filter((l) => l.startsWith('d0/'))
+        .sort(),
+      '收了范围之后的回执与整个视图里那几行不一致',
+    )
+    console.log(
+      `格 3 读数：范围 d0 的预取批 ${batch.length} 份（整棵树 30 份）· 那一趟 ${scopedCost} 次请求 · 回执 5 行与整个视图里那 5 行逐字节相同`,
+    )
+  } finally {
+    await c.close()
+  }
+})
 // ── ⑩ `read` 的窗口档：offset/limit 下推（T16 ① 的第二半）──────────────────────
 //
 //   · 两档格式：**不给窗口** = 与从前逐字节相同（头 + 原样正文，一个行号都不带）；**给了任意一项**
