@@ -32,7 +32,7 @@
 import type { Delta } from '../delta.ts'
 import { FAMILY_KIND } from './stream.ts'
 import { permanentLinesOf } from './stream.ts'
-import { clip } from './glyph.ts'
+import { clip, cutAt, widthOf } from './glyph.ts'
 import type { StatusRow } from '../probe/status.ts'
 
 /**
@@ -460,8 +460,49 @@ export function firstFace(faces: ReadFaces): ReadFaceName {
   return faces.diff !== null ? 'diff' : 'stream'
 }
 
-/** 那一面那几行（标题算第 0 行；`top` 是看到第几行起）。一面都没有时给空表。 */
-export function faceRowsOf(faces: ReadFaces, name: ReadFaceName): readonly string[] {
+/**
+ * 控制字节 → **可见形状**（`\uXXXX`）。转义之后它就是几个能读的字符，宽度也照这几个字符算。
+ *
+ * 为什么要有这一道：终端把 `\x1b` 当**一条序列的开头**——账上一条正文里混进一个不可见字节，
+ * 屏幕上从那个字节起整幅错位（`\x1b[2J` 是清屏 · `\x1b[?1049h` 是换一块屏）。混沌字节不许原样
+ * 落到圣像上。只动 C0 与 C1（`[\x00-\x1f\x7f-\x9f]`），含 `\n`：账上一行正文本来就该是一行
+ * （`read.test.ts` ④ 那条"一行里没有换行"钉着它），真混进来了也转义，不许它撕开一帧。
+ */
+export function escapeOf(s: string): string {
+  return s.replace(/[\x00-\x1f\x7f-\x9f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+}
+
+/**
+ * 阅读面那一行的折法：**先转义、再按簇量宽折，一个字节都不吃**。
+ *
+ * 与 `glyph.ts` 那把通用折行**刻意不共用**：`wrap` 折在词尾、还会吃分隔符与空白（`trimEnd` ·
+ * `trimStart` · 行首那个 `· `），那是给面板读数用的——读数短，折在词尾好看；正文折了要**拼得
+ * 回来**（`read.test.ts` ⑦ 的往返断言），一个空格都不许少。切点仍用 `glyph.ts` 的 `cutAt`
+ * （整簇切）——尺只有一把，一个 emoji 不许被拆成两半。
+ *
+ * `cols <= 0`（量不到列宽那一档）时原样一行出去，不折也不报错。
+ */
+export function readWrap(s: string, cols: number): readonly string[] {
+  const text = escapeOf(s)
+  if (cols <= 0 || widthOf(text) <= cols) return [text]
+  const out: string[] = []
+  let rest = text
+  while (rest !== '') {
+    const cut = cutAt(rest, cols)
+    out.push(rest.slice(0, cut))
+    rest = rest.slice(cut)
+  }
+  return out
+}
+
+/**
+ * 那一面那几行（标题算第 0 行；`top` 是看到第几行起）。一面都没有时给空表。
+ *
+ * `cols` 是**本帧框内那一栏的宽度**（`frame.ts` 的 `innerOf` 那一把尺）：每一行在这儿折成物理
+ * 行，于是**屏上印的**与**`top` 数的**是同一串行。两把尺（显示端按框宽截断 · 滚动端按未折行
+ * 行数数）是这一面最容易犯的错——翻下去的那几行与看见的那几行对不上，而且不报错。
+ */
+export function faceRowsOf(faces: ReadFaces, name: ReadFaceName, cols: number): readonly string[] {
   const one = faces[name]
-  return one === null ? [] : [one.title, ...one.lines]
+  return one === null ? [] : [one.title, ...one.lines].flatMap((l) => [...readWrap(l, cols)])
 }

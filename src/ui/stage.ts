@@ -346,7 +346,7 @@ export function openStage(deps: StageDeps): Stage {
         ? {}
         : ((): { read: { rows: readonly string[]; top: number } } => {
             const faces = facesOf(readState)
-            const rows = faceRowsOf(faces, reading.face ?? firstFace(faces))
+            const rows = faceRowsOf(faces, reading.face ?? firstFace(faces), deps.columns() - 2)
             const top = Math.max(0, Math.min(reading.top, Math.max(0, rows.length - 1)))
             return rows.length === 0 ? {} : { read: { rows, top } }
           })()
@@ -553,7 +553,8 @@ export function openStage(deps: StageDeps): Stage {
         return
       }
       if (d.action === 'historyOlder' || d.action === 'historyNewer') {
-        reading = { ...reading, top: stepTop(faceRowsOf(facesOf(readState), reading.face).length, reading.top, d.action === 'historyOlder' ? -1 : 1) }
+        const n = faceRowsOf(facesOf(readState), reading.face, deps.columns() - 2).length
+        reading = { ...reading, top: stepTop(n, reading.top, d.action === 'historyOlder' ? -1 : 1) }
         settle()
         return
       }
@@ -564,7 +565,7 @@ export function openStage(deps: StageDeps): Stage {
     if (d.action === 'pageUp' || d.action === 'pageDown' || d.action === 'jumpFirst' || d.action === 'jumpLast') {
       const back = d.action === 'pageUp' || d.action === 'jumpFirst'
       if (reading !== null) {
-        const n = faceRowsOf(facesOf(readState), reading.face).length
+        const n = faceRowsOf(facesOf(readState), reading.face, deps.columns() - 2).length
         // 跳首尾用一个够大的数一步到头（`stepTop` 夹得住）。
         const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -PAGE_STEP : PAGE_STEP
         reading = { ...reading, top: stepTop(n, reading.top, delta) }
