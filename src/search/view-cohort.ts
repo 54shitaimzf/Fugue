@@ -31,8 +31,16 @@ interface Generation {
   readonly base: View['base']
   readonly rev: View['rev']
 }
-interface Snapshot extends Generation { readonly blobs: readonly BlobId[] }
-interface Cached extends Generation { readonly result: Promise<CohortIndex | null> }
+interface Snapshot extends Generation {
+  readonly blobs: readonly BlobId[]
+  /** Private generation-owned metadata, captured only from this View. */
+  readonly files: ReadonlyMap<string, BlobId>
+}
+interface Proof {
+  readonly index: CohortIndex
+  readonly files: ReadonlyMap<string, BlobId>
+}
+interface Cached extends Generation { readonly result: Promise<Proof | null> }
 const owners = new WeakMap<ViewCohortLookup, CohortView>()
 const typedArray = Object.getPrototypeOf(Uint8Array.prototype)
 const byteLengthOf = Object.getOwnPropertyDescriptor(typedArray, 'byteLength')!.get!
@@ -86,18 +94,21 @@ export function createViewCohortLookup(
     const paths = strings(await enumerate(), MAX_VIEW_PATHS)
     if (paths === null || changed(mark)) return null
     const blobs = new Set<BlobId>()
-    for (const path of paths) {
+    const files = new Map<string, BlobId>()
+    for (const path of new Set(paths)) {
       const meta = await view.stat(path as RelPath)
       if (changed(mark)) return null
       if (meta?.kind !== 'file') continue
-      if (!id(meta.id)) return null
-      blobs.add(meta.id)
+      const blob = meta.id
+      if (!id(blob)) return null
+      blobs.add(blob)
+      files.set(path, blob)
       if (blobs.size > MAX_COHORT_BLOBS) return null
     }
     if (blobs.size === 0) return null
-    return { ...mark, blobs: Object.freeze([...blobs].sort()) }
+    return { ...mark, blobs: Object.freeze([...blobs].sort()), files }
   }
-  function load(mark: Generation): Promise<CohortIndex | null> {
+  function load(mark: Generation): Promise<Proof | null> {
     if (cached !== undefined && cached.base === mark.base && cached.rev === mark.rev) return cached.result
     const current: Cached = { ...mark, result: (async () => {
       const selected = await snapshot(mark)
@@ -106,7 +117,7 @@ export function createViewCohortLookup(
       const index = await store.read(selected.blobs)
       if (changed(mark) || index === null || index.key !== cohortKey(selected.blobs)) return null
       prior = index
-      return index
+      return { index, files: selected.files }
     })().catch(() => null) }
     cached = current
     return current.result
@@ -125,13 +136,15 @@ export function createViewCohortLookup(
         counts.queries++
         if (original.length > MAX_INDEX_CANDIDATE_BATCH || grams === null) return original
         const mark = generation()
-        const index = await load(mark)
-        if (index === null || changed(mark)) { counts.fallbacks++; return original }
+        const proof = await load(mark)
+        if (proof === null || changed(mark)) { counts.fallbacks++; return original }
         const keep: string[] = []
         for (const path of original) {
-          const meta = await view.stat(path as RelPath)
+          // This phase has no awaits or metadata calls. The same base/rev owns
+          // both the exact-set artifact and the already validated path identities.
+          const blob = proof.files.get(path)
           if (changed(mark)) { counts.fallbacks++; return original }
-          if (meta?.kind !== 'file' || !id(meta.id) || cohortMightContain(index, meta.id, grams) !== false) keep.push(path)
+          if (blob === undefined || cohortMightContain(proof.index, blob, grams) !== false) keep.push(path)
         }
         return changed(mark) ? original : keep
       })
@@ -205,7 +218,7 @@ export function createViewCohortLookup(
         counts.builds++
         if (!await store.write(index) || changed(mark)) return false
         prior = index
-        cached = { ...mark, result: Promise.resolve(index) }
+        cached = { ...mark, result: Promise.resolve({ index, files: selected.files }) }
         return true
       })
       preparing = task

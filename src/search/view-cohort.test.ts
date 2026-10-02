@@ -71,7 +71,7 @@ test('missing, throwing and wrong-set artifacts remain full scan; no automatic s
   }
 })
 
-test('generation changes during disk or per-path metadata invalidate every negative', async () => {
+test('generation changes during disk or snapshot metadata invalidate every negative', async () => {
   const b = fixture()
   const index = b.index()
   const entered = held<void>(), disk = held<ReturnType<typeof b.index>>()
@@ -87,12 +87,60 @@ test('generation changes during disk or per-path metadata invalidate every negat
   const stat = b.view.stat.bind(b.view)
   b.view.stat = async path => {
     const result = await stat(path)
-    if (++calls === 3) b.view.base = 'a'.repeat(40) as CommitId
+    if (++calls === 2) b.view.base = 'a'.repeat(40) as CommitId
     return result
   }
   const next = createViewCohortLookup(b.view, b.enumerate, { read: async () => current, write: async () => true })
   assert.deepEqual(await next.filterCandidates(['a', 'b'], ['zzz']), ['a', 'b'])
   await next.close()
+})
+
+test('exact generation metadata is read once and unknown paths never become exclusions', async () => {
+  const b = fixture()
+  let calls = 0, reads = 0
+  const stat = b.view.stat.bind(b.view)
+  b.view.stat = async path => { calls++; return stat(path) }
+  const lookup = createViewCohortLookup(b.view, b.enumerate, {
+    read: async () => { reads++; return b.index() }, write: async () => true,
+  })
+  try {
+    assert.deepEqual(await lookup.filterCandidates(['a', 'b', 'outside', 'b'], ['nee']), ['b', 'outside', 'b'])
+    assert.equal(calls, 2, 'one metadata read per enumerated path; no candidate re-probes')
+    assert.deepEqual(await lookup.filterCandidates(['a', 'b'], ['zzz']), [])
+    assert.equal(calls, 2, 'a later batch reuses the generation-owned identities')
+    assert.equal(reads, 1)
+    b.write('a', 'needle')
+    assert.deepEqual(await lookup.filterCandidates(['a', 'b'], ['nee']), ['a', 'b'])
+    assert.equal(calls, 4, 'a changed generation rebuilds its own metadata')
+    assert.equal(reads, 2)
+    assert.equal(await lookup.prepare(b.source), true)
+    const preparedCalls = calls
+    assert.deepEqual(await lookup.filterCandidates(['a', 'b'], ['zzz']), [])
+    assert.equal(calls, preparedCalls, 'successful preparation installs its exact current snapshot')
+  } finally { await lookup.close() }
+})
+
+test('snapshot deduplicates owned paths and captures primitive metadata IDs once', async () => {
+  const b = fixture()
+  let calls = 0, ids = 0
+  const stat = b.view.stat.bind(b.view)
+  b.view.stat = async path => {
+    calls++
+    const meta = await stat(path)
+    if (meta === null) return null
+    return { ...meta, get id() { ids++; return meta.id } }
+  }
+  const lookup = createViewCohortLookup(b.view, async () => ['a', 'a', 'b', 'missing'], {
+    read: async () => b.index(), write: async () => true,
+  })
+  try {
+    assert.deepEqual(await lookup.filterCandidates(['a', 'b', 'missing'], ['nee']), ['b', 'missing'])
+    assert.equal(calls, 3)
+    assert.equal(ids, 2)
+    b.paths.delete('a'); b.view.rev = (Number(b.view.rev) + 1) as ViewRev
+    assert.deepEqual(await lookup.filterCandidates(['a', 'b'], ['zzz']), ['a'])
+    assert.equal(calls, 6, 'a deleted path cannot inherit its former identity')
+  } finally { await lookup.close() }
 })
 
 test('dense frozen requirements, caller mutation and unsupported admission never issue false exclusions', async () => {

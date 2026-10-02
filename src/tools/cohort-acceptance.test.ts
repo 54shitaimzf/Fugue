@@ -158,26 +158,29 @@ test('fresh missing/corrupt/oversize/unknown-version/wrong-set cohort records fa
   } finally { await f.close() }
 })
 
-test('two held current-View query probes roll back their earlier exclusions after a real edit/delete', { timeout: 15_000 }, async () => {
+test('two queries sharing held current-View metadata restore their whole batch after a real edit/delete', { timeout: 15_000 }, async () => {
   const f = await truthViewFixture(Object.fromEntries(Array.from({ length: 12 }, (_, at) => [String(at).padStart(2, '0'), `none ${at}`])))
   const gate = held<void>(), entered = held<void>()
   let blocking = false, calls = 0
   try {
     const store = f.own(createCohortIndexStore(f.root)), t = await f.target('racing'), indexed = attach(f, t, store)
     assert.equal(await indexed.index.prepare(blob => f.truth.getBlob(blob)), true)
+    // A new handle must capture current metadata before using the prepared disk
+    // artifact. Warm membership itself is synchronous, without a per-path await.
+    const querying = attach(f, t, store)
     const stat = t.view.stat.bind(t.view)
     t.view.stat = async path => {
-      if (blocking && path === '01') { if (++calls === 2) entered.release(); await gate.promise }
+      if (blocking && path === '01') { if (++calls === 1) entered.release(); await gate.promise }
       return stat(path)
     }
     blocking = true
     const queries = ['needle', 'other'].map(pattern => {
-      const check = measured(indexed.host)
+      const check = measured(querying.host)
       return { ...check, pattern, result: grep({ pattern }, check.host, context(t)) }
     })
     try {
       await entered.promise
-      assert.equal(indexed.index.stats().active, 2)
+      assert.equal(querying.index.stats().active, 2)
       await t.change({ kind: 'modify', path: '00', bytes: Buffer.from('needle other\n'), mode })
       await t.change({ kind: 'delete', path: '02' })
     } finally { blocking = false; gate.release() }
@@ -185,9 +188,9 @@ test('two held current-View query probes roll back their earlier exclusions afte
       const result = await query.result
       assert.deepEqual(result, await grep({ pattern: query.pattern }, t.plain, context(t)))
       assert.match(result.output, /00:1:needle other/)
-      assert.deepEqual(query.reads, Array.from({ length: 12 }, (_, at) => String(at).padStart(2, '0')), 'whole enumerated batch includes the earlier excluded path')
+      assert.deepEqual(query.reads, Array.from({ length: 12 }, (_, at) => String(at).padStart(2, '0')), 'stale metadata cannot exclude any path from the enumerated batch')
     }
-    assert.equal(indexed.index.stats().active, 0)
+    assert.equal(querying.index.stats().active, 0)
   } finally { blocking = false; gate.release(); await f.close() }
 })
 

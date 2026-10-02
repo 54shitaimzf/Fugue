@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 只读开发出口：既有 M0 日志 → 有界的逐模型调用 JSON，不开启产品写者。
 import { resolve } from 'node:path'
-import { openLog } from '../src/log/log.ts'
+import { readLogSnapshot } from '../src/log/stream.ts'
 import { DEFAULT_CALL_LEDGER_ROWS, readCallLedger } from '../src/probe/call-ledger.ts'
 
 const args = process.argv.slice(2)
@@ -16,10 +16,5 @@ if (args[1] !== undefined && !/^\d+$/.test(args[1])) {
   process.exit(2)
 }
 const limit = args[1] === undefined ? DEFAULT_CALL_LEDGER_ROWS : Number(args[1])
-const log = openLog(resolve(args[0]))
-try {
-  const ledger = await readCallLedger(log.readMerged(), limit)
-  console.log(JSON.stringify(ledger))
-} finally {
-  await log.close()
-}
+const ledger = await readCallLedger(readLogSnapshot(resolve(args[0])), limit)
+console.log(JSON.stringify(ledger))
