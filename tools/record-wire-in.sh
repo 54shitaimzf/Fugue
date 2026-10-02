@@ -3,9 +3,15 @@
 #
 # 为什么要有这一条命令：夹具绑的是**录制那一版的请求字节**（`src/model/http.ts` 的
 # `wireInTransport` 按 `requestHash` 逐字节核），于是前缀或契约一变它就过期——`src/cli/chain.test.ts`
-# 的「序 1」当场红，而那条命令自己写着"过期不重修，要新的就真跑一趟重录"。这一份把"真跑一趟"
-# 收成一条命令：照 `scenario.json` 搭一份工作区 → 真跑 `round run --live` → 把 dump 收进 `wire/`
-# → 照新产物更新 `scenario.json` 的 `expected`。
+# 的「序 1」当场红，而那条命令自己写着"过期不重修"。这一份把"真跑一趟"收成一条命令：照
+# `scenario.json` 搭一份工作区 → 真跑 `round run --live` → 把 dump 收进 `wire/` → 照新产物更新
+# `scenario.json` 的 `expected`。
+#
+# **描述类漂移的缺省处置不是这一条，而是离线改齐**（`node tools/align-wire-in.ts`）：动的是目录
+# 文案时，请求侧可以逐字节复算——不出网 · 不读凭据 · 不花钱，而快档那条对齐测试
+# （`src/cli/wire-in.test.ts`）当场给红绿。这一份脚本留给两种天：**响应侧**要新证据（要新的模型
+# 行为对照），或者动的是**参数面/语义**而不只是描述——那时旧响应不再是有意义的对照，离线改齐
+# 就成了伪造对照。
 #
 # 跑法：cd ~/fugue && sh tools/record-wire-in.sh        # 花钱：约 ¥0.02 · 3 次调用 · 依赖网
 #       sh tools/record-wire-in.sh --keep               # 现场留着（打印路径）
