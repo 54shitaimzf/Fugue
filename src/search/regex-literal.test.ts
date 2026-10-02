@@ -33,7 +33,7 @@ test('balanced unquantified literal groups preserve concatenation across their b
 })
 
 test('unsupported or malformed group contents refuse the entire index condition', () => {
-  for (const pattern of ['rare(_hit)+', '(abc){1}', '(abc|xyz)',
+  for (const pattern of ['(abc){1}', '(abc|xyz)',
     '(?:abc|xyz)', '(abc*)', '(?:[abc])', '(?=abc)', '(?!abc)', '(?<=abc)',
     '(?<!abc)', '(?<name>abc)', '(?i:abc)', '(abc)\\1', '(?:\\wabc)', '(?:^abc)', '(abc$)',
     'abc)', '(abc', '(?:abc', '(?abc)', '(?:abc)$$']) {
@@ -65,8 +65,8 @@ test('mandatory runs stop at optional children and variable atoms without false 
 })
 
 test('unsupported quantifiers and optional-group contents still refuse the whole condition', () => {
-  for (const pattern of ['?abc', '*abc', 'abc??', 'abc**', 'abc?*', 'abc*?', 'abc.*?', 'abc.+',
-    'abc{0}def', 'abc(?:x|y)?def', 'abc(?:x+)def', 'abc(?=x)?def', 'abc[xyz]?def', 'abc\\s*def']) {
+  for (const pattern of ['?abc', '*abc', 'abc??', 'abc**', 'abc?*', 'abc*?', 'abc.*?', 'abc.+?',
+    'abc{0}def', 'abc(?:x|y)?def', 'abc(?:x++)?def', 'abc(?=x)?def', 'abc[xyz]?def', 'abc\\s*def']) {
     assert.equal(requiredLiteralTrigrams(pattern, ''), null, pattern)
   }
   const invalidTail = 'x'.repeat(MAX_LITERAL_PATTERN_UNITS - 1) + '|'
@@ -283,7 +283,7 @@ test('a seeded adversarial matrix never requires a gram some matching string lac
 
 test('inserting unsupported regex syntax into an accepted literal forces the scan path', () => {
   assert.deepEqual(requiredLiteralTrigrams('abcabc', ''), ['abc', 'bca', 'cab'])
-  for (const meta of ['+', '|', '[a]', '(?:x)+', '(x)+', '{2}', '(?=x)', '(?!x)']) {
+  for (const meta of ['+?', '|', '[a]', '(?:x)+?', '(x)++', '{2}', '(?=x)', '(?!x)']) {
     for (let at = 0; at <= 6; at++) {
       const pattern = 'abcabc'.slice(0, at) + meta + 'abcabc'.slice(at)
       assert.equal(requiredLiteralTrigrams(pattern, ''), null, pattern)

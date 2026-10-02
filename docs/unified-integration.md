@@ -82,3 +82,7 @@ execute 文件出现一次已见 Node cloned-data 传输错误，随后 execute/
 随后候选提取增加[必需字面串](../design/MANDATORY-LITERAL-RUNS.md)：只保留 dot 与可选段两侧独立必需的连续文本，可选子树与虚假的相邻拼接均不参与排除。真实 View/原正则回执与编辑失效另验。[metadata 批次调查](info-batch-investigation/README.md)的512/1024实验没有稳定墙钟收益，生产256保持不变；[单个选择性机会](info-batch-investigation/required-run-proof.md)仅证明候选与回执，不作为本组合的计时证书。
 
 [原生配对读数](required-runs-pair/README.md)另记录固定本地2a→1623图：选择性源读取512→1，512条 eager metadata检查保留；code可选组62.1ms、mixed dot-star56.3ms仍超50ms，dense与不支持语法的代价不隐藏。证据的原图/回执指纹保持原样，不转借为本组合或默认索引的全域性能承诺。
+
+随后的 `+` 候选规则只保留至少一次出现的子条件，重复仍是变长边界，不能造出跨两侧的 gram。新原生 Unicode/多次重复控制与真实 View 短子组回执验证独立记录。[树名查找调查](tree-name-investigation/README.md)的实验虽有热 CPU 收益，冷查询与超限预检退化，未采纳生产 helper/Truth 改动；源码补丁仅作 docs 下的被否决实验复现附件。
+
+[最少一次重复的原生小链](min-one-pair/README.md)保留 ede→96c 的固定运行图、原始捕获与修正后的不可变 manifest：选择性读取512→1，eager metadata512保留；groupPlus76.9ms与densePlus58.5ms仍超冷目标，dotPlus39.7ms不外推为全域承诺。生成的 QA 文件在计时后被 manifest 捕获，归属已明示，未重写原始计时/回执证据。

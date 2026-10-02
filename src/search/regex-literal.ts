@@ -39,7 +39,7 @@ function sequenceFacts(children: readonly LiteralFacts[]): LiteralFacts {
 }
 
 /**
- * 固定 literal/分组连接；dot 是未知字符边界，?/* 丢掉前一个完整 atom/group 的全部条件。
+ * 固定 literal/分组连接；dot 是未知边界，?/* 丢弃子条件，+ 只保留子条件并切断两侧连接。
  * 绝不跨可变/可选边界造连续 literal。其他量词、选择、类、分组、反向引用、
  * 字符/边界转义和任何 flags 都退回扫描。
  * 返回非空的、去重有序的三个 UTF-16 code units；与 Buffer UTF-8 解码后的 JS RegExp 一致。
@@ -75,11 +75,19 @@ export function requiredLiteralTrigrams(pattern: string, flags: string): readonl
       if (frames.length === 1) return null
       const group = sequenceFacts(frames.pop()!)
       frames[frames.length - 1]!.push(group)
-    } else if (char === '?' || char === '*') {
+    } else if (char === '?' || char === '*' || char === '+') {
       const child = children[children.length - 1]
       if (child === undefined || child.quantified) return null
-      // Zero occurrences are possible, so NO fact from this child is mandatory.
-      children[children.length - 1] = { fixed: null, runs: [], quantified: true }
+      if (char === '+') {
+        if (child.fixed === '') return null // No useful proof from an empty repeated group.
+        // At least one occurrence contains these facts, but repeated length is VARIABLE.
+        // Keeping fixed here could invent e.g. bcd from the true match abccde of ab(c)+de.
+        const runs = child.fixed === null ? child.runs : [child.fixed]
+        children[children.length - 1] = { fixed: null, runs, quantified: true }
+      } else {
+        // Zero occurrences are possible, so NO fact from this child is mandatory.
+        children[children.length - 1] = { fixed: null, runs: [], quantified: true }
+      }
     } else if (char === '.') {
       children.push({ fixed: null, runs: [], quantified: false })
     } else {
