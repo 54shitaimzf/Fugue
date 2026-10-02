@@ -100,7 +100,7 @@ function assembled(protocol: Protocol, state: AssembleState) {
 }
 
 for (const protocol of [SUBAGENT_PROTOCOL, HOLDER_PROTOCOL]) {
-  test(`${protocol === HOLDER_PROTOCOL ? 'holder' : 'subagent'}: actual policy exposes the remaining developer-path violation`, async () => {
+  test(`${protocol === HOLDER_PROTOCOL ? 'holder' : 'subagent'}: actual accepted policy has no developer-path leakage`, async () => {
     await withState(async (_root, state) => {
       const { prefix } = assembled(protocol, state)
       policyViolations(protocol, state)

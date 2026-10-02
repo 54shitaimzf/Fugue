@@ -1,6 +1,6 @@
 # 统一上游基线与路线图贡献
 
-本分支以官方 `ff40425a51955ae2f4f5c03535534550145757dd`（PR53 的机制与 PR55 的发布归档已合入）为最新实际祖先；此前基于 `ba77d765` 合入公开审查汇总
+本分支以官方 `f271ad2fd6dc64e26bfa6a7d8a28d3f8d7c00ad5`（PR53 的机制、PR55 发布归档与 PR56 文档校准已合入）为最新实际祖先；此前基于 `ba77d765` 合入公开审查汇总
 `claude/fugue-roadmap-pr-review-c0t5od` 的 `a5010b8430286d803a5fcc625d2dff2a12a0d303`，
 再接入随后完成的增量 cohort 构建和真实 View/M0 验收。只持续更新
 `roadmap/maintenance-integration-check`，沿用上游 draft PR45；旧来源 ref 保留，不改写历史。
@@ -68,3 +68,5 @@ execute 文件出现一次已见 Node cloned-data 传输错误，随后 execute/
 可选索引管线现在可复用完整、已核 BlobId 的 regex 验证结果；默认宿主仍走原扫描路径，未穷尽、超限或身份变化不安装缓存，详见[缓存边界](grep-verification-cache.md)。[配对读数](performance-next/regex-verification.md)是在上游同步前的固定源码图上量得，保留完整源指纹与冷代价，不作为当前新组合的性能证书；最终实际 View 与持久写入的正确性另在当前组合验证。
 
 官方 ROADMAP §10 的尾段政策采用非破坏恢复：读者保留盘上字节，当前写者遇已观察到的半行先拒绝追加。旧自动 truncate 候选撤回，显式清理仍待决定，见[尾段边界](log-tail-recovery.md)。
+
+随后与官方 `f271ad2` 的同步只改变五份已审文档：凭据查找、命令速查差异与 s8/s9 演示清单均依上游校准；源码、历史录音与上述功能证据不变。
