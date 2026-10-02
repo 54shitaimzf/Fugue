@@ -1,4 +1,4 @@
-// U22 · 默认主题：表钉死（恰三个角色）· 两道退回门（--no-style · NO_COLOR）· 退回档的字节流
+// U22 · 默认主题：表钉死（四个角色）· 两道退回门（--no-style · NO_COLOR）· 退回档的字节流
 // 与没有主题那一档逐字节相同。真画出来的字节与屏幕可见内容那一对断言在 `term.test.ts` ⑬
 // （那里夹具全：屏幕模拟器 · 拼接读数）。
 import assert from 'node:assert/strict'
@@ -21,14 +21,15 @@ function sinkOf(o: { columns: number }): { written: string[]; out: TermOut } {
   return { written, out }
 }
 
-test('① DEFAULT_THEME：恰 border · footer · overlay 三个角色有值，body 与 read 不在表里', () => {
+test('① DEFAULT_THEME：border · footer · overlay · readHeading 四个角色有值，body 与 read 不在表里', () => {
   assert.deepEqual(
     Object.keys(DEFAULT_THEME).sort(),
-    ['border', 'footer', 'overlay'],
-    '主题只动"边与弹出"，正文（body · read）缺省不动',
+    ['border', 'footer', 'overlay', 'readHeading'],
+    '主题只动行级层次，正文（body · read）缺省不动',
   )
   assert.equal(DEFAULT_THEME.border, '\x1b[2m', '框线：暗一档')
-  assert.equal(DEFAULT_THEME.footer, '\x1b[2m', '脚注：暗一档（与框线同一副）')
+  assert.equal(DEFAULT_THEME.footer, '\x1b[1m', '账尾：加粗最近永久行')
+  assert.equal(DEFAULT_THEME.readHeading, '\x1b[1m', '阅读标题加粗')
   assert.equal(DEFAULT_THEME.overlay, '\x1b[1m', '弹层：加粗轻强调')
 })
 

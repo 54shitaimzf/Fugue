@@ -1,3 +1,4 @@
+// tier: real —— 真实 Git 对象库、日志与文件系统索引的合成验收。
 // 架构 § 8.9 / § 9.3：发现读当前 View，索引是派生体；M0 拒绝先于恢复写入。
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -23,52 +24,59 @@ import type { ToolContext, ToolHost } from './execute.ts'
 import type { AgentId, BlobId, RelPath, WriterId } from '../terms.ts'
 import type { Delta } from '../delta.ts'
 
-const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, LANG: 'C', LC_ALL: 'C',
+  GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
   GIT_AUTHOR_NAME: 'fugue', GIT_AUTHOR_EMAIL: 'fugue@localhost', GIT_COMMITTER_NAME: 'fugue', GIT_COMMITTER_EMAIL: 'fugue@localhost' }
 const grep = faceOf('grep')!
 const mode = 0o100644
 const context = (writer: WriterId): ToolContext => ({ agent: writer as AgentId, step: 0, cwd: '', holder: false })
 
-async function fixture(files: Record<string, string | Uint8Array>) {
+async function fixture(files: Record<string, string | Uint8Array>, truthOf = openTruth) {
   const root = tmpDir('fugue-index-acceptance-')
   execFileSync('git', ['init', '-q', '--object-format=sha1', root], { env })
-  const truth = openTruth(root), roots = createRoots(root), store = createBlobIndexStore(root)
-  const entries = []
-  for (const [name, content] of Object.entries(files)) {
-    entries.push({ name, mode, id: await truth.putBlob(typeof content === 'string' ? Buffer.from(content) : content) })
-  }
-  const base = await truth.commit(await truth.putTree(entries), [], 'index acceptance fixture')
-  const index = createBlobIndexLookup(root, id => truth.getBlob(id))
-  const indices = [index]
+  const truth = truthOf(root)
+  const indices: ReturnType<typeof createBlobIndexLookup>[] = []
   const logs: ReturnType<typeof openLog>[] = []
-  async function target(name: string) {
-    const writer = name as WriterId, log = openLog(root, { write: writer, sync: 'never' })
-    logs.push(log)
-    const view = await loadView(log, writer, { lower: lowerAt(truth, base) })
-    const indexed = createToolHost(view, roots, { blobIndex: index }), plain = createToolHost(view, roots)
-    return { writer, log, view, indexed, plain,
-      change: (delta: Delta) => applyEdit({ view, log, truth, writer }, delta) }
-  }
-  async function warm(t: Awaited<ReturnType<typeof target>>) {
-    for (const path of await t.indexed.walk()) {
-      const meta = await t.view.stat(path as RelPath)
-      if (meta?.kind !== 'file') continue
-      const blob = meta.id as BlobId
-      assert.equal((await store.rebuild(blob, await truth.getBlob(blob))).stored, true)
-      await index.mightContain(blob, ['nee'])
-    }
-    await index.drain()
-  }
-  function failingIndex() {
-    const handle = createBlobIndexLookup(root, async () => { throw new Error('optional source is unavailable') })
-    indices.push(handle)
-    return handle
-  }
   async function close() {
     try { await Promise.all(indices.map(handle => handle.close())) }
     finally { try { await Promise.all(logs.map(log => log.close())) } finally { await truth.close() } }
   }
-  return { root, truth, roots, store, base, index, target, warm, failingIndex, close }
+  try {
+    const roots = createRoots(root), store = createBlobIndexStore(root)
+    const entries = []
+    for (const [name, content] of Object.entries(files)) {
+      entries.push({ name, mode, id: await truth.putBlob(typeof content === 'string' ? Buffer.from(content) : content) })
+    }
+    const base = await truth.commit(await truth.putTree(entries), [], 'index acceptance fixture')
+    const index = createBlobIndexLookup(root, id => truth.getBlob(id))
+    indices.push(index)
+    async function target(name: string) {
+      const writer = name as WriterId, log = openLog(root, { write: writer, sync: 'never' })
+      logs.push(log)
+      const view = await loadView(log, writer, { lower: lowerAt(truth, base) })
+      const indexed = createToolHost(view, roots, { blobIndex: index }), plain = createToolHost(view, roots)
+      return { writer, log, view, indexed, plain,
+        change: (delta: Delta) => applyEdit({ view, log, truth, writer }, delta) }
+    }
+    async function warm(t: Awaited<ReturnType<typeof target>>) {
+      for (const path of await t.indexed.walk()) {
+        const meta = await t.view.stat(path as RelPath)
+        if (meta?.kind !== 'file') continue
+        const blob = meta.id as BlobId
+        assert.equal((await store.rebuild(blob, await truth.getBlob(blob))).stored, true)
+        await index.mightContain(blob, ['nee'])
+      }
+      await index.drain()
+    }
+    function failingIndex() {
+      const handle = createBlobIndexLookup(root, async () => { throw new Error('optional source is unavailable') })
+      indices.push(handle)
+      return handle
+    }
+    return { root, truth, roots, store, base, index, target, warm, failingIndex, close }
+  } catch (error) {
+    try { await close() } finally { throw error }
+  }
 }
 
 type Target = Awaited<ReturnType<Awaited<ReturnType<typeof fixture>>['target']>>
@@ -92,6 +100,26 @@ async function allReceipts(t: Target, indexed: ToolHost = t.indexed) {
     }
   }
 }
+
+test('fixture setup failure closes its owned Truth after real blob work', async () => {
+  const failure = new Error('injected fixture tree setup failure')
+  let closed = 0
+  let owned: ReturnType<typeof openTruth> | undefined
+  try {
+    await assert.rejects(fixture({ seeded: 'seeded blob bytes' }, root => {
+      const truth = openTruth(root)
+      owned = truth
+      return { ...truth,
+        putTree: async entries => {
+          await truth.getBlob(entries[0].id as BlobId) // 打开真实批量读者后再注入失败。
+          throw failure
+        },
+        close: async () => { await truth.close(); closed++ },
+      }
+    }), error => error === failure)
+    assert.equal(closed, 1, 'setup failure must retire the actual owned Git reader')
+  } finally { await owned?.close() } // 清理回归控制里的泄漏也属于测试自己。
+})
 
 test('two nonempty Views sharing immutable indices retain their own paths, mutations and replayed whiteouts', async () => {
   const f = await fixture({ 'dir/a.ts': 'none', 'dir/b.ts': 'needle\n', 'same.ts': 'none' })

@@ -25,12 +25,14 @@ import type { LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import { rowsOf } from '../probe/status.ts'
 import type { StatusRow } from '../probe/status.ts'
+import { clustersOf, widthOf } from './glyph.ts'
 import type { AgentId, BlobId, RoundId, ViewRev, WriterId } from '../terms.ts'
 import {
   DELTA_FACE,
   EMPTY_READ,
   READ_LIMIT,
   faceKeyOf,
+  faceRowsOf,
   faceOfDelta,
   facesOf,
   firstFace,
@@ -237,13 +239,14 @@ test('④ 工具输出折叠：一串调用折成一行 · 一次起进程折成
 
 // ── ⑤ 契约正文那一面 ─────────────────────────────────────────────────────────────────
 
-test('⑤ 契约正文那一面：账上那一条说得出的那几栏（写入面逐条 · 正文原文一行）', () => {
+test('⑤ 契约正文那一面：账上那一条说得出的那几栏（写入面逐条 · 正文原文段落）', () => {
   const faces = facesOf(readStateOf(script()))
   const c = faces.contract
   assert.ok(c !== null, '这一份账里有一条 `contract/issue`')
   for (const l of c.lines) console.log(`⑤ ${l}`)
   assert.ok(c.lines[0]?.includes('契约 r1.implement.1 · 轮次 r1 · 归属 agent/r1/1'), '头一行是"哪一份 · 谁的"')
-  assert.ok(c.lines.some((l) => l.includes('写入面 1 条（src/a.ts）')), '写入面逐条')
+  assert.ok(c.lines.some((l) => l.includes('写入面 1 条')), '写入面条数')
+  assert.ok(c.lines.includes('    src/a.ts'), '写入面逐条')
   assert.ok(c.lines.some((l) => l.includes('"goal":"写 a.ts"')), '正文原文在（一个字节都不改，只是折成一行）')
 
   const empty = facesOf(EMPTY_READ)
@@ -270,4 +273,60 @@ test('⑥ 翻到哪一行（U14）：±1 / ±PAGE_STEP / 跳首尾都夹住，�
   assert.equal(stepTop(30, 99, 0), 29, '越界的 top 夹回末行')
   assert.equal(stepTop(0, 5, 4), 0, '一页都没有时给 0')
   console.log(`⑥ 读数：±1 · ±4 · 跳首尾 夹住到头停 · 越界 top 夹回`)
+})
+
+
+// 0.2.8：回到旧版单行 / 160 列截断时，这几条断言会红。
+test('⑦ 长 diff 两端与契约第四条路径、正文尾部全部可翻到，正文空白与标点不被吞', () => {
+  const from = 'src/旧路径/é-👩‍💻-' + 'long-'.repeat(10) + 'old.ts'
+  const to = 'src/' + 'new-'.repeat(20) + 'important.ts'
+  const body = '  paragraph one · exact spacing  \n\n' + 'requirements '.repeat(30) + 'FINAL_REQUIREMENT'
+  const rows = [
+    row({ t: 'view/rename', from, to } as never, A),
+    row({ t: 'contract/issue', round: 'r1', contract: 'c1', owner: A, paths: ['a', 'b', 'c', 'FOURTH_PATH'], body } as never),
+  ]
+  const state = readStateOf(rows)
+  const faces = facesOf(state)
+  assert.ok(faces.diff?.lines.includes(`  从 ${from}`))
+  assert.ok(faces.diff?.lines.includes(`  到 ${to}`))
+  assert.ok(faces.contract?.lines.includes('    FOURTH_PATH'))
+  assert.ok(faces.contract?.lines.includes('    '), '空段保留')
+  assert.ok(faces.contract?.lines.some((l) => l.endsWith('FINAL_REQUIREMENT')))
+  for (const width of [2, 7, 20, 58, 98]) {
+    for (const name of ['diff', 'contract', 'stream'] as const) {
+      const wrapped = faceRowsOf(faces, name, width)
+      for (const line of wrapped) assert.ok(widthOf(line) <= width, `列宽 ${width}: ${line}`)
+      assert.deepEqual(wrapped, faceRowsOf(faces, name, width), '纯函数')
+    }
+  }
+  const plain = { ...faces, contract: { title: 'contract', lines: [body.split('\n')[0] as string] } }
+  // 20 列：续行的两个空格是显示缩进，原文空白和 · 一个字节都不少。
+  const wrapped = faceRowsOf(plain, 'contract', 20).slice(1)
+  assert.equal(wrapped[0] + wrapped.slice(1).map((l) => l.slice(2)).join(''), body.split('\n')[0])
+  const unicode = { ...faces, diff: { title: 'diff', lines: ['é👩‍💻'.repeat(20)] } }
+  const clusterRows = faceRowsOf(unicode, 'diff', 7).slice(1)
+  assert.deepEqual(clusterRows.flatMap((l) => clustersOf(l).map((c) => c.text)), clustersOf('é👩‍💻'.repeat(20)).map((c) => c.text), '完整簇')
+  for (const line of faceRowsOf(unicode, 'diff', 1)) assert.ok(widthOf(line) <= 1, '一列用省略标志代替宽簇')
+  assert.deepEqual(readStateOf(rows), state, '只排版，没有改读面状态')
+})
+
+test('⑧ 折行后仍有界，少印的显示行明确报出', () => {
+  const faces = facesOf(EMPTY_READ)
+  const large = { ...faces, stream: { title: 'stream', lines: ['x'.repeat(5000)] } }
+  const rows = faceRowsOf(large, 'stream', 20)
+  assert.equal(rows.length, READ_LIMIT)
+  assert.ok(rows.slice(0, 4).join('').includes('前面还有'), '上限不是静默截掉')
+  for (const line of rows) assert.ok(widthOf(line) <= 20)
+})
+
+
+test('⑨ 阅读面控制字节可见转义，正文不能移动光标或注入样式', () => {
+  const faces = { ...facesOf(EMPTY_READ), stream: { title: 'stream', lines: ['before\tvalue\x1b[31mred\rreturn\x07bell'] } }
+  const rows = faceRowsOf(faces, 'stream', 60)
+  assert.ok(rows.join('').includes('\\u001b'))
+  assert.ok(rows.join('').includes('\\u0009'))
+  for (const line of rows) {
+    assert.ok(!/[\x00-\x1f\x7f-\x9f]/.test(line))
+    assert.ok(widthOf(line) <= 60)
+  }
 })

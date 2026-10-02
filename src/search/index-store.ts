@@ -31,7 +31,8 @@ export interface BlobIndexStore {
 
 const DIR_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
-function validId(blob: string): boolean { return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(blob) }
+function validId(blob: string): boolean { return typeof blob === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(blob) }
+function validTemporaryId(value: unknown): value is string { return typeof value === 'string' && /^[0-9a-f]{24}$/.test(value) }
 function ownedBy(meta: Stats): boolean {
   return typeof process.getuid === 'function' && meta.uid === process.getuid()
 }
@@ -151,7 +152,7 @@ async function readRecord(directory: FileHandle, blob: BlobId): Promise<BlobInde
 
 // 年龄、pid、nonce 均不能证明未知临时对象已无写者；只清自己认领的任务叶。
 async function replaceRecord(directory: FileHandle, blob: BlobId, bytes: Uint8Array, temporaryId?: string, notes?: ShardNotes): Promise<void> {
-  if (temporaryId !== undefined && !/^[0-9a-f]{24}$/.test(temporaryId)) throw new Error("invalid index temporary ID")
+  if (temporaryId !== undefined && !validTemporaryId(temporaryId)) throw new Error('invalid index temporary ID')
   const target = at(directory, `${blob}.json`)
   try {
     const existing = await lstat(target)
@@ -194,6 +195,7 @@ export function createBlobIndexStore(root: string): BlobIndexStore {
       catch { return null }
     },
     async rebuild(blob, bytes, temporaryId) {
+      if (temporaryId !== undefined && !validTemporaryId(temporaryId)) return { index: null, stored: false }
       let index: BlobIndex
       try { index = buildBlobIndex(blob, bytes) }
       catch { return { index: null, stored: false } }
@@ -208,14 +210,10 @@ export function createBlobIndexStore(root: string): BlobIndexStore {
 }
 
 
-/** 只清本进程为已知后台任务保留的临时叶；特殊/共享叶不碰。 */
-export async function cleanupIndexTemporary(root: string, blob: BlobId, temporaryId: string): Promise<void> {
-  if (!validId(blob) || !/^[0-9a-f]{24}$/.test(temporaryId)) return
-  try {
-    await withShard(resolve(root), blob, false, async (directory) => {
-      const path = at(directory, `.tmp-${process.pid}-${temporaryId}`)
-      const meta = await lstat(path)
-      if (safeFile(meta)) await unlink(path)
-    })
-  } catch { /* 不存在/权限故障也是安全退档，不清其它文件。 */ }
+/**
+ * Compatibility no-op: root/blob/PID/nonce identify a name, never ownership of its current leaf.
+ * Only the exclusive creator's live replaceRecord operation may clean its unconsumed temporary.
+ * Abruptly stopped workers can leave unknown derived temporaries; retain them conservatively.
+ */
+export async function cleanupIndexTemporary(_root: string, _blob: BlobId, _temporaryId: string): Promise<void> {
 }

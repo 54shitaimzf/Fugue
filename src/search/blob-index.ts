@@ -3,7 +3,7 @@ import type { Worker } from 'node:worker_threads'
 import { randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
 import type { BlobId } from '../terms.ts'
-import { cleanupIndexTemporary, createBlobIndexStore } from './index-store.ts'
+import { createBlobIndexStore } from './index-store.ts'
 import { encodeBlobIndex } from './index-format.ts'
 import type { BlobIndex } from './index-format.ts'
 import { copyIndexSource } from './index-source.ts'
@@ -41,7 +41,7 @@ interface LoadTask {
   readonly blob: BlobId; readonly temporaryId: string; readonly abort: AbortController
   readonly query: Promise<PreparedIndex | null>; readonly done: Promise<void>
   readonly answer: (value: PreparedIndex | null) => void; readonly finish: () => void
-  timer?: NodeJS.Timeout; worker?: Worker; workerStarted?: boolean; canceled: boolean; settled: boolean
+  timer?: NodeJS.Timeout; worker?: Worker; canceled: boolean; settled: boolean
 }
 function gramKey(gram: string): number {
   return gram.charCodeAt(0) * 0x1_0000_0000 + gram.charCodeAt(1) * 0x1_0000 + gram.charCodeAt(2)
@@ -103,7 +103,6 @@ export function createBlobIndexLookup(
     if (task.worker !== undefined) {
       try { await task.worker.terminate() } catch { /* 当前任务仍退为 scan。 */ }
     }
-    await cleanupIndexTemporary(selectedRoot, task.blob, task.temporaryId)
     complete(task)
   }
   async function build(task: LoadTask): Promise<void> {
@@ -114,7 +113,7 @@ export function createBlobIndexLookup(
     if (ownedBytes === null) return
     const worker = pool.acquire()
     if (worker === null) return
-    task.worker = worker; task.workerStarted = true
+    task.worker = worker
     const result = await new Promise<PreparedIndex | null>((done) => {
       const finish = (result: PreparedIndex | null) => {
         worker.removeListener('message', onMessage)
@@ -154,7 +153,6 @@ export function createBlobIndexLookup(
     } catch { task.answer(null) }
     finally {
       task.answer(null)
-      if (task.workerStarted) await cleanupIndexTemporary(selectedRoot, task.blob, task.temporaryId)
       complete(task)
     }
   }

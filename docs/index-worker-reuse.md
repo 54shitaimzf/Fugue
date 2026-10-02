@@ -14,7 +14,8 @@
   源回调仍接AbortSignal；忽略signal的外部IO不受强制停止保证，原lookup说明的边界不变。
 - 默认空闲10秒后终止（workerIdleMs可配0–60秒，0禁用复用）。空闲Worker和定时器都unref；
   受控Worker代码不打印内容，使用Node默认stdio避免自定义流额外持活引用。
-  close显式终止所有存量Worker、收尾已知临时文件，仍不是对已完成缓存发布的回滚。
+  close显式终止所有存量Worker；无创建/inode凭据的取消者保留未知临时叶，
+  仍不是对已完成缓存发布的回滚。
 - stats的workers仍是被未完成任务持有的活动Worker数；workerStarts累计创建次数，
   retainedWorkers含空闲/终止中的实际存量，idleWorkers只计可再借的空闲项。
   这些机制统计不是新M0日志，也不是精确RSS。子线程堆、源字节与codec临时分配仍可能很大。
