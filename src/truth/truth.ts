@@ -21,6 +21,7 @@
 // 这三处都是**派生体，不是第二处真源**：清空随时安全，容量 0 就是直通（地板 = 变慢，不是
 // 跑不起来）。跨进程不共享、不落盘——「单次进程 + 每次重建」没有被破坏。
 import { GitError, openGit, type GitHandle, type ReadTier } from './git.ts'
+import { objectFormatProbe } from './object-format.ts'
 import type { Conflict, ConflictStage, Truth } from './contract.ts'
 import type { DirEntry, EntryKind, EntryMeta, ObjectId, TreeEntry } from '../entries.ts'
 import type { BlobId, CommitId, RefName, RelPath, TreeId } from '../terms.ts'
@@ -219,6 +220,7 @@ export interface TruthHandle extends Truth {
 
 export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
   const git: GitHandle = openGit(root, opts)
+  const storageHashBytes = objectFormatProbe(git)
 
   /** 内容寻址 → 缓存永远有效。tree id → 条目。 */
   const trees = new Map<string, RawEntry[]>()
@@ -562,8 +564,9 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
 
     async advance(ref: RefName, to: CommitId, expectedOld: CommitId | null): Promise<void> {
       // `expectedOld === null` 的形态是"这个 ref 必须还不存在"：git 用全零 oid 表达它。
-      // 零的长度随对象格式走（sha1 40 位、sha256 64 位），所以从 `to` 自己身上取。
-      const args = ['update-ref', ref, to, expectedOld ?? '0'.repeat(to.length)]
+      // 零的长度由仓库 storage 格式决定；`to` 可能是 Git 接受的缩写，不能拿它的长度猜。
+      const old = expectedOld ?? '0'.repeat(2 * await storageHashBytes())
+      const args = ['update-ref', ref, to, old]
       for (let attempt = 0; ; attempt++) {
         const r = await git.tryRun(args)
         if (r.status === 0) return
