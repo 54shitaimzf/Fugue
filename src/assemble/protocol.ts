@@ -127,13 +127,15 @@ export function protocolNamed(name: string): Protocol {
 }
 
 /**
- * 载入时的核对：**两份声明的段的域恰好等于区表的域**（架构 § 8.11 的"十二个段，三个区，
- * 各有其拥有者"）。
+ * 两份声明的段的域**恰好等于区表的域**（架构 § 8.11 的"十二个段，三个区，各有其拥有者"）。
  *
- * 它为什么必须是当场炸：`Protocol.segmentOrder` 与 `ZONE_SEGMENTS` 分居两个文件，而两者
- * 不一致的后果**只有字节不同**——前缀缓存命中率掉下去，没有任何一方报错。少一段（某段源
- * 产出了值却没人排它的序）、多一段（排了序却没有源）、重复一段、渲染规则缺一条，四种都在这
- * 里拒。**它是这一站唯一一条"错了会静默"的地方的封口。**
+ * 它为什么非有不可：`Protocol.segmentOrder` 与 `ZONE_SEGMENTS` 分居两个文件，而两者不一致的
+ * 后果**只有字节不同**——前缀缓存命中率掉下去，没有任何一方报错。少一段（某段源产出了值却没人
+ * 排它的序）、多一段（排了序却没有源）、重复一段、渲染规则缺一条，四种都在这里报。
+ *
+ * **它是一条判据，不是一道闸**（0.2.9 ②）：原先它还在模块载入时被调一遍（不一致就 throw），
+ * 现在那一道撤了，读它的地方是 `tools/check-invariants.ts` 第二节——挂在 fast 组，红了就是红
+ * 了，而生产路径上不再为"我们自己的两份声明对不对得上"付一次载入时的核对。
  */
 export function checkProtocolInvariant(p: Protocol, zoneB: readonly SegmentId[]): string[] {
   const bad: string[] = []
@@ -150,21 +152,12 @@ export function checkProtocolInvariant(p: Protocol, zoneB: readonly SegmentId[])
   }
   const names = [...p.toolCatalog]
   if (names.length === 0) bad.push('工具目录是空的')
-  // 工具目录与它的定义处同一份：架构 § 8.10 说这张目录是工具名的唯一定义处，而协议值里的
-  // 那一栏只是把它搬过来。搬错了（少一个 · 多一个 · 换了顺序）前缀的字节只是不同，没有别的
-  // 报错——所以在这里核一遍。
-  if (names.length !== TOOL_NAMES.length || names.some((n, i) => n !== TOOL_NAMES[i])) {
-    bad.push('协议里的工具目录与工具目录那一份不是同一份：' + names.length + ' 个，应当是 ' + TOOL_NAMES.length + ' 个')
-  }
+  // **这里原先还有一句"协议里那一栏与目录那一份是不是同一份"——它是恒真的**（0.2.9 ②）：
+  // 两份协议值的 `toolCatalog` 就是 `TOOL_NAMES` 这个**同一个数组引用**，拿它与自己逐元素比，
+  // 永远相等。真正的跨文件那道缝（能力表 ↔ 工具目录）由 `tools/check-invariants.ts` 第一节守。
   return bad
 }
 
-for (const [name, p] of [
-  ['subagent', SUBAGENT_PROTOCOL],
-  ['holder', HOLDER_PROTOCOL],
-] as const) {
-  const bad = checkProtocolInvariant(p, name === 'holder' ? HOLDER_B : ZONE_SEGMENTS.B)
-  if (bad.length > 0) {
-    throw new Error(`协议 ${name} 与区表不一致：\n  ${bad.join('\n  ')}`)
-  }
-}
+// **载入时那道闸撤了**（0.2.9 ②）：两份协议值与区表对不对得上，由
+// `tools/check-invariants.ts` 第二节判（正半真状态 0 处 · 负半六种坏声明各报一处），
+// 挂在 `test/check-invariants.test.ts`（fast 组）。判据还在上面那个函数里，一处没变。
