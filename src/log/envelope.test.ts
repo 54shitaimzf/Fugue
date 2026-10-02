@@ -40,11 +40,6 @@ test('改一个字节 → crc 不符，并给出重算值', () => {
   assert.match(d.reason, /crc 不符/)
 })
 
-test('载荷字段与信封字段重名 → 拒绝编码', () => {
-  const bad = { t: 'view/write', agent: A('round'), seq: 1 } as unknown as LogEvent
-  assert.throws(() => encodeEvent(1, 'round', bad), /重名/)
-})
-
 test('seq 不是正整数 → 拒绝解码', () => {
   const parsed = JSON.parse(encodeEvent(1, 'round', EV)) as Record<string, unknown>
   parsed.seq = 0

@@ -8,7 +8,7 @@
 //        接在 `src/boundary/policy.test.ts` 的 P1c 那一格上）：
 //          · overlay 重开整批拒（`land.ts` 的 `refuseReopen`）
 //          · `EnsureRefused`（还没铺过物化树）
-//          · `encodeEvent` 保留字拒（经 `log.append` 那一趟）
+//          · 写者锁不是这条句柄持有的那个 writer（`log.ts` 的 `append` 当面报出来）
 //          · 执行档不足拒（`reclaim.ts`：树可写而没有 `upper` 可枚举）
 //
 // **每一格必含三条**（路线图 0.2.6 行 · 崩溃注入矩阵那三条在这一档的对应物）：拒得住 ·
@@ -22,13 +22,12 @@ import type { Delta } from '../src/delta.ts'
 import type { EntryMeta } from '../src/entries.ts'
 import { createReclaim, ReclaimRefused } from '../src/execute/reclaim.ts'
 import type { LogEvent } from '../src/log/events.ts'
-import { encodeEvent } from '../src/log/envelope.ts'
 import { openLog } from '../src/log/log.ts'
 import { EnsureRefused, ensure } from '../src/materialize/ensure.ts'
 import { LandError, landDeltas } from '../src/materialize/land.ts'
 import type { LandOptions, ViewReads } from '../src/materialize/land.ts'
 import { createRoots } from '../src/roots/roots.ts'
-import type { AgentId, RelPath } from '../src/terms.ts'
+import type { AgentId, RelPath, WriterId } from '../src/terms.ts'
 import { assertUnchanged, refusedAndUnchanged, snapshotOf } from './helpers/refuse.ts'
 import { tmpDir } from './helpers/tmp.ts'
 
@@ -167,21 +166,24 @@ test('0.2.6 ④ · EnsureRefused（还没铺过物化树）：账一个字节不
   }
 })
 
-test('0.2.6 ④ · encodeEvent 保留字拒：经 log.append 那一趟，账不动、序号不跳', async () => {
-  const root = tmpDir('fugue-refuse-reserved-')
-  const log = openLog(root, { sync: 'never' })
+test('0.2.6 ④ · 写者锁不是这条句柄持有的那个 writer：经 log.append 那一趟，账不动、序号不跳', async () => {
+  const root = tmpDir('fugue-refuse-writer-')
+  // 这条句柄持的是 `round` 的锁（`openLog` 的 `write` 那一栏，`hold.ts`）。
+  const log = openLog(root, { sync: 'never', write: AGENT })
   try {
     const write = (i: number): LogEvent =>
       ({ t: 'view/write', agent: AGENT, path: `src/f${i}.ts`, rev: i, blob: `b${i}`, mode: 420 }) as unknown as LogEvent
     assert.equal(await log.append(AGENT, write(1)), 1)
 
     const err = await refusedAndUnchanged(
-      // 载荷里带一个信封字段（`seq`）——编码时拒，**一行都不落**。
-      () => log.append(AGENT, { t: 'view/write', agent: AGENT, seq: 99 } as unknown as LogEvent),
+      // 持着 `round` 的锁却往 `other` 里追加——"一次命令只写一个 writer"这条规矩被违反。
+      // （这一格原先量的是编码器那道保留字拒；0.2.9 ⑥ 把那道撤了，判据搬到声明那一侧，
+      // 这一格改成量同一层上另一道真在的拒——它同样是"经 `log.append` 那一趟"。）
+      () => log.append('other' as WriterId, write(2)),
       [root],
-      'encodeEvent 保留字拒',
+      '写者锁不是这条句柄持有的那个 writer',
     )
-    assert.match((err as Error).message, /事件的载荷字段与信封字段重名：seq/)
+    assert.match((err as Error).message, /这条句柄持的是 round 的锁，却要往 other 的日志里追加/)
 
     // **下一次操作照常成功，而且序号没被那次拒跳掉**（`nextSeq` 只在写成功之后才往前）。
     assert.equal(await log.append(AGENT, write(2)), 2)
@@ -219,19 +221,4 @@ test('0.2.6 ④ · 执行档不足拒（树可写而没有 `upper` 可枚举）�
     treeOpen: true,
   })
   assert.deepEqual(await ok.undeclared(AGENT, { agent: AGENT, paths: [] }), [])
-})
-
-// 编码器本身那一格（纯函数，不经 log）：与上面"经 log 那一趟"分工，两处都留着。
-test('0.2.6 ④ · encodeEvent 本身：保留字当场抛，好行一个字节不受影响', () => {
-  const bad = { t: 'view/write', agent: AGENT, seq: 1 } as unknown as LogEvent
-  assert.throws(() => encodeEvent(1, 'round', bad), /重名/)
-  const good = encodeEvent(1, 'round', {
-    t: 'view/write',
-    agent: AGENT,
-    path: 'src/a.ts',
-    rev: 1,
-    blob: 'b1',
-    mode: 420,
-  } as unknown as LogEvent)
-  assert.match(good, /"seq":1/)
 })
