@@ -3,6 +3,10 @@
 本页记录 [`9515979`](https://github.com/StevenLi-phoenix/Fugue/commit/951597962e0febb04334322a4777a272dffd8c6c)
 时的维护组合快照；同一集成分支随后可继续接入独立检索功能，以下来源与读数只认证该维护快照。
 
+后续与已发布官方 0.2.6 同步时，重复键行为遵从上游顶层边界；嵌套拒绝的旧候选证书不迁移为
+当前实现。当前持久交互控制用转义顶层键，仍验证完整坏行先拒绝再考虑半行恢复；详见
+[当前边界](log-duplicate-keys.md)。以下数字保留原历史快照的含义。
+
 这是七件独立维护单元的组合验证材料，基于官方 main
 [`bbf2ef1`](https://github.com/54shitaimzf/Fugue/commit/bbf2ef10294ddd54f662da217dcab661a4d78fbc)。
 分支 `roadmap/maintenance-integration-check` 不表示已经合并、发布或完成 0.2.6 验收。

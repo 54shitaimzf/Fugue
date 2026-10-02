@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
@@ -22,7 +22,7 @@ import { openTruth } from '../truth/truth.ts'
 import type { View } from './contract.ts'
 import { applyEdit } from './edit.ts'
 import { lowerFor } from './lower.ts'
-import { readSnapshot, snapshotOf } from './snapshot.ts'
+import { readSnapshot, snapshotOf, writeSnapshot } from './snapshot.ts'
 import { loadView } from './view.ts'
 
 const CLI = fileURLToPath(new URL('../cli/fugue.ts', import.meta.url))
@@ -458,4 +458,67 @@ test('--to 停在某个修订点 · 快照不越过它 · --agent 各看各的�
     ['round', 'w2'],
     '逐 agent 走了一遍，两个视图都在',
   )
+})
+
+// ────────────────────────────────── ② 崩溃注入矩阵（快照那一族）
+
+/**
+ * **快照残件**：`writeSnapshot` 也是「先写临时名 `<seq>.json.tmp-<pid>`，再 rename」，崩在这
+ * 中间留下的就是那一份残件（一份写了一半的 JSON）。快照的契约是"**从不阻塞写入，也从不阻塞
+ * 读出**"（§ 9.4）——它没有任何独有数据，所以残件必须：
+ *
+ *   · **读不动它就当没有**：残件的文件名不匹配 `^([0-9]+)[.]json$`，`readSnapshot` 连解析都
+ *     不会去解析它，拿回来的还是那一份好的；
+ *   · **不妨碍下一份**：残件在那儿，再写一份照成，读回来的就是新的那一份；
+ *   · **旧份一个字节不动**。
+ *
+ * 残件名照产品那个形状写死（`${seq}.json.tmp-${pid}`）——形状变了这一格当场红，这正是想要的。
+ */
+test('② 崩溃注入矩阵 · 快照残件（崩在 write 与 rename 之间）：读不动它 · 下一份照成 · 旧份不动', async () => {
+  const root = tmpRoot()
+  await seedBase(root)
+  fugueStdin(root, '第一版\n', 'write', 'a.txt', '--stdin')
+  assert.equal(fugue(root, 'commit', '-m', '一号').code, 0)
+
+  const w = 'round' as WriterId
+  const dir = join(root, '.fugue', 'snap', w)
+  const names = readdirSync(dir).sort()
+  assert.ok(names.length >= 1, `提交点该留下一份快照：${JSON.stringify(names)}`)
+  const goodName = names[names.length - 1] as string
+  const goodBytes = readFileSync(join(dir, goodName))
+  const seq = Number(goodName.replace(/\.json$/, ''))
+  const beforeSnap = await readSnapshot(root, w)
+  assert.equal(beforeSnap?.seq, seq, '这一格的前提：有一份能用的快照')
+
+  // 摆残件：**下一份**（seq+1）写到一半就没了——名字是 `writeSnapshot` 那个形状。
+  const residue = `${seq + 1}.json.tmp-99999`
+  // 残件是一份**完整**的快照，只是名字多了一段——于是"被挡在外面"的原因只剩文件名那一条，
+  // 不是"JSON 解析不过"。负对照正是拿它做靶子：把 `readSnapshot` 的名字判据放宽成前缀匹配，
+  // 这一份立刻被当成 seq+1 那一份读回来，这一格当场红。
+  writeFileSync(
+    join(dir, residue),
+    JSON.stringify({ seq: seq + 1, logBytes: 0, state: { rev: 0, points: [], upper: [] } }),
+  )
+
+  // 一 · 读不动它就当没有：拿回来的还是那一份好的，逐字段相同。
+  const afterResidue = await readSnapshot(root, w)
+  assert.deepEqual(afterResidue, beforeSnap, '残件在那儿，读出来的还是那一份好的')
+
+  // 二 · 下一份照成：残件不挡路。
+  assert.equal(
+    await writeSnapshot(root, w, {
+      seq: seq + 1,
+      logBytes: beforeSnap?.logBytes ?? 0,
+      state: beforeSnap?.state as NonNullable<typeof beforeSnap>['state'],
+    }),
+    true,
+    '残件不该挡下一份',
+  )
+  const next = await readSnapshot(root, w)
+  assert.equal(next?.seq, seq + 1, '读回来的就是新的那一份')
+
+  // 三 · 旧份一个字节不动；而残件还在那儿（§ 9.4 里没人清它——它既不挡读也不冒充一份快照）。
+  assert.deepEqual(readFileSync(join(dir, goodName)), goodBytes, '旧那份快照一个字节没动')
+  assert.equal(existsSync(join(dir, residue)), true, '残件原地不动（清它不是快照这一层的事）')
+  assert.equal(readdirSync(dir).filter((n) => /^[0-9]+[.]json$/.test(n)).length, 2, '能用的快照恰好两份')
 })

@@ -8,6 +8,16 @@
 //
 // `crc` 覆盖的是**去掉 crc 字段后的规范形式**：键按字典序排列。于是校验与键的
 // 书写顺序无关——重排一行里的键，它照样是一个完好的信封。
+//
+// **顶层重复键一律拒**。`JSON.parse` 对同一个对象里出现两个同名键取最后一个，
+// 而"取哪一个"没有规范可依——于是重算出来的那一串取决于解析器的选择。这种行在今天会报
+// "crc 不符"（指向错误的地方），或者被一个**配平了 crc** 的写入者读得进来。后者正是那条
+// 缝上的破口："两种写入者共存"是承重性质，而它的前提是两边对同一串字节读到同一件事。
+// 判据在 `duplicateTopKey`，而且**写在 crc 校验之前**——报出来的由头是"重复键"，不是"crc"。
+//
+// **只管顶层**（这一站的决定，记在提交说明里）：信封字段都在顶层，而这一份的职责是"这一行
+// 是不是一个完好的信封"；载荷里面那一层是事件形状的事（§ 8.1）。**什么条件下改主意**：树里
+// 出现第二套实现、而且它也往载荷里写——那时把扫描器按同一个形状扩到每一层（深度栈）。
 import { crc32 } from 'node:zlib'
 import type { LogEvent } from './events.ts'
 import type { LogPos, LogSeq, WriterId } from '../terms.ts'
@@ -56,32 +66,65 @@ export type DecodeResult =
   | { ok: true; pos: LogPos; event: LogEvent }
   | { ok: false; reason: string }
 
-/** JSON.parse已验语法后扫描对象键；不用递归，字符串里的JSON样子不算结构。 */
-function duplicateKey(line: string): string | undefined {
-  const scopes: (Set<string> | null)[] = []
-  for (let at = 0; at < line.length; at++) {
-    const token = line[at]
-    if (token === '{') scopes.push(new Set())
-    else if (token === '[') scopes.push(null)
-    else if (token === '}' || token === ']') scopes.pop()
-    else if (token === '"') {
-      const start = at
-      for (at++; at < line.length; at++) {
-        if (line[at] === '\\') at++
-        else if (line[at] === '"') break
+/**
+ * 顶层有没有同名键出现两次；有就给那个键名，没有给 `null`。
+ *
+ * **只认括号深度 1 上的键名。** JSON 的对象里键后面一定跟一个 `:`（数组里没有键），所以
+ * "这一段字符串是不是键"由位置判——**进深度 1 之后**、或者**深度 1 上刚过一个逗号之后**那
+ * 一段就是键名。字符串内部的转义与 `,` `:` 都跳过去（一路走到它自己那个收尾引号），所以
+ * 载荷里那段**写成文本的 JSON**（值里出现 `"path":` 那种字样）不会误伤。
+ *
+ * **只在 `JSON.parse` 成功之后调用**：那一行已是合法 JSON，所以这一趟不撞畸形输入、也不用
+ * "猜"——它是键名清点，不是第二份解析器。
+ */
+function duplicateTopKey(line: string): string | null {
+  const seen = new Set<string>()
+  let depth = 0
+  /** 下一段字符串是不是"成员名"。 */
+  let expectKey = false
+  let i = 0
+  while (i < line.length) {
+    const c = line[i] as string
+    if (c === '"') {
+      const start = i
+      i += 1
+      while (i < line.length && line[i] !== '"') {
+        if (line[i] === '\\') i += 1
+        i += 1
       }
-      let next = at + 1
-      while (line[next] === ' ' || line[next] === '\t' || line[next] === '\r' || line[next] === '\n') next++
-      // 已验语法的JSON里，冒号前的字符串恰是当前对象的键，数组值/字符串值不会在此。
-      if (line[next] !== ':') continue
-      const keys = scopes[scopes.length - 1]
-      if (keys === null || keys === undefined) continue
-      const key = JSON.parse(line.slice(start, at + 1)) as string
-      if (keys.has(key)) return key
-      keys.add(key)
+      if (depth === 1 && expectKey) {
+        const name = JSON.parse(line.slice(start, i + 1)) as string
+        if (seen.has(name)) return name
+        seen.add(name)
+        expectKey = false
+      }
+      i += 1
+      continue
     }
+    if (c === '{' || c === '[') {
+      depth += 1
+      expectKey = depth === 1
+      i += 1
+      continue
+    }
+    if (c === '}' || c === ']') {
+      depth -= 1
+      i += 1
+      continue
+    }
+    if (c === ',') {
+      if (depth === 1) expectKey = true
+      i += 1
+      continue
+    }
+    if (c === ':') {
+      expectKey = false
+      i += 1
+      continue
+    }
+    i += 1
   }
-  return undefined
+  return null
 }
 
 /** 解一行。`reason` 是给人看的——它会被带进错误、指向行号。 */
@@ -95,10 +138,11 @@ export function decodeLine(line: string): DecodeResult {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     return { ok: false, reason: '行不是一个 JSON 对象' }
   }
-  const duplicate = duplicateKey(line)
-  if (duplicate !== undefined) {
-    const shown = duplicate.length > 120 ? duplicate.slice(0, 120) + '…' : duplicate
-    return { ok: false, reason: `JSON键重复：${JSON.stringify(shown)}` }
+  // **重复键排在最前**（在 seq / writer / t / crc 那几道门之前）：这种行别的字段可能样样都
+  // 好，而"这一行读出来的是什么"从根上就不确定——先说清这件事，别让人去追一个算错的 crc。
+  const dup = duplicateTopKey(line)
+  if (dup !== null) {
+    return { ok: false, reason: `顶层重复键：${JSON.stringify(dup)}——一行里每个键只许出现一次` }
   }
   const { seq, writer, crc, t, ...payload } = raw as Record<string, unknown>
 

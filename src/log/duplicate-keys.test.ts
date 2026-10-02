@@ -16,7 +16,7 @@ function rejected(line: string) {
   const result = decodeLine(line)
   assert.equal(result.ok, false, 'ambiguous keys must be rejected even when last-value CRC matches')
   if (result.ok) assert.fail('expected refusal')
-  assert.match(result.reason, /JSON.*重复/)
+  assert.match(result.reason, /顶层重复键/)
   return result.reason
 }
 
@@ -30,21 +30,25 @@ test('envelope and payload duplicate keys cannot hide behind a matching last-val
 test('escaped and literal spellings of the same decoded key are duplicates', () => {
   rejected(`{"\\u0073eq":99,${historical.slice(1)}`)
   for (const [key, escaped] of [['', ''], ['a', '\\u0061'], ['é', '\\u00e9'], ['𝄞', '\\ud834\\udd1e'], ['a/b', 'a\\/b']]) {
-    const line = lineWith({ nested: { [key]: 2 } })
-    const duplicate = line.replace(`"nested":{${JSON.stringify(key)}:2}`, `"nested":{${JSON.stringify(key)}:1,"${escaped}":2}`)
+    const line = lineWith({ [key]: 2 })
+    const duplicate = `{"${escaped}":1,${line.slice(1)}`
     assert.notEqual(duplicate, line)
     rejected(duplicate)
   }
 })
 
-test('nested object and array-member duplicates reject while sibling scopes stay independent', () => {
+test('accepted top-level boundary leaves nested payload decoding to native JSON semantics', () => {
   const line = lineWith({ nested: { value: 2 }, rows: [{ value: 3 }, { value: 4 }] })
   assert.equal(decodeLine(line).ok, true)
-  rejected(line.replace('"nested":{"value":2}', '"nested":{"value":1,"value":2}'))
-  rejected(line.replace('"rows":[{"value":3}', '"rows":[{"value":1,"value":3}'))
+  for (const candidate of [
+    line.replace('"nested":{"value":2}', '"nested":{"value":1,"value":2}'),
+    line.replace('"rows":[{"value":3}', '"rows":[{"value":1,"value":3}'),
+  ]) {
+    assert.deepEqual(decodeLine(candidate), decodeLine(line), 'upstream explicitly keeps nested last-value behavior')
+  }
   const quoted = lineWith({ nested: { ['quote"slash\\']: 2 } })
   const encoded = JSON.stringify('quote"slash\\')
-  rejected(quoted.replace(`"nested":{${encoded}:2}`, `"nested":{${encoded}:1,${encoded}:2}`))
+  assert.deepEqual(decodeLine(quoted.replace(`"nested":{${encoded}:2}`, `"nested":{${encoded}:1,${encoded}:2}`)), decodeLine(quoted))
 })
 
 test('old emitted bytes, reordered keys, whitespace and JSON-looking strings remain valid', () => {
@@ -60,12 +64,12 @@ test('old emitted bytes, reordered keys, whitespace and JSON-looking strings rem
   }
 })
 
-test('large legitimate values are scanned without treating string syntax as object keys; duplicate diagnostics stay bounded', () => {
+test('large legitimate values remain valid and long top-level duplicate keys still refuse', () => {
   const text = '{"a":1,"a":2}\\\"'.repeat(70_000)
   assert.equal(decodeLine(lineWith({ text })).ok, true)
-  const key = 'x'.repeat(16_384), line = lineWith({ nested: { [key]: 2 } })
-  const duplicate = line.replace(`"nested":{${JSON.stringify(key)}:2}`, `"nested":{${JSON.stringify(key)}:1,${JSON.stringify(key)}:2}`)
-  assert.ok(rejected(duplicate).length < 800, 'a malicious long key must not create an unbounded diagnostic')
+  const key = 'x'.repeat(16_384), line = lineWith({ [key]: 2 })
+  const duplicate = `{${JSON.stringify(key)}:1,${line.slice(1)}`
+  assert.ok(rejected(duplicate).includes(key), 'accepted upstream diagnostics identify the complete top-level key')
 })
 
 test('complete ambiguous M0 lines reject with writer/line and leave read-side bytes and files untouched', async () => {

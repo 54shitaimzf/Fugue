@@ -227,7 +227,7 @@ test('real View generation changes undo an earlier negative and observe all held
   } finally { for (const release of releases) release(); await f.close() }
 })
 
-test('nested escaped duplicate refusal precedes torn-tail repair; repaired M0 replays the same indexed whiteout View', async () => {
+test('top-level escaped duplicate refusal precedes torn-tail repair; repaired M0 replays the same indexed whiteout View', async () => {
   const f = await fixture({ 'dir/old.ts': 'needle old\n', 'outside.ts': 'none' })
   try {
     const t = await f.target('recovery')
@@ -239,7 +239,7 @@ test('nested escaped duplicate refusal precedes torn-tail repair; repaired M0 re
     const file = logFileOf(f.root, t.writer), prefix = readFileSync(file)
     const next = encodeEvent(3, t.writer, { t: 'view/write', agent: t.writer, path: 'bad.ts', rev: 3,
       blob: (await t.view.stat('dir/new.ts'))!.id, mode, probe: { scope: 'kept' } } as unknown as LogEvent)
-    const duplicate = next.replace('"probe":{"scope":"kept"}', '"probe":{"\\u0073cope":"hidden","scope":"kept"}')
+    const duplicate = `{"\\u0072ev":999,${next.slice(1)}`
     assert.notEqual(duplicate, next)
     const tail = Buffer.concat([Buffer.from('{"partial":"'), Buffer.from([0xe7, 0x94])])
     appendFileSync(file, Buffer.concat([Buffer.from(duplicate + '\n'), tail]))
@@ -248,7 +248,7 @@ test('nested escaped duplicate refusal precedes torn-tail repair; repaired M0 re
     try {
       await assert.rejects(loadView(reader, t.writer, { lower: lowerAt(f.truth, f.base) }), LogCorruptError)
       await assert.rejects(writer.append(t.writer, { t: 'view/remove', agent: t.writer, path: 'outside.ts', rev: 3 } as LogEvent), /重复/)
-      assert.deepEqual(readFileSync(file), before, 'complete nested corruption forbids destructive tail repair')
+      assert.deepEqual(readFileSync(file), before, 'complete top-level corruption forbids destructive tail repair')
       // 只修本测试生成的坏整行；同一失败过的 writer 必须可重试，然后恢复尾巴。
       writeFileSync(file, Buffer.concat([prefix, tail]))
       const view = await loadView(reader, t.writer, { lower: lowerAt(f.truth, f.base) })

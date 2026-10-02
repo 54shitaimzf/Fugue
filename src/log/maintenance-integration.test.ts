@@ -1,4 +1,4 @@
-// Combined 0.2.6 boundary: duplicate-key refusal must precede destructive tail recovery.
+// Combined maintenance boundary: top-level duplicate refusal precedes destructive tail recovery.
 import assert from 'node:assert/strict'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
