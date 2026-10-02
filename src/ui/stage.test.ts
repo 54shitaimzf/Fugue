@@ -12,6 +12,7 @@ import type { LineArgv, RunLauncher } from './run.ts'
 
 /** 假的那一只手（`RunLauncher` 的四样全记下来：起了什么 · 停过没有 · argv 现推）。 */
 interface Ctl {
+  columns: number
   readonly notes: string[]
   redraws: number
   readonly presses: { line: string; mode?: string }[]
@@ -34,6 +35,7 @@ function stageOf(
   tick: (ms: number) => void
 } {
   const ctl: Ctl = {
+    columns: 80,
     notes: [],
     redraws: 0,
     presses: [],
@@ -66,7 +68,7 @@ function stageOf(
     redraw: () => {
       ctl.redraws += 1
     },
-    columns: () => 80,
+    columns: () => ctl.columns,
     termRows: () => o.termRows,
     rows: () => ctl.rows,
     pendingFace: async () => ctl.face,
@@ -209,4 +211,32 @@ test('⑥ 面板高度按终端行数分账：输入那块不得与显示区等�
   assert.equal(stage.heightWant(), 13, '弹层开着走 3/5 那一档')
   stage.onAction({ action: 'cancel' })
   assert.equal(stage.heightWant(), 9, '收掉弹层回到缺省那一档')
+})
+
+
+test('⑥ 阅读面长行按物理行翻页，收窄再放宽仍能到首尾，Esc 收起', () => {
+  const path = 'src/' + 'long-component/'.repeat(16) + 'FINAL_PATH.ts'
+  const rows: StatusRow[] = [{ pos: { writer: 'agent/r1/1' as never, seq: 1 }, e: { t: 'view/write', path } as never }]
+  const { stage, ctl } = stageOf({ rows })
+  stage.onAction({ action: 'read' })
+  const wide = stage.view().read
+  assert.ok(wide !== undefined)
+  ctl.columns = 20
+  const narrow = stage.view().read
+  assert.ok(narrow !== undefined && narrow.rows.length > wide.rows.length, 'resize 当帧重折显示行')
+  stage.onAction({ action: 'jumpLast' })
+  const end = stage.view().read
+  assert.equal(end?.top, (end?.rows.length ?? 0) - 1)
+  assert.ok(end?.rows.slice(-2).map((l) => l.slice(2)).join('').endsWith('FINAL_PATH.ts'), '长路径尾部的两行都在显示列表里')
+  assert.ok(end?.rows[end.top]?.endsWith('s'), '最后一个字符可到达')
+  stage.onAction({ action: 'historyOlder' })
+  assert.equal(stage.view().read?.top, (end?.top ?? 0) - 1, '上一条物理行')
+  ctl.columns = 100
+  const resized = stage.view().read
+  assert.ok((resized?.top ?? 0) < (resized?.rows.length ?? 0), '放宽后夹回界内')
+  stage.onAction({ action: 'jumpFirst' })
+  assert.equal(stage.view().read?.top, 0)
+  stage.onAction({ action: 'cancel' })
+  assert.equal(stage.view().read, undefined)
+  assert.deepEqual(ctl.presses, [], '阅读和翻行不起命令')
 })

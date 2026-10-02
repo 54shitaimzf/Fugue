@@ -1,0 +1,507 @@
+{
+  "files": 512,
+  "lines": 256,
+  "runs": 1,
+  "profile": "entropy",
+  "bytes": 16037385,
+  "corpusSha256": "9bc3a51c5d1fe18f3d6f34804180fca1c1ae053c9caabb7e5e3f725334c6d115",
+  "sourceHashes": {
+    "src/tools/execute.ts": "9cefc0939dfb56bc3a258604933ba80d587f56b15761ec92ad34599a13e71445",
+    "src/tools/host.ts": "273d9bd5fe02be0fccd68ef1c57744946a16cc9519e23570e7a66691aa3c5708",
+    "src/tools/walk.ts": "4a14ec8a545dab9991928f3952fdd1f5d003991198b42c5e24edb81059645be8",
+    "src/search/view-cohort.ts": "12019443a06d075d72e6afe15342300a6d80bb03a51f965505348eef7f0681cd",
+    "src/search/cohort-store.ts": "b0b4692e1bd36d7caa10720179dd95db9ebcb83a54bca265ac92de25877f493d",
+    "src/search/cohort-format.ts": "cb5ca408b5729326a3c9caf1e4301fe16e1ea8e0458da90be517cc56fc6daad3",
+    "src/search/index-format.ts": "7074b2065aad9770c67990b1265ddbf55ef14d50a946954ce8fd6307bb2bcf83",
+    "src/truth/truth.ts": "4c6b252d98143486c20abcc8cb35e531a5bda2b87381c213cba2b28dd1e42d2b",
+    "src/truth/git.ts": "5ebf031332af0a633911bae006428c0c3a79d418c08a49e9cd01861bd6ca00db",
+    "src/view/view.ts": "e0b01dd413deec233ddcf445f1dfabc7470e8f0acec2d645752552ce80e76014",
+    "src/view/lower.ts": "5f1cf9e40882e51a6c6b53e994301d14a32bf51b0d9417a86f44fdf7a85768c6",
+    "src/log/log.ts": "4d37059d6f4eabdf9ea43eee6d1ea7d8ba78beb97f55e9a50b4aaffc214b510e",
+    "tools/cohort-benchmark-owned.js": "3c659e01ec392f515259656de4a3b2b05df40d7f5a4bab3801cd572a9ea212e5",
+    "tools/bench-cohort-query.js": "c0133b935355f5de48bc18c5a357f18a9a14c414b09c79d5c6c7aec5337623bb"
+  },
+  "cases": {
+    "dense": {
+      "pattern": "dense_hit",
+      "trials": [
+        {
+          "directHitFiles": 512,
+          "scanCold": {
+            "ms": 23.93439000000035,
+            "gitRequests": 6,
+            "gitSpawns": 1,
+            "reads": 1,
+            "prefetched": 32
+          },
+          "scanRepeat": {
+            "ms": 1.0469359999997323,
+            "gitRequests": 0,
+            "gitSpawns": 0,
+            "reads": 1,
+            "prefetched": 32
+          },
+          "firstMissing": {
+            "ms": 31.81260599999996,
+            "gitRequests": 6,
+            "gitSpawns": 1,
+            "reads": 1,
+            "prefetched": 32,
+            "index": {
+              "queries": 1,
+              "diskReads": 1,
+              "sourceReads": 0,
+              "builds": 0,
+              "fallbacks": 1,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          },
+          "preparation": {
+            "prepared": false,
+            "ms": 1442.2013259999994,
+            "gitRequests": 136,
+            "gitSpawns": 0,
+            "index": {
+              "queries": 1,
+              "diskReads": 1,
+              "sourceReads": 137,
+              "builds": 0,
+              "fallbacks": 1,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          },
+          "preparedMemory": {
+            "ms": 0.7881029999998646,
+            "gitRequests": 0,
+            "gitSpawns": 0,
+            "reads": 1,
+            "prefetched": 32,
+            "index": {
+              "queries": 2,
+              "diskReads": 1,
+              "sourceReads": 137,
+              "builds": 0,
+              "fallbacks": 2,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          },
+          "restartCold": {
+            "ms": 35.77162999999928,
+            "gitRequests": 6,
+            "gitSpawns": 1,
+            "reads": 1,
+            "prefetched": 32,
+            "index": {
+              "queries": 1,
+              "diskReads": 1,
+              "sourceReads": 0,
+              "builds": 0,
+              "fallbacks": 1,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          },
+          "restartRepeat": {
+            "ms": 0.9635189999999056,
+            "gitRequests": 0,
+            "gitSpawns": 0,
+            "reads": 1,
+            "prefetched": 32,
+            "index": {
+              "queries": 2,
+              "diskReads": 1,
+              "sourceReads": 0,
+              "builds": 0,
+              "fallbacks": 2,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          }
+        }
+      ],
+      "mediansMs": {
+        "scanCold": 23.934,
+        "scanRepeat": 1.047,
+        "firstMissing": 31.813,
+        "preparation": 1442.201,
+        "preparedMemory": 0.788,
+        "restartCold": 35.772,
+        "restartRepeat": 0.964
+      }
+    },
+    "sparse": {
+      "pattern": "rare_hit",
+      "trials": [
+        {
+          "directHitFiles": 1,
+          "scanCold": {
+            "ms": 593.4738210000014,
+            "gitRequests": 517,
+            "gitSpawns": 1,
+            "reads": 512,
+            "prefetched": 512
+          },
+          "scanRepeat": {
+            "ms": 483.8657409999996,
+            "gitRequests": 512,
+            "gitSpawns": 0,
+            "reads": 512,
+            "prefetched": 512
+          },
+          "firstMissing": {
+            "ms": 553.0260500000004,
+            "gitRequests": 517,
+            "gitSpawns": 1,
+            "reads": 512,
+            "prefetched": 512,
+            "index": {
+              "queries": 5,
+              "diskReads": 1,
+              "sourceReads": 0,
+              "builds": 0,
+              "fallbacks": 5,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          },
+          "preparation": {
+            "prepared": false,
+            "ms": 1379.9469719999997,
+            "gitRequests": 80,
+            "gitSpawns": 0,
+            "index": {
+              "queries": 5,
+              "diskReads": 1,
+              "sourceReads": 137,
+              "builds": 0,
+              "fallbacks": 5,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          },
+          "preparedMemory": {
+            "ms": 742.1708559999988,
+            "gitRequests": 445,
+            "gitSpawns": 0,
+            "reads": 512,
+            "prefetched": 512,
+            "index": {
+              "queries": 10,
+              "diskReads": 1,
+              "sourceReads": 137,
+              "builds": 0,
+              "fallbacks": 10,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          },
+          "restartCold": {
+            "ms": 510.26472400000057,
+            "gitRequests": 517,
+            "gitSpawns": 1,
+            "reads": 512,
+            "prefetched": 512,
+            "index": {
+              "queries": 5,
+              "diskReads": 1,
+              "sourceReads": 0,
+              "builds": 0,
+              "fallbacks": 5,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          },
+          "restartRepeat": {
+            "ms": 548.3529199999994,
+            "gitRequests": 512,
+            "gitSpawns": 0,
+            "reads": 512,
+            "prefetched": 512,
+            "index": {
+              "queries": 10,
+              "diskReads": 1,
+              "sourceReads": 0,
+              "builds": 0,
+              "fallbacks": 10,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          }
+        }
+      ],
+      "mediansMs": {
+        "scanCold": 593.474,
+        "scanRepeat": 483.866,
+        "firstMissing": 553.026,
+        "preparation": 1379.947,
+        "preparedMemory": 742.171,
+        "restartCold": 510.265,
+        "restartRepeat": 548.353
+      }
+    },
+    "miss": {
+      "pattern": "absent_needle",
+      "trials": [
+        {
+          "directHitFiles": 0,
+          "scanCold": {
+            "ms": 488.4622180000006,
+            "gitRequests": 517,
+            "gitSpawns": 1,
+            "reads": 512,
+            "prefetched": 512
+          },
+          "scanRepeat": {
+            "ms": 507.857938000001,
+            "gitRequests": 512,
+            "gitSpawns": 0,
+            "reads": 512,
+            "prefetched": 512
+          },
+          "firstMissing": {
+            "ms": 532.5002099999983,
+            "gitRequests": 517,
+            "gitSpawns": 1,
+            "reads": 512,
+            "prefetched": 512,
+            "index": {
+              "queries": 5,
+              "diskReads": 1,
+              "sourceReads": 0,
+              "builds": 0,
+              "fallbacks": 5,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          },
+          "preparation": {
+            "prepared": false,
+            "ms": 1342.0764899999995,
+            "gitRequests": 80,
+            "gitSpawns": 0,
+            "index": {
+              "queries": 5,
+              "diskReads": 1,
+              "sourceReads": 137,
+              "builds": 0,
+              "fallbacks": 5,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          },
+          "preparedMemory": {
+            "ms": 453.0344420000001,
+            "gitRequests": 445,
+            "gitSpawns": 0,
+            "reads": 512,
+            "prefetched": 512,
+            "index": {
+              "queries": 10,
+              "diskReads": 1,
+              "sourceReads": 137,
+              "builds": 0,
+              "fallbacks": 10,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          },
+          "restartCold": {
+            "ms": 699.4966009999989,
+            "gitRequests": 517,
+            "gitSpawns": 1,
+            "reads": 512,
+            "prefetched": 512,
+            "index": {
+              "queries": 5,
+              "diskReads": 1,
+              "sourceReads": 0,
+              "builds": 0,
+              "fallbacks": 5,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          },
+          "restartRepeat": {
+            "ms": 533.6169279999995,
+            "gitRequests": 512,
+            "gitSpawns": 0,
+            "reads": 512,
+            "prefetched": 512,
+            "index": {
+              "queries": 10,
+              "diskReads": 1,
+              "sourceReads": 0,
+              "builds": 0,
+              "fallbacks": 10,
+              "active": 0,
+              "closed": false
+            },
+            "store": {
+              "reads": 1,
+              "writes": 0,
+              "bytesRead": 0,
+              "stored": 0,
+              "failures": 1,
+              "closeFailures": 0,
+              "active": 0,
+              "closed": false
+            }
+          }
+        }
+      ],
+      "mediansMs": {
+        "scanCold": 488.462,
+        "scanRepeat": 507.858,
+        "firstMissing": 532.5,
+        "preparation": 1342.076,
+        "preparedMemory": 453.034,
+        "restartCold": 699.497,
+        "restartRepeat": 533.617
+      }
+    }
+  },
+  "boundary": "Generated Git-only corpus; exact full-scan receipts. Fresh Truth/View/adapter handles in the same Node process; OS page cache is not dropped. Prepared-cold includes walk/current-View metadata/filter/regex; preparation and first miss charged separately. Artifact-only timings cannot authorize default activation."
+}

@@ -382,3 +382,20 @@ test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账
       '其余 body · 阅读面行报 read · 矮帧报 body',
   )
 })
+
+
+test('⑩ 阅读面层次与准确遗漏数，极窄帧仍不越界', () => {
+  const rows = ['标题', 'one', 'two', 'three', 'four', 'five']
+  const f = frameOf({ snapshot: snapshotOf(), width: 50, height: 5, read: { rows, top: 0 } })
+  assert.ok(f.lines[0]?.includes('阅读面'))
+  assert.ok(!f.lines[0]?.includes('处境'))
+  assert.equal(f.roles[1], 'readHeading')
+  assert.ok(f.lines.some((l) => l.includes('下面还有 4 行')), '被提示行替换的正文也算在遗漏数内')
+  const moved = frameOf({ snapshot: snapshotOf(), width: 50, height: 5, read: { rows, top: 1 } })
+  assert.equal(moved.roles[1], 'read', '翻下去不把普通正文加粗')
+  for (const width of [1, 2, 3, 7]) {
+    const n = frameOf({ snapshot: snapshotOf(), width, height: 8, read: { rows, top: 0 } })
+    for (const line of n.lines) assert.equal(widthOf(line), width)
+    assert.ok(n.lines.length <= 8)
+  }
+})

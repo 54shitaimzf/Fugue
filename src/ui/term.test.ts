@@ -594,9 +594,9 @@ test('⑫ 主题地基（U20）：缺省与空表逐字节相同 · 有值恰那
   )
 })
 
-// ── ⑬ 默认主题（U22）：DEFAULT_THEME 三族被包 · 与无主题档的差恰是角色包裹 ──────────────
+// ── ⑬ 默认主题（U22）：DEFAULT_THEME 行级角色被包 · 与无主题档的差恰是角色包裹 ──────────────
 
-test('⑬ 默认主题（U22）：border/footer 暗一档 · overlay 加粗 · 与无主题档的差恰是角色包裹', () => {
+test('⑬ 默认主题（U22）：border 暗一档 · footer/overlay 加粗 · 与无主题档的差恰是角色包裹', () => {
   // 带弹层的一份（overlay 那一族要在场）：菜单开着——三族角色这才凑齐。
   const W = 100
   const frame = frameOf({
@@ -626,12 +626,12 @@ test('⑬ 默认主题（U22）：border/footer 暗一档 · overlay 加粗 · �
   })
   assert.equal(themed, styledRows.map((r) => `\r${CLEAR_LINE}${r}\n`).join(''), '默认主题那一帧 = 逐行按角色包裹的那一份')
 
-  // ② 出现次数逐族钉：`2m` 恰 border+footer 那么多次 · `1m` 恰 overlay 那么多次（一对没有多）。
-  const dimN = frame.roles.filter((r) => r === 'border' || r === 'footer').length
-  const boldN = frame.roles.filter((r) => r === 'overlay').length
+  // ② 出现次数逐族钉：`2m` 恰 border 那么多次 · `1m` 恰 footer/overlay/readHeading 那么多次（一对没有多）。
+  const dimN = frame.roles.filter((r) => r === 'border').length
+  const boldN = frame.roles.filter((r) => r === 'overlay' || r === 'footer' || r === 'readHeading').length
   assert.ok(dimN > 0 && boldN > 0, '三族角色都在场（这份帧画得出差别）')
-  assert.equal(themed.split('\x1b[2m').length - 1, dimN, `\\x1b[2m 恰 border+footer 那么多次（该 ${dimN}）`)
-  assert.equal(themed.split('\x1b[1m').length - 1, boldN, `\\x1b[1m 恰 overlay 那么多次（该 ${boldN}）`)
+  assert.equal(themed.split('\x1b[2m').length - 1, dimN, `\\x1b[2m 恰 border 那么多次（该 ${dimN}）`)
+  assert.equal(themed.split('\x1b[1m').length - 1, boldN, `\\x1b[1m 恰 footer/overlay/readHeading 那么多次（该 ${boldN}）`)
 
   // ③ 屏幕可见内容与无主题档全等（SGR 零宽，模拟器跳过它之后屏幕上没有差）。
   assert.deepEqual(
@@ -641,7 +641,7 @@ test('⑬ 默认主题（U22）：border/footer 暗一档 · overlay 加粗 · �
   )
 
   console.log(
-    `⑬ 读数：${frame.lines.length} 行里 ${dimN} 行暗（border/footer）· ${boldN} 行粗（overlay）· ` +
+    `⑬ 读数：${frame.lines.length} 行里 ${dimN} 行暗（border）· ${boldN} 行粗（footer/overlay/readHeading）· ` +
       `与无主题档差 ${themed.length - plain.length} 字节（全是 SGR 对）· 可见内容全等`,
   )
 })

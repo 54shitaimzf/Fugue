@@ -32,7 +32,7 @@
 import type { Delta } from '../delta.ts'
 import { FAMILY_KIND } from './stream.ts'
 import { permanentLinesOf } from './stream.ts'
-import { clip } from './glyph.ts'
+import { clustersOf } from './glyph.ts'
 import type { StatusRow } from '../probe/status.ts'
 
 /**
@@ -348,9 +348,6 @@ export type ReadFaceName = 'diff' | 'contract' | 'stream'
 /** 一面的上限（行）。**它是一个常量，可调**：掐掉的那一截在头一行说清楚。 */
 export const READ_LIMIT = 200
 
-/** 正文那一栏折成一行之后截到多少列（全文的读法是 `fugue log`）。 */
-const READ_BODY_COLS = 160
-
 /** 只留尾部那 `limit` 行；掐掉了就在最前面说一句（**少印要说出来**）。 */
 function tail(lines: readonly string[], limit: number): readonly string[] {
   if (lines.length <= limit) return lines
@@ -359,30 +356,29 @@ function tail(lines: readonly string[], limit: number): readonly string[] {
 }
 
 /** 一格变更那一行：坐标 + 那一格。 */
-function deltaLineOf(d: DeltaFace, at_: string): string {
+function deltaLinesOf(d: DeltaFace, at_: string): readonly string[] {
   switch (d.kind) {
     case 'write':
-      return `${at_}写 ${d.path}`
+      return [`${at_}写 ${d.path}`]
     case 'delete':
-      return `${at_}删 ${d.path}`
+      return [`${at_}删 ${d.path}`]
     case 'rename':
-      return `${at_}改名 ${d.from} → ${d.to}`
+      return [`${at_}改名`, `  从 ${d.from}`, `  到 ${d.to}`]
     case 'chmod':
-      return `${at_}改权限 ${d.path} ${(d.mode & 0o777).toString(8)}`
+      return [`${at_}改权限 ${d.path} ${(d.mode & 0o777).toString(8)}`]
     case 'symlink':
-      return `${at_}符号链接 ${d.path} → ${d.target}`
+      return [`${at_}符号链接`, `  路径 ${d.path}`, `  目标 ${d.target}`]
   }
 }
 
-/** 一份契约那几行：**账上那一条说得出的那几栏**（正文原文一行，截到 `READ_BODY_COLS`）。 */
+/** 契约只排已有数据：每条写入路径与正文段落都可翻到，不另读文件。 */
 function contractLinesOf(c: ContractFace): readonly string[] {
-  const shown = c.paths.slice(0, 3).join(' · ')
-  const more = c.paths.length > 3 ? ' · …' : ''
-  const body = clip(c.body.replace(/\s+/g, ' ').trim(), READ_BODY_COLS)
   return [
     `契约 ${c.id} · 轮次 ${c.round} · 归属 ${c.agent}`,
-    `  写入面 ${c.paths.length} 条（${shown}${more}）`,
-    `  正文 ${body}`,
+    `  写入面 ${c.paths.length} 条`,
+    ...c.paths.map((path) => `    ${path}`),
+    '  正文',
+    ...c.body.replace(/\r\n?/g, '\n').split('\n').map((line) => `    ${line}`),
   ]
 }
 
@@ -407,7 +403,7 @@ function tallyLineOf(tally: Readonly<Record<string, number>>): string | null {
  */
 export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}): ReadFaces {
   const limit = opts.limit ?? READ_LIMIT
-  const diffLines = state.diff.map((d, i) => deltaLineOf(d, state.diffAt[i] as string))
+  const diffLines = state.diff.flatMap((d, i) => [...deltaLinesOf(d, state.diffAt[i] as string)])
   const contractLines = state.contracts.flatMap((c) => [...contractLinesOf(c)])
   const tally = tallyLineOf(state.tally)
   const streamAll = tally === null ? [...state.stream] : [...state.stream, tally]
@@ -416,7 +412,7 @@ export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}
       state.diff.length === 0
         ? null
         : {
-            title: `diff · ${state.diff.length} 条变更（账上的 \`view/*\` 那五族；\`add\` 与 \`modify\` 在读面上是同一格「写」）`,
+            title: `diff · ${state.diff.length} 条变更（写 = add / modify）`,
             lines: tail(diffLines, limit),
           },
     contract:
@@ -460,8 +456,60 @@ export function firstFace(faces: ReadFaces): ReadFaceName {
   return faces.diff !== null ? 'diff' : 'stream'
 }
 
-/** 那一面那几行（标题算第 0 行；`top` 是看到第几行起）。一面都没有时给空表。 */
-export function faceRowsOf(faces: ReadFaces, name: ReadFaceName): readonly string[] {
+/**
+ * 阅读面的显示行：按完整簇折行，保留路径、正文的空格与标点。
+ * 与通用 `wrap` 不同，这里不吃分隔符或空白（它们可能是正文的一部分）。
+ * 续行缩进使坐标 / 动作与正文易区分；不足两列时不能展示宽簇，明确印 …。
+ */
+function readWrap(line: string, columns: number): readonly string[] {
+  const width = Math.max(1, Math.floor(columns))
+  const indent = width >= 8 ? '  ' : ''
+  const out: string[] = []
+  // 生的控制字节不是显示簇：显式转义，防止正文改变光标或终端属性。
+  const visible = line.replace(/[\x00-\x1f\x7f-\x9f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+  const clusters = clustersOf(visible)
+  let at = 0
+  while (at < clusters.length) {
+    const prefix = out.length === 0 ? '' : indent
+    const budget = width - prefix.length
+    let used = 0
+    let end = at
+    let space = -1
+    while (end < clusters.length && used + (clusters[end]?.width ?? 0) <= budget) {
+      const c = clusters[end] as (typeof clusters)[number]
+      used += c.width
+      end += 1
+      if (c.text === ' ') space = end
+    }
+    if (end === at) {
+      // 一列放不下宽簇：明确省略，免得终端自动换行破坏面板几何。
+      out.push(`${prefix}…`)
+      at += 1
+      continue
+    }
+    // 整词能放下时在空格之后断，空格本身保留；长路径无空格则硬折。
+    if (end < clusters.length && space > at && clusters[end]?.text !== ' ') end = space
+    out.push(prefix + clusters.slice(at, end).map((c) => c.text).join(''))
+    at = end
+  }
+  if (out.length === 0) out.push('')
+  return out
+}
+
+/** 标题算第 0 行；给列宽时返回可逐行翻到的物理行，显示与滚动共用这一份。 */
+export function faceRowsOf(faces: ReadFaces, name: ReadFaceName, columns?: number): readonly string[] {
   const one = faces[name]
-  return one === null ? [] : [one.title, ...one.lines]
+  if (one === null) return []
+  if (columns === undefined) return [one.title, ...one.lines]
+  const width = Math.max(1, Math.floor(columns))
+  // 最多 READ_LIMIT 条显示行，超限仍在头部声明。标记自己也按列宽折。
+  const rows = [one.title, ...one.lines].flatMap((line) => [...readWrap(line, width)])
+  if (rows.length <= READ_LIMIT) return rows
+  let cut = rows.length - READ_LIMIT + 1
+  let notice = readWrap(`… 前面还有 ${cut} 显示行（全文 fugue log）`, width)
+  while (cut !== rows.length - READ_LIMIT + notice.length) {
+    cut = rows.length - READ_LIMIT + notice.length
+    notice = readWrap(`… 前面还有 ${cut} 显示行（全文 fugue log）`, width)
+  }
+  return [...notice, ...rows.slice(cut)]
 }

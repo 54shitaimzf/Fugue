@@ -75,10 +75,10 @@ export interface Frame {
 
 /**
  * 行的角色（U20）：`border` 框线 · `body` 正文（树与读数）· `footer` 账尾 · `overlay` 临时那一层
- * （候选 · 门口那一块 · 排队）· `read` 阅读面正文。**只在地基这一层声明**——值是给终端那一层的
+ * （候选 · 门口那一块 · 排队）· `read` 阅读面正文 · `readHeading` 阅读标题。**只在地基这一层声明**——值是给终端那一层的
  * `theme` 查的键，排版本身不知道任何样式。
  */
-export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'read'
+export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'read' | 'readHeading'
 
 export interface FrameInput {
   /** 读源一：那一刻的处境（`status --once` 印的那一份）。 */
@@ -301,6 +301,7 @@ export function frameOf(o: FrameInput): Frame {
   const { width, height } = o
   const empty: Frame = { width, height, columns: { left: 0, right: 0 }, footer: '', lines: [], roles: [] }
   if (width <= 0 || height <= 0) return empty
+  if (width < 3) return { ...empty, lines: [cell('（这一屏太窄）', width)], roles: ['body'] }
   if (height < MIN_HEIGHT) {
     // 画不出框就说出来，不静默给一个空帧（读面那一条：少印要说）。
     const why = `（这一屏太矮：要 ${MIN_HEIGHT} 行以上才画得出框与账尾，拿到的是 ${height} 行）`
@@ -368,7 +369,7 @@ export function frameOf(o: FrameInput): Frame {
     const count = Math.min(readAll.length - top, Math.max(1, budget))
     for (let i = top; i < top + count; i += 1) readBody.push(readAll[i] as string)
     const below = readAll.length - (top + count)
-    if (below > 0) readBody[readBody.length - 1] = `… 下面还有 ${below} 行（↑↓ 翻 · Esc 收起）`
+    if (below > 0) readBody[readBody.length - 1] = `… 下面还有 ${below + 1} 行（↑↓ 翻 · Esc 收起）`
   }
   budget -= readBody.length
 
@@ -407,13 +408,13 @@ export function frameOf(o: FrameInput): Frame {
     ...content.map((x) => ({ ...x, role: 'body' as const })),
   ]
   if (dropped > 0) shown.push({ l: `… 还有 ${dropped} 行没印（这一屏 ${height} 行）`, r: '', role: 'body' })
-  for (const one of readBody) shown.push({ l: one, r: '', full: true, role: 'read' as const })
+  for (const [i, one] of readBody.entries()) shown.push({ l: one, r: '', full: true, role: i === 0 && (o.read?.top ?? 0) === 0 ? 'readHeading' : 'read' })
   for (const one of menuBody) shown.push({ l: one, r: '', full: true, role: 'overlay' as const })
   for (const one of gateBody) shown.push({ l: one, r: '', full: true, role: 'overlay' as const })
 
   const lines: string[] = []
   const roles: LineRole[] = []
-  lines.push(`┌${bar(left, '处境')}${two ? `┬${bar(right, '读数')}` : ''}┐`)
+  lines.push(readingOn ? `┌${bar(inner, '阅读面')}┐` : `┌${bar(left, '处境')}${two ? `┬${bar(right, '读数')}` : ''}┐`)
   roles.push('border')
   for (const one of shown) {
     // 候选那一层**横贯整栏**（它是临时的一层，不参与左右两栏的分工）。
@@ -426,12 +427,12 @@ export function frameOf(o: FrameInput): Frame {
     roles.push(one.role)
   }
   if (withFooter) {
-    lines.push(`├${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┤`)
+    lines.push(readingOn ? `├${'─'.repeat(inner)}┤` : `├${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┤`)
     roles.push('border')
     lines.push(`│${cell(footer, inner)}│`)
     roles.push('footer')
   }
-  lines.push(`└${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┘`)
+  lines.push(readingOn ? `└${'─'.repeat(inner)}┘` : `└${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┘`)
   roles.push('border')
   return { width, height, columns: { left, right }, footer, lines, roles }
 }
