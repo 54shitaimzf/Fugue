@@ -37,6 +37,7 @@ fugue 是住在终端里的编码 agent：给它一句目标，它自己拆活�
                              搜索 · 复制都还是终端自己的。它只看不写，随时开随时关：
                              g 放行门口那批 · ? 重印按键提示 · q 退出
                              ${hintLineOf(KEYMAP, hintLimitOf(60))}
+                             （上面是缺省键位 · fugue config set ui.keys.<动作> '<键串>' 可改）
                              --metrics / --report 与 status 同义；真终端上默认就跟着新事件走
                              --once 印一遍旧事件就退（管道 · CI 里自动是这一档，不写 ANSI）
                              --tail <n> 开始时只看最后 n 条旧事件（旧账很长时的入口）
