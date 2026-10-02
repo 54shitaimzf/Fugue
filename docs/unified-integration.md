@@ -74,3 +74,7 @@ execute 文件出现一次已见 Node cloned-data 传输错误，随后 execute/
 随后维护批按官方 §10 补 `config ls` 和[配置文档诊断](configuration.md)，列两级合并后在场的键而非默认/schema 表；命令帮助补齐 assemble。C 约束新增[具名诊断见证](../design/CONSTRAINT-WITNESS.md)，以真实段边界比较积累正文，保留裸 Prefix 粗比法，不接发送路径。终端/status 的既有总量分别标明转移条数与图上步数，JSON/fold 字段不变。
 
 可选 grep 的[整批预取省略](../design/GREP-PREFETCH-READINESS.md)只在原候选全部拥有当前完整证明时生效；记录/代/原读口/原预取源任何变化都回原路径，部分命中不重新压缩前缀。实测[单链证据](prefetch-investigation/real-chain.md)保留精确 527→971 本地源图、冷退化和淘汰，热趟消除512个预取ID与5个Git批次；11.5–13.4ms并不是冷50ms或缺省启用的证书。当前组合自己的功能与CI另验，不重写历史指纹。
+
+随后维护固定[日志围栏的根与寿命](log-fence-ownership.md)：创建时解析绝对根，私有描述符固定取得的 inode，释放一次且只移除已证明的当前名字。可选查询扩展到[无量词纯字面组](../design/GROUPED-LITERAL-QUERIES.md)，不改变原生 regex 匹配，只扩展安全候选过滤；量词/分支回退、真实编辑失效与三档回执由新控制覆盖。两项均不改事件/索引格式或默认启用策略；组合的精确 CI 独立记录。
+
+[准备后冷查询剖面与分组配对](prepared-cold-profile/group-pair.md)保留实际执行的 f7/697 本地源码图：稀疏组的源读取512→1，密集早停和 entropy 准备拒绝仍有额外 metadata/墙钟成本。code 非捕获组54.5ms仍超过冷50ms目标；新围栏/组合源码不借用这份旧图的性能证书。

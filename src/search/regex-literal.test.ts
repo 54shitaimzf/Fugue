@@ -1,7 +1,7 @@
 // 索引候选过滤绝不能漏掉 RegExp 的真命中；无法证明必需的 literal 就返回 null 扫描。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { MAX_LITERAL_PATTERN_UNITS, MAX_REQUIRED_TRIGRAMS, requiredLiteralTrigrams } from './regex-literal.ts'
+import { MAX_LITERAL_GROUP_DEPTH, MAX_LITERAL_PATTERN_UNITS, MAX_REQUIRED_TRIGRAMS, requiredLiteralTrigrams } from './regex-literal.ts'
 
 function gramsOf(text: string): Set<string> {
   const grams = new Set<string>()
@@ -22,8 +22,86 @@ test('plain literals, simple anchors and escaped punctuation produce required UT
   assert.deepEqual(requiredLiteralTrigrams(' ^foo ', ''), null)
 })
 
+test('balanced unquantified literal groups preserve concatenation across their boundaries', () => {
+  for (const pattern of ['rare(?:_hit)', 'rare(_hit)', '(rare)(?:_)(hit)', '^(?:ra(r))e(?:_h(it))$', '()rare(?:)(?:_hit)']) {
+    assert.deepEqual(requiredLiteralTrigrams(pattern, ''), requiredLiteralTrigrams('rare_hit', ''), pattern)
+  }
+  assert.deepEqual(requiredLiteralTrigrams('(?:中)(😀)文', ''), requiredLiteralTrigrams('中😀文', ''))
+  assert.deepEqual(requiredLiteralTrigrams('(?:a\\(b\\))\\|\\$', ''), requiredLiteralTrigrams('a\\(b\\)\\|\\$', ''))
+  assert.deepEqual(requiredLiteralTrigrams('abc(?:)', ''), ['abc'])
+  assert.equal(requiredLiteralTrigrams('(?:ab)', ''), null)
+})
+
+test('unsupported or malformed group contents refuse the entire index condition', () => {
+  for (const pattern of ['rare(?:_hit)?', 'rare(_hit)*', 'rare(_hit)+', '(abc){1}', '(abc|xyz)',
+    '(?:abc|xyz)', '(abc*)', '(?:abc.)', '(?:[abc])', '(?=abc)', '(?!abc)', '(?<=abc)',
+    '(?<!abc)', '(?<name>abc)', '(?i:abc)', '(abc)\\1', '(?:\\wabc)', '(?:^abc)', '(abc$)',
+    'abc)', '(abc', '(?:abc', '(?abc)', '(?:abc)$$']) {
+    assert.equal(requiredLiteralTrigrams(pattern, ''), null, pattern)
+  }
+  for (const flags of ['i', 'm', 'u', 'g', 's', 'y', 'v']) assert.equal(requiredLiteralTrigrams('rare(?:_hit)', flags), null)
+})
+
+test('group admission is iterative and bounded without rejecting the original regex', () => {
+  const atLimit = '('.repeat(MAX_LITERAL_GROUP_DEPTH) + 'abc' + ')'.repeat(MAX_LITERAL_GROUP_DEPTH)
+  assert.deepEqual(requiredLiteralTrigrams(atLimit, ''), ['abc'])
+  const tooDeep = '(' + atLimit + ')'
+  assert.equal(requiredLiteralTrigrams(tooDeep, ''), null)
+  assert.ok(new RegExp(tooDeep).test('abc'), 'unsupported index depth still has a valid native scanner')
+  const tooLong = '(?:' + 'a'.repeat(MAX_LITERAL_PATTERN_UNITS) + ')'
+  assert.equal(requiredLiteralTrigrams(tooLong, ''), null)
+  assert.equal(requiredLiteralTrigrams('('.repeat(MAX_LITERAL_PATTERN_UNITS), ''), null)
+})
+
+test('exhaustive grouped binary literals imply every required gram on matching subjects', () => {
+  const words = ['']
+  for (let length = 1; length <= 6; length++) {
+    for (let bits = 0; bits < 2 ** length; bits++) words.push(bits.toString(2).padStart(length, '0').replace(/0/g, 'a').replace(/1/g, 'b'))
+  }
+  let matching = 0
+  for (const literal of words.filter(word => word.length >= 3 && word.length <= 4)) {
+    for (let cut = 0; cut <= literal.length; cut++) {
+      for (const pattern of [literal.slice(0, cut) + '(?:' + literal.slice(cut) + ')',
+        '(' + literal.slice(0, cut) + ')(' + literal.slice(cut) + ')', '^(?:(' + literal + '))$']) {
+        const required = requiredLiteralTrigrams(pattern, '')
+        assert.ok(required !== null, pattern)
+        const regex = new RegExp(pattern)
+        for (const subject of words) {
+          if (!regex.test(subject)) continue
+          matching++
+          for (const gram of required) assert.ok(subject.includes(gram), JSON.stringify({ pattern, subject, gram }))
+        }
+      }
+    }
+  }
+  assert.ok(matching > 1000, `matching coverage must be non-vacuous: ${matching}`)
+})
+
+test('seeded escaped Unicode grouped patterns never exclude a true native match', () => {
+  let seed = 0x709541
+  const next = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed }
+  const alphabet = ['a', '.', '$', '^', '(', ')', '|', '\\', '中', '😀', '�', '\ud800']
+  const escape = (literal: string) => literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  let matching = 0
+  for (let turn = 0; turn < 2000; turn++) {
+    const pieces = Array.from({ length: 3 + next() % 8 }, () => alphabet[next() % alphabet.length]!)
+    const literal = pieces.join('')
+    const body = pieces.map(piece => next() % 2 ? '(' + escape(piece) + ')' : '(?:' + escape(piece) + ')').join('')
+    const pattern = (next() % 2 ? '^' : '') + body + (next() % 2 ? '$' : '')
+    const required = requiredLiteralTrigrams(pattern, '')
+    assert.ok(required !== null, pattern)
+    const regex = new RegExp(pattern)
+    for (const subject of [literal, 'prefix' + literal, literal + 'suffix', literal.slice(1), 'other']) {
+      if (!regex.test(subject)) continue
+      matching++
+      for (const gram of required) assert.ok(subject.includes(gram), JSON.stringify({ pattern, subject, gram }))
+    }
+  }
+  assert.ok(matching >= 2000)
+})
+
 test('ambiguous regex syntax and all flags fail open to scanning', () => {
-  for (const pattern of ['', 'a', 'ab', '^$', '.', 'foo|bar', 'abc|xyz', 'abc*', 'abc?', '(?!abc)xyz', 'abc(?!d)', '(?<!a)bc', '(?i:abc)', '(foo)', '(?:foo)', '(?=foo)', 'foo+', 'foo*', 'foo?', 'foo{2}', '[foo]', '\\wfoo', '\\bfoo', '(foo)\\1', '\\u0066oo', '\\x66oo', '\\nfoo', 'foo\\', '^foo$$']) {
+  for (const pattern of ['', 'a', 'ab', '^$', '.', 'foo|bar', 'abc|xyz', 'abc*', 'abc?', '(?!abc)xyz', 'abc(?!d)', '(?<!a)bc', '(?i:abc)', '(?=foo)', 'foo+', 'foo*', 'foo?', 'foo{2}', '[foo]', '\\wfoo', '\\bfoo', '(foo)\\1', '\\u0066oo', '\\x66oo', '\\nfoo', 'foo\\', '^foo$$']) {
     assert.equal(requiredLiteralTrigrams(pattern, ''), null, pattern)
   }
   for (const flags of ['i', 'm', 'u', 'g', 's', 'y', 'v', 'unknown']) assert.equal(requiredLiteralTrigrams('hello', flags), null)
@@ -121,9 +199,9 @@ test('a seeded adversarial matrix never requires a gram some matching string lac
   assert.ok(matching > 1000, `matching subjects must actually exercise the assertion, got ${matching}`)
 })
 
-test('inserting any metacharacter into an accepted literal forces the scan path', () => {
+test('inserting unsupported regex syntax into an accepted literal forces the scan path', () => {
   assert.deepEqual(requiredLiteralTrigrams('abcabc', ''), ['abc', 'bca', 'cab'])
-  for (const meta of ['*', '?', '+', '|', '[a]', '(?:x)', '(x)', '{2}', '.', '(?=x)', '(?!x)']) {
+  for (const meta of ['*', '?', '+', '|', '[a]', '(?:x)?', '(x)+', '{2}', '.', '(?=x)', '(?!x)']) {
     for (let at = 0; at <= 6; at++) {
       const pattern = 'abcabc'.slice(0, at) + meta + 'abcabc'.slice(at)
       assert.equal(requiredLiteralTrigrams(pattern, ''), null, pattern)

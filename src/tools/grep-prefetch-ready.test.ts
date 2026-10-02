@@ -122,6 +122,25 @@ test('metadata-await generation/reader changes invalidate all-hit proof and obse
   }
 })
 
+test('aborting a fixture wait still releases and observes its started metadata probe', { timeout: 10_000 }, async t => {
+  const f = fixture({ a: 'hit' })
+  await warm(f, 'a')
+  const gate = deferred(), entered = deferred(), stat = f.view.stat, controller = new AbortController()
+  let completed = false
+  f.view.stat = async path => { entered.release(); await gate.promise; completed = true; return stat(path) }
+  const pending = readyGrepBatch(f.host, ['a'], /hit/)
+  try {
+    await ready(Promise.race([entered.promise, pending.then(() => { assert.fail('probe completed before its gate') })]), t.signal)
+    const wait = ready(pending, controller.signal), reason = new Error('fixture abort')
+    controller.abort(reason)
+    await assert.rejects(wait, error => error === reason)
+    assert.equal(completed, false, 'fixture cancellation does not pretend to cancel an accepted metadata operation')
+  } finally {
+    gate.release(); await pending.catch(() => {})
+  }
+  assert.equal(completed, true, 'the fixture observed the started operation before completing cleanup')
+})
+
 test('an all-hit proof rechecks generation and reader immediately after candidate-filter awaits', async () => {
   for (const changedReader of [false, true]) {
     const f = fixture({ a: 'hit a', b: 'hit b' })

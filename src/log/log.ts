@@ -11,7 +11,7 @@
 // 一步，也是唯一需要保证顺序的一步；另外两步归 M1 与 M2。
 import type { FileHandle } from 'node:fs/promises'
 import { mkdir, open, readFile, readdir, stat } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { assertIdent } from '../identity.ts'
 import { decodeLine, encodeEvent } from './envelope.ts'
 import type { Log, LogEvent, LogReader } from './events.ts'
@@ -237,7 +237,8 @@ interface WriterState {
   chain: Promise<unknown>
 }
 
-export function openLog(root: string, opts: LogOptions = {}): LogHandle {
+export function openLog(inputRoot: string, opts: LogOptions = {}): LogHandle {
+  const root = resolve(inputRoot)
   const sync: SyncLevel = opts.sync ?? 'batch'
   const batchEvery = opts.batchEvery ?? DEFAULT_BATCH_EVERY
   const writers = new Map<WriterId, WriterState>()

@@ -2,6 +2,7 @@
 // 不理解的正则返回 null，调用者必须扫描；这份模块不查询/构建索引、不改工具回执。
 export const MAX_LITERAL_PATTERN_UNITS = 4096
 export const MAX_REQUIRED_TRIGRAMS = 128
+export const MAX_LITERAL_GROUP_DEPTH = 64
 
 const META = new Set('.^$*+?()[]{}|'.split(''))
 const ESCAPED_LITERAL = new Set('\\.^$*+?()[]{}|/-'.split(''))
@@ -14,7 +15,8 @@ function endsWithAnchor(pattern: string): boolean {
 }
 
 /**
- * 支持整段普通 literal、单个外层 ^/$ 与转义标点。量词、选择、类、分组、反向引用、
+ * 支持普通 literal、单个外层 ^/$、转义标点与不带量词的 literal 捕获/非捕获分组。
+ * 分组只连接固定文本，不改变必需子串。量词、选择、类、其他分组、反向引用、
  * 字符/边界转义和任何 flags 都退回扫描。尤其不把一个量词后的 literal 当成必需的。
  * 返回非空的、去重有序的三个 UTF-16 code units；与 Buffer UTF-8 解码后的 JS RegExp 一致。
  *
@@ -29,6 +31,7 @@ export function requiredLiteralTrigrams(pattern: string, flags: string): readonl
   if (endsWithAnchor(source)) source = source.slice(0, -1)
 
   let literal = ''
+  let depth = 0
   for (let at = 0; at < source.length; at++) {
     const char = source[at]!
     if (char === '\\') {
@@ -36,12 +39,21 @@ export function requiredLiteralTrigrams(pattern: string, flags: string): readonl
       const escaped = source[at]
       if (escaped === undefined || !ESCAPED_LITERAL.has(escaped)) return null
       literal += escaped
+    } else if (char === '(') {
+      if (++depth > MAX_LITERAL_GROUP_DEPTH) return null
+      if (source[at + 1] === '?') {
+        if (source[at + 2] !== ':') return null
+        at += 2
+      }
+    } else if (char === ')') {
+      if (depth === 0) return null
+      depth--
     } else {
       if (META.has(char)) return null
       literal += char
     }
   }
-  if (literal.length < 3) return null
+  if (depth !== 0 || literal.length < 3) return null
 
   const grams = new Set<string>()
   for (let at = 0; at + 2 < literal.length; at++) {
