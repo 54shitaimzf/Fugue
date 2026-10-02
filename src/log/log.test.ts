@@ -380,3 +380,47 @@ test('全部事件类型往返：M0 不解释事件，也一个字段都不丢',
   await log.close()
   rmSync(root, { recursive: true, force: true })
 })
+
+// ────────────────────────────────── 0.2.6 · 顶层重复键走同一条处置
+//
+// 处置只有一条（§ 9.3）：**半行在尾部 → 截断继续；中段损坏 → 拒绝加载**。重复键是又一种
+// 中段损坏，所以换的是 reason，不是处置——与一字节损坏逐条对上（行号 · 错误类型 · 读路径）。
+
+test('0.2.6 · 顶层重复键的行与一字节损坏**同一条处置**，只是换了个理由', async () => {
+  /** 摆一份 20 行的日志，按 `mangle` 改坏第 10 行，回报读它时抛出来的那个错。 */
+  const broken = async (mangle: (line: string) => string): Promise<LogCorruptError> => {
+    const root = tmp()
+    const log = openLog(root, { sync: 'never' })
+    for (let i = 1; i <= 20; i++) await log.append('round', ev(i, A('round')))
+    await log.close()
+    const file = logFile(root, 'round')
+    const lines = readFileSync(file, 'utf8').split('\n')
+    lines[9] = mangle(lines[9] as string)
+    writeFileSync(file, lines.join('\n'))
+    try {
+      await drain(openLog(root, { sync: 'never' }).readByWriter('round'))
+    } catch (err) {
+      rmSync(root, { recursive: true, force: true })
+      assert.ok(err instanceof LogCorruptError, `应是 LogCorruptError，实得 ${String(err)}`)
+      return err
+    }
+    rmSync(root, { recursive: true, force: true })
+    throw new Error('这一行该被拒，却读得进来')
+  }
+
+  // 一 · 一字节损坏（既有的那一格，作对照）
+  const flipped = await broken((l) => {
+    const at = l.indexOf('src/f10.ts')
+    return l.slice(0, at + 4) + 'X' + l.slice(at + 5)
+  })
+  // 二 · **crc 配平**的顶层重复键：插在最前面的那个 `path` 被 JSON.parse 丢掉（最后一个赢），
+  //      所以重算 crc 与行内那一栏相同——在被拒之前它是**读得进来**的。
+  const duped = await broken((l) => '{"path":"被丢掉的那一个",' + l.slice(1))
+
+  assert.equal(duped.line, flipped.line, '指到同一行：处置是同一处，行号也同一处')
+  assert.equal(duped.writer, flipped.writer)
+  assert.match(flipped.reason, /crc 不符/)
+  assert.match(duped.reason, /顶层重复键/)
+  assert.match(duped.reason, /path/, '理由点名那个键')
+  assert.doesNotMatch(duped.reason, /crc/, '不再走那句报偏的话')
+})
