@@ -45,6 +45,7 @@
 - **按视图代复用工具文件清单**：同一宿主内的重复 `grep` / `glob` 不再逐目录重走；`base` / `rev` 变化后重新枚举，枚举失败不缓存，候选数组彼此独立。深度、文件数上限与不跟软链的规则不变。机制读数与复现方式见 [walk 缓存说明](docs/walk-cache.md)。
 - **当前视图的索引候选相交**：新增路线图 0.3.3 的独立前置适配器，逐批按当前 `View.stat` 的 immutable BlobId 查询；只有严格有效的负判断剔除候选，未知、损坏、异常或查询期间变代都退回扫描。尚未接入工具，也没有默认启用索引。
 - **后台索引Worker不再被一条坏形状的消息打死**：原来把宿主消息写成回调的参数解构（`async ({ blob, bytes, temporaryId }) => …`），解构失败产生的是一个没人消费的rejected promise（EventEmitter不看回调的返回值），默认unhandledRejection模式下当场终止线程——代价正好是一份已经预热好的可复用Worker，也就是复用这一笔的全部收益。现在宿主→Worker的方向也逐字段查形状，任一项不对就回`{ok:false}`；回执方向本来就查，两侧对称。宿主当前只在一处`postMessage`、形状固定，所以这是补上的纵深而不是现网故障，见 [复用说明](docs/index-worker-reuse.md)。
+- **拆分已准备索引的磁盘校验成本**：独占生成Git语料、逐趟核全源命中ID，区分未包装墙钟与重叠API观测成本；不改产品策略或信任检查，见 [开发读数](docs/index-validation-readings.md)。
 - **缓存有界的不可变gram知识**：只从受控完整表学习必要项，未知回完整表/扫描；跨完整表LRU的重复查询减少盘解析，独立事实预算与close清理。新/冷query仍有开销，默认索引不启用，见 [知识层说明](docs/index-gram-facts.md)。
 - **复用有限的后台索引Worker**：每句柄有界存量、nonce逐任务关联、失败/取消退休、空闲退出与显式close；准备更快但首miss前台竞争回归仍披露，默认索引继续关闭，见 [复用说明](docs/index-worker-reuse.md)。
 - **减少索引构建的重复字符串分配**：先按48位UTF-16键去重，只为唯一trigram造字符串；canonical记录逐字节不变。增加多样语料对照与分项基准，不默认启用索引，见 [构建说明](docs/index-builder-keys.md)。
