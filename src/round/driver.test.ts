@@ -407,7 +407,7 @@ test('U2b · 轮内收下：问题落 ask/raised · 判决落 ask/ruling · 契�
     assert.match(asked.body, /归我还是归另一格/, '接住那一条里没有问题的原文')
     assert.equal(one.forwarded, false, '契约内那一档不该进人')
     assert.equal(one.tier, 'contract')
-    assert.equal(one.ruler, 'ask-ruler-1', '判决没记下是按哪把尺量的')
+    assert.equal(one.ruler, 'ask-ruler-2', '判决没记下是按哪把尺量的')
     assert.equal(one.asked, asked.digest, '判决没指回被接住的那一问')
     assert.match((JSON.parse(one.body) as { ruling: string }).ruling, /最小改动/)
     assert.equal(rows.some((e) => e.t === 'holder/ask'), false, '契约内那一档不该敲人那道门')

@@ -131,7 +131,7 @@ function oneOfEach(): StatusRow[] {
       'agent/r1/1',
     ),
     row(
-      { t: 'ask/ruling', agent: brand('agent/r1/1'), asked: 'd8', forwarded: true, tier: 'design', ruler: 'ask-ruler-1', digest: 'd9', body: '{}' },
+      { t: 'ask/ruling', agent: brand('agent/r1/1'), asked: 'd8', forwarded: true, tier: 'design', ruler: 'ask-ruler-2', digest: 'd9', body: '{}' },
       'agent/r1/1',
     ),
     row({

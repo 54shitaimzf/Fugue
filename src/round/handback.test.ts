@@ -96,7 +96,7 @@ test('① 固定尺：三档 · 两类进人 · 版本在正文里', async () =>
   assert.equal(ASK_RULER.filter((r) => r.who === 'human').length, 2, '进人的档数不是两档')
   // 尺是**版本化常量**：正文里带着版本号，而且与那一栏同源。
   assert.ok(ASK_RULER_TEXT.includes(ASK_RULER_VERSION), '尺的正文里没有版本号')
-  assert.equal(ASK_RULER_VERSION, 'ask-ruler-1')
+  assert.equal(ASK_RULER_VERSION, 'ask-ruler-2')
   console.log(`① 读数：三档 ${ASK_RULER.map((r) => `${r.tier}(${r.who})`).join(' · ')} · 尺的版本 ${ASK_RULER_VERSION}`)
 })
 

@@ -45,15 +45,15 @@ export interface AskTierRule {
  * **尺的版本**。它随判词的形状一起走：改尺改版本，于是"这一条判决是按哪把尺量出来的"读得出来。
  * 事件里落的就是它（`AskVerdict.ruler`）。
  */
-export const ASK_RULER_VERSION = 'ask-ruler-1'
+export const ASK_RULER_VERSION = 'ask-ruler-2'
 
 /**
  * **固定尺（版本化常量）**：三档，两类进人。判据在这里，判决不在这里——这一份只把尺说清楚，
  * 谁在哪一档上由裁断那一次读出来。
  *
  * 头一档是**契约自己的地界**（哪条路径归它 · 已经谈定的形状怎么用 · 它自己面上怎么命名）；
- * 后两档是工作区那条纪律里点名的两类：**设计预期**（要推翻架构里的哪一句，或者把某一节的形状
- * 定下来——接口 · 口径 · 命名 · 站与站的边界）与**用户面影响**（人看得见的行为变了，或者
+ * 后两档是工作区那条纪律里点名的两类：**设计预期**（要推翻架构里的哪一句，或把**后面的活要继承的形状**定下来——冻结面 · 公布名 ·
+ * 站与站的边界；本轮之内的命名与安排不算这一档——2026-10-02 人批收窄：一般设计问题主 agent 自决）与**用户面影响**（人看得见的行为变了，或者
  * "变好还是变坏"要人定）。
  */
 export const ASK_RULER: readonly AskTierRule[] = [
@@ -62,15 +62,16 @@ export const ASK_RULER: readonly AskTierRule[] = [
     who: 'self',
     text:
       'the question lives inside the ground this contract already has: which of the paths that are yours to write, ' +
-      'how to use a shape that is already agreed, what to call something inside your own surface. Settle it yourself by ' +
-      '"cleanest and most extensible" and say the ruling in one sentence.',
+      'how to use a shape that is already agreed, what to call something, or how to arrange a piece of work that stays ' +
+      'inside this round. Settle it yourself by "cleanest and most extensible" and say the ruling in one sentence.',
   },
   {
     tier: 'design',
     who: 'human',
     text:
-      'answering it would overrule a sentence of the architecture, or fix the shape of a section (an interface, a convention, ' +
-      'a name, the boundary between two stations). A person decides this.',
+      'answering it would overrule a sentence of the architecture, or freeze a shape that work after this round inherits ' +
+      '(a frozen interface, a published name, the boundary between two stations). A person decides this. Everyday ' +
+      'shaping — names and arrangement that stay inside this round — belongs to the contract tier, not here.',
   },
   {
     tier: 'user',
