@@ -193,6 +193,57 @@ export function encodeCohortIndex(index: CohortIndex): Uint8Array {
   return Uint8Array.from(state.bytes)
 }
 
+/**
+ * Recover COMPLETE selected tables from an already validated opaque artifact.
+ * One bounded traversal preserves exact source metadata. IDs outside the artifact
+ * have no returned record and MUST fall back to source, never to an empty table.
+ * Unsupported inputs or aggregate budgets return unknown before table allocation.
+ * Returned records own frozen arrays; no caller table becomes a proof here.
+ */
+export function cohortBlobRecords(index: CohortIndex, requested: readonly BlobId[]): readonly BlobIndex[] | null {
+  try {
+    const state = states.get(index)
+    if (state === undefined) return null
+    const ids = sortedBlobs(requested)
+    if (ids === null) return null
+    const selected = new Set(ids)
+    const descriptors: { blob: BlobId; ordinal: number; sourceBytes: number; textUnits: number }[] = []
+    let at = HEADER_BYTES, sourceBytes = 0, postingCount = 0
+    for (let ordinal = 0; ordinal < index.blobs.length; ordinal++) {
+      const digestBytes = state.bytes[at++]
+      at += digestBytes
+      const bytes = state.bytes.readUInt32BE(at), units = state.bytes.readUInt32BE(at + 4), grams = state.bytes.readUInt32BE(at + 8)
+      at += 12
+      const blob = index.blobs[ordinal]
+      if (!selected.has(blob)) continue
+      sourceBytes += bytes; postingCount += grams
+      if (sourceBytes > MAX_SOURCE_BYTES || postingCount > MAX_COHORT_POSTINGS) return null
+      descriptors.push({ blob, ordinal, sourceBytes: bytes, textUnits: units })
+    }
+    const tables = new Map<number, string[]>()
+    for (const descriptor of descriptors) tables.set(descriptor.ordinal, [])
+    for (let ordinal = 0; ordinal < index.gramCount; ordinal++) {
+      const entryAt = state.dictionaryAt + ordinal * GRAM_ENTRY_BYTES
+      const start = state.bytes.readUInt32BE(entryAt + 6), count = state.bytes.readUInt16BE(entryAt + 10)
+      let gram: string | undefined
+      for (let candidate = 0; candidate < count; candidate++) {
+        const blobOrdinal = state.bytes.readUInt16BE(state.postingsAt + (start + candidate) * 2)
+        const table = tables.get(blobOrdinal)
+        if (table === undefined) continue
+        if (gram === undefined) {
+          const key = readGram(state.bytes, entryAt)
+          gram = String.fromCharCode(Math.floor(key / HIGH_BASE), Math.floor(key / UNIT_BASE) % UNIT_BASE, key % UNIT_BASE)
+        }
+        table.push(gram)
+      }
+    }
+    return Object.freeze(descriptors.map(({ blob, ordinal, sourceBytes, textUnits }): BlobIndex => Object.freeze({
+      format: 'fugue-blob-trigrams', version: 1, blob, sourceBytes, textUnits,
+      tables: Object.freeze({ trigrams: Object.freeze(tables.get(ordinal)!), symbols: null }),
+    })))
+  } catch { return null }
+}
+
 /** All failures are unknown. Exact expected identities are mandatory, not optional. */
 export function decodeCohortIndex(input: Uint8Array, expectedBlobs: readonly BlobId[]): CohortIndex | null {
   try {

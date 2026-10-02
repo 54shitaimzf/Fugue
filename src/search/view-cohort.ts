@@ -4,7 +4,7 @@ import type { View } from '../view/contract.ts'
 import type { CohortIndexStore } from './cohort-store.ts'
 import { buildBlobIndex, MAX_SOURCE_BYTES } from './index-format.ts'
 import type { BlobIndex } from './index-format.ts'
-import { buildCohortIndex, cohortKey, cohortMightContain, MAX_COHORT_BLOBS, MAX_COHORT_POSTINGS } from './cohort-format.ts'
+import { buildCohortIndex, cohortBlobRecords, cohortKey, cohortMightContain, MAX_COHORT_BLOBS, MAX_COHORT_POSTINGS } from './cohort-format.ts'
 import type { CohortIndex } from './cohort-format.ts'
 import { MAX_INDEX_CANDIDATE_BATCH, MAX_INDEX_REQUIREMENTS } from './current-view-candidates.ts'
 
@@ -14,10 +14,16 @@ export interface ViewCohortLookup {
 }
 export interface ViewCohortHandle extends ViewCohortLookup {
   /** Caller-paid preparation from immutable Git objects; never called by filterCandidates. */
-  prepare(readBlob: (blob: BlobId) => Promise<Uint8Array>): Promise<boolean>
+  prepare(readBlob: (blob: BlobId) => Promise<Uint8Array>, options?: CohortPreparationOptions): Promise<boolean>
   /** Observes admitted work; the caller separately owns store.close(). */
   close(): Promise<void>
-  stats(): { queries: number; diskReads: number; sourceReads: number; builds: number; fallbacks: number; active: number; closed: boolean }
+  stats(): { queries: number; diskReads: number; sourceReads: number; reusedRecords: number; prefetches: number; builds: number; fallbacks: number; active: number; closed: boolean }
+}
+export interface CohortPreparationOptions {
+  /** Restart hint only: reuse must still pass a controlled exact-set artifact read. */
+  readonly previousBlobs?: readonly BlobId[]
+  /** Optional caller-owned Truth batching for NEW IDs; not called during a query. */
+  readonly prefetchBlobs?: (blobs: readonly BlobId[]) => Promise<void>
 }
 interface Generation {
   readonly base: View['base']
@@ -58,9 +64,10 @@ export function createViewCohortLookup(
 ): ViewCohortHandle {
   let closed = false
   let cached: Cached | undefined
+  let prior: CohortIndex | undefined
   let preparing: Promise<boolean> | undefined
   const active = new Set<Promise<unknown>>()
-  const counts = { queries: 0, diskReads: 0, sourceReads: 0, builds: 0, fallbacks: 0 }
+  const counts = { queries: 0, diskReads: 0, sourceReads: 0, reusedRecords: 0, prefetches: 0, builds: 0, fallbacks: 0 }
   const generation = (): Generation => ({ base: view.base, rev: view.rev })
   function changed(mark: Generation): boolean {
     try { return closed || view.base !== mark.base || view.rev !== mark.rev }
@@ -95,7 +102,9 @@ export function createViewCohortLookup(
       if (selected === null || changed(mark)) return null
       counts.diskReads++
       const index = await store.read(selected.blobs)
-      return changed(mark) || index === null || index.key !== cohortKey(selected.blobs) ? null : index
+      if (changed(mark) || index === null || index.key !== cohortKey(selected.blobs)) return null
+      prior = index
+      return index
     })().catch(() => null) }
     cached = current
     return current.result
@@ -125,36 +134,75 @@ export function createViewCohortLookup(
         return changed(mark) ? original : keep
       })
     },
-    prepare(readBlob) {
+    prepare(readBlob, options = {}) {
       if (closed) return Promise.resolve(false)
       if (preparing !== undefined) return preparing
+      let previous: readonly BlobId[] | undefined
+      let prefetch: CohortPreparationOptions['prefetchBlobs']
+      try {
+        const input = options.previousBlobs
+        if (input !== undefined) {
+          const ids = strings(input, MAX_COHORT_BLOBS)
+          if (ids === null || cohortKey(ids as readonly BlobId[]) === null) return Promise.resolve(false)
+          previous = ids as readonly BlobId[]
+        }
+        prefetch = options.prefetchBlobs
+        if (prefetch !== undefined && typeof prefetch !== 'function') return Promise.resolve(false)
+      } catch { return Promise.resolve(false) }
       const task = admit(false, async () => {
         if (typeof readBlob !== 'function') return false
         const mark = generation()
         const selected = await snapshot(mark)
         if (selected === null) return false
-        const records: BlobIndex[] = []
-        let sourceBytes = 0, postings = 0
-        for (const blob of selected.blobs) {
+        let seed = prior
+        if (previous !== undefined) {
+          counts.diskReads++
+          try {
+            const found = await store.read(previous)
+            seed = found !== null && found.key === cohortKey(previous) ? found : undefined
+          } catch { seed = undefined }
           if (changed(mark)) return false
-          counts.sourceReads++
-          const bytes = await readBlob(blob)
-          if (changed(mark) || !(bytes instanceof Uint8Array)) return false
-          const length = byteLengthOf.call(bytes) as number
-          sourceBytes += length
-          if (sourceBytes > MAX_SOURCE_BYTES) return false
-          // Never trust subclass accessors or an iterator; charge the intrinsic byte window
-          // before allocating an owned snapshot used for both hashing and decoded grams.
-          const owned = Uint8Array.from(new Uint8Array(bufferOf.call(bytes), byteOffsetOf.call(bytes), length))
-          const record = buildBlobIndex(blob, owned)
-          postings += record.tables.trigrams.length
-          if (postings > MAX_COHORT_POSTINGS) return false
-          records.push(record)
+        }
+        const reused = seed === undefined ? [] : cohortBlobRecords(seed, selected.blobs)
+        // A failed extraction is unknown, never a partially populated table.
+        const records: BlobIndex[] = reused === null ? [] : [...reused]
+        const known = new Set(records.map(record => record.blob))
+        const missing = Object.freeze(selected.blobs.filter(blob => !known.has(blob)))
+        let sourceBytes = records.reduce((sum, record) => sum + record.sourceBytes, 0)
+        let postings = records.reduce((sum, record) => sum + record.tables.trigrams.length, 0)
+        counts.reusedRecords += records.length
+        for (let at = 0; at < missing.length; at += MAX_INDEX_CANDIDATE_BATCH) {
+          const batch = Object.freeze(missing.slice(at, at + MAX_INDEX_CANDIDATE_BATCH))
+          if (changed(mark)) return false
+          // Consume each bounded hint's IDs before issuing another, so a bounded
+          // Truth cache need not retain every new source at once.
+          if (prefetch !== undefined) {
+            counts.prefetches++
+            try { await prefetch(batch) }
+            catch { /* A hint failure cannot replace exact source verification. */ }
+            if (changed(mark)) return false
+          }
+          for (const blob of batch) {
+            if (changed(mark)) return false
+            counts.sourceReads++
+            const bytes = await readBlob(blob)
+            if (changed(mark) || !(bytes instanceof Uint8Array)) return false
+            const length = byteLengthOf.call(bytes) as number
+            sourceBytes += length
+            if (sourceBytes > MAX_SOURCE_BYTES) return false
+            // Charge the intrinsic visible window before allocating/hash verification.
+            const owned = Uint8Array.from(new Uint8Array(bufferOf.call(bytes), byteOffsetOf.call(bytes), length))
+            const record = buildBlobIndex(blob, owned)
+            postings += record.tables.trigrams.length
+            if (postings > MAX_COHORT_POSTINGS) return false
+            records.push(record)
+          }
         }
         if (changed(mark)) return false
         const index = buildCohortIndex(records)
         counts.builds++
         if (!await store.write(index) || changed(mark)) return false
+        prior = index
         cached = { ...mark, result: Promise.resolve(index) }
         return true
       })
@@ -165,6 +213,7 @@ export function createViewCohortLookup(
     async close() {
       closed = true
       cached = undefined
+      prior = undefined
       await Promise.allSettled([...active])
     },
     stats: () => ({ ...counts, active: active.size, closed }),
