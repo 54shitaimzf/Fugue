@@ -349,19 +349,40 @@ const PATH_TOOLS: readonly string[] = ['read', 'write', 'edit', 'read_image']
 // 路径参数原样交给实现那一侧（`ToolHost`）：围栏在 `dispatch` 那一道（由能力表的 `fence` 推
 // 出来的），物理落点在 `Roots`。这一层不碰路径算术——§ 8.4 的"唯一入口"那句话说的就是它。
 
+/**
+ * 一个「整行号」参数（`read` 的 `offset` · `limit`）：**没给这一栏就是没给**，给了就必须是安全
+ * 整数（`offset` 正 · `limit` 非负）。
+ *
+ * **坏参数在伸手之前拒**（§ 8.10 硬纪律 1 的另一半：公布了就要有人接，接了就要接得干净）：
+ * 为了回一句"参数不对"先去读一整份文件，是把我们的粗心算在它头上。缺省只有一种形状——这个键
+ * 不在；给了别的形状（含 `null`）就是坏参数，拒的话里点出是哪一个。
+ */
+function wholeArg(
+  args: Readonly<Record<string, unknown>>,
+  name: 'offset' | 'limit',
+): { readonly value: number | null } | { readonly why: string } {
+  const v = args[name]
+  if (v === undefined) return { value: null }
+  if (typeof v === 'number' && Number.isSafeInteger(v) && v >= (name === 'offset' ? 1 : 0)) return { value: v }
+  const said = typeof v === 'string' ? JSON.stringify(v) : String(v)
+  const wants =
+    name === 'offset'
+      ? 'a positive whole number of lines (1 is the first line)'
+      : 'a whole number of lines (0 is allowed, and shows none)'
+  return { why: `${name} has to be ${wants} — this call gave ${said}.` }
+}
+
 const readFace: ToolFn = async (args, host) => {
   const path = text(args, 'path')
   if (path === null) return missing('read', 'path')
-  const hasWindow = args.offset !== undefined || args.limit !== undefined
+  const offsetArg = wholeArg(args, 'offset')
+  if ('why' in offsetArg) return no(offsetArg.why)
+  const limitArg = wholeArg(args, 'limit')
+  if ('why' in limitArg) return no(limitArg.why)
+  const hasWindow = offsetArg.value !== null || limitArg.value !== null
   if (hasWindow) {
-    const offset = args.offset === undefined ? 1 : args.offset
-    const limit = args.limit
-    if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 1) {
-      return no('read offset must be a positive safe integer (1-based).')
-    }
-    if (limit !== undefined && (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 0)) {
-      return no('read limit must be a nonnegative safe integer.')
-    }
+    const offset = offsetArg.value ?? 1
+    const limit = limitArg.value ?? undefined
     const window: ReadWindow = { offset, ...(limit === undefined ? {} : { limit }) }
     let got: (ReadText & { readonly mode: number }) | null
     if (host.readTextWindow !== undefined) {

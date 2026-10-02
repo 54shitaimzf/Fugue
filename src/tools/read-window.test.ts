@@ -1,4 +1,4 @@
-// 0.2.5：目录里声明的 read offset/limit 必须真的选行；不切整文件/图像那条字节路。
+// 窗口读取：目录里声明的 read offset/limit 必须真的选行；不切整文件/图像那条字节路。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { faceOf } from './execute.ts'

@@ -1,4 +1,4 @@
-// ROADMAP § 3 / 0.2.5 · 清单按视图代缓存；只缓存派生结果，不另建真源。
+// ROADMAP § 3 · 清单按视图代缓存；只缓存派生结果，不另建真源。
 import type { View } from '../view/contract.ts'
 import type { CommitId, RelPath, ViewRev } from '../terms.ts'
 

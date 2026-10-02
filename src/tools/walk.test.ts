@@ -1,4 +1,4 @@
-// 0.2.5：缓存只减少 list 调用，不改变候选顺序、边界或后续变更可见性。
+// 清单缓存：缓存只减少 list 调用，不改变候选顺序、边界或后续变更可见性。
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { DirEntry, EntryKind } from '../entries.ts'

@@ -38,6 +38,30 @@ export function lineCount(text: string): number {
   return text.split('\n').length - (text.endsWith('\n') ? 1 : 0)
 }
 
+/**
+ * 一段**字节**的行数：与 `lineCount` 同一把尺（空 0 行；末尾那个 LF 不另算一行）。
+ *
+ * 为什么要有字节侧这一份：`read` 的窗口档不整段解码，而回执头里的「L 行」统计的是**整个文件**
+ * ——要那一句就只能数 LF，不能先把整份文件解成字符串。两把尺给同一个数：LF 是多字节序列里
+ * 不可能出现的那个字节，所以解出来的文本里 `\n` 的个数与字节里的 LF 个数逐份相等（语料上
+ * 逐条对过，见 `window.test.ts`）。数 LF 走 `Buffer.indexOf`（原生 memchr），不是 JS 逐字节
+ * 循环：3 MB / 40000 行的语料上 0.62 ms 对 1.91 ms——那条读数与理由写在 `window.ts` 头注里。
+ */
+export function lineCountOfBytes(bytes: Uint8Array): number {
+  const n = bytes.byteLength
+  if (n === 0) return 0
+  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, n)
+  let lf = 0
+  let at = 0
+  for (;;) {
+    const nl = buf.indexOf(0x0a, at)
+    if (nl === -1) break
+    lf += 1
+    at = nl + 1
+  }
+  return buf[n - 1] === 0x0a ? lf : lf + 1
+}
+
 /** 从 `at` 起往前找最近的**字符边界**（那个位置本身就是一个 UTF-8 首字节，或者是 0）。 */
 function boundaryAt(bytes: Uint8Array, at: number): number {
   let i = Math.max(0, Math.min(at, bytes.byteLength))
