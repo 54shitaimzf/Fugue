@@ -9,6 +9,9 @@
 //   ③ **结账口**：三区哈希与 `firstDivergence` 两栏都印得出来（架构 § 20 S6 的交付物）
 //   ④ **负对照**：把 `hostname` 那一条检查短路 → ① 少一处、当场红
 //   ⑤ **正对照**：一份干净的输入四条一处都不报（否则 ① 那四处可能只是"什么都报"）
+//   ⑥ **命令行那三档拒绝各走同一条路**（0.2.9 ③）：普通 Error · SourceError · ConfigError 都
+//      报出原话 + 退出码 1——`cmd/assemble.ts` 那个 catch 从三项收敛成一项之后接得住它们，
+//      靠的就是这一条（那两个类都是 Error 的子类，而仓里没有 tsc 来保证这件事）
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { hostname } from 'node:os'
@@ -25,9 +28,10 @@ import { BUILTIN_CATALOG, defaultModelOf } from '../model/catalog.ts'
 const DEFAULT_MODEL = { id: defaultModelOf(BUILTIN_CATALOG).id }
 import { render } from './render.ts'
 import { HOLDER_PROTOCOL, SUBAGENT_PROTOCOL } from './protocol.ts'
-import { emptyState, sourcesFor } from './sources.ts'
+import { SourceError, emptyState, sourcesFor } from './sources.ts'
 import type { AgentCoord } from './sources.ts'
 import { CONSTRAINT_KINDS, checkConstraints, envFacts, formatViolation } from './constraints.ts'
+import { ConfigError } from '../config.ts'
 import { stateWithState } from './sources-state.ts'
 
 const CLI = fileURLToPath(new URL('../cli/fugue.ts', import.meta.url))
@@ -226,6 +230,40 @@ test('⑤ 正对照：一份干净的输入四条一处都不报', () => {
   assert.deepEqual(one({ 信号摘要: ['{"kind":"done","digest":"原文"}'] }), ['signal'])
   // 三样同时来，就报三处。
   assert.equal(one({ 系统状态: { root: '/home/fugue/work', host: envFacts().hostname } }).length, 2)
+})
+
+// ⑥ 命令行那三档拒绝各走同一条路。**三档的来源不同**：`protocolNamed` 抛普通 `Error`、
+// `agentCoord` 抛 `SourceError`、`readConfig` 抛 `ConfigError`；而 `cmd/assemble.ts` 的 catch
+// 收敛成 `err instanceof Error` 一项之后，三档都必须照样变成"报出原话 + 退出码 1"。
+// 末了那两句量的是那条收敛成立的前提——仓里没有 tsc，这件事只有在这里量。
+test('⑥ 命令行三档拒绝：都报出原话、退出码 1，而那两个错误类确实都是 Error', () => {
+  const root = fixtureRoot('refuse')
+  try {
+    const cli = (...args: string[]): { status: number | null; stderr: string; stdout: string } =>
+      spawnSync(process.execPath, [CLI, '--root', root, ...args], { encoding: 'utf8' })
+
+    // 甲 · 不认识的协议名 → 普通 Error。
+    const proto = cli('assemble', '没有这一份')
+    assert.equal(proto.status, 1, `不认识的协议名该退 1，实得 ${proto.status}：${proto.stderr}`)
+    assert.match(proto.stderr, /没有这一份协议/)
+
+    // 乙 · 不认识的 agent → SourceError。
+    const who = cli('assemble', 'subagent', '--agent', 'agent-9')
+    assert.equal(who.status, 1, `不认识的 agent 该退 1，实得 ${who.status}：${who.stderr}`)
+    assert.match(who.stderr, /没有这个 agent：agent-9/)
+
+    // 丙 · 坏配置 → ConfigError。
+    writeFileSync(join(root, '.fugue', 'config'), 'not json at all')
+    const cfg = cli('assemble', 'subagent', '--agent', 'agent-2')
+    assert.equal(cfg.status, 1, `坏配置该退 1，实得 ${cfg.status}：${cfg.stderr}`)
+    assert.match(cfg.stderr, /配置不是一份完整的 JSON/)
+
+    // 收敛成一项所依赖的前提：两个类都还是 `Error` 的子类。
+    assert.ok(new SourceError('x') instanceof Error, 'SourceError 不再是 Error 的子类')
+    assert.ok(new ConfigError('x') instanceof Error, 'ConfigError 不再是 Error 的子类')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 /** 一个临时工作区根：项目方针 · 配置 · 一个提交 · 一条 agent 分支（`--agent` 那一栏要它存在）。 */

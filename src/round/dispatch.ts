@@ -148,7 +148,10 @@ export async function issueAndStart(
       try {
         const opts = deps.forkOpt ?? DEFAULT_MATERIALIZE
         const r = await fork({ roots: deps.roots, log: agentLog, root: deps.roots.realRoot }, a, base, opts)
-        if (r.base !== base) throw new RoundStartError(`fork 回来的底不是钉住的那一个：${r.base} ≠ ${base}`)
+        // **这里原先还有一句"fork 回来的底不是钉住的那一个"就 throw——它是恒真的**（0.2.9 ③）：
+        // `fork()` 把它收到的 `base` **原样**写进 `ForkResult.base`（`materialize/fork.ts:139-149`），
+        // 所以两个值永远是同一个。承重的那条性质现在由 `materialize/fork.test.ts` ② 里
+        // `res.base === f.commit` 那一句量——它才是会红的（谁把 `base` 归一化，它就红）。
         forks.push(r)
       } finally {
         await (agentLog as { close?: () => Promise<void> }).close?.()
