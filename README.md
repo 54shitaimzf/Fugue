@@ -42,16 +42,19 @@
 ```sh
 git clone https://github.com/54shitaimzf/Fugue.git ~/fugue && cd ~/fugue
 ln -s "$PWD/bin/fugue" ~/.local/bin/fugue      # 或者用 npm i -g .
-fugue --help                                   # 一共 28 条命令（其中 round 有 5 条子命令，config 有 3 条）
+fugue --help                                   # 命令速查表：每条命令带一两句说明
 ```
 
 它没有任何第三方依赖，`package.json` 里的 `dependencies` 是空的，所以不用 `npm install`。
 
-要连接真实的大模型，你需要一个 API 密钥。以下三种方式任选一种：
+要连接真实的大模型，你需要一个 API 密钥。配置里保存的是「密钥放在哪里」（环境变量名或密钥文件路径），密钥本身不会写进配置、日志或它生成的任何文件。在系统级配置里配一张查找表，整台机器配一次：
 
-- 设置环境变量 `DEEPSEEK_API_KEY`；
-- 把密钥存到 `~/.fugue/credentials/deepseek.key`；
-- 运行命令时用 `--credential <文件路径>` 指定。
+```sh
+fugue config set --system credentials.deepseek \
+  '[{"from":"env","name":"DEEPSEEK_API_KEY"},{"from":"file","path":"<密钥文件的路径>"}]'
+```
+
+用的时候它按这张表逐条找：先看环境变量 `DEEPSEEK_API_KEY`，没有再读那份文件。临时换一份密钥文件，运行时给 `--credential <文件路径>`：没配过表的，这一条自己就是一条路；配过表的，它换掉表里的文件那一栏（环境变量那一栏仍排在前面）。什么都没配时它会当场报错，并把上面这条配法原样告诉你。
 
 模型列表和价格放在全局配置目录 `~/.fugue/` 里。如果你创建了 `~/.fugue/models.json`，它会完全替换掉内置的模型列表。每个项目自己的配置只会覆盖它写了的那几项，其他的沿用全局设置。
 
@@ -72,6 +75,7 @@ sh tools/live-round.sh src/cli/__fixture__/wire-in/scenario.json \
 ```text
 漂移检：HEAD 没动 · 这次合并动到 [notes.md] · 盘上与目标树不同 [] · 会被覆盖的（盘上既不是底也不是目标树）[（没有）]
   契约 1 份：r1.implement.1
+  预检：Planning 0 对 · 合并前 0 对
   折叠：折了 0 步
   验收：通过 2 · 没通过 0 · 跑不起来 0
   推进：写 1 条 · 删 0 条 · 跳过 2 条
@@ -158,7 +162,7 @@ fugue round work --live --max-steps 8
 
 ## 更多资料
 
-- `fugue --help`：列出全部 28 条命令，每条都有一两句话说明。
+- `fugue --help`：命令速查表，每条都有一两句话说明。命令面一共 28 条（`round` 有 5 条子命令、`config` 有 3 条），速查表少列一条——核对装配用的 `assemble`（命令全表在架构文档 § 9.6）。
 - 每个版本的改动：[CHANGELOG.md](CHANGELOG.md)。
 - 想修改或测试赋格本身：先看 [AGENTS.md](AGENTS.md)（开发环境、怎么跑测试、演示脚本），再看 [tools/](tools/)（演示脚本、测量工具和性能测试，它们只用于开发，不属于产品）。
 - 设计文档在 [design/](design/)：架构（这一版**是**什么）· 路线图（按什么次序收口）· 目标（第一版之后做什么）· 随笔（为什么这么设计）。落地计划（正在做的那一站）与归档（已经落地的那一份）随施工走，不在这个仓库里。
