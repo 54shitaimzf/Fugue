@@ -49,6 +49,19 @@ export const MIN_TWO_COLUMN = 24 + 20 + 3
 export const MIN_HEIGHT = 5
 
 /**
+ * 画得出框至少要几列：左右两根竖线 + 框内一列。**出处是代码，不是直觉**：`ui/term.ts` 的列宽探测是
+ * `seen > 0` 就放行，1–2 列照样落进 `frameOf`。
+ *
+ * 那一档不加这道提示画出来是什么：3 列以下 `innerOf` 给 0，框内一列都没有——每一行都是 `││`（一个
+ * 字符都印不出来），1 列上连 `┌┐` 都比屏幕宽。与 `height < MIN_HEIGHT` **同一口径**：画不出框就说
+ * 出来，不给一个静默的空框（读面那条"少印要说出来"）。
+ *
+ * **U2 之后的那句老话不成立了**：`innerOf` 把 `width - 2` 夹成 0 之后，"负数进了 `repeat` 当场
+ * RangeError"这条已经不存在。守的东西因此收窄成一条——别印一个空框；出处与可达性一字未改。
+ */
+export const MIN_WIDTH = 3
+
+/**
  * **框内那一栏**占几列（左右两根竖线各一列）。**这是它的唯一出处**——面板自己那一栏与舞台那几处
  * 算列宽的地方（`stage.ts` 的输入行 · 门口那一块 · 树 · 阅读面）全从这一只推。
  *
@@ -315,6 +328,11 @@ export function frameOf(o: FrameInput): Frame {
   const { width, height } = o
   const empty: Frame = { width, height, columns: { left: 0, right: 0 }, footer: '', lines: [], roles: [] }
   if (width <= 0 || height <= 0) return empty
+  if (width < MIN_WIDTH) {
+    // 极窄帧：画不出框就说出来。不加这一道，出来的是一整幅 `││`（框内 0 列）——那是静默的空帧。
+    const why = `（这一屏太窄：要 ${MIN_WIDTH} 列以上才画得出框，拿到的是 ${width} 列）`
+    return { ...empty, lines: [cell(why, width)], roles: ['body'] }
+  }
   if (height < MIN_HEIGHT) {
     // 画不出框就说出来，不静默给一个空帧（读面那一条：少印要说）。
     const why = `（这一屏太矮：要 ${MIN_HEIGHT} 行以上才画得出框与账尾，拿到的是 ${height} 行）`

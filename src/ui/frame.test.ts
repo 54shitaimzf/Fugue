@@ -12,7 +12,8 @@
 //   ④ **两栏都动的那一条也是对的**：多一次 `llm/call` → 两栏都变（调用次数在左栏"每一格"与
 //      右栏"用量"各有一处口径）。它说明两栏不是按事件类型分的，是按**读法**分的。
 //   ⑤ **地板**：窄了收成单栏（同一个框，少中间那根竖线，内容一行不少）· 矮了截断并说出还剩
-//      几行 · 三行都不到印一句"太矮"（不静默给空帧）· 尺寸给 0 给一个空帧。
+//      几行 · 三行都不到印一句"太矮"（不静默给空帧）· **三列都不到印一句"太窄"**（`innerOf` 给 0，
+//      `'─'.repeat` 会拿到负数）· 尺寸给 0 给一个空帧。
 //   ⑥ **纯**：同一份输入两次调用逐字节相同，而且进去的那一份快照一个字段都没被改。
 //   ⑦ **候选那一层开的窗**（`windowOf`，`T4` 的 `/` 菜单与 `Ctrl-P` 面板用它）：装得下就全印 · 装不下
 //      时**选中的那一条一定在窗里**（贴着头或贴着尾）· 上下各还剩几条数得出来 · 只剩一行可印时不留
@@ -249,12 +250,35 @@ test('⑤ 地板：窄了收单栏 · 矮了截断并说出剩几行 · 三行�
   assert.equal(tiny.lines.length, 1, '画不出框时只印一句')
   assert.match(tiny.lines[0] ?? '', /太矮/)
 
+  // 极窄（1–2 列）：**同一个口径**——`ui/term.ts` 的列宽探测是 `seen > 0` 就放行，1–2 列真会走到
+  // 这里。**负对照**：这道提示拿掉，`lines` 就不是一句而是十几行空框（框内 0 列，每行 `││`），
+  // 下面第一条当场红。U2 之前那一档还会以 `RangeError` 收场（`inner` 是负的，直接进了 `repeat`）；
+  // `innerOf` 把它夹成 0 之后那条抛错没有了——守卫守的因此是"别印一个静默的空框"。
+  for (const width of [1, 2]) {
+    const thin = frameOf({ snapshot, metrics: METRICS, report: REPORT, width, height: 20 })
+    assert.equal(thin.lines.length, 1, `${width} 列：只印一句（不是空帧）`)
+    assert.equal(thin.roles.length, 1, '窄帧里 roles 与 lines 也是平行的')
+    assert.equal(widthOf(thin.lines[0] as string), width, `${width} 列那一行不许超宽`)
+    // 1–2 列上**那一句原因自己也印不出来**（框内一列都没有），留下的是 `…`——与截断那一条同一个
+    // 记号，说的是"这里还有东西没印出来"。所以这一段的作用是**当场不抛**，不是把话说全。
+    assert.equal(
+      (thin.lines[0] as string).startsWith('…'),
+      true,
+      `${width} 列那一行是截断记号：${JSON.stringify(thin.lines[0])}`,
+    )
+  }
+  // 3 列是**边界**：画得出（框内恰一列），每一行仍是 3 列。
+  const edge = frameOf({ snapshot, metrics: METRICS, report: REPORT, width: 3, height: 20 })
+  assert.equal((edge.lines[0] as string).startsWith('┌'), true, `3 列该画得出框：${edge.lines[0]}`)
+  for (const l of edge.lines) assert.equal(widthOf(l), 3, `3 列那一档每一行都是 3 列：${JSON.stringify(l)}`)
+
   // 终端那一刻没给出尺寸：空帧（调用方那一侧的事）。
   assert.deepEqual(frameOf({ snapshot, width: 0, height: 0 }).lines, [])
 
   console.log(
     `⑤ 读数：40 列 → 单栏（右 0，${narrow.lines.length} 行，一处内容不少）· 8 行 → 「${(cut as string).split('│').map((x) => x.trim()).filter((x) => x !== '').join(' ｜ ')}」` +
-      ` · 3 行 → 「${(tiny.lines[0] as string).replace(/^│|│$/g, '').trim()}」· 0 列 0 行 → ${frameOf({ snapshot, width: 0, height: 0 }).lines.length} 行`,
+      ` · 3 行 → 「${(tiny.lines[0] as string).replace(/^│|│$/g, '').trim()}」· 0 列 0 行 → ${frameOf({ snapshot, width: 0, height: 0 }).lines.length} 行` +
+      ` · 1–2 列 → 「${(frameOf({ snapshot, width: 2, height: 20 }).lines[0] as string).replace(/^│|│$/g, '').trim()}」· 3 列 → 「${edge.lines[0]}」`,
   )
 })
 
