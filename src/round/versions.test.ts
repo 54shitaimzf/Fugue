@@ -14,6 +14,8 @@
 //      一个不存在的第 0 版）；`why` 分得清是**哪一版**读不成草案
 //   ⑥ **按 `against` 走回第一版**：第 i 条的 `against` 就是第 i-1 条那一版的指纹（重落那一趟指向
 //      自己），按它一步步往回走、每一步都取回得了正文——这就是「按坐标取回」今天走的那条路
+//   ⑧ **负对照**（0.2.9 ④）：拿一版**不在这条链上**的来印制 → 当场红。原先那一句 `?? v.at`
+//      会拿落点号顶内容的号，静默印一个错的"第 N 版"（而那一栏是给人看的）
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -24,6 +26,7 @@ import type { AgentId, CommitId, RoundId, WriterId } from '../terms.ts'
 import type { LogReader } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import { loggedOf, roundStateOf } from './dispatch.ts'
+import type { DistillVersion } from './versions.ts'
 import { bodyOf, lastOf, roundFactsOf, sectionDiffOf, versionFaceOf, versionIndexOf } from './versions.ts'
 
 const R = 'r1' as RoundId
@@ -300,6 +303,30 @@ test('⑥ 按 `against` 走回第一版：第 i 条指着第 i-1 条那一版（
       `⑥ 读数：链上 ${f.versions.length} 格（重落 1）· 每一条的 against 都是上一条那一版的指纹 · ` +
         `从链尾走 ${f.versions.length - 1} 步回到第一版（${String(ds[0])}）`,
     )
+  } finally {
+    await b.close()
+  }
+})
+
+test('⑧ 负对照：一版不在这条链上 → 当场红，不拿落点号顶内容的号', async () => {
+  const b = await bench()
+  try {
+    const a = draftText([section()])
+    await b.log.append('round', { t: 'holder/distill', round: R, agent: HOLDER, digest: digestOf(a), body: a })
+    const f = await roundFactsOf(b.log, R)
+    const on = f.versions[0]
+    assert.ok(on !== undefined)
+    // 正对照：链上那一版印得出来，号是内容的号。
+    assert.equal(versionFaceOf(f, on).version, 1, '链上那一版印不出第 1 版')
+    // 负对照：一版不在这条链上的（比如另一轮的那一版）。`at` 是落点号、`version` 是内容的号——
+    // 拿落点号顶上就是印一个错的版本号。
+    const stray: DistillVersion = { at: 3, digest: 'deadbeefdeadbeef', against: null, body: a }
+    assert.throws(
+      () => versionFaceOf(f, stray),
+      /不在这一轮的链上/,
+      '不在链上的那一版没有被当场拒——`?? v.at` 那个兜底还在',
+    )
+    console.log(`⑧ 读数：链上那一版 → 第 ${versionFaceOf(f, on).version} 版；不在这条链上的一版 → 当场红`)
   } finally {
     await b.close()
   }
