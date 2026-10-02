@@ -70,3 +70,5 @@ execute 文件出现一次已见 Node cloned-data 传输错误，随后 execute/
 官方 ROADMAP §10 的尾段政策采用非破坏恢复：读者保留盘上字节，当前写者遇已观察到的半行先拒绝追加。旧自动 truncate 候选撤回，显式清理仍待决定，见[尾段边界](log-tail-recovery.md)。
 
 随后与官方 `f271ad2` 的同步只改变五份已审文档：凭据查找、命令速查差异与 s8/s9 演示清单均依上游校准；源码、历史录音与上述功能证据不变。
+
+随后维护批按官方 §10 补 `config ls` 和[配置文档诊断](configuration.md)，列两级合并后在场的键而非默认/schema 表；命令帮助补齐 assemble。C 约束新增[具名诊断见证](../design/CONSTRAINT-WITNESS.md)，以真实段边界比较积累正文，保留裸 Prefix 粗比法，不接发送路径。终端/status 的既有总量分别标明转移条数与图上步数，JSON/fold 字段不变。

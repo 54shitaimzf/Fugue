@@ -34,6 +34,61 @@ export interface Violation {
   readonly detail: string
 }
 
+/** Diagnostic sidecar only: Prefix, assembly bytes and the send path remain unchanged. */
+export interface ConstraintWitness {
+  readonly kind: 'named-c-segments'
+}
+
+interface WitnessData {
+  readonly layout: string
+  readonly zoneC: Uint8Array
+  readonly runtime: Uint8Array
+}
+const witnesses = new WeakMap<ConstraintWitness, WitnessData>()
+
+/**
+ * Capture named segments from the same input snapshot used to assemble `prefix`.
+ * The C bytes must agree exactly; boundaries are never inferred from serialized C.
+ * Unsupported/missing segment layouts return null, retaining the coarse diagnostic.
+ */
+export function constraintWitness(
+  protocol: Protocol,
+  segments: Readonly<Record<SegmentId, SegmentValue>>,
+  prefix: Prefix,
+): ConstraintWitness | null {
+  const data = namedC(protocol, segments, prefix.zoneC)
+  if (data === null) return null
+  const witness: ConstraintWitness = Object.freeze({ kind: 'named-c-segments' })
+  witnesses.set(witness, data)
+  return witness
+}
+
+function namedC(
+  protocol: Protocol,
+  segments: Readonly<Record<SegmentId, SegmentValue>>,
+  zoneC: Uint8Array,
+): WitnessData | null {
+  const ids = protocol.segmentOrder.filter(id => ZONE_OF[id] === 'C')
+  // These are the three accepted C roles: one accumulating text and two replaced suffixes.
+  if (ids.length !== 3 || ids[0] !== '运行时上下文' || ids[1] !== '信号摘要' || ids[2] !== '上一步结果') return null
+  const runtime = segments['运行时上下文']
+  if (protocol.renderers['运行时上下文'] !== 'text' || typeof runtime !== 'string') return null
+  if (ids.some(id => segments[id] === undefined)) return null
+  const parts = ids.map(id => render(protocol.renderers[id], segments[id]))
+  const bytes = concat(parts)
+  if (!sameBytes(bytes, zoneC)) return null
+  return {
+    layout: JSON.stringify(ids.map(id => [id, protocol.renderers[id]])),
+    zoneC: bytes,
+    // Compare content, not the renderer's final framing LF: empty/unterminated text can grow.
+    runtime: parts[0].slice(0, -1),
+  }
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && startsWith(a, b)
+}
+
 /** 四条约束各自的名字，给人读的输出用。 */
 export const CONSTRAINT_NAMES: Readonly<Record<ConstraintKind, string>> = {
   'append-only': 'C 区只追加，绝不修改中部',
@@ -104,6 +159,7 @@ function envHits(bytes: Uint8Array, facts: EnvFacts): string[] {
  *
  * `previous` 是上一次的 `Prefix`（同一条线上的上一步）：给了它才判得了第一条——「只追加」是一句
  * 关于两次的断言，一次装配里看不出来。**不给就不查第一条**：一条查不了的约束不该报假绿。
+ * Named witness handoff refines it to the accumulating segment; bare Prefix retains the legacy coarse check.
  */
 export function checkConstraints(
   protocol: Protocol,
@@ -112,6 +168,7 @@ export function checkConstraints(
   who: string = '这一步',
   facts: EnvFacts = envFacts(),
   current: Prefix | null = null,
+  previousWitness: ConstraintWitness | null = null,
 ): Violation[] {
   const out: Violation[] = []
 
@@ -140,17 +197,25 @@ export function checkConstraints(
     }
   }
 
-  // 约束 1：C 区只追加，绝不修改中部。判据是**上一次的 C 区是不是这一次的前缀**：中部被改写
-  // （或删掉）都会在某一个字节上开始不同，那个位置就是报出来的东西。
+  // 约束 1：有具名见证时核积累段的正文；只有 Prefix 时保留整段 C 的旧诊断。
+  // 改写或删掉历史正文，都会在某个字节上开始不同；后两段的正常替换不改积累历史。
   if (previous !== null) {
-    const prev = previous.zoneC
-    const next = current === null ? currentZoneC(protocol, segments) : current.zoneC
+    let prev = previous.zoneC
+    let next = current === null ? currentZoneC(protocol, segments) : current.zoneC
+    let where = 'C 区'
+    const before = previousWitness === null ? undefined : witnesses.get(previousWitness)
+    const after = before === undefined ? null : namedC(protocol, segments, next)
+    if (before !== undefined && after !== null && before.layout === after.layout && sameBytes(before.zoneC, prev)) {
+      prev = before.runtime
+      next = after.runtime
+      where = '运行时上下文'
+    }
     const shared = sharedPrefixLen(prev, next)
     if (!startsWith(prev, next)) {
       out.push({
         kind: 'append-only',
-        where: 'C 区',
-        detail: `${who}：C 区中部被改写了——前 ${shared} 个字节相同，第 ${shared + 1} 个字节起不同`,
+        where,
+        detail: `${who}：${where}中部被改写了——前 ${shared} 个字节相同，第 ${shared + 1} 个字节起不同`,
       })
     }
   }

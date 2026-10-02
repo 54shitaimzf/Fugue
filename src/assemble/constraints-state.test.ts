@@ -16,7 +16,7 @@ import type { AgentHandle } from '../runtime/step.ts'
 import type { AgentId, BranchId, ContractId, RefName, RelPath } from '../terms.ts'
 import { openTruth } from '../truth/truth.ts'
 import { assemble } from './assemble.ts'
-import { checkConstraints, envFacts, formatViolation } from './constraints.ts'
+import { checkConstraints, constraintWitness, envFacts, formatViolation } from './constraints.ts'
 import type { Protocol } from './contract.ts'
 import { HOLDER_PROTOCOL, SUBAGENT_PROTOCOL } from './protocol.ts'
 import { emptyState, sourcesFor } from './sources.ts'
@@ -160,7 +160,7 @@ test('a real quiet runtime transition checks previous and current product prefix
   })
 })
 
-test('a nonquiet product transition exposes the existing whole-C diagnostic boundary', async () => {
+test('a nonquiet product transition accepts named accumulation while retaining the bare whole-C boundary', async () => {
   await withState(async (root, state) => {
     const log = openLog(root, { write: AGENT })
     try {
@@ -178,6 +178,17 @@ test('a nonquiet product transition exposes the existing whole-C diagnostic boun
       assert.deepEqual(violations.filter(v => v.kind !== 'append-only'), baseline)
       assert.equal(violations.filter(v => v.kind === 'append-only').length, 1,
         'whole C includes replaced suffixes; this is not a zero-violation acceptance claim')
+      const witness = constraintWitness(SUBAGENT_PROTOCOL, before.segments, before.prefix)
+      assert.ok(witness !== null)
+      assert.deepEqual(checkConstraints(SUBAGENT_PROTOCOL, after.segments, before.prefix,
+        'named nonquiet runtime step', envFacts(), after.prefix, witness), baseline)
+      for (const runtimeText of ['rewritten ' + state.runtime, '']) {
+        const broken = assembled(SUBAGENT_PROTOCOL, { ...result.next, runtime: runtimeText })
+        const faults = checkConstraints(SUBAGENT_PROTOCOL, broken.segments, before.prefix,
+          'changed accumulating input', envFacts(), broken.prefix, witness)
+        assert.deepEqual(faults.filter(v => v.kind !== 'append-only'), baseline)
+        assert.deepEqual(faults.filter(v => v.kind === 'append-only').map(v => v.where), ['运行时上下文'])
+      }
     } finally { await log.close() }
   })
 })

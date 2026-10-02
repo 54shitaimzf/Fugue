@@ -39,7 +39,7 @@ import type { AgentId, BlobId, BranchId, ContractId, RefName } from '../terms.ts
 import { openTruth } from '../truth/truth.ts'
 import { assemble } from './assemble.ts'
 import type { EnvFacts } from './constraints.ts'
-import { checkConstraints, envFacts, formatViolation, sharedPrefixLen } from './constraints.ts'
+import { checkConstraints, constraintWitness, envFacts, formatViolation, sharedPrefixLen } from './constraints.ts'
 import type { Prefix, SegmentId, SegmentValue } from './contract.ts'
 import { SUBAGENT_PROTOCOL } from './protocol.ts'
 import { render, stableStringify } from './render.ts'
@@ -324,7 +324,7 @@ test('④ quiet 档：只动 B 区 · 真跑一步空轮次，两处都 0 违例
  * 改写"。抓住的变异：把约束 1 放行成恒真（条数变 0）· 把比较面从整段 C 换成别的东西（位置或条数
  * 变）· 把这一条挪出 C 区（`where` 变）。
  */
-test('⑤ 非静默档（定性）：真跑一步恰好一条 append-only，位置在新轮次那个字节上', async () => {
+test('⑤ 非静默档：旧整段定性读数保留，具名见证验积累段追加为 0 违反', async () => {
   const w = await realWorkspace('step')
   const log = openLog(w.root, { write: AGENT })
   try {
@@ -356,6 +356,14 @@ test('⑤ 非静默档（定性）：真跑一步恰好一条 append-only，位�
       '第一处不同的位置不在新轮次那一刀上——这一条定性读数变了',
     )
     assert.match(v?.detail ?? '', new RegExp(`前 ${first.length} 个字节相同`), '报出来的话里没有那个位置')
+    const witness = constraintWitness(SUBAGENT_PROTOCOL, w.segments, w.prefix)
+    assert.ok(witness !== null)
+    assert.deepEqual(checkConstraints(SUBAGENT_PROTOCOL, ran.segments, w.prefix, '具名积累段', CONTROLLED, ran.prefix, witness), [])
+    for (const runtimeText of ['改写了原始输入', '']) {
+      const broken = assembled({ ...step.next, runtime: runtimeText })
+      const faults = checkConstraints(SUBAGENT_PROTOCOL, broken.segments, w.prefix, '真正改写', CONTROLLED, broken.prefix, witness)
+      assert.deepEqual(faults.map(fault => [fault.kind, fault.where]), [['append-only', '运行时上下文']])
+    }
   } finally {
     await log.close()
     await w.close()

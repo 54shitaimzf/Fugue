@@ -192,6 +192,35 @@ export function getConfig(doc: ConfigDoc, key: string): unknown {
   return cur
 }
 
+/** Present merged keys, not a schema/default registry. Arrays and empty objects are terminal values. */
+export function configuredKeyPaths(doc: ConfigDoc): string[][] {
+  const out: string[][] = []
+  const pending: { value: unknown; path: string[] }[] = []
+  for (const key of Object.keys(doc).sort().reverse()) pending.push({ value: doc[key], path: [key] })
+  while (pending.length > 0) {
+    const { value, path } = pending.pop()!
+    const keys = isPlainObject(value) ? Object.keys(value).sort() : []
+    if (keys.length === 0) out.push(path)
+    else for (const key of keys.reverse()) pending.push({ value: (value as ConfigDoc)[key], path: [...path, key] })
+  }
+  return out
+}
+
+/** Dot syntax only where every segment is unambiguous and printable; otherwise preserve the exact path. */
+export function formatConfigKeyPath(path: readonly string[]): string {
+  return path.every(part => part !== '' && !/[.\s\p{C}]/u.test(part)) ? path.join('.') : escapedKeyJson(path)
+}
+
+function escapedKeyJson(value: readonly string[] | readonly (readonly string[])[]): string {
+  // JSON.stringify handles ASCII controls, but leaves C1/bidi/format controls literal.
+  return JSON.stringify(value).replace(/\p{C}/gu, char => char.split('').map(unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`).join(''))
+}
+
+/** Exact path JSON without invisible control/format characters on the terminal. */
+export function configKeyPathsJson(paths: readonly (readonly string[])[]): string {
+  return escapedKeyJson(paths)
+}
+
 /**
  * 改一条，原地改。缺的中间层建出来；**中途撞上非对象就报错，不覆盖**——`a` 现在是个字符串
  * 而去写 `a.b`，说明写的人以为那儿有一层，把字符串换成对象是替人做决定。

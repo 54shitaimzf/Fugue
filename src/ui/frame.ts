@@ -181,8 +181,7 @@ export function bodyOf(o: {
   }
   for (const r of s.rounds) {
     const here = r.round === s.current ? ' · 最近一条落在这一轮' : ''
-    const jumps = r.hops === r.transitions ? '' : ` · 跳步 ${r.hops - r.transitions}`
-    left.push(`轮次 ${r.round} · 状态 ${r.state} · 转移 ${r.transitions} 条${jumps} · 打回 ${r.rejects} 次${here}`)
+    left.push(`轮次 ${r.round} · 状态 ${r.state} · 转移 ${r.transitions} 条 · 图上 ${r.hops} 步 · 打回 ${r.rejects} 次${here}`)
     for (const e of r.edges) left.push(`  ${e}`)
     if (r.unrouted > 0) left.push(`  （图上走不通的 ${r.unrouted} 条：账与图对不上）`)
   }

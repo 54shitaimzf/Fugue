@@ -13,6 +13,9 @@
 
 ### 内部维护
 
+- 精化 C 区诊断：调用方可交付绑定真实装配字节的具名见证，只核运行时积累正文的追加；信号/上步结果替换与裸前缀粗读数分别保留，发送路径与公开 Prefix 不动，见 [诊断见证](design/CONSTRAINT-WITNESS.md)。
+- 终端和 status 的汇总行分别显示已有的转移条数与图上步数，不再相减后冒充状态总量；所有路由细节与 JSON 数据字段不变。
+- 增加 `config ls`：只列合并配置中在场的键，数组/null/空对象按末端处理，特殊键名和 `--json` 保留路径分段，不打印凭据引用或其他值；配置域与已知实际消费键的说明由 `check-config-keys.js` 常驻核对，见 [配置说明](docs/configuration.md)。
 - 修复 View 在等待 `Lower.putBlob` 或日志持久化时借用调用方字节的问题：输入、Entry、Delta 与 blob ID 绑定同一自有快照，返回 read/diff 不再借出内部 Buffer。真实 Truth 与可选索引的持久交互均有回归控制，见 [字节绑定](design/VIEW-BYTE-OWNERSHIP.md)。
 - 可选索引宿主缓存完整的原生 regex 验证结果：按不可变 blob、表达式和 flags 分键，仅在读完并核地址后安装；行字节独立复制、有界淘汰，默认宿主保留原扫描路径。预取费用和冷退化保留在 [性能证据](docs/performance-next/regex-verification.md)。
 - 同步上游 Lower 的 `putBlob` 约定：纯内存 walk 测试与演示使用独立的虚拟对象库，按所选 SHA-1/SHA-256 计算 Git blob 标识并复制输入/返回字节；不靠旧的缺失端口绕过 View 写入。
