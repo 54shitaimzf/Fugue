@@ -56,6 +56,34 @@ export type DecodeResult =
   | { ok: true; pos: LogPos; event: LogEvent }
   | { ok: false; reason: string }
 
+/** JSON.parse已验语法后扫描对象键；不用递归，字符串里的JSON样子不算结构。 */
+function duplicateKey(line: string): string | undefined {
+  const scopes: (Set<string> | null)[] = []
+  for (let at = 0; at < line.length; at++) {
+    const token = line[at]
+    if (token === '{') scopes.push(new Set())
+    else if (token === '[') scopes.push(null)
+    else if (token === '}' || token === ']') scopes.pop()
+    else if (token === '"') {
+      const start = at
+      for (at++; at < line.length; at++) {
+        if (line[at] === '\\') at++
+        else if (line[at] === '"') break
+      }
+      let next = at + 1
+      while (line[next] === ' ' || line[next] === '\t' || line[next] === '\r' || line[next] === '\n') next++
+      // 已验语法的JSON里，冒号前的字符串恰是当前对象的键，数组值/字符串值不会在此。
+      if (line[next] !== ':') continue
+      const keys = scopes[scopes.length - 1]
+      if (keys === null || keys === undefined) continue
+      const key = JSON.parse(line.slice(start, at + 1)) as string
+      if (keys.has(key)) return key
+      keys.add(key)
+    }
+  }
+  return undefined
+}
+
 /** 解一行。`reason` 是给人看的——它会被带进错误、指向行号。 */
 export function decodeLine(line: string): DecodeResult {
   let raw: unknown
@@ -66,6 +94,11 @@ export function decodeLine(line: string): DecodeResult {
   }
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     return { ok: false, reason: '行不是一个 JSON 对象' }
+  }
+  const duplicate = duplicateKey(line)
+  if (duplicate !== undefined) {
+    const shown = duplicate.length > 120 ? duplicate.slice(0, 120) + '…' : duplicate
+    return { ok: false, reason: `JSON键重复：${JSON.stringify(shown)}` }
   }
   const { seq, writer, crc, t, ...payload } = raw as Record<string, unknown>
 
