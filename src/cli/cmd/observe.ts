@@ -9,8 +9,9 @@ import { readCatalog } from '../../model/catalog.ts'
 import { readings, readingsLines } from '../../probe/status.ts'
 import type { StatusRow } from '../../probe/status.ts'
 import { follow, readNew } from '../../probe/watch.ts'
-import { KEYMAP, hintLimitOf, hintLineOf, openKeys } from '../../ui/keymap.ts'
-import type { KeySource } from '../../ui/keymap.ts'
+import { KEYMAP, hintLimitOf, hintLineOf, keymapOf, openKeys } from '../../ui/keymap.ts'
+import type { KeySource, Keymap } from '../../ui/keymap.ts'
+import { readConfig } from '../../config.ts'
 import { openTui, tuiModeOf } from '../../ui/follow.ts'
 import { openExitHooks } from '../../ui/exit-hooks.ts'
 import type { Tui } from '../../ui/follow.ts'
@@ -23,7 +24,6 @@ import { openRun } from '../../ui/run.ts'
 import type { RunLauncher } from '../../ui/run.ts'
 import { pendingOf } from '../../round/dispatch.ts'
 import { identFor } from '../../identity.ts'
-import { getConfig, readConfig } from '../../config.ts'
 import { actionCommandsOf, actionsTableOf } from './round.ts'
 import { emitJson, emitLine, usageFail } from '../shared.ts'
 
@@ -339,16 +339,29 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     // 收尾那一下整套在舞台里（`stage.onRunDone`：说了什么 · 要退就退 · 跑完一趟起排队里下一条）。
     ui.go = openRun({ root, onLine: (line) => tui.note(line), onDone: stage.onRunDone })
     // 按键那一头：⓪–⑩ 分派整套在舞台里（`ui/stage.ts` 的 `onAction`），这一头只递。
-    keys = openKeys({ input: process.stdin, out: process.stdout, onAction: stage.onAction })
+    // 按键表（0.2.9 ⑧ 接线）：覆盖从 `ui.keys` 读，配错的那一格照缺省走、当场印出为什么。
+    // 配置文件读不动（坏 JSON · 坏形状）也不静默：stderr 说一声，按缺省表起——TUI 是看的东西，
+    // 不因为配置坏了就拒绝开。形状在读那一面已经核过，这里拿到的一定是「动作 → 键串」。
+    let km: Keymap = KEYMAP
+    try {
+      const doc = await readConfig(root)
+      const keys = (doc.ui as { keys?: Record<string, string> } | undefined)?.keys
+      km = keymapOf(keys ?? {})
+    } catch (err) {
+      process.stderr.write(`配置读不出来，按键按缺省表走：${(err as Error).message}
+`)
+    }
+    keys = openKeys({ input: process.stdin, out: process.stdout, onAction: stage.onAction, km })
     // 第一件事：把按键那一行印出来（写在面板上方；翻上去了按 `?` 再印一次）。
     // **stdin 不是终端就不印它**（`stdout` 是终端而 `stdin` 不是：面板照画，可按键收不到）——
     // 印一行"按 g 放行"而按下去没反应，是这一档最坏的一种体验。
     stage.setRaw(keys.raw)
+    for (const p of km.problems) tui.note(`键位 ${p.action} 配不了（${JSON.stringify(p.key)}）：${p.why}`)
     // 按键那一行**按屏幕宽度取前几条**（28 条接线的动作整行印出来 438 列，终端会折成五行）；
     // 剩下的那一句说清还有几条、去哪儿看全部（`Ctrl-P` 那一屏）。
     tui.note(
       keys.raw
-        ? hintLineOf(KEYMAP, hintLimitOf(term.columns))
+        ? hintLineOf(km, hintLimitOf(term.columns))
         : 'stdin 不是终端：这一档不收按键（输入行与弹层都在等按键，画出来是骗人）',
     )
   }
