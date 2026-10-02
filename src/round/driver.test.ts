@@ -677,7 +677,7 @@ test('③ 触发点到了落 agent/handoff，后继接着干完（同一条分�
     const h = handoffs[0]!
     assert.equal(h.agent, AGENT)
     // **逐字**：`driver.ts` 交接那一步算的是 `<前任>-<第几步 + 1>`，而这一趟的步号由脚本与触发点
-    // 定死，所以这里钉得住那个数（0.2.9 ⑤：`successorNameOf` 撤了，那条规则原先只有它那一份没有
+    // 定死，所以这里钉得住那个数（清障批 ⑤：`successorNameOf` 撤了，那条规则原先只有它那一份没有
     // 消费者的实现与一条宽松的正则；规则现在只在生产那一处，断言在真跑出来的这一条上）。
     assert.equal(h.successor, 'agent-1-2', `后继的名字：${h.successor}`)
     // **轮级状态那一栏没被动过**：这条事件里没有轮次号，也没有 `round/state` 跟着它。

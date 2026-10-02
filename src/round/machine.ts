@@ -266,7 +266,7 @@ export function trail(steps: readonly (readonly [Cause, StepContext?])[]): Trail
  */
 export const RETRY_DEFAULT = 1
 
-// **这里原先有一个 `verdictCause(pass, retriesLeft)`**（0.2.9 ⑤ 撤了）：它是"没过 ∧ 有余量 →
+// **这里原先有一个 `verdictCause(pass, retriesLeft)`**（清障批 ⑤ 撤了）：它是"没过 ∧ 有余量 →
 // `verdict-fail`，没过 ∧ 余量用完 → `retry-exceeded`"这条判据的**第二份实现**，而**没有一处生产
 // 消费者调它**——真跑的那一处是 `round/execute.ts` 里验收那一步（`retriesLeft > 0 ? … : …`）。
 // 第二份抄本漂移时不报错，只会让这里的断言与真跑的那条路各说各话。判据留生产那一处，

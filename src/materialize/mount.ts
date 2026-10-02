@@ -62,7 +62,7 @@ export interface Ran {
  * **不走 shell**：路径里有什么字符都不该被解释。这一层的子进程跑手就这一个：
  * 挂载 · sudo 探测 · 工具链探针（P3a，toolchain.ts）共用它。
  *
- * **0.2.9 ④ 到这里看过，结论是这两个"非 0"撤不得——它们是地板，不是兜底造值。**
+ * **清障批 ④ 到这里看过，结论是这两个"非 0"撤不得——它们是地板，不是兜底造值。**
  * `spawnSync` 起不动一个命令时给 `error`（`status` 是 `null`），被信号杀掉时也是 `status === null`；
  * 两种都由这里翻成一个非 0 的数 + 那句原话。两个消费者靠的正是这个宽容：
  *   · `sudoAvailable()` 见非 0 就答"不通"——`capability.ts` 据此把 overlayfs 与 whiteout 判成

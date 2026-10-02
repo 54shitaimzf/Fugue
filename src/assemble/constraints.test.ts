@@ -9,7 +9,7 @@
 //   ③ **结账口**：三区哈希与 `firstDivergence` 两栏都印得出来（架构 § 20 S6 的交付物）
 //   ④ **负对照**：把 `hostname` 那一条检查短路 → ① 少一处、当场红
 //   ⑤ **正对照**：一份干净的输入四条一处都不报（否则 ① 那四处可能只是"什么都报"）
-//   ⑥ **命令行那三档拒绝各走同一条路**（0.2.9 ③）：普通 Error · SourceError · ConfigError 都
+//   ⑥ **命令行那三档拒绝各走同一条路**（清障批 ③）：普通 Error · SourceError · ConfigError 都
 //      报出原话 + 退出码 1——`cmd/assemble.ts` 那个 catch 从三项收敛成一项之后接得住它们，
 //      靠的就是这一条（那两个类都是 Error 的子类，而仓里没有 tsc 来保证这件事）
 import assert from 'node:assert/strict'

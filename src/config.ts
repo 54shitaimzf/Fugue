@@ -43,7 +43,7 @@ export class ConfigError extends Error {}
  * 冻结清单漏了它，全量一跑被这张表拒出来（这正是这张表要抓的那类事），据实补进。
  * `credentials` 是凭据的引用表（P2c）：值是引用不是凭据，取值只在真出网那一步。
  * `toolchain` 是工具链的声明与探测读数（P3a）：声明两级可配，读数只写工作区级（materialize/toolchain.ts）。
- * `ui` 是界面那一节（0.2.9 ⑧）：现在只有 `ui.keys` 一格——按键表的动作覆盖。形状在这份文件
+ * `ui` 是界面那一节（清障批 ⑧）：现在只有 `ui.keys` 一格——按键表的动作覆盖。形状在这份文件
  * 里核；动作名与键名认不认得，由写那面（`config set` 过 `keymapOf`）与 TUI 读那面（`keymapOf`
  * 逐格照缺省走并印出为什么）各自把关——语义不进这份文件。 */
 export const TOP_LEVEL_KEYS: readonly string[] = [
