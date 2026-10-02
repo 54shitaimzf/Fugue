@@ -76,6 +76,15 @@ export type ForkStrategy = 'reflink' | 'overlayfs' | 'hardlink-ro' | 'copy'
 export type SignalKind = string
 
 /**
+ * 一次裁定的三档（架构 § 23 的 U18 · 路线图 0.2.7 行 ② · U18 甲案）。**头一档自决，后两档进人**。
+ *
+ * 判据不在这里——它在 `round/handback.ts` 的固定尺（`ASK_RULER`：版本化常量）上；这一份只给
+ * 名字。为什么名字住这里：`ask/ruling` 是 § 8.1 的事件之一，而**那份事件联合只依赖这一份词汇表**
+ * （`contract/types.ts` 顶上那条纪律：事件联合不往上层要类型）。
+ */
+export type AskTier = 'contract' | 'design' | 'user'
+
+/**
  * 一次验收的取值：**通过 · 没通过 · 跑不起来**（架构 § 8.12 末段 · § 23 U9「已定：S7 的 A0」）。
  *
  * **它进事件，所以只带取值。** 架构 § 8.1 的 `merge/accept` 那一行是 `assertions:

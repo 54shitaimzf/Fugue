@@ -154,7 +154,43 @@ async function listWriters(root: string): Promise<WriterId[]> {
 }
 
 /**
- * 写者准备时从文件尾取回序号，必要时去掉未提交尾段。**只读一个窗口**，不读整份日志——
+ * 窗口里最后一条完整行的**字节终点**（窗口内坐标；加上窗口起点就是磁盘偏移）。`0` = 窗口里一条
+ * 完整行都没有。
+ *
+ * **不能拿字符串算这个位置**：窗口的第一行可能从半个码点中间开始，那段字节解出来是替换符
+ * （U+FFFD，三个字节），拿解出来的字符串再去量，坐标就整体挪了位。`\n` 在 UTF-8 里是单字节，
+ * 所以最后一个 `0x0a` 在字节里的位置就是它在磁盘上的位置——这一份量的就是它。
+ *
+ * 这条坐标用于完整段解析与未提交尾段识别；恢复不修改磁盘上的字节。
+ */
+export function completeEndOf(buf: Buffer): number {
+  const lastNewline = buf.lastIndexOf(0x0a)
+  return lastNewline === -1 ? 0 : lastNewline + 1
+}
+
+/**
+ * 把窗口读满，返回**真正读到的字节数**。
+ *
+ * **`read` 允许短读**（返回的字节数比要的少，甚至为 0），所以"读了一次"不等于"窗口在那儿"：
+ * 拿半份窗口去算序号，是在替这份日志猜。读到 0 就停下（提前到了文件尾，或者文件在读取中变短）
+ * ——拒不拒由调用方定，这一层只如实报数。
+ */
+export async function readFully(
+  fh: { read(buffer: Buffer, offset: number, length: number, position: number): Promise<{ bytesRead: number }> },
+  buf: Buffer,
+  start: number,
+): Promise<number> {
+  let used = 0
+  while (used < buf.length) {
+    const read = await fh.read(buf, used, buf.length - used, start + used)
+    if (read.bytesRead === 0) break
+    used += read.bytesRead
+  }
+  return used
+}
+
+/**
+ * 写者准备时从文件尾取回序号，遇未提交尾段时拒绝追加并保留原字节。**只读一个窗口**，不读整份日志——
  * 追加的代价因此与已有日志的长度无关（架构 § 9.4 的重建代价上界）。
  */
 async function tailSeq(fh: FileHandle, w: WriterId): Promise<LogSeq> {
@@ -162,16 +198,11 @@ async function tailSeq(fh: FileHandle, w: WriterId): Promise<LogSeq> {
   if (st.size === 0) return 0
   const want = Math.min(st.size, TAIL_WINDOW), start = st.size - want
   const buf = Buffer.alloc(want)
-  let used = 0
-  while (used < want) {
-    const read = await fh.read(buf, used, want - used, start + used)
-    if (read.bytesRead === 0) break
-    used += read.bytesRead
-  }
+  const used = await readFully(fh, buf, start)
   if (used !== want) throw new LogCorruptError(w, 0, '日志尾部在读取中改变，拒绝恢复')
   // 截点必须来自原字节；UTF8半码点解码成替换符以后，字符串长度不再是磁盘坐标。
-  const lastNewline = buf.lastIndexOf(0x0a)
-  const completeEnd = lastNewline === -1 ? 0 : start + lastNewline + 1
+  const windowEnd = completeEndOf(buf)
+  const completeEnd = windowEnd === 0 ? 0 : start + windowEnd
   let text = buf.toString('utf8')
   if (want < st.size) {
     // 窗口的第一行可能被切断，丢掉它。
@@ -192,14 +223,9 @@ async function tailSeq(fh: FileHandle, w: WriterId): Promise<LogSeq> {
     if (d.pos.writer !== w) throw new LogCorruptError(w, 0, `信封里的 writer 与文件名不符：${JSON.stringify(d.pos.writer)}`)
     seq = d.pos.seq
   }
-  // 先验证最后完整行，再动未提交尾段；拒绝时不能顺手删掉诊断证据。
+  // 完整坏行先报本来的错误；半行的清理策略未定，不删证据，也不能向半行后继续追加。
   if (completeEnd < st.size) {
-    const now = await fh.stat()
-    if (now.size !== st.size || now.mtimeMs !== st.mtimeMs || now.ctimeMs !== st.ctimeMs) {
-      throw new LogCorruptError(w, 0, '日志尾部在恢复前改变，拒绝截断')
-    }
-    await fh.truncate(completeEnd)
-    // truncate完成后O_APPEND按新EOF写；flush仍在append里遵守调用方的sync档。
+    throw new LogCorruptError(w, 0, '日志末尾有未提交半行，拒绝追加；原字节保留，请先确认恢复处置再重试')
   }
   return seq
 }

@@ -227,7 +227,7 @@ test('real View generation changes undo an earlier negative and observe all held
   } finally { for (const release of releases) release(); await f.close() }
 })
 
-test('top-level escaped duplicate refusal precedes torn-tail repair; repaired M0 replays the same indexed whiteout View', async () => {
+test('top-level escaped duplicate and torn-tail refusals preserve bytes; explicit fixture repair replays the indexed whiteout View', async () => {
   const f = await fixture({ 'dir/old.ts': 'needle old\n', 'outside.ts': 'none' })
   try {
     const t = await f.target('recovery')
@@ -249,9 +249,13 @@ test('top-level escaped duplicate refusal precedes torn-tail repair; repaired M0
       await assert.rejects(loadView(reader, t.writer, { lower: lowerAt(f.truth, f.base) }), LogCorruptError)
       await assert.rejects(writer.append(t.writer, { t: 'view/remove', agent: t.writer, path: 'outside.ts', rev: 3 } as LogEvent), /重复/)
       assert.deepEqual(readFileSync(file), before, 'complete top-level corruption forbids destructive tail repair')
-      // 只修本测试生成的坏整行；同一失败过的 writer 必须可重试，然后恢复尾巴。
+      // 只修本测试生成的坏整行；读者仍能重放前缀，写者不能自动清理半行。
       writeFileSync(file, Buffer.concat([prefix, tail]))
       const view = await loadView(reader, t.writer, { lower: lowerAt(f.truth, f.base) })
+      await assert.rejects(writer.append(t.writer, { t: 'view/remove', agent: t.writer, path: 'outside.ts', rev: 3 } as LogEvent), /未提交半行/)
+      assert.deepEqual(readFileSync(file), Buffer.concat([prefix, tail]))
+      // 这是本测试独占的生成夹具，不是产品自动恢复策略。
+      writeFileSync(file, prefix)
       await applyEdit({ view, truth: f.truth, log: writer, writer: t.writer }, { kind: 'add', path: 'after.ts', bytes: Buffer.from('needle after\n'), mode })
     } finally { await reader.close(); await writer.close() }
     const replay = await f.target('recovery')

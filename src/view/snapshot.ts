@@ -165,8 +165,8 @@ export async function saveSnapshot(
 /**
  * 视图的全量读出，摊成 § 8.2 的 `putTree` 输入（提交要的那一份，见本文件顶部）。
  *
- * **一个字节的内容都不用读**：下层文件的 id 来自 `list` 的行，上层文件的 id 由视图自己
- * 算（内容就在手里），gitlink 的 id 就是那个提交。于是"把整棵树读出来"这件事与仓库的
+ * **一个字节的内容都不用读**：下层的 id 来自 `list` 的行，上层那条目自己带着真源给的 id
+ * （`Entry.blob`），gitlink 的 id 就是那个提交。于是"把整棵树读出来"这件事与仓库的
  * 字节数无关，只与路径数有关。
  */
 export async function snapshotOf(view: View): Promise<TreeEntry[]> {

@@ -6,7 +6,7 @@
 //
 // 两条口径：
 //   · **机制隔离**：这一份不碰 git，也不碰真源。视图是纯内存的 `MemoryView`（上层就是全部，
-//     `lower.base === null`，那几样下层读口一律抛）——walk 省的是"每目录一次 Promise + 逐层合并
+//     `lower.base === null`，路径读口一律抛，blob 端口由独占的内存对象库实现）——walk 省的是"每目录一次 Promise + 逐层合并
 //     + 数组重建"，read 省的是"解码与行切"，两者都不含对象库往返（那一头是 0.2.4 的读数，
 //     在 `bench-grep.js` 里量）。
 //   · **内置等价自校验**：量之前先断言新旧两条路给的结果相同（walk 与一份逐步重走的参照比 ·
@@ -25,6 +25,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { memoryBlobs } from '../test/helpers/memory-blobs.ts'
 
 const root = resolve(process.env.FUGUE_ROOT ?? process.cwd())
 const argv = process.argv.slice(2)
@@ -54,7 +55,6 @@ const NO_LOG = {
 const boom = () => {
   throw new Error('这一跑不碰真源：视图是纯内存的（lower.base === null）')
 }
-const NO_TRUTH = { base: null, readBlob: boom, stat: boom, read: boom, list: boom }
 
 const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]
 const ms = (t0) => performance.now() - t0
@@ -63,7 +63,9 @@ const fix = (x) => Number(x.toFixed(3))
 /** 一份纯内存视图：外面包一层只数 `list` 调用（归因读数）。 */
 async function makeBench() {
   const where = mkdtempSync(join(tmpdir(), 'fugue-bench-walk-read-'))
-  const view = await loadView(NO_LOG, AGENT, { lower: NO_TRUTH })
+  const view = await loadView(NO_LOG, AGENT, {
+    lower: { base: null, ...memoryBlobs(), stat: boom, read: boom, list: boom },
+  })
   let lists = 0
   const counted = new Proxy(view, {
     get(target, key) {

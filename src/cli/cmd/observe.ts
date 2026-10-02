@@ -339,7 +339,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     // 收尾那一下整套在舞台里（`stage.onRunDone`：说了什么 · 要退就退 · 跑完一趟起排队里下一条）。
     ui.go = openRun({ root, onLine: (line) => tui.note(line), onDone: stage.onRunDone })
     // 按键那一头：⓪–⑩ 分派整套在舞台里（`ui/stage.ts` 的 `onAction`），这一头只递。
-    // 按键表（0.2.9 ⑧ 接线）：覆盖从 `ui.keys` 读，配错的那一格照缺省走、当场印出为什么。
+    // 按键表（清障批 ⑧ 接线）：覆盖从 `ui.keys` 读，配错的那一格照缺省走、当场印出为什么。
     // 配置文件读不动（坏 JSON · 坏形状）也不静默：stderr 说一声，按缺省表起——TUI 是看的东西，
     // 不因为配置坏了就拒绝开。形状在读那一面已经核过，这里拿到的一定是「动作 → 键串」。
     let km: Keymap = KEYMAP

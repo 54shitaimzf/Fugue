@@ -1,6 +1,6 @@
 # 统一上游基线与路线图贡献
 
-本分支以官方 `f4b571b3aad7fd114506ed5b01e90f0fb4106a0c`（PR48–52 已合入）为最新实际祖先；此前基于 `ba77d765` 合入公开审查汇总
+本分支以官方 `ff40425a51955ae2f4f5c03535534550145757dd`（PR53 的机制与 PR55 的发布归档已合入）为最新实际祖先；此前基于 `ba77d765` 合入公开审查汇总
 `claude/fugue-roadmap-pr-review-c0t5od` 的 `a5010b8430286d803a5fcc625d2dff2a12a0d303`，
 再接入随后完成的增量 cohort 构建和真实 View/M0 验收。只持续更新
 `roadmap/maintenance-integration-check`，沿用上游 draft PR45；旧来源 ref 保留，不改写历史。
@@ -19,8 +19,7 @@ cohort 的 `prepare(readBlob, options)` 复用完整不可变记录，只为新 
 嵌套 payload 最后值语义由测试明确记录。转义顶层重复键与半行恢复的持久交互覆盖保留，
 具体边界见[重复键说明](log-duplicate-keys.md)。官方发布说明、版本和最新 ROADMAP 保留。
 
-0.2.7 的[实际装配诊断](assembly-constraints.md)只改两处已定案的方针指针，并忠实报告剩余
-宿主示例路径与整段 C 的追加判据差异；它不证明零违反，新的 A 前缀真实录制尚未完成。
+0.2.7 的[实际装配诊断](assembly-constraints.md)采用官方清理后的真实方针，历史宿主路径诊断不再是当前基线。官方常驻证人、真实 facts 与非静默整段 C 诊断均保留；新的 A 前缀真实录制不能由源码同步证明。
 0.2.9 的[内部不变量诊断网](../design/INVARIANT-CHECKS.md)采用上游已审的完整主体与能力表，
 额外保留目录重名、层域、能力标识重名和声明集布尔四格。纯显示层和键位接线采用上游
 PR49/50 的源码与断言，旧显示实现不再形成 PR 差异；真实 PTY 退出控制作为额外覆盖保留。
@@ -46,7 +45,7 @@ PR49/50 的源码与断言，旧显示实现不再形成 PR 差异；真实 PTY 
 是分别带源指纹的历史样本。后者二次源读取 0、新 ID 1；前者 code sparse 52.682ms 与 entropy
 退化、dense 全扫优势仍保留。此次源合并不把旧指纹迁成新源码的性能证书，不启用索引缺省。
 
-0.2.7 三项已按最新官方路线图定案，但具体实现、方针/追加判据收口与真实录制尚待完成。
+官方 PR53 已实现 ask-ruler-2 的轮内一次裁断、ask/raised 与 ask/ruling 事件、结论回传以及 Lower.putBlob / Entry.blob 真源 ID 携带；本组合直接保留官方类型与行为。整段 C 的非静默诊断与真实前缀录制仍按各自口径判断。
 冻结成本事件、serve 三项前置审批、默认索引、native 触发条件与发布/合并门保持独立。
 PR23 仍只作前置审批输入，不当成已批或直接合入的 serve 实现。T19 后续阶段按官方节奏。
 
@@ -61,3 +60,11 @@ PR23 仍只作前置审批输入，不当成已批或直接合入的 serve 实�
 execute 文件出现一次已见 Node cloned-data 传输错误，随后 execute/两份网测试 26/26。
 真实装配/View/M0 19/19；PTY 的旧启动夹具在新异步键位读取下互等，修正 readiness 后 6/6。
 这些是适用检查，精确推送 head 的完整 CI 另验。
+
+本次 `5202914` 与官方 `ba4d2392`、`ff40425` 的追加式同步保留各方祖先：采用官方 AGENTS、U18 事件/固定尺与 M2 ID 来源；已接受的 `completeEndOf`/`readFully` 与已验证的初始化/append-close 栅栏共用原字节读法。可选搜索/索引候选仍逐站审查；`5202914` 的绿 CI 属于旧 base，不借给新组合。
+
+新的 View 所有权修复在任何 await 之前捕获自有字节，令 Entry、Lower.putBlob 与持久 Delta 使用同一快照；读取与 diff 返回值也不借出内部 Buffer。真源 ID 仍由官方 Lower 端口提供，详见[字节绑定](../design/VIEW-BYTE-OWNERSHIP.md)。纯内存测试和 walk/read 演示实现相同端口，不调用真实 Git。
+
+可选索引管线现在可复用完整、已核 BlobId 的 regex 验证结果；默认宿主仍走原扫描路径，未穷尽、超限或身份变化不安装缓存，详见[缓存边界](grep-verification-cache.md)。[配对读数](performance-next/regex-verification.md)是在上游同步前的固定源码图上量得，保留完整源指纹与冷代价，不作为当前新组合的性能证书；最终实际 View 与持久写入的正确性另在当前组合验证。
+
+官方 ROADMAP §10 的尾段政策采用非破坏恢复：读者保留盘上字节，当前写者遇已观察到的半行先拒绝追加。旧自动 truncate 候选撤回，显式清理仍待决定，见[尾段边界](log-tail-recovery.md)。

@@ -53,6 +53,14 @@ class FakeLower implements Lower {
     return b
   }
 
+  /**
+   * 内容的 id。**假体按内容定**（这一份不碰 git，所以口径由这里给）：同一串字节问两次给同一个 id
+   * ——真源那一侧（`Truth.putBlob`）的性质就是这个。
+   */
+  async putBlob(bytes: Uint8Array): Promise<BlobId> {
+    return `blob:${Buffer.from(bytes).toString('utf8')}` as BlobId
+  }
+
   async stat(path: string): Promise<EntryMeta | null> {
     const own = this.files.get(path)
     if (own !== undefined) {

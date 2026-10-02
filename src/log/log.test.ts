@@ -6,8 +6,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import type { LogEvent } from './events.ts'
-import { LogCorruptError, logDir, openLog, type SyncLevel } from './log.ts'
-import type { AgentId, BranchId, CommitId, LogPos, WriterId } from '../terms.ts'
+import { encodeEvent } from './envelope.ts'
+import { completeEndOf, LogCorruptError, logDir, openLog, readFully, type SyncLevel } from './log.ts'
+import type { AgentId, BranchId, CommitId, LogPos, LogSeq, WriterId } from '../terms.ts'
 
 const REPO = join(import.meta.dirname, '..', '..')
 const HELPER = join(REPO, 'test', 'helpers', 'append-writer.ts')
@@ -102,7 +103,7 @@ test('尾行截断：截到最后一个完整行内的任意字节，都止于�
   rmSync(root, { recursive: true, force: true })
 })
 
-test('整份文件就是一条半行：当作 0 条，序号从 1 重新起', async () => {
+test('整份文件就是一条半行：读为空，写拒绝且保留原字节', async () => {
   const root = tmp()
   const log = openLog(root, { sync: 'never' })
   await log.append('round', ev(1, A('round')))
@@ -114,8 +115,13 @@ test('整份文件就是一条半行：当作 0 条，序号从 1 重新起', as
 
   assert.equal(await countRows(root, 'round'), 0)
   const again = openLog(root, { sync: 'never' })
-  assert.equal(await again.append('round', ev(1, A('round'))), 1)
-  await again.close()
+  try {
+    await assert.rejects(again.append('round', ev(1, A('round'))), /未提交半行/)
+    assert.deepEqual(readFileSync(file), bytes.subarray(0, bytes.length - 5))
+    // 测试独占的生成夹具显式处置后，同一句柄可以重试；产品不会代替用户清理。
+    writeFileSync(file, Buffer.alloc(0))
+    assert.equal(await again.append('round', ev(1, A('round'))), 1)
+  } finally { await again.close() }
   rmSync(root, { recursive: true, force: true })
 })
 
@@ -180,6 +186,95 @@ test('信封里的 writer 与文件名不符 → 拒绝加载', async () => {
     drain(openLog(root, { sync: 'never' }).readByWriter(A('agent/r1/2'))),
     /writer 与文件名不符/,
   )
+  rmSync(root, { recursive: true, force: true })
+})
+
+// ────────────────── 尾部读窗口那一段：短读 · 截点的坐标 · 信封 · 并发初始化
+
+/** 一个只按给定份数吐字节的假句柄：`read` 允许短读，真句柄也一样。 */
+function fakeRead(chunks: readonly number[]): {
+  read: (buf: Buffer, offset: number, length: number, position: number) => Promise<{ bytesRead: number }>
+} {
+  let at = 0
+  return {
+    read: async (buf, offset, length) => {
+      const n = Math.min(chunks[at] ?? 0, length)
+      at++
+      if (n === 0) return { bytesRead: 0 }
+      buf.fill(0x61, offset, offset + n)
+      return { bytesRead: n }
+    },
+  }
+}
+
+test('尾部读窗口：一次读不满的句柄也要读满 · 读不满如实报数 · 起点接着上一趟', async () => {
+  // 一次只给一字节：读满那一段要转到读满为止。
+  assert.equal(await readFully(fakeRead([1, 1, 1, 1, 1, 1, 1, 1]), Buffer.alloc(8), 0), 8, '短读的句柄也要读满')
+  // 提前到了文件尾：如实报出读了多少（0 也是如实）——拒不拒由调用方定。
+  assert.equal(await readFully(fakeRead([3, 3]), Buffer.alloc(8), 0), 6, '读不满要如实报数，不许拿半份窗口当窗口')
+  // 位置那一栏要跟着进度走：每一趟从 `start + 已经读到的字节数` 起。
+  const seen: number[] = []
+  const spy = {
+    read: async (buf: Buffer, offset: number, length: number, position: number) => {
+      seen.push(position)
+      const n = Math.min(2, length)
+      buf.fill(0x62, offset, offset + n)
+      return { bytesRead: n }
+    },
+  }
+  assert.equal(await readFully(spy, Buffer.alloc(6), 100), 6)
+  assert.deepEqual(seen, [100, 102, 104], `每一趟的起点要接着上一趟：${JSON.stringify(seen)}`)
+  console.log(`尾部读窗口读数：一次一字节 × 8 → 读满 8 · 提前 EOF → 报了 6/8 · 起点序列 ${JSON.stringify(seen)}`)
+})
+
+test('截点从原字节算：窗口从半个码点中间开始时，坐标不跟着替换符挪位', async () => {
+  // 头三个字节是"一个汉字的前两字节 + 换行"：解出来那半个码点成了一个替换符。
+  const buf = Buffer.from([0xe4, 0xb8, 0x0a, 0x61, 0x62])
+  assert.equal(completeEndOf(buf), 3, '完整的那一段到换行为止（第 3 个字节）')
+  // 负对照（量的是"为什么"，不是产品行为）：那半个码点解成一个替换符（三个字节），拿解出来的
+  // 字符串再编码回去量，坐标就挪到了 4——原字节上是 3。
+  const viaString = Buffer.from(buf.toString('utf8'), 'utf8').lastIndexOf(0x0a) + 1
+  assert.equal(viaString, 4, '字符串坐标在这份窗口上就是会挪位')
+  assert.equal(completeEndOf(Buffer.from('没有换行的一段', 'utf8')), 0, '一条完整行都没有 → 0')
+  assert.equal(completeEndOf(Buffer.from('a\nb\n', 'utf8')), 4, '整段都完整 → 窗口末尾')
+  console.log(`截点读数：原字节 → 3 · 拿字符串算会得到 ${viaString}`)
+})
+
+test('尾部取序号那一路也核对信封：最后一条完整行的 writer 不是这一份 → 拒绝恢复', async () => {
+  const root = tmp()
+  const file = logFile(root, 'round')
+  mkdirSync(dirname(file), { recursive: true })
+  // 一条**完好**的信封写进 `round.jsonl`（crc 自洽、行也完整）：文件名与行都合法，只有信封里的
+  // writer 是另一份——"改名或拷错"之后就是这个形状。
+  writeFileSync(file, encodeEvent(1 as LogSeq, A('other') as WriterId, ev(1, A('other'))) + '\n')
+  await assert.rejects(
+    openLog(root, { sync: 'never' }).append('round', ev(2, A('round'))),
+    /writer 与文件名不符/,
+  )
+  rmSync(root, { recursive: true, force: true })
+})
+
+test('同一个 writer 的并发追加：初始化只做一次，序号不重号', async () => {
+  const root = tmp()
+  // **接着一份已有的日志往下写**（常见形状，也是这一条要量形状：文件已在、两笔同时在飞）。
+  const first = openLog(root, { sync: 'never' })
+  assert.equal(await first.append('round', ev(1, A('round'))), 1)
+  await first.close()
+
+  const log = openLog(root, { sync: 'never' })
+  // 两笔同时在飞：没有那一份在飞的初始化，两次 `state(w)` 各开一个句柄、各自从尾部读一次，
+  // 两个都读到同一条（序号 1）——"同一 writer 内序号唯一"当场破。
+  const [a, b] = await Promise.all([
+    log.append('round', ev(2, A('round'))),
+    log.append('round', ev(3, A('round'))),
+  ])
+  await log.close()
+  assert.deepEqual([a, b].sort((x, y) => x - y), [2, 3], `两笔并发的序号重了：${String(a)} · ${String(b)}`)
+  const seqs = readFileSync(logFile(root, 'round'), 'utf8')
+    .trimEnd()
+    .split('\n')
+    .map((line) => (JSON.parse(line) as { seq: number }).seq)
+  assert.deepEqual(seqs.slice().sort((x, y) => x - y), [1, 2, 3], `日志里的序号重了或跳了：${JSON.stringify(seqs)}`)
   rmSync(root, { recursive: true, force: true })
 })
 

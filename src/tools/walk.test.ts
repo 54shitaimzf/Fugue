@@ -7,6 +7,7 @@ import { loadView } from '../view/view.ts'
 import { createToolHost } from './host.ts'
 import { createRoots } from '../roots/roots.ts'
 import { createCachedWalkDetailed, WALK_LIMITS } from './walk.ts'
+import { memoryBlobs } from '../../test/helpers/memory-blobs.ts'
 
 function row(name: string, kind: EntryKind = 'file'): DirEntry {
   return { name, kind, mode: kind === 'dir' ? 0o40000 : 0o100644, size: 0, id: '' }
@@ -126,7 +127,7 @@ test('late old success/failure cannot discard a newer cached generation', async 
 test('actual ToolHost invalidates after write, rename, chmod, tombstone and recreation', async () => {
   const view = await loadView({ async *readByWriter() {} }, 'round', { lower: {
     base: null,
-    async readBlob() { throw new Error('no lower blobs') },
+    ...memoryBlobs(),
     async stat() { return null },
     async read() { return null },
     async list() { return [] },
@@ -178,7 +179,7 @@ test('detailed walk reports depth and rows independently without changing the ca
 test('ToolHost detailed and legacy reads reuse the same cached enumeration', async () => {
   const view = await loadView({ async *readByWriter() {} }, 'round', { lower: {
     base: null,
-    async readBlob() { throw new Error('no lower blobs') },
+    ...memoryBlobs(),
     async stat() { return null }, async read() { return null }, async list() { return [] },
   } })
   await view.write('a', Buffer.from('a'))

@@ -47,6 +47,7 @@ import type { Stub } from './execute.ts'
 import { HarnessError, createRuntime } from '../runtime/step.ts'
 import type { AgentHandle, CallModel, StepResult, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
 import { planBudget } from '../runtime/budget.ts'
+import { takeAsks } from './handback.ts'
 import { calibrate, ratioOf, truthOf } from '../runtime/calib.ts'
 import { assemble } from '../assemble/assemble.ts'
 import { sourcesFor, stepsLeftTail } from '../assemble/sources.ts'
@@ -684,6 +685,8 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
 
   const commits: LogSeq[] = []
   const handoffs: string[] = []
+  /** 轮内裁断回来的那几句结论（U18 甲案）：挂到下一步的「信号摘要」上，**只带结论**。 */
+  const notes: string[] = []
   /** 这一格已经量到的那些比值（真 ÷ 估；每次调用最多加一份）。 */
   const ratios: number[] = []
   let handle: AgentHandle = { ...ask.handle, agent, state: ask.state }
@@ -709,7 +712,8 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       stopped = budget.why
       break
     }
-    const r: StepResult = await runtime.step(handle, new AbortController().signal)
+    const signal = new AbortController().signal
+    const r: StepResult = await runtime.step(handle, signal)
     steps += 1
     if (r.outcome.kind === 'failed') {
       // **失败要报出来**：它不是"干完了"。`why` 是短分类（`cut-stream` · `max-tokens` · …）。
@@ -720,7 +724,30 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     // 比一次。真读数在调用之后才有，所以它改的是下一步，不是当步；没有读数就不修。
     const ratio = ratioOf(truthOf(r.outcome.usage), budget.raw)
     if (ratio !== null) ratios.push(ratio)
-    handle = { ...handle, state: r.next }
+    // **轮内收下**（U18 甲案 · 架构 § 23 的 U18 · 路线图 0.2.7 行 ②）：这一格把问题带回来了，
+    // 持轮者**当场**判一次——不积累上下文的一次裁断（复用装配出来的 A 区 · 契约 + 问题 + 固定尺
+    // 走近因），判决落事件；进人那一档把**问题原样**转到人那道门口。判不了的那一档也走这一条。
+    //
+    // **推敲不进任何人的 C 区**：这里只把那句结论（判词）收进 `notes`，下一步挂到那一格的
+    // 「信号摘要」上；裁断读到的上下文与模型的原始回复哪儿都不落。
+    if (r.asks !== undefined && r.asks.length > 0) {
+      const taken = await takeAsks({
+        log,
+        writer,
+        agent,
+        contract,
+        task: handle.state.task,
+        asks: r.asks,
+        aZone: prefixOf(handle).zoneA,
+        call: ask.call as CallModel,
+        target: handle.target,
+        adapter: handle.adapter,
+        model: handle.wireModel,
+        signal,
+      })
+      notes.push(taken.note)
+    }
+    handle = { ...handle, state: notes.length === 0 ? r.next : { ...r.next, signals: [...r.next.signals, ...notes] } }
     if (r.outcome.kind === 'done') break
     // **交一次就够**（缺省只交一次）：触发点是一个数，而"这一格该不该换人"不是每一步都重新判的
     // ——反复交接会把同一格切成三四段，而每一段都要重读一遍 Zone A + Zone B。

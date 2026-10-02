@@ -3,6 +3,7 @@
 // FUGUE_ROOT=<checkout> 用同一份固定语料比较另一份实现；不使用 git/模型/执行面。
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { memoryBlobs } from '../test/helpers/memory-blobs.ts'
 
 const root = resolve(process.env.FUGUE_ROOT ?? process.cwd())
 const { loadView } = await import(pathToFileURL(join(root, 'src/view/view.ts')).href)
@@ -10,7 +11,7 @@ const { createToolHost } = await import(pathToFileURL(join(root, 'src/tools/host
 const { createRoots } = await import(pathToFileURL(join(root, 'src/roots/roots.ts')).href)
 const view = await loadView({ async *readByWriter() {} }, 'round', { lower: {
   base: null,
-  async readBlob() { throw new Error('empty lower has no blobs') },
+  ...memoryBlobs(),
   async stat() { return null },
   async read() { return null },
   async list() { return [] },

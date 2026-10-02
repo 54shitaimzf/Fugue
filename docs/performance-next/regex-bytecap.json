@@ -1,0 +1,1087 @@
+{
+  "schema": 1,
+  "node": "v24.19.0",
+  "before": {
+    "commit": "93767476c31f31f0057799154c3d87fe5f00a511",
+    "sourceHashes": {
+      "src/tools/execute.ts": "272cd3c1ce0000f9fc3945bbb4e1c518ca7736874e6fe2b4d9a588b5d1b3517e",
+      "src/tools/host.ts": "0e1416ae3f0bc38bfbe650f3a73a1dd63b13e5d3d49e52a6e2dbac8f0540e305",
+      "src/tools/search-receipt.ts": "e88a85d18d9f1cd7a07731aab56028a211e025051e5074f4df1a0dfad7241192",
+      "src/tools/walk.ts": "27ac24c25c86e8a1e7f4f541baff82e8f0802114c23a5ffe4503c55dad0beaa0",
+      "src/search/view-cohort.ts": "e9bc441b15e1f9945c469db7b10a5b7531a797a45bf3517555772e3bb9c1b743",
+      "src/search/cohort-store.ts": "b0b4692e1bd36d7caa10720179dd95db9ebcb83a54bca265ac92de25877f493d",
+      "src/search/cohort-format.ts": "09734b5e789e3a32f27aa90de105285d0455e9e42b6b4e222ae3ebbd5bc3ca88",
+      "src/search/index-format.ts": "7074b2065aad9770c67990b1265ddbf55ef14d50a946954ce8fd6307bb2bcf83",
+      "src/truth/truth.ts": "86d14731213d2b805b26d0131d53f24a417e1ae58862d1bfe21973391caaaad0",
+      "src/truth/git.ts": "5ebf031332af0a633911bae006428c0c3a79d418c08a49e9cd01861bd6ca00db",
+      "src/view/view.ts": "e0b01dd413deec233ddcf445f1dfabc7470e8f0acec2d645752552ce80e76014",
+      "src/view/lower.ts": "5f1cf9e40882e51a6c6b53e994301d14a32bf51b0d9417a86f44fdf7a85768c6",
+      "src/log/log.ts": "4d37059d6f4eabdf9ea43eee6d1ea7d8ba78beb97f55e9a50b4aaffc214b510e",
+      "src/roots/roots.ts": "ad6091a3ea0f97ecbd4563c6a2a3359f5a5864848468dd8fcd85480295e18fa3",
+      "src/round/head.ts": "c49f9ff50b7cbbfc11426e1c89af9fe244b55d7553ab03dfb7828ccf171c04dd"
+    }
+  },
+  "after": {
+    "commit": "9dbf5134c30afd0b4073fceeaca99a7bf29b136c",
+    "sourceHashes": {
+      "src/tools/execute.ts": "4aaecb220f9b6dcc513538a34b07ee3eabbe20098b73da2b345fe25852bc2824",
+      "src/tools/host.ts": "166cb23713e0538a101cdb71b725810ae9750ae46ed9b0622825df09e852163a",
+      "src/tools/search-receipt.ts": "e88a85d18d9f1cd7a07731aab56028a211e025051e5074f4df1a0dfad7241192",
+      "src/tools/walk.ts": "27ac24c25c86e8a1e7f4f541baff82e8f0802114c23a5ffe4503c55dad0beaa0",
+      "src/search/view-cohort.ts": "e9bc441b15e1f9945c469db7b10a5b7531a797a45bf3517555772e3bb9c1b743",
+      "src/search/cohort-store.ts": "b0b4692e1bd36d7caa10720179dd95db9ebcb83a54bca265ac92de25877f493d",
+      "src/search/cohort-format.ts": "09734b5e789e3a32f27aa90de105285d0455e9e42b6b4e222ae3ebbd5bc3ca88",
+      "src/search/index-format.ts": "7074b2065aad9770c67990b1265ddbf55ef14d50a946954ce8fd6307bb2bcf83",
+      "src/truth/truth.ts": "86d14731213d2b805b26d0131d53f24a417e1ae58862d1bfe21973391caaaad0",
+      "src/truth/git.ts": "5ebf031332af0a633911bae006428c0c3a79d418c08a49e9cd01861bd6ca00db",
+      "src/view/view.ts": "e0b01dd413deec233ddcf445f1dfabc7470e8f0acec2d645752552ce80e76014",
+      "src/view/lower.ts": "5f1cf9e40882e51a6c6b53e994301d14a32bf51b0d9417a86f44fdf7a85768c6",
+      "src/log/log.ts": "4d37059d6f4eabdf9ea43eee6d1ea7d8ba78beb97f55e9a50b4aaffc214b510e",
+      "src/roots/roots.ts": "ad6091a3ea0f97ecbd4563c6a2a3359f5a5864848468dd8fcd85480295e18fa3",
+      "src/round/head.ts": "c49f9ff50b7cbbfc11426e1c89af9fe244b55d7553ab03dfb7828ccf171c04dd",
+      "src/tools/grep-verifier.ts": "035417a757bcd64c70fb73a1d6e247e6c2e052af34fc00cd4c9957222b0d8d11"
+    }
+  },
+  "scriptSha256": "72dd6d3e20a21a2324cbace4f7e8f32e91a5d0acdc3cc03e845a7fe681a111e3",
+  "generated": {
+    "files": 512,
+    "fileBytes": 32768,
+    "bytes": 16777216,
+    "profile": "code",
+    "scenario": "bytecap",
+    "corpusSha256": "2e0d01975c0ae9a3fac389e303e6d79ffda1503e9a5df1a5d18a3141af5430a0"
+  },
+  "cohort": false,
+  "prefetchEnabled": true,
+  "pipeline": "selected cohort with missing artifact",
+  "runs": 2,
+  "fullFaceResultEquality": true,
+  "limits": {
+    "MAX_VERIFICATION_SOURCE_BYTES": 1048576,
+    "MAX_VERIFICATION_RECORD_BYTES": 65536,
+    "MAX_VERIFICATION_MATCHES": 4096,
+    "MAX_VERIFICATION_BYTES": 2097152,
+    "MAX_VERIFICATION_ENTRIES": 1024
+  },
+  "cases": {
+    "bytePressure": {
+      "pattern": "many_hit",
+      "output_mode": "count"
+    }
+  },
+  "trials": [
+    {
+      "trial": 0,
+      "order": [
+        "before",
+        "after"
+      ],
+      "result": {
+        "before": {
+          "bytePressure": {
+            "preparation": null,
+            "coldFirst": {
+              "ms": 147.41144500000019,
+              "cpuUserMs": 209.756,
+              "cpuSystemMs": 27.267,
+              "statCalls": 1536,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "prefetchCalls": 10,
+              "prefetchedIds": 512,
+              "truthDelta": {
+                "gitSpawns": 1,
+                "gitRequests": 15,
+                "blobHits": 512,
+                "blobMisses": 0,
+                "blobEntries": 256,
+                "blobBytes": 8388608,
+                "blobEvictions": 256,
+                "blobCacheBytes": 0,
+                "infoHits": 2048,
+                "infoMisses": 512,
+                "infoEntries": 512
+              },
+              "verification": null,
+              "verificationDelta": null,
+              "indexDelta": {
+                "queries": 10,
+                "diskReads": 1,
+                "sourceReads": 0,
+                "reusedRecords": 0,
+                "prefetches": 0,
+                "builds": 0,
+                "fallbacks": 10,
+                "active": 0
+              },
+              "storeDelta": {
+                "reads": 1,
+                "writes": 0,
+                "bytesRead": 0,
+                "stored": 0,
+                "failures": 1,
+                "closeFailures": 0,
+                "active": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat1": {
+              "ms": 160.4232360000001,
+              "cpuUserMs": 165.273,
+              "cpuSystemMs": 51.617,
+              "statCalls": 1024,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "prefetchCalls": 10,
+              "prefetchedIds": 512,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 10,
+                "blobHits": 512,
+                "blobMisses": 0,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 1024,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": null,
+              "verificationDelta": null,
+              "indexDelta": {
+                "queries": 10,
+                "diskReads": 0,
+                "sourceReads": 0,
+                "reusedRecords": 0,
+                "prefetches": 0,
+                "builds": 0,
+                "fallbacks": 10,
+                "active": 0
+              },
+              "storeDelta": {
+                "reads": 0,
+                "writes": 0,
+                "bytesRead": 0,
+                "stored": 0,
+                "failures": 0,
+                "closeFailures": 0,
+                "active": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat2": {
+              "ms": 147.74579099999983,
+              "cpuUserMs": 129.299,
+              "cpuSystemMs": 35.323,
+              "statCalls": 1024,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "prefetchCalls": 10,
+              "prefetchedIds": 512,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 10,
+                "blobHits": 512,
+                "blobMisses": 0,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 1024,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": null,
+              "verificationDelta": null,
+              "indexDelta": {
+                "queries": 10,
+                "diskReads": 0,
+                "sourceReads": 0,
+                "reusedRecords": 0,
+                "prefetches": 0,
+                "builds": 0,
+                "fallbacks": 10,
+                "active": 0
+              },
+              "storeDelta": {
+                "reads": 0,
+                "writes": 0,
+                "bytesRead": 0,
+                "stored": 0,
+                "failures": 0,
+                "closeFailures": 0,
+                "active": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "restartCold": {
+              "preparation": null,
+              "query": {
+                "ms": 207.08279399999992,
+                "cpuUserMs": 177.767,
+                "cpuSystemMs": 41.506,
+                "statCalls": 1536,
+                "viewReads": 512,
+                "viewBytes": 16777216,
+                "prefetchCalls": 10,
+                "prefetchedIds": 512,
+                "truthDelta": {
+                  "gitSpawns": 1,
+                  "gitRequests": 15,
+                  "blobHits": 512,
+                  "blobMisses": 0,
+                  "blobEntries": 256,
+                  "blobBytes": 8388608,
+                  "blobEvictions": 256,
+                  "blobCacheBytes": 0,
+                  "infoHits": 2048,
+                  "infoMisses": 512,
+                  "infoEntries": 512
+                },
+                "verification": null,
+                "verificationDelta": null,
+                "indexDelta": {
+                  "queries": 10,
+                  "diskReads": 1,
+                  "sourceReads": 0,
+                  "reusedRecords": 0,
+                  "prefetches": 0,
+                  "builds": 0,
+                  "fallbacks": 10,
+                  "active": 0
+                },
+                "storeDelta": {
+                  "reads": 1,
+                  "writes": 0,
+                  "bytesRead": 0,
+                  "stored": 0,
+                  "failures": 1,
+                  "closeFailures": 0,
+                  "active": 0
+                },
+                "ok": true,
+                "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+                "outputBytes": 5642,
+                "earlyTruncated": false
+              }
+            }
+          }
+        },
+        "after": {
+          "bytePressure": {
+            "preparation": null,
+            "coldFirst": {
+              "ms": 235.14715799999976,
+              "cpuUserMs": 249.279,
+              "cpuSystemMs": 68.076,
+              "statCalls": 2048,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "prefetchCalls": 10,
+              "prefetchedIds": 512,
+              "truthDelta": {
+                "gitSpawns": 1,
+                "gitRequests": 15,
+                "blobHits": 512,
+                "blobMisses": 0,
+                "blobEntries": 256,
+                "blobBytes": 8388608,
+                "blobEvictions": 256,
+                "blobCacheBytes": 0,
+                "infoHits": 2560,
+                "infoMisses": 512,
+                "infoEntries": 512
+              },
+              "verification": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 276,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "verificationDelta": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 276,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "indexDelta": {
+                "queries": 10,
+                "diskReads": 1,
+                "sourceReads": 0,
+                "reusedRecords": 0,
+                "prefetches": 0,
+                "builds": 0,
+                "fallbacks": 10,
+                "active": 0
+              },
+              "storeDelta": {
+                "reads": 1,
+                "writes": 0,
+                "bytesRead": 0,
+                "stored": 0,
+                "failures": 1,
+                "closeFailures": 0,
+                "active": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat1": {
+              "ms": 165.71800399999938,
+              "cpuUserMs": 156.965,
+              "cpuSystemMs": 56.076,
+              "statCalls": 1536,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "prefetchCalls": 10,
+              "prefetchedIds": 512,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 10,
+                "blobHits": 512,
+                "blobMisses": 0,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 1536,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": {
+                "hits": 0,
+                "misses": 1024,
+                "sourceReads": 1024,
+                "testedLines": 263168,
+                "verifiedSources": 1024,
+                "rejectedSources": 0,
+                "installed": 1024,
+                "evictions": 788,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "verificationDelta": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 512,
+                "entries": 0,
+                "bytes": 0
+              },
+              "indexDelta": {
+                "queries": 10,
+                "diskReads": 0,
+                "sourceReads": 0,
+                "reusedRecords": 0,
+                "prefetches": 0,
+                "builds": 0,
+                "fallbacks": 10,
+                "active": 0
+              },
+              "storeDelta": {
+                "reads": 0,
+                "writes": 0,
+                "bytesRead": 0,
+                "stored": 0,
+                "failures": 0,
+                "closeFailures": 0,
+                "active": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat2": {
+              "ms": 163.27133799999956,
+              "cpuUserMs": 203.763,
+              "cpuSystemMs": 29.048,
+              "statCalls": 1536,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "prefetchCalls": 10,
+              "prefetchedIds": 512,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 10,
+                "blobHits": 512,
+                "blobMisses": 0,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 1536,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": {
+                "hits": 0,
+                "misses": 1536,
+                "sourceReads": 1536,
+                "testedLines": 394752,
+                "verifiedSources": 1536,
+                "rejectedSources": 0,
+                "installed": 1536,
+                "evictions": 1300,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "verificationDelta": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 512,
+                "entries": 0,
+                "bytes": 0
+              },
+              "indexDelta": {
+                "queries": 10,
+                "diskReads": 0,
+                "sourceReads": 0,
+                "reusedRecords": 0,
+                "prefetches": 0,
+                "builds": 0,
+                "fallbacks": 10,
+                "active": 0
+              },
+              "storeDelta": {
+                "reads": 0,
+                "writes": 0,
+                "bytesRead": 0,
+                "stored": 0,
+                "failures": 0,
+                "closeFailures": 0,
+                "active": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "restartCold": {
+              "preparation": null,
+              "query": {
+                "ms": 211.18076800000017,
+                "cpuUserMs": 231.282,
+                "cpuSystemMs": 53.869,
+                "statCalls": 2048,
+                "viewReads": 512,
+                "viewBytes": 16777216,
+                "prefetchCalls": 10,
+                "prefetchedIds": 512,
+                "truthDelta": {
+                  "gitSpawns": 1,
+                  "gitRequests": 15,
+                  "blobHits": 512,
+                  "blobMisses": 0,
+                  "blobEntries": 256,
+                  "blobBytes": 8388608,
+                  "blobEvictions": 256,
+                  "blobCacheBytes": 0,
+                  "infoHits": 2560,
+                  "infoMisses": 512,
+                  "infoEntries": 512
+                },
+                "verification": {
+                  "hits": 0,
+                  "misses": 512,
+                  "sourceReads": 512,
+                  "testedLines": 131584,
+                  "verifiedSources": 512,
+                  "rejectedSources": 0,
+                  "installed": 512,
+                  "evictions": 276,
+                  "entries": 236,
+                  "bytes": 2089072
+                },
+                "verificationDelta": {
+                  "hits": 0,
+                  "misses": 512,
+                  "sourceReads": 512,
+                  "testedLines": 131584,
+                  "verifiedSources": 512,
+                  "rejectedSources": 0,
+                  "installed": 512,
+                  "evictions": 276,
+                  "entries": 236,
+                  "bytes": 2089072
+                },
+                "indexDelta": {
+                  "queries": 10,
+                  "diskReads": 1,
+                  "sourceReads": 0,
+                  "reusedRecords": 0,
+                  "prefetches": 0,
+                  "builds": 0,
+                  "fallbacks": 10,
+                  "active": 0
+                },
+                "storeDelta": {
+                  "reads": 1,
+                  "writes": 0,
+                  "bytesRead": 0,
+                  "stored": 0,
+                  "failures": 1,
+                  "closeFailures": 0,
+                  "active": 0
+                },
+                "ok": true,
+                "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+                "outputBytes": 5642,
+                "earlyTruncated": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "trial": 1,
+      "order": [
+        "after",
+        "before"
+      ],
+      "result": {
+        "after": {
+          "bytePressure": {
+            "preparation": null,
+            "coldFirst": {
+              "ms": 206.44797800000015,
+              "cpuUserMs": 248.573,
+              "cpuSystemMs": 44.304,
+              "statCalls": 2048,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "prefetchCalls": 10,
+              "prefetchedIds": 512,
+              "truthDelta": {
+                "gitSpawns": 1,
+                "gitRequests": 15,
+                "blobHits": 512,
+                "blobMisses": 0,
+                "blobEntries": 256,
+                "blobBytes": 8388608,
+                "blobEvictions": 256,
+                "blobCacheBytes": 0,
+                "infoHits": 2560,
+                "infoMisses": 512,
+                "infoEntries": 512
+              },
+              "verification": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 276,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "verificationDelta": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 276,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "indexDelta": {
+                "queries": 10,
+                "diskReads": 1,
+                "sourceReads": 0,
+                "reusedRecords": 0,
+                "prefetches": 0,
+                "builds": 0,
+                "fallbacks": 10,
+                "active": 0
+              },
+              "storeDelta": {
+                "reads": 1,
+                "writes": 0,
+                "bytesRead": 0,
+                "stored": 0,
+                "failures": 1,
+                "closeFailures": 0,
+                "active": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat1": {
+              "ms": 172.56491499999902,
+              "cpuUserMs": 190.331,
+              "cpuSystemMs": 33.658,
+              "statCalls": 1536,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "prefetchCalls": 10,
+              "prefetchedIds": 512,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 10,
+                "blobHits": 512,
+                "blobMisses": 0,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 1536,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": {
+                "hits": 0,
+                "misses": 1024,
+                "sourceReads": 1024,
+                "testedLines": 263168,
+                "verifiedSources": 1024,
+                "rejectedSources": 0,
+                "installed": 1024,
+                "evictions": 788,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "verificationDelta": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 512,
+                "entries": 0,
+                "bytes": 0
+              },
+              "indexDelta": {
+                "queries": 10,
+                "diskReads": 0,
+                "sourceReads": 0,
+                "reusedRecords": 0,
+                "prefetches": 0,
+                "builds": 0,
+                "fallbacks": 10,
+                "active": 0
+              },
+              "storeDelta": {
+                "reads": 0,
+                "writes": 0,
+                "bytesRead": 0,
+                "stored": 0,
+                "failures": 0,
+                "closeFailures": 0,
+                "active": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat2": {
+              "ms": 154.89809799999966,
+              "cpuUserMs": 156.881,
+              "cpuSystemMs": 29.152,
+              "statCalls": 1536,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "prefetchCalls": 10,
+              "prefetchedIds": 512,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 10,
+                "blobHits": 512,
+                "blobMisses": 0,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 1536,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": {
+                "hits": 0,
+                "misses": 1536,
+                "sourceReads": 1536,
+                "testedLines": 394752,
+                "verifiedSources": 1536,
+                "rejectedSources": 0,
+                "installed": 1536,
+                "evictions": 1300,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "verificationDelta": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 512,
+                "entries": 0,
+                "bytes": 0
+              },
+              "indexDelta": {
+                "queries": 10,
+                "diskReads": 0,
+                "sourceReads": 0,
+                "reusedRecords": 0,
+                "prefetches": 0,
+                "builds": 0,
+                "fallbacks": 10,
+                "active": 0
+              },
+              "storeDelta": {
+                "reads": 0,
+                "writes": 0,
+                "bytesRead": 0,
+                "stored": 0,
+                "failures": 0,
+                "closeFailures": 0,
+                "active": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "restartCold": {
+              "preparation": null,
+              "query": {
+                "ms": 238.26489299999957,
+                "cpuUserMs": 206.138,
+                "cpuSystemMs": 64.59,
+                "statCalls": 2048,
+                "viewReads": 512,
+                "viewBytes": 16777216,
+                "prefetchCalls": 10,
+                "prefetchedIds": 512,
+                "truthDelta": {
+                  "gitSpawns": 1,
+                  "gitRequests": 15,
+                  "blobHits": 512,
+                  "blobMisses": 0,
+                  "blobEntries": 256,
+                  "blobBytes": 8388608,
+                  "blobEvictions": 256,
+                  "blobCacheBytes": 0,
+                  "infoHits": 2560,
+                  "infoMisses": 512,
+                  "infoEntries": 512
+                },
+                "verification": {
+                  "hits": 0,
+                  "misses": 512,
+                  "sourceReads": 512,
+                  "testedLines": 131584,
+                  "verifiedSources": 512,
+                  "rejectedSources": 0,
+                  "installed": 512,
+                  "evictions": 276,
+                  "entries": 236,
+                  "bytes": 2089072
+                },
+                "verificationDelta": {
+                  "hits": 0,
+                  "misses": 512,
+                  "sourceReads": 512,
+                  "testedLines": 131584,
+                  "verifiedSources": 512,
+                  "rejectedSources": 0,
+                  "installed": 512,
+                  "evictions": 276,
+                  "entries": 236,
+                  "bytes": 2089072
+                },
+                "indexDelta": {
+                  "queries": 10,
+                  "diskReads": 1,
+                  "sourceReads": 0,
+                  "reusedRecords": 0,
+                  "prefetches": 0,
+                  "builds": 0,
+                  "fallbacks": 10,
+                  "active": 0
+                },
+                "storeDelta": {
+                  "reads": 1,
+                  "writes": 0,
+                  "bytesRead": 0,
+                  "stored": 0,
+                  "failures": 1,
+                  "closeFailures": 0,
+                  "active": 0
+                },
+                "ok": true,
+                "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+                "outputBytes": 5642,
+                "earlyTruncated": false
+              }
+            }
+          }
+        },
+        "before": {
+          "bytePressure": {
+            "preparation": null,
+            "coldFirst": {
+              "ms": 144.80647099999987,
+              "cpuUserMs": 92.687,
+              "cpuSystemMs": 53.143,
+              "statCalls": 1536,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "prefetchCalls": 10,
+              "prefetchedIds": 512,
+              "truthDelta": {
+                "gitSpawns": 1,
+                "gitRequests": 15,
+                "blobHits": 512,
+                "blobMisses": 0,
+                "blobEntries": 256,
+                "blobBytes": 8388608,
+                "blobEvictions": 256,
+                "blobCacheBytes": 0,
+                "infoHits": 2048,
+                "infoMisses": 512,
+                "infoEntries": 512
+              },
+              "verification": null,
+              "verificationDelta": null,
+              "indexDelta": {
+                "queries": 10,
+                "diskReads": 1,
+                "sourceReads": 0,
+                "reusedRecords": 0,
+                "prefetches": 0,
+                "builds": 0,
+                "fallbacks": 10,
+                "active": 0
+              },
+              "storeDelta": {
+                "reads": 1,
+                "writes": 0,
+                "bytesRead": 0,
+                "stored": 0,
+                "failures": 1,
+                "closeFailures": 0,
+                "active": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat1": {
+              "ms": 91.87433199999941,
+              "cpuUserMs": 134.033,
+              "cpuSystemMs": 12.411,
+              "statCalls": 1024,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "prefetchCalls": 10,
+              "prefetchedIds": 512,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 10,
+                "blobHits": 512,
+                "blobMisses": 0,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 1024,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": null,
+              "verificationDelta": null,
+              "indexDelta": {
+                "queries": 10,
+                "diskReads": 0,
+                "sourceReads": 0,
+                "reusedRecords": 0,
+                "prefetches": 0,
+                "builds": 0,
+                "fallbacks": 10,
+                "active": 0
+              },
+              "storeDelta": {
+                "reads": 0,
+                "writes": 0,
+                "bytesRead": 0,
+                "stored": 0,
+                "failures": 0,
+                "closeFailures": 0,
+                "active": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat2": {
+              "ms": 90.7524749999975,
+              "cpuUserMs": 75.496,
+              "cpuSystemMs": 15.461,
+              "statCalls": 1024,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "prefetchCalls": 10,
+              "prefetchedIds": 512,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 10,
+                "blobHits": 512,
+                "blobMisses": 0,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 1024,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": null,
+              "verificationDelta": null,
+              "indexDelta": {
+                "queries": 10,
+                "diskReads": 0,
+                "sourceReads": 0,
+                "reusedRecords": 0,
+                "prefetches": 0,
+                "builds": 0,
+                "fallbacks": 10,
+                "active": 0
+              },
+              "storeDelta": {
+                "reads": 0,
+                "writes": 0,
+                "bytesRead": 0,
+                "stored": 0,
+                "failures": 0,
+                "closeFailures": 0,
+                "active": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "restartCold": {
+              "preparation": null,
+              "query": {
+                "ms": 127.9076410000016,
+                "cpuUserMs": 108.367,
+                "cpuSystemMs": 48.044,
+                "statCalls": 1536,
+                "viewReads": 512,
+                "viewBytes": 16777216,
+                "prefetchCalls": 10,
+                "prefetchedIds": 512,
+                "truthDelta": {
+                  "gitSpawns": 1,
+                  "gitRequests": 15,
+                  "blobHits": 512,
+                  "blobMisses": 0,
+                  "blobEntries": 256,
+                  "blobBytes": 8388608,
+                  "blobEvictions": 256,
+                  "blobCacheBytes": 0,
+                  "infoHits": 2048,
+                  "infoMisses": 512,
+                  "infoEntries": 512
+                },
+                "verification": null,
+                "verificationDelta": null,
+                "indexDelta": {
+                  "queries": 10,
+                  "diskReads": 1,
+                  "sourceReads": 0,
+                  "reusedRecords": 0,
+                  "prefetches": 0,
+                  "builds": 0,
+                  "fallbacks": 10,
+                  "active": 0
+                },
+                "storeDelta": {
+                  "reads": 1,
+                  "writes": 0,
+                  "bytesRead": 0,
+                  "stored": 0,
+                  "failures": 1,
+                  "closeFailures": 0,
+                  "active": 0
+                },
+                "ok": true,
+                "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+                "outputBytes": 5642,
+                "earlyTruncated": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "medians": {
+    "before": {
+      "bytePressure": {
+        "coldFirst": 147.41144500000019,
+        "repeat1": 160.4232360000001,
+        "repeat2": 147.74579099999983,
+        "restartCold": 207.08279399999992
+      }
+    },
+    "after": {
+      "bytePressure": {
+        "coldFirst": 235.14715799999976,
+        "repeat1": 172.56491499999902,
+        "repeat2": 163.27133799999956,
+        "restartCold": 238.26489299999957
+      }
+    }
+  },
+  "boundary": "Exact separately imported backend graphs, same process alternating backend order, original concrete host/readBytes identity preserved. Default full actions enable Truth prefetch and an explicitly selected optional cohort pipeline with a missing artifact. --plain preserves default unbound verification; --cohort pays explicit index preparation. Unknown candidates are retained, not pruned. --no-prefetch is an explicitly isolated mechanism ceiling. Prefetch calls/IDs and Git request deltas retain unpaid-source-read warnings on verification hits. View read/stat counters do not replace source ownership. Cold/restart means fresh Truth/View/concrete host, not physical-cold OS cache. Every repeat uses the same host/cache. Corpus seeding and handle construction are outside query clocks; optional cohort preparation is separately fully charged for each session. Full FaceResult (ok/output/optional fields) equality is asserted. Cache retained-byte/entry gauges are logical accounted retention, not RSS. Source, record, total-byte and entry cap fallbacks are measured separately; no universal speed or default index activation claim."
+}

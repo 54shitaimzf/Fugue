@@ -1,40 +1,18 @@
-# 0.2.6：写者恢复未完成尾段后再追加
+# 日志未提交尾段：非破坏读取与写者拒绝
 
-依据ROADMAP §3的崩溃注入维护项，基线bbf2ef1。之前读者会忽略未换行的半行，但重启
-写者只算出下一序号，没有删掉半行；新记录接在旧碎片后，后续重放变成JSON损坏。
-本单元只在写者首次准备该日志时恢复尾段，不让观察者修日志。
+官方 `ff40425` 的 ROADMAP §10 明确保留盘上原字节，恢复即清理的政策尚未决定。本组合撤回旧候选的自动 `truncate`；旧 `0372b73` / `5202914` 的相关证据是历史候选，不能当作当前已接受的清理策略。
 
-仍只读现有64KiB尾窗口，用有界循环填满短读；截点按原字节的LF计算，不按UTF-8解码
-后的字符长度计算，因此半个emoji不会把截点推错。先验紧邻尾段的最后完整行CRC、
-信封writer与文件名，再核文件size/mtime/ctime未在读中改变，才去掉最后LF后的未完成
-字节。首条半行且整文件在窗口内可恢复为空；窗口内无法确认一条完整行则保持拒绝，
-不猜序号、不截掉诊断证据。更早行的全量检查仍属读/重放路径，append没有偷偷全扫历史。
+读者只解析最后 LF 之前的完整段，忽略未终止尾段且不改文件。写者仍用既有 64KiB 尾窗口、`readFully` 短读填充和原字节 `completeEndOf`，先验证最后完整行的 CRC 与 writer；发现任何未提交半行时明确拒绝追加，保留诊断字节。整份文件只有首条半行也拒绝写入；超窗口不能确认完整行时不猜序号。更早历史的全量检查仍在读取/重放路径。
 
-沿用既有整条写命令writer fence；同writer的第二句柄取不到锁，在碰日志字节前拒绝。
-同句柄并发首写共用按writer键控的初始化Promise，不能各开fd再互相截断已完成行；
-初始化失败清pending以便显式修复后重试。close先关新append入口，观察已接受的初始化/
-串行写完成，等待已有fd的关闭尝试后才释放fence；close幂等，返回后不许迟到写者重新发布fd或追加。
-跟踪量只随既有正在接受的调用数增长，settle清理，没有新增无限后台队列或改close错误口径。
-截断是FileHandle.truncate对已打开文件的一次操作，必须完成后才让O_APPEND写新EOF。
-无新增事件/schema/编码/CRC；完整坏行、foreign-writer行、opaque大尾段或恢复中发现
-文件变化时不截断。检查与截断之间依赖合法写者遵守同一fence，不承诺阻挡绕锁的主动
-同UID文件修改。只读重放继续忽略未换行尾段，日志字节与目录项不由读者改变。
+这一写者拒绝是 PR45 中的可靠性修复提案：官方主线虽然保留尾段，却仍可能向半行后追加，让原本可读的前缀之后产生坏整行。拒绝避免继续扩大损坏，不替用户决定该删除、保留或迁出哪些字节。用户需要先确认恢复处置再重试；产品没有新增清理命令、事件或自动修复。测试中的人工修复只操作本测试独占的生成夹具。
 
-架构§9.5的耐久档位保留：each在新事件写完后sync，batch按原计数刷，never仍交OS；
-**不因为恢复偷偷给never加fsync**。测试观察truncate→write→sync（each）与truncate→write
-（batch/never）；完整尾行不做恢复截断。sync失败向调用者报错，不能把已写入的完整行
-假说成不存在或已获耐久确认，后续写者按实际完整尾行的序号接续。这里是进程/IO故障
-注入与调用顺序证据，不是断电硬件证明，也不是一等档全量验收。
+完整坏行、foreign writer 与顶层重复键先报原错误；后面的半行不能让它们被忽略。整条写命令的 writer fence 保留；同句柄首次初始化按 writer 共用 Promise，失败后可重试。close 关闭新 append 入口，等待已接受的初始化与串行写、观察关闭尝试，再释放 fence；迟到写拒绝。这里依赖合法写者遵守 fence，不承诺抵抗绕锁的同 UID 主动修改。
+
+完整尾行的追加仍遵从架构 §9.5 的 each/batch/never 刷盘档位。没有自动截断或额外恢复 fsync；写入/同步故障的原错误仍交调用者判断，不声称断电硬件证明。原始完整行、事件、编码与 CRC 不变。
 
 ```sh
-node tools/test-entry.js fast src/log/tail-recovery.test.ts src/log/log.test.ts src/log/envelope.test.ts src/log/cache.test.ts src/log/hold.test.ts src/view/replay.test.ts
-node tools/check-targets.js
-node tools/check-events.js
+node tools/test-entry.js fast src/log/tail-recovery.test.ts src/log/maintenance-integration.test.ts src/log/log.test.ts
+node tools/test-entry.js real src/tools/index-acceptance.test.ts
 ```
 
-最终16条在未改动基线为2通过/14失败，修改后16/16：覆盖each/batch/never、UTF-8半码点、
-首条半行、完整坏CRC/不同writer/超窗口、已有锁拒绝、短读/早零、恢复中追加与sync失败；
-另覆盖跨64KiB多行前缀、并发首写共享、失败重试、不同writer独立与close等待/晚写拒绝。
-正常旧行和合法字节前缀完整保留；既有重放/缓存/持锁套件同时验证。相关日志/重放focused
-54/54，读数跟提交序列记录；duplicate-key读取拒绝位于独立分支，本单元不用它代替既有
-坏CRC拒绝。
+当前控制覆盖不同 flush 档、UTF-8 半码点、跨 64KiB 前缀、首条半行、短读/早零、完整坏行优先、持锁拒绝、同句柄初始化共享、失败后显式修复重试与 close 栅栏。精确当前组合检查与推送 CI 另按 head 记录，不沿用旧自动截断候选的通过数。

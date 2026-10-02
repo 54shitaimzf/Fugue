@@ -97,7 +97,7 @@ test('① 到了触发点：agent/handoff 在日志里 · 正文非空 · 新 Ag
     const plan = planBudget({ decl: DECL, prefix, tools: TOOLS, seed: SEED, handoff: handoffOf(2_000) })
     assert.equal(plan.kind, 'restart', `这一份状态该判交接：${plan.why}`)
 
-    // 后继的名字**这一份不算**（0.2.9 ⑤）：名字由调用方给（`round/driver.ts` 交接那一步），
+    // 后继的名字**这一份不算**（清障批 ⑤）：名字由调用方给（`round/driver.ts` 交接那一步），
     // 而那条规则逐字的断言在 `round/driver.test.ts` 里真跑出来的 `agent/handoff` 上。
     const successor = 'agent-1-2' as AgentId
     const out = await handoffAt({

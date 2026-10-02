@@ -71,7 +71,7 @@ export async function config(
         )
       }
       const value = parseConfigValue(raw)
-      // `ui.keys` 的键值在**写**这一面就过一遍 `keymapOf`（0.2.9 ⑧ 接线：它从无消费者升格为
+      // `ui.keys` 的键值在**写**这一面就过一遍 `keymapOf`（清障批 ⑧ 接线：它从无消费者升格为
       // 合法校验）。手改文件配错的那一档由 TUI 读那面逐格照缺省走并印出为什么；写时拦住并说
       // 为什么，人才知道键串该怎么写。形状读那面也核，这里核语义。
       const segs = keySegments(key)

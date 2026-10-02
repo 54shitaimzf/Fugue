@@ -112,7 +112,7 @@ export async function assembleCmd(
     }
     return violations.length === 0 ? 0 : 1
   } catch (err) {
-    // **三个析取项里前两项是恒真的**（0.2.9 ③）：`SourceError` 与 `ConfigError` 都是
+    // **三个析取项里前两项是恒真的**（清障批 ③）：`SourceError` 与 `ConfigError` 都是
     // `class … extends Error {}`（`assemble/sources.ts:155` · `config.ts:39`），所以
     // `err instanceof Error` 早就把前两项包住了——留着它们的唯一效果是让人以为这里分了三种。
     // 收敛成一项，行为一个字节不变：`cli/chain.test.ts` 的坏协议名那条 · `assemble/constraints.test.ts` ⑥

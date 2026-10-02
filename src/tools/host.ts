@@ -30,6 +30,7 @@ import type { ActionAsk, AskItem, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, T
 import { refuse } from './execute.ts'
 import { shellArgv } from './argv.ts'
 import { digestOf } from '../runtime/restart.ts'
+import { bindGrepVerifier } from './grep-verifier.ts'
 import { lstatSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ForkStrategy } from '../terms.ts'
@@ -494,7 +495,7 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
    * 补这两个口的地方只有一处（`declaredNow()`，下面那个函数），所以这里把"两栏都给全"写进类型
    * ——`DeclaredSet` 把那两栏写成可选，那是为 `createReclaim().declare()` 那种**裸声明集**留的
    * （`cli/cmd/execute.ts` 那一侧走的就是裸的那一份）。类型写全了，消费点就不必再判"它有没有"
-   * ——原先那一判的假支正是 0.2.9 ④ 撤掉的那一处。
+   * ——原先那一判的假支正是 清障批 ④ 撤掉的那一处。
    */
   type FilledDeclaredSet = DeclaredSet & {
     readonly isDeclared: (rel: RelPath) => readonly RelPath[]
@@ -555,7 +556,7 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
       //   · **视图里压根没有它**（先删、随后又在同名路径下建了目录那一类）。
       // 不跳的话，`applyEdit` 会当场报“删除 `<p>`：这个路径不存在”（本地实测撞到的就是它）。
       if (d.kind === 'delete') {
-        // **这里原先有一个"没有 `isTombstone` 就自己重算一遍"的兜底**（0.2.9 ④ 撤了）：
+        // **这里原先有一个"没有 `isTombstone` 就自己重算一遍"的兜底**（清障批 ④ 撤了）：
         // `declaredNow()` 是这段里 `declared` 唯一的来源，而它两个口一起给（`FilledDeclaredSet`
         // 就是把这件事写进类型的地方）——所以那一支按构造不可达，它只是把 `:470` 那个 lambda
         // 逐字重算了一遍。留着它的效果是让读的人以为这里有两种声明集。
@@ -566,7 +567,7 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
       await applyEdit({ view, truth: cfg.truth, log: cfg.log, writer: cfg.writer }, d)
     }
   }
-  return {
+  const host: ToolHostHandle = {
     readBytes: readBytesOf,
     ...(cohortIndex !== undefined ? {
       filterCandidates: (paths: readonly string[], required: readonly string[]) => cohortIndex.filterCandidates(paths, required),
@@ -707,6 +708,10 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
 
     deny,
   }
+  // Cached verification is part of the existing optional index pipeline. Plain
+  // hosts retain their original read/decode/test path, without a new config knob.
+  if (blobIndex !== undefined || cohortIndex !== undefined) bindGrepVerifier(host, view)
+  return host
 }
 
 /** 从 `<root>` 起一份真源与一份日志（模型侧那一面**不经过命令行**的一条路：`B5` 的断言 ⑤ 用它）。 */

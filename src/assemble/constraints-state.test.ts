@@ -28,16 +28,14 @@ const MODEL = defaultModelOf(BUILTIN_CATALOG)
 const AGENT = 'constraint-witness' as AgentId
 const WHO: AgentCoord = { id: AGENT, branch: 'refs/heads/main', outputPaths: ['deliver/result.md'] }
 
-/** Characterize the accepted developer policy, without treating its known leak as clean. */
+/** Read the actual accepted developer policy; real environment collisions remain separately characterized. */
 function policyViolations(protocol: Protocol, state: AssembleState) {
   const { segments, prefix } = assembled(protocol, state)
   const facts = envFacts()
   const violations = checkConstraints(protocol, segments, prefix, 'unchanged state', facts, prefix)
-  assert.deepEqual(violations.filter(v => v.kind === 'materialized').map(v => [v.where, v.detail]), [
-    ['项目方针', '这一段（A 区）里有绝对路径：/home/ubuntu/fugue'],
-  ])
+  assert.deepEqual(violations.filter(v => v.kind === 'materialized'), [], 'accepted main cleared the real developer-policy paths')
   // Small process IDs can also collide with the policy's section/example numbers.
-  assert.ok(violations.every(v => v.kind === 'materialized' || v.kind === 'env'), violations.map(formatViolation).join('\n'))
+  assert.ok(violations.every(v => v.kind === 'env'), violations.map(formatViolation).join('\n'))
   for (const violation of violations.filter(v => v.kind === 'env')) {
     assert.equal(violation.where, '项目方针', 'real projected sources must not introduce environment identities')
     const lead = 'A 区那一段里有环境标识：'

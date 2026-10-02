@@ -13,7 +13,6 @@
 // 三 · **`diff` 给的是变更序列，不是净差异。** 净差异里一次改名会退化成"删一条 + 加一
 //      条"，而 § 8.5 要求 `applyDelta` 覆盖 `rename` 这一情形。序列是重放的片段：把它
 //      交给 `applyDelta`，与交给任何一批 delta 没有区别。
-import { createHash } from 'node:crypto'
 import { MODE_FILE, normMode } from '../delta.ts'
 import type { Delta } from '../delta.ts'
 import { EMPTY_TREE_ID } from '../entries.ts'
@@ -22,6 +21,7 @@ import { agentFor } from '../identity.ts'
 import { PathShapeError } from '../path-shape.ts'
 import type { LogEvent, LogReader } from '../log/events.ts'
 import type { AgentId, BlobId, CommitId, RelPath, ViewRev, WriterId } from '../terms.ts'
+import { cloneDelta, copyBytes } from './owned.ts'
 import type {
   Entry,
   LoadViewOptions,
@@ -37,31 +37,20 @@ const DIR_MODE = 0o40000
 const SYMLINK_MODE = 0o120000
 
 /**
- * 内容的 blob id：`sha1("blob <字节数>\0" + 内容)`。
+ * **内容的 id 不在这里算。** 算法是仓库的性质（sha1 与 sha256 是两把尺），所以每一条 `Entry` 自己
+ * 带着真源给的那一份：`view/write` 事件与文件快照条目里本来就有 id；记录里没有 id 的两处
+ * （`view/symlink` 事件 · 软链快照条目）问下层要（`Lower.putBlob`）。
  *
- * **不发一个进程**——上层的内容就在手里。下层文件的 id 来自 `list` 的行，也不读内容；
- * 于是"把整棵树读出来"这件事不读一个字节的 blob。代价是一处已知边界：sha256 仓库里
- * 这个算法不是 sha1（与 M1 那处未测的边界同源，见交付说明）。
+ * 这里原先那份按 sha1 自己算的实现（`sha1("blob <n>\0" + 内容)`）已删：它算出来的 id 在 sha256
+ * 库里 git 不认，而症状是静默的——`mktree` 当场拒才知道（`tools/probe-hashfmt.sh` 的读数）。
  */
-const blobIds = new WeakMap<Uint8Array, BlobId>()
-function blobIdOf(bytes: Uint8Array): BlobId {
-  const hit = blobIds.get(bytes)
-  if (hit !== undefined) return hit
-  const h = createHash('sha1')
-  h.update(Buffer.from(`blob ${bytes.length}\0`, 'utf8'))
-  h.update(bytes)
-  const id = h.digest('hex')
-  blobIds.set(bytes, id)
-  return id
-}
 
 function metaOf(e: Entry): EntryMeta {
   if (e.kind === 'file') {
-    return { kind: 'file', mode: e.mode, size: e.bytes.length, id: blobIdOf(e.bytes) }
+    return { kind: 'file', mode: e.mode, size: e.bytes.length, id: e.blob }
   }
   if (e.kind === 'symlink') {
-    const bytes = Buffer.from(e.target, 'utf8')
-    return { kind: 'symlink', mode: SYMLINK_MODE, size: bytes.length, id: blobIdOf(bytes) }
+    return { kind: 'symlink', mode: SYMLINK_MODE, size: Buffer.byteLength(e.target, 'utf8'), id: e.blob }
   }
   return dirMeta()
 }
@@ -105,16 +94,6 @@ function ancestorsOf(p: string): string[] {
 
 function under(p: string, dir: string): boolean {
   return dir === '' ? p !== '' : p.startsWith(dir + '/')
-}
-
-function cloneDelta(d: Delta): Delta {
-  switch (d.kind) {
-    case 'add':
-    case 'modify':
-      return { ...d, bytes: d.bytes.slice() }
-    default:
-      return { ...d }
-  }
 }
 
 class MemoryView implements View {
@@ -254,7 +233,7 @@ class MemoryView implements View {
     const p = pathOf(path)
     const own = this.upper.get(p)
     if (own !== undefined) {
-      if (own.kind === 'file') return own.bytes.slice()
+      if (own.kind === 'file') return copyBytes(own.bytes)
       // 符号链接的字节就是它的 target——git 就是这么存的，M1 的 `readAt` 也这么给。
       if (own.kind === 'symlink') return Buffer.from(own.target, 'utf8')
       return null
@@ -304,15 +283,17 @@ class MemoryView implements View {
   private async copyUp(p: string): Promise<Entry> {
     const own = this.upper.get(p)
     if (own !== undefined && own.kind !== 'tombstone') return own
-    const meta = this.lower.base === null ? null : await this.lower.stat(p)
+    const found = this.lower.base === null ? null : await this.lower.stat(p)
+    const meta = found === null ? null : { ...found }
     if (meta === null) throw new Error(`路径不存在：${p}`)
     if (meta.kind === 'file') {
       const bytes = await this.lower.read(p)
-      return { kind: 'file', bytes: bytes ?? new Uint8Array(0), mode: meta.mode }
+      // 下层的 id 来自 `stat` 那一行（M1 从树里读的），**一个字节的内容都不用读来算它**。
+      return { kind: 'file', bytes: copyBytes(bytes ?? new Uint8Array(0)), mode: meta.mode, blob: meta.id as BlobId }
     }
     if (meta.kind === 'symlink') {
       const bytes = await this.lower.read(p)
-      return { kind: 'symlink', target: bytes === null ? '' : Buffer.from(bytes).toString('utf8') }
+      return { kind: 'symlink', target: bytes === null ? '' : Buffer.from(bytes).toString('utf8'), blob: meta.id as BlobId }
     }
     if (meta.kind === 'gitlink') {
       throw new Error(`${p} 是一个 submodule（gitlink）：它指的是另一个仓库的一个提交，视图不改它`)
@@ -390,16 +371,43 @@ class MemoryView implements View {
     }
   }
 
+  /**
+   * 内容的那个 id：**记录里带着的就用它**，记录里没有的问下层（`Lower.putBlob`）。
+   *
+   * 两个来源都是真源给的，所以这一份里没有一处自己算内容地址。带 id 的那两处是 `view/write` 事件
+   * 与文件快照条目；不带的那两处是 `view/symlink` 事件与软链快照条目——它们只有 `target` 一条字符串，
+   * 而对象地址要问对象库。
+   */
+  private async idFor(bytes: Uint8Array, known?: BlobId): Promise<BlobId> {
+    return known ?? (await this.lower.putBlob(bytes))
+  }
+
   /** 只改内存。重放与活路径共用它——**两者语义不同才是 bug 的来源**。 */
-  private async applyOne(d: Delta): Promise<void> {
+  private async applyOne(d: Delta, known?: BlobId): Promise<void> {
     switch (d.kind) {
       case 'add':
-      case 'modify':
-        this.setSlot(pathOf(d.path), { kind: 'file', bytes: d.bytes.slice(), mode: normMode(d.mode) })
+      case 'modify': {
+        const path = pathOf(d.path), mode = normMode(d.mode)
+        const bytes = copyBytes(d.bytes)
+        const blob = await this.idFor(bytes, known)
+        this.setSlot(path, {
+          kind: 'file',
+          bytes,
+          mode,
+          blob,
+        })
         return
-      case 'symlink':
-        this.setSlot(pathOf(d.path), { kind: 'symlink', target: d.target })
+      }
+      case 'symlink': {
+        const path = pathOf(d.path), target = d.target
+        const blob = await this.idFor(Buffer.from(target, 'utf8'), known)
+        this.setSlot(path, {
+          kind: 'symlink',
+          target,
+          blob,
+        })
         return
+      }
       case 'delete': {
         const p = pathOf(d.path)
         for (const k of this.subtree(p)) this.dropSlot(k)
@@ -418,15 +426,17 @@ class MemoryView implements View {
         return
       }
       case 'chmod': {
+        // **id 跟着内容走**：改模式不改内容，所以对象地址原地不动（带着它比再问一次便宜，也少一次
+        // 到真源的路）。
         const p = pathOf(d.path)
         const own = this.upper.get(p)
         if (own !== undefined && own.kind === 'file') {
-          this.setSlot(p, { kind: 'file', bytes: own.bytes, mode: normMode(d.mode) })
+          this.setSlot(p, { kind: 'file', bytes: own.bytes, mode: normMode(d.mode), blob: own.blob })
           return
         }
         const src = await this.copyUp(p)
         if (src.kind !== 'file') throw new Error(`chmod 只对文件有意义：${p} 是 ${src.kind}`)
-        this.setSlot(p, { kind: 'file', bytes: src.bytes, mode: normMode(d.mode) })
+        this.setSlot(p, { kind: 'file', bytes: src.bytes, mode: normMode(d.mode), blob: src.blob })
         return
       }
     }
@@ -434,7 +444,7 @@ class MemoryView implements View {
 
   async write(path: RelPath, bytes: Uint8Array, mode: number = MODE_FILE): Promise<ViewRev> {
     const p = pathOf(path)
-    const d: Delta = { kind: this.kindFor(p), path: p, bytes, mode: normMode(mode) }
+    const d: Delta = { kind: this.kindFor(p), path: p, bytes: copyBytes(bytes), mode: normMode(mode) }
     await this.check(d)
     await this.applyOne(d)
     return this.record(d)
@@ -481,8 +491,10 @@ class MemoryView implements View {
   }
 
   async applyDelta(deltas: Delta[]): Promise<ViewRev> {
+    // Capture both bytes and primitive labels before the first check/put await.
+    const captured = deltas.map(cloneDelta)
     let last = this.cur
-    for (const d of deltas) {
+    for (const d of captured) {
       await this.check(d)
       await this.applyOne(d)
       last = this.record(d)
@@ -498,7 +510,7 @@ class MemoryView implements View {
     for (const [path, e] of this.upper) {
       if (e.kind === 'tombstone') upper.push({ path, kind: 'tombstone' })
       else if (e.kind === 'file') {
-        upper.push({ path, kind: 'file', blob: blobIdOf(e.bytes), mode: e.mode })
+        upper.push({ path, kind: 'file', blob: e.blob, mode: e.mode })
       } else upper.push({ path, kind: 'symlink', target: e.target })
     }
     upper.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
@@ -511,30 +523,40 @@ class MemoryView implements View {
    * 变更序列不在这里面，所以 `floor` 立起来：`diff` 从此不回答更早的修订点。
    */
   async seed(s: ViewState): Promise<void> {
-    for (const e of s.upper) {
+    const rev = s.rev, points = [...s.points], upper = s.upper.map(e => ({ ...e }))
+    for (const e of upper) {
       if (e.kind === 'tombstone') this.setSlot(e.path, { kind: 'tombstone' })
-      else if (e.kind === 'symlink') this.setSlot(e.path, { kind: 'symlink', target: e.target })
-      else {
+      else if (e.kind === 'symlink') {
+        // 软链的快照条目只有 `target`（与 `view/symlink` 事件同一档）：对象地址问下层要。
+        this.setSlot(e.path, {
+          kind: 'symlink',
+          target: e.target,
+          blob: await this.lower.putBlob(Buffer.from(e.target, 'utf8')),
+        })
+      } else {
         const bytes = await this.lower.readBlob(e.blob)
-        this.setSlot(e.path, { kind: 'file', bytes, mode: normMode(e.mode) })
+        this.setSlot(e.path, { kind: 'file', bytes: copyBytes(bytes), mode: normMode(e.mode), blob: e.blob })
       }
     }
-    for (const p of s.points) this.points.add(p)
-    this.cur = Math.max(this.cur, s.rev)
-    this.floor = s.rev
+    for (const p of points) this.points.add(p)
+    this.cur = Math.max(this.cur, rev)
+    this.floor = rev
   }
 
-  async replay(e: LogEvent): Promise<void> {
+  async replay(raw: LogEvent): Promise<void> {
+    const e = { ...raw }
     switch (e.t) {
       case 'view/write': {
         const bytes = await this.lower.readBlob(e.blob)
-        const d: Delta = { kind: this.kindFor(e.path), path: e.path, bytes, mode: e.mode }
-        await this.applyOne(d)
+        const d: Delta = { kind: this.kindFor(e.path), path: e.path, bytes: copyBytes(bytes), mode: e.mode }
+        // **事件里那一栏就是这一条的 id**（`putBlob` 在落日志之前问过 git），不必再问一次。
+        await this.applyOne(d, e.blob)
         this.note(e.rev, d)
         return
       }
       case 'view/symlink': {
         const d: Delta = { kind: 'symlink', path: e.path, target: e.target }
+        // 这一条事件不带 id（架构 § 8.1 那一行只有 `target`），所以那一处问下层要。
         await this.applyOne(d)
         this.note(e.rev, d)
         return
@@ -579,8 +601,9 @@ export async function loadView(log: LogReader, agent: WriterId, opts: LoadViewOp
   const stop = opts.upToRev
   const snap = opts.snap
   const useSnap = snap !== undefined && (stop === undefined || snap.state.rev <= stop)
+  const from = useSnap ? snap.seq : 0
   if (snap !== undefined && useSnap) await view.seed(snap.state)
-  for await (const e of log.readByWriter(agent, useSnap ? snap.seq : 0)) {
+  for await (const e of log.readByWriter(agent, from)) {
     const rev = (e as { rev?: unknown }).rev
     if (stop !== undefined && typeof rev === 'number' && rev > stop) continue
     await view.replay(e)

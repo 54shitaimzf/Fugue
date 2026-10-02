@@ -25,6 +25,7 @@ import type { WalkResult } from './walk.ts'
 import { SearchRows, searchLines, SEARCH_PREFETCH_ROWS, SEARCH_PREFETCH_MAX_ROWS } from './search-receipt.ts'
 import type { SearchCoverage } from './search-receipt.ts'
 import { requiredLiteralTrigrams } from '../search/regex-literal.ts'
+import { hasGrepVerifier, verifiedGrepMatches } from './grep-verifier.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -264,6 +265,14 @@ export interface FaceResult {
    * 由它自己说，不由运行时按名字分岔。
    */
   readonly halt?: boolean
+  /**
+   * **这一趟从别的格带回来的问题**（U18 甲案：子 agent 不问人——它问持轮者）。
+   *
+   * 与 `halt` 同一档：不是回执文本里的一句话，是**结构化的那一件事**——轮次那一层拿它去接住
+   * （落 `ask/raised` · 判 · 落 `ask/ruling`？后两样在 `round/handback.ts`），而回执文本只是
+   * 说给模型听的那一句。工具面这一层不认识尺，也不认识日志。
+   */
+  readonly asks?: readonly AskItem[]
 }
 
 const ok = (output: string): FaceResult => ({ ok: true, output })
@@ -452,12 +461,12 @@ const readImageFace: ToolFn = async (args, host) => {
  * **尾斜杠在这里归一掉**：`path: 'src/'` 不归一的话 `dir + '/'` 成了 `'src//'`、`path === dir`
  * 也不成立，候选集于是是空集。而空集在发现类工具上**看起来只是"真没有"**——一个字的错都不报。
  */
-function scopeOf(raw: string | null, fallback: string): string {
+export function scopeOf(raw: string | null, fallback: string): string {
   return (raw ?? fallback).replace(/\/+$/, '')
 }
 
 /** 这条路径在范围里吗。空范围 = 整个视图；范围指到一条文件时它自己也算在内。 */
-function inScope(path: string, dir: string): boolean {
+export function inScope(path: string, dir: string): boolean {
   return dir === '' || path === dir || path.startsWith(dir + '/')
 }
 
@@ -471,7 +480,7 @@ function inScope(path: string, dir: string): boolean {
  *
  * 两边取并：既认"从视图根看是这样"，也认"从范围里看是这样"。
  */
-function matchesInScope(re: RegExp, path: string, dir: string): boolean {
+export function matchesInScope(re: RegExp, path: string, dir: string): boolean {
   if (re.test(path)) return true
   return dir !== '' && path.length > dir.length && re.test(path.slice(dir.length + 1))
 }
@@ -584,11 +593,18 @@ const grepFace: ToolFn = async (args, host, ctx) => {
     }
     at += batch.length
     for (const path of candidates) {
-      const got = await host.readBytes(path)
-      if (got === null) continue
+      const proof = hasGrepVerifier(host) ? await verifiedGrepMatches(host, path, re) : undefined
+      if (proof === null) continue
+      const verified = proof?.current() === true
+      let lines: Iterable<{ readonly line: string; readonly number: number }>
+      if (!verified) {
+        const got = await host.readBytes(path)
+        if (got === null) continue
+        lines = searchLines(utf8Of(got.bytes))
+      } else lines = proof!.matches
       let count = 0
-      for (const { line, number } of searchLines(utf8Of(got.bytes))) {
-        if (!re.test(line)) continue
+      for (const { line, number } of lines) {
+        if (!verified && !re.test(line)) continue
         count += 1
         if (mode === 'content' && !rows.add(`${path}:${number}:${line}`)) break scan
         if (mode === 'files_with_matches') break
@@ -714,7 +730,19 @@ const askUserQuestionFace: ToolFn = async (args, host, ctx) => {
     })
   }
   if (!ctx.holder) {
-    return no('this is not your cell\'s job: you hold a contract, so do that one step — when something needs a human, carry the question back to the holder cell.')
+    // **子 agent 问的那一下：带回去，不是拒。** 这一格手里是一份契约（§ 8.4 纪律 2），而"问人"
+    // 那道门在持轮者那一格——所以这里把问题**原样**交给轮次那一层（`asks` 那一栏），由它在轮内
+    // 接住：判得了就判、判不了就原样转到人面前（架构 § 23 的 U18 · 路线图 0.2.7 行 ② 的甲案）。
+    //
+    // **不叫停**：这一格还有别的活要干，而"问了一句"不该让整格停在那儿——判决到它下一步的
+    // 那一栏里（结论，不是推敲）。
+    return {
+      ok: true,
+      asks,
+      output:
+        `carried back to the holder cell (${asks.length} question(s)) — it judges them inside this round and the ruling comes back in your next step. ` +
+        'If a question turns out to be one only a person can answer, it is forwarded to a person as it stands; keep doing what you can do cleanly and say in your conclusion what is waiting on that ruling.',
+    }
   }
   await host.askUser(asks)
   return {

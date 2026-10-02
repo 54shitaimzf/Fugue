@@ -29,29 +29,30 @@ async function rows(root: string) {
 }
 
 for (const sync of ['each', 'batch', 'never'] as const) {
-  test(`${sync}: writer removes only incomplete bytes before append and restart`, async () => {
+  test(`${sync}: writer refuses a UTF8 torn tail on every restart without changing any bytes`, async () => {
     const prefix = Buffer.from(row(1)), interrupted = Buffer.from(row(2))
     const cut = interrupted.indexOf(Buffer.from('😀')) + 2 // 落在UTF8码点中间，不能按解码文本长度截。
     assert.ok(cut > 1 && cut < interrupted.length)
     const f = fixture(Buffer.concat([prefix, interrupted.subarray(0, cut)]))
     assert.deepEqual(await rows(f.root), [event(1)])
-    let writer = openLog(f.root, { write: 'round', sync })
-    try { assert.equal(await writer.append('round', event(2)), 2) }
-    finally { await writer.close() }
-    assert.deepEqual(readFileSync(f.file), Buffer.concat([prefix, Buffer.from(row(2))]))
-    writer = openLog(f.root, { write: 'round', sync })
-    try { assert.equal(await writer.append('round', event(3)), 3) }
-    finally { await writer.close() }
-    assert.deepEqual(await rows(f.root), [event(1), event(2), event(3)])
+    const before = readFileSync(f.file)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const writer = openLog(f.root, { write: 'round', sync })
+      try { await assert.rejects(writer.append('round', event(2)), LogCorruptError) }
+      finally { await writer.close() }
+      assert.deepEqual(readFileSync(f.file), before)
+      assert.deepEqual(await rows(f.root), [event(1)])
+    }
   })
 }
 
-test('a crash in the first row recovers empty prefix, then emits a parseable seq1', async () => {
-  const f = fixture(Buffer.from(row(1)).subarray(0, 28)), writer = openLog(f.root, { write: 'round', sync: 'each' })
-  try { assert.equal(await writer.append('round', event(1)), 1) }
+test('a crash in the first row is refused without inventing or appending a seq1', async () => {
+  const before = Buffer.from(row(1)).subarray(0, 28), f = fixture(before)
+  const writer = openLog(f.root, { write: 'round', sync: 'each' })
+  try { await assert.rejects(writer.append('round', event(1)), LogCorruptError) }
   finally { await writer.close() }
-  assert.deepEqual(readFileSync(f.file), Buffer.from(row(1)))
-  assert.deepEqual(await rows(f.root), [event(1)])
+  assert.deepEqual(readFileSync(f.file), before)
+  assert.deepEqual(await rows(f.root), [])
 })
 
 test('complete corrupt, foreign-writer or opaque-over-window tails are never truncated', async () => {
@@ -104,44 +105,47 @@ async function withObservedFile(file: string, run: (ops: string[], opens: () => 
   }
 }
 
-test('truncate precedes new bytes and recovery preserves configured flush policy', async () => {
+test('torn-tail refusal has no truncate/write/sync; explicit fixture repair preserves configured flush policy', async () => {
   for (const sync of ['each', 'batch', 'never'] as const) {
-    const f = fixture(Buffer.from(row(1) + '{"partial"'))
+    const prefix = Buffer.from(row(1)), before = Buffer.concat([prefix, Buffer.from('{"partial"')]), f = fixture(before)
     await withObservedFile(f.file, async ops => {
       const writer = openLog(f.root, { write: 'round', sync })
-      try {
-        await writer.append('round', event(2))
-        assert.deepEqual(ops, sync === 'each' ? ['truncate', 'write', 'sync'] : ['truncate', 'write'])
-      } finally { await writer.close() }
-    })
-    await withObservedFile(f.file, async ops => {
-      const writer = openLog(f.root, { write: 'round', sync: 'never' })
-      try { await writer.append('round', event(3)) }
+      try { await assert.rejects(writer.append('round', event(2)), LogCorruptError) }
       finally { await writer.close() }
-      assert.deepEqual(ops, ['write'], 'an intact tail needs no recovery truncate or forced sync')
+      assert.deepEqual(ops, [])
+      assert.deepEqual(readFileSync(f.file), before)
     })
+    // This test repairs only its generated fixture. Production initialization never makes this decision.
+    writeFileSync(f.file, prefix)
+    await withObservedFile(f.file, async ops => {
+      const writer = openLog(f.root, { write: 'round', sync })
+      try { assert.equal(await writer.append('round', event(2)), 2) }
+      finally { await writer.close() }
+      assert.deepEqual(ops, sync === 'each' ? ['write', 'sync'] : ['write'])
+    })
+    assert.deepEqual(await rows(f.root), [event(1), event(2)])
   }
 })
 
-test('bounded short reads fill the tail window before any recovery decision', async () => {
+test('bounded short reads fill the tail window before fail-closed refusal', async () => {
   const prefix = Buffer.from(row(1)), f = fixture(Buffer.concat([prefix, Buffer.from('{"partial"')]))
   await withObservedFile(f.file, async () => {
     const writer = openLog(f.root, { write: 'round', sync: 'never' })
-    try { assert.equal(await writer.append('round', event(2)), 2) }
+    try { await assert.rejects(writer.append('round', event(2)), LogCorruptError) }
     finally { await writer.close() }
   }, handle => {
     const original = handle.read.bind(handle)
     handle.read = ((buffer: Buffer, offset: number, length: number, position: number) =>
       original(buffer, offset, Math.min(length, 7), position)) as typeof handle.read
   })
-  assert.deepEqual(readFileSync(f.file), Buffer.concat([prefix, Buffer.from(row(2))]))
+  assert.deepEqual(readFileSync(f.file), Buffer.concat([prefix, Buffer.from('{"partial"')]))
 })
 
-test('a file changed during recovery is refused without deleting the uncooperative additions', async () => {
+test('a torn file changed during initialization is refused without deleting uncooperative additions', async () => {
   const before = Buffer.from(row(1) + '{"partial"'), f = fixture(before), added = Buffer.from('unexpected bytes')
   await withObservedFile(f.file, async ops => {
     const writer = openLog(f.root, { write: 'round', sync: 'never' })
-    try { await assert.rejects(writer.append('round', event(2)), /恢复前改变/) }
+    try { await assert.rejects(writer.append('round', event(2)), LogCorruptError) }
     finally { await writer.close() }
     assert.deepEqual(ops, [])
   }, handle => {
@@ -156,7 +160,7 @@ test('a file changed during recovery is refused without deleting the uncooperati
 })
 
 test('failed configured flush is not a false durability acknowledgment; complete bytes resume at the next sequence', async () => {
-  const prefix = Buffer.from(row(1)), f = fixture(Buffer.concat([prefix, Buffer.from('{"partial"')])), marker = new Error('event sync failed')
+  const prefix = Buffer.from(row(1)), f = fixture(prefix), marker = new Error('event sync failed')
   let syncCalls = 0
   await withObservedFile(f.file, async () => {
     const writer = openLog(f.root, { write: 'round', sync: 'each' })
@@ -184,18 +188,23 @@ function deferred() {
   return { promise, resolve }
 }
 
-test('a valid multirow prefix crossing64KiB keeps its raw bytes before a UTF8 partial tail', async () => {
+async function enteredBeforeSettlement(entered: ReturnType<typeof deferred>, operation: Promise<unknown>): Promise<void> {
+  await Promise.race([entered.promise, operation.then(() => { throw new Error('initialization settled before the required read callback') })])
+}
+
+test('a valid multirow prefix crossing64KiB and its UTF8 partial tail remain byte-identical on refusal', async () => {
   const prefix = Buffer.from(Array.from({ length: 900 }, (_, at) => row(at + 1)).join(''))
   assert.ok(prefix.length > 65536)
   const interrupted = Buffer.from(row(901)), cut = interrupted.indexOf(Buffer.from('😀')) + 2
   const f = fixture(Buffer.concat([prefix, interrupted.subarray(0, cut)])), writer = openLog(f.root, { write: 'round', sync: 'never' })
-  try { assert.equal(await writer.append('round', event(901)), 901) }
+  const before = readFileSync(f.file)
+  try { await assert.rejects(writer.append('round', event(901)), LogCorruptError) }
   finally { await writer.close() }
-  assert.deepEqual(readFileSync(f.file), Buffer.concat([prefix, Buffer.from(row(901))]))
-  assert.equal((await rows(f.root)).length, 901)
+  assert.deepEqual(readFileSync(f.file), before)
+  assert.equal((await rows(f.root)).length, 900)
 })
 
-test('an early-zero read refuses recovery without truncating or appending', async () => {
+test('an early-zero read refuses initialization without truncating or appending', async () => {
   const before = Buffer.from(row(1) + '{"partial"'), f = fixture(before)
   await withObservedFile(f.file, async ops => {
     const writer = openLog(f.root, { write: 'round', sync: 'never' })
@@ -206,8 +215,8 @@ test('an early-zero read refuses recovery without truncating or appending', asyn
   assert.deepEqual(readFileSync(f.file), before)
 })
 
-test('two first appends share recovery and cannot truncate one another committed row', async () => {
-  const f = fixture(Buffer.from(row(1) + '{"partial"')), entered = deferred(), release = deferred()
+test('two first appends share failed initialization and cannot change any torn or committed bytes', async () => {
+  const before = Buffer.from(row(1) + '{"partial"'), f = fixture(before), entered = deferred(), release = deferred()
   const originalMkdir = fs.mkdir
   // fixture目录已存在；让初始化的mkdir yield可控，不把断言绑定到磁盘速度。
   fs.mkdir = (async (...args: Parameters<typeof originalMkdir>) => args[0] === dirname(f.file) ? undefined : originalMkdir(...args)) as typeof fs.mkdir
@@ -217,13 +226,19 @@ test('two first appends share recovery and cannot truncate one another committed
       const writer = openLog(f.root, { write: 'round', sync: 'never' }), accepted: Promise<number>[] = []
       try {
         accepted.push(writer.append('round', event(2)))
-        await entered.promise
+        await enteredBeforeSettlement(entered, accepted[0])
         accepted.push(writer.append('round', event(3)))
         await Promise.resolve()
         assert.equal(opens(), 1, 'pending initialization is shared before a second native open starts')
         release.resolve()
-        assert.deepEqual(await Promise.all(accepted), [2, 3])
-        assert.equal(ops.filter(value => value === 'truncate').length, 1)
+        const results = await Promise.allSettled(accepted)
+        assert.equal(results.length, 2)
+        for (const result of results) {
+          assert.equal(result.status, 'rejected')
+          if (result.status === 'rejected') assert.ok(result.reason instanceof LogCorruptError)
+        }
+        assert.equal((results[0] as PromiseRejectedResult).reason, (results[1] as PromiseRejectedResult).reason, 'both callers observe the same failed initializer')
+        assert.deepEqual(ops, [])
       } finally {
         release.resolve()
         await Promise.allSettled(accepted)
@@ -239,7 +254,8 @@ test('two first appends share recovery and cannot truncate one another committed
       }) as typeof handle.read
     })
   } finally { fs.mkdir = originalMkdir; syncBuiltinESMExports() }
-  assert.deepEqual(await rows(f.root), [event(1), event(2), event(3)])
+  assert.deepEqual(readFileSync(f.file), before)
+  assert.deepEqual(await rows(f.root), [event(1)])
 })
 
 test('failed initialization is evicted so the same handle can retry after explicit repair', async () => {
@@ -253,29 +269,35 @@ test('failed initialization is evicted so the same handle can retry after explic
   assert.deepEqual(await rows(f.root), [event(1), event(2)])
 })
 
-test('different writer IDs keep independent initialization and sequence state', async () => {
-  const f = fixture(Buffer.from(row(1) + '{"partial"')), other = join(logDir(f.root), 'other.jsonl')
-  writeFileSync(other, encodeEvent(7, 'other', event(7)) + '\n{"partial"')
+test('different writer IDs keep independent initialization when only one has a torn tail', async () => {
+  const before = Buffer.from(row(1) + '{"partial"'), f = fixture(before), other = join(logDir(f.root), 'other.jsonl')
+  writeFileSync(other, encodeEvent(7, 'other', event(7)) + '\n')
   const writer = openLog(f.root, { sync: 'never' })
-  try { assert.deepEqual(await Promise.all([writer.append('round', event(2)), writer.append('other', event(8))]), [2, 8]) }
-  finally { await writer.close() }
+  try {
+    const results = await Promise.allSettled([writer.append('round', event(2)), writer.append('other', event(8))])
+    assert.equal(results[0].status, 'rejected')
+    if (results[0].status === 'rejected') assert.ok(results[0].reason instanceof LogCorruptError)
+    assert.deepEqual(results[1], { status: 'fulfilled', value: 8 })
+  } finally { await writer.close() }
+  assert.deepEqual(readFileSync(f.file), before)
   assert.equal(readFileSync(other, 'utf8'), encodeEvent(7, 'other', event(7)) + '\n' + encodeEvent(8, 'other', event(8)) + '\n')
 })
 
-test('close retains the fence through accepted initialization/write and prevents late append', async () => {
+test('close retains the fence through accepted failed initialization and prevents late append', async () => {
   const f = fixture(Buffer.from(row(1) + '{"partial"')), entered = deferred(), release = deferred()
   await withObservedFile(f.file, async () => {
     const writer = openLog(f.root, { write: 'round', sync: 'never' })
     const append = writer.append('round', event(2))
-    await entered.promise
     let returned = false
-    const closing = writer.close().then(() => { returned = true })
+    let closing: Promise<void> | undefined
     try {
+      await enteredBeforeSettlement(entered, append)
+      closing = writer.close().then(() => { returned = true })
       await new Promise<void>(done => setImmediate(done))
       assert.equal(returned, false, 'close must observe already accepted initialization')
       assert.throws(() => holdWriter(f.root, 'round'), error => error instanceof LogHeldError)
       release.resolve()
-      assert.equal(await append, 2)
+      await assert.rejects(append, LogCorruptError)
       await closing
       await assert.rejects(writer.append('round', event(3)), /已关闭/)
       const next = holdWriter(f.root, 'round')
@@ -293,5 +315,5 @@ test('close retains the fence through accepted initialization/write and prevents
       return original(...args)
     }) as typeof handle.read
   })
-  assert.deepEqual(await rows(f.root), [event(1), event(2)])
+  assert.deepEqual(await rows(f.root), [event(1)])
 })

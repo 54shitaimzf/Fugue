@@ -152,7 +152,7 @@ export interface AdvanceDeps {
  * **"不 touch 一致的"是承重的**：全量重写会让每一个文件的 mtime 都变，而 § 8.5 明说按修改时间
  * 判定新旧的工具链于是会重新编译整个项目——那是假失效。
  *
- * **这里原先有一趟白读**（0.2.9 ⑦ 撤了）：`const tree = await treeOfCommit(deps.truth, commit)`
+ * **这里原先有一趟白读**（清障批 ⑦ 撤了）：`const tree = await treeOfCommit(deps.truth, commit)`
  * 紧接着一个 `void tree`——那一趟是 `truth.statAt(commit, '')`，也就是**问一遍整棵树的根**，
  * 而它的结果一个字节都没进这一份的任何判断（下面要的那棵树是**逐目录 `listAt` 走出来**的）。
  * 实测一次 git 子进程 6.7 ms，每轮落地白付一次。真源那一侧不动：`treeOfCommit` 在

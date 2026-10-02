@@ -218,7 +218,7 @@ export interface VersionFace {
  */
 export function versionFaceOf(facts: RoundFacts, v: DistillVersion): VersionFace {
   const version = versionIndexOf(facts, v.digest)
-  // **拿不出一版的号就当场红，不拿落点号顶上**（0.2.9 ④）：`version` 是**内容**的号（重落同一版
+  // **拿不出一版的号就当场红，不拿落点号顶上**（清障批 ④）：`version` 是**内容**的号（重落同一版
   // 不涨号），`v.at` 是**落点**的号——两个不同的单位。原先那一句 `?? v.at` 在"这一版不在这条链上"
   // 时静默印一个错的版本号，而那一栏（`版本：第 N 版`）是给人看的。负对照在 `versions.test.ts` ⑧。
   if (version === null) {

@@ -1,0 +1,1 @@
+{"passed":9,"coverage":"invalid before/after references, same-backend admission, reader async/sync-fs restoration after body failure, regex owned HOME cleanup after later allocation failure, attempt-all cleanup and primary-error preservation"}

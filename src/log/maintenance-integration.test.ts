@@ -1,4 +1,4 @@
-// Combined maintenance boundary: top-level duplicate refusal precedes destructive tail recovery.
+// Combined maintenance boundary: complete duplicate and torn-tail refusals never rewrite authoritative bytes.
 import assert from 'node:assert/strict'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -21,7 +21,7 @@ function fixture(text: string) {
 }
 
 for (const key of ['seq', '\\u0073eq']) {
-  test(`complete duplicate ${key} before a partial tail refuses truncation, then same-handle initialization retries`, async () => {
+  test(`complete duplicate ${key} before a partial tail refuses without mutation, then same-handle initialization retries after explicit complete-prefix repair`, async () => {
     const prefix = row(1) + '\n'
     const ambiguous = `{"${key}":999,${row(2).slice(1)}`
     const f = fixture(prefix + ambiguous + '\n{"partial":')
@@ -36,23 +36,27 @@ for (const key of ['seq', '\\u0073eq']) {
       assert.deepEqual(readFileSync(f.file), before, 'refusal must preserve both complete and partial bytes')
       // Repair only this generated fixture; the failed initializer must not poison this handle.
       writeFileSync(f.file, prefix + '{"partial":')
+      await assert.rejects(writer.append('round', event(2)), LogCorruptError)
+      assert.equal(readFileSync(f.file, 'utf8'), prefix + '{"partial":')
+      writeFileSync(f.file, prefix)
       assert.equal(await writer.append('round', event(2)), 2)
     } finally { await writer.close() }
     assert.equal(readFileSync(f.file, 'utf8'), prefix + row(2) + '\n')
   })
 }
 
-test('ambiguous but unterminated row is uncommitted: recovery retains the valid prefix and emits only the intended next event', async () => {
+test('ambiguous unterminated row stays uncommitted for readers and refuses writer initialization without mutation', async () => {
   const prefix = row(1) + '\n'
   const f = fixture(prefix + `{"seq":999,${row(2).slice(1)}`)
-  const writer = openLog(f.root, { write: 'round', sync: 'each' })
-  try { assert.equal(await writer.append('round', event(2)), 2) }
-  finally { await writer.close() }
-  assert.equal(readFileSync(f.file, 'utf8'), prefix + row(2) + '\n')
+  const before = readFileSync(f.file)
   const reader = openLog(f.root, { sync: 'never' })
   try {
     const events: LogEvent[] = []
     for await (const value of reader.readByWriter('round')) events.push(value)
-    assert.deepEqual(events, [event(1), event(2)])
+    assert.deepEqual(events, [event(1)])
   } finally { await reader.close() }
+  const writer = openLog(f.root, { write: 'round', sync: 'each' })
+  try { await assert.rejects(writer.append('round', event(2)), LogCorruptError) }
+  finally { await writer.close() }
+  assert.deepEqual(readFileSync(f.file), before)
 })
