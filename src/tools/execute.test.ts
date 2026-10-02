@@ -39,7 +39,7 @@ import { createRuntime, scriptedModel } from '../runtime/step.ts'
 import type { ToolCallRequest } from '../runtime/step.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
 import { faceOf, noFace, parseArgs } from './execute.ts'
-import { capReceipt } from './receipt.ts'
+import { capReceipt, lineCount, MAX_RECEIPT_BYTES } from './receipt.ts'
 import type { ToolHost } from './execute.ts'
 import { createToolHost } from './host.ts'
 import { refHeadOf } from '../round/head.ts'
@@ -866,6 +866,24 @@ test('格 3 · 地板：容量 0 + 预取缺席 + oneshot 三者同开，回执�
   }
 })
 
+test('格 3 · 预取：自适应批次按字节封顶——72 KiB 的文件不许把 8 MiB 的缓存撑爆再逐条重取', async () => {
+  // 128 条 × 72 KiB = 9 MiB > 8 MiB 的缺省缓存：一批取回来的前几条在读到它们之前就被后几条挤出去，
+  // 读那一侧于是逐条重取（实测冷请求 12 → 135）。预取是提示，**提示不许比它省下的还贵**。
+  const files: Record<string, string> = {}
+  for (let i = 0; i < 256; i++) files[`f${String(i).padStart(3, '0')}.txt`] = `${i} `.padEnd(72 * 1024 - 1, 'x') + '\n' // 内容各异：同内容会被去重成一个 blob
+  const b = await lowerBench(files)
+  try {
+    const before = b.truth.stats().gitRequests
+    const out = await face('grep', { pattern: 'no-such-token' }, b.host)
+    const cost = b.truth.stats().gitRequests - before
+    assert.equal(out.ok, true)
+    assert.equal(out.output, 'no line matches no-such-token.')
+    assert.ok(cost <= 25, `256 个文件的冷搜索该是几批而不是逐条：实际 ${cost} 次请求`)
+  } finally {
+    await b.close()
+  }
+})
+
 test('格 3 · 预取：一批把候选的内容取回来，此后逐文件读全命中', async () => {
 
   // **无预取那一档**：从产品宿主上摘掉那一栏，就是今天的逐文件读。
@@ -907,5 +925,122 @@ test('格 3 · 预取：一批把候选的内容取回来，此后逐文件读�
     )
   } finally {
     await c.close()
+  }
+})
+// ── ⑩ `read` 的窗口档：offset/limit 下推（T16 ① 的第二半）──────────────────────
+//
+//   · 两档格式：**不给窗口** = 与从前逐字节相同（头 + 原样正文，一个行号都不带）；**给了任意一项**
+//     = 头在原句尾上带一句窗口标注，正文每行 `${原文件行号}\t${原文行}`。
+//   · 语法坏拒 · 语义空如实：坏参数在**伸手之前**拒（下面那个"一碰就喊"的宿主是量具），
+//     而 `limit: 0` / 越过末尾 / 空文件都是 ok 的"空窗口"。
+//   · 大窗口被 `capReceipt` 截了之后，头里那句标注还在（它在前 4 KiB 里），而标记里那两个数是
+//     **这一条回执**的——两套数各有所指，别混。
+test('⑩ read 的窗口档：整档逐字节照旧 · 切片带原文件行号 · 坏参数拒在伸手之前 · 空窗口如实', async () => {
+  const b = await bench()
+  try {
+    const text = 'a\nb\nc\nd\n'
+    const size = Buffer.byteLength(text, 'utf8')
+    await b.host.writeBytes('w.txt' as RelPath, new Uint8Array(Buffer.from(text, 'utf8')))
+    const head = `w.txt (${size} bytes · 4 lines · mode 100644`
+
+    // 一 · 整档：与从前逐字节相同——头 + 原样正文，一个行号都不带。
+    const whole = await face('read', { path: 'w.txt' }, b.host)
+    assert.equal(whole.ok, true, whole.output)
+    assert.equal(whole.output, `${head})\n${text}`, '整档还是那一串（这一条是"输出逐字节不变"的落点）')
+
+    // 二 · 切片：行号是**原文件行号**；头上多一句窗口标注。
+    const slice = await face('read', { path: 'w.txt', offset: 3, limit: 2 }, b.host)
+    assert.equal(slice.output, `${head} · lines 3–4 shown)\n3\tc\n4\td`)
+    // 只给 offset：读到末尾。只给 limit：从第一行起（一行那一档用单数）。
+    assert.equal((await face('read', { path: 'w.txt', offset: 3 }, b.host)).output, `${head} · lines 3–4 shown)\n3\tc\n4\td`)
+    assert.equal((await face('read', { path: 'w.txt', limit: 1 }, b.host)).output, `${head} · line 1 shown)\n1\ta`)
+    // 同一份文件的整读与切片：正文那一半是同一串字节（切片只是加了 `N\t` 前缀与拆行）。
+    assert.equal(slice.output.split('\n').slice(1).map((l) => l.slice(2)).join('\n'), text.split('\n').slice(2, 4).join('\n'))
+
+    // 三 · 语义空如实：三档都是 ok 的空窗口（不是错误）。
+    for (const args of [{ limit: 0 }, { offset: 9 }, { offset: 5, limit: 3 }]) {
+      const empty = await face('read', { path: 'w.txt', ...args }, b.host)
+      assert.equal(empty.ok, true, `${JSON.stringify(args)} 该是一次 ok 的空窗口：${empty.output}`)
+      assert.equal(empty.output, `${head} · no lines shown)\n`)
+    }
+    // 空文件：整档照旧给头 + 空正文；给了窗口就是空窗口。
+    await b.host.writeBytes('empty.txt' as RelPath, new Uint8Array(0))
+    assert.equal((await face('read', { path: 'empty.txt' }, b.host)).output, 'empty.txt (0 bytes · 0 lines · mode 100644)\n')
+    assert.equal((await face('read', { path: 'empty.txt', offset: 1 }, b.host)).output, 'empty.txt (0 bytes · 0 lines · mode 100644 · no lines shown)\n')
+
+    // 四 · **坏参数拒在伸手之前**：这个宿主一碰就喊（读到了它，这一条就红在那句喊上）。
+    const yell = new Proxy({} as ToolHost, {
+      get: (_t, k) => () => {
+        throw new Error(`实现在问清窗口之前就碰了宿主的 ${String(k)}——它没先问。`)
+      },
+    })
+    const bads: readonly Record<string, unknown>[] = [
+      { offset: 0 },
+      { offset: -1 },
+      { offset: 1.5 },
+      { offset: '2' },
+      { offset: null },
+      { offset: Number.MAX_SAFE_INTEGER + 2 },
+      { limit: -1 },
+      { limit: 2.5 },
+      { limit: '1' },
+      { limit: Number.MAX_SAFE_INTEGER + 2 },
+    ]
+    for (const bad of bads) {
+      const r = await face('read', { path: 'w.txt', ...bad }, yell)
+      assert.equal(r.ok, false, `${JSON.stringify(bad)} 该当场拒：${r.output}`)
+      const which = 'offset' in bad ? 'offset' : 'limit'
+      assert.match(r.output, new RegExp(`^${which} has to be `), `拒的话要点出是哪一个参数：${r.output}`)
+    }
+    // 而**能兑现**的那一档照旧伸手（同一个宿主上，参数对了就该碰它——拒的是参数，不是窗口）。
+    await assert.rejects(async () => await face('read', { path: 'w.txt', offset: 1, limit: 1 }, yell), /就碰了宿主的/)
+    console.log(
+      `⑩ 读数：整档 ${whole.output.split('\n')[0]}｜切片 ${JSON.stringify(slice.output.split('\n')[0])}｜空窗口 3 档 + 空文件｜坏参数 ${bads.length} 条拒在伸手之前`,
+    )
+  } finally {
+    await b.close()
+  }
+})
+
+test('⑩ 大窗口被截：头里那句窗口标注还在，而标记里那两个数是这一条回执的', async () => {
+  const b = await bench()
+  try {
+    const lines = 400
+    const text =
+      Array.from({ length: lines }, (_, i) => `第 ${i + 1} 行：这一段汉字要长到能把窗口这一条回执顶过上限。`).join('\n') + '\n'
+    await b.host.writeBytes('big.txt' as RelPath, new Uint8Array(Buffer.from(text, 'utf8')))
+
+    // **走执行器**：回执的上界那一刀在它的出口上（`capReceipt`），直接调实现量不到那一刀。
+    const executor = createToolExecutor({ logOf: () => b.log, host: b.host, fenceOf: b.fenceOf, ensureOf: b.ensureOf })
+    const got = await executor.execute(
+      { id: 'c1', name: 'read', arguments: JSON.stringify({ path: 'big.txt', offset: 5, limit: 200 }) },
+      handleOf(stateOf()),
+    )
+    assert.equal(got.ok, true, `这一条该成：${got.output.slice(0, 200)}`)
+
+    // 一 · 头那一句窗口标注在**前 4 KiB** 里，所以被截之后它还在。
+    assert.match(got.output.slice(0, 4096), /big\.txt \(\d+ bytes · 400 lines · mode 100644 · lines 5–204 shown\)/)
+
+    // 二 · 标记里那两个数是**这一条回执**的（头 + 那 200 行），不是整个文件的——两套数各有所指。
+    const all = text.split('\n')
+    all.pop()
+    const body = all.slice(4, 204).map((s, k) => `${5 + k}\t${s}`).join('\n')
+    const receipt = `big.txt (${Buffer.byteLength(text, 'utf8')} bytes · 400 lines · mode 100644 · lines 5–204 shown)\n${body}`
+    assert.ok(
+      Buffer.byteLength(receipt, 'utf8') > MAX_RECEIPT_BYTES,
+      `这一条要真的超上限：${Buffer.byteLength(receipt, 'utf8')} 字节`,
+    )
+    const m = /\n…\((\d+) bytes omitted · (\d+) bytes and (\d+) lines in all\)…\n/.exec(got.output)
+    assert.ok(m !== null, `这一条该被截：${got.output.slice(-200)}`)
+    assert.equal(Number(m[2]), Buffer.byteLength(receipt, 'utf8'), '标记里的字节数是这一条回执的')
+    assert.equal(Number(m[3]), lineCount(receipt), '标记里的行数是这一条回执的')
+    assert.notEqual(Number(m[2]), Buffer.byteLength(text, 'utf8'), '标记里的字节数不该是整个文件的')
+    assert.ok(got.output.endsWith(receipt.slice(-12)), '尾就是这一条回执的尾')
+    console.log(
+      `⑩ 截断读数：这一条回执 ${Buffer.byteLength(receipt, 'utf8')} 字节 / ${lineCount(receipt)} 行 → 略去 ${m[1]} 字节` +
+        `（整个文件是 ${Buffer.byteLength(text, 'utf8')} 字节 / 400 行 · 头上的窗口标注在被截之后还在）`,
+    )
+  } finally {
+    await b.close()
   }
 })

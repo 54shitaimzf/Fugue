@@ -6,7 +6,9 @@ import { buildBlobIndex, MAX_SOURCE_BYTES } from './index-format.ts'
 import type { BlobIndex } from './index-format.ts'
 import { buildCohortIndex, cohortBlobRecords, cohortKey, cohortMightContain, MAX_COHORT_BLOBS, MAX_COHORT_POSTINGS } from './cohort-format.ts'
 import type { CohortIndex } from './cohort-format.ts'
-import { MAX_INDEX_CANDIDATE_BATCH, MAX_INDEX_REQUIREMENTS } from './current-view-candidates.ts'
+import { MAX_INDEX_REQUIREMENTS } from './current-view-candidates.ts'
+// 一批候选的上限就是批读存储一次最多读的行数（同一个数，不另拍一个）。
+import { MAX_INDEX_BATCH_ROWS as MAX_INDEX_CANDIDATE_BATCH } from './index-store.ts'
 
 type CohortView = Pick<View, 'base' | 'rev' | 'stat'>
 export interface ViewCohortLookup {

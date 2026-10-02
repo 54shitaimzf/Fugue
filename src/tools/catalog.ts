@@ -96,7 +96,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'read',
-    description: 'Read a file and return its text with line numbers. Read a slice when the file is long (offset is 1-based, limit caps the lines) — locate with grep first; that is cheaper than reading the whole file. To change it use edit or write; for images use read_image.',
+    description: 'Read a file and return its text. Read a slice when the file is long (offset is 1-based, limit caps the lines; a slice comes back with the original line numbers, the whole file comes back verbatim) — locate with grep first; that is cheaper than reading the whole file. To change it use edit or write; for images use read_image.',
     parameters: {
       type: 'object',
       properties: {

@@ -29,19 +29,18 @@ try {
 但磁盘 probe、校验和已有记录解码仍有成本，也不承诺主线程绝不受后台资源竞争影响。
 新增 ID 只补自己；损坏记录给 miss，然后从可信原字节重建。没有第二份权威状态。
 
-后台任务默认最多4份，上限16份；同 ID 共享，不保存无限候补队列。满额给 null，
+后台**构建**（读源 + Worker）默认最多4份，上限16份；盘上已有记录的纯读命中不占构建名额，
+探测同时在飞最多16份。同 ID 共享，不保存无限候补队列。满额给 null，
 以后查询可以重试。默认60秒任务时限（可配0–120秒），包括磁盘 probe/source/构建；
 0禁用新任务。每个任务向 source 传 AbortSignal，close 或外部 signal 取消任务、
-终止已经启动的 Worker，清句柄缓存与逻辑 pending。取消者没有临时叶的创建/inode 所有权，
-不按 nonce 删除；突然停止的 Worker 可能留下未知派生临时叶，保守保留。
+终止已经启动的 Worker，清句柄缓存与逻辑 pending，并尝试收走自己 nonce 对应的临时文件。
 Worker可在同一句柄内短暂复用，池存量/空闲退出与创建次数见[复用边界](index-worker-reuse.md)。
 Worker 只收到可见字节窗口的独立副本并转移该副本，不转移借用 Buffer 的 backing store，
 不会携带池内其它字节，也不会 detach 原回调的字节。Worker 不继承宿主环境变量。
 
 调用方拥有句柄生命周期，须显式 close；主查询不能先 drain 再扫描。
 `drain()` 仅供开发基准/收尾等已接受任务，不自动接受新任务。
-取消**不是事务回滚**：已发布的完整派生记录可以留下；只有尚未消耗临时名字的 exclusive
-创建操作在正常收尾中清自己的叶，取消者不能替它认领后来复用的名字。
+取消**不是事务回滚**：已发布的完整派生记录可以留下；临时清理是尽力而为。
 不遵从 AbortSignal 的 source 回调，其外部 IO 可能继续，退休逻辑槽也不能证明该 IO
 已停止或其真实并发已封顶。迟到的回调结果会被丢弃，不再启动 Worker；需要真正的 IO
 取消/并发界限时，调用方必须提供遵从 signal 的源。测试覆盖 source 等待及 Worker 活跃时
@@ -54,13 +53,19 @@ close、超时、失败重试和外部 abort，不声称任意外部回调都可
 **canonical字节数是逻辑记账，不是精确堆内存或RSS**。单份记录/source预算由codec控制。
 完整表之外的有限gram事实见[知识层预算](index-gram-facts.md)，它不改变完整表LRU上限。
 必要三元组在任何 await 前拷成私有数值键，后来的调用者数组变化不改这次判断。
-失败不缓存；任务完成/失败/取消清逻辑pending。容量0可退档，危险磁盘不阻止可信内存构建。
+失败不缓存；任务完成/失败/取消清逻辑pending。**唯一例外是已核内容地址后的确定性
+构建失败**：Worker先核BlobId，再发现超20万个trigram，记进有界集合（4096份，满了丢
+最旧的，`stats().unindexable`），这份blob以后直接回扫描，避免重复重建。超过64MiB的
+source回复在接收时被拒，尚未核其请求BlobId，所以保持unknown、下次可重试；不为了
+负memo去复制/Hash任意超预算回复。store的unindexable也只表示地址已核验后的预算失败。
+close立即清负集合，并禁止迟到结果重添；读源出错、超时、取消都不记。容量0可退档，
+危险磁盘不阻止可信内存构建。
 持久存储没有全盘配额/淘汰，原字节回调与M0/M1既有缓冲也不属于保留缓存的RSS保证。
 
 ## 复现与测量
 
 ```sh
-node tools/test-entry.js fast src/search/blob-index.test.ts src/search/index-store.test.ts src/search/index-format.test.ts
+node tools/test-entry.js fast src/search/index-negative-memo.test.ts src/search/blob-index.test.ts src/search/index-store.test.ts src/search/index-format.test.ts
 node tools/bench-blob-index.js
 node tools/check-targets.js
 node tools/check-events.js

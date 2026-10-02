@@ -1,52 +1,40 @@
-# 统一集成分支
+# 统一上游基线与路线图贡献
 
-后续功能统一进入 `roadmap/maintenance-integration-check`，每个完整、经 focused 测试的检查点
-继续 push。并行实现只使用本地临时分支；原有独立来源 ref 保留，最终只准备一个合并 PR。
+本分支以官方 `ba77d76548d56cfa94f56ba58a960adf42581cb4` 为实际祖先，合入公开审查汇总
+`claude/fugue-roadmap-pr-review-c0t5od` 的 `a5010b8430286d803a5fcc625d2dff2a12a0d303`，
+再接入随后完成的增量 cohort 构建和真实 View/M0 验收。只持续更新
+`roadmap/maintenance-integration-check`，沿用上游 draft PR45；旧来源 ref 保留，不改写历史。
 
-本次检查点在维护组合 `9515979` 上接入已有的完整可选检索功能：
+官方 0.2.5 的 read、catalog、receipt、walk 机制与测试保留，已吸收的贡献不再当作一套待并入的
+独立实现。工具宿主继续使用后来扩展的 base/rev 详细遍历状态，以保留共享并发、失效重试和如实
+截断；上游原始纯机制帮助口及其测试作为独立覆盖保留。官方最新 T19 / Windows-first 路线图、
+TARGETS 与架构来自实际上游，未用旧文件整篇覆盖。
 
-- `a9a801eb`：walk 代缓存、read 窗口、如实截断的 grep/glob 回执、当前 View blob 过滤、
-  有界后台构建、worker 复用和独立 reference 的端到端基准。
-- `99ac1a52`：完整受控索引产生的有界 gram facts，未知条件继续扫描。
-- `bf462c72` 加 `7b9ea7a2` 的自建临时叶增量：未知/仍在用的临时对象保留，逐项观察目录关闭，
-  关闭失败也收尾自建临时叶，成功 rename 后不再删除后来复用的名字。
-- 组合审查另发现父任务的取消清理口只有 PID/nonce，没有当前叶所有权；取消路径现已停止按名字删除，
-  旧兼容口保守保留未知叶。实际同 nonce 的后来活跃发布者保留并成功完成，新增两例和相关生命周期
-  focused 集合 56/56；非 primitive 的 ID/nonce 也在字符串强制转换或文件系统准入前拒绝。
-  突然终止的 worker 可能留下派生临时叶，不能把它们当作已证明属于旧任务。
-- `54615407` 的格式端源身份边界：预哈希超限只拒绝，确定性预算分类只用于核验后的构建。
-  本分支 lookup 采用原始已审实现，不存在外部后来加入的 `unindexableSet`，不会缓存未核验的负事实。
+汇总功能包括维护恢复/重复键/哈希探测/终端退出，read 窗口、搜索回执与早停、纯显示层可读性，
+只读调用账本，以及缺省关闭的 blob/cohort 索引、worker/facts/存储安全控制。
+cohort 的 `prepare(readBlob, options)` 复用完整不可变记录，只为新 BlobId 读取、核验和构建源；
+查询仍只按当前 View 集合排除明确否定的候选，再用实际内容和原 regex 验证。
 
-可选检索已提供两条接线：`HostOptions.blobIndex` 的逐 blob 后端，以及
-`HostOptions.cohortIndex` 的当前 View 集合后端。后一种句柄只为绑定的 View 排除候选，
-按当前 base/rev 和完整 BlobId 集选择一个 artifact；缺失、不可信、超限或代变化继续扫描。
-`prepare(readBlob)` 是调用方明确付费的独立动作；cohort 候选查询不会为构建读取源 blob，
-匹配候选仍读真实内容并按原正则验证，查询不构建或发布索引。
-句柄和存储的关闭仍由调用方观察。两种选项均缺省关闭，现有 v1 blob 字节与读写契约不变；
-新 cohort 使用独立版本、命名空间与有界 UTF-16 postings。
+汇总分支中的确定性预算负 memo 已有地址核验与 close 清空控制；未核验的超限回复继续未知/重试。
+取消清理保留无所有权证明的临时叶；只有独占创建且 inode 仍匹配的发布者清理自己的叶。合并中
+仅删除重复的 `IndexStoreStats` 类型声明与过时 sweep 注释，不改变统计字段或可执行语句。
 
-检索之外，0.2.8 已带上既有数据的阅读面 diff、长行和黑白属性可读性小批，
-痛点与实际终端视觉验收记在 [显示层说明](terminal-readability.md)。它没有引入新的事件或数据路径。
+历史输入明确分层：`wire-in/original` 固定保存 `e02fa524` 的请求、响应与 metadata，并钉住 manifest
+指纹；当前上游兼容输入只改目录投影与派生请求指纹，响应/usage 仍是旧记录。它们不是新 live
+录制、provider/cache 证明。静态 model 测试对象直接沿用公开汇总分支的既有对象；目录投影与派生请求指纹的
+兼容修订也不改变旧响应的证据性质。源码相同不表示新证据。
 
-[真实查询读数](cohort-query-measurements.md) 分开记录准备、首次 miss、当前 View 元数据、
-重开句柄的查询和重复查询。512 文件约 16MB 的 code/mixed 样本由 512 个盘记录缩为一个
-artifact；code sparse 冷中位仍为 52.682ms，dense 全扫更快，entropy 超预算后继续扫描。
-这些边界与 paid preparation 都保留，不能拿单项读取或一个样本宣布默认启用。
+本次组合检查：codec/增量构建 focused 25/25；维护、View/M0、索引、哈希与真实 PTY 的适用 real
+集合 44/44。完整本地 fast 初次为 847/854，五个 Node runner 克隆数据传输失败与两条既有
+挂载/overlay 非 ext4 条件失败；受影响文件随后单独复核通过。以上不能写成整档全绿，PR 的
+精确 head fast/full 证书另验，云严格内核隔离限制也不据此消失。
 
-官方 `bbf2ef1` 路线图保留。原始 `wire-in` 真录制与链验收保留；三个静态 model 协议样例的
-工具描述更新和临时生成的 synthetic 当前目录输入不是 live 重录、provider/cache 证书。
-未导入外部后来改写历史请求而保留旧响应/usage 的接受路径。
+[冷查询基线](cohort-query-measurements.md)与[增量准备读数](cohort-incremental-measurements.md)
+是分别带源指纹的历史样本。后者二次源读取 0、新 ID 1；前者 code sparse 52.682ms 与 entropy
+退化、dense 全扫优势仍保留。此次源合并不把旧指纹迁成新源码的性能证书，不启用索引缺省。
 
-原始组合 owner focused 检查为 store/格式 33/33、lookup/facts/worker/current-view 49/49，
-早期额外真实 View/M0 组合 30/30。后续精确 cohort 接线为 fast 9/9，真实 cohort + v1
-验收 10/10；基准自建资源清理控制 3/3。codec 与 v1 focused 15/15，cohort store
-最大 4096-ID 证明后 14/14，显示层 focused 43/43、follow 11/11 和 real PTY 6/6。
-这些是各自相关集合，不是合并整档计数；集中 reviewer 按最终源 blob 和交互验收复核。
-云 overlay/挂载、Node runner 反序列化和 kernel 沙箱限制仍如
-[维护快照](maintenance-integration.md) 报告；focused 和 fork push fast 都不等于 full。
+0.2.7、冻结成本事件、serve 三项前置审批、默认索引、native 触发条件与发布/合并门保持独立。
+PR23 仍只作前置审批输入，不当成已批或直接合入的 serve 实现。T19 后续阶段按官方节奏。
 
-0.2.7 待批动作、成本事件扩展、serve 与默认索引启用条件保持待定；本分支也不授权合并或发布。
-
-`308a2f99` 提交说明中「exact tree reviewed centrally」写得过早：当时完成的是原单元审查与
-组合 owner 检查，集中审查随后发现上述取消所有权问题。修复和最后的集中检查证书应按后续
-精确 head 认证，不能把该说明当作 `308a2f99` 已通过最终源码审查的依据。
+早先 `308a2f99` 提交中的「exact tree reviewed centrally」写得过早；当时仅有单元与 owner
+组合检查，集中审查随后发现取消所有权问题。后续修复与精确 head 证书才是源码认证依据。

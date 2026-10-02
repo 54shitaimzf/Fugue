@@ -43,15 +43,15 @@ import type { RefHead } from '../round/head.ts'
 import { isMounted, unmountOverlay } from '../materialize/mount.ts'
 import { matParts } from '../roots/paths.ts'
 import { lowerAt } from '../view/lower.ts'
-import { createCachedWalkDetailed } from './walk.ts'
+import { WALK_LIMITS, createCachedWalkDetailed } from './walk.ts'
 import type { WalkResult } from './walk.ts'
 import type { Reclaim, DeclaredSet } from '../execute/reclaim.ts'
 import type { AbsPath } from '../terms.ts'
 
 /** 走多远就停。**两条都是必须的**：软链穿过去就绕开了路径围栏（§ 8.4 的 `through-symlink`），
  * 而不封顶的深树能把一步走成挂死。 */
-const MAX_DEPTH = 24
-const MAX_ROWS = 5000
+const MAX_DEPTH = WALK_LIMITS.maxDepth
+const MAX_ROWS = WALK_LIMITS.maxRows
 
 /** 落日志与提交要的那一半（读与写视图那一半在 `view` 里）。 */
 export interface HostActions {
@@ -150,6 +150,15 @@ export interface HostOptions {
 }
 
 /**
+ * 一批预取最多取回多少字节：**4 MiB**，是 blob 缓存缺省容量（8 MiB，`truth.ts` 的
+ * `DEFAULT_BLOB_CACHE_BYTES`）的一半——另一半留给上一批刚读完、还没被淘汰的内容，
+ * 以及与本批同时活着的别的读。自适应批次（`SEARCH_PREFETCH_MAX_ROWS` = 128 条）只说条数，
+ * 72 KiB 的文件 128 条就是 9 MiB，一批取回来的前几条在读到它们之前就被后几条挤出去，
+ * 读那一侧逐条重取（实测冷请求 12 → 134）。预取是提示，提示不许比它省下的还贵。
+ */
+export const PREFETCH_BYTE_BUDGET = 4 * 1024 * 1024
+
+/**
  * `actions.truth` 上那道"一次批量把这几条 blob 取回来"的缝，**有才用**。
  *
  * 判据是运行时那一问：真源那一层是 `TruthHandle` 时它有 `prefetchBlobs`，而**冻结的 `Truth`
@@ -162,6 +171,11 @@ function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Prom
   return (ids) => (fn as (ids: readonly BlobId[]) => Promise<void>).call(truth, ids)
 }
 
+export interface ToolHostHandle extends ToolHost {
+  /** 原有 walk 的同一次遍历，加上不完整枚举的原因；状态不代表遗漏文件数。 */
+  walkDetailed(): Promise<WalkResult>
+}
+
 /**
  * 一份 `ToolHost`。
  *
@@ -169,11 +183,6 @@ function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Prom
  * `roots` 只用来过围栏——**它不拼物理路径**：这一档里文件的字节住在视图的上层，不在物化出来的
  * 那棵树上（`B6` 把"执行前物化"接上时，`bash` 那一条才真的落在树里）。
  */
-export interface ToolHostHandle extends ToolHost {
-  /** 原有 walk 的同一次遍历，加上不完整枚举的原因；状态不代表遗漏文件数。 */
-  walkDetailed(): Promise<WalkResult>
-}
-
 export function createToolHost(view: View, roots: Roots, opts: HostOptions = {}): ToolHostHandle {
   const parts = opts.actions
   const blobIndex = opts.blobIndex
@@ -245,7 +254,7 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
    *
    * **没有真源（夹具档）就是缺席**：这里直接返回，grep 退回逐文件读。
    */
-  async function prefetchNow(paths: readonly string[]): Promise<void> {
+  async function prefetchNow(paths: readonly string[]): Promise<number | void> {
     const blobs = prefetchOf(opts.actions?.truth)
     if (blobs === undefined) return
     const metas = await Promise.all(
@@ -259,12 +268,21 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
       }),
     )
     const out: BlobId[] = []
-    for (const meta of metas) {
-      const id = meta === null || meta.kind !== 'file' ? undefined : meta.id
+    let bytes = 0
+    let covered = metas.length
+    for (const [at, meta] of metas.entries()) {
+      if (meta === null || meta.kind !== 'file') continue
+      const id = meta.id
       if (id === undefined || id === null || id === '') continue
+      // 按字节封顶：自适应批次最多 128 条，条数不说明字节。超出预算就在这里切开，只报告前缀
+      // 覆盖到了——调用方只读这一段，其余下一轮重新成批；而不是把没取的那些留给逐条读。
+      // 第一条自己就超预算时 `at === 0`，`covered` 为 0：那一条逐个读（缓存装不下它也一样）。
+      if (bytes + meta.size > PREFETCH_BYTE_BUDGET) { covered = at; break }
+      bytes += meta.size
       out.push(id as BlobId)
     }
     await blobs(out)
+    return covered
   }
 
   // 清单随视图代失效；MAX_ROWS/深度与不跟软链的原语义保持不变。

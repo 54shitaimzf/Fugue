@@ -1,4 +1,4 @@
-// ROADMAP § 3 / 0.2.5 · 清单按视图代缓存；只缓存派生结果，不另建真源。
+// ROADMAP § 3 · 清单按视图代缓存；只缓存派生结果，不另建真源。
 import type { View } from '../view/contract.ts'
 import type { CommitId, RelPath, ViewRev } from '../terms.ts'
 
@@ -8,6 +8,9 @@ interface WalkLimits {
   readonly maxDepth: number
   readonly maxRows: number
 }
+
+/** 产品宿主的枚举上限：`host.ts` 的 `walk` 与 `leavesUnder` 共用这一份，测试也从这里取，不另写一遍。 */
+export const WALK_LIMITS: WalkLimits = Object.freeze({ maxDepth: 24, maxRows: 5000 })
 
 export interface WalkResult {
   readonly paths: readonly string[]
@@ -67,10 +70,4 @@ export function createCachedWalkDetailed(view: WalkView, limits: WalkLimits): ()
     const result = await cached.result
     return { paths: [...result.paths], truncated: result.truncated, limits: [...result.limits] }
   }
-}
-
-/** 原有读口保留；详细状态是额外的句柄能力，不改冻结的 View 契约。 */
-export function createCachedWalk(view: WalkView, limits: WalkLimits): () => Promise<readonly string[]> {
-  const detailed = createCachedWalkDetailed(view, limits)
-  return async () => (await detailed()).paths
 }

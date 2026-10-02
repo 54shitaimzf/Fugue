@@ -260,3 +260,21 @@ test('unknown temporaries stay intact regardless of age or claimed PID', async (
   assert.deepEqual(await store.read(id), buildBlobIndex(id, bytes))
   assert.deepEqual(readdirSync(directory).sort(), [orphan, inFlight, ownStale, foreign, pathOf(root, id)].map(path => path.split('/').at(-1)).sort())
 })
+
+test('a record leaf readable by group or others is refused as a miss, and rebuilding never overwrites it', async () => {
+  const root = tmpDir('fugue-index-leaf-mode-')
+  const bytes = Buffer.from('mode guard abc\n'), id = idOf(bytes)
+  const store = createBlobIndexStore(root)
+  assert.equal((await store.rebuild(id, bytes)).stored, true)
+  assert.deepEqual(await store.read(id), buildBlobIndex(id, bytes))
+  const leaf = pathOf(root, id)
+  for (const mode of [0o644, 0o640, 0o604, 0o666]) {
+    chmodSync(leaf, mode)
+    assert.equal(await store.read(id), null, `0${mode.toString(8)} 的叶不是私有记录：当 miss，不读它`)
+  }
+  // 重建遇到不安全的既有叶也不覆盖（拒绝，宁可不落盘）；改回私有后恢复命中。
+  chmodSync(leaf, 0o644)
+  assert.equal((await store.rebuild(id, bytes)).stored, false)
+  chmodSync(leaf, 0o600)
+  assert.deepEqual(await store.read(id), buildBlobIndex(id, bytes))
+})

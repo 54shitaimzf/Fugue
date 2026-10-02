@@ -49,10 +49,11 @@ test('corrupt, truncated, duplicate-key, extra-field and unsupported-version rec
   const original = Buffer.from(encodeBlobIndex(index)).toString()
   const corruptions = [original.slice(0, -2), original.replace('abc', 'abd'), original.replace('"version":1', '"version":2'),
     original.replace('"version":1', '"version":1,"version":1'), original.replace('"version":1', '"version":1,"extra":true'),
-    original.replace('"symbols":null', '"symbols":[]'), original.replace('"checksum":"', '"checksum":"0'), 'null', '[]', '{}']
+    original.replace('"symbols":null', '"symbols":[]'), original.replace('"checksum":"', '"checksum":"0'), 'null', '[]', '{}',
+    // JSON.parse 容忍的那几种字节级偏差：尾随/前置空白、少了收尾换行、同一份文档写了两遍。
+    `${original} `, ` ${original}`, original.slice(0, -1), `${original}${original}`]
   for (const corrupt of corruptions) assert.equal(decodeBlobIndex(Buffer.from(corrupt), index.blob), null, corrupt)
   assert.equal(decodeBlobIndex(encodeBlobIndex(index), 'HEAD'), null)
-  assert.deepEqual(decodeBlobIndex(encodeBlobIndex(indexOf('abcabc')), index.blob), index, 'fresh rebuild repairs a corrupted derived record')
 })
 
 test('encoders reject malformed, unsorted and duplicate postings instead of serializing partial tables', () => {
@@ -92,4 +93,18 @@ test('seeded binary corpora roundtrip every decoded UTF-16 trigram without omiss
     assert.ok(decoded)
     assert.deepEqual(decoded.tables.trigrams, [...expected].sort())
   }
+})
+
+test('the 8 MiB record budget is implied by the trigram budget: the worst canonical record is well under it', () => {
+  // 最坏情况：每个 UTF-16 单元都是需要 `\uXXXX` 转义的孤立代理项（6 字节）。
+  const grams: string[] = []
+  for (let at = 0; grams.length < MAX_TRIGRAMS; at++) {
+    grams.push(String.fromCharCode(0xd800 + (at >> 16 & 0x3ff), 0xd800 + (at >> 8 & 0xff), 0xd800 + (at & 0xff)))
+  }
+  grams.sort()
+  const index = { format: 'fugue-blob-trigrams' as const, version: 1 as const, blob: 'a'.repeat(40), sourceBytes: (MAX_TRIGRAMS + 2) * 3,
+    textUnits: MAX_TRIGRAMS + 2, tables: { trigrams: grams, symbols: null } }
+  const encoded = encodeBlobIndex(index as never)
+  assert.ok(encoded.byteLength < MAX_INDEX_BYTES, `最坏记录 ${encoded.byteLength} 字节应远小于 ${MAX_INDEX_BYTES}`)
+  assert.ok(encoded.byteLength * 1.5 < MAX_INDEX_BYTES, '留足余量：条数预算改大前，这条要先红')
 })

@@ -9,6 +9,11 @@
 - 完整枚举且未碰结果预算时，小结果逐字节保持原样，空结果仍说 `no line/path matches …`。
 - 已发现但放不下的命中如实报 `results are incomplete`；刚好填满预算就停时，后续有没有命中尚未查明，报 `further matches and completeness are unknown`。
 - 命中列表是前缀，头里说 `N lines/paths shown`。不编造未扫描的总命中数、遗漏字节数或遗漏文件数。
+- **总数确实知道的时候要报出来**：`glob` 只配路径、一个文件都不读，所以枚举完整时命中总数是白捡的——
+  头里说 `N of M paths shown`，说明里说 `M-N more paths are not shown`，**不说** `Further matches are unknown`。
+  把可知的数说成未知与"不猜未知"是两件事，而模型最需要的恰好是"这个模式一共匹配 5,000 条、我该收紧"。
+  枚举自己不全（或完整性未知）时 `M` 不是总数，那一档仍然只报前缀与未知。
+  `grep` 的 `content` / `count` / `files_with_matches` 一律不报总数：不读完文件确实不知道还有多少命中。
 - 第一条命中就过长时给完整 UTF-8 前缀，并说 `Last result line shortened`；保留完整字符，不劈开汉字/emoji。
 - `count` 对已经完整扫描并显示的文件给精确匹配行数，早停只发生在文件结果行之间。文件名档只需找出文件内第一条匹配。
 - 行迭代保留旧 grep 的末尾 LF 空段和空文件一段语义；不预先拆出整文件行数组。
@@ -16,8 +21,20 @@
 - 旧宿主没有详细枚举读口时如实报 `Enumeration completeness unavailable`。这是不知道，不能假报完整。
 
 候选边界仍由原宿主维护：不跟软链，深度 24，最多 5,000 条文件。详细状态来自
-[walk 限制读口](walk-limits.md)，不改冻结的 View/Truth 契约。搜索结果正文预算为 7,680 字节，
-为头、说明、运行时步预算留 512 字节；最终仍过统一 `capReceipt` 出口。没有 cgroup/内核安全配置变化。
+[walk 限制读口](walk-limits.md)，不改冻结的 View/Truth 契约。最终仍过统一 `capReceipt` 出口。
+没有 cgroup/内核安全配置变化。
+
+**结果行的预算是算出来的，不是拍出来的**（`src/tools/search-receipt.ts` 的 `SEARCH_ROW_BYTES`）：
+8,192 减去「说明块最长那一份（四条全上 + 每条一个换行）333 字节」「结果头最长那一份
+（`N of M paths shown:` + 换行，两个数各留 7 位）32 字节」「运行时在回执后面追加的那一句
+（`stepsLeftTail`）留 256 字节」= **7,571 字节**。
+
+原先写的是 `MAX_RECEIPT_BYTES - 512`，而最坏情况下实测只剩 **42 字节**余量：说明措辞再长一句、
+或者 `AGENT_LAND_NOW` 改一句话就越界，搜索回执就被 `capReceipt` 中段截掉——正是这一单元声称要
+避免的那件事。而且**没有一条测试能发现它**：`w10.test.ts` 的字节断言都落在追加那一句**之前**的
+face 输出上。`search-stop.test.ts` 的「the row budget leaves room for the worst case …」把这件事
+钉成断言：最坏说明集的 `render` 结果拼上真正的 `stepsLeftTail`，`capReceipt` 一个字节都不许动它，
+并对着 `driver.ts` / `plan.ts` 两处真正的收工句子核 256 这个留量。
 
 ## 预取成本与实测取舍
 
@@ -51,24 +68,34 @@
 新策略少付 5 次批请求，但仍比最初整树预取的 5 次请求多 2 次；没有宣称全面提速。
 稀疏首批之后突然出现密集命中时，新策略可能提前取最多 128 条；回归案例量到先取 32 + 128 条、实际只读 33 个文件，随后停止。
 这比固定档在同一转折多预取一些候选，是减少冷批请求的代价，不把它写成全档少读。
-单个 blob 可能很大，128 条上限不等于 128 个小文件或一个字节预算；原有缓存/真源的边界未扩大。
+单个 blob 可能很大，128 条上限不等于 128 个小文件，所以预取另有一道字节预算（`PREFETCH_BYTE_BUDGET`，4 MiB，缓存缺省容量的一半）：超出就只取回前缀并如实告知 `grep` 覆盖到了第几条，其余下一轮重新成批。72 KiB × 256 个文件的冷搜索，没有这道预算是 134 次请求（一批 9 MiB 挤爆 8 MiB 缓存，前几条被逐条重取），有了它回到几批。
 目录描述、schema 和模型夹具字节没有再变，不需要再适配前缀或改历史 live 验收。
 
 ## 工具目录与离线请求重录
 
 路线图 §10 要求把早停/MAX_ROWS 的描述变化一次付清。grep/glob 描述同时更新，schema 不变；
-目录指纹 `5681832878aa0634` → `1d3c279ecd84ec3f`，三种状态一致。
+三种状态同一份目录（`src/tools/search-prefix.test.ts` 的第一条就是它）。
 
-- `node tools/make-fixtures.ts` 重新捕获三份**离线请求**，响应/历史 usage 原样保留
-- `test/helpers/search-wire.ts` 生成临时、带 provenance 的额外合成兼容副本，只适配两个描述和派生请求指纹/字节数；原 `src/cli/__fixture__/wire-in/` 真录制与 chain 的历史验收绑定均不改
-- 新目录请求喂给原历史目录仍会被产品 transport 逐字节拒绝，任意请求改动仍拒绝；没有放松 `--wire-in` 的取证规则
-- `node tools/recapture-search-wire.ts` 可另外生成临时离线输入检查，输出目录需自行清理
+- `node tools/make-fixtures.ts` 重新捕获三份**离线请求**（`src/model/fixtures/*.json`），响应/历史 usage 原样保留
+- `node tools/adapt-wire-in.ts` 把回放夹具 `src/cli/__fixture__/wire-in/` 里那份录制请求的
+  `tools` 栏**就地**改齐当前整份目录（不只是 grep/glob），并重算 `request.sha256` 与 `meta.json`
+  的 `requestBytes` / `requestHash` / `zoneAHash`；响应、usage、timings、`messages` 一个字节不动。
+  来历写在 `src/cli/__fixture__/wire-in/PROVENANCE.md`，机器可读的那份在同目录的 `provenance.json`
+- `src/cli/wire-in-catalog.test.ts` 在 **fast** 档盯着这件事：盘上那一份与当前目录不一致就当场红，
+  而不是等 `full` 档里的 real 测试
+- **"录下来的字节被改过就当场拒"一个字没松**：请求改一个字节仍被产品 transport 拒
+  （`src/cli/chain.test.ts` 的「序 1 负对照」与 `src/cli/wire-in-catalog.test.ts` 的最后一条各守一档）
 
 **离线适配不是新的 live 录制、提供方成功证据、付费前缀读数或 cache 成本证据。**响应、用量和时间来自历史，
-新请求没有发给提供方，也不会替换历史 chain 验收。目录字节已经变化，旧历史 chain 将按冻结规则正确拒绝；
-路线图 §10 的**真正新 live 重录仍是阻塞项**，需要明确的提供方/凭据/费用授权，以及具备隔离能力的 Linux 主机。
-本云环境 bwrap NETLINK_ROUTE 被拒，
+新请求没有发给提供方。路线图 §10 的**真正新 live 重录仍是阻塞项**，需要明确的提供方/凭据/费用授权，
+以及具备隔离能力的 Linux 主机。本云环境 bwrap NETLINK_ROUTE 被拒，
 未绕过宿主策略，也不将有界搜索的测试通过算作隔离正向通过。
+
+**为什么不是"目录字节变了就让历史 chain 红着"**：`--wire-in` 过期之后 `src/cli/chain.test.ts`
+序 1 不是"报出一处不同"，而是整条端到端验收（验收照过 · 产物逐字节相同 · 每条调用逐条对上 ·
+围栏 `full` + `bwrap+landlock` · 停因收敛）**一条都不再执行**，`full` 这道合并闸门长期红。
+那不是更严格，只是更瞎——所以口径拆成两句：目录字节漂了就离线改齐（可逐字节复算 · 来历写明），
+录下来的字节被改过仍当场拒。
 
 ## 验证入口
 

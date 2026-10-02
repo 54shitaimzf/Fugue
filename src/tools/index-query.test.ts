@@ -202,3 +202,20 @@ test('candidate provider input mutations cannot inject paths, reorder receipts o
     assert.deepEqual(host.reads, Object.keys(files))
   }
 })
+
+test('a byte-capped prefetch prefix composes with candidate filtering: each kept path is read once, in order, and none are dropped', async () => {
+  const paths = Array.from({ length: 100 }, (_, index) => `file-${String(index).padStart(3, '0')}`)
+  const kept = paths.filter((_, index) => index % 2 === 0)
+  const asked: string[][] = []
+  const read: string[] = []
+  const host = {
+    walk: async () => paths,
+    walkDetailed: async () => ({ paths, truncated: false, limits: [] }),
+    filterCandidates: async (batch: readonly string[]) => batch.filter(path => kept.includes(path)),
+    prefetch: async (batch: readonly string[]) => { asked.push([...batch]); return 10 },
+    readBytes: async (path: string) => { read.push(path); return { bytes: Buffer.from('none'), mode: 0o100644 } },
+  } as ToolHost
+  assert.equal((await grep({ pattern: 'needle' }, host, ctx)).output, 'no line matches needle.')
+  assert.deepEqual(read, kept)
+  assert.deepEqual(asked.map(batch => batch[0]), kept.filter((_, index) => index % 10 === 0))
+})

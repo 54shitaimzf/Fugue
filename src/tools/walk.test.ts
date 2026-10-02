@@ -1,4 +1,4 @@
-// 0.2.5：缓存只减少 list 调用，不改变候选顺序、边界或后续变更可见性。
+// 清单缓存：缓存只减少 list 调用，不改变候选顺序、边界或后续变更可见性。
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { DirEntry, EntryKind } from '../entries.ts'
@@ -6,7 +6,7 @@ import type { CommitId, RelPath } from '../terms.ts'
 import { loadView } from '../view/view.ts'
 import { createToolHost } from './host.ts'
 import { createRoots } from '../roots/roots.ts'
-import { createCachedWalk, createCachedWalkDetailed } from './walk.ts'
+import { createCachedWalkDetailed, WALK_LIMITS } from './walk.ts'
 
 function row(name: string, kind: EntryKind = 'file'): DirEntry {
   return { name, kind, mode: kind === 'dir' ? 0o40000 : 0o100644, size: 0, id: '' }
@@ -23,9 +23,17 @@ function fakeView(tree: Record<string, DirEntry[]>) {
 }
 const limits = { maxDepth: 24, maxRows: 5000 }
 
+// 产品侧（`createToolHost`）走的就是 detailed 口，`walk()` 只是它的 paths 投影
+// （`host.ts`）。这个 helper 在测试里复制那一层投影，免得为了测试在产品代码里留一个
+// 没有调用方的包装导出。
+function pathsOnly(view: Parameters<typeof createCachedWalkDetailed>[0], bounds = limits): () => Promise<readonly string[]> {
+  const detailed = createCachedWalkDetailed(view, bounds)
+  return async () => (await detailed()).paths
+}
+
 test('same-generation walks share traversal and return independent arrays', async () => {
   const view = fakeView({ '': [row('a'), row('d', 'dir')], d: [row('b')] })
-  const walk = createCachedWalk(view, limits)
+  const walk = pathsOnly(view)
   const [first, concurrent] = await Promise.all([walk(), walk()])
   assert.deepEqual(first, ['a', 'd/b'])
   assert.deepEqual(concurrent, first)
@@ -38,7 +46,7 @@ test('same-generation walks share traversal and return independent arrays', asyn
 test('revision/base changes invalidate; independent walkers do not share state', async () => {
   const tree = { '': [row('a')] }
   const view = fakeView(tree)
-  const walk = createCachedWalk(view, limits)
+  const walk = pathsOnly(view)
   assert.deepEqual(await walk(), ['a'])
   tree[''] = [row('b')]
   view.rev++
@@ -46,7 +54,7 @@ test('revision/base changes invalidate; independent walkers do not share state',
   tree[''] = [row('c')]
   view.base = 'new-base'
   assert.deepEqual(await walk(), ['c'])
-  assert.deepEqual(await createCachedWalk(view, limits)(), ['c'])
+  assert.deepEqual(await pathsOnly(view)(), ['c'])
   assert.equal(view.listed.length, 4)
 })
 
@@ -57,11 +65,11 @@ test('cached traversal preserves row order, depth/row bounds and no-follow behav
     'd/nested': [row('too-deep')],
     link: [row('outside')],
   })
-  const walk = createCachedWalk(view, { maxDepth: 1, maxRows: 2 })
+  const walk = pathsOnly(view, { maxDepth: 1, maxRows: 2 })
   assert.deepEqual(await walk(), ['d/first', 'd/second'])
   assert.deepEqual(await walk(), ['d/first', 'd/second'])
   assert.deepEqual(view.listed, ['', 'd'])
-  assert.deepEqual(await createCachedWalk(view, { maxDepth: 0, maxRows: 5 })(), ['last'])
+  assert.deepEqual(await pathsOnly(view, { maxDepth: 0, maxRows: 5 })(), ['last'])
 })
 
 test('failed enumeration is retried instead of poisoning a generation', async () => {
@@ -70,7 +78,7 @@ test('failed enumeration is retried instead of poisoning a generation', async ()
     if (++attempts === 1) throw new Error('temporary list failure')
     return [row('recovered')]
   } }
-  const walk = createCachedWalk(view, limits)
+  const walk = pathsOnly(view)
   await assert.rejects(walk(), /temporary list failure/)
   assert.deepEqual(await walk(), ['recovered'])
   assert.deepEqual(await walk(), ['recovered'])
@@ -85,7 +93,7 @@ test('a generation changed during traversal is not reused', async () => {
     if (++calls === 1) await waiting
     return [row(`generation-${view.rev}`)]
   } }
-  const walk = createCachedWalk(view, limits)
+  const walk = pathsOnly(view)
   const old = walk()
   view.rev = 1
   release()
@@ -103,7 +111,7 @@ test('late old success/failure cannot discard a newer cached generation', async 
       if (++calls === 1) { await waiting; if (fail) throw new Error('old failure') }
       return [row(`generation-${view.rev}`)]
     } }
-    const walk = createCachedWalk(view, limits)
+    const walk = pathsOnly(view)
     const old = walk()
     view.rev = 1
     assert.deepEqual(await walk(), ['generation-1'])
@@ -185,7 +193,7 @@ test('ToolHost detailed and legacy reads reuse the same cached enumeration', asy
 
 test('production row/depth thresholds report incomplete traversal without exceeding bounds', async () => {
   const files = Array.from({ length: 5001 }, (_, i) => row(String(i)))
-  const wide = await createCachedWalkDetailed(fakeView({ '': files }), limits)()
+  const wide = await createCachedWalkDetailed(fakeView({ '': files }), WALK_LIMITS)()
   assert.equal(wide.paths.length, 5000)
   assert.equal(wide.paths[4999], '4999')
   assert.deepEqual(wide.limits, ['rows'])
@@ -195,7 +203,12 @@ test('production row/depth thresholds report incomplete traversal without exceed
     tree[path] = [row('file'), row('next', 'dir')]
     path = path === '' ? 'next' : `${path}/next`
   }
-  const deep = await createCachedWalkDetailed(fakeView(tree), limits)()
+  const deep = await createCachedWalkDetailed(fakeView(tree), WALK_LIMITS)()
   assert.equal(deep.paths.length, 25)
   assert.deepEqual(deep.limits, ['depth'])
+})
+
+test('the product walk limits are one shared constant, pinned to the documented 24 deep / 5,000 rows', () => {
+  assert.deepEqual({ ...WALK_LIMITS }, { maxDepth: 24, maxRows: 5000 })
+  assert.ok(Object.isFrozen(WALK_LIMITS))
 })

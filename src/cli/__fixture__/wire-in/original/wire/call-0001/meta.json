@@ -1,0 +1,29 @@
+{
+  "call": 1,
+  "target": {
+    "providerId": "deepseek",
+    "host": "https://api.deepseek.com",
+    "path": "/anthropic/v1/messages",
+    "model": "deepseek-flash",
+    "from": "decl",
+    "wire": "anthropic-messages"
+  },
+  "model": "deepseek-flash",
+  "requestBytes": 9022,
+  "requestHash": "df09987f5c290cd2",
+  "responseBytes": 6990,
+  "responseHash": "e043b6e860f87064",
+  "zoneAHash": "57bf4e895c18810d",
+  "zoneBHash": "6b7e0454a6d59c10",
+  "zoneCHash": "75a11da44c802486",
+  "tools": 12,
+  "events": 50,
+  "attempts": [
+    200
+  ],
+  "opened": 1,
+  "closed": 1,
+  "stop": "tool-calls",
+  "failure": null,
+  "outcome": "done"
+}

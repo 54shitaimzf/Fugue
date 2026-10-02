@@ -19,3 +19,10 @@ export function decodeIndexWorkerReply(message: unknown, temporaryId: string): I
   }
   return { grams: new Set(row.keys), serializedBytes: row.serializedBytes as number, stored: row.stored }
 }
+
+/** 确定性的构建失败（超预算）：同样的字节永远同样的结果，调用方可以记住不再重读重建。 */
+export function isUnindexableReply(message: unknown, temporaryId: string): boolean {
+  if (message === null || typeof message !== 'object') return false
+  const row = message as Record<string, unknown>
+  return row.temporaryId === temporaryId && row.ok === false && row.unindexable === true
+}
