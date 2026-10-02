@@ -1,4 +1,6 @@
 // Development-only bounded snapshot reader. Product M0 polling/cache and its three methods stay unchanged.
+import { fstatSync } from 'node:fs'
+import { setImmediate } from 'node:timers/promises'
 import { open } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -17,8 +19,13 @@ export class LogReadLimitError extends Error {
 interface Row { pos: LogPos; e: LogEvent }
 interface Source { writer: WriterId; file: FileHandle; size: number; mtimeNs: bigint; ctimeNs: bigint; ino: bigint; dev: bigint }
 
-async function unchanged(source: Source): Promise<void> {
-  const now = await source.file.stat({ bigint: true })
+// Same metadata checks, without a libuv round-trip for every row/writer pair.
+// Fairness is per invocation: no more than 64 synchronous checks before yielding the event loop.
+const SYNC_CHECKS_PER_TURN = 64
+interface Schedule { checks: number }
+async function unchanged(source: Source, schedule: Schedule): Promise<void> {
+  if (++schedule.checks % SYNC_CHECKS_PER_TURN === 0) await setImmediate()
+  const now = fstatSync(source.file.fd, { bigint: true })
   if (now.size !== BigInt(source.size) || now.ino !== source.ino || now.dev !== source.dev ||
       now.mtimeNs !== source.mtimeNs || now.ctimeNs !== source.ctimeNs) {
     throw new Error(`日志在快照读取中改变：${source.writer}；请重新读取`)
@@ -26,17 +33,17 @@ async function unchanged(source: Source): Promise<void> {
 }
 
 /** Each pass retains one chunk and at most one bounded line. Split UTF8 is decoded only at LF. */
-async function* rowsOf(source: Source): AsyncGenerator<Row> {
+async function* rowsOf(source: Source, schedule: Schedule): AsyncGenerator<Row> {
   const chunk = Buffer.alloc(CHUNK_BYTES)
   let offset = 0, line = 0, length = 0
   let oversized = false
   let parts: Buffer[] = []
   while (offset < source.size) {
-    await unchanged(source)
+    await unchanged(source, schedule)
     const want = Math.min(chunk.length, source.size - offset)
     const { bytesRead } = await source.file.read(chunk, 0, want, offset)
     if (bytesRead === 0) throw new Error(`日志快照读取提前结束：${source.writer}`)
-    await unchanged(source)
+    await unchanged(source, schedule)
     offset += bytesRead
     let start = 0
     while (start < bytesRead) {
@@ -64,7 +71,7 @@ async function* rowsOf(source: Source): AsyncGenerator<Row> {
     }
   }
   // An unterminated suffix is uncommitted, including malformed/partial UTF8 bytes. Pure read never truncates.
-  await unchanged(source)
+  await unchanged(source, schedule)
 }
 
 /**
@@ -83,6 +90,7 @@ async function* readSnapshot(capturedRoot: string, fromSeq: LogSeq): AsyncGenera
   if (names.length > STREAM_LOG_LIMITS.maxWriters) {
     throw new LogReadLimitError(`日志 writer 超过 ${STREAM_LOG_LIMITS.maxWriters} 个`)
   }
+  const schedule: Schedule = { checks: 0 }
   const sources: Source[] = []
   const iterators: AsyncGenerator<Row>[] = []
   let refused = false
@@ -98,8 +106,8 @@ async function* readSnapshot(capturedRoot: string, fromSeq: LogSeq): AsyncGenera
       if (st.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new LogReadLimitError(`日志快照大小不可安全寻址：${writer}`)
       Object.assign(source, { size: Number(st.size), mtimeNs: st.mtimeNs, ctimeNs: st.ctimeNs, ino: st.ino, dev: st.dev })
     }
-    for (const source of sources) for await (const _row of rowsOf(source)) { /* validate before first yield */ }
-    for (const source of sources) await unchanged(source)
+    for (const source of sources) for await (const _row of rowsOf(source, schedule)) { /* validate before first yield */ }
+    for (const source of sources) await unchanged(source, schedule)
     const heads: (Row | undefined)[] = []
     async function advance(at: number): Promise<void> {
       for (;;) {
@@ -108,7 +116,7 @@ async function* readSnapshot(capturedRoot: string, fromSeq: LogSeq): AsyncGenera
         if (next.value.pos.seq > fromSeq) { heads[at] = next.value; return }
       }
     }
-    for (const source of sources) iterators.push(rowsOf(source))
+    for (const source of sources) iterators.push(rowsOf(source, schedule))
     for (let at = 0; at < iterators.length; at++) await advance(at)
     for (;;) {
       let best = -1
@@ -121,7 +129,7 @@ async function* readSnapshot(capturedRoot: string, fromSeq: LogSeq): AsyncGenera
       }
       if (best < 0) return
       // Mutation of even another writer invalidates the entire captured read, before the next result.
-      for (const source of sources) await unchanged(source)
+      for (const source of sources) await unchanged(source, schedule)
       yield heads[best]!
       await advance(best)
     }
