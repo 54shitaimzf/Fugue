@@ -48,6 +48,18 @@ export const MIN_TWO_COLUMN = 24 + 20 + 3
 /** 画得出框 + 账尾至少要几行：上下两条边 · 一行内容 · 一条分隔 · 一行账尾。 */
 export const MIN_HEIGHT = 5
 
+/**
+ * **框内那一栏**占几列（左右两根竖线各一列）。**这是它的唯一出处**——面板自己那一栏与舞台那几处
+ * 算列宽的地方（`stage.ts` 的输入行 · 门口那一块 · 树 · 阅读面）全从这一只推。
+ *
+ * 为什么要收成一处：第二把尺就是第二份真相，而它漂移的时候**不报错**——宽一列的那一份画不进框，
+ * `cell` 把它悄悄截掉，屏幕上只少一个字符。`width < 3` 时给 0（框都画不出来，那一档由 `frameOf`
+ * 的极窄提示兜住，见 `MIN_WIDTH`）。
+ */
+export function innerOf(width: number): number {
+  return Math.max(0, width - 2)
+}
+
 /** 一条读数的两栏。**它是这一份唯一的中间产物**——渲染与那三条对照都从它读。 */
 export interface FrameBody {
   /** 左栏那些行：处境。 */
@@ -312,9 +324,9 @@ export function frameOf(o: FrameInput): Frame {
   // **右栏拿大头（3/5）**（U10c）：读数那一栏是"数字 + 分子/分母"的长行（八元指标一条
   // 就是一句），40 列那档两栏对半时它截得最狠；处境那一栏的行短（轮次 · 状态 · 边），
   // 2/5 装得下。两根竖线加两头的框占 3 列，先扣再分。
-  const left = two ? Math.floor(((width - 3) * 2) / 5) : width - 2
+  const inner = innerOf(width)
+  const left = two ? Math.floor(((width - 3) * 2) / 5) : inner
   const right = two ? width - 3 - left : 0
-  const inner = width - 2
 
   // 内容那一栏：**先把每一行折进它那一栏的列宽**，再一行对一行（右边短的那些补空）；
   // 单栏那一档先把左栏印完再印右栏（同一个框，只是没有中间那根竖线）。
