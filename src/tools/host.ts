@@ -22,6 +22,8 @@ import type { View } from '../view/contract.ts'
 import { textWindowOf } from './read-window.ts'
 import { filterCurrentViewCandidates } from '../search/current-view-candidates.ts'
 import type { BlobIndexLookup } from '../search/blob-index.ts'
+import type { ViewCohortLookup } from '../search/view-cohort.ts'
+import { cohortLookupForView } from '../search/view-cohort.ts'
 import { checkpoint } from '../checkpoint.ts'
 import type { RunReply } from './execute.ts'
 import type { ActionAsk, AskItem, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, ToolHost, ToolListing } from './execute.ts'
@@ -78,6 +80,8 @@ export interface CommandPlan {
 }
 
 export interface HostOptions {
+  /** Optional View-bound cohort adapter; preparation and lifecycle belong to the caller. */
+  readonly cohortIndex?: ViewCohortLookup
   /** 显式提供才启用索引候选读口；默认缺席。构造/排空/关闭的生命周期由调用方持有。 */
   readonly blobIndex?: BlobIndexLookup
   /**
@@ -173,6 +177,7 @@ export interface ToolHostHandle extends ToolHost {
 export function createToolHost(view: View, roots: Roots, opts: HostOptions = {}): ToolHostHandle {
   const parts = opts.actions
   const blobIndex = opts.blobIndex
+  const cohortIndex = opts.cohortIndex !== undefined && cohortLookupForView(opts.cohortIndex, view) ? opts.cohortIndex : undefined
 
   async function deny(d: DenyAsk): Promise<void> {
     // 没有日志口就不记（夹具档与单测里那几份宿主就是这样）——但**有口就一定要记**：
@@ -532,7 +537,9 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
   }
   return {
     readBytes: readBytesOf,
-    ...(blobIndex === undefined ? {} : {
+    ...(cohortIndex !== undefined ? {
+      filterCandidates: (paths: readonly string[], required: readonly string[]) => cohortIndex.filterCandidates(paths, required),
+    } : blobIndex === undefined ? {} : {
       filterCandidates: (paths: readonly string[], required: readonly string[]) =>
         filterCurrentViewCandidates(view, paths, required, (blob, grams) => blobIndex.mightContain(blob, grams)),
     }),
