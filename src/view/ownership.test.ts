@@ -9,6 +9,7 @@ import type { BlobId, CommitId } from '../terms.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { Lower, ViewSnapshot } from './contract.ts'
 import { applyEdit } from './edit.ts'
+import { copyBytes } from './owned.ts'
 import { loadView } from './view.ts'
 
 const hash = (bytes: Uint8Array): BlobId => createHash('sha1').update(`blob ${bytes.byteLength}\0`).update(bytes).digest('hex')
@@ -29,6 +30,31 @@ function fixture() {
 }
 const emptyLog = { async *readByWriter() {} }
 const body = (bytes: Uint8Array | null) => bytes === null ? null : Buffer.from(bytes).toString('utf8')
+const byteValues = (deltas: Delta[]) => deltas.map(d =>
+  d.kind === 'add' || d.kind === 'modify' ? { ...d, bytes: new Uint8Array(d.bytes) } : d)
+
+test('owned copies and View reads retain Buffer/plain constructors with independent visible windows', async () => {
+  for (const backing of [Buffer.from('xxfirstyy'), Uint8Array.from(Buffer.from('xxfirstyy'))]) {
+    const input = backing.subarray(2, 7), owned = copyBytes(input)
+    const expectedConstructor = Buffer.isBuffer(input) ? Buffer : Uint8Array
+    assert.equal(owned.constructor, expectedConstructor)
+    assert.notEqual(owned.buffer, input.buffer)
+    assert.equal(owned.byteLength, 5); assert.equal(owned.buffer.byteLength, 5)
+    const f = fixture(), view = await loadView(emptyLog, 'round', { lower: f.lower })
+    await view.write('a', input)
+    input.fill(120)
+    assert.equal(body(owned), 'first')
+    const read = (await view.read('a'))!, delta = view.diff()[0]
+    assert.equal(read.constructor, expectedConstructor)
+    assert.equal(delta.kind, 'add')
+    if (delta.kind !== 'add') assert.fail('expected add')
+    assert.equal(delta.bytes.constructor, expectedConstructor)
+    new Uint8Array(read.buffer).fill(121); new Uint8Array(delta.bytes.buffer).fill(122)
+    assert.equal(body(await view.read('a')), 'first')
+    assert.equal(body((view.diff()[0] as Extract<Delta, { kind: 'add' }>).bytes), 'first')
+    assert.equal((await view.stat('a'))!.id, hash(Buffer.from('first')))
+  }
+})
 
 test('Buffer/Uint8Array caller mutation during put keeps Entry, blob and recorded delta identical', { timeout: 10_000 }, async () => {
   for (const input of [Buffer.from('first'), Uint8Array.from(Buffer.from('first'))]) {
@@ -164,7 +190,9 @@ for (const stage of ['putBlob', 'append'] as const) {
         gate.release(); await pending
         const replayed = await loadView(log, 'round', { lower: f.lower })
         assert.deepEqual(view.state(), replayed.state())
-        assert.deepEqual(view.diff(), replayed.diff())
+        // Git readers can return Buffer for a plain Uint8Array-origin write.
+        // The persistent invariant covers every delta label and byte value.
+        assert.deepEqual(byteValues(view.diff()), byteValues(replayed.diff()))
         assert.equal(body(await view.read('a')), 'first')
         const event = events[0]
         assert.equal(event.t, 'view/write')
