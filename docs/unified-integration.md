@@ -17,19 +17,33 @@
 - `54615407` 的格式端源身份边界：预哈希超限只拒绝，确定性预算分类只用于核验后的构建。
   本分支 lookup 采用原始已审实现，不存在外部后来加入的 `unindexableSet`，不会缓存未核验的负事实。
 
-可选索引由 `HostOptions.blobIndex` 接入，句柄生命周期由调用方持有；不给它仍走扫描。
-现有 v1 blob 盘格式不变，新 cohort 后端会独立版本化，不改 Truth/View/M0/serve 契约或缺省档。
-cohort 的目标是一次读取当前 blob 集的紧凑 postings，避免冷趟逐叶打开 512 条记录；
-准备、首次 miss、当前 View 元数据和端到端耗时分开记，不拿单项读取低于 50ms 宣布默认启用。
+可选检索已提供两条接线：`HostOptions.blobIndex` 的逐 blob 后端，以及
+`HostOptions.cohortIndex` 的当前 View 集合后端。后一种句柄只为绑定的 View 排除候选，
+按当前 base/rev 和完整 BlobId 集选择一个 artifact；缺失、不可信、超限或代变化继续扫描。
+`prepare(readBlob)` 是调用方明确付费的独立动作；cohort 候选查询不会为构建读取源 blob，
+匹配候选仍读真实内容并按原正则验证，查询不构建或发布索引。
+句柄和存储的关闭仍由调用方观察。两种选项均缺省关闭，现有 v1 blob 字节与读写契约不变；
+新 cohort 使用独立版本、命名空间与有界 UTF-16 postings。
+
+检索之外，0.2.8 已带上既有数据的阅读面 diff、长行和黑白属性可读性小批，
+痛点与实际终端视觉验收记在 [显示层说明](terminal-readability.md)。它没有引入新的事件或数据路径。
+
+[真实查询读数](cohort-query-measurements.md) 分开记录准备、首次 miss、当前 View 元数据、
+重开句柄的查询和重复查询。512 文件约 16MB 的 code/mixed 样本由 512 个盘记录缩为一个
+artifact；code sparse 冷中位仍为 52.682ms，dense 全扫更快，entropy 超预算后继续扫描。
+这些边界与 paid preparation 都保留，不能拿单项读取或一个样本宣布默认启用。
 
 官方 `bbf2ef1` 路线图保留。原始 `wire-in` 真录制与链验收保留；三个静态 model 协议样例的
 工具描述更新和临时生成的 synthetic 当前目录输入不是 live 重录、provider/cache 证书。
 未导入外部后来改写历史请求而保留旧响应/usage 的接受路径。
 
-当前 owner focused 检查：store/格式 33/33，lookup/facts/worker/current-view 接线 49/49；
-额外真实 View/M0 组合检查 30/30，包含新验收四例。集中 reviewer 在最终组合点复核，
-避免每位实现者反复跑同一整档。云 overlay/挂载、Node runner 反序列化和 kernel 沙箱限制
-仍如 [维护快照](maintenance-integration.md) 报告；不得把 focused 或 fork push fast 当 full。
+原始组合 owner focused 检查为 store/格式 33/33、lookup/facts/worker/current-view 49/49，
+早期额外真实 View/M0 组合 30/30。后续精确 cohort 接线为 fast 9/9，真实 cohort + v1
+验收 10/10；基准自建资源清理控制 3/3。codec 与 v1 focused 15/15，cohort store
+最大 4096-ID 证明后 14/14，显示层 focused 43/43、follow 11/11 和 real PTY 6/6。
+这些是各自相关集合，不是合并整档计数；集中 reviewer 按最终源 blob 和交互验收复核。
+云 overlay/挂载、Node runner 反序列化和 kernel 沙箱限制仍如
+[维护快照](maintenance-integration.md) 报告；focused 和 fork push fast 都不等于 full。
 
 0.2.7 待批动作、成本事件扩展、serve 与默认索引启用条件保持待定；本分支也不授权合并或发布。
 
