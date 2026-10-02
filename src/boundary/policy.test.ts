@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, test } from 'node:test'
+import { assertUnchanged, snapshotOf } from '../../test/helpers/refuse.ts'
 
 const CLI = fileURLToPath(new URL('../cli/fugue.ts', import.meta.url))
 
@@ -246,12 +247,22 @@ test('P1c · 声明 full 而实测层不齐：起跑前拒并指两条出路；�
   // 声明期望档 full，实测只有第二层（bwrap 不在）——fugue policy 与 fugue run 都在起跑前拒，
   // 文案指两条出路（把层补齐 · 把声明改 partial）。**错误那一行走 stderr**（§ 9.8：stdout 纪律）。
   assert.equal(fugue(root, 'config', 'set', 'boundary.enforcement', '"full"').code, 0)
+  // **预热那一趟**：`fugue policy` 头一回会顺手把 landlock / seccomp 两个帮手编译进
+  // `<root>/.fugue/bin`（工具链缓存，见 `materialize/toolchain.ts`）——那是探测机制自己的缓存，
+  // 不是"这一次拒"动的。先跑一趟把它热起来，下面那两趟才是干净的对照。
+  assert.equal(fugueEnv(noBwrap, root, '--json', 'policy').code, 1)
+  // **0.2.6 ④ · 拒了之后什么都没动**：起跑前拒是"一条路径都没动"。快照里**必含账文件字节**
+  // （`.fugue/log` 下每一份 `.jsonl` 的原始字节），所以"账被顺手写了一条"这一类也抓得住。
+  const beforePolicy = snapshotOf([root])
   const denied = fugueEnv(noBwrap, root, '--json', 'policy')
   assert.equal(denied.code, 1, '起跑前拒（fail=1）——不是静默降档照跑')
   assert.ok(denied.err.includes('把层补齐'), `指路要给"补层"那条出路：${denied.err}`)
   assert.ok(denied.err.includes('partial'), `指路要给"改声明"那条出路：${denied.err}`)
+  assertUnchanged(beforePolicy, snapshotOf([root]), '边界声明档起跑前拒（fugue policy）')
+  const beforeRun = snapshotOf([root])
   const refused = fugueEnv(noBwrap, root, '--json', 'run', 'build')
   assert.equal(refused.code, 1, 'fugue run 同一处拒（resolvePolicy 一处解析两处读）')
+  assertUnchanged(beforeRun, snapshotOf([root]), '边界声明档起跑前拒（fugue run）')
 
   // 负对照：声明 partial（= 把"我知道在降档"写下来）→ 照跑，如实报实测那一档（今天的行为）。
   assert.equal(fugue(root, 'config', 'set', 'boundary.enforcement', '"partial"').code, 0)
