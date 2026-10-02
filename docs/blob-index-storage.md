@@ -29,13 +29,12 @@
 
 创建目录时同步它的父目录（并发创建已存在时也同步），最后再同步完整分片。
 写入用随机唯一临时文件、exclusive/no-follow 创建、文件 fsync、rename、目录
-fsync；失败清自己的临时对象，不清别人的数据。**无主临时对象有出口**：进程在
-`open(O_EXCL)` 之后、`rename` 之前被 SIGKILL，会留下一个 pid 和 nonce 都不再能被
-认领的 `.tmp-…`（nonce 随进程消失）；发布成功之后用手里的目录句柄扫一次本分片，
-只收走同时满足「`.tmp-` 前缀 · 普通文件 · 本 uid · 单硬链接 · 不超记录预算 ·
-mtime 早于一小时」的叶。那条时限保证踩不到另一个**正在**写的并发操作，
-「别人的临时文件一律不动」照旧；扫不动也不会把已经发布成功的记录退成
-`stored:false`，收走的个数记在 `stats().sweptTemporaries`。目录描述符在这一串之后才回收，
+fsync；失败清自己创建或任务明确认领的临时对象，不清未知叶。
+文件年龄、PID 或 nonce 不能证明写者已停止：活跃操作可能暂停超过一小时，
+共享文件系统上的 PID 也可能属于不同命名空间。因此不再按年龄自动删除 `.tmp-…`；
+崩溃留下且无人认领的叶保守保留，尚无安全的跨进程回收协议或全缓存磁盘配额。
+兼容统计字段 `stats().sweptTemporaries` 保留，目前恒为0。
+目录描述符在操作结局确定后回收，同步抛错与异步拒绝都观察，所有关闭都尝试并等完。
 **回收失败不改变结果**：rename 与 fsync 都已经成功，`stored` 照旧是 true，只在
 `stats().closeFailures` 记一笔；`rebuild`/`read` 自己的错因始终优先。并发同 blob 重建只发布完整的
 canonical 记录，没有一半内容的目标文件。读者可能因并发更换读到 miss，照退档。
@@ -48,7 +47,7 @@ canonical 记录，没有一半内容的目标文件。读者可能因并发更�
 ## 验证
 
 ```sh
-node tools/test-entry.js fast src/search/index-store.test.ts src/search/index-format.test.ts
+node tools/test-entry.js fast src/search/index-store.test.ts src/search/index-store-liveness.test.ts src/search/index-format.test.ts
 node tools/check-targets.js
 node tools/check-events.js
 ```
@@ -57,6 +56,6 @@ node tools/check-events.js
 指向一份**格式合法**的外部记录也不能被接受；共享可写目录拒绝且不改权限；
 `umask 002` 式的组可写根与 `.fugue` 照样落盘、而本模块自建那三层仍是 0700；
 `idx` 被人放宽成 0770 则整条拒绝并记数；关句柄失败不改结果也不顶掉原始错因；
-过期的无主临时对象（含同 pid 的）被收走、新鲜的并发临时对象与非 `.tmp-` 叶一个字节不动；
+未知临时叶（含同 pid 的过期活跃写者）与非 `.tmp-` 叶保持原样；
 无效 ID/错内容地址无写；过大记录有界 miss 后修复；并发读写只见完整结果，
-结束后不留临时文件。源内容、Git/M0、模型协议、沙箱策略、网络权限均不变。
+成功的本任务不遗留自己的临时文件；故障路径尝试清理自己创建或明确认领的叶，未知孤儿保留。源内容、Git/M0、模型协议、沙箱策略、网络权限均不变。

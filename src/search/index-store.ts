@@ -1,7 +1,7 @@
 // ROADMAP § 4 / 0.3.1 · 派生索引落盘；所有失败退为 miss/未持久化，不阻断真源。
 import { constants } from 'node:fs'
 import type { Stats } from 'node:fs'
-import { open, mkdir, lstat, readdir, rename, unlink } from 'node:fs/promises'
+import { open, mkdir, lstat, rename, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
@@ -29,7 +29,7 @@ export interface IndexStoreStats {
   readonly directoryRefusals: number
   /** 发布/读取已经完成、只是回收目录描述符失败的次数；不改变 stored/读结果。 */
   readonly closeFailures: number
-  /** 收走的无主临时对象个数（进程被杀留下的那些）。 */
+  /** 兼容既有统计字段；未知临时对象保守保留，目前恒为0。 */
   readonly sweptTemporaries: number
 }
 export interface BlobIndexStore {
@@ -81,7 +81,7 @@ export interface ShardAttempt<T> {
  * 发布完成之后关句柄失败只记一笔，不改结果。导出只为让这条判据可直接断言。
  */
 export async function settleShard<T>(attempt: ShardAttempt<T>, opened: readonly Closable[], notes?: ShardNotes): Promise<T> {
-  const closed = await Promise.allSettled(opened.map((file) => file.close()))
+  const closed = await Promise.allSettled(opened.map((file) => Promise.resolve().then(() => file.close())))
   if (notes !== undefined) {
     if (attempt.refused) notes.directoryRefusals++
     notes.closeFailures += closed.filter((result) => result.status === 'rejected').length
@@ -159,30 +159,8 @@ async function readRecord(directory: FileHandle, blob: BlobId): Promise<BlobInde
   } finally { await file.close() }
 }
 
-/**
- * 进程在 `open(O_EXCL)` 之后、`rename` 之前被 SIGKILL，就会留下一个最多 8 MiB 的
- * `.tmp-<pid>-<nonce>`：nonce 随进程消失、pid 也不再匹配，`cleanupIndexTemporary`
- * 永远认不出它，累积量随崩溃次数线性增长。发布成功之后顺手扫一次本分片——目录句柄
- * 已经在手里，代价为零。判据刻意保守：只动 `.tmp-` 前缀、`safeFile` 为真（普通文件 /
- * 本 uid / 单硬链接 / 不超记录预算）、而且 mtime 够老的叶。那条时限保证踩不到另一个
- * **正在**写的并发操作（包括同 pid 的另一个任务），「别人的临时文件一律不动」照旧成立。
- */
-const STALE_TEMPORARY_MS = 60 * 60 * 1000
-async function sweepStaleTemporaries(directory: FileHandle, keep: string, now: number): Promise<number> {
-  let swept = 0
-  for (const name of await readdir(self(directory))) {
-    if (name === keep || !name.startsWith('.tmp-')) continue
-    try {
-      const meta = await lstat(at(directory, name))
-      if (!safeFile(meta) || now - meta.mtimeMs < STALE_TEMPORARY_MS) continue
-      await unlink(at(directory, name))
-      swept++
-    } catch { /* 并发已经收走、或者够不到：孤儿清理从来不是发布成功的前提。 */ }
-  }
-  return swept
-}
-
-async function replaceRecord(directory: FileHandle, blob: BlobId, bytes: Uint8Array, temporaryId?: string, notes?: ShardNotes): Promise<void> {
+// 年龄、pid、nonce 均不能证明未知临时对象已无写者；只清自己认领的任务叶。
+async function replaceRecord(directory: FileHandle, blob: BlobId, bytes: Uint8Array, temporaryId?: string): Promise<void> {
   if (temporaryId !== undefined && !/^[0-9a-f]{24}$/.test(temporaryId)) throw new Error("invalid index temporary ID")
   const target = at(directory, `${blob}.json`)
   try {
@@ -204,8 +182,6 @@ async function replaceRecord(directory: FileHandle, blob: BlobId, bytes: Uint8Ar
     await rename(temporary, target)
     created = false // 临时名称已被rename消耗；后来复用nonce的叶不属于本操作。
     await directory.sync()
-    try { const swept = await sweepStaleTemporaries(directory, name, Date.now()); if (notes !== undefined) notes.sweptTemporaries += swept }
-    catch { /* 扫不动不能把一次已经发布成功的记录退成 stored:false。 */ }
   } catch (error) { failed = true; failure = error }
   const remainingFile = file
   await settleOwnedTemporary({ failed, failure },
@@ -233,7 +209,7 @@ export function createBlobIndexStore(root: string): BlobIndexStore {
       catch (error) { return error instanceof IndexBudgetError ? { index: null, stored: false, unindexable: true } : { index: null, stored: false } }
       try {
         const encoded = encodeBlobIndex(index)
-        await withShard(selectedRoot, blob, true, (directory) => replaceRecord(directory, blob, encoded, temporaryId, notes), notes)
+        await withShard(selectedRoot, blob, true, (directory) => replaceRecord(directory, blob, encoded, temporaryId), notes)
         return { index, stored: true }
       } catch { return { index, stored: false } }
     },
