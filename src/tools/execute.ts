@@ -424,23 +424,52 @@ const readImageFace: ToolFn = async (args, host) => {
 }
 
 /**
+ * 发现类那两条工具共用的「范围」那一栏（`path`）。**三句话，各管一处细节**：
+ *
+ *   · `scopeOf`：尾巴上的斜杠折掉——`src/` 与 `src` 说的是同一个范围，而两种写法模型都会给。
+ *   · `inScope`：**空范围是整个视图**（不给 `path` 就是把整棵树看一遍）；范围指着一个**文件**
+ *     时，那个文件自己也在范围里。原先这一处的判据只有 `startsWith(dir + '/')`，于是模型说
+ *     "就看这一份"（`path: 'src/b.ts'`）时一个候选都取不到，回一句"没有匹配"——看起来只是
+ *     "那儿真没有"。
+ *   · `matchesInScope`：模式按**相对范围**再配一次——`pattern: '*.ts'` + `path: 'src'` 这种
+ *     写法（范围给在参数里、模式只写文件名那一段）也配得上；同样的道理，取不到时它只会报
+ *     "没有匹配"。
+ *
+ * 三条都**只加不减**：没有 `path` 那一次问法与从前逐字节相同（空串那一档），带 `path` 的那些
+ * 只会比从前多取到东西，不会少。
+ */
+export function scopeOf(raw: string | null, fallback: string): string {
+  return (raw ?? fallback).replace(/\/+$/, '')
+}
+
+/** 这一条路径在不在这个范围里（空串 = 整个视图 · 范围本身那一条也在）。 */
+export function inScope(path: string, dir: string): boolean {
+  return dir === '' || path === dir || path.startsWith(dir + '/')
+}
+
+/** 在范围里再配一次模式：模式只写文件名那一段时（`*.ts` + 范围 `src`）也要配得上。 */
+export function matchesInScope(re: RegExp, path: string, dir: string): boolean {
+  return re.test(path) || (dir !== '' && path.length > dir.length && re.test(path.slice(dir.length + 1)))
+}
+
+/**
  * 走一遍树。**走法归宿主**（`walk`）：它知道哪些行是目录、哪些是软链、能走多深。这一层只
  * 拿结果去配 `glob` 的语法（`**` 要不要跨 `/` 是模式那边的事）。
  */
 const globFace: ToolFn = async (args, host) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('glob', 'pattern')
-  const dir = text(args, 'path') ?? ''
+  const dir = scopeOf(text(args, 'path'), '')
   const all = await host.walk()
   const re = globToRe(pattern)
-  const hit = all.filter((p) => (dir === '' || p.startsWith(dir + '/')) && re.test(p))
+  const hit = all.filter((p) => inScope(p, dir) && matchesInScope(re, p, dir))
   return ok(hit.length === 0 ? `no path matches ${pattern}.` : `${hit.length} paths:\n${hit.join('\n')}`)
 }
 
 const grepFace: ToolFn = async (args, host, ctx) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('grep', 'pattern')
-  const dir = text(args, 'path') ?? ctx.cwd
+  const dir = scopeOf(text(args, 'path'), ctx.cwd)
   let re: RegExp
   try {
     re = new RegExp(pattern)
@@ -462,7 +491,7 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   if (prefetch !== undefined) await prefetch(all)
   const hits: string[] = []
   for (const path of all) {
-    if (dir !== '' && !path.startsWith(dir + '/')) continue
+    if (!inScope(path, dir)) continue
     const got = await host.readBytes(path)
     if (got === null) continue
     utf8Of(got.bytes)

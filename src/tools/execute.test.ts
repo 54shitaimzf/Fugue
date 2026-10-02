@@ -251,6 +251,57 @@ test('③ glob 与 grep：`**` 跨 `/` · `*` 不跨 · grep 报行号', async (
   }
 })
 
+/**
+ * ③b 发现类那两条的「范围」那一栏：三处细节各一条断言。
+ *
+ * 抓住的变异：`scopeOf` 不折尾巴上的斜杠（`src/` 那个范围当场取不到东西）· `inScope` 少了
+ * "范围本身"那一项（指着文件时一个候选都没有）· `matchesInScope` 那一面拿掉（模式只写文件名
+ * 那一段时退回"没有匹配"）。负对照两条：范围外那一份不许进结果，`grep` 与 `glob` 各一条。
+ *
+ * 为什么单挑这三处：它们各自都表现为**空结果**——发现类工具取不到东西时报的是"没有匹配"，
+ * 看起来只是"那儿真没有"，模型会一直绕（真档上撞到过：四步全是 `find`/`ls`，草案 0 字节）。
+ */
+test('③b 范围那一栏：尾巴斜杠折掉 · 空范围是整个视图 · 范围指着文件时它自己也算 · 模式在范围里再配一次', async () => {
+  const b = await bench()
+  try {
+    await b.host.writeBytes('a.ts', new Uint8Array(Buffer.from('const a = 1\n', 'utf8')))
+    await b.host.writeBytes('src/b.ts', new Uint8Array(Buffer.from('const b = 2\n// 记号在 src\n', 'utf8')))
+    await b.host.writeBytes('src/deep/c.ts', new Uint8Array(Buffer.from('const c = 3\n', 'utf8')))
+
+    // 甲 · 尾巴上的斜杠折掉：`src/` 与 `src` 是同一次问法。
+    const slash = await face('glob', { pattern: '*.ts', path: 'src/' }, b.host)
+    const plain = await face('glob', { pattern: '*.ts', path: 'src' }, b.host)
+    assert.equal(slash.ok, true, slash.output)
+    assert.equal(slash.output, plain.output, '`src/` 与 `src` 该是同一个范围')
+    // 这一条同时量了"模式在范围里再配一次"：`*.ts` 配得上 `src/b.ts`，靠的正是相对范围那一面
+    // （`*` 不跨 `/`，所以更深处那一份不在）。
+    assert.deepEqual(slash.output.split('\n'), ['1 paths:', 'src/b.ts'], `范围与模式的相对面没生效：${slash.output}`)
+
+    // 乙 · 空范围 = 整个视图：不给 `path` 与给空串是同一次问法。
+    const whole = await face('glob', { pattern: '**/*.ts' }, b.host)
+    const empty = await face('glob', { pattern: '**/*.ts', path: '' }, b.host)
+    assert.equal(whole.ok, true)
+    assert.deepEqual(whole.output.split('\n').slice(1).sort(), ['a.ts', 'src/b.ts', 'src/deep/c.ts'])
+    assert.equal(empty.output, whole.output, '空串就是整个视图')
+
+    // 丙 · 范围指着一个文件：那个文件自己也在范围里。
+    const one = await face('grep', { pattern: '记号', path: 'src/b.ts' }, b.host)
+    assert.equal(one.ok, true)
+    assert.equal(one.output, '1 lines:\nsrc/b.ts:2:// 记号在 src', `指着文件时取不到它自己：${one.output}`)
+
+    // 负对照（两路）：范围外那一份不许进结果。
+    const away = await face('grep', { pattern: '记号', path: 'src/deep' }, b.host)
+    assert.match(away.output, /no line matches/, `范围外的内容进了 grep：${away.output}`)
+    const awayGlob = await face('glob', { pattern: '**/*.ts', path: 'src/deep' }, b.host)
+    assert.equal(awayGlob.output, '1 paths:\nsrc/deep/c.ts', `范围外的路径进了 glob：${awayGlob.output}`)
+    console.log(
+      `③b 读数：带斜杠的范围 → ${slash.output.replace('\n', '｜')} · 指着文件的范围 → ${one.output.replace('\n', '｜')}`,
+    )
+  } finally {
+    await b.close()
+  }
+})
+
 // ── ④ 假模型驱动 读 → 写 → 检查点，走到一次真提交 ────────────────────────────
 
 /** 一条工具调用（三段：起点 · 分片 · 收尾）。 */
