@@ -110,7 +110,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'glob',
-    description: 'Find files by path pattern and return the matching paths. Use it when you know part of a file name but not where it is; to search contents use grep. Searches from this step\'s working directory by default.',
+    description: 'Find files by path pattern and return the matching paths. Use it when you know part of a file name but not where it is; to search contents use grep. Searches from this step\'s working directory by default. A listing that hits the traversal ceiling is cut and the result says so: an incomplete listing is not proof of absence.',
     parameters: {
       type: 'object',
       properties: {

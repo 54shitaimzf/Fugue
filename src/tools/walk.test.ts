@@ -209,9 +209,38 @@ test('④ 截没截是一个读数：两条上限各记一笔，没截就是两�
   assert.equal(walkCutOf(byDepth)?.rows, false, '条数这一趟没顶到')
   // 四 · 上限那一趟用的两个数**跟着清单走**：印给人看的那句话不必另抄一份常数。
   assert.deepEqual(walkCutOf(byDepth)?.limits, { depth: 0, rows: 5000 })
-  // 五 · 机制缺席：手搓的清单没有这份读数——不猜、不报错。
+  // 五 · **恰好顶到不算截**（对照吸收）：树上正好 3 条文件、后面一条都没有——循环自然走完，
+  //     两条都是假。这一档与「真的还有第 4 条」（rows: 2 → rows=true）分开，才拦得住
+  //     「凑巧顶到就报截尾」那个变异。
+  const exact = await createWalk(fakeWalk(tree).view, { depth: 24, rows: 3 })()
+  assert.equal(exact.length, 3, '这一棵树上一共 3 条文件')
+  assert.equal(walkCutOf(exact)?.rows, false, '正好 3 条、没有第 4 条：那不是截')
+  const short = await createWalk(fakeWalk(tree).view, { depth: 24, rows: 2 })()
+  assert.equal(short.length, 2)
+  assert.equal(walkCutOf(short)?.rows, true, '还有第 3 条没列出来：那是截了')
+  // 六 · **名额只被候选（文件）用掉**（对照吸收）：收满之后往后看，看到的全是软链 / gitlink——
+  //     一个候选都没漏，那就不是截尾。判据要摆在「跳过非候选」**之后**，否则这一档会把该报绿的
+  //     报成截尾（对照那一支的同一条判据在同一个位置）。
+  const tailOnly: Record<string, readonly DirRow[]> = {
+    '': [row('a.ts', 'file'), row('b.ts', 'file'), row('link', 'symlink'), row('sub', 'gitlink')],
+  }
+  const noLoss = await createWalk(fakeWalk(tailOnly).view, { depth: 24, rows: 2 })()
+  assert.deepEqual([...noLoss], ['a.ts', 'b.ts'])
+  assert.equal(walkCutOf(noLoss)?.rows, false, '收满之后只剩软链与 gitlink：一个候选都没漏，那不是截')
+  // 与上面那一档配成一对：同一个位置上真有一条文件，就是截——两档都断，单看一档会放过「一律不报截」。
+  const realLoss: Record<string, readonly DirRow[]> = {
+    '': [row('a.ts', 'file'), row('b.ts', 'file'), row('link', 'symlink'), row('c.ts', 'file')],
+  }
+  const lost = await createWalk(fakeWalk(realLoss).view, { depth: 24, rows: 2 })()
+  assert.deepEqual([...lost], ['a.ts', 'b.ts'])
+  assert.equal(walkCutOf(lost)?.rows, true, '软链后面还有第三条文件：那是截了')
+  // 七 · 机制缺席：手搓的清单没有这份读数——不猜、不报错。
   assert.equal(walkCutOf(Object.freeze(['x.ts'])), null, '不是枚举出来的清单就是没有读数')
-  console.log('④ 读数：全走 rows=false/depth=false · 条数 1 → rows=true · 深度 0 → depth=true · 手搓清单 null')
+  console.log(
+    '④ 读数：全走 rows=false/depth=false · 条数 1 → rows=true · 深度 0 → depth=true' +
+      ' · 正顶到 3 条 → rows=false · 差一条（3 条只要 2）→ rows=true' +
+      ' · 尾上只有软链/gitlink → rows=false · 尾上还有一条文件 → rows=true · 手搓清单 null',
+  )
 })
 
 // ── ② 产品失效路径：真视图上那六种变更各推一代 ──────────────────────────────────

@@ -104,14 +104,17 @@ export function createWalk(view: WalkView, limits: WalkLimits): () => Promise<re
       }
       const rows = await view.list(dir)
       for (const row of rows) {
+        const path = dir === '' ? row.name : `${dir}/${row.name}`
+        // **软链不跟**：它指向的东西不在视图的可达集里（§ 8.4 的 `through-symlink`）。这一跳过要
+        // 排在名额判定**之前**：收满之后往后看、看到的只是软链，那不是遗漏——把它报成截尾就是
+        // 该报绿的报成截尾（对照吸收：远端把同一条判据摆在同一个位置）。
+        if (row.kind !== 'file' && row.kind !== 'dir') continue
         if (out.length >= limits.rows) {
           rowsCut = true
           return
         }
-        const path = dir === '' ? row.name : `${dir}/${row.name}`
-        // **软链不跟**：它指向的东西不在视图的可达集里（§ 8.4 的 `through-symlink`）。
         if (row.kind === 'dir') await step(path, depth + 1)
-        else if (row.kind === 'file') out.push(path)
+        else out.push(path)
       }
     }
     // **抛出去就不写缓存**（硬性二）：`await` 在这里把异常原样交给调用者，而 `cached` 一行不动。

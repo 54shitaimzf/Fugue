@@ -246,7 +246,7 @@ test('① 真实链路：回执那一层的截断照旧（`read` 那一句标记
     assert.equal(grep.ok, true, `grep 该成：${grep.output.slice(0, 200)}`)
     assert.ok(!grep.output.includes('bytes omitted'), `早停那一档不该再落回字节截断：${grep.output.slice(0, 120)}`)
     assert.ok(bytesOf(grep.output) <= MAX_RECEIPT_BYTES, `早停之后回执自身要在上限之内：${bytesOf(grep.output)}`)
-    assert.match(grep.output, /the search stopped early/, '停在哪要说出来')
+    assert.match(grep.output, /the search stopped at the receipt budget/, '停在哪要说出来')
     assert.match(grep.output, /after \d+ of \d+ files/, '扫到哪儿也要说出来')
     assert.ok(grep.output.split('\n').length - 1 > 30, `这一趟该真的印了一串命中行：${grep.output.split('\n').length - 1}`)
     // 半个字符一个都不许进回执——早停那一刀切在**行**上，这条路比字节那一刀更好守，也照旧要守。
