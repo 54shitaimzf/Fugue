@@ -8,6 +8,8 @@
 //   ④ **假模型驱动 读 → 写 → 检查点，走到一次真提交**，而**真工作树一个文件都没多**
 //   ⑤ 负对照：字节那一栏改成"读回来的 UTF-8 文本相同"→ 一条非法序列就把它变红
 //   ⑨ **模型读到的每一个字节都是英文**（口径：谁读谁的语言——人读的走中文 · 见证 § 8.11）
+//   ⑪ **清单被走树的上限截住时照实说**（0.3.0 ②）：那一句挂在回执尾上，`glob` 与 `grep` 同源
+//      （`walk-cache.ts` 的 `walkCutOf`）；没截的那一档逐字节与从前相同（负对照）
 //   格 3 **`grep` 的候选先按一批取回内容**：冷的那一趟请求数不随文件数线性涨，
 //   热的那一趟一次都不发；这道缝缺席时退回逐文件读（回执逐字节不变）
 
@@ -40,6 +42,7 @@ import type { ToolCallRequest } from '../runtime/step.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
 import { faceOf, noFace, parseArgs } from './execute.ts'
 import { capReceipt, lineCount, MAX_RECEIPT_BYTES } from './receipt.ts'
+import { createWalk } from './walk-cache.ts'
 import type { ToolHost } from './execute.ts'
 import { createToolHost } from './host.ts'
 import { refHeadOf } from '../round/head.ts'
@@ -342,6 +345,39 @@ function handleOf(state: AssembleState): AgentHandle {
     state,
   }
 }
+
+test('⑪ 走树上限截住清单时，吃到截断的回执照实说；没截的那一档一个字都不加（0.3.0 ②）', async () => {
+  const b = await bench()
+  try {
+    await b.host.writeBytes('a.ts', new Uint8Array(Buffer.from('// 记号 a\n', 'utf8')))
+    await b.host.writeBytes('b.ts', new Uint8Array(Buffer.from('// 记号 b\n', 'utf8')))
+    await b.host.writeBytes('c.ts', new Uint8Array(Buffer.from('// 记号 c\n', 'utf8')))
+    // **上限只给负对照用**：产品路径上那两条是 `host.ts` 的两个常数，走树那一份自己收一对
+    // 上限（`createWalk`），所以测试能拿它当夹具，不需要往产品上开一个开关。
+    const tight = { ...b.host, walk: createWalk(b.view, { depth: 24, rows: 1 }) }
+    const cutGlob = await face('glob', { pattern: '*.ts' }, tight)
+    assert.match(cutGlob.output, /^1 paths:/, `截住的那一档仍要如实报它列了几条：${cutGlob.output}`)
+    assert.match(cutGlob.output, /this listing is cut/, `截了就要说出来：${cutGlob.output}`)
+    assert.match(cutGlob.output, /2[45] paths|1 paths/, `那一句要说清停在哪条上限上：${cutGlob.output}`)
+    const cutGrep = await face('grep', { pattern: '记号' }, tight)
+    assert.match(cutGrep.output, /this listing is cut/, `grep 走的是同一份清单，也要说：${cutGrep.output}`)
+    // **空结果不许被当成结论**：那一句自己要说出这件事。
+    const none = await face('grep', { pattern: '这一份不存在' }, tight)
+    assert.match(none.output, /^no line matches/, none.output)
+    assert.match(none.output, /not evidence that nothing matches/, `空结果那一档要提醒：${none.output}`)
+
+    // ── 负对照 · 没截的那一档：逐字节与从前相同（一句话都不加）。
+    const loose = { ...b.host, walk: createWalk(b.view, { depth: 24, rows: 5000 }) }
+    const wholeGlob = await face('glob', { pattern: '*.ts' }, loose)
+    assert.deepEqual(wholeGlob.output.split('\n'), ['3 paths:', 'a.ts', 'b.ts', 'c.ts'])
+    const wholeGrep = await face('grep', { pattern: '记号' }, loose)
+    assert.match(wholeGrep.output, /^3 lines:\n/, wholeGrep.output)
+    assert.equal(/this listing is cut/.test(wholeGrep.output), false, '没截就不许加这一句')
+    console.log(`⑪ 读数：截住那一档「${cutGlob.output.split('\n').pop()}」 · 没截那一档 ${wholeGlob.output.length} 字节与从前相同`)
+  } finally {
+    await b.close()
+  }
+})
 
 test('④ 假模型驱动 读 → 写 → 检查点：走到一次真提交，而真工作树一个文件都没多', async () => {
   const b = await bench()

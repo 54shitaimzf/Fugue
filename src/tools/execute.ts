@@ -22,6 +22,8 @@ import { lineCountOfBytes } from './receipt.ts'
 // **行窗口住工具面**（`window.ts`）：字节已经是整对象，要省的是解码与行切——在这里做窗口算术
 // 零接口改动、逐字节可证，将来 serve 化时它跟 `readBytes` 一起搬，形状不返工。
 import { lineWindow, windowNote } from './window.ts'
+// **截没截住在枚举那一份里**（`walk-cache.ts` 的 `WalkCut`）：回执这一层只读它，不猜（0.3.0 ②）。
+import { walkCutOf } from './walk-cache.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -461,6 +463,31 @@ export function matchesInScope(re: RegExp, path: string, dir: string): boolean {
 }
 
 /**
+ * **清单被走树的上限截住时，吃到截断的那张回执照实说**（0.3.0 ②）。
+ *
+ * 一处真相：截没截住在枚举那一份里（`walk-cache.ts` 的 `walkCutOf`），这一份只把它印成一句话
+ * ——`glob` 与 `grep` 走的是同一份清单，两张回执于是从同一处取。
+ *
+ * **没记过就是没有读数**（夹具与单测里那种手搓的 `walk()`）：一个字都不加，回执与从前逐字节
+ * 相同——机制缺席是少一份读数，不是坏掉。
+ *
+ * 为什么这一句挂在**尾上**：`capReceipt` 掐中间、留头尾，所以清单再长，这一句也活着。它同时也
+ * 是给模型的最后一句警告：**空结果不是"那儿真没有"的证据**——那正是 `glob` 少印会造成的绕行。
+ */
+function walkCutNote(paths: readonly string[]): string {
+  const cut = walkCutOf(paths)
+  if (cut === null) return ''
+  const at: string[] = []
+  if (cut.rows) at.push(`${cut.limits.rows} paths`)
+  if (cut.depth) at.push(`${cut.limits.depth} levels deep`)
+  if (at.length === 0) return ''
+  return (
+    `\n…(this listing is cut: walking stops at ${at.join(' and ')}, so the tree may hold more than what is listed here` +
+    ' — an empty result below is not evidence that nothing matches)…'
+  )
+}
+
+/**
  * 走一遍树。**走法归宿主**（`walk`）：它知道哪些行是目录、哪些是软链、能走多深。这一层只
  * 拿结果去配 `glob` 的语法（`**` 要不要跨 `/` 是模式那边的事）。
  */
@@ -471,7 +498,10 @@ const globFace: ToolFn = async (args, host) => {
   const all = await host.walk()
   const re = globToRe(pattern)
   const hit = all.filter((p) => inScope(p, dir) && matchesInScope(re, p, dir))
-  return ok(hit.length === 0 ? `no path matches ${pattern}.` : `${hit.length} paths:\n${hit.join('\n')}`)
+  // **被截住的那一份清单要说出来**（0.3.0 ②）："没有匹配"与"没走完"是两件事，混起来那一次
+  // 问法看起来只是"那儿真没有"，而模型会照着这个结论一直绕。
+  const cut = walkCutNote(all)
+  return ok(hit.length === 0 ? `no path matches ${pattern}.${cut}` : `${hit.length} paths:\n${hit.join('\n')}${cut}`)
 }
 
 const grepFace: ToolFn = async (args, host, ctx) => {
@@ -502,6 +532,7 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   // **收窄只改那一批，不改结果**：结果那一路的判据在下面那个循环里，它自己按范围判一次；预取
   // 始终只是提示（缺席 · 失败 · 少几份，都只是慢一点）。
   if (prefetch !== undefined) await prefetch(all.filter((p) => inScope(p, dir)))
+  const cut = walkCutNote(all)
   const hits: string[] = []
   for (const path of all) {
     if (!inScope(path, dir)) continue
@@ -513,7 +544,9 @@ const grepFace: ToolFn = async (args, host, ctx) => {
         if (re.test(line)) hits.push(`${path}:${i + 1}:${line}`)
       })
   }
-  return ok(hits.length === 0 ? `no line matches ${pattern}.` : `${hits.length} lines:\n${hits.join('\n')}`)
+  // 与 `glob` 同一处（`walkCutNote`）：这一趟搜的候选是从那份清单里来的，清单被截过，
+  // 那"没有一行匹配"就不是一句结论（0.3.0 ②）。
+  return ok(hits.length === 0 ? `no line matches ${pattern}.${cut}` : `${hits.length} lines:\n${hits.join('\n')}${cut}`)
 }
 
 // ── 执行类那两个 ───────────────────────────────────────────────────────────────

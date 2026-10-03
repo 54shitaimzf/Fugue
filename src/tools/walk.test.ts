@@ -24,7 +24,7 @@ import type { AgentId, RelPath, WriterId } from '../terms.ts'
 import type { ToolHost } from './execute.ts'
 import { createToolHost } from './host.ts'
 import { refHeadOf } from '../round/head.ts'
-import { createWalk } from './walk-cache.ts'
+import { createWalk, walkCutOf } from './walk-cache.ts'
 import type { DirRow, WalkView } from './walk-cache.ts'
 
 const AGENT = 'agent-1' as AgentId
@@ -186,6 +186,32 @@ test('③ 语义逐项不变：行序 · 深度与条数截断 · 软链与 gitl
   const one = [...(await createWalk(fakeWalk(tree).view, { depth: 24, rows: 1 })())]
   assert.deepEqual(one, ['b.ts'], '条数 1 就停在第一条')
   console.log(`③ 读数：6 档界（深度 0/1/24 × 条数 1/2/3）两边逐项相同 · 全走 ${all.length} 条`)
+})
+
+test('④ 截没截是一个读数：两条上限各记一笔，没截就是两笔都假（0.3.0 ②）', async () => {
+  const tree: Record<string, readonly DirRow[]> = {
+    '': [row('b.ts', 'file'), row('a', 'dir')],
+    a: [row('deep.ts', 'file'), row('deeper', 'dir')],
+    'a/deeper': [row('bottom.ts', 'file')],
+  }
+  // 一 · 都没顶到：两笔都是假——"树里恰好这么多"与"截在上限上"要分得开。
+  const whole = await createWalk(fakeWalk(tree).view, { depth: 24, rows: 5000 })()
+  assert.deepEqual(walkCutOf(whole), { rows: false, depth: false, limits: { depth: 24, rows: 5000 } })
+  // 二 · 条数顶到：根那一层还有没列出来的行。
+  const byRows = await createWalk(fakeWalk(tree).view, { depth: 24, rows: 1 })()
+  assert.deepEqual([...byRows], ['b.ts'])
+  assert.equal(walkCutOf(byRows)?.rows, true, '条数停在上限上，那是截了')
+  assert.equal(walkCutOf(byRows)?.depth, false, '深度这一趟没顶到')
+  // 三 · 深度顶到：`a` 那一条目录没被列过，它下面还有东西没走到。
+  const byDepth = await createWalk(fakeWalk(tree).view, { depth: 0, rows: 5000 })()
+  assert.deepEqual([...byDepth], ['b.ts'])
+  assert.equal(walkCutOf(byDepth)?.depth, true, '深度停在上限上，那是截了')
+  assert.equal(walkCutOf(byDepth)?.rows, false, '条数这一趟没顶到')
+  // 四 · 上限那一趟用的两个数**跟着清单走**：印给人看的那句话不必另抄一份常数。
+  assert.deepEqual(walkCutOf(byDepth)?.limits, { depth: 0, rows: 5000 })
+  // 五 · 机制缺席：手搓的清单没有这份读数——不猜、不报错。
+  assert.equal(walkCutOf(Object.freeze(['x.ts'])), null, '不是枚举出来的清单就是没有读数')
+  console.log('④ 读数：全走 rows=false/depth=false · 条数 1 → rows=true · 深度 0 → depth=true · 手搓清单 null')
 })
 
 // ── ② 产品失效路径：真视图上那六种变更各推一代 ──────────────────────────────────
