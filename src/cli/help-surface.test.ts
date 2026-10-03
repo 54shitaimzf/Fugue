@@ -6,10 +6,16 @@
 // 判据是**数出来的行**：速查表里每一行的行首恰好两个空格、第 3 个字符起是命令名——那种行才是
 // 命令行；组标题是汉字打头、选项行是 `-` 打头、续行缩进 29 列，都不算。
 //
+// 子命令那一层还有一处 ① 与 ② 都抓不住的：`config` 在 `FLAGS_OF` 里是**一个**键，所以速查表
+// 少了 `config ls` 那一行，①（首词去重）与 ②（键逐条有行）照旧是绿的。③ 把断言挂在
+// `cmd/config.ts` 的 `CONFIG_VERBS` 上——那才是 config 子命令的那一处真源。
+//
 // 负对照（红得起来才是断言）：从速查表里删掉 `assemble` 那一行（连它那一组的标题一起），
-// ① 当场红——命令面 28 条、表上只剩 27 条。这一条量的正是登记进路线图 § 10 的那个缺口。
+// ① 当场红——命令面 28 条、表上只剩 27 条。这一条量的正是登记进路线图 § 10 的那个缺口；
+// 删掉 `config ls` 那一行则只有 ③ 红（①② 照旧绿）。
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { CONFIG_VERBS } from './cmd/config.ts'
 import { FLAGS_OF } from './flags.ts'
 import { USAGE } from './shared.ts'
 
@@ -34,4 +40,10 @@ test('② 命令面每一个键在速查表里都有自己的行（子命令按�
   const missing = keys.filter((k) => !new RegExp(`^ {2}${k}(?= |$)`, 'm').test(USAGE))
   assert.deepEqual(missing, [], `命令面里有、速查表里没有行的：${missing.join(' · ')}`)
   console.log(`② 读数：${keys.length} 个键，${keys.length - missing.length} 个在速查表里有自己的行`)
+})
+
+test('③ `config` 的每一条子命令在速查表里都有自己的行（`config` 在命令面是一个键，①②抓不住）', () => {
+  const missing = CONFIG_VERBS.filter((v) => !new RegExp(`^ {2}config ${v}(?= |$)`, 'm').test(USAGE))
+  assert.deepEqual(missing, [], `config 的子命令里，速查表没有行的：${missing.join(' · ')}`)
+  console.log(`③ 读数：config ${CONFIG_VERBS.length} 条子命令，逐条有行 —— ${CONFIG_VERBS.join(' · ')}`)
 })

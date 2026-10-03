@@ -124,6 +124,8 @@ fugue round work --live --max-steps 8
 
 如果你想自己决定怎么拆任务，而不是让它来拆：先用 `fugue config set round.split '[…]'` 和 `fugue config set round.assertions '[…]'` 写好任务和检查，再运行 `fugue round run "<目标>" --live`，一条命令从头跑到尾。
 
+想知道配置认得的顶层键有哪些，用 `fugue config ls`：一行一个键，`--json` 那一面是数组。它不读你的配置，所以配置有毛病的时候它照样答得出；要看当下配了什么，用 `fugue config show`。
+
 **费用参考：** 一次真实任务按 2 个子任务、每个最多 64 步来估算，大概花几毛钱。如果不加 `--max-steps`，就没有步数限制。要不要设上限、设多少，由你自己决定，它不会自动帮你限制。
 
 ### 边看边操作

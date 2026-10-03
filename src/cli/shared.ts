@@ -111,6 +111,7 @@ fugue 是住在终端里的编码 agent：给它一句目标，它自己拆活�
   doctor                     环境自检：node · git · bwrap … 一项项报给你（只读；「缺」算
                              读数不算失败）
   config show                看全部配置
+  config ls                  只列顶层键域（合法键有哪些），不读配置
   config get <key>           看一条（点分路径，如 round.id）
   config set <key> <value>   改一条（值能按 JSON 解析就当 JSON，否则当字符串）
 
