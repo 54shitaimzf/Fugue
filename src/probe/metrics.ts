@@ -113,10 +113,17 @@ const TOOL_WORDS: readonly string[] = ['read', 'write', 'edit', 'glob', 'grep', 
  * ——后一句话今天没有可判定的形状（架构 § 8.10 的工具目录管的是"我们公布什么"，不是"shell 里
  * 不许出现什么字"）。所以这条读数**偏保守**：它会漏掉"用 `sed -n 1,20p` 代替 read"那一类，
  * 而不会把 `echo readme` 误判成绕行。
+ *
+ * **第二半（本站 ④ 起）**：`boundCommands` 里某一行的**命令原文逐字出现在这一行里**也算绕行——那正是
+ * 归档 § 5.20 点的那个缺口（「清单里那条 argv 原样抄给 bash」看不见），而「清单里那条 argv 是什么」
+ * 只有读账的人手里那份配置说得出来（日志里没有它）。**不传它时判据一个字没变**：`detour-rate`
+ * 那一支照旧只传一个参数，它数的还是「命令里提到了工具名」那一半——既有可见形态的读数不因修而变，
+ * 改进归 `T11` 的台账（归档 § 5.20 原话）。
  */
-export function looksLikeDetour(argv: readonly string[]): boolean {
+export function looksLikeDetour(argv: readonly string[], boundCommands: readonly string[] = []): boolean {
   const line = argv.join(' ')
-  return TOOL_WORDS.some((w) => new RegExp(`\\b${w}\\b`).test(line))
+  if (TOOL_WORDS.some((w) => new RegExp(`\\b${w}\\b`).test(line))) return true
+  return boundCommands.some((b) => b !== '' && line.includes(b))
 }
 
 /**

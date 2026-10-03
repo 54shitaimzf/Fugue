@@ -24,7 +24,7 @@ import type { AgentId, RelPath, WriterId } from '../terms.ts'
 import type { ToolHost } from './execute.ts'
 import { createToolHost } from './host.ts'
 import { refHeadOf } from '../round/head.ts'
-import { createWalk } from './walk-cache.ts'
+import { createWalk, walkCutOf } from './walk-cache.ts'
 import type { DirRow, WalkView } from './walk-cache.ts'
 
 const AGENT = 'agent-1' as AgentId
@@ -186,6 +186,61 @@ test('③ 语义逐项不变：行序 · 深度与条数截断 · 软链与 gitl
   const one = [...(await createWalk(fakeWalk(tree).view, { depth: 24, rows: 1 })())]
   assert.deepEqual(one, ['b.ts'], '条数 1 就停在第一条')
   console.log(`③ 读数：6 档界（深度 0/1/24 × 条数 1/2/3）两边逐项相同 · 全走 ${all.length} 条`)
+})
+
+test('④ 截没截是一个读数：两条上限各记一笔，没截就是两笔都假（本站 ②）', async () => {
+  const tree: Record<string, readonly DirRow[]> = {
+    '': [row('b.ts', 'file'), row('a', 'dir')],
+    a: [row('deep.ts', 'file'), row('deeper', 'dir')],
+    'a/deeper': [row('bottom.ts', 'file')],
+  }
+  // 一 · 都没顶到：两笔都是假——"树里恰好这么多"与"截在上限上"要分得开。
+  const whole = await createWalk(fakeWalk(tree).view, { depth: 24, rows: 5000 })()
+  assert.deepEqual(walkCutOf(whole), { rows: false, depth: false, limits: { depth: 24, rows: 5000 } })
+  // 二 · 条数顶到：根那一层还有没列出来的行。
+  const byRows = await createWalk(fakeWalk(tree).view, { depth: 24, rows: 1 })()
+  assert.deepEqual([...byRows], ['b.ts'])
+  assert.equal(walkCutOf(byRows)?.rows, true, '条数停在上限上，那是截了')
+  assert.equal(walkCutOf(byRows)?.depth, false, '深度这一趟没顶到')
+  // 三 · 深度顶到：`a` 那一条目录没被列过，它下面还有东西没走到。
+  const byDepth = await createWalk(fakeWalk(tree).view, { depth: 0, rows: 5000 })()
+  assert.deepEqual([...byDepth], ['b.ts'])
+  assert.equal(walkCutOf(byDepth)?.depth, true, '深度停在上限上，那是截了')
+  assert.equal(walkCutOf(byDepth)?.rows, false, '条数这一趟没顶到')
+  // 四 · 上限那一趟用的两个数**跟着清单走**：印给人看的那句话不必另抄一份常数。
+  assert.deepEqual(walkCutOf(byDepth)?.limits, { depth: 0, rows: 5000 })
+  // 五 · **恰好顶到不算截**（对照吸收）：树上正好 3 条文件、后面一条都没有——循环自然走完，
+  //     两条都是假。这一档与「真的还有第 4 条」（rows: 2 → rows=true）分开，才拦得住
+  //     「凑巧顶到就报截尾」那个变异。
+  const exact = await createWalk(fakeWalk(tree).view, { depth: 24, rows: 3 })()
+  assert.equal(exact.length, 3, '这一棵树上一共 3 条文件')
+  assert.equal(walkCutOf(exact)?.rows, false, '正好 3 条、没有第 4 条：那不是截')
+  const short = await createWalk(fakeWalk(tree).view, { depth: 24, rows: 2 })()
+  assert.equal(short.length, 2)
+  assert.equal(walkCutOf(short)?.rows, true, '还有第 3 条没列出来：那是截了')
+  // 六 · **名额只被候选（文件）用掉**（对照吸收）：收满之后往后看，看到的全是软链 / gitlink——
+  //     一个候选都没漏，那就不是截尾。判据要摆在「跳过非候选」**之后**，否则这一档会把该报绿的
+  //     报成截尾（对照那一支的同一条判据在同一个位置）。
+  const tailOnly: Record<string, readonly DirRow[]> = {
+    '': [row('a.ts', 'file'), row('b.ts', 'file'), row('link', 'symlink'), row('sub', 'gitlink')],
+  }
+  const noLoss = await createWalk(fakeWalk(tailOnly).view, { depth: 24, rows: 2 })()
+  assert.deepEqual([...noLoss], ['a.ts', 'b.ts'])
+  assert.equal(walkCutOf(noLoss)?.rows, false, '收满之后只剩软链与 gitlink：一个候选都没漏，那不是截')
+  // 与上面那一档配成一对：同一个位置上真有一条文件，就是截——两档都断，单看一档会放过「一律不报截」。
+  const realLoss: Record<string, readonly DirRow[]> = {
+    '': [row('a.ts', 'file'), row('b.ts', 'file'), row('link', 'symlink'), row('c.ts', 'file')],
+  }
+  const lost = await createWalk(fakeWalk(realLoss).view, { depth: 24, rows: 2 })()
+  assert.deepEqual([...lost], ['a.ts', 'b.ts'])
+  assert.equal(walkCutOf(lost)?.rows, true, '软链后面还有第三条文件：那是截了')
+  // 七 · 机制缺席：手搓的清单没有这份读数——不猜、不报错。
+  assert.equal(walkCutOf(Object.freeze(['x.ts'])), null, '不是枚举出来的清单就是没有读数')
+  console.log(
+    '④ 读数：全走 rows=false/depth=false · 条数 1 → rows=true · 深度 0 → depth=true' +
+      ' · 正顶到 3 条 → rows=false · 差一条（3 条只要 2）→ rows=true' +
+      ' · 尾上只有软链/gitlink → rows=false · 尾上还有一条文件 → rows=true · 手搓清单 null',
+  )
 })
 
 // ── ② 产品失效路径：真视图上那六种变更各推一代 ──────────────────────────────────

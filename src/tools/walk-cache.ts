@@ -13,6 +13,7 @@
 //   二 · **枚举失败不写缓存**：一次 `view.list` 抛出去，这一代照旧是未命中，下一次调用重试。
 //        半份清单比没有清单更坏：它看着像"这棵树就这么大"。
 //   三 · **交出去的那一份是冻结的**：一位调用者改它不影响下一位，于是同代复用不必逐次拷贝。
+//        截没截（`WalkCut` · `walkCutOf`）**跟着那一份清单走**：它是枚举的读数，不是清单的一栏。
 import type { ViewRev } from '../terms.ts'
 
 /**
@@ -41,6 +42,39 @@ export interface WalkLimits {
 }
 
 /**
+ * 一次枚举的收尾事实：**这一趟走有没有被上限截住**（本站 ②）。
+ *
+ * 它与那份清单一起交出去——**"截没截"是一个读数，不是每张回执各自猜的东西**：回执那边看不见
+ * 走树内部发生了什么，`paths.length === limits.rows` 也判不出来（树里恰好这么多文件与截在
+ * 上限上，两件事长得一样；深度那一档更是从清单上根本看不出来）。
+ */
+export interface WalkCut {
+  /** 条数顶到上限：**还有没列出来的**。 */
+  readonly rows: boolean
+  /** 深度顶到上限：**可能有更深的目录没走进去**。 */
+  readonly depth: boolean
+  /** 这一趟用的两条上限（回执那句人读的话要用它们，**不另抄一份常数**）。 */
+  readonly limits: WalkLimits
+}
+
+/**
+ * 交出去的那份清单 → 它是怎么走出来的。**键就是那份清单自己**（同一个代复用同一个引用）。
+ *
+ * 为什么是 `WeakMap` 而不是往数组上挂一个字段：交出去的那一份是**冻结**的（硬性三），而"这次
+ * 枚举截没截"是枚举那一侧的读数——挂到数组上就把它变成了数组的一部分，谁遍历 · 谁 `JSON.stringify`
+ * 都会带上它，而它不是一个路径。
+ *
+ * **没记过就是 `null`**（夹具与单测里那种手搓的 `walk()`）：机制缺席 = 少一份读数——不猜、
+ * 不报错、也不改变既有回执的一个字节。
+ */
+const CUTS = new WeakMap<readonly string[], WalkCut>()
+
+/** 读一次枚举的收尾事实。**只读，不改**（见上面那一张表的理由）。 */
+export function walkCutOf(paths: readonly string[]): WalkCut | null {
+  return CUTS.get(paths) ?? null
+}
+
+/**
  * 一份按视图代缓存的 `walk()`。
  *
  * 出口的形状与 `ToolHost.walk()` 逐字相同（`() => Promise<readonly string[]>`）——缓存是这一条
@@ -54,20 +88,39 @@ export function createWalk(view: WalkView, limits: WalkLimits): () => Promise<re
     const rev = view.rev
     if (cached !== null && cached.rev === rev) return cached.paths
     const out: string[] = []
+    // **两条上限各自记一笔**（本站 ②）：记的是"真的因为这一条停下来了"，不是"凑巧顶到了"——
+    // 树里恰好 `limits.rows` 个文件的那一档，循环自然走完，两条都是假。
+    let rowsCut = false
+    let depthCut = false
     const step = async (dir: string, depth: number): Promise<void> => {
-      if (depth > limits.depth || out.length >= limits.rows) return
+      // 这一条目录没被列过：它下面可能有东西，而这一趟走不到那么深。
+      if (depth > limits.depth) {
+        depthCut = true
+        return
+      }
+      if (out.length >= limits.rows) {
+        rowsCut = true
+        return
+      }
       const rows = await view.list(dir)
       for (const row of rows) {
-        if (out.length >= limits.rows) return
         const path = dir === '' ? row.name : `${dir}/${row.name}`
-        // **软链不跟**：它指向的东西不在视图的可达集里（§ 8.4 的 `through-symlink`）。
+        // **软链不跟**：它指向的东西不在视图的可达集里（§ 8.4 的 `through-symlink`）。这一跳过要
+        // 排在名额判定**之前**：收满之后往后看、看到的只是软链，那不是遗漏——把它报成截尾就是
+        // 该报绿的报成截尾（对照吸收：远端把同一条判据摆在同一个位置）。
+        if (row.kind !== 'file' && row.kind !== 'dir') continue
+        if (out.length >= limits.rows) {
+          rowsCut = true
+          return
+        }
         if (row.kind === 'dir') await step(path, depth + 1)
-        else if (row.kind === 'file') out.push(path)
+        else out.push(path)
       }
     }
     // **抛出去就不写缓存**（硬性二）：`await` 在这里把异常原样交给调用者，而 `cached` 一行不动。
     await step('', 0)
     const paths: readonly string[] = Object.freeze(out)
+    CUTS.set(paths, { rows: rowsCut, depth: depthCut, limits })
     cached = { rev, paths }
     return paths
   }

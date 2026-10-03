@@ -18,10 +18,12 @@ import type { Capability, Denied } from '../capability/table.ts'
 // **路径形状那一个错来自叶子**（`src/path-shape.ts`）：视图那一层抛它，这一层按它接成一条结果。
 // 不 import 视图那边——这一层的头注写着"不认识视图"，而这条规矩两层共用，所以它有一条自己的家。
 import { PathShapeError } from '../path-shape.ts'
-import { lineCountOfBytes } from './receipt.ts'
+import { MAX_RECEIPT_BYTES, lineCountOfBytes } from './receipt.ts'
 // **行窗口住工具面**（`window.ts`）：字节已经是整对象，要省的是解码与行切——在这里做窗口算术
 // 零接口改动、逐字节可证，将来 serve 化时它跟 `readBytes` 一起搬，形状不返工。
 import { lineWindow, windowNote } from './window.ts'
+// **截没截住在枚举那一份里**（`walk-cache.ts` 的 `WalkCut`）：回执这一层只读它，不猜（本站 ②）。
+import { walkCutOf } from './walk-cache.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -313,6 +315,26 @@ function missing(tool: string, name: string): FaceResult {
 }
 
 const utf8Of = (b: Uint8Array): string => Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString('utf8')
+
+/**
+ * 一条文本的 **UTF-8 安全前缀**（最多 `room` 字节，切在整字符边界上）。
+ *
+ * 与 `receipt.ts` 那条口径是同一件事（半个汉字不许进回执）：续字节是 `10xxxxxx`，从切点往回退到
+ * 某个字符的首字节——那一个字符放不下就整体丢掉，不放半个。
+ */
+function utf8PrefixOf(text: string, room: number): string {
+  if (room <= 0) return ''
+  // 只在**前 room 个码元**上做：一个码元的 UTF-8 至少一个字节，所以想要的前缀一定落在这一刀之内。
+  // 一整行几百兆（压缩过的 JS · 一整行 base64）时，不必为取几 KB 先复制一整份。
+  const head = text.length > room ? text.slice(0, room) : text
+  const bytes = Buffer.from(head, 'utf8')
+  if (bytes.length <= room) return head
+  // 上一刀落在代理对中间那件事也由这一退管住：半个代理对编码出来是一个替换字符（`EF BF BD`），
+  // 它同样以首字节开头——退到首字节就等于把它整段留在外面，不必再单独判一次代理。
+  let end = room
+  while (end > 0 && ((bytes[end] as number) & 0xc0) === 0x80) end -= 1
+  return bytes.subarray(0, end).toString('utf8')
+}
 const bytesOf = (s: string): Uint8Array => new Uint8Array(Buffer.from(s, 'utf8'))
 
 /**
@@ -432,6 +454,130 @@ const readImageFace: ToolFn = async (args, host) => {
 }
 
 /**
+ * `grep` 公布的那三档输出（`catalog.ts` 里那个 `enum` 逐字）。**一处取值处**：解析与渲染都
+ * 从这一张表来，目录改了这里不改的话，公布的第四档会被静默当成第三档。
+ */
+// **公布的与服务的是同一组**：目录里 `grep` 的 `output_mode` 那条 enum 与这一份由 `execute.test.ts`
+// 的 ⑭ 逐字对齐（各写一份 → 那一档要么公布了没人接，要么接了没公布，而回执看起来只是「那儿真没有」）。
+export const GREP_MODES = ['content', 'files_with_matches', 'count'] as const
+type GrepMode = (typeof GREP_MODES)[number]
+
+/**
+ * `output_mode` 那一栏。**不给就是 `content`**（从前的形状，逐字节照旧）；给了别的形状当场拒
+ * ——拒在伸手之前，话里点出这一栏叫什么都行（架构 § 8.10 硬纪律 1 的另一半）。
+ */
+function grepModeOf(args: Readonly<Record<string, unknown>>): { readonly value: GrepMode } | { readonly why: string } {
+  const v = arg(args, 'output_mode')
+  if (v === undefined) return { value: 'content' }
+  if (typeof v === 'string' && (GREP_MODES as readonly string[]).includes(v)) return { value: v as GrepMode }
+  return { why: `output_mode has to be one of ${GREP_MODES.join(' · ')} — this call gave ${JSON.stringify(v)}.` }
+}
+
+/**
+ * `grep` 的 `glob` 那一栏（范围）。不给就是「不限定范围」——逐字节照旧；给了**不是字符串**的
+ * 当场拒。
+ *
+ * 为什么不再静默当「没给」（对照吸收）：`{"glob": 1}` 是一段合法 JSON，静默忽略它，回执看起来
+ * 就是「范围里的结果」，而实际搜的是一整棵树——该报红的那一档报成了通过。
+ */
+function globOf(args: Readonly<Record<string, unknown>>): { readonly value: string | null } | { readonly why: string } {
+  const v = arg(args, 'glob')
+  if (v === undefined) return { value: null }
+  if (typeof v === 'string') return { value: v }
+  return { why: `glob has to be a string — this call gave ${JSON.stringify(v)}.` }
+}
+
+/**
+ * 一窗取几条内容。**它不是回执上限**——上限只有一套，住 `receipt.ts`（`MAX_RECEIPT_BYTES`）；
+ * 这一条是"取内容"那道缝的批量大小。
+ *
+ * 为什么按窗取，而不是像 0.2.4 那样一次把候选全取回来：一次全取时，回执虽然早停了，内容却已经
+ * 全取回来了——"超限靶上少读的东西"就成了空话。窗也不宜太小：没到上限的那些问法会把每一窗都
+ * 取一遍，窗越小，`objectMany` 的往返越多。
+ */
+const PREFETCH_WINDOW = 128
+
+/**
+ * 收尾那几句话的**原文各一处**（早停 · 逐文件被掐 · 超长行缩短 · 走树截尾）。
+ *
+ * 为什么是函数而不是散在 `render` 里的字面量：**留量要照着它们算**（见下面 `STOP_NOTE_RESERVE`）。
+ * 留量一旦是拍出来的，改一句措辞就能把回执挤出 `MAX_RECEIPT_BYTES`——那时它是被 `capReceipt` 从
+ * 中间切一刀，而所有字节断言都落在运行时追加那一句**之前**，没有一条测试发现得了。这一处的由头
+ * 是对照那一支照出来的（它那边把同一件事写成了算出来的留量 + 对着真收工句核一遍的断言）。
+ */
+function noteStopped(scanned: number | string, total: number | string): string {
+  // **不报一个自己没到的数**：这一趟结构上停在 `MAX_RECEIPT_BYTES - STOP_NOTE_RESERVE`，说「到了
+  // 8192 字节」就是把没到的说成到了。对照那一支照出来的第二处——它那一档只写 `at the receipt budget`。
+  return (
+    `\n…(the search stopped at the receipt budget after ${scanned} of ${total} files` +
+    ' — more matches may exist; narrow the search to see them)…'
+  )
+}
+
+function noteListCut(): string {
+  return '\n…(the per-file lines above stop at the receipt limit; every file was read, so the totals are complete)…'
+}
+
+/** 那一条超长行印的是前缀——**缩短了要说**，与「停在这儿」分开说（两件事，两个由头）。 */
+function noteShortened(): string {
+  return '\n…(that line is longer than this receipt: what is printed is a complete-character prefix, and the search stopped there)…'
+}
+
+/** 走树截尾那一句（**一处原文**：留量也要算它）。 */
+function noteCut(at: string): string {
+  return (
+    `\n…(this listing is cut: walking stops at ${at}, so the tree may hold more than what is listed here` +
+    ' — an empty result below is not evidence that nothing matches)…'
+  )
+}
+
+/** 算留量时当宽度的上界（七位数）：不看当时到底数到几。 */
+const WIDEST_COUNT = '9'.repeat(7)
+
+/**
+ * 头上那一栏（**一处原文**：它也要算进留量里）。
+ *
+ * 两个数分得开：`shown` 是**印了几条**，`total` 是计数那一档数出来的**全量数**。内容与路径那两档
+ * 印的就是 `shown`（停了的时候还要说它不是总数）；计数那一档印的是 `total`——它的答案本来就是一个
+ * 全量数（它不早停，机制上做不到半截就不做半截）。
+ */
+function headOf(mode: GrepMode, shown: number, total: number, files: number, stopped: boolean): string {
+  const tail = stopped ? ' (not a total — the search stopped early):' : ':'
+  if (mode === 'content') return `${shown} lines${tail}`
+  if (mode === 'files_with_matches') return `${shown} paths${tail}`
+  return `${total} matches in ${files} files:`
+}
+
+/**
+ * 运行时在回执**后面**再追加的那一句留多少（`round/driver.ts` 的 `withStepsLeft` 追加
+ * `stepsLeftTail`，然后再过一次 `capReceipt`）。
+ *
+ * 那一句不住这一层，所以这里留一个数，由 `execute.test.ts` 的 ⑯ 对着**两处真正的收工句**
+ * （`driver.ts` 的 `AGENT_LAND_NOW` 与 `plan.ts` 的 `HOLDER_LAND_NOW`）核一遍。
+ */
+export const RUNTIME_TAIL_RESERVE = 256
+
+/**
+ * 收尾留量。**它是算出来的，不是拍出来的**，而且是**求和不是取最大**：几句说明可以同时挂着
+ * （走树截尾 + 早停 + 单行缩短就是三句同现，`execute.test.ts` 的 ⑰ 量的正是这一档），取最大
+ * 就少留一百多字节，那一档正好落回被 `capReceipt` 从中间切一刀——这处要避免的正是这件事。
+ * 求和是上界（计数那一档不早停、也不缩短单行，四项俱全到不了），宁可多留几十字节。
+ *
+ * **它仍然是 `MAX_RECEIPT_BYTES` 里的一部分，不是第二个上限**（上限只有一套，住 `receipt.ts`）。
+ */
+export const STOP_NOTE_RESERVE =
+  Buffer.byteLength(noteStopped(WIDEST_COUNT, WIDEST_COUNT)) +
+  Buffer.byteLength(noteListCut()) +
+  Buffer.byteLength(noteShortened()) +
+  Buffer.byteLength(noteCut(`${WIDEST_COUNT} paths and ${WIDEST_COUNT} levels deep`)) +
+  Math.max(
+    Buffer.byteLength(headOf('content', 9999999, 9999999, 9999999, true)),
+    Buffer.byteLength(headOf('files_with_matches', 9999999, 9999999, 9999999, true)),
+    Buffer.byteLength(headOf('count', 9999999, 9999999, 9999999, false)),
+  ) +
+  RUNTIME_TAIL_RESERVE
+
+/**
  * 发现类那两条工具共用的「范围」那一栏（`path`）。**三句话，各管一处细节**：
  *
  *   · `scopeOf`：尾巴上的斜杠折掉——`src/` 与 `src` 说的是同一个范围，而两种写法模型都会给。
@@ -461,6 +607,28 @@ export function matchesInScope(re: RegExp, path: string, dir: string): boolean {
 }
 
 /**
+ * **清单被走树的上限截住时，吃到截断的那张回执照实说**（本站 ②）。
+ *
+ * 一处真相：截没截住在枚举那一份里（`walk-cache.ts` 的 `walkCutOf`），这一份只把它印成一句话
+ * ——`glob` 与 `grep` 走的是同一份清单，两张回执于是从同一处取。
+ *
+ * **没记过就是没有读数**（夹具与单测里那种手搓的 `walk()`）：一个字都不加，回执与从前逐字节
+ * 相同——机制缺席是少一份读数，不是坏掉。
+ *
+ * 为什么这一句挂在**尾上**：`capReceipt` 掐中间、留头尾，所以清单再长，这一句也活着。它同时也
+ * 是给模型的最后一句警告：**空结果不是"那儿真没有"的证据**——那正是 `glob` 少印会造成的绕行。
+ */
+function walkCutNote(paths: readonly string[]): string {
+  const cut = walkCutOf(paths)
+  if (cut === null) return ''
+  const at: string[] = []
+  if (cut.rows) at.push(`${cut.limits.rows} paths`)
+  if (cut.depth) at.push(`${cut.limits.depth} levels deep`)
+  if (at.length === 0) return ''
+  return noteCut(at.join(' and '))
+}
+
+/**
  * 走一遍树。**走法归宿主**（`walk`）：它知道哪些行是目录、哪些是软链、能走多深。这一层只
  * 拿结果去配 `glob` 的语法（`**` 要不要跨 `/` 是模式那边的事）。
  */
@@ -471,19 +639,37 @@ const globFace: ToolFn = async (args, host) => {
   const all = await host.walk()
   const re = globToRe(pattern)
   const hit = all.filter((p) => inScope(p, dir) && matchesInScope(re, p, dir))
-  return ok(hit.length === 0 ? `no path matches ${pattern}.` : `${hit.length} paths:\n${hit.join('\n')}`)
+  // **被截住的那一份清单要说出来**（本站 ②）："没有匹配"与"没走完"是两件事，混起来那一次
+  // 问法看起来只是"那儿真没有"，而模型会照着这个结论一直绕。
+  const cut = walkCutNote(all)
+  // **清单被截过就不许下「没有匹配」这个结论**（对照吸收：同一张回执里一句结论一句否认，读的人
+  // 只会记住前面那句）。没截的那一档照旧逐字节不变。
+  const none =
+    cut === ''
+      ? `no path matches ${pattern}.`
+      : `cannot say whether anything matches ${pattern}: the enumeration is incomplete (unvisited paths are unknown).${cut}`
+  return ok(hit.length === 0 ? none : `${hit.length} paths:\n${hit.join('\n')}${cut}`)
 }
 
 const grepFace: ToolFn = async (args, host, ctx) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('grep', 'pattern')
   const dir = scopeOf(text(args, 'path'), ctx.cwd)
+  // **公布的参数面一格不落**（架构 § 8.10 硬纪律 1：只公布能兑现的选项——公布了就要有人接）。
+  // `output_mode` 与 `glob` 这两栏原先公布了没人接：按公布面给的参数被静默忽略，而回执看起来
+  // 只是"那儿真没有"——同一个入口，一个参数有人接、一个没人接，读的人分不出来。
+  const mode = grepModeOf(args)
+  if ('why' in mode) return no(mode.why)
+  const only = globOf(args)
+  if ('why' in only) return no(only.why)
   let re: RegExp
   try {
     re = new RegExp(pattern)
   } catch (err) {
     return no(`that is not a regular expression: ${(err as Error).message}`)
   }
+  // `glob` 那一栏走与 `glob` 工具**同一份**方言（`globToRe`）：不另立第二套模式语法。
+  const onlyRe = only.value === null ? null : globToRe(only.value)
   const all = await host.walk()
   // **先按一次批量把候选的内容取回来**：它是提示，缺席或失败都退回今天的逐文件读
   // ——这台宿主没有那道缝（测试夹具）、或者那一层没接上真源，都只是慢一点。
@@ -496,24 +682,108 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   } catch {
     prefetch = undefined
   }
-  // **候选先按范围收窄，再取那一批**：预取是"接下来要读的那几份先取回来"，范围外的不该占这一批
-  // ——一条窄范围加上一棵大树的问法上，差的就是几十上百份的内容。
+  // **候选先按范围与 `glob` 收窄**：预取是"接下来要读的那几份先取回来"，范围外 · 模式外的都不该
+  // 占这一窗。**它只改取法，不改结果**：结果那一路在下面那个循环里自己把范围与模式判一次
+  // ——预取始终只是提示（缺席 · 失败 · 少几份，都只是慢一点）。
+  const cut = walkCutNote(all)
+  const candidates = all.filter((p) => inScope(p, dir) && (onlyRe === null || matchesInScope(onlyRe, p, dir)))
+
+  // **拼够回执上限即停**（本站 ③ · `T16` ①）。上限就是 `receipt.ts` 那一套常数——这里不另立
+  // 第二套，只是**在拼的时候就知道自己要满了**，于是后面的窗不必取、后面的文件不必读。
   //
-  // **收窄只改那一批，不改结果**：结果那一路的判据在下面那个循环里，它自己按范围判一次；预取
-  // 始终只是提示（缺席 · 失败 · 少几份，都只是慢一点）。
-  if (prefetch !== undefined) await prefetch(all.filter((p) => inScope(p, dir)))
+  // 停了要说（`scanned` / `candidates.length` 那一句）："少印"与"没扫完"是两件事，后者不许被
+  // 当成本次问法的结论（正确性不为机制让路）。
   const hits: string[] = []
-  for (const path of all) {
-    if (!inScope(path, dir)) continue
-    const got = await host.readBytes(path)
-    if (got === null) continue
-    utf8Of(got.bytes)
-      .split('\n')
-      .forEach((line, i) => {
-        if (re.test(line)) hits.push(`${path}:${i + 1}:${line}`)
-      })
+  const counted = new Map<string, number>()
+  /** 已经拼进回执的字节数（与上限那一套常数同一把尺）。 */
+  let used = 0
+  /** 内容那两档：回执满了，搜索停在这里。 */
+  let stopped = false
+  /** 那一条超长行印的是前缀（**缩短了要说**，与「停在这儿」分开说）。 */
+  let shortened = false
+  /** 计数档：逐文件那一份印不下了（**数照旧数完**——那一档的答案是一个全量数）。 */
+  let listCut = false
+  let total = 0
+  let scanned = 0
+  const budget = MAX_RECEIPT_BYTES - STOP_NOTE_RESERVE
+
+  scan: for (let at = 0; at < candidates.length; at += PREFETCH_WINDOW) {
+    const window = candidates.slice(at, at + PREFETCH_WINDOW)
+    // 预取是提示：这一窗取不回来（或这道缝压根不在），下面照样逐文件读。
+    if (prefetch !== undefined) await prefetch(window)
+    for (const path of window) {
+      scanned += 1
+      const got = await host.readBytes(path)
+      if (got === null) continue
+      const body = utf8Of(got.bytes).split('\n')
+      let here = 0
+      for (let i = 0; i < body.length; i += 1) {
+        const line = body[i] as string
+        if (!re.test(line)) continue
+        here += 1
+        if (mode.value !== 'content') continue
+        const one = `${path}:${i + 1}:${line}`
+        const size = Buffer.byteLength(one, 'utf8') + 1
+        if (used + size > budget) {
+          // **一条超长行不许把回执挤成 0 行**（0 行读起来像「这儿没有」，而它明明有一行）：一行都还
+          // 没印的时候，印一条 UTF-8 安全的前缀并说出来。压缩过的 JS · base64 · 一整行 CSV 都是这个形状。
+          if (hits.length === 0) {
+            const where = `${path}:${i + 1}:`
+            const room = budget - used - Buffer.byteLength(where, 'utf8') - 1
+            const cut = utf8PrefixOf(line, Math.max(0, room))
+            if (cut !== '') {
+              hits.push(`${where}${cut}`)
+              used += Buffer.byteLength(`${where}${cut}`, 'utf8') + 1
+              shortened = true
+            }
+          }
+          stopped = true
+          break scan
+        }
+        hits.push(one)
+        used += size
+      }
+      if (here === 0) continue
+      if (mode.value === 'files_with_matches') {
+        const size = Buffer.byteLength(path, 'utf8') + 1
+        if (used + size > budget) {
+          stopped = true
+          break scan
+        }
+        hits.push(path)
+        used += size
+        continue
+      }
+      if (mode.value === 'count') {
+        // **数完是必须的**：这一档的答案是一个全量数，所以它不早停（回执本来就短）。
+        counted.set(path, here)
+        total += here
+        const size = Buffer.byteLength(`${path}:${here}`, 'utf8') + 1
+        if (used + size <= budget) {
+          hits.push(`${path}:${here}`)
+          used += size
+        } else listCut = true
+      }
+    }
   }
-  return ok(hits.length === 0 ? `no line matches ${pattern}.` : `${hits.length} lines:\n${hits.join('\n')}`)
+
+  // 与 `glob` 同一处（`walkCutNote`）：这一趟搜的候选是从那份清单里来的，清单被截过，
+  // 那"没有一行匹配"就不是一句结论（本站 ②）。
+  if (hits.length === 0 && !stopped) {
+    // 与 `glob` 同一处判据：清单被截过就不许下「没有匹配」这个结论（对照吸收）。
+    return ok(
+      cut === ''
+        ? `no line matches ${pattern}.`
+        : `cannot say whether anything matches ${pattern}: the enumeration is incomplete (unvisited files are unknown).${cut}`,
+    )
+  }
+  /** 早停那一句：**扫到哪儿 · 后面可能还有**（两件事都要说）。 */
+  const stopNote = stopped ? noteStopped(scanned, candidates.length) : ''
+  const listNote = listCut ? noteListCut() : ''
+  const cutLine = shortened ? noteShortened() : ''
+  // **数出来的数不许被当成全量数**：停了的那两档，头上那一栏说的是「印了几条」，不是总数。
+  const head = headOf(mode.value, hits.length, total, counted.size, stopped)
+  return ok(`${head}\n${hits.join('\n')}${stopNote}${listNote}${cutLine}${cut}`)
 }
 
 // ── 执行类那两个 ───────────────────────────────────────────────────────────────

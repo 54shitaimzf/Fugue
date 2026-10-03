@@ -8,6 +8,17 @@
 //   ④ **假模型驱动 读 → 写 → 检查点，走到一次真提交**，而**真工作树一个文件都没多**
 //   ⑤ 负对照：字节那一栏改成"读回来的 UTF-8 文本相同"→ 一条非法序列就把它变红
 //   ⑨ **模型读到的每一个字节都是英文**（口径：谁读谁的语言——人读的走中文 · 见证 § 8.11）
+//   ⑪ **清单被走树的上限截住时照实说**（本站 ②）：那一句挂在回执尾上，`glob` 与 `grep` 同源
+//      （`walk-cache.ts` 的 `walkCutOf`）；没截的那一档逐字节与从前相同（负对照）
+//   ⑫ **拼够回执上限即停**（本站 ③）：停了要说（扫到哪儿 · 后面可能还有）· 头上那一栏不许把
+//      "印了几条"说成总数 · 少读的东西量得出来（读了几份 / 取了几份）· **计数那一档不早停**
+//      （它的答案是一个全量数），逐文件那一份被掐了也要说清总数是全的
+//   ⑬ **公布的参数面一格不落**（架构 § 8.10 硬纪律 1）：`glob` 与 `output_mode` 三档各有一种
+//      被断言钉住的形状，坏值拒在伸手之前
+//   ⑭ **公布面与服务面逐字对齐**（架构 § 8.10 硬纪律 1）：`grep` 的 `output_mode` 三档，目录里公布
+//      的就是服务面认的那一组（各写一份 → 当场红）
+//   ⑮ **一条超长行不许把回执挤成 0 行**（对照吸收）：印一条 UTF-8 安全的前缀并说出来
+//   ⑯ **收尾留量是算出来的**（对照吸收）：真收工句 + 最长的说明与头，都装在留量里
 //   格 3 **`grep` 的候选先按一批取回内容**：冷的那一趟请求数不随文件数线性涨，
 //   热的那一趟一次都不发；这道缝缺席时退回逐文件读（回执逐字节不变）
 
@@ -27,7 +38,7 @@ import type { View } from '../view/contract.ts'
 import { createRoots } from '../roots/roots.ts'
 import type { Denied as FenceDenied, Roots } from '../roots/contract.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
-import { emptyState } from '../assemble/sources.ts'
+import { emptyState, stepsLeftTail } from '../assemble/sources.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 import { fixtureState } from '../model/fixture-state.ts'
 import { BUILTIN_CATALOG, modelDeclOf } from '../model/catalog.ts'
@@ -38,11 +49,14 @@ import type { AgentHandle } from '../runtime/step.ts'
 import { createRuntime, scriptedModel } from '../runtime/step.ts'
 import type { ToolCallRequest } from '../runtime/step.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
-import { faceOf, noFace, parseArgs } from './execute.ts'
+import { GREP_MODES, RUNTIME_TAIL_RESERVE, STOP_NOTE_RESERVE, faceOf, noFace, parseArgs } from './execute.ts'
 import { capReceipt, lineCount, MAX_RECEIPT_BYTES } from './receipt.ts'
+import { createWalk } from './walk-cache.ts'
 import type { ToolHost } from './execute.ts'
 import { createToolHost } from './host.ts'
 import { refHeadOf } from '../round/head.ts'
+import { AGENT_LAND_NOW } from '../round/driver.ts'
+import { HOLDER_LAND_NOW } from '../round/plan.ts'
 import type { TreeEntry } from '../entries.ts'
 
 const AGENT = 'agent-1' as AgentId
@@ -342,6 +356,149 @@ function handleOf(state: AssembleState): AgentHandle {
     state,
   }
 }
+
+test('⑪ 走树上限截住清单时，吃到截断的回执照实说；没截的那一档一个字都不加（本站 ②）', async () => {
+  const b = await bench()
+  try {
+    await b.host.writeBytes('a.ts', new Uint8Array(Buffer.from('// 记号 a\n', 'utf8')))
+    await b.host.writeBytes('b.ts', new Uint8Array(Buffer.from('// 记号 b\n', 'utf8')))
+    await b.host.writeBytes('c.ts', new Uint8Array(Buffer.from('// 记号 c\n', 'utf8')))
+    // **上限只给负对照用**：产品路径上那两条是 `host.ts` 的两个常数，走树那一份自己收一对
+    // 上限（`createWalk`），所以测试能拿它当夹具，不需要往产品上开一个开关。
+    const tight = { ...b.host, walk: createWalk(b.view, { depth: 24, rows: 1 }) }
+    const cutGlob = await face('glob', { pattern: '*.ts' }, tight)
+    assert.match(cutGlob.output, /^1 paths:/, `截住的那一档仍要如实报它列了几条：${cutGlob.output}`)
+    assert.match(cutGlob.output, /this listing is cut/, `截了就要说出来：${cutGlob.output}`)
+    assert.match(cutGlob.output, /2[45] paths|1 paths/, `那一句要说清停在哪条上限上：${cutGlob.output}`)
+    const cutGrep = await face('grep', { pattern: '记号' }, tight)
+    assert.match(cutGrep.output, /this listing is cut/, `grep 走的是同一份清单，也要说：${cutGrep.output}`)
+    // **空结果不许被当成结论**：那一句自己要说出这件事。
+    const none = await face('grep', { pattern: '这一份不存在' }, tight)
+    // **截过的那一档不许下「没有匹配」这个结论**（对照吸收）：一句结论一句否认，读的人只记住前面那句。
+    assert.match(none.output, /^cannot say whether anything matches/, none.output)
+    assert.equal(/^no line matches/m.test(none.output), false, '截过的那一档不许说「没有匹配」')
+    assert.match(none.output, /not evidence that nothing matches/, `空结果那一档要提醒：${none.output}`)
+
+    // ── 负对照 · 没截的那一档：逐字节与从前相同（一句话都不加）。
+    const loose = { ...b.host, walk: createWalk(b.view, { depth: 24, rows: 5000 }) }
+    const wholeGlob = await face('glob', { pattern: '*.ts' }, loose)
+    assert.deepEqual(wholeGlob.output.split('\n'), ['3 paths:', 'a.ts', 'b.ts', 'c.ts'])
+    const wholeGrep = await face('grep', { pattern: '记号' }, loose)
+    assert.match(wholeGrep.output, /^3 lines:\n/, wholeGrep.output)
+    assert.equal(/this listing is cut/.test(wholeGrep.output), false, '没截就不许加这一句')
+    // 而**没截**的那一档照旧是那句话：结论下得，因为它走完了整棵树。
+    const plainNone = await face('grep', { pattern: '这一份不存在' }, loose)
+    assert.match(plainNone.output, /^no line matches .*\.$/, plainNone.output)
+    const plainGlob = await face('glob', { pattern: '*.md' }, loose)
+    assert.match(plainGlob.output, /^no path matches .*\.$/, plainGlob.output)
+    console.log(`⑪ 读数：截住那一档「${cutGlob.output.split('\n').pop()}」 · 没截那一档 ${wholeGlob.output.length} 字节与从前相同`)
+  } finally {
+    await b.close()
+  }
+})
+
+/**
+ * 一份手搓的宿主：`count` 份一模一样的小文件，每一份一行命中。
+ *
+ * 为什么手搓：真台子上造一千份要走一千次 git 写，快档付不起；而这一条要量的两样（**少读了多少**
+ * · **全量数还是不是全量数**）都只与"有几份候选 · 读了几份"有关，与内容从哪儿来无关。
+ * 只给这一条用，所以只实现它走到的那三样（`walk` · `readBytes` · `prefetch`）。
+ */
+function wideHost(count: number): { readonly host: ToolHost; readonly reads: string[]; readonly batched: string[] } {
+  const files = Array.from({ length: count }, (_, i) => `f${String(i).padStart(4, '0')}.ts`)
+  const reads: string[] = []
+  const batched: string[] = []
+  const host = {
+    walk: async () => files,
+    readBytes: async (p: string) => {
+      reads.push(p)
+      return { bytes: new TextEncoder().encode('const a = 1 // 记号\n'), mode: 0o100644 }
+    },
+    prefetch: async (paths: readonly string[]) => {
+      batched.push(...paths)
+    },
+  } as unknown as ToolHost
+  return { host, reads, batched }
+}
+
+test('⑫ 早停截断：拼够回执上限就停（少读的东西量得出来）· 计数那一档照旧是全量数（本站 ③）', async () => {
+  // ── 甲 · 内容那一档：一千份候选，回执拼够上限就停。
+  const wide = wideHost(1000)
+  const out = await face('grep', { pattern: '记号' }, wide.host)
+  assert.equal(out.ok, true)
+  assert.match(out.output, /lines \(not a total — the search stopped early\):/, `头上那一栏不许把印了几条说成总数：${out.output.slice(0, 90)}`)
+  assert.match(out.output, /the search stopped at the receipt budget/, '停了要说')
+  // **不报一个自己没到的数**（对照吸收）：这一趟结构上停在 `MAX_RECEIPT_BYTES - STOP_NOTE_RESERVE`。
+  assert.equal(/reached its \d+-byte limit/.test(out.output), false, '不许报一个自己没到的上限')
+  assert.match(out.output, /after \d+ of 1000 files/, '扫到哪儿也要说')
+  const outBytes = Buffer.byteLength(out.output, 'utf8')
+  assert.ok(outBytes <= MAX_RECEIPT_BYTES, `早停之后回执要在上限之内：${outBytes}`)
+  assert.ok(!out.output.includes('bytes omitted'), '早停那一档不该再落回字节截断')
+  // **收益的读数**：读了几份内容、取了几份。
+  const scanned = Number(/after (\d+) of 1000 files/.exec(out.output)?.[1])
+  assert.equal(wide.reads.length, scanned, '印出来的"读了几份"就是真的读了几份')
+  assert.ok(wide.reads.length < 1000, `一千份里该少读很多：实际 ${wide.reads.length}`)
+  assert.ok(wide.batched.length < 1000, `预取也该早停（不该把一千份全取回来）：实际 ${wide.batched.length}`)
+  // 每一条命中行都是完整的一行（切在行上，不是切在字节上）。
+  for (const line of out.output.split('\n').slice(1)) {
+    if (line.startsWith('…(') || line === '') continue
+    assert.match(line, /^f\d{4}\.ts:\d+:const a = 1 \/\/ 记号$/, `那一行不完整：${line}`)
+  }
+  const contentReads = wide.reads.length
+  const contentBatched = wide.batched.length
+
+  // ── 乙 · 计数那一档：**答案是一个全量数**，所以它不早停（机制上做不到半截就不做半截）。
+  const all = wideHost(1000)
+  const counted = await face('grep', { pattern: '记号', output_mode: 'count' }, all.host)
+  assert.equal(counted.ok, true)
+  assert.match(counted.output, /^1000 matches in 1000 files:/, `头一行要是全量数：${counted.output.slice(0, 90)}`)
+  assert.equal(all.reads.length, 1000, '计数那一档要把每一份都读过才敢报总数')
+  assert.match(counted.output, /every file was read, so the totals are complete/, '逐文件那一份被掐了就要说，并说清总数是全的')
+  console.log(
+    `⑫ 读数：一千份候选 · 内容档读了 ${contentReads} 份 / 取了 ${contentBatched} 份 · ` +
+      `回执 ${outBytes} 字节（上限 ${MAX_RECEIPT_BYTES}）· 计数档读完 1000 份报 ${(counted.output.split('\n')[0] as string)}`,
+  )
+})
+
+test('⑬ 公布的参数面一格不落：`glob` 过滤 · `output_mode` 三档各一种形状 · 坏值拒在伸手之前（本站 ③）', async () => {
+  const b = await bench()
+  try {
+    await b.host.writeBytes('a.ts', new Uint8Array(Buffer.from('// 记号 a\n', 'utf8')))
+    await b.host.writeBytes('b.ts', new Uint8Array(Buffer.from('// 记号 b\n// 记号 b2\n', 'utf8')))
+    await b.host.writeBytes('c.md', new Uint8Array(Buffer.from('// 记号 c\n', 'utf8')))
+
+    // 一 · `output_mode` 缺省那一档：逐行（**与从前逐字节同形**）。
+    const lines = await face('grep', { pattern: '记号' }, b.host)
+    assert.match(lines.output, /^4 lines:\n/, lines.output)
+    // 二 · `files_with_matches`：一份文件一行（与 `glob` 那一档同一个头）。
+    const files = await face('grep', { pattern: '记号', output_mode: 'files_with_matches' }, b.host)
+    assert.deepEqual(files.output.split('\n'), ['3 paths:', 'a.ts', 'b.ts', 'c.md'])
+    // 三 · `count`：全量总数在前，逐文件在后。
+    const count = await face('grep', { pattern: '记号', output_mode: 'count' }, b.host)
+    assert.deepEqual(count.output.split('\n'), ['4 matches in 3 files:', 'a.ts:1', 'b.ts:2', 'c.md:1'])
+    // 四 · `glob` 那一栏：只在这些路径里找（与 `glob` 工具同一份模式方言）。
+    const only = await face('grep', { pattern: '记号', glob: '*.md' }, b.host)
+    assert.deepEqual(only.output.split('\n'), ['1 lines:', 'c.md:1:// 记号 c'])
+    const wideOnly = await face('grep', { pattern: '记号', glob: '**/*.ts' }, b.host)
+    assert.match(wideOnly.output, /^3 lines:/, wideOnly.output)
+    assert.equal(wideOnly.output.includes('c.md'), false, `模式外的路径进了 grep：${wideOnly.output}`)
+    // 五 · 坏值拒在伸手之前，话里把三档列出来（公布面与兑现面不一致时模型无从判起）。
+    const bad = await face('grep', { pattern: '记号', output_mode: 'lines' }, b.host)
+    assert.equal(bad.ok, false)
+    assert.match(bad.output, /output_mode has to be one of content · files_with_matches · count/, bad.output)
+    // 六 · `glob` 那一栏给了**不是字符串**的：当场拒，不许静默当「没给」（对照吸收）——静默忽略
+    // 它，回执看起来就是「范围里的结果」，而实际搜的是一整棵树。
+    const badGlob = await face('grep', { pattern: '记号', glob: 1 }, b.host)
+    assert.equal(badGlob.ok, false, `坏 glob 该被拒在伸手之前：${badGlob.output}`)
+    assert.match(badGlob.output, /glob has to be a string/, badGlob.output)
+    console.log(
+      `⑬ 读数：四栏各有形状（content 4 行 · files 3 路径 · count 4 命中/3 文件 · glob *.md 1 行）· ` +
+        '坏值当场拒（output_mode 的三档与 glob 的类型各一档）',
+    )
+  } finally {
+    await b.close()
+  }
+})
 
 test('④ 假模型驱动 读 → 写 → 检查点：走到一次真提交，而真工作树一个文件都没多', async () => {
   const b = await bench()
@@ -1136,6 +1293,142 @@ test('⑩ 大窗口被截：头里那句窗口标注还在，而标记里那两�
     console.log(
       `⑩ 截断读数：这一条回执 ${Buffer.byteLength(receipt, 'utf8')} 字节 / ${lineCount(receipt)} 行 → 略去 ${m[1]} 字节` +
         `（整个文件是 ${Buffer.byteLength(text, 'utf8')} 字节 / 400 行 · 头上的窗口标注在被截之后还在）`,
+    )
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ⑭ 公布面与服务面逐字对齐（架构 § 8.10 硬纪律 1）────────────────────────────
+
+test('⑭ `grep` 的 `output_mode`：模型读到的三档就是服务面认的那三档', () => {
+  // **一处真相**：公布面（目录里那一条 schema 的 `enum`）与服务面（`GREP_MODES`）不许各写一份——
+  // 各写一份的话，「公布了没人接」与「接了没公布」两种都会出现，而回执看起来只是「那儿真没有」。
+  const entry = CATALOG.find((t) => t.name === 'grep')
+  const props = entry?.parameters.properties as Record<string, { readonly enum?: readonly string[] }> | undefined
+  const published = props?.output_mode?.enum ?? []
+  assert.deepEqual(
+    [...published],
+    [...GREP_MODES],
+    `公布的三档与服务面认的三档不是同一组：${JSON.stringify(published)} vs ${JSON.stringify(GREP_MODES)}`,
+  )
+  // 服务面认的每一档都公布过（少一档这一条也红）。
+  for (const m of GREP_MODES) assert.ok(published.includes(m), `服务面认的 ${m} 没公布`)
+  console.log(`⑭ 读数：grep 公布 ${published.join(' · ')}，服务面认 ${GREP_MODES.join(' · ')}——同一组 ${GREP_MODES.length} 档`)
+})
+
+// ── ⑮⑯ 对照之后吸收的两处（都在 ③ 这条线上）────────────────────────────────────
+
+test('⑮ 一条超长行不许把回执挤成 0 行：印一条 UTF-8 安全的前缀，并说出来', async () => {
+  // 一行比整份回执还长的文件（压缩过的 JS · base64 · 一整行 CSV 都是这个形状——真到得到）。
+  // 两个形状各走一条路：`多字节` 那一条**码元不算多、字节很多**（切在字节上，要退到整字符边界）；
+  // `一整行 ASCII` 那一条**码元数就超过留量**（只在留量那么长的前缀上算字节，不必先复制整份）。
+  const shapes = [
+    ['多字节', `const s = "hit ${'中😀'.repeat(3000)}"`],
+    ['一整行 ASCII', `const s = "hit ${'a'.repeat(200000)}"`],
+    // 留量那一刀可能正切在一对代理中间（😀 是两个码元），切偏一位就把半个编码单元喂进编码器。
+    // 印出来的仍是整字符——退到首字节那一步把它留在外面；这四个偏移总有一个切在中间。
+    ['代理对边界 0', `const s = "hit ${'😀'.repeat(20000)}"`],
+    ['代理对边界 1', `const s = "hit a${'😀'.repeat(20000)}"`],
+    ['代理对边界 2', `const s = "hit aa${'😀'.repeat(20000)}"`],
+    ['代理对边界 3', `const s = "hit aaa${'😀'.repeat(20000)}"`],
+  ]
+  for (const one of shapes) {
+    const name = one[0] as string
+    const line = one[1] as string
+    const host = {
+      walk: async () => ['big.js'],
+      readBytes: async () => ({ bytes: new TextEncoder().encode(line), mode: 0o100644 }),
+      prefetch: async () => {},
+    } as unknown as ToolHost
+    const out = await face('grep', { pattern: 'hit' }, host)
+    assert.equal(out.ok, true)
+    assert.match(
+      out.output,
+      /^1 lines \(not a total — the search stopped early\):/,
+      `${name}：该印那条被缩短的行，而不是 0 行（0 行读起来像「这儿没有」）：${out.output.slice(0, 90)}`,
+    )
+    assert.match(out.output, /longer than this receipt/, `${name}：缩短了要说`)
+    assert.match(out.output, /the search stopped at the receipt budget/, `${name}：停了也要说（两件事分开说）`)
+    const bytes = Buffer.byteLength(out.output, 'utf8')
+    assert.ok(bytes <= MAX_RECEIPT_BYTES, `${name}：回执仍要在上限之内：${bytes}`)
+    assert.ok(!out.output.includes('\uFFFD'), `${name}：不许把半个字符切进回执`)
+    assert.ok(!out.output.includes('bytes omitted'), `${name}：不是回落到字节截断`)
+    // **那一刀要把地方用掉**：按码元的几分之一去切，同样是 1 行、同样是整字符边界，上面几条全过；
+    // 这一条才抓得住。判据拿留量当尺子（不写死一个数）：**回执至少要把行预算用满**——
+    // 差的那一段是几句说明与头上那一栏，它们住在留量里，不在这一刀的预算里。
+    assert.ok(
+      bytes >= MAX_RECEIPT_BYTES - STOP_NOTE_RESERVE,
+      `${name}：回执只有 ${bytes} 字节，连行预算（${MAX_RECEIPT_BYTES - STOP_NOTE_RESERVE}）都没用满——前缀没把地方用掉`,
+    )
+    console.log(
+      `⑮ 读数（${name}）：一行 ${Buffer.byteLength(line, 'utf8')} 字节 · ${line.length} 个码元 → 回执 ${bytes} 字节` +
+        `（上限 ${MAX_RECEIPT_BYTES}）· 印 1 条前缀 + 两句说明 · 切在整字符边界上`,
+    )
+  }
+})
+test('⑯ 收尾留量是算出来的：真收工句 + 最长的说明与头，都装在留量里', () => {
+  // **对着真正的收工句核一遍**（不是它自己算的那一份）：`round/driver.ts` 的 `withStepsLeft` 在回执
+  // 后面追加 `stepsLeftTail`，然后才过 `capReceipt`——那一句不住回执这一层，所以只能这样量。
+  // 这一句**只在快用完时**才拼出来（`left` 落在 0…`STEPS_HINT_AT` 之间），所以最长的形状是
+  // 「`left` 正好 3 而且两个数位数最多」——`(999996, 1000000)` 那一档就是它（步数上界由人给，
+  // 位数不设上限，留 54 字节余量给更长的号）。
+  const shapes = [
+    [0, 1],
+    [0, 4],
+    [0, 999],
+    [12, 9999],
+    [999996, 1000000],
+  ]
+  const tails: string[] = []
+  for (const one of shapes) {
+    tails.push(stepsLeftTail(one[0] as number, one[1] as number, AGENT_LAND_NOW))
+    tails.push(stepsLeftTail(one[0] as number, one[1] as number, HOLDER_LAND_NOW))
+  }
+  const longest = Math.max(...tails.map((t) => Buffer.byteLength(t, 'utf8')))
+  assert.ok(longest > 0, '这一条要真量到那一句（形状给错了会恒 0）')
+  assert.ok(longest <= RUNTIME_TAIL_RESERVE, `运行时那一句最长 ${longest} 字节，越过了留的 ${RUNTIME_TAIL_RESERVE} 字节`)
+  assert.ok(STOP_NOTE_RESERVE <= MAX_RECEIPT_BYTES, `留量 ${STOP_NOTE_RESERVE} 不许把回执预算吃穿`)
+  console.log(
+    `⑯ 读数：运行时那一句最长 ${longest} 字节 · 收尾留量合计 ${STOP_NOTE_RESERVE} 字节 · 回执上限 ${MAX_RECEIPT_BYTES}`,
+  )
+})
+
+// ── ⑰ 最坏那一档：三句说明同现（对照吸收的第二刀）────────────────────────────────
+
+test('⑰ 最坏那一档：走树截尾 + 早停 + 单行缩短三句同现，回执加上运行时那一句仍在上限之内', async () => {
+  // 留量少算一点也不行：那一档会被 `capReceipt` 从中间切一刀，而切掉的正是**这些说明**要防的事。
+  // 这一条不从 `STOP_NOTE_RESERVE` 的算式出发（算式自己错了自己也核不出来），而是**把最坏那一档
+  // 真跑出来、按运行时的次序号一遍字节**：回执 + 真收工句。
+  const b = await bench()
+  try {
+    const huge = `const a = "${'记号'.repeat(12000)}"`
+    await b.host.writeBytes('big.ts', new Uint8Array(Buffer.from(huge, 'utf8')))
+    await b.host.writeBytes('small.ts', new Uint8Array(Buffer.from('// 记号\n', 'utf8')))
+    // 走树那条上限收到 1 条：清单被截（还有 small.ts 没列出来），而候选只剩 big.ts 那一份。
+    const tight = { ...b.host, walk: createWalk(b.view, { depth: 24, rows: 1 }) }
+    const out = await face('grep', { pattern: '记号' }, tight)
+    assert.equal(out.ok, true)
+    // 三句都在——少了哪一句，这一条量的就不是最坏那一档（它就成了空话）。
+    assert.match(out.output, /this listing is cut/, '走树截尾那一句要在')
+    assert.match(out.output, /the search stopped at the receipt budget/, '早停那一句要在')
+    assert.match(out.output, /longer than this receipt/, '单行缩短那一句要在')
+    // 运行时的次序：`round/driver.ts` 在回执后面追加 `stepsLeftTail`，然后才过 `capReceipt`。
+    // **量到的必须是真句子**：`stepsLeftTail` 在步数宽裕时返回空串，空串会让下面那条断言变成空话
+    // （施工当场踩到过：`(12, 9999)` 回空串，于是「回执 + 0 字节」当然过）。
+    const tail = stepsLeftTail(999996, 1000000, AGENT_LAND_NOW)
+    assert.ok(tail.length > 0, '这一步没量到真收工句——形状给错了，下面那条断言就成了空话')
+    const withTail = out.output + tail
+    const bytes = Buffer.byteLength(withTail, 'utf8')
+    const receiptBytes = Buffer.byteLength(out.output, 'utf8')
+    assert.ok(
+      bytes <= MAX_RECEIPT_BYTES,
+      `最坏那一档越了上限：回执 ${receiptBytes} + 收工句 ${Buffer.byteLength(tail, 'utf8')} = ${bytes} > ${MAX_RECEIPT_BYTES}——留量少算了`,
+    )
+    assert.equal(withTail.includes('bytes omitted'), false, '这一档不该落回字节截断（那正是留量要挡的事）')
+    console.log(
+      `⑰ 读数：三句同现 · 回执 ${receiptBytes} 字节 + 收工句 ${Buffer.byteLength(tail, 'utf8')} 字节 = ${bytes} 字节` +
+        `（上限 ${MAX_RECEIPT_BYTES} · 留量 ${STOP_NOTE_RESERVE}）`,
     )
   } finally {
     await b.close()

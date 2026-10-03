@@ -380,6 +380,8 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     )
 
     // ── 2. 一次调用。**这一层不认识线协议**：`deps.call` 后面是 `B3` 的传输或一串脚本。
+    // 两头各取一次单调钟：这是**区间读数**（`llm/call` 那一栏 `ms`），不是时刻——信封上不落时刻。
+    const started = performance.now()
     const reply = deps.call(request, signal)
     const events: ModelEvent[] = []
     let call: ModelCall | null = null
@@ -408,6 +410,9 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       if (call === null) failure = '这一条流没有给出账，也没说为什么——半截的响应当不了完整的用'
     }
 
+    /** 这一趟（含把流读完）的耗时读数：毫秒整数，与 `run/end.ms` 同一个格子。 */
+    const ms = Math.round(performance.now() - started)
+
     // ── 3. 工具调用（分片那一段已经在 `B1` 的账里收过口了）
     const calls = call?.toolCalls ?? []
     const usage: Usage | null = call?.usage ?? null
@@ -425,6 +430,8 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         thinking: h.call?.thinking ?? null,
         toolCount: tools.length,
         invocations: calls.length,
+        // **这一趟花了多久**：区间读数，与 `run/end.ms` 同一个格子；旧日志里没有这一栏。
+        ms,
         usage: {
           inputTokens: usage?.inputTokens ?? null,
           cacheReadTokens: usage?.cacheReadTokens ?? null,

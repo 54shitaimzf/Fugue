@@ -229,8 +229,13 @@ export interface RealDriverOptions {
   readonly deliver?: (view: View, contract: Contract, agent: AgentId) => Promise<readonly RelPath[]>
 }
 
-/** 契约那一格念的**收工那半句**（`sources.ts` 的 `stepsLeftTail` 第三个参数）。 */
-const AGENT_LAND_NOW =
+/**
+ * 契约那一格念的**收工那半句**（`sources.ts` 的 `stepsLeftTail` 第三个参数）。
+ *
+ * **导出它是为了让留量那一栏能被量**（`tools/execute.test.ts` 的 ⑯：回执那一层给自己留的字节数
+ * 要罩得住**真正追加的那一句**——它不住那一层，所以只能对着真句子核）。
+ */
+export const AGENT_LAND_NOW =
   'Land the deliverable(s) now and hand in — the harness runs the assertions, so spend what is left on the files rather than on verifying them.'
 
 /**

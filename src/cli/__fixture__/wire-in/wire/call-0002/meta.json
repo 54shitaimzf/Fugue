@@ -9,8 +9,8 @@
     "wire": "anthropic-messages"
   },
   "model": "deepseek-flash",
-  "requestBytes": 9737,
-  "requestHash": "b3dba679975d0717",
+  "requestBytes": 10032,
+  "requestHash": "2586d32d4c125ebc",
   "responseBytes": 2767,
   "responseHash": "822cf2fe96f1a97c",
   "zoneAHash": "57bf4e895c18810d",
