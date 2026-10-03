@@ -13,6 +13,9 @@
 //   ⑥ 读那一面也不许**看**原型链：`Object.prototype` 上挂了可枚举成员时，合并与查询都不受它
 //      影响（不是"我们不去写它"，而是"它的内容不算配置"）。
 //
+// 另有跨分支对账收进来的三条细账（见 § 对账单）：末端就是 `__proto__` 的那一格 · 数组下标
+// 读法没被 `Object.hasOwn` 挡掉 · 字面 `__proto__` 里的内容不许从原型链上"读得到"。
+//
 // 负对照（改之前那一份码上：① ② ③ ④ ⑤ 全红，实测读数——版本号不写在这里，`test/version.test.ts` 只许它住在 package.json）：
 //   · `setConfig(doc, 'config.__proto__.x', 'wrote-it')` → `Object.prototype.x === 'wrote-it'`，
 //     而 `JSON.stringify(doc)` 还是 `{"config":{}}`——报成功，那份里一个字节没多；
@@ -47,6 +50,7 @@ test('① 写面报成功必须真写：JSON 往返全等，键还得是可枚�
   setConfig(doc, 'config.__proto__.hidden', 'literal')
   setConfig(doc, 'config.constructor.prototype.value', 2)
   setConfig(doc, 'config.prototype', 3)
+  setConfig(doc, 'config.terminal.__proto__', 3)
   setConfig(doc, 'config.toString', '字面成员，不是继承来的那个函数')
 
   const text = JSON.stringify(doc)
@@ -56,12 +60,18 @@ test('① 写面报成功必须真写：JSON 往返全等，键还得是可枚�
   assert.equal(getConfig(back, 'config.constructor.prototype.value'), 2)
   assert.equal(getConfig(back, 'config.prototype'), 3)
   assert.equal(getConfig(back, 'config.toString'), '字面成员，不是继承来的那个函数')
+  // 末端**就是** `__proto__` 的那一格：写它时没有"下一层"可建，最容易被普通赋值漏过去。
+  assert.equal(getConfig(back, 'config.terminal.__proto__'), 3, '末端那一格 `__proto__` 要真写进去')
   for (const key of ['__proto__', 'constructor', 'prototype', 'toString']) {
     const d = Object.getOwnPropertyDescriptor(back.config as ConfigDoc, key)
     assert.equal(d?.enumerable, true, `${key} 要落成自有的可枚举数据属性：${JSON.stringify(d)}`)
     assert.equal(d?.writable, true, `${key} 该是可写的普通数据属性`)
     assert.equal(d?.configurable, true, `${key} 该是可配置的普通数据属性`)
   }
+  const nested = Object.getOwnPropertyDescriptor((back.config as ConfigDoc).terminal as ConfigDoc, '__proto__')
+  assert.equal(nested?.enumerable, true, `末端那一格也要是可枚举的自有数据属性：${JSON.stringify(nested)}`)
+  assert.equal(nested?.writable, true)
+  assert.equal(nested?.configurable, true)
   console.log(`① 读数：${text}`)
 })
 
@@ -89,6 +99,14 @@ test('③ 查询面对不存在的键报缺：继承成员不算数', async () =
   const inheritedMid = { config: Object.create({ x: 1 }) } as ConfigDoc
   assert.equal(getConfig(inheritedMid, 'config.x'), undefined, '中间那一层的继承成员不算')
 
+  // 换 `Object.hasOwn` 巡路的时候最容易顺手把**数组下标**一起挡掉：`config.array.0` 这种读法
+  // 今天就用着（数组是自己带 `0` 那一格的对象），所以这一条钉的是"没被挡掉"。
+  const list = { config: { array: [1, 2] } } as ConfigDoc
+  assert.equal(getConfig(list, 'config.array.0'), 1, '数组下标照旧读得到')
+  assert.equal(getConfig(list, 'config.array.1'), 2)
+  assert.deepEqual(getConfig(list, 'config.array'), [1, 2])
+  assert.equal(getConfig({ config: { array: [] } } as ConfigDoc, 'config.array.0'), undefined, '空数组那一格还是没有')
+
   const sys = tmpDir('fugue-own-keys-get-sys-')
   await withSystemDir(sys, async () => {
     const root = tmpDir('fugue-own-keys-get-')
@@ -115,6 +133,7 @@ test('④ 两级合并对含此类键的文件同样当字面数据，且不换�
   assert.equal(getConfig(merged, 'config.ordinary'), 1)
   assert.deepEqual(getConfig(merged, 'config.object'), { left: 1, right: 2 }, '普通对象照旧深合并')
   assert.equal(Object.getPrototypeOf(merged.config), Object.prototype, '合并出来的 config 原型被换掉了')
+  assert.equal(getConfig(merged, 'config.local'), undefined, '字面 `__proto__` 里的内容不许从原型链上"读得到"')
   assert.deepEqual(
     JSON.parse(JSON.stringify(merged)),
     JSON.parse(
@@ -134,6 +153,7 @@ test('④ 两级合并对含此类键的文件同样当字面数据，且不换�
   assert.equal(getConfig(both, 'config.__proto__.net'), 'from-system')
   assert.equal(getConfig(both, 'config.__proto__.local'), 'from-workspace')
   assert.equal(Object.getPrototypeOf(both.config), Object.prototype)
+  assert.equal(getConfig(both, 'config.net'), undefined, '两级都带 `__proto__` 时也一样')
   assert.deepEqual(protoNames(), before, '合并这一路也没碰 Object.prototype')
   console.log('④ 读数：两份的 `__proto__` 都当字面数据深合并；原型与 Object.prototype 都没动')
 })
