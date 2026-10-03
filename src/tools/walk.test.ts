@@ -188,7 +188,7 @@ test('③ 语义逐项不变：行序 · 深度与条数截断 · 软链与 gitl
   console.log(`③ 读数：6 档界（深度 0/1/24 × 条数 1/2/3）两边逐项相同 · 全走 ${all.length} 条`)
 })
 
-test('④ 截没截是一个读数：两条上限各记一笔，没截就是两笔都假（0.3.0 ②）', async () => {
+test('④ 截没截是一个读数：两条上限各记一笔，没截就是两笔都假（本站 ②）', async () => {
   const tree: Record<string, readonly DirRow[]> = {
     '': [row('b.ts', 'file'), row('a', 'dir')],
     a: [row('deep.ts', 'file'), row('deeper', 'dir')],

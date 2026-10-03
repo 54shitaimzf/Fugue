@@ -22,7 +22,7 @@ import { MAX_RECEIPT_BYTES, lineCountOfBytes } from './receipt.ts'
 // **行窗口住工具面**（`window.ts`）：字节已经是整对象，要省的是解码与行切——在这里做窗口算术
 // 零接口改动、逐字节可证，将来 serve 化时它跟 `readBytes` 一起搬，形状不返工。
 import { lineWindow, windowNote } from './window.ts'
-// **截没截住在枚举那一份里**（`walk-cache.ts` 的 `WalkCut`）：回执这一层只读它，不猜（0.3.0 ②）。
+// **截没截住在枚举那一份里**（`walk-cache.ts` 的 `WalkCut`）：回执这一层只读它，不猜（本站 ②）。
 import { walkCutOf } from './walk-cache.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
@@ -497,7 +497,7 @@ export function matchesInScope(re: RegExp, path: string, dir: string): boolean {
 }
 
 /**
- * **清单被走树的上限截住时，吃到截断的那张回执照实说**（0.3.0 ②）。
+ * **清单被走树的上限截住时，吃到截断的那张回执照实说**（本站 ②）。
  *
  * 一处真相：截没截住在枚举那一份里（`walk-cache.ts` 的 `walkCutOf`），这一份只把它印成一句话
  * ——`glob` 与 `grep` 走的是同一份清单，两张回执于是从同一处取。
@@ -532,7 +532,7 @@ const globFace: ToolFn = async (args, host) => {
   const all = await host.walk()
   const re = globToRe(pattern)
   const hit = all.filter((p) => inScope(p, dir) && matchesInScope(re, p, dir))
-  // **被截住的那一份清单要说出来**（0.3.0 ②）："没有匹配"与"没走完"是两件事，混起来那一次
+  // **被截住的那一份清单要说出来**（本站 ②）："没有匹配"与"没走完"是两件事，混起来那一次
   // 问法看起来只是"那儿真没有"，而模型会照着这个结论一直绕。
   const cut = walkCutNote(all)
   return ok(hit.length === 0 ? `no path matches ${pattern}.${cut}` : `${hit.length} paths:\n${hit.join('\n')}${cut}`)
@@ -574,7 +574,7 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   const cut = walkCutNote(all)
   const candidates = all.filter((p) => inScope(p, dir) && (onlyRe === null || matchesInScope(onlyRe, p, dir)))
 
-  // **拼够回执上限即停**（0.3.0 ③ · `T16` ①）。上限就是 `receipt.ts` 那一套常数——这里不另立
+  // **拼够回执上限即停**（本站 ③ · `T16` ①）。上限就是 `receipt.ts` 那一套常数——这里不另立
   // 第二套，只是**在拼的时候就知道自己要满了**，于是后面的窗不必取、后面的文件不必读。
   //
   // 停了要说（`scanned` / `candidates.length` 那一句）："少印"与"没扫完"是两件事，后者不许被
@@ -640,7 +640,7 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   }
 
   // 与 `glob` 同一处（`walkCutNote`）：这一趟搜的候选是从那份清单里来的，清单被截过，
-  // 那"没有一行匹配"就不是一句结论（0.3.0 ②）。
+  // 那"没有一行匹配"就不是一句结论（本站 ②）。
   if (hits.length === 0 && !stopped) return ok(`no line matches ${pattern}.${cut}`)
   /** 早停那一句：**扫到哪儿 · 后面可能还有**（两件事都要说）。 */
   const stopNote = stopped

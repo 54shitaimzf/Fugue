@@ -1,4 +1,4 @@
-// 每调用成本台账的**口径**（0.3.0 ④ · 本站的冻结面 · 路线图 § 9 的 0.3.0 行「成本台账口径：
+// 每调用成本台账的**口径**（本站 ④ · 冻结面 · 路线图 § 9 里「T18 每调用成本台账」那一行「成本台账口径：
 // 一次调用怎么记账」）。
 //
 // **口径住这一份**：头几段回答那五个问题（一次调用记谁 · 耗时从哪来 · 钱与 token 怎么进账 ·
@@ -90,7 +90,7 @@ export const LEDGER_COLUMNS: Readonly<Record<LedgerKind, readonly LedgerColumn[]
     { name: '线协议', from: 'llm/call.wire', missing: '（这一栏恒在）' },
     { name: '格', from: 'llm/call.agent', missing: '（这一栏恒在）' },
     { name: '步', from: 'llm/call.step', missing: '（这一栏恒在）' },
-    { name: '耗时', from: 'llm/call.ms（0.3.0 新加的一栏；单调钟量的区间）', missing: '未量到' },
+    { name: '耗时', from: 'llm/call.ms（这一版新加的一栏；单调钟量的区间）', missing: '未量到' },
     { name: '输入', from: 'llm/call.usage.inputTokens', missing: '未量到' },
     { name: '缓存读', from: 'llm/call.usage.cacheReadTokens', missing: '未量到' },
     { name: '缓存写', from: 'llm/call.usage.cacheWriteTokens', missing: '未量到' },
@@ -342,7 +342,7 @@ export function ledgerOf(rows: readonly LedgerRow[], inputs: LedgerInputs): Ledg
         step: e.step,
         model: e.model,
         wire: e.wire,
-        // **没量到就不是 0**：旧日志没有这一栏（0.3.0 之前的账）。
+        // **没量到就不是 0**：旧日志没有这一栏（这一栏是后来加的）。
         ms: typeof e.ms === 'number' ? e.ms : null,
         tokens,
         usd: usdOf(e.model, tokens, inputs),
@@ -465,7 +465,7 @@ export function ledgerLines(l: Ledger): readonly string[] {
   out.push(`读了 ${l.events} 条事件 · 逐条那一份在 --json 里（${l.calls.length} 条）——这一本账是读的时候从日志重算的，不落盘、不缓存`)
   if (l.msMissing > 0) {
     out.push(
-      `耗时那一栏有 ${l.msMissing} 条模型调用没量到（0.3.0 之前的日志没有 llm/call.ms 那一栏——回放照旧，不去猜它）`,
+      `耗时那一栏有 ${l.msMissing} 条模型调用没量到（这一栏是后来加的：更早的日志里没有 llm/call.ms 那一栏——回放照旧，不去猜它）`,
     )
   }
   if (l.boundCommands === 0) {

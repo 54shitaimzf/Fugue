@@ -42,7 +42,7 @@ export interface WalkLimits {
 }
 
 /**
- * 一次枚举的收尾事实：**这一趟走有没有被上限截住**（0.3.0 ②）。
+ * 一次枚举的收尾事实：**这一趟走有没有被上限截住**（本站 ②）。
  *
  * 它与那份清单一起交出去——**"截没截"是一个读数，不是每张回执各自猜的东西**：回执那边看不见
  * 走树内部发生了什么，`paths.length === limits.rows` 也判不出来（树里恰好这么多文件与截在
@@ -88,7 +88,7 @@ export function createWalk(view: WalkView, limits: WalkLimits): () => Promise<re
     const rev = view.rev
     if (cached !== null && cached.rev === rev) return cached.paths
     const out: string[] = []
-    // **两条上限各自记一笔**（0.3.0 ②）：记的是"真的因为这一条停下来了"，不是"凑巧顶到了"——
+    // **两条上限各自记一笔**（本站 ②）：记的是"真的因为这一条停下来了"，不是"凑巧顶到了"——
     // 树里恰好 `limits.rows` 个文件的那一档，循环自然走完，两条都是假。
     let rowsCut = false
     let depthCut = false

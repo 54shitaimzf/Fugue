@@ -83,7 +83,7 @@ export async function statusCmd(
     const r = await readings(log, {
       metrics: flags.has('metrics'),
       report: flags.has('report'),
-      // **每调用成本台账**（0.3.0 ④）：钱要价目与峰谷档，走法那一栏要这一台已绑定动作的命令行。
+      // **每调用成本台账**（本站 ④）：钱要价目与峰谷档，走法那一栏要这一台已绑定动作的命令行。
       ...(flags.has('ledger') ? { ledger: { cat, phase, bindings: await boundCommandsOf(root) } } : {}),
       ...(typeof only === 'string' ? { agent: only } : {}),
     })

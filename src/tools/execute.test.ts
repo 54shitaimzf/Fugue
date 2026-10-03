@@ -8,9 +8,9 @@
 //   ④ **假模型驱动 读 → 写 → 检查点，走到一次真提交**，而**真工作树一个文件都没多**
 //   ⑤ 负对照：字节那一栏改成"读回来的 UTF-8 文本相同"→ 一条非法序列就把它变红
 //   ⑨ **模型读到的每一个字节都是英文**（口径：谁读谁的语言——人读的走中文 · 见证 § 8.11）
-//   ⑪ **清单被走树的上限截住时照实说**（0.3.0 ②）：那一句挂在回执尾上，`glob` 与 `grep` 同源
+//   ⑪ **清单被走树的上限截住时照实说**（本站 ②）：那一句挂在回执尾上，`glob` 与 `grep` 同源
 //      （`walk-cache.ts` 的 `walkCutOf`）；没截的那一档逐字节与从前相同（负对照）
-//   ⑫ **拼够回执上限即停**（0.3.0 ③）：停了要说（扫到哪儿 · 后面可能还有）· 头上那一栏不许把
+//   ⑫ **拼够回执上限即停**（本站 ③）：停了要说（扫到哪儿 · 后面可能还有）· 头上那一栏不许把
 //      "印了几条"说成总数 · 少读的东西量得出来（读了几份 / 取了几份）· **计数那一档不早停**
 //      （它的答案是一个全量数），逐文件那一份被掐了也要说清总数是全的
 //   ⑬ **公布的参数面一格不落**（架构 § 8.10 硬纪律 1）：`glob` 与 `output_mode` 三档各有一种
@@ -351,7 +351,7 @@ function handleOf(state: AssembleState): AgentHandle {
   }
 }
 
-test('⑪ 走树上限截住清单时，吃到截断的回执照实说；没截的那一档一个字都不加（0.3.0 ②）', async () => {
+test('⑪ 走树上限截住清单时，吃到截断的回执照实说；没截的那一档一个字都不加（本站 ②）', async () => {
   const b = await bench()
   try {
     await b.host.writeBytes('a.ts', new Uint8Array(Buffer.from('// 记号 a\n', 'utf8')))
@@ -408,7 +408,7 @@ function wideHost(count: number): { readonly host: ToolHost; readonly reads: str
   return { host, reads, batched }
 }
 
-test('⑫ 早停截断：拼够回执上限就停（少读的东西量得出来）· 计数那一档照旧是全量数（0.3.0 ③）', async () => {
+test('⑫ 早停截断：拼够回执上限就停（少读的东西量得出来）· 计数那一档照旧是全量数（本站 ③）', async () => {
   // ── 甲 · 内容那一档：一千份候选，回执拼够上限就停。
   const wide = wideHost(1000)
   const out = await face('grep', { pattern: '记号' }, wide.host)
@@ -445,7 +445,7 @@ test('⑫ 早停截断：拼够回执上限就停（少读的东西量得出来�
   )
 })
 
-test('⑬ 公布的参数面一格不落：`glob` 过滤 · `output_mode` 三档各一种形状 · 坏值拒在伸手之前（0.3.0 ③）', async () => {
+test('⑬ 公布的参数面一格不落：`glob` 过滤 · `output_mode` 三档各一种形状 · 坏值拒在伸手之前（本站 ③）', async () => {
   const b = await bench()
   try {
     await b.host.writeBytes('a.ts', new Uint8Array(Buffer.from('// 记号 a\n', 'utf8')))

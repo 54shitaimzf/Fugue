@@ -24,7 +24,7 @@
 //      尾巴永远看不见）· `top` 数到的那一行就是屏上第一条正文。
 //   ⑪ **层次**（0.2.8 U3）：阅读面那一档收成单栏、框名换「阅读面」，那一行报 `readHeading`
 //      （主题里加粗）· 遗漏数算上被那句提示顶掉的一行（`below + 1`）。
-//   ⑫ **跳步那一栏**（0.3.0）：左栏印的那个数与命令行那一张脸**同源**（`probe/status.ts` 的
+//   ⑫ **跳步那一栏**（本站）：左栏印的那个数与命令行那一张脸**同源**（`probe/status.ts` 的
 //      `skipsNote`）；自环边吃不掉真跳步 · 图外边不印负数——判据改回 `hops - transitions` 当场红。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
