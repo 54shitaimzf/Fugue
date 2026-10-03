@@ -49,6 +49,12 @@ export async function config(
     // 配置读不动的那一刻（正是要查「合法键有哪些」的时刻）它照样给得出这张清单。
     // 人面一行一键；`--json` 那一面是数组（给脚本用）。
     if (verb === 'ls') {
+      // 多余的位置参数在**这里**判掉：这一支一次配置都不读，不会有后面的读把它拦下来——
+      // 不判的话，`config ls show` 会静默吐出一张键表，看着像成功。`show|get|set` 三面的
+      // 同名宽收是既有面，收严它们是另一站的事（改的是既有用户看得见的行为）。
+      if (args.length !== 1) {
+        return usageFail('config ls 不接受位置参数；它列的是顶层键域，一条值都不报', json)
+      }
       if (json) {
         emitJson([...TOP_LEVEL_KEYS])
       } else {
