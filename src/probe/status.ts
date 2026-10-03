@@ -104,7 +104,7 @@ export interface RoundTrail {
   readonly state: RoundState
   /** 账上记了几条转移。 */
   readonly transitions: number
-  /** 那几条在图上**一共走了几步**（单边算一步；跳步按最短路算）——它与上面那一栏不同就是跳步了。 */
+  /** 那几条在图上**一共走了几步**：单边一步，跳步按最短路算，原地与走不通的转移都是零步。 */
   readonly hops: number
   /** 打回了几次（`Verifying → Working` 的条数）。**判据在 `probe/round.ts` 那一份里**，这里只是转手。 */
   readonly rejects: number
@@ -667,9 +667,8 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions): readonly string[
   if (s.rounds.length === 0) out.push('一条轮次状态都没有：这份日志里还没开过轮次')
   for (const r of s.rounds) {
     const here = r.round === s.current ? ' · 最近一条落在这一轮' : ''
-    const hops = r.hops === r.transitions ? '' : `（图上走了 ${r.hops} 步：${r.transitions} 条里有跳步）`
     const odd = r.unrouted > 0 ? ` · 图外 ${r.unrouted} 条` : ''
-    out.push(`轮次 ${r.round} · 状态 ${r.state} · 转移 ${r.transitions} 条${hops} · 打回 ${r.rejects} 次${odd}${here}`)
+    out.push(`轮次 ${r.round} · 状态 ${r.state} · 转移 ${r.transitions} 条 · 图上 ${r.hops} 步 · 打回 ${r.rejects} 次${odd}${here}`)
     for (const e of r.edges) out.push(`  ${e}`)
   }
   for (const a of s.agents) {

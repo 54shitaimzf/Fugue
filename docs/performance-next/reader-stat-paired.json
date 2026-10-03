@@ -1,0 +1,2350 @@
+{
+  "schema": 1,
+  "node": "v24.19.0",
+  "platform": "linux",
+  "before": {
+    "commit": "82db8f754ca7859beaae62db088f245893ad1ceb",
+    "hashes": {
+      "src/log/log.ts": "4d37059d6f4eabdf9ea43eee6d1ea7d8ba78beb97f55e9a50b4aaffc214b510e",
+      "src/log/envelope.ts": "d79a962d8dabe66454ddd68c371dd2b367663a9d2aeecdb32760599e1e93e9ca",
+      "src/probe/call-ledger.ts": "6b9c234cec17dd6eca33b12621e74a9839047aa1693aff53d424935460af2e7e",
+      "src/log/stream.ts": "5459de7176a850074e359082be88ccb5445e7a10d22696d199623c3a53c336e6"
+    }
+  },
+  "after": {
+    "commit": "4b67def9c7feae6360dd2b3225284f5004a66871",
+    "hashes": {
+      "src/log/log.ts": "4d37059d6f4eabdf9ea43eee6d1ea7d8ba78beb97f55e9a50b4aaffc214b510e",
+      "src/log/envelope.ts": "d79a962d8dabe66454ddd68c371dd2b367663a9d2aeecdb32760599e1e93e9ca",
+      "src/probe/call-ledger.ts": "6b9c234cec17dd6eca33b12621e74a9839047aa1693aff53d424935460af2e7e",
+      "src/log/stream.ts": "2704e994b8f4b3944c33eaee8e232896e27968db18c5647a277e71546ff63a43"
+    }
+  },
+  "scriptSha256": "61a42fbd0e67d7e00cd0c0c25cea94c3c29eb3ed1ea14815b1b7d4f4acbc94bf",
+  "generated": {
+    "writers": 8,
+    "rows": 24000,
+    "bytes": 42804200,
+    "maxRowBytes": 1823,
+    "corpusSha256": "b31886dfc535f3f6430d164e2b49f9433f02b864c29d70be900389c50cd90639",
+    "fullDeepEquality": true,
+    "referenceJsonSha256": "73162178f529c233eb67dce8dd9e42034ffd796184d48342fafe9f7b0e157dbf"
+  },
+  "trials": [
+    {
+      "run": 0,
+      "firstOrder": [
+        "awaited",
+        "sync"
+      ],
+      "phases": {
+        "awaited": {
+          "mode": "awaited",
+          "fromSeq": 0,
+          "firstYieldMs": 809.7007290000001,
+          "totalMs": 15711.710016999998,
+          "cpuUserMs": 5557.326,
+          "cpuSystemMs": 5192.122,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "asyncStats": 194656,
+            "syncStats": 0,
+            "opens": 8
+          },
+          "eventLoop": {
+            "histogramResolutionMs": 10,
+            "histogramMaxMs": 156.237823,
+            "histogramMeanMs": 10.455862468085106,
+            "histogramP99Ms": 14.680063,
+            "ticks": 1504,
+            "maxTimerLagMs": 146.18705600000249,
+            "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+          }
+        },
+        "sync": {
+          "mode": "sync",
+          "fromSeq": 0,
+          "firstYieldMs": 789.9386090000007,
+          "totalMs": 1986.2577180000008,
+          "cpuUserMs": 1850.379,
+          "cpuSystemMs": 118.424,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "asyncStats": 8,
+            "syncStats": 194648,
+            "opens": 8
+          },
+          "eventLoop": {
+            "histogramResolutionMs": 10,
+            "histogramMaxMs": 87.556095,
+            "histogramMeanMs": 10.492536628272251,
+            "histogramP99Ms": 12.517375,
+            "ticks": 191,
+            "maxTimerLagMs": 77.53668100000141,
+            "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+          }
+        },
+        "syncRepeat": {
+          "mode": "sync",
+          "fromSeq": 0,
+          "firstYieldMs": 638.3203189999986,
+          "totalMs": 1820.0965970000034,
+          "cpuUserMs": 1764.297,
+          "cpuSystemMs": 81.034,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "asyncStats": 8,
+            "syncStats": 194648,
+            "opens": 8
+          },
+          "eventLoop": {
+            "histogramResolutionMs": 10,
+            "histogramMaxMs": 12.738559,
+            "histogramMeanMs": 10.07435956043956,
+            "histogramP99Ms": 12.099583,
+            "ticks": 182,
+            "maxTimerLagMs": 2.7350209999931394,
+            "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+          }
+        },
+        "awaitedRepeat": {
+          "mode": "awaited",
+          "fromSeq": 0,
+          "firstYieldMs": 808.3662599999952,
+          "totalMs": 15265.237520999995,
+          "cpuUserMs": 5611.333,
+          "cpuSystemMs": 4997.367,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "asyncStats": 194656,
+            "syncStats": 0,
+            "opens": 8
+          },
+          "eventLoop": {
+            "histogramResolutionMs": 10,
+            "histogramMaxMs": 149.815295,
+            "histogramMeanMs": 10.640539454038999,
+            "histogramP99Ms": 20.856831,
+            "ticks": 1436,
+            "maxTimerLagMs": 139.7646289999975,
+            "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+          }
+        }
+      }
+    },
+    {
+      "run": 1,
+      "firstOrder": [
+        "sync",
+        "awaited"
+      ],
+      "phases": {
+        "sync": {
+          "mode": "sync",
+          "fromSeq": 0,
+          "firstYieldMs": 684.0569629999954,
+          "totalMs": 2084.2031759999954,
+          "cpuUserMs": 1986.794,
+          "cpuSystemMs": 97.568,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "asyncStats": 8,
+            "syncStats": 194648,
+            "opens": 8
+          },
+          "eventLoop": {
+            "histogramResolutionMs": 10,
+            "histogramMaxMs": 12.320767,
+            "histogramMeanMs": 10.185638524271845,
+            "histogramP99Ms": 12.279807,
+            "ticks": 207,
+            "maxTimerLagMs": 2.1777470000015455,
+            "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+          }
+        },
+        "awaited": {
+          "mode": "awaited",
+          "fromSeq": 0,
+          "firstYieldMs": 1161.3797829999967,
+          "totalMs": 20085.040875000006,
+          "cpuUserMs": 5910.602,
+          "cpuSystemMs": 6265.638,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "asyncStats": 194656,
+            "syncStats": 0,
+            "opens": 8
+          },
+          "eventLoop": {
+            "histogramResolutionMs": 10,
+            "histogramMaxMs": 27.115519,
+            "histogramMeanMs": 10.241809084055017,
+            "histogramP99Ms": 13.172735,
+            "ticks": 1963,
+            "maxTimerLagMs": 17.104347000000416,
+            "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+          }
+        },
+        "awaitedRepeat": {
+          "mode": "awaited",
+          "fromSeq": 0,
+          "firstYieldMs": 800.1313850000006,
+          "totalMs": 15992.707716000004,
+          "cpuUserMs": 5884.265,
+          "cpuSystemMs": 4815.232,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "asyncStats": 194656,
+            "syncStats": 0,
+            "opens": 8
+          },
+          "eventLoop": {
+            "histogramResolutionMs": 10,
+            "histogramMaxMs": 147.718143,
+            "histogramMeanMs": 10.51030910571241,
+            "histogramP99Ms": 15.433727,
+            "ticks": 1523,
+            "maxTimerLagMs": 137.4881999999925,
+            "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+          }
+        },
+        "syncRepeat": {
+          "mode": "sync",
+          "fromSeq": 0,
+          "firstYieldMs": 744.5637180000049,
+          "totalMs": 1972.4221220000036,
+          "cpuUserMs": 1780.669,
+          "cpuSystemMs": 85.212,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "asyncStats": 8,
+            "syncStats": 194648,
+            "opens": 8
+          },
+          "eventLoop": {
+            "histogramResolutionMs": 10,
+            "histogramMaxMs": 22.249471,
+            "histogramMeanMs": 10.227123856410255,
+            "histogramP99Ms": 11.960319,
+            "ticks": 195,
+            "maxTimerLagMs": 13.675401999993483,
+            "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+          }
+        }
+      }
+    },
+    {
+      "run": 2,
+      "firstOrder": [
+        "awaited",
+        "sync"
+      ],
+      "phases": {
+        "awaited": {
+          "mode": "awaited",
+          "fromSeq": 0,
+          "firstYieldMs": 883.342181,
+          "totalMs": 13079.622725000008,
+          "cpuUserMs": 4430.681,
+          "cpuSystemMs": 4711.165,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "asyncStats": 194656,
+            "syncStats": 0,
+            "opens": 8
+          },
+          "eventLoop": {
+            "histogramResolutionMs": 10,
+            "histogramMaxMs": 77.987839,
+            "histogramMeanMs": 10.099734895913647,
+            "histogramP99Ms": 11.280383,
+            "ticks": 1297,
+            "maxTimerLagMs": 67.95148699999845,
+            "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+          }
+        },
+        "sync": {
+          "mode": "sync",
+          "fromSeq": 0,
+          "firstYieldMs": 752.5225890000002,
+          "totalMs": 2961.0953239999944,
+          "cpuUserMs": 2333.131,
+          "cpuSystemMs": 420.699,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "asyncStats": 8,
+            "syncStats": 194648,
+            "opens": 8
+          },
+          "eventLoop": {
+            "histogramResolutionMs": 10,
+            "histogramMaxMs": 91.553791,
+            "histogramMeanMs": 11.08111131598513,
+            "histogramP99Ms": 18.055167,
+            "ticks": 270,
+            "maxTimerLagMs": 81.53452400000242,
+            "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+          }
+        },
+        "syncRepeat": {
+          "mode": "sync",
+          "fromSeq": 0,
+          "firstYieldMs": 1245.2933899999916,
+          "totalMs": 2957.0092710000026,
+          "cpuUserMs": 2368.031,
+          "cpuSystemMs": 430.881,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "asyncStats": 8,
+            "syncStats": 194648,
+            "opens": 8
+          },
+          "eventLoop": {
+            "histogramResolutionMs": 10,
+            "histogramMaxMs": 16.351231,
+            "histogramMeanMs": 10.742299725631769,
+            "histogramP99Ms": 14.606335,
+            "ticks": 278,
+            "maxTimerLagMs": 6.346655999994255,
+            "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+          }
+        },
+        "awaitedRepeat": {
+          "mode": "awaited",
+          "fromSeq": 0,
+          "firstYieldMs": 756.3598080000083,
+          "totalMs": 10401.382624999998,
+          "cpuUserMs": 3997.985,
+          "cpuSystemMs": 4134.034,
+          "rows": 24000,
+          "resultHash": "67e12ad1f13b1e44452ab5d1a2b1a1269913c2f05059baae21f355354fa38906",
+          "ledger": {
+            "schema": 1,
+            "tokenScope": "model-call",
+            "calls": [
+              {
+                "source": {
+                  "writer": "w00",
+                  "seq": 37
+                },
+                "agent": "w00",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w01",
+                  "seq": 37
+                },
+                "agent": "w01",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w02",
+                  "seq": 37
+                },
+                "agent": "w02",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w03",
+                  "seq": 37
+                },
+                "agent": "w03",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              },
+              {
+                "source": {
+                  "writer": "w04",
+                  "seq": 37
+                },
+                "agent": "w04",
+                "step": "37",
+                "model": "generated",
+                "wire": "openai-chat",
+                "publishedTools": 7,
+                "requestedTools": 1,
+                "usage": {
+                  "inputTokens": 37,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": null,
+                  "outputTokens": 2,
+                  "reasoningTokens": null
+                },
+                "stop": "end-turn",
+                "status": null,
+                "attempts": null,
+                "toolMs": null,
+                "toolArgumentBytes": null,
+                "toolReceiptBytes": null
+              }
+            ],
+            "totalCalls": 648,
+            "truncated": true
+          },
+          "io": {
+            "fileReads": 0,
+            "fileReadBytes": 0,
+            "chunkReads": 1312,
+            "chunkReadBytes": 85608400,
+            "asyncStats": 194656,
+            "syncStats": 0,
+            "opens": 8
+          },
+          "eventLoop": {
+            "histogramResolutionMs": 10,
+            "histogramMaxMs": 15.400959,
+            "histogramMeanMs": 10.030559445086704,
+            "histogramP99Ms": 11.247615,
+            "ticks": 1038,
+            "maxTimerLagMs": 5.8044689999951515,
+            "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+          }
+        }
+      }
+    }
+  ],
+  "suffix": {
+    "awaited": {
+      "mode": "awaited",
+      "fromSeq": 2959,
+      "firstYieldMs": 1520.7965140000015,
+      "totalMs": 1670.233818000008,
+      "cpuUserMs": 1626.891,
+      "cpuSystemMs": 111.028,
+      "rows": 328,
+      "resultHash": "4da1ea9afec2fc5fc90bc322f4ce62fc48e91f69f3ea120b9ab872f157be43e0",
+      "ledger": {
+        "schema": 1,
+        "tokenScope": "model-call",
+        "calls": [
+          {
+            "source": {
+              "writer": "w00",
+              "seq": 2960
+            },
+            "agent": "w00",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w01",
+              "seq": 2960
+            },
+            "agent": "w01",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w02",
+              "seq": 2960
+            },
+            "agent": "w02",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w03",
+              "seq": 2960
+            },
+            "agent": "w03",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w04",
+              "seq": 2960
+            },
+            "agent": "w04",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          }
+        ],
+        "totalCalls": 16,
+        "truncated": true
+      },
+      "io": {
+        "fileReads": 0,
+        "fileReadBytes": 0,
+        "chunkReads": 1312,
+        "chunkReadBytes": 85608400,
+        "asyncStats": 5280,
+        "syncStats": 0,
+        "opens": 8
+      },
+      "eventLoop": {
+        "histogramResolutionMs": 10,
+        "histogramMaxMs": 14.483455,
+        "histogramMeanMs": 10.159708530120483,
+        "histogramP99Ms": 12.230655,
+        "ticks": 167,
+        "maxTimerLagMs": 2.621980000010808,
+        "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+      }
+    },
+    "sync": {
+      "mode": "sync",
+      "fromSeq": 2959,
+      "firstYieldMs": 1348.6020569999964,
+      "totalMs": 1366.5252089999994,
+      "cpuUserMs": 1324.199,
+      "cpuSystemMs": 16.516,
+      "rows": 328,
+      "resultHash": "4da1ea9afec2fc5fc90bc322f4ce62fc48e91f69f3ea120b9ab872f157be43e0",
+      "ledger": {
+        "schema": 1,
+        "tokenScope": "model-call",
+        "calls": [
+          {
+            "source": {
+              "writer": "w00",
+              "seq": 2960
+            },
+            "agent": "w00",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w01",
+              "seq": 2960
+            },
+            "agent": "w01",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w02",
+              "seq": 2960
+            },
+            "agent": "w02",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w03",
+              "seq": 2960
+            },
+            "agent": "w03",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          },
+          {
+            "source": {
+              "writer": "w04",
+              "seq": 2960
+            },
+            "agent": "w04",
+            "step": "2960",
+            "model": "generated",
+            "wire": "openai-chat",
+            "publishedTools": 7,
+            "requestedTools": 2,
+            "usage": {
+              "inputTokens": 2960,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": null,
+              "outputTokens": 2,
+              "reasoningTokens": null
+            },
+            "stop": "end-turn",
+            "status": null,
+            "attempts": null,
+            "toolMs": null,
+            "toolArgumentBytes": null,
+            "toolReceiptBytes": null
+          }
+        ],
+        "totalCalls": 16,
+        "truncated": true
+      },
+      "io": {
+        "fileReads": 0,
+        "fileReadBytes": 0,
+        "chunkReads": 1312,
+        "chunkReadBytes": 85608400,
+        "asyncStats": 8,
+        "syncStats": 5272,
+        "opens": 8
+      },
+      "eventLoop": {
+        "histogramResolutionMs": 10,
+        "histogramMaxMs": 12.271615,
+        "histogramMeanMs": 10.13296188235294,
+        "histogramP99Ms": 11.575295,
+        "ticks": 137,
+        "maxTimerLagMs": 1.945653000002494,
+        "note": "Warm-up before the clock and one post-completion timer drain are excluded from wall/CPU. Histogram and timer lag are sampled scheduling delays, not a universal responsiveness bound."
+      }
+    }
+  },
+  "negative": {
+    "awaited": {
+      "yielded": 0,
+      "error": {
+        "name": "LogCorruptError",
+        "writer": "w07",
+        "line": 3001,
+        "reason": "seq 非法：undefined"
+      }
+    },
+    "sync": {
+      "yielded": 0,
+      "error": {
+        "name": "LogCorruptError",
+        "writer": "w07",
+        "line": 3001,
+        "reason": "seq 非法：undefined"
+      }
+    }
+  },
+  "logicalRetention": {
+    "kind": "source-derived algorithmic counts, not measured RSS or heap",
+    "both": {
+      "maxMergeHeads": 8,
+      "maxActiveChunksBytes": 524288,
+      "corpusLineFragmentBoundBytes": 14584,
+      "allowedLineFragmentBoundBytes": 8388608,
+      "ledgerRows": 5,
+      "note": "Also bounded decode/concatenation temporaries and one validation row. Parts own copied bytes; paused iterators retain a 64KiB chunk per writer. Source counts do not describe GC, string layout, native allocator or RSS."
+    }
+  },
+  "boundary": "Generated immutable multiauthor corpus in workspace filesystem, not tmpfs. Same Node process, alternating first/repeat order, fresh snapshot invocation per measurement. OS page cache is not dropped; untimed equality warms it. Source original readers, developer-only I/O wrappers. Both snapshots validate all complete rows before first yield, read/decode twice, and apply the same per-chunk/per-yield stable checks. Sync checks block the event loop; event-loop delay is reported separately. Neither snapshot retains a parsed whole-history cache. No latency/RSS conclusion inferred from logical retention."
+}

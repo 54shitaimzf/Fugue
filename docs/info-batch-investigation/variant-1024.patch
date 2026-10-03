@@ -1,0 +1,24 @@
+diff --git a/src/truth/truth.ts b/src/truth/truth.ts
+index 7d643ac..0f3b899 100644
+--- a/src/truth/truth.ts
++++ b/src/truth/truth.ts
+@@ -195,6 +195,8 @@ export const DEFAULT_BLOB_CACHE_BYTES = 8 * 1024 * 1024
+  * 所以按条数分块而不是一次全发。这个数不参与任何断言（预取是提示，不是承诺）。
+  */
+ const OBJECT_MANY_CHUNK = 256
++// Isolated developer experiment: metadata responses only, never content batches.
++const INFO_MANY_CHUNK = 1024
+ 
+ /**
+  * `read` 选的是读的档位：`batch`（默认）或 `oneshot`（退化档，见 git.ts）。
+@@ -294,8 +296,8 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
+       want.push(id)
+     }
+     const out = new Map<string, { type: string; size: number }>()
+-    for (let i = 0; i < want.length; i += OBJECT_MANY_CHUNK) {
+-      const chunk = want.slice(i, i + OBJECT_MANY_CHUNK)
++    for (let i = 0; i < want.length; i += INFO_MANY_CHUNK) {
++      const chunk = want.slice(i, i + INFO_MANY_CHUNK)
+       infoMisses += chunk.length
+       const replies = await git.objectMany(
+         'info',

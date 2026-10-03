@@ -38,7 +38,7 @@ const PATH = { type: 'string', description: 'Relative path inside the view' } as
 
 /**
  * 那十二个工具，逐个写它的参数面。**顺序不承重**：承重的是名字的域——能力表（§ 8.9）以这套
- * 名字为键，那一份载入时的核对比的就是集合（`checkInvariant`）。仓库里这份列的顺序、能力表
+ * 名字为键，开发诊断网跨文件核对集合与各行（`tools/check-invariants.ts`）。仓库里这份列的顺序、能力表
  * 那份的顺序、§ 8.10 那张表按类别分行的顺序，三处都不同；而进字节流的是这一列扁平条目的先
  * 后，所以它只被 § 8.10 硬纪律 2 管（跨状态逐字节稳定），不被"哪一处跟哪一处同序"管。
  *
@@ -110,7 +110,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'glob',
-    description: 'Find files by path pattern and return the matching paths. Use it when you know part of a file name but not where it is; to search contents use grep. Searches from this step\'s working directory by default.',
+    description: 'Find files by path pattern and return the matching paths. Use it when you know part of a file name but not where it is; to search contents use grep. Searches from this step\'s working directory by default. Results stop at the receipt budget; limited traversal or unknown coverage is reported, so an incomplete result is not proof of absence.',
     parameters: {
       type: 'object',
       properties: {
@@ -123,7 +123,7 @@ export const TOOL_ENTRIES: readonly ToolEntry[] = [
   },
   {
     name: 'grep',
-    description: 'Find files by content and return matching lines, file names, or counts (output_mode picks which; use content when unsure). To search paths rather than contents use glob.',
+    description: 'Find files by content and return matching lines, file names, or counts (output_mode picks which; use content when unsure). To search paths rather than contents use glob. Results stop at the receipt budget and say when incomplete; unvisited matches are unknown. Narrow the pattern or path for more results.',
     parameters: {
       type: 'object',
       properties: {

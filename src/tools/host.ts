@@ -19,14 +19,19 @@ import type { Denied as FenceDenied, Roots } from '../roots/contract.ts'
 import { applyEdit } from '../view/edit.ts'
 import { snapshotOf } from '../view/snapshot.ts'
 import type { View } from '../view/contract.ts'
+import { textWindowOf } from './read-window.ts'
+import { filterCurrentViewCandidates } from '../search/current-view-candidates.ts'
+import type { BlobIndexLookup } from '../search/blob-index.ts'
+import type { ViewCohortLookup } from '../search/view-cohort.ts'
+import { cohortLookupForView } from '../search/view-cohort.ts'
 import { checkpoint } from '../checkpoint.ts'
 import type { RunReply } from './execute.ts'
 import type { ActionAsk, AskItem, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, ToolHost, ToolListing } from './execute.ts'
 import { refuse } from './execute.ts'
 import { shellArgv } from './argv.ts'
-// **清单缓存**：`walk()` 的实现与它的键（视图代）都住这一份，宿主只接线（见 `walk-cache.ts`）。
-import { createWalk } from './walk-cache.ts'
 import { digestOf } from '../runtime/restart.ts'
+import { bindGrepVerifier } from './grep-verifier.ts'
+import { prefetchPlan } from './prefetch-plan.ts'
 import { lstatSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ForkStrategy } from '../terms.ts'
@@ -40,13 +45,15 @@ import type { RefHead } from '../round/head.ts'
 import { isMounted, unmountOverlay } from '../materialize/mount.ts'
 import { matParts } from '../roots/paths.ts'
 import { lowerAt } from '../view/lower.ts'
+import { WALK_LIMITS, createCachedWalkDetailed } from './walk.ts'
+import type { WalkResult } from './walk.ts'
 import type { Reclaim, DeclaredSet } from '../execute/reclaim.ts'
 import type { AbsPath } from '../terms.ts'
 
 /** 走多远就停。**两条都是必须的**：软链穿过去就绕开了路径围栏（§ 8.4 的 `through-symlink`），
  * 而不封顶的深树能把一步走成挂死。 */
-const MAX_DEPTH = 24
-const MAX_ROWS = 5000
+const MAX_DEPTH = WALK_LIMITS.maxDepth
+const MAX_ROWS = WALK_LIMITS.maxRows
 
 /** 落日志与提交要的那一半（读与写视图那一半在 `view` 里）。 */
 export interface HostActions {
@@ -75,6 +82,10 @@ export interface CommandPlan {
 }
 
 export interface HostOptions {
+  /** Optional View-bound cohort adapter; preparation and lifecycle belong to the caller. */
+  readonly cohortIndex?: ViewCohortLookup
+  /** 显式提供才启用索引候选读口；默认缺席。构造/排空/关闭的生命周期由调用方持有。 */
+  readonly blobIndex?: BlobIndexLookup
   /**
    * 起一个进程要什么：命令行 · cwd · 环境 · 超时。**怎么关起来归调用方**（`M7` 包命令行 · `M5` 起进程）。
    *
@@ -141,6 +152,15 @@ export interface HostOptions {
 }
 
 /**
+ * 一批预取最多取回多少字节：**4 MiB**，是 blob 缓存缺省容量（8 MiB，`truth.ts` 的
+ * `DEFAULT_BLOB_CACHE_BYTES`）的一半——另一半留给上一批刚读完、还没被淘汰的内容，
+ * 以及与本批同时活着的别的读。自适应批次（`SEARCH_PREFETCH_MAX_ROWS` = 128 条）只说条数，
+ * 72 KiB 的文件 128 条就是 9 MiB，一批取回来的前几条在读到它们之前就被后几条挤出去，
+ * 读那一侧逐条重取（实测冷请求 12 → 134）。预取是提示，提示不许比它省下的还贵。
+ */
+export { PREFETCH_BYTE_BUDGET } from './prefetch-plan.ts'
+
+/**
  * `actions.truth` 上那道"一次批量把这几条 blob 取回来"的缝，**有才用**。
  *
  * 判据是运行时那一问：真源那一层是 `TruthHandle` 时它有 `prefetchBlobs`，而**冻结的 `Truth`
@@ -153,6 +173,11 @@ function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Prom
   return (ids) => (fn as (ids: readonly BlobId[]) => Promise<void>).call(truth, ids)
 }
 
+export interface ToolHostHandle extends ToolHost {
+  /** 原有 walk 的同一次遍历，加上不完整枚举的原因；状态不代表遗漏文件数。 */
+  walkDetailed(): Promise<WalkResult>
+}
+
 /**
  * 一份 `ToolHost`。
  *
@@ -160,8 +185,10 @@ function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Prom
  * `roots` 只用来过围栏——**它不拼物理路径**：这一档里文件的字节住在视图的上层，不在物化出来的
  * 那棵树上（`B6` 把"执行前物化"接上时，`bash` 那一条才真的落在树里）。
  */
-export function createToolHost(view: View, roots: Roots, opts: HostOptions = {}): ToolHost {
+export function createToolHost(view: View, roots: Roots, opts: HostOptions = {}): ToolHostHandle {
   const parts = opts.actions
+  const blobIndex = opts.blobIndex
+  const cohortIndex = opts.cohortIndex !== undefined && cohortLookupForView(opts.cohortIndex, view) ? opts.cohortIndex : undefined
 
   async function deny(d: DenyAsk): Promise<void> {
     // 没有日志口就不记（夹具档与单测里那几份宿主就是这样）——但**有口就一定要记**：
@@ -229,7 +256,7 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
    *
    * **没有真源（夹具档）就是缺席**：这里直接返回，grep 退回逐文件读。
    */
-  async function prefetchNow(paths: readonly string[]): Promise<void> {
+  async function prefetchNow(paths: readonly string[]): Promise<number | void> {
     const blobs = prefetchOf(opts.actions?.truth)
     if (blobs === undefined) return
     const metas = await Promise.all(
@@ -242,21 +269,14 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
         }
       }),
     )
-    const out: BlobId[] = []
-    for (const meta of metas) {
-      const id = meta === null || meta.kind !== 'file' ? undefined : meta.id
-      if (id === undefined || id === null || id === '') continue
-      out.push(id as BlobId)
-    }
-    await blobs(out)
+    const plan = prefetchPlan(metas)
+    await blobs(plan.ids)
+    return plan.covered
   }
 
-  /**
-   * 走一遍树。**走法与它的缓存归 `walk-cache.ts`**，键是这份视图的代（`view.rev`）：同代连发的
-   * `glob`/`grep` 不再重走清单，而视图一动（`write` · `rename` · `chmod` · `remove` · 执行回写）
-   * 就是新的一代——深度 · 条数 · 软链不跟三条语义逐字照旧（同一份视图缓存前后给出的清单相同）。
-   */
-  const walk = createWalk(view, { depth: MAX_DEPTH, rows: MAX_ROWS })
+  // 清单随视图代失效；MAX_ROWS/深度与不跟软链的原语义保持不变。
+  const walkDetailed = createCachedWalkDetailed(view, { maxDepth: MAX_DEPTH, maxRows: MAX_ROWS })
+  const walk = async () => (await walkDetailed()).paths
 
   // ── 执行面（W8：视图是读面，物化根是执行面）──────────────────────────
   //
@@ -535,8 +555,19 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
       await applyEdit({ view, truth: cfg.truth, log: cfg.log, writer: cfg.writer }, d)
     }
   }
-  return {
+  const host: ToolHostHandle = {
     readBytes: readBytesOf,
+    ...(cohortIndex !== undefined ? {
+      filterCandidates: (paths: readonly string[], required: readonly string[]) => cohortIndex.filterCandidates(paths, required),
+    } : blobIndex === undefined ? {} : {
+      filterCandidates: (paths: readonly string[], required: readonly string[]) =>
+        filterCurrentViewCandidates(view, paths, required, (blob, grams) => blobIndex.mightContain(blob, grams)),
+    }),
+    async readTextWindow(rel, window) {
+      // 和字节读共用路径检查/视图，不建立第二个来源；仅把 UTF-8 解码下推到选中的行段。
+      const got = await readBytesOf(rel)
+      return got === null ? null : { ...textWindowOf(got.bytes, window), mode: got.mode }
+    },
     execCwd,
     writeBytes: writeBytesOf,
 
@@ -576,6 +607,7 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     },
 
     walk,
+    walkDetailed,
     prefetch: prefetchNow,
 
     async run(ask: RunAsk) {
@@ -664,6 +696,21 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
 
     deny,
   }
+  // Cached verification is part of the existing optional index pipeline. Plain
+  // hosts retain their original read/decode/test path, without a new config knob.
+  if (blobIndex !== undefined || cohortIndex !== undefined) {
+    let plan: Parameters<typeof bindGrepVerifier>[2]
+    try {
+      const truth = opts.actions?.truth as (Truth & { readonly prefetchBlobs?: unknown }) | undefined
+      const original = truth?.prefetchBlobs
+      if (typeof original === 'function') plan = Object.freeze({
+        current: () => opts.actions?.truth === truth && truth?.prefetchBlobs === original,
+        covered: metas => prefetchPlan(metas).covered,
+      })
+    } catch { /* Unsupported hint ports keep their original loading path. */ }
+    bindGrepVerifier(host, view, plan)
+  }
+  return host
 }
 
 /** 从 `<root>` 起一份真源与一份日志（模型侧那一面**不经过命令行**的一条路：`B5` 的断言 ⑤ 用它）。 */

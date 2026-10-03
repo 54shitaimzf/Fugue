@@ -28,8 +28,9 @@
 // 检查都只有一处实现）。环是安全的——两边都只在**调用时**用对方的东西，而函数声明在模块实例化
 // 时就已就位。不把路径那半抄一份过来：身份这条规矩今天已经有两份实现（W3 要收掉它们），
 // 第三份不是这一站该添的东西。
-import { existsSync, linkSync, mkdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { closeSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import type { Stats } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { logFileOf } from './log.ts'
 import type { WriterId } from '../terms.ts'
 
@@ -237,7 +238,8 @@ function dropDir(dir: string): void {
  * 持者是**本进程**时同样拒绝：一份日志一个写者，而"同一个进程里两份句柄"是这条规矩的一个特例，
  * 不是例外。同一进程里再拿一次是程序错误，报出来比放行好。
  */
-export function holdWriter(root: string, w: WriterId): Hold {
+export function holdWriter(inputRoot: string, w: WriterId): Hold {
+  const root = resolve(inputRoot)
   const path = lockFileOf(root, w) // 身份检查在 logFileOf 里，只有一处
   const dir = dirname(path)
   const up = dirname(dir)
@@ -258,61 +260,101 @@ export function holdWriter(root: string, w: WriterId): Hold {
     t: since,
   }
   const tmp = `${path}.tmp-${process.pid}`
-  writeFileSync(tmp, JSON.stringify(rec) + '\n', { mode: 0o644 })
+  writeFileSync(tmp, JSON.stringify(rec) + '\n', { mode: 0o644, flag: 'wx' })
 
-  const release = (): void => {
-    // **只删自己那一个**：接管是另一条路（下面的判死），别人接管之后这份已经不是我们的了。
-    const cur = readRecord(path)
-    if (cur !== null && 'rec' in cur && (cur.rec.pid !== rec.pid || cur.rec.start !== rec.start)) return
-    drop(path)
-    if (madeLog) {
-      dropDir(dir) // 空目录才删得掉：这一层里还有别人的日志或锁，就不是空的了
-      if (madeUp) dropDir(up)
-    }
+  // Keep the original inode alive even if its directory entry is removed/replaced.
+  // A numeric inode snapshot alone could be reused after unlink.
+  let created: Stats | undefined, fd: number | undefined
+  const dropTemporary = (): void => {
+    if (created === undefined) return
+    let current: Stats
+    try { current = lstatSync(tmp) } catch { return }
+    if (current.isFile() && current.dev === created.dev && current.ino === created.ino) drop(tmp)
   }
+  let released = false
+  try {
+    created = lstatSync(tmp)
+    if (!created.isFile()) throw new Error('临时锁已换成非普通文件，拒绝持有')
+    const pin = openSync(tmp, 'r')
+    fd = pin
+    const owned = fstatSync(pin)
+    if (!owned.isFile() || owned.dev !== created.dev || owned.ino !== created.ino) {
+      throw new Error('临时锁在打开时已换成别的文件，拒绝持有')
+    }
+    const release = (): void => {
+      if (released) return
+      released = true
+      try {
+        let current
+        try { current = lstatSync(path) }
+        catch { return }
+        if (!current.isFile() || current.dev !== owned.dev || current.ino !== owned.ino) return
+        // Preserve the existing PID/start policy as well as creation identity.
+        const cur = readRecord(path)
+        if (cur !== null && 'bad' in cur) return
+        if (cur !== null && 'rec' in cur && (cur.rec.pid !== rec.pid || cur.rec.start !== rec.start)) return
+        drop(path)
+        if (madeLog) {
+          dropDir(dir)
+          if (madeUp) dropDir(up)
+        }
+      } finally { closeSync(pin) }
+    }
 
-  for (let round = 0; round < TAKEOVER_ROUNDS; round++) {
-    try {
-      linkSync(tmp, path) // 原子：建得上就是我的；EEXIST 说明有人
-      drop(tmp)
-      return { writer: w, path, pid: rec.pid, since, release }
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code
-      if (code === 'ENOENT') {
-        // 另一个进程刚把它自己建的那两层空目录收走了（见 `release`）：再建一次，接着抢。
-        mkdirSync(dir, { recursive: true })
-        continue
+    for (let round = 0; round < TAKEOVER_ROUNDS; round++) {
+      try {
+        linkSync(tmp, path) // 原子：建得上就是我的；EEXIST 说明有人
+        const linked = lstatSync(path)
+        if (!linked.isFile() || linked.dev !== owned.dev || linked.ino !== owned.ino) {
+          throw new Error('锁路径在取得时已换成别的文件，拒绝持有')
+        }
+        dropTemporary()
+        return { writer: w, path, pid: rec.pid, since, release }
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code === 'ENOENT') {
+          // 另一个进程刚把它自己建的那两层空目录收走了（见 `release`）：再建一次，接着抢。
+          mkdirSync(dir, { recursive: true })
+          continue
+        }
+        if (code !== 'EEXIST') {
+          dropTemporary()
+          throw new Error(`锁建不出来（${path}）：${code ?? (err as Error).message}`)
+        }
       }
-      if (code !== 'EEXIST') {
-        drop(tmp)
-        throw new Error(`锁建不出来（${path}）：${code ?? (err as Error).message}`)
+      const cur = readRecord(path)
+      if (cur === null) continue // 刚好被放掉了：再抢一次
+      if ('bad' in cur) {
+        dropTemporary()
+        throw new LogHeldError(w, path, null, `锁文件读不动：${cur.bad}`)
+      }
+      const verdict = judge(cur.rec)
+      if (verdict.alive) {
+        dropTemporary()
+        throw new LogHeldError(
+          w,
+          path,
+          { pid: cur.rec.pid, since: sinceOf(cur.rec.start) },
+          verdict.why,
+        )
+      }
+      // 死的：把它请走，再抢一次。**删之前按记录比对一次**——这中间可能已经换人了。
+      const again = readRecord(path)
+      if (again !== null && 'rec' in again && again.rec.pid === cur.rec.pid && again.rec.start === cur.rec.start) {
+        drop(path)
       }
     }
-    const cur = readRecord(path)
-    if (cur === null) continue // 刚好被放掉了：再抢一次
-    if ('bad' in cur) {
-      drop(tmp)
-      throw new LogHeldError(w, path, null, `锁文件读不动：${cur.bad}`)
+    dropTemporary()
+    const last = readRecord(path)
+    const holder =
+      last !== null && 'rec' in last ? { pid: last.rec.pid, since: sinceOf(last.rec.start) } : null
+    throw new LogHeldError(w, path, holder, `连着 ${TAKEOVER_ROUNDS} 次都有人抢先`)
+  } catch (err) {
+    // Acquisition failures keep their original classification; still observe pin retirement.
+    try { dropTemporary() } catch { /* still attempt descriptor retirement */ }
+    if (fd !== undefined) {
+      try { closeSync(fd) } catch { /* primary refusal/error wins */ }
     }
-    const verdict = judge(cur.rec)
-    if (verdict.alive) {
-      drop(tmp)
-      throw new LogHeldError(
-        w,
-        path,
-        { pid: cur.rec.pid, since: sinceOf(cur.rec.start) },
-        verdict.why,
-      )
-    }
-    // 死的：把它请走，再抢一次。**删之前按记录比对一次**——这中间可能已经换人了。
-    const again = readRecord(path)
-    if (again !== null && 'rec' in again && again.rec.pid === cur.rec.pid && again.rec.start === cur.rec.start) {
-      drop(path)
-    }
+    throw err
   }
-  drop(tmp)
-  const last = readRecord(path)
-  const holder =
-    last !== null && 'rec' in last ? { pid: last.rec.pid, since: sinceOf(last.rec.start) } : null
-  throw new LogHeldError(w, path, holder, `连着 ${TAKEOVER_ROUNDS} 次都有人抢先`)
 }

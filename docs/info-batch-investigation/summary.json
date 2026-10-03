@@ -1,0 +1,602 @@
+[
+  {
+    "profile": "code",
+    "files": 512,
+    "bytes": 16777216,
+    "results": [
+      {
+        "name": "sparseGrouped",
+        "trials": 3,
+        "samples": {
+          "256": {
+            "wallMs": [
+              93.10294200000044,
+              41.24905800000033,
+              54.11381600000004
+            ],
+            "medianWallMs": 54.11381600000004,
+            "gitRequests": [
+              6,
+              6,
+              6
+            ],
+            "infoMisses": [
+              512,
+              512,
+              512
+            ],
+            "sourceReads": [
+              1,
+              1,
+              1
+            ]
+          },
+          "512": {
+            "wallMs": [
+              103.05619399999978,
+              49.15579600000001,
+              84.8271079999995
+            ],
+            "medianWallMs": 84.8271079999995,
+            "gitRequests": [
+              5,
+              5,
+              5
+            ],
+            "infoMisses": [
+              512,
+              512,
+              512
+            ],
+            "sourceReads": [
+              1,
+              1,
+              1
+            ]
+          },
+          "1024": {
+            "wallMs": [
+              85.89660599999934,
+              68.32797300000038,
+              58.80616900000041
+            ],
+            "medianWallMs": 68.32797300000038,
+            "gitRequests": [
+              5,
+              5,
+              5
+            ],
+            "infoMisses": [
+              512,
+              512,
+              512
+            ],
+            "sourceReads": [
+              1,
+              1,
+              1
+            ]
+          }
+        }
+      },
+      {
+        "name": "miss",
+        "trials": 3,
+        "samples": {
+          "256": {
+            "wallMs": [
+              72.7368319999996,
+              36.643325000000004,
+              38.434777999999824
+            ],
+            "medianWallMs": 38.434777999999824,
+            "gitRequests": [
+              5,
+              5,
+              5
+            ],
+            "infoMisses": [
+              512,
+              512,
+              512
+            ],
+            "sourceReads": [
+              0,
+              0,
+              0
+            ]
+          },
+          "512": {
+            "wallMs": [
+              52.974935999999616,
+              36.38478799999939,
+              36.34797100000014
+            ],
+            "medianWallMs": 36.38478799999939,
+            "gitRequests": [
+              4,
+              4,
+              4
+            ],
+            "infoMisses": [
+              512,
+              512,
+              512
+            ],
+            "sourceReads": [
+              0,
+              0,
+              0
+            ]
+          },
+          "1024": {
+            "wallMs": [
+              70.53592500000013,
+              30.195303000000422,
+              36.34378300000026
+            ],
+            "medianWallMs": 36.34378300000026,
+            "gitRequests": [
+              4,
+              4,
+              4
+            ],
+            "infoMisses": [
+              512,
+              512,
+              512
+            ],
+            "sourceReads": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "name": "dense",
+        "trials": 1,
+        "samples": {
+          "256": {
+            "wallMs": [
+              255.15013
+            ],
+            "medianWallMs": 255.15013,
+            "gitRequests": [
+              6
+            ],
+            "infoMisses": [
+              512
+            ],
+            "sourceReads": [
+              1
+            ]
+          },
+          "512": {
+            "wallMs": [
+              46.44863299999997
+            ],
+            "medianWallMs": 46.44863299999997,
+            "gitRequests": [
+              5
+            ],
+            "infoMisses": [
+              512
+            ],
+            "sourceReads": [
+              1
+            ]
+          },
+          "1024": {
+            "wallMs": [
+              55.739542000000256
+            ],
+            "medianWallMs": 55.739542000000256,
+            "gitRequests": [
+              5
+            ],
+            "infoMisses": [
+              512
+            ],
+            "sourceReads": [
+              1
+            ]
+          }
+        }
+      },
+      {
+        "name": "quantifiedFallback",
+        "trials": 1,
+        "samples": {
+          "256": {
+            "wallMs": [
+              165.3068170000006
+            ],
+            "medianWallMs": 165.3068170000006,
+            "gitRequests": [
+              10
+            ],
+            "infoMisses": [
+              512
+            ],
+            "sourceReads": [
+              512
+            ]
+          },
+          "512": {
+            "wallMs": [
+              248.82752399999936
+            ],
+            "medianWallMs": 248.82752399999936,
+            "gitRequests": [
+              9
+            ],
+            "infoMisses": [
+              512
+            ],
+            "sourceReads": [
+              512
+            ]
+          },
+          "1024": {
+            "wallMs": [
+              178.71195799999987
+            ],
+            "medianWallMs": 178.71195799999987,
+            "gitRequests": [
+              9
+            ],
+            "infoMisses": [
+              512
+            ],
+            "sourceReads": [
+              512
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "profile": "mixed",
+    "files": 512,
+    "bytes": 16777216,
+    "results": [
+      {
+        "name": "sparseGrouped",
+        "trials": 3,
+        "samples": {
+          "256": {
+            "wallMs": [
+              38.51583499999833,
+              31.173681999998735,
+              46.425553000000946
+            ],
+            "medianWallMs": 38.51583499999833,
+            "gitRequests": [
+              6,
+              6,
+              6
+            ],
+            "infoMisses": [
+              512,
+              512,
+              512
+            ],
+            "sourceReads": [
+              1,
+              1,
+              1
+            ]
+          },
+          "512": {
+            "wallMs": [
+              46.72019999999975,
+              36.81876899999952,
+              55.90310099999988
+            ],
+            "medianWallMs": 46.72019999999975,
+            "gitRequests": [
+              5,
+              5,
+              5
+            ],
+            "infoMisses": [
+              512,
+              512,
+              512
+            ],
+            "sourceReads": [
+              1,
+              1,
+              1
+            ]
+          },
+          "1024": {
+            "wallMs": [
+              40.90293399999973,
+              32.68842500000028,
+              61.44036299999971
+            ],
+            "medianWallMs": 40.90293399999973,
+            "gitRequests": [
+              5,
+              5,
+              5
+            ],
+            "infoMisses": [
+              512,
+              512,
+              512
+            ],
+            "sourceReads": [
+              1,
+              1,
+              1
+            ]
+          }
+        }
+      },
+      {
+        "name": "miss",
+        "trials": 3,
+        "samples": {
+          "256": {
+            "wallMs": [
+              36.254659000000174,
+              30.858322000000044,
+              26.272777000000133
+            ],
+            "medianWallMs": 30.858322000000044,
+            "gitRequests": [
+              5,
+              5,
+              5
+            ],
+            "infoMisses": [
+              512,
+              512,
+              512
+            ],
+            "sourceReads": [
+              0,
+              0,
+              0
+            ]
+          },
+          "512": {
+            "wallMs": [
+              31.549283000000287,
+              33.40107299999909,
+              31.066076999999495
+            ],
+            "medianWallMs": 31.549283000000287,
+            "gitRequests": [
+              4,
+              4,
+              4
+            ],
+            "infoMisses": [
+              512,
+              512,
+              512
+            ],
+            "sourceReads": [
+              0,
+              0,
+              0
+            ]
+          },
+          "1024": {
+            "wallMs": [
+              42.569860999999946,
+              38.61513399999967,
+              30.502079000001686
+            ],
+            "medianWallMs": 38.61513399999967,
+            "gitRequests": [
+              4,
+              4,
+              4
+            ],
+            "infoMisses": [
+              512,
+              512,
+              512
+            ],
+            "sourceReads": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "name": "dense",
+        "trials": 1,
+        "samples": {
+          "256": {
+            "wallMs": [
+              50.98255199999949
+            ],
+            "medianWallMs": 50.98255199999949,
+            "gitRequests": [
+              6
+            ],
+            "infoMisses": [
+              512
+            ],
+            "sourceReads": [
+              1
+            ]
+          },
+          "512": {
+            "wallMs": [
+              46.385620999999446
+            ],
+            "medianWallMs": 46.385620999999446,
+            "gitRequests": [
+              5
+            ],
+            "infoMisses": [
+              512
+            ],
+            "sourceReads": [
+              1
+            ]
+          },
+          "1024": {
+            "wallMs": [
+              47.978118999999424
+            ],
+            "medianWallMs": 47.978118999999424,
+            "gitRequests": [
+              5
+            ],
+            "infoMisses": [
+              512
+            ],
+            "sourceReads": [
+              1
+            ]
+          }
+        }
+      },
+      {
+        "name": "quantifiedFallback",
+        "trials": 1,
+        "samples": {
+          "256": {
+            "wallMs": [
+              260.38432099999955
+            ],
+            "medianWallMs": 260.38432099999955,
+            "gitRequests": [
+              10
+            ],
+            "infoMisses": [
+              512
+            ],
+            "sourceReads": [
+              512
+            ]
+          },
+          "512": {
+            "wallMs": [
+              184.77779800000098
+            ],
+            "medianWallMs": 184.77779800000098,
+            "gitRequests": [
+              9
+            ],
+            "infoMisses": [
+              512
+            ],
+            "sourceReads": [
+              512
+            ]
+          },
+          "1024": {
+            "wallMs": [
+              193.5137250000007
+            ],
+            "medianWallMs": 193.5137250000007,
+            "gitRequests": [
+              9
+            ],
+            "infoMisses": [
+              512
+            ],
+            "sourceReads": [
+              512
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "profile": "pressure1024",
+    "files": 1024,
+    "bytes": 16777216,
+    "results": [
+      {
+        "name": "miss",
+        "trials": 3,
+        "samples": {
+          "256": {
+            "wallMs": [
+              67.1300889999984,
+              67.34214799999972,
+              67.94196199999715
+            ],
+            "medianWallMs": 67.34214799999972,
+            "gitRequests": [
+              7,
+              7,
+              7
+            ],
+            "infoMisses": [
+              1024,
+              1024,
+              1024
+            ],
+            "sourceReads": [
+              0,
+              0,
+              0
+            ]
+          },
+          "512": {
+            "wallMs": [
+              72.24613900000259,
+              65.32419500000105,
+              61.94771000000037
+            ],
+            "medianWallMs": 65.32419500000105,
+            "gitRequests": [
+              5,
+              5,
+              5
+            ],
+            "infoMisses": [
+              1024,
+              1024,
+              1024
+            ],
+            "sourceReads": [
+              0,
+              0,
+              0
+            ]
+          },
+          "1024": {
+            "wallMs": [
+              49.246947999999975,
+              65.07570699999997,
+              66.01767100000143
+            ],
+            "medianWallMs": 65.07570699999997,
+            "gitRequests": [
+              4,
+              4,
+              4
+            ],
+            "infoMisses": [
+              1024,
+              1024,
+              1024
+            ],
+            "sourceReads": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      }
+    ]
+  }
+]

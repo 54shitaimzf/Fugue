@@ -104,9 +104,11 @@ fugue 是住在终端里的编码 agent：给它一句目标，它自己拆活�
                              默认接真模型（花钱）
 
   环境与配置
+  assemble <protocol>       核对装配的三区哈希、字节数与四条约束；--against 比另一协议
   doctor                     环境自检：node · git · bwrap … 一项项报给你（只读；「缺」算
                              读数不算失败）
   config show                看全部配置
+  config ls                  只列合并配置中在场的键（无值、无缺省表；--json 为分段路径）
   config get <key>           看一条（点分路径，如 round.id）
   config set <key> <value>   改一条（值能按 JSON 解析就当 JSON，否则当字符串）
 

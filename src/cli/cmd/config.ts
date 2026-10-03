@@ -8,8 +8,11 @@ import {
   configHistoryOf,
   ConfigError,
   configFileOf,
+  configuredKeyPaths,
+  configKeyPathsJson,
   defaultSystemDir,
   getConfig,
+  formatConfigKeyPath,
   keySegments,
   parseConfigValue,
   readConfig,
@@ -36,6 +39,13 @@ export async function config(
 ): Promise<number> {
   const verb = args[0]
   try {
+    if (verb === 'ls') {
+      if (args.length !== 1) return usageFail('config ls 不接受位置参数；列系统级与工作区级合并后在场的键', json)
+      const paths = configuredKeyPaths(await readConfig(root))
+      if (json) emitLine(configKeyPathsJson(paths))
+      else for (const path of paths) emitLine(formatConfigKeyPath(path))
+      return 0
+    }
     if (verb === 'show') {
       const doc = await readConfig(root)
       emitLine(json ? JSON.stringify(doc) : JSON.stringify(doc, null, 2))
@@ -129,7 +139,7 @@ export async function config(
       }
       return 0
     }
-    return usageFail(`config 需要 show|get|set，收到：${verb ?? '(空)'}`, json)
+    return usageFail(`config 需要 show|get|set|ls，收到：${verb ?? '(空)'}`, json)
   } catch (err) {
     if (err instanceof ConfigError) return fail(err.message, json)
     throw err

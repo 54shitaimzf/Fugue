@@ -1,0 +1,238 @@
+// Optional current-View cohort adapter. Preparation is explicit; a query miss scans.
+import type { BlobId, RelPath } from '../terms.ts'
+import type { View } from '../view/contract.ts'
+import type { CohortIndexStore } from './cohort-store.ts'
+import { buildBlobIndex, MAX_SOURCE_BYTES } from './index-format.ts'
+import type { BlobIndex } from './index-format.ts'
+import { buildCohortIndex, cohortBlobRecords, cohortKey, cohortMightContain, MAX_COHORT_BLOBS, MAX_COHORT_POSTINGS } from './cohort-format.ts'
+import type { CohortIndex } from './cohort-format.ts'
+import { MAX_INDEX_REQUIREMENTS } from './current-view-candidates.ts'
+// 一批候选的上限就是批读存储一次最多读的行数（同一个数，不另拍一个）。
+import { MAX_INDEX_BATCH_ROWS as MAX_INDEX_CANDIDATE_BATCH } from './index-store.ts'
+
+type CohortView = Pick<View, 'base' | 'rev' | 'stat'>
+export interface ViewCohortLookup {
+  filterCandidates(paths: readonly string[], required: readonly string[]): Promise<readonly string[]>
+}
+export interface ViewCohortHandle extends ViewCohortLookup {
+  /** Caller-paid preparation from immutable Git objects; never called by filterCandidates. */
+  prepare(readBlob: (blob: BlobId) => Promise<Uint8Array>, options?: CohortPreparationOptions): Promise<boolean>
+  /** Observes admitted work; the caller separately owns store.close(). */
+  close(): Promise<void>
+  stats(): { queries: number; diskReads: number; sourceReads: number; reusedRecords: number; prefetches: number; builds: number; fallbacks: number; active: number; closed: boolean }
+}
+export interface CohortPreparationOptions {
+  /** Restart hint only: reuse must still pass a controlled exact-set artifact read. */
+  readonly previousBlobs?: readonly BlobId[]
+  /** Optional caller-owned Truth batching for NEW IDs; not called during a query. */
+  readonly prefetchBlobs?: (blobs: readonly BlobId[]) => Promise<void>
+}
+interface Generation {
+  readonly base: View['base']
+  readonly rev: View['rev']
+}
+interface Snapshot extends Generation {
+  readonly blobs: readonly BlobId[]
+  /** Private generation-owned metadata, captured only from this View. */
+  readonly files: ReadonlyMap<string, BlobId>
+}
+interface Proof {
+  readonly index: CohortIndex
+  readonly files: ReadonlyMap<string, BlobId>
+}
+interface Cached extends Generation { readonly result: Promise<Proof | null> }
+const owners = new WeakMap<ViewCohortLookup, CohortView>()
+const typedArray = Object.getPrototypeOf(Uint8Array.prototype)
+const byteLengthOf = Object.getOwnPropertyDescriptor(typedArray, 'byteLength')!.get!
+const byteOffsetOf = Object.getOwnPropertyDescriptor(typedArray, 'byteOffset')!.get!
+const bufferOf = Object.getOwnPropertyDescriptor(typedArray, 'buffer')!.get!
+/** An adapter prepared for another View cannot supply negative path decisions to this host. */
+export function cohortLookupForView(lookup: ViewCohortLookup, view: CohortView): boolean {
+  return owners.get(lookup) === view
+}
+const MAX_VIEW_PATHS = 5000
+function id(value: unknown): value is BlobId {
+  return typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value)
+}
+function strings(input: readonly string[], maximum: number, gram = false): readonly string[] | null {
+  if (!Array.isArray(input)) return null
+  const count = input.length
+  if (!Number.isSafeInteger(count) || count < 0 || count > maximum || (gram && count === 0)) return null
+  const output: string[] = []
+  for (let at = 0; at < count; at++) {
+    const value = input[at]
+    if (typeof value !== 'string' || (gram && value.length !== 3)) return null
+    output.push(value)
+  }
+  return Object.freeze(output)
+}
+
+/** The enumeration and metadata are exclusively current View reads, never host paths. */
+export function createViewCohortLookup(
+  view: CohortView, enumerate: () => Promise<readonly string[]>,
+  store: Pick<CohortIndexStore, 'read' | 'write'>,
+): ViewCohortHandle {
+  let closed = false
+  let cached: Cached | undefined
+  let prior: CohortIndex | undefined
+  let preparing: Promise<boolean> | undefined
+  const active = new Set<Promise<unknown>>()
+  const counts = { queries: 0, diskReads: 0, sourceReads: 0, reusedRecords: 0, prefetches: 0, builds: 0, fallbacks: 0 }
+  const generation = (): Generation => ({ base: view.base, rev: view.rev })
+  function changed(mark: Generation): boolean {
+    try { return closed || view.base !== mark.base || view.rev !== mark.rev }
+    catch { return true }
+  }
+  function admit<T>(fallback: T, run: () => Promise<T>): Promise<T> {
+    if (closed || active.size >= 4) return Promise.resolve(fallback)
+    let finish!: () => void
+    const reservation = new Promise<void>(resolve => { finish = resolve })
+    active.add(reservation)
+    return Promise.resolve().then(run).catch(() => fallback).finally(() => { active.delete(reservation); finish() })
+  }
+  async function snapshot(mark: Generation): Promise<Snapshot | null> {
+    const paths = strings(await enumerate(), MAX_VIEW_PATHS)
+    if (paths === null || changed(mark)) return null
+    const blobs = new Set<BlobId>()
+    const files = new Map<string, BlobId>()
+    for (const path of new Set(paths)) {
+      const meta = await view.stat(path as RelPath)
+      if (changed(mark)) return null
+      if (meta?.kind !== 'file') continue
+      const blob = meta.id
+      if (!id(blob)) return null
+      blobs.add(blob)
+      files.set(path, blob)
+      if (blobs.size > MAX_COHORT_BLOBS) return null
+    }
+    if (blobs.size === 0) return null
+    return { ...mark, blobs: Object.freeze([...blobs].sort()), files }
+  }
+  function load(mark: Generation): Promise<Proof | null> {
+    if (cached !== undefined && cached.base === mark.base && cached.rev === mark.rev) return cached.result
+    const current: Cached = { ...mark, result: (async () => {
+      const selected = await snapshot(mark)
+      if (selected === null || changed(mark)) return null
+      counts.diskReads++
+      const index = await store.read(selected.blobs)
+      if (changed(mark) || index === null || index.key !== cohortKey(selected.blobs)) return null
+      prior = index
+      return { index, files: selected.files }
+    })().catch(() => null) }
+    cached = current
+    return current.result
+  }
+  const handle: ViewCohortHandle = {
+    filterCandidates(paths, required) {
+      let original: readonly string[]
+      let grams: readonly string[] | null
+      try {
+        const captured = strings(paths, MAX_INDEX_CANDIDATE_BATCH)
+        if (captured === null) return Promise.resolve(paths)
+        original = captured
+        grams = strings(required, MAX_INDEX_REQUIREMENTS, true)
+      } catch { return Promise.resolve(paths) }
+      return admit(original, async () => {
+        counts.queries++
+        if (original.length > MAX_INDEX_CANDIDATE_BATCH || grams === null) return original
+        const mark = generation()
+        const proof = await load(mark)
+        if (proof === null || changed(mark)) { counts.fallbacks++; return original }
+        const keep: string[] = []
+        for (const path of original) {
+          // This phase has no awaits or metadata calls. The same base/rev owns
+          // both the exact-set artifact and the already validated path identities.
+          const blob = proof.files.get(path)
+          if (changed(mark)) { counts.fallbacks++; return original }
+          if (blob === undefined || cohortMightContain(proof.index, blob, grams) !== false) keep.push(path)
+        }
+        return changed(mark) ? original : keep
+      })
+    },
+    prepare(readBlob, options = {}) {
+      if (closed) return Promise.resolve(false)
+      if (preparing !== undefined) return preparing
+      let previous: readonly BlobId[] | undefined
+      let prefetch: CohortPreparationOptions['prefetchBlobs']
+      try {
+        const input = options.previousBlobs
+        if (input !== undefined) {
+          const ids = strings(input, MAX_COHORT_BLOBS)
+          if (ids === null || cohortKey(ids as readonly BlobId[]) === null) return Promise.resolve(false)
+          previous = ids as readonly BlobId[]
+        }
+        prefetch = options.prefetchBlobs
+        if (prefetch !== undefined && typeof prefetch !== 'function') return Promise.resolve(false)
+      } catch { return Promise.resolve(false) }
+      const task = admit(false, async () => {
+        if (typeof readBlob !== 'function') return false
+        const mark = generation()
+        const selected = await snapshot(mark)
+        if (selected === null) return false
+        let seed = prior
+        if (previous !== undefined) {
+          counts.diskReads++
+          try {
+            const found = await store.read(previous)
+            seed = found !== null && found.key === cohortKey(previous) ? found : undefined
+          } catch { seed = undefined }
+          if (changed(mark)) return false
+        }
+        const reused = seed === undefined ? [] : cohortBlobRecords(seed, selected.blobs)
+        // A failed extraction is unknown, never a partially populated table.
+        const records: BlobIndex[] = reused === null ? [] : [...reused]
+        const known = new Set(records.map(record => record.blob))
+        const missing = Object.freeze(selected.blobs.filter(blob => !known.has(blob)))
+        let sourceBytes = records.reduce((sum, record) => sum + record.sourceBytes, 0)
+        let postings = records.reduce((sum, record) => sum + record.tables.trigrams.length, 0)
+        counts.reusedRecords += records.length
+        for (let at = 0; at < missing.length; at += MAX_INDEX_CANDIDATE_BATCH) {
+          const batch = Object.freeze(missing.slice(at, at + MAX_INDEX_CANDIDATE_BATCH))
+          if (changed(mark)) return false
+          // Consume each bounded hint's IDs before issuing another, so a bounded
+          // Truth cache need not retain every new source at once.
+          if (prefetch !== undefined) {
+            counts.prefetches++
+            try { await prefetch(batch) }
+            catch { /* A hint failure cannot replace exact source verification. */ }
+            if (changed(mark)) return false
+          }
+          for (const blob of batch) {
+            if (changed(mark)) return false
+            counts.sourceReads++
+            const bytes = await readBlob(blob)
+            if (changed(mark) || !(bytes instanceof Uint8Array)) return false
+            const length = byteLengthOf.call(bytes) as number
+            sourceBytes += length
+            if (sourceBytes > MAX_SOURCE_BYTES) return false
+            // Charge the intrinsic visible window before allocating/hash verification.
+            const owned = Uint8Array.from(new Uint8Array(bufferOf.call(bytes), byteOffsetOf.call(bytes), length))
+            const record = buildBlobIndex(blob, owned)
+            postings += record.tables.trigrams.length
+            if (postings > MAX_COHORT_POSTINGS) return false
+            records.push(record)
+          }
+        }
+        if (changed(mark)) return false
+        const index = buildCohortIndex(records)
+        counts.builds++
+        if (!await store.write(index) || changed(mark)) return false
+        prior = index
+        cached = { ...mark, result: Promise.resolve({ index, files: selected.files }) }
+        return true
+      })
+      preparing = task
+      task.finally(() => { if (preparing === task) preparing = undefined }).catch(() => {})
+      return task
+    },
+    async close() {
+      closed = true
+      cached = undefined
+      prior = undefined
+      await Promise.allSettled([...active])
+    },
+    stats: () => ({ ...counts, active: active.size, closed }),
+  }
+  owners.set(handle, view)
+  return handle
+}

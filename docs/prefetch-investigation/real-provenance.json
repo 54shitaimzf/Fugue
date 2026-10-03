@@ -1,0 +1,12 @@
+{
+  "before": "527319e76a1780e668f47c95f340087a99170564",
+  "after": "97160db4ca288b91f8df2ac498ba81d6b9d6fd66",
+  "scope": "Exact local source checkpoints. One sequential real scenario chain, not statistical speed certification or a later merged full-graph certificate. Source hashes/complete results and actual prefetch-elision counters verified.",
+  "scriptSha256": "2a01251917ea8e4ea366cd278e4c9e61248ce47049d922d558630ad3af136b92",
+  "rawSha256": "ce6d344843b2f465ee09cc7ebafdb26bd0ebe6ec0698990fbba0825686971aa9",
+  "sameCorpusAsCounterfactual": true,
+  "sourceTrees": {
+    "before": "b3c14b2703fa0d7738957b00eff78ae8095bcf9d",
+    "after": "d633d720d953346cf81ee320e789695908d8ec5d"
+  }
+}

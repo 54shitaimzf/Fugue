@@ -214,7 +214,7 @@ test('① 超上限的回执：头尾逐字是原文的头尾，标记与 M · N
   )
 })
 
-test('① 真实链路：`read` 与 `grep` 两条超上限的回执都带同一份标记（同一句话）', async () => {
+test('① 真实链路：read 仍截全文，grep 早停并如实报搜索不完整', async () => {
   const b = await bench()
   try {
     const text = bigText(400)
@@ -236,16 +236,13 @@ test('① 真实链路：`read` 与 `grep` 两条超上限的回执都带同一�
     // `grep`：所有行都命中 → 命中那一串同样超上限。
     const grep = await exec.execute(callOf('grep', { pattern: '第' }, 'c2'), h)
     assert.equal(grep.ok, true, `grep 该成：${grep.output.slice(0, 200)}`)
-    const r2 = splitCapped(grep.output)
-    assert.ok(r2.M > 0, '这一份该真的被截了')
-    assertNoHalfChar(r2.head, 'grep 头')
-    assertNoHalfChar(r2.tail, 'grep 尾')
-
-    // `bash`：这台子没接执行面（`execRoot` 不给就是 `fugue run` 之前那条形状，子进程跑在真实工作区），
-    // 所以不走它——`bash` 那一份的截断与 `read` / `grep` 走的是同一个出口（回执那一层），
-    // 判据 ① 的纯函数那一条与链路这几条已经把那条缝量到了。
-    assert.ok(r1.M > 0 && r2.M > 0, '两条都真的被截了')
-    console.log(`① 链路读数：read 略去 ${r1.M} · grep 略去 ${r2.M}（两条都是同一句话的标记）`)
+    assert.match(grep.output, /Search stopped at the receipt budget/)
+    assert.match(grep.output, /results are incomplete/)
+    assert.doesNotMatch(grep.output, /bytes omitted/, '未扫全文，不冒充知道遗漏字节数')
+    assert.ok(bytesOf(grep.output) <= MAX_RECEIPT_BYTES, '搜索本身留说明与步预算的余量')
+    assertNoHalfChar(grep.output, 'grep 早停回执')
+    assert.ok(r1.M > 0, 'read 仍从统一出口截全文')
+    console.log(`① 链路读数：read 略去 ${r1.M}；grep 回执 ${bytesOf(grep.output)} 字节，明确早停与不完整`)
   } finally {
     await b.close()
   }

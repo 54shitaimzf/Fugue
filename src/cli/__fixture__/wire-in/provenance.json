@@ -1,39 +1,40 @@
 {
-  "夹具": "src/cli/__fixture__/wire-in",
-  "这一份是什么": "一次真实 round 的录像：请求字节 · 上游原话 · 三区指纹。回放档（--wire-in）按 requestHash 逐字节核，核不上就当场拒。",
-  "录的那一趟": {
-    "目标": "写一份 notes.md：内容一行「数完了」。",
-    "上界": "4 步",
-    "调用": 3,
-    "停因": "收敛",
-    "趟次标记": "c1470033（钉在 AGENTS.md 第一行——前缀是内容寻址的缓存键，不换标记就量不到真冷读）",
-    "脚本": "tools/record-wire-in.sh（真跑一趟，花钱要网）"
-  },
-  "录下来的（永不改）": [
-    "wire/call-*/response.sse —— 上游原话的原始字节",
-    "wire/call-*/response.sha256",
-    "wire/call-*/request.json 的 messages · system（以及 max_tokens/model/stream/thinking/output_config）",
-    "wire/call-*/meta.json 的 target · responseBytes · responseHash · events · attempts · opened · closed · stop · failure · outcome",
-    "scenario.json（录制那个工作区的全部输入，含趟次标记）",
-    "expected（录制那一趟盘上的产物，逐字节）"
-  ],
-  "离线改齐的（可逐字节复算）": [
-    "wire/call-*/request.json 的 tools 那一栏 —— 按当前工具目录投影重写（形状由该线型的适配器自己给）",
-    "wire/call-*/request.sha256",
-    "wire/call-*/meta.json 的 requestBytes · requestHash · tools · zoneAHash（zoneAHash 从 system 复算，不假定它不变）"
-  ],
-  "两条红线": {
-    "响应永不改": "response.sse 与它自己的 meta.json 对不上，就是一份被改过的取证物——回放那一档当场拒（src/model/http.ts 的 wireInTransport），离线改齐脚本也当场拒、一个字节都不写。",
-    "录的字节被改即拒": "request.json 动一个字节，meta.json 的 requestHash 就对不上，回放当场拒（chain.test.ts 序 1 的负对照量着这一条）。所谓离线改齐，指的是把 tools 那一栏换成当前目录投影把派生栏一起重算，不是把指纹修得像新的。"
-  },
-  "处置": {
-    "目录文案漂了": "离线改齐：node tools/align-wire-in.ts（不出网 · 不读凭据 · 不花钱）。快档 src/cli/wire-in.test.ts 当场给红绿。",
-    "响应侧要新证据": "真跑重录：sh tools/record-wire-in.sh（花钱要网）。",
-    "动的是参数面或语义": "真跑重录——那时旧响应不再是有意义的对照，离线改齐就是伪造对照。"
-  },
-  "干活的三处": {
-    "改齐脚本": "tools/align-wire-in.ts",
-    "快档对齐断言": "src/cli/wire-in.test.ts",
-    "端到端回放": "src/cli/chain.test.ts 序 1（real 档）"
-  }
+  "kind": "offline-catalog-adaptation",
+  "sourceCommit": "e02fa524579bbd6332278e21a27b15c7b12c4b05",
+  "sourceManifestSha256": "62aa94ffd198b92a359e3fff5a42c40f1bbbae6119949fdf4b3e33d97da21a10",
+  "catalogHash": "06266332e0410bcf",
+  "liveRequestSent": false,
+  "historicalResponseAndUsage": true,
+  "calls": [
+    {
+      "call": "call-0001",
+      "sourceRequestSha256": "df09987f5c290cd2e4adc9b9e3ec85321c6c5e01b6f0c9594389cf24136e39b7",
+      "sourceMetaSha256": "2323dab65fabe9c1fe2f09d8e1f3484c9b6ef1bb5952b5b746c85a476dd9acd3",
+      "requestSha256": "abfcf0c078725b499dd96a52254babdc2a637534bc3f7680a4980d6a2bbdcd26",
+      "requestHash": "abfcf0c078725b49",
+      "requestBytes": 9363,
+      "responseSha256": "e043b6e860f8706468eb32bde0137311e428a9e6124997a642f6581ee2e45417",
+      "changed": true
+    },
+    {
+      "call": "call-0002",
+      "sourceRequestSha256": "da3179d090424d3dd431f8010acefadefc6947856b5166a149d258a97c7d1bbd",
+      "sourceMetaSha256": "d3fa3b92dc524d64d267690ebac4d3182133aa75e4acb43114f088ccac32f7f2",
+      "requestSha256": "147fa7e3223e119f6f8fae7f434f12ce072898b3681c30793bef6e072329d7ce",
+      "requestHash": "147fa7e3223e119f",
+      "requestBytes": 10009,
+      "responseSha256": "822cf2fe96f1a97c229822d7b0289825c214270762baad00280a66bff9aa380b",
+      "changed": true
+    },
+    {
+      "call": "call-0003",
+      "sourceRequestSha256": "655f3346dd4e82c45c4fef1f5f86a3d8b56d2a5bd95446d35e3f1d607e2d2bae",
+      "sourceMetaSha256": "e8ffbbc60772c9c1515fb64192b64d3c5c8823773766c0b72ebd8457667f7619",
+      "requestSha256": "80a305324dbaaa0dc8ddaa3ff98bcce3ecf642d658d59495bc158d051a58aa39",
+      "requestHash": "80a305324dbaaa0d",
+      "requestBytes": 10591,
+      "responseSha256": "393cb9be0a5bb2fb06be52646aeb468340d0b9448e39ab6a94a2861139a657ac",
+      "changed": true
+    }
+  ]
 }

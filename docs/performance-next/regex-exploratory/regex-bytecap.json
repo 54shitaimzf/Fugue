@@ -1,0 +1,747 @@
+{
+  "schema": 1,
+  "node": "v24.19.0",
+  "before": {
+    "commit": "93767476c31f31f0057799154c3d87fe5f00a511",
+    "sourceHashes": {
+      "src/tools/execute.ts": "272cd3c1ce0000f9fc3945bbb4e1c518ca7736874e6fe2b4d9a588b5d1b3517e",
+      "src/tools/host.ts": "0e1416ae3f0bc38bfbe650f3a73a1dd63b13e5d3d49e52a6e2dbac8f0540e305",
+      "src/tools/search-receipt.ts": "e88a85d18d9f1cd7a07731aab56028a211e025051e5074f4df1a0dfad7241192",
+      "src/tools/walk.ts": "27ac24c25c86e8a1e7f4f541baff82e8f0802114c23a5ffe4503c55dad0beaa0",
+      "src/search/view-cohort.ts": "e9bc441b15e1f9945c469db7b10a5b7531a797a45bf3517555772e3bb9c1b743",
+      "src/search/cohort-store.ts": "b0b4692e1bd36d7caa10720179dd95db9ebcb83a54bca265ac92de25877f493d",
+      "src/search/cohort-format.ts": "09734b5e789e3a32f27aa90de105285d0455e9e42b6b4e222ae3ebbd5bc3ca88",
+      "src/search/index-format.ts": "7074b2065aad9770c67990b1265ddbf55ef14d50a946954ce8fd6307bb2bcf83",
+      "src/truth/truth.ts": "86d14731213d2b805b26d0131d53f24a417e1ae58862d1bfe21973391caaaad0",
+      "src/truth/git.ts": "5ebf031332af0a633911bae006428c0c3a79d418c08a49e9cd01861bd6ca00db",
+      "src/view/view.ts": "e0b01dd413deec233ddcf445f1dfabc7470e8f0acec2d645752552ce80e76014",
+      "src/view/lower.ts": "5f1cf9e40882e51a6c6b53e994301d14a32bf51b0d9417a86f44fdf7a85768c6",
+      "src/log/log.ts": "4d37059d6f4eabdf9ea43eee6d1ea7d8ba78beb97f55e9a50b4aaffc214b510e",
+      "src/roots/roots.ts": "ad6091a3ea0f97ecbd4563c6a2a3359f5a5864848468dd8fcd85480295e18fa3"
+    }
+  },
+  "after": {
+    "commit": "1c0b66ae10689ecb73d6a43de0b5b6a82259b5e3",
+    "sourceHashes": {
+      "src/tools/execute.ts": "2444e9d2a5a39d5b7a2f8f64dce43992346f3620df87856f226599ba9493c38a",
+      "src/tools/host.ts": "2854c8f19cca432d08f534863910e83c2dda96cbb62f0e5483b63c1297a1765c",
+      "src/tools/search-receipt.ts": "e88a85d18d9f1cd7a07731aab56028a211e025051e5074f4df1a0dfad7241192",
+      "src/tools/walk.ts": "27ac24c25c86e8a1e7f4f541baff82e8f0802114c23a5ffe4503c55dad0beaa0",
+      "src/search/view-cohort.ts": "e9bc441b15e1f9945c469db7b10a5b7531a797a45bf3517555772e3bb9c1b743",
+      "src/search/cohort-store.ts": "b0b4692e1bd36d7caa10720179dd95db9ebcb83a54bca265ac92de25877f493d",
+      "src/search/cohort-format.ts": "09734b5e789e3a32f27aa90de105285d0455e9e42b6b4e222ae3ebbd5bc3ca88",
+      "src/search/index-format.ts": "7074b2065aad9770c67990b1265ddbf55ef14d50a946954ce8fd6307bb2bcf83",
+      "src/truth/truth.ts": "86d14731213d2b805b26d0131d53f24a417e1ae58862d1bfe21973391caaaad0",
+      "src/truth/git.ts": "5ebf031332af0a633911bae006428c0c3a79d418c08a49e9cd01861bd6ca00db",
+      "src/view/view.ts": "e0b01dd413deec233ddcf445f1dfabc7470e8f0acec2d645752552ce80e76014",
+      "src/view/lower.ts": "5f1cf9e40882e51a6c6b53e994301d14a32bf51b0d9417a86f44fdf7a85768c6",
+      "src/log/log.ts": "4d37059d6f4eabdf9ea43eee6d1ea7d8ba78beb97f55e9a50b4aaffc214b510e",
+      "src/roots/roots.ts": "ad6091a3ea0f97ecbd4563c6a2a3359f5a5864848468dd8fcd85480295e18fa3",
+      "src/tools/grep-verifier.ts": "a696b3543b777bb553dfa413c167059bcf1ec740cae055f1386c444ef70814f2"
+    }
+  },
+  "scriptSha256": "9c29f6cd751d19df7030d06c1e37e9cea5498173a3dba6f38549acffa0890e0f",
+  "generated": {
+    "files": 512,
+    "fileBytes": 32768,
+    "bytes": 16777216,
+    "profile": "code",
+    "scenario": "bytecap",
+    "corpusSha256": "2e0d01975c0ae9a3fac389e303e6d79ffda1503e9a5df1a5d18a3141af5430a0"
+  },
+  "cohort": false,
+  "runs": 2,
+  "fullFaceResultEquality": true,
+  "limits": {
+    "MAX_VERIFICATION_SOURCE_BYTES": 1048576,
+    "MAX_VERIFICATION_RECORD_BYTES": 65536,
+    "MAX_VERIFICATION_MATCHES": 4096,
+    "MAX_VERIFICATION_BYTES": 2097152,
+    "MAX_VERIFICATION_ENTRIES": 1024
+  },
+  "cases": {
+    "bytePressure": {
+      "pattern": "many_hit",
+      "output_mode": "count"
+    }
+  },
+  "trials": [
+    {
+      "trial": 0,
+      "order": [
+        "before",
+        "after"
+      ],
+      "result": {
+        "before": {
+          "bytePressure": {
+            "preparation": null,
+            "coldFirst": {
+              "ms": 437.9302520000001,
+              "cpuUserMs": 293.456,
+              "cpuSystemMs": 81.589,
+              "statCalls": 512,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "truthDelta": {
+                "gitSpawns": 1,
+                "gitRequests": 517,
+                "blobHits": 0,
+                "blobMisses": 512,
+                "blobEntries": 256,
+                "blobBytes": 8388608,
+                "blobEvictions": 256,
+                "blobCacheBytes": 0,
+                "infoHits": 512,
+                "infoMisses": 512,
+                "infoEntries": 512
+              },
+              "verification": null,
+              "verificationDelta": null,
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat1": {
+              "ms": 420.3792910000002,
+              "cpuUserMs": 306.905,
+              "cpuSystemMs": 94.774,
+              "statCalls": 512,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 512,
+                "blobHits": 0,
+                "blobMisses": 512,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 512,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": null,
+              "verificationDelta": null,
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat2": {
+              "ms": 346.6627490000001,
+              "cpuUserMs": 217.806,
+              "cpuSystemMs": 42.897,
+              "statCalls": 512,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 512,
+                "blobHits": 0,
+                "blobMisses": 512,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 512,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": null,
+              "verificationDelta": null,
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "restartCold": {
+              "preparation": null,
+              "query": {
+                "ms": 408.11792700000024,
+                "cpuUserMs": 263.122,
+                "cpuSystemMs": 53.558,
+                "statCalls": 512,
+                "viewReads": 512,
+                "viewBytes": 16777216,
+                "truthDelta": {
+                  "gitSpawns": 1,
+                  "gitRequests": 517,
+                  "blobHits": 0,
+                  "blobMisses": 512,
+                  "blobEntries": 256,
+                  "blobBytes": 8388608,
+                  "blobEvictions": 256,
+                  "blobCacheBytes": 0,
+                  "infoHits": 512,
+                  "infoMisses": 512,
+                  "infoEntries": 512
+                },
+                "verification": null,
+                "verificationDelta": null,
+                "ok": true,
+                "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+                "outputBytes": 5642,
+                "earlyTruncated": false
+              }
+            }
+          }
+        },
+        "after": {
+          "bytePressure": {
+            "preparation": null,
+            "coldFirst": {
+              "ms": 224.74925200000143,
+              "cpuUserMs": 274.062,
+              "cpuSystemMs": 9.964,
+              "statCalls": 1024,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "truthDelta": {
+                "gitSpawns": 1,
+                "gitRequests": 517,
+                "blobHits": 0,
+                "blobMisses": 512,
+                "blobEntries": 256,
+                "blobBytes": 8388608,
+                "blobEvictions": 256,
+                "blobCacheBytes": 0,
+                "infoHits": 1024,
+                "infoMisses": 512,
+                "infoEntries": 512
+              },
+              "verification": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 276,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "verificationDelta": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 276,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat1": {
+              "ms": 216.6452360000003,
+              "cpuUserMs": 186.991,
+              "cpuSystemMs": 27.263,
+              "statCalls": 1024,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 512,
+                "blobHits": 0,
+                "blobMisses": 512,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 1024,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": {
+                "hits": 0,
+                "misses": 1024,
+                "sourceReads": 1024,
+                "testedLines": 263168,
+                "verifiedSources": 1024,
+                "rejectedSources": 0,
+                "installed": 1024,
+                "evictions": 788,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "verificationDelta": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 512,
+                "entries": 0,
+                "bytes": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat2": {
+              "ms": 294.1723870000005,
+              "cpuUserMs": 153.095,
+              "cpuSystemMs": 34.182,
+              "statCalls": 1024,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 512,
+                "blobHits": 0,
+                "blobMisses": 512,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 1024,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": {
+                "hits": 0,
+                "misses": 1536,
+                "sourceReads": 1536,
+                "testedLines": 394752,
+                "verifiedSources": 1536,
+                "rejectedSources": 0,
+                "installed": 1536,
+                "evictions": 1300,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "verificationDelta": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 512,
+                "entries": 0,
+                "bytes": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "restartCold": {
+              "preparation": null,
+              "query": {
+                "ms": 371.15249699999913,
+                "cpuUserMs": 234.982,
+                "cpuSystemMs": 40.237,
+                "statCalls": 1024,
+                "viewReads": 512,
+                "viewBytes": 16777216,
+                "truthDelta": {
+                  "gitSpawns": 1,
+                  "gitRequests": 517,
+                  "blobHits": 0,
+                  "blobMisses": 512,
+                  "blobEntries": 256,
+                  "blobBytes": 8388608,
+                  "blobEvictions": 256,
+                  "blobCacheBytes": 0,
+                  "infoHits": 1024,
+                  "infoMisses": 512,
+                  "infoEntries": 512
+                },
+                "verification": {
+                  "hits": 0,
+                  "misses": 512,
+                  "sourceReads": 512,
+                  "testedLines": 131584,
+                  "verifiedSources": 512,
+                  "rejectedSources": 0,
+                  "installed": 512,
+                  "evictions": 276,
+                  "entries": 236,
+                  "bytes": 2089072
+                },
+                "verificationDelta": {
+                  "hits": 0,
+                  "misses": 512,
+                  "sourceReads": 512,
+                  "testedLines": 131584,
+                  "verifiedSources": 512,
+                  "rejectedSources": 0,
+                  "installed": 512,
+                  "evictions": 276,
+                  "entries": 236,
+                  "bytes": 2089072
+                },
+                "ok": true,
+                "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+                "outputBytes": 5642,
+                "earlyTruncated": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "trial": 1,
+      "order": [
+        "after",
+        "before"
+      ],
+      "result": {
+        "after": {
+          "bytePressure": {
+            "preparation": null,
+            "coldFirst": {
+              "ms": 312.46685699999944,
+              "cpuUserMs": 329.343,
+              "cpuSystemMs": 34.764,
+              "statCalls": 1024,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "truthDelta": {
+                "gitSpawns": 1,
+                "gitRequests": 517,
+                "blobHits": 0,
+                "blobMisses": 512,
+                "blobEntries": 256,
+                "blobBytes": 8388608,
+                "blobEvictions": 256,
+                "blobCacheBytes": 0,
+                "infoHits": 1024,
+                "infoMisses": 512,
+                "infoEntries": 512
+              },
+              "verification": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 276,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "verificationDelta": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 276,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat1": {
+              "ms": 247.12773899999956,
+              "cpuUserMs": 187.104,
+              "cpuSystemMs": 24.354,
+              "statCalls": 1024,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 512,
+                "blobHits": 0,
+                "blobMisses": 512,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 1024,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": {
+                "hits": 0,
+                "misses": 1024,
+                "sourceReads": 1024,
+                "testedLines": 263168,
+                "verifiedSources": 1024,
+                "rejectedSources": 0,
+                "installed": 1024,
+                "evictions": 788,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "verificationDelta": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 512,
+                "entries": 0,
+                "bytes": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat2": {
+              "ms": 198.81441600000107,
+              "cpuUserMs": 201.909,
+              "cpuSystemMs": 0,
+              "statCalls": 1024,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 512,
+                "blobHits": 0,
+                "blobMisses": 512,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 1024,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": {
+                "hits": 0,
+                "misses": 1536,
+                "sourceReads": 1536,
+                "testedLines": 394752,
+                "verifiedSources": 1536,
+                "rejectedSources": 0,
+                "installed": 1536,
+                "evictions": 1300,
+                "entries": 236,
+                "bytes": 2089072
+              },
+              "verificationDelta": {
+                "hits": 0,
+                "misses": 512,
+                "sourceReads": 512,
+                "testedLines": 131584,
+                "verifiedSources": 512,
+                "rejectedSources": 0,
+                "installed": 512,
+                "evictions": 512,
+                "entries": 0,
+                "bytes": 0
+              },
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "restartCold": {
+              "preparation": null,
+              "query": {
+                "ms": 458.6644610000003,
+                "cpuUserMs": 282.97,
+                "cpuSystemMs": 119.145,
+                "statCalls": 1024,
+                "viewReads": 512,
+                "viewBytes": 16777216,
+                "truthDelta": {
+                  "gitSpawns": 1,
+                  "gitRequests": 517,
+                  "blobHits": 0,
+                  "blobMisses": 512,
+                  "blobEntries": 256,
+                  "blobBytes": 8388608,
+                  "blobEvictions": 256,
+                  "blobCacheBytes": 0,
+                  "infoHits": 1024,
+                  "infoMisses": 512,
+                  "infoEntries": 512
+                },
+                "verification": {
+                  "hits": 0,
+                  "misses": 512,
+                  "sourceReads": 512,
+                  "testedLines": 131584,
+                  "verifiedSources": 512,
+                  "rejectedSources": 0,
+                  "installed": 512,
+                  "evictions": 276,
+                  "entries": 236,
+                  "bytes": 2089072
+                },
+                "verificationDelta": {
+                  "hits": 0,
+                  "misses": 512,
+                  "sourceReads": 512,
+                  "testedLines": 131584,
+                  "verifiedSources": 512,
+                  "rejectedSources": 0,
+                  "installed": 512,
+                  "evictions": 276,
+                  "entries": 236,
+                  "bytes": 2089072
+                },
+                "ok": true,
+                "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+                "outputBytes": 5642,
+                "earlyTruncated": false
+              }
+            }
+          }
+        },
+        "before": {
+          "bytePressure": {
+            "preparation": null,
+            "coldFirst": {
+              "ms": 147.3734280000026,
+              "cpuUserMs": 106.936,
+              "cpuSystemMs": 23.155,
+              "statCalls": 512,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "truthDelta": {
+                "gitSpawns": 1,
+                "gitRequests": 517,
+                "blobHits": 0,
+                "blobMisses": 512,
+                "blobEntries": 256,
+                "blobBytes": 8388608,
+                "blobEvictions": 256,
+                "blobCacheBytes": 0,
+                "infoHits": 512,
+                "infoMisses": 512,
+                "infoEntries": 512
+              },
+              "verification": null,
+              "verificationDelta": null,
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat1": {
+              "ms": 117.70359800000006,
+              "cpuUserMs": 140.825,
+              "cpuSystemMs": 0,
+              "statCalls": 512,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 512,
+                "blobHits": 0,
+                "blobMisses": 512,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 512,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": null,
+              "verificationDelta": null,
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "repeat2": {
+              "ms": 113.98623399999997,
+              "cpuUserMs": 107.983,
+              "cpuSystemMs": 19.652,
+              "statCalls": 512,
+              "viewReads": 512,
+              "viewBytes": 16777216,
+              "truthDelta": {
+                "gitSpawns": 0,
+                "gitRequests": 512,
+                "blobHits": 0,
+                "blobMisses": 512,
+                "blobEntries": 0,
+                "blobBytes": 0,
+                "blobEvictions": 512,
+                "blobCacheBytes": 0,
+                "infoHits": 512,
+                "infoMisses": 0,
+                "infoEntries": 0
+              },
+              "verification": null,
+              "verificationDelta": null,
+              "ok": true,
+              "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+              "outputBytes": 5642,
+              "earlyTruncated": false
+            },
+            "restartCold": {
+              "preparation": null,
+              "query": {
+                "ms": 153.99735300000248,
+                "cpuUserMs": 123.797,
+                "cpuSystemMs": 36.327,
+                "statCalls": 512,
+                "viewReads": 512,
+                "viewBytes": 16777216,
+                "truthDelta": {
+                  "gitSpawns": 1,
+                  "gitRequests": 517,
+                  "blobHits": 0,
+                  "blobMisses": 512,
+                  "blobEntries": 256,
+                  "blobBytes": 8388608,
+                  "blobEvictions": 256,
+                  "blobCacheBytes": 0,
+                  "infoHits": 512,
+                  "infoMisses": 512,
+                  "infoEntries": 512
+                },
+                "verification": null,
+                "verificationDelta": null,
+                "ok": true,
+                "receiptSha256": "dcd2b96dda7a99dc92533bac5fba28ebf741ded9e3769e3fb04f162a189be8e6",
+                "outputBytes": 5642,
+                "earlyTruncated": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "medians": {
+    "before": {
+      "bytePressure": {
+        "coldFirst": 437.9302520000001,
+        "repeat1": 420.3792910000002,
+        "repeat2": 346.6627490000001,
+        "restartCold": 408.11792700000024
+      }
+    },
+    "after": {
+      "bytePressure": {
+        "coldFirst": 312.46685699999944,
+        "repeat1": 247.12773899999956,
+        "repeat2": 294.1723870000005,
+        "restartCold": 458.6644610000003
+      }
+    }
+  },
+  "boundary": "Exact separately imported backend graphs, same process alternating backend order, original concrete host/readBytes identity preserved. View read/stat counters do not replace source ownership. Cold/restart means fresh Truth/View/concrete host, not physical-cold OS cache. Every repeat uses the same host/cache. Corpus seeding and handle construction are outside query clocks; optional cohort preparation is separately fully charged for each session. Full FaceResult (ok/output/optional fields) equality is asserted. Cache retained-byte/entry gauges are logical accounted retention, not RSS. Source, record, total-byte and entry cap fallbacks are measured separately; no universal speed or default index activation claim."
+}

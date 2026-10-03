@@ -21,6 +21,7 @@ import { agentFor } from '../identity.ts'
 import { PathShapeError } from '../path-shape.ts'
 import type { LogEvent, LogReader } from '../log/events.ts'
 import type { AgentId, BlobId, CommitId, RelPath, ViewRev, WriterId } from '../terms.ts'
+import { cloneDelta, copyBytes } from './owned.ts'
 import type {
   Entry,
   LoadViewOptions,
@@ -93,16 +94,6 @@ function ancestorsOf(p: string): string[] {
 
 function under(p: string, dir: string): boolean {
   return dir === '' ? p !== '' : p.startsWith(dir + '/')
-}
-
-function cloneDelta(d: Delta): Delta {
-  switch (d.kind) {
-    case 'add':
-    case 'modify':
-      return { ...d, bytes: d.bytes.slice() }
-    default:
-      return { ...d }
-  }
 }
 
 class MemoryView implements View {
@@ -242,7 +233,7 @@ class MemoryView implements View {
     const p = pathOf(path)
     const own = this.upper.get(p)
     if (own !== undefined) {
-      if (own.kind === 'file') return own.bytes.slice()
+      if (own.kind === 'file') return copyBytes(own.bytes)
       // 符号链接的字节就是它的 target——git 就是这么存的，M1 的 `readAt` 也这么给。
       if (own.kind === 'symlink') return Buffer.from(own.target, 'utf8')
       return null
@@ -292,12 +283,13 @@ class MemoryView implements View {
   private async copyUp(p: string): Promise<Entry> {
     const own = this.upper.get(p)
     if (own !== undefined && own.kind !== 'tombstone') return own
-    const meta = this.lower.base === null ? null : await this.lower.stat(p)
+    const found = this.lower.base === null ? null : await this.lower.stat(p)
+    const meta = found === null ? null : { ...found }
     if (meta === null) throw new Error(`路径不存在：${p}`)
     if (meta.kind === 'file') {
       const bytes = await this.lower.read(p)
       // 下层的 id 来自 `stat` 那一行（M1 从树里读的），**一个字节的内容都不用读来算它**。
-      return { kind: 'file', bytes: bytes ?? new Uint8Array(0), mode: meta.mode, blob: meta.id as BlobId }
+      return { kind: 'file', bytes: copyBytes(bytes ?? new Uint8Array(0)), mode: meta.mode, blob: meta.id as BlobId }
     }
     if (meta.kind === 'symlink') {
       const bytes = await this.lower.read(p)
@@ -394,21 +386,28 @@ class MemoryView implements View {
   private async applyOne(d: Delta, known?: BlobId): Promise<void> {
     switch (d.kind) {
       case 'add':
-      case 'modify':
-        this.setSlot(pathOf(d.path), {
+      case 'modify': {
+        const path = pathOf(d.path), mode = normMode(d.mode)
+        const bytes = copyBytes(d.bytes)
+        const blob = await this.idFor(bytes, known)
+        this.setSlot(path, {
           kind: 'file',
-          bytes: d.bytes.slice(),
-          mode: normMode(d.mode),
-          blob: await this.idFor(d.bytes, known),
+          bytes,
+          mode,
+          blob,
         })
         return
-      case 'symlink':
-        this.setSlot(pathOf(d.path), {
+      }
+      case 'symlink': {
+        const path = pathOf(d.path), target = d.target
+        const blob = await this.idFor(Buffer.from(target, 'utf8'), known)
+        this.setSlot(path, {
           kind: 'symlink',
-          target: d.target,
-          blob: await this.idFor(Buffer.from(d.target, 'utf8'), known),
+          target,
+          blob,
         })
         return
+      }
       case 'delete': {
         const p = pathOf(d.path)
         for (const k of this.subtree(p)) this.dropSlot(k)
@@ -445,7 +444,7 @@ class MemoryView implements View {
 
   async write(path: RelPath, bytes: Uint8Array, mode: number = MODE_FILE): Promise<ViewRev> {
     const p = pathOf(path)
-    const d: Delta = { kind: this.kindFor(p), path: p, bytes, mode: normMode(mode) }
+    const d: Delta = { kind: this.kindFor(p), path: p, bytes: copyBytes(bytes), mode: normMode(mode) }
     await this.check(d)
     await this.applyOne(d)
     return this.record(d)
@@ -492,8 +491,10 @@ class MemoryView implements View {
   }
 
   async applyDelta(deltas: Delta[]): Promise<ViewRev> {
+    // Capture both bytes and primitive labels before the first check/put await.
+    const captured = deltas.map(cloneDelta)
     let last = this.cur
-    for (const d of deltas) {
+    for (const d of captured) {
       await this.check(d)
       await this.applyOne(d)
       last = this.record(d)
@@ -522,7 +523,8 @@ class MemoryView implements View {
    * 变更序列不在这里面，所以 `floor` 立起来：`diff` 从此不回答更早的修订点。
    */
   async seed(s: ViewState): Promise<void> {
-    for (const e of s.upper) {
+    const rev = s.rev, points = [...s.points], upper = s.upper.map(e => ({ ...e }))
+    for (const e of upper) {
       if (e.kind === 'tombstone') this.setSlot(e.path, { kind: 'tombstone' })
       else if (e.kind === 'symlink') {
         // 软链的快照条目只有 `target`（与 `view/symlink` 事件同一档）：对象地址问下层要。
@@ -533,19 +535,20 @@ class MemoryView implements View {
         })
       } else {
         const bytes = await this.lower.readBlob(e.blob)
-        this.setSlot(e.path, { kind: 'file', bytes, mode: normMode(e.mode), blob: e.blob })
+        this.setSlot(e.path, { kind: 'file', bytes: copyBytes(bytes), mode: normMode(e.mode), blob: e.blob })
       }
     }
-    for (const p of s.points) this.points.add(p)
-    this.cur = Math.max(this.cur, s.rev)
-    this.floor = s.rev
+    for (const p of points) this.points.add(p)
+    this.cur = Math.max(this.cur, rev)
+    this.floor = rev
   }
 
-  async replay(e: LogEvent): Promise<void> {
+  async replay(raw: LogEvent): Promise<void> {
+    const e = { ...raw }
     switch (e.t) {
       case 'view/write': {
         const bytes = await this.lower.readBlob(e.blob)
-        const d: Delta = { kind: this.kindFor(e.path), path: e.path, bytes, mode: e.mode }
+        const d: Delta = { kind: this.kindFor(e.path), path: e.path, bytes: copyBytes(bytes), mode: e.mode }
         // **事件里那一栏就是这一条的 id**（`putBlob` 在落日志之前问过 git），不必再问一次。
         await this.applyOne(d, e.blob)
         this.note(e.rev, d)
@@ -598,8 +601,9 @@ export async function loadView(log: LogReader, agent: WriterId, opts: LoadViewOp
   const stop = opts.upToRev
   const snap = opts.snap
   const useSnap = snap !== undefined && (stop === undefined || snap.state.rev <= stop)
+  const from = useSnap ? snap.seq : 0
   if (snap !== undefined && useSnap) await view.seed(snap.state)
-  for await (const e of log.readByWriter(agent, useSnap ? snap.seq : 0)) {
+  for await (const e of log.readByWriter(agent, from)) {
     const rev = (e as { rev?: unknown }).rev
     if (stop !== undefined && typeof rev === 'number' && rev > stop) continue
     await view.replay(e)

@@ -116,7 +116,15 @@ test('① 一帧的字节：逐字节等于原件，而且**一次绘制恰一�
     '补的那几行该是空白（不是内容）',
   )
   assert.equal(panel.length, 16, `那一块该是恒定 16 行（K），拿到 ${panel.length} 行`)
-  assert.equal(frame.lines.length, 7, `这一份小账画出来该是 7 行（右栏放宽到 59 列后，原先折的那行放得下了），实得 ${frame.lines.length} 行`)
+  // 100 列仍分成左 38 / 右 59；轮次总数如实报图上步数之后，左栏标题折成三行。
+  // 这份内容因此占 8 行（不是固定区域 K 的大小）；总数与最近标记都必须完整可见。
+  assert.deepEqual(frame.columns, { left: 38, right: 59 }, '两栏预算没有为了总数改动')
+  assert.deepEqual(
+    panel.slice(1, 4).map((r) => r.split('│')[1]?.trimEnd()),
+    ['轮次 r1 · 状态 Planning · 转移 1 条 ·', '图上 1 步 · 打回 0 次 ·', '最近一条落在这一轮'],
+    '三条实际写出的标题行该完整保留转移、图上步数与最近标记，不能靠截断省行',
+  )
+  assert.equal(frame.lines.length, 8, `这一份小账画出来该是 8 行（左栏总数标题折成三行，区域仍补到 K=16），实得 ${frame.lines.length} 行`)
   assert.deepEqual(asked, { columns: 100, height: 16 }, '渲染拿到的尺寸不是终端量到的那一份')
   console.log(`① 读数：手写那一份 1 笔 write（2 永久行 + 3 行面板拼在里头，U3）· frameOf 那一份 ${panel.length} 行逐字相同 · 渲染拿到的尺寸 ${JSON.stringify(asked)}`)
 })

@@ -1,3 +1,4 @@
+// tier: real —— actual Git/Truth assembly and M0 runtime fixtures; no provider traffic
 // 四条约束的**常驻**测试：用这个仓库自己那一刻的方针字节走产品装配，期望 0 违反。出处：路线图
 // 维护批那一行 ①（真状态走产品装配喂 `checkConstraints`，期望 0 违反；改动约束或约束住的那几份
 // 真实文件时，当次 CI 变红。**不接发送路径**：这是门后的哨，不是门前的闸）。
@@ -38,7 +39,7 @@ import type { AgentId, BlobId, BranchId, ContractId, RefName } from '../terms.ts
 import { openTruth } from '../truth/truth.ts'
 import { assemble } from './assemble.ts'
 import type { EnvFacts } from './constraints.ts'
-import { checkConstraints, envFacts, formatViolation, sharedPrefixLen } from './constraints.ts'
+import { checkConstraints, constraintWitness, envFacts, formatViolation, sharedPrefixLen } from './constraints.ts'
 import type { Prefix, SegmentId, SegmentValue } from './contract.ts'
 import { SUBAGENT_PROTOCOL } from './protocol.ts'
 import { render, stableStringify } from './render.ts'
@@ -206,7 +207,8 @@ test('② 五路注入：方针 · 文件内容 · 上一步结果 · 系统状�
     // 环境那一档另走一条：**真 facts** 下把宿主名放进系统状态，报的是 env。
     const host = envFacts().hostname
     assert.notEqual(host, '', '宿主名是空的——这一条注入测不成')
-    assert.deepEqual(kws({ 系统状态: { workspace: 'fugue', host } }, envFacts()), ['env@系统状态'])
+    // This witness injects the actual hostname only; PID noise has its own proof below.
+    assert.deepEqual(kws({ 系统状态: { workspace: 'fugue', host } }, { hostname: host, pid: 0 }), ['env@系统状态'])
 
     // 负对照：同一条路注入相对路径 → 一条都不报。
     assert.deepEqual(kws({ 上一步结果: '结果在 src/index.ts\n' }), [], '相对路径被当成绝对路径报了')
@@ -232,15 +234,33 @@ test('③ 环境那一档：受控 facts 的 0 条是按契约，而那一档在
       '空宿主名的受控 facts 下不该报环境标识（这一档的契约就是"不查"）',
     )
     assert.deepEqual(
-      checkConstraints(SUBAGENT_PROTOCOL, injected, null, '这一步', envFacts()).map((v) => `${v.kind}@${v.where}`),
+      checkConstraints(SUBAGENT_PROTOCOL, injected, null, '这一步', { hostname: envFacts().hostname, pid: 0 }).map((v) => `${v.kind}@${v.where}`),
       ['env@系统状态'],
       '真 facts 下注入的宿主名没报出来——那一档死了',
     )
     assert.deepEqual(checkConstraints(SUBAGENT_PROTOCOL, w.segments, null, '这一步', CONTROLLED), [])
+    // Isolate actual PID injection from the policy's existing numeric collisions.
+    const pidFacts: EnvFacts = { hostname: '', pid: envFacts().pid }
+    const pidBaseline = checkConstraints(SUBAGENT_PROTOCOL, w.segments, null, '这一步', pidFacts)
+    const pidInjected = checkConstraints(SUBAGENT_PROTOCOL,
+      { ...w.segments, 系统状态: { workspace: 'fugue', pid: pidFacts.pid } }, null, '这一步', pidFacts)
+    assert.deepEqual(pidInjected.filter(v => v.where !== '系统状态'), pidBaseline,
+      'PID injection must not admit unrelated new environment leaks')
+    const systemPID = pidInjected.filter(v => v.where === '系统状态')
+    assert.equal(systemPID.length, 1, 'actual PID detection must stay active independently of the hostname witness')
+    assert.equal(systemPID[0]!.kind, 'env')
+    assert.match(systemPID[0]!.detail, new RegExp(`(?:^|[^0-9])${pidFacts.pid}(?![0-9])`))
     // 读数（**不断言条数**）：真 facts 下真方针会报几条、报的是什么——它随这台机器的 pid 走。
-    const real = checkConstraints(SUBAGENT_PROTOCOL, w.segments, null, '这一步', envFacts())
+    const facts = envFacts()
+    const real = checkConstraints(SUBAGENT_PROTOCOL, w.segments, null, '这一步', facts)
     for (const v of real.filter((x) => x.kind === 'env')) {
       assert.equal(v.where, '项目方针', `投影出来的段带上了环境标识：${v.where} —— ${v.detail}`)
+      const lead = 'A 区那一段里有环境标识：'
+      assert.ok(v.detail.startsWith(lead))
+      const hit = v.detail.slice(lead.length)
+      assert.ok(w.state.policy.includes(hit), 'only a real current-policy collision may explain baseline noise')
+      assert.ok((facts.hostname !== '' && hit === facts.hostname) || new RegExp(`^(?:[^0-9])?${facts.pid}$`).test(hit),
+        'baseline noise must identify this hostname or PID, not an arbitrary leaked field')
     }
     console.log(
       `③ 读数：真 facts（宿主名 ${envFacts().hostname} · pid ${process.pid}）下真方针报 ${real.length} 条：${
@@ -304,7 +324,7 @@ test('④ quiet 档：只动 B 区 · 真跑一步空轮次，两处都 0 违例
  * 改写"。抓住的变异：把约束 1 放行成恒真（条数变 0）· 把比较面从整段 C 换成别的东西（位置或条数
  * 变）· 把这一条挪出 C 区（`where` 变）。
  */
-test('⑤ 非静默档（定性）：真跑一步恰好一条 append-only，位置在新轮次那个字节上', async () => {
+test('⑤ 非静默档：旧整段定性读数保留，具名见证验积累段追加为 0 违反', async () => {
   const w = await realWorkspace('step')
   const log = openLog(w.root, { write: AGENT })
   try {
@@ -336,6 +356,14 @@ test('⑤ 非静默档（定性）：真跑一步恰好一条 append-only，位�
       '第一处不同的位置不在新轮次那一刀上——这一条定性读数变了',
     )
     assert.match(v?.detail ?? '', new RegExp(`前 ${first.length} 个字节相同`), '报出来的话里没有那个位置')
+    const witness = constraintWitness(SUBAGENT_PROTOCOL, w.segments, w.prefix)
+    assert.ok(witness !== null)
+    assert.deepEqual(checkConstraints(SUBAGENT_PROTOCOL, ran.segments, w.prefix, '具名积累段', CONTROLLED, ran.prefix, witness), [])
+    for (const runtimeText of ['改写了原始输入', '']) {
+      const broken = assembled({ ...step.next, runtime: runtimeText })
+      const faults = checkConstraints(SUBAGENT_PROTOCOL, broken.segments, w.prefix, '真正改写', CONTROLLED, broken.prefix, witness)
+      assert.deepEqual(faults.map(fault => [fault.kind, fault.where]), [['append-only', '运行时上下文']])
+    }
   } finally {
     await log.close()
     await w.close()

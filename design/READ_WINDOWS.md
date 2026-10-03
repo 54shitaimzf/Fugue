@@ -1,0 +1,46 @@
+# read 的行窗口（路线图 0.2.5 单元）
+
+`read` 的目录早已声明 `offset`（首行，1-based）和 `limit`（最多几行），旧实现却忽略了这两个字段。
+这一单元补齐这条既有用法，并把文本解码下推到选中的字节段；不是发布新版本，也不表示 0.2.5 整站已经收口。
+
+## 用法和边界
+
+- 不给 `offset` / `limit`：原来的整文件回执逐字节不变，包括原始换行与字节/行数/模式头。
+  **这一档不带行号**——正文就是文件的字节，`edit` 的 `old_string` 可以直接从这里取。
+- 给其中任意一项：只显示选中的行，行号仍是原文件行号（`N\t正文`）。`offset` 缺省 1，`limit` 缺省读到末尾。
+  这一档的正文带 `N\t` 前缀，拿去做 `old_string` 之前要先去掉它。
+- **目录里那句描述说的就是上面这两句**：原先写的是 `return its text with line numbers`——无条件
+  承诺行号，而整文件那一档从来没有行号（架构 § 8.10「只公布能兑现的选项」管的正是这件事）。
+  现在它把行号挂在切片那半句上，整文件那一档写明「原样」。
+- **窗口档的头里点出这一份正文是哪几行**（`· lines 100–599 shown` / `· line 4 shown` /
+  `· no lines shown`）。不点明的话一条回执里会出现两套互不相干的数：头里的「N 字节 · L 行」算的是
+  整个文件，而 `capReceipt` 的截断标记里 `N bytes and L lines in all` 算的是这一条回执——施工当场
+  读到过 `31000 bytes · 1000 lines` 的头配 `17544 bytes and 501 lines in all` 的标记。
+- `offset` 必须是正的安全整数，`limit` 必须是非负安全整数；`limit: 0`、越过文件末尾和空文件都给空正文。坏参数在读文件前拒绝。
+- 头里的字节/行数仍统计完整原文件。末尾 LF 不额外算一行，CRLF 的 CR 原样保留；非法 UTF-8 与原实现一样用替代字符表示。
+- 目录、软链和缺失路径仍共用宿主的文件检查；`read_image` 不经过文本窗口。
+- schema 的字节没有改，`read` 的**描述**改了一句（见上）。描述属于前缀字节，所以
+  `src/model/fixtures/*.json`（`node tools/make-fixtures.ts`）与回放夹具里那份录制请求
+  （`node tools/adapt-wire-in.ts`，来历见 `src/cli/__fixture__/wire-in/PROVENANCE.md`）一并改齐；
+  响应、usage、timings 一个字节都没动。窗口修复兑现架构 § 8.10「只公布能兑现的选项」；回执仍从
+  原来的统一出口经过 `capReceipt`。
+
+## 实现接缝
+
+`src/tools/read-window.ts` 先找 LF 字节边界，统计完整文件行数，随后仅解码选中的连续 UTF-8 段。
+`ToolHost.readTextWindow` 是可选读口；产品宿主与原 `readBytes` 共用视图读取和文件检查。
+没有这个读口的旧宿主/夹具由工具面从 `readBytes` 退回，结果相同，不要求改变冻结的 `View` / `Truth` 契约。
+
+**完整 blob 仍会取回，完整字节仍会扫描以统计行数。**这不是 git 的范围 I/O，也不是持久行索引。
+大范围窗口仍可能构造长回执，8 KiB 截断继续归原回执层；早停属于路线图 0.3.0。
+
+## 验证
+
+- `node tools/test-entry.js fast src/tools/read-window.test.ts src/tools/execute.test.ts`
+- `node tools/test-entry.js fast` / `node tools/test-entry.js real`
+- `node tools/bench-read-window.js`：确定语料，先校验与解码后拆行的参照逐字相同，再分别计时；不作速度断言
+
+基准隔离的是解码/选行机制，不是完整工具调用或 git I/O。在这份云工作区的首次 7 趟中位数，
+8,400,000 字节、150,000 行、取第 75,000 行起 20 行：参照 129.073 ms，字节窗口 13.441 ms；
+实际解码从 8,400,000 字节变成 1,119 字节。此云工作区同时运行其他检查，读数只供趋势参考，
+不作为一等档 ext4 主机的性能常数，也不证明真实隔离成功路径。

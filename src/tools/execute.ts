@@ -18,10 +18,14 @@ import type { Capability, Denied } from '../capability/table.ts'
 // **路径形状那一个错来自叶子**（`src/path-shape.ts`）：视图那一层抛它，这一层按它接成一条结果。
 // 不 import 视图那边——这一层的头注写着"不认识视图"，而这条规矩两层共用，所以它有一条自己的家。
 import { PathShapeError } from '../path-shape.ts'
-import { lineCountOfBytes } from './receipt.ts'
-// **行窗口住工具面**（`window.ts`）：字节已经是整对象，要省的是解码与行切——在这里做窗口算术
-// 零接口改动、逐字节可证，将来 serve 化时它跟 `readBytes` 一起搬，形状不返工。
-import { lineWindow, windowNote } from './window.ts'
+import { lineCount } from './receipt.ts'
+import { textWindowOf, numberedWindowOf, windowNoteOf } from './read-window.ts'
+import type { ReadWindow, ReadText } from './read-window.ts'
+import type { WalkResult } from './walk.ts'
+import { SearchRows, searchLines, SEARCH_PREFETCH_ROWS, SEARCH_PREFETCH_MAX_ROWS } from './search-receipt.ts'
+import type { SearchCoverage } from './search-receipt.ts'
+import { requiredLiteralTrigrams } from '../search/regex-literal.ts'
+import { hasGrepVerifier, readyGrepBatch, verifiedGrepMatches } from './grep-verifier.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -63,6 +67,8 @@ export interface ToolHost {
    * 文本工具自己在这一层解（`utf8Of`），二进制工具原样拿走。
    */
   readBytes(rel: string): Promise<{ readonly bytes: Uint8Array; readonly mode: number } | null>
+  /** 行窗口的可选读口：只解选中那段文本。缺席时由 readBytes 原样退回；图像/整文件仍走字节口。 */
+  readonly readTextWindow?: (rel: string, window: ReadWindow) => Promise<(ReadText & { readonly mode: number }) | null>
   writeBytes(rel: string, bytes: Uint8Array): Promise<{ readonly rev: number }>
   /**
    * 列一层。**只列直接的孩子，不递归**——递归是另一条（`walk`），因为"走多深"这件事
@@ -76,6 +82,10 @@ export interface ToolHost {
    * 那一条），而不封顶的深树能把一步走成挂死。两条都由实现那一侧封——这一层只消费结果。
    */
   walk(): Promise<readonly string[]>
+  /** 可选详细读口；缺席时枚举完整性未知，不把截掉的候选说成没有匹配。 */
+  readonly walkDetailed?: () => Promise<WalkResult>
+  /** 可选辅助候选过滤。仅接收必需的三元组，缺席/失败/坏结果都按原批扫描。 */
+  readonly filterCandidates?: (paths: readonly string[], required: readonly string[]) => Promise<readonly string[]>
   /**
    * **把这几条路径的内容先取回一层来**（这一站加的，可选）。它是一道**缝**：实现了就在这一层
    * 批量取（一条 `objectMany('contents', …)`），没实现就照旧"用一条读一条"——**预取缺席 =
@@ -83,8 +93,11 @@ export interface ToolHost {
    *
    * 它是**提示，不是承诺**：谁也不许依赖"调过之后一定命中"（上层可能是空的 · 容量可能不够），
    * 读那一侧照旧按"读不到就问"的顺序走。`grep` 在逐文件读之前调它一次。
+   *
+   * 返回值是**覆盖到的前缀长度**（缺省 = 全部）：实现按字节封顶时只取得回前面那几条，`grep`
+   * 就只读这一段、下一轮从没覆盖的地方起重新成批——而不是把整批读完、让没取的那些各走一趟。
    */
-  readonly prefetch?: (paths: readonly string[]) => Promise<void>
+  readonly prefetch?: (paths: readonly string[]) => Promise<void | number>
   readonly edit: (rel: string, raw: EditRaw) => Promise<{ readonly rev: number; readonly changed: boolean }>
   /**
    * **执行面在哪儿**：这一格的物化根（绝对路径，一格一个）。`bash` / `run_action` 跑在那儿。
@@ -357,7 +370,7 @@ function wholeArg(
   args: Readonly<Record<string, unknown>>,
   name: 'offset' | 'limit',
 ): { readonly value: number | null } | { readonly why: string } {
-  const v = arg(args, name)
+  const v = args[name]
   if (v === undefined) return { value: null }
   if (typeof v === 'number' && Number.isSafeInteger(v) && v >= (name === 'offset' ? 1 : 0)) return { value: v }
   const said = typeof v === 'string' ? JSON.stringify(v) : String(v)
@@ -371,29 +384,40 @@ function wholeArg(
 const readFace: ToolFn = async (args, host) => {
   const path = text(args, 'path')
   if (path === null) return missing('read', 'path')
-  // **窗口先问清楚，再伸手**：两个参数一个都没给就是整档——那一档与从前逐字节相同。
-  const offset = wholeArg(args, 'offset')
-  if ('why' in offset) return no(offset.why)
-  const limit = wholeArg(args, 'limit')
-  if ('why' in limit) return no(limit.why)
+  const offsetArg = wholeArg(args, 'offset')
+  if ('why' in offsetArg) return no(offsetArg.why)
+  const limitArg = wholeArg(args, 'limit')
+  if ('why' in limitArg) return no(limitArg.why)
+  const hasWindow = offsetArg.value !== null || limitArg.value !== null
+  if (hasWindow) {
+    const offset = offsetArg.value ?? 1
+    const limit = limitArg.value ?? undefined
+    const window: ReadWindow = { offset, ...(limit === undefined ? {} : { limit }) }
+    let got: (ReadText & { readonly mode: number }) | null
+    if (host.readTextWindow !== undefined) {
+      got = await host.readTextWindow(path, window)
+    } else {
+      const raw = await host.readBytes(path)
+      got = raw === null ? null : { ...textWindowOf(raw.bytes, window), mode: raw.mode }
+    }
+    if (got === null) return no(`no ${path} in the view (unreadable reads as absent — this layer does not tell the two apart).`)
+    // **头里点出窗口**（`windowNoteOf`）：头里那两个数是整文件的，而截断标记里那两个是这一条
+    // 回执的——不点明的话一条回执里就有两套各差一倍的数，谁都不知道哪个说的是哪件事。
+    return ok(
+      `${path} (${got.byteLength} bytes · ${got.lines} lines · mode ${got.mode.toString(8)}${windowNoteOf(got, offset)})\n` +
+        numberedWindowOf(got, offset),
+    )
+  }
   const got = await host.readBytes(path)
   if (got === null) return no(`no ${path} in the view (unreadable reads as absent — this layer does not tell the two apart).`)
-  const size = `${got.bytes.byteLength} bytes`
-  const mode = `mode ${got.mode.toString(8)}`
-  if (offset.value === null && limit.value === null) {
-    // **整档不带行号**（定案：整读的产物是 `edit`/`write` 的底稿，`old_string` 要逐字取自原文，
-    // 每行一个 `N\t` 前缀是每行都付的剥离税；行号是导航信息，grep 与切片档已经给了）。
-    //
-    // **行数走 `receipt.ts` 那一处**：这一行里的「L 行」与截断标记里的「共 L 行」必须是同一个数
-    // ——两处各算一次，两个数就迟早不一样（施工当场撞到过：头里 401 行、标记里 400 行）。
-    // 整档本来就要把整段解出来，所以数的是字节侧那一把尺（同一个口径的另一种数法，更便宜）。
-    const lines = lineCountOfBytes(got.bytes)
-    return ok(`${path} (${size} · ${lines} lines · ${mode})\n${utf8Of(got.bytes)}`)
-  }
-  // 切片档：**一次扫描**既报出整个文件的行数（头上那一句要它），也定下这一窗的字节区间；
-  // 正文每行带**原文件行号**，头在原句尾上加一句窗口标注。同一个「L 行」口径。
-  const w = lineWindow(got.bytes, offset.value ?? 1, limit.value)
-  return ok(`${path} (${size} · ${w.total} lines · ${mode}${windowNote(w)})\n${w.text}`)
+  const body = utf8Of(got.bytes)
+  // 整文件读保持原样：统计和回执截断仍用 receipt.ts 的共同口径。
+  // **这一档不带行号**，所以目录里那句描述只许把行号挂在切片那一档上（架构 § 8.10 只公布能
+  // 兑现的选项）——两种格式混在一个 `read` 里的时候，模型拿到的 `old_string` 就带着 `N\t`。
+  const lines = lineCount(body)
+  return ok(
+    `${path} (${got.bytes.byteLength} bytes · ${lines} lines · mode ${got.mode.toString(8)})\n${body}`,
+  )
 }
 
 const writeFace: ToolFn = async (args, host) => {
@@ -432,32 +456,49 @@ const readImageFace: ToolFn = async (args, host) => {
 }
 
 /**
- * 发现类那两条工具共用的「范围」那一栏（`path`）。**三句话，各管一处细节**：
+ * 发现类那两条工具的**范围**：一条相对路径，可以指目录（含其后代），也可以直接指一条文件。
  *
- *   · `scopeOf`：尾巴上的斜杠折掉——`src/` 与 `src` 说的是同一个范围，而两种写法模型都会给。
- *   · `inScope`：**空范围是整个视图**（不给 `path` 就是把整棵树看一遍）；范围指着一个**文件**
- *     时，那个文件自己也在范围里。原先这一处的判据只有 `startsWith(dir + '/')`，于是模型说
- *     "就看这一份"（`path: 'src/b.ts'`）时一个候选都取不到，回一句"没有匹配"——看起来只是
- *     "那儿真没有"。
- *   · `matchesInScope`：模式按**相对范围**再配一次——`pattern: '*.ts'` + `path: 'src'` 这种
- *     写法（范围给在参数里、模式只写文件名那一段）也配得上；同样的道理，取不到时它只会报
- *     "没有匹配"。
- *
- * 三条都**只加不减**：没有 `path` 那一次问法与从前逐字节相同（空串那一档），带 `path` 的那些
- * 只会比从前多取到东西，不会少。
+ * **尾斜杠在这里归一掉**：`path: 'src/'` 不归一的话 `dir + '/'` 成了 `'src//'`、`path === dir`
+ * 也不成立，候选集于是是空集。而空集在发现类工具上**看起来只是"真没有"**——一个字的错都不报。
  */
 export function scopeOf(raw: string | null, fallback: string): string {
   return (raw ?? fallback).replace(/\/+$/, '')
 }
 
-/** 这一条路径在不在这个范围里（空串 = 整个视图 · 范围本身那一条也在）。 */
+/** 这条路径在范围里吗。空范围 = 整个视图；范围指到一条文件时它自己也算在内。 */
 export function inScope(path: string, dir: string): boolean {
   return dir === '' || path === dir || path.startsWith(dir + '/')
 }
 
-/** 在范围里再配一次模式：模式只写文件名那一段时（`*.ts` + 范围 `src`）也要配得上。 */
+/**
+ * 路径模式**在范围内也配一次**（视图根相对的那一份之外）。
+ *
+ * `path: 'src'` 或 `cwd: 'src'` 之下，模型给的最自然的那个模式是 `*.ts`——它说的是"范围里的
+ * 文件名"，而视图根相对的路径是 `src/a.ts`，`^[^/]*\.ts$` 配不上。这一条坑在 `glob` 工具上
+ * 真烧过一格（见 `globToRe` 的注释：模型先 `find` 看见 `./count.ts`，再用惯常模式问 `glob`
+ * 拿到空列表，四步全在 `find`/`ls`，写 0 条），而且**这一条不报错**。
+ *
+ * 两边取并：既认"从视图根看是这样"，也认"从范围里看是这样"。
+ */
 export function matchesInScope(re: RegExp, path: string, dir: string): boolean {
-  return re.test(path) || (dir !== '' && path.length > dir.length && re.test(path.slice(dir.length + 1)))
+  if (re.test(path)) return true
+  return dir !== '' && path.length > dir.length && re.test(path.slice(dir.length + 1))
+}
+
+/**
+ * 走一遍树**并带回这一趟枚举全不全**。
+ *
+ * 详细读口（`walkDetailed`）在场时它说得出"碰了哪个上限"；不在场时**完整性是"不知道"**
+ * （`known: false`），不是"完整"——回执那一层据此说 `Enumeration completeness unavailable`，
+ * 而不是替一次没做过的枚举打包票。生产宿主（`createToolHost`）一定带这个读口，`known: false`
+ * 那一支只有旧宿主与夹具走得到。
+ */
+async function searchWalk(host: ToolHost): Promise<{ readonly paths: readonly string[]; readonly coverage: SearchCoverage }> {
+  if (host.walkDetailed !== undefined) {
+    const got = await host.walkDetailed()
+    return { paths: got.paths, coverage: { known: true, truncated: got.truncated, limits: got.limits } }
+  }
+  return { paths: await host.walk(), coverage: { known: false, truncated: false, limits: [] } }
 }
 
 /**
@@ -468,52 +509,116 @@ const globFace: ToolFn = async (args, host) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('glob', 'pattern')
   const dir = scopeOf(text(args, 'path'), '')
-  const all = await host.walk()
+  const all = await searchWalk(host)
   const re = globToRe(pattern)
-  const hit = all.filter((p) => inScope(p, dir) && matchesInScope(re, p, dir))
-  return ok(hit.length === 0 ? `no path matches ${pattern}.` : `${hit.length} paths:\n${hit.join('\n')}`)
+  // **路径匹配一个文件都不读**：枚举完整时命中总数是白捡的，所以先数出来、再截前缀。
+  // 丢掉它就等于把可知的数说成 unknown，而模型最需要的恰好是"一共匹配 5000 条、我该收紧"。
+  const hit = all.paths.filter((path) => inScope(path, dir) && matchesInScope(re, path, dir))
+  const rows = new SearchRows()
+  for (const path of hit) if (!rows.add(path)) break
+  // 枚举自己不全（或完整性未知）的时候 `hit.length` 不是总数，那一档仍然不报。
+  const total = all.coverage.known && !all.coverage.truncated ? hit.length : null
+  return ok(rows.render('paths',`no path matches ${pattern}.`,all.coverage,total))
+}
+
+async function indexedCandidates(host: ToolHost, paths: readonly string[], required: readonly string[] | null): Promise<readonly string[]> {
+  const original = [...paths]
+  if (required === null) return original
+  try {
+    if (typeof host.filterCandidates !== 'function') return original
+    // 可选提供者拿独立冻结副本；失败回原批，不能改原批/后续查询条件。
+    const filtered = await host.filterCandidates(Object.freeze([...original]), Object.freeze([...required]))
+    if (!Array.isArray(filtered)) return original
+    const allowed = new Set(original)
+    const kept = new Set<string>()
+    for (const path of filtered) {
+      if (typeof path !== 'string' || !allowed.has(path) || kept.has(path)) return original
+      kept.add(path)
+    }
+    // 可选实现不许重排/注入路径；数据来源和逐行匹配仍在原路径上。
+    return original.filter(path => kept.has(path))
+  } catch {
+    return original
+  }
 }
 
 const grepFace: ToolFn = async (args, host, ctx) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('grep', 'pattern')
   const dir = scopeOf(text(args, 'path'), ctx.cwd)
+  const mode = args.output_mode === undefined ? 'content' : args.output_mode
+  if (mode !== 'content' && mode !== 'files_with_matches' && mode !== 'count') {
+    return no('grep output_mode must be content, files_with_matches, or count.')
+  }
+  if (args.glob !== undefined && typeof args.glob !== 'string') {
+    return no('grep glob must be a path-pattern string.')
+  }
   let re: RegExp
   try {
     re = new RegExp(pattern)
   } catch (err) {
     return no(`that is not a regular expression: ${(err as Error).message}`)
   }
-  const all = await host.walk()
-  // **先按一次批量把候选的内容取回来**：它是提示，缺席或失败都退回今天的逐文件读
-  // ——这台宿主没有那道缝（测试夹具）、或者那一层没接上真源，都只是慢一点。
-  //
-  // **读那道缝这件事自己包在 try 里**：`host` 可能是负对照那种"读任何字段都抛"的假体
-  // （`execute.test.ts` 的 ①d 用它），那种宿主上"没有这道缝"该走缺席那一条，不该把这一趟打死。
-  let prefetch: ((paths: readonly string[]) => Promise<void>) | undefined
+  const required = requiredLiteralTrigrams(pattern, re.flags)
+  const pathPattern = typeof args.glob === 'string' ? globToRe(args.glob) : null
+  const walked = await searchWalk(host)
+  const all = walked.paths.filter(path =>
+    inScope(path, dir) && (pathPattern === null || matchesInScope(pathPattern, path, dir)),
+  )
+  // 只预取筛后的候选。可选口缺席时仍逐文件读；失败仍由真源读口报出。
+  let prefetch: ((paths: readonly string[]) => Promise<void | number>) | undefined
   try {
     prefetch = host.prefetch
   } catch {
     prefetch = undefined
   }
-  // **候选先按范围收窄，再取那一批**：预取是"接下来要读的那几份先取回来"，范围外的不该占这一批
-  // ——一条窄范围加上一棵大树的问法上，差的就是几十上百份的内容。
-  //
-  // **收窄只改那一批，不改结果**：结果那一路的判据在下面那个循环里，它自己按范围判一次；预取
-  // 始终只是提示（缺席 · 失败 · 少几份，都只是慢一点）。
-  if (prefetch !== undefined) await prefetch(all.filter((p) => inScope(p, dir)))
-  const hits: string[] = []
-  for (const path of all) {
-    if (!inScope(path, dir)) continue
-    const got = await host.readBytes(path)
-    if (got === null) continue
-    utf8Of(got.bytes)
-      .split('\n')
-      .forEach((line, i) => {
-        if (re.test(line)) hits.push(`${path}:${i + 1}:${line}`)
-      })
+  const rows = new SearchRows()
+  let batchRows = SEARCH_PREFETCH_ROWS
+  scan: for (let at = 0; at < all.length;) {
+    let batch = all.slice(at, at + batchRows)
+    // Prove ALL original paths before filtering; partial hits cannot compress prefix coverage.
+    const ready = prefetch !== undefined && hasGrepVerifier(host) ? await readyGrepBatch(host, batch, re) : undefined
+    // 候选过滤也只做当前批；索引 miss 不许提前枚举/读取后面的全树。
+    let candidates = await indexedCandidates(host, batch, required)
+    // 最多预取当前批；回执够了以后不再预取后面整棵树。预取按字节封顶时只覆盖候选的前缀：读也只读
+    // 这一段（至少一个，保证前进），批在第一条没覆盖的候选处截断，其余留给下一轮重新成批。
+    if (prefetch !== undefined) {
+      const planned = ready?.covered(candidates)
+      const covered = planned === undefined ? await prefetch(candidates) : planned
+      // 可选口的数值只有稠密候选前缀计数这一种含义；坏形状仍扫描原批，不能跳过路径。
+      if (typeof covered === 'number' && Number.isSafeInteger(covered) && covered >= 0 && covered <= candidates.length) {
+        const kept = Math.max(1, Math.min(covered, candidates.length))
+        if (kept < candidates.length) {
+          batch = batch.slice(0, batch.indexOf(candidates[kept]!))
+          candidates = candidates.slice(0, kept)
+        }
+      }
+    }
+    at += batch.length
+    for (const path of candidates) {
+      const proof = hasGrepVerifier(host) ? await verifiedGrepMatches(host, path, re) : undefined
+      if (proof === null) continue
+      const verified = proof?.current() === true
+      let lines: Iterable<{ readonly line: string; readonly number: number }>
+      if (!verified) {
+        const got = await host.readBytes(path)
+        if (got === null) continue
+        lines = searchLines(utf8Of(got.bytes))
+      } else lines = proof!.matches
+      let count = 0
+      for (const { line, number } of lines) {
+        if (!verified && !re.test(line)) continue
+        count += 1
+        if (mode === 'content' && !rows.add(`${path}:${number}:${line}`)) break scan
+        if (mode === 'files_with_matches') break
+      }
+      // count 只提交扫描完这个文件后的精确数，未扫文件不冒充计过了。
+      if (count > 0 && mode !== 'content' && !rows.add(mode === 'count' ? `${path}:${count}` : path)) break scan
+    }
+    // 首批小探针保住密集命中；回执还空时减少后续冷批请求，接近满时继续小批。
+    batchRows = rows.fillRatio < 0.25 ? SEARCH_PREFETCH_MAX_ROWS : SEARCH_PREFETCH_ROWS
   }
-  return ok(hits.length === 0 ? `no line matches ${pattern}.` : `${hits.length} lines:\n${hits.join('\n')}`)
+  return ok(rows.render(mode === 'content' ? 'lines' : 'paths', `no line matches ${pattern}.`, walked.coverage))
 }
 
 // ── 执行类那两个 ───────────────────────────────────────────────────────────────

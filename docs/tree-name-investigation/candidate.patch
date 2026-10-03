@@ -1,0 +1,205 @@
+diff --git a/src/truth/tree-name-index.test.ts b/src/truth/tree-name-index.test.ts
+new file mode 100644
+index 0000000..49f3688
+--- /dev/null
++++ b/src/truth/tree-name-index.test.ts
+@@ -0,0 +1,86 @@
++import assert from 'node:assert/strict'
++import { test } from 'node:test'
++import { TreeNameIndex, MAX_NAME_INDEX_TREES, MAX_NAME_INDEX_ROWS, MAX_NAME_INDEX_UNITS } from './tree-name-index.ts'
++
++function tracked(count: number, name: (at: number) => string = at => `row-${at}`) {
++  let reads = 0
++  const rows = Array.from({ length: count }, (_, at) => ({ get name() { reads++; return name(at) }, at }))
++  return { rows, reads: () => reads }
++}
++
++test('complete name indexes preserve first duplicates and exact decoded-string identity', () => {
++  const cache = new TreeNameIndex<{ name: string; mode: number; id: string }>()
++  const rows = [{ name: 'same', mode: 0o100644, id: 'first' }, { name: 'same', mode: 0o40000, id: 'second' },
++    { name: '__proto__', mode: 0o120000, id: 'link' }, { name: '�', mode: 0o100644, id: 'first decoded alias' },
++    { name: '�', mode: 0o100755, id: 'second decoded alias' }]
++  for (const name of ['same', '__proto__', '�', 'absent']) assert.equal(cache.find('tree', rows, name), rows.find(row => row.name === name))
++  assert.equal(cache.find('tree', rows, 'same'), rows[0])
++})
++
++test('warm indexes avoid linear name inspection and changed array identity never reuses stale rows', () => {
++  const rows = tracked(512), cache = new TreeNameIndex<{ name: string; at: number }>()
++  assert.equal(cache.find('tree', rows.rows, 'row-511'), rows.rows[511])
++  const built = rows.reads()
++  for (let at = 0; at < 512; at++) assert.equal(cache.find('tree', rows.rows, `row-${at}`), rows.rows[at])
++  assert.equal(cache.find('tree', rows.rows, 'absent'), undefined)
++  assert.equal(rows.reads(), built)
++  const replacement = [{ name: 'other', at: 0 }]
++  assert.equal(cache.find('tree', replacement, 'row-511'), undefined)
++  assert.equal(cache.find('tree', replacement, 'other'), replacement[0])
++  cache.clear()
++  cache.find('tree', rows.rows, 'row-511')
++  assert.ok(rows.reads() > built)
++})
++
++test('tree-count LRU is bounded and promotes actual lookups', () => {
++  const rows = Array.from({ length: MAX_NAME_INDEX_TREES + 1 }, () => tracked(1))
++  const cache = new TreeNameIndex<{ name: string; at: number }>()
++  for (let at = 0; at < MAX_NAME_INDEX_TREES; at++) cache.find(`tree-${at}`, rows[at]!.rows, 'row-0')
++  const first = rows[0]!.reads(), second = rows[1]!.reads()
++  cache.find('tree-0', rows[0]!.rows, 'row-0')
++  cache.find('new', rows[MAX_NAME_INDEX_TREES]!.rows, 'row-0')
++  cache.find('tree-0', rows[0]!.rows, 'row-0')
++  assert.equal(rows[0]!.reads(), first)
++  cache.find('tree-1', rows[1]!.rows, 'row-0')
++  assert.ok(rows[1]!.reads() > second)
++})
++
++test('row/name and accounted-byte admission boundaries retain linear fallback', () => {
++  const cache = new TreeNameIndex<{ name: string; at: number }>()
++  const atLimit = tracked(MAX_NAME_INDEX_ROWS)
++  cache.find('at-limit', atLimit.rows, 'row-0')
++  const admitted = atLimit.reads()
++  cache.find('at-limit', atLimit.rows, 'row-0')
++  assert.equal(atLimit.reads(), admitted)
++  const tooMany = tracked(MAX_NAME_INDEX_ROWS + 1)
++  assert.equal(cache.find('too-many', tooMany.rows, 'row-0'), tooMany.rows[0])
++  assert.equal(tooMany.reads(), 1, 'row budget refuses before building an index')
++  const tooLong = tracked(1, () => 'x'.repeat(MAX_NAME_INDEX_UNITS + 1))
++  cache.find('too-long', tooLong.rows, 'absent')
++  const rejected = tooLong.reads()
++  cache.find('too-long', tooLong.rows, 'absent')
++  assert.ok(tooLong.reads() > rejected)
++  const bytePressure = tracked(MAX_NAME_INDEX_ROWS, () => 'x'.repeat(32))
++  cache.find('byte-pressure', bytePressure.rows, 'absent')
++  const bytesRejected = bytePressure.reads()
++  cache.find('byte-pressure', bytePressure.rows, 'absent')
++  assert.ok(bytePressure.reads() > bytesRejected, 'independent byte accounting forces fallback')
++})
++
++test('global row/name budgets evict whole indexes without changing answers', () => {
++  const cache = new TreeNameIndex<{ name: string; at: number }>()
++  const first = tracked(MAX_NAME_INDEX_ROWS / 2), second = tracked(MAX_NAME_INDEX_ROWS / 2), extra = tracked(1)
++  cache.find('first', first.rows, 'row-0'); cache.find('second', second.rows, 'row-0')
++  const before = first.reads()
++  cache.find('extra', extra.rows, 'row-0')
++  assert.equal(cache.find('first', first.rows, 'row-0'), first.rows[0])
++  assert.ok(first.reads() > before)
++  cache.clear()
++  const huge = 'y'.repeat(MAX_NAME_INDEX_UNITS)
++  const largeFirst = tracked(1, () => huge), largeSecond = tracked(1, () => huge)
++  cache.find('large-first', largeFirst.rows, 'absent')
++  const named = largeFirst.reads()
++  cache.find('large-second', largeSecond.rows, 'absent')
++  cache.find('large-first', largeFirst.rows, 'absent')
++  assert.ok(largeFirst.reads() > named)
++})
+diff --git a/src/truth/tree-name-index.ts b/src/truth/tree-name-index.ts
+new file mode 100644
+index 0000000..0a44c66
+--- /dev/null
++++ b/src/truth/tree-name-index.ts
+@@ -0,0 +1,69 @@
++// Private derived lookup over complete, privately parsed immutable tree arrays.
++export const MAX_NAME_INDEX_TREES = 256
++export const MAX_NAME_INDEX_ROWS = 32768
++export const MAX_NAME_INDEX_UNITS = 1024 * 1024
++export const MAX_NAME_INDEX_BYTES = 4 * 1024 * 1024
++
++interface Named { readonly name: string }
++interface Indexed<T> {
++  readonly rows: readonly T[]
++  readonly names: ReadonlyMap<string, T>
++  readonly units: number
++  readonly bytes: number
++}
++
++/** No caller options or Truth contract changes. Rejected trees retain Array.find. */
++export class TreeNameIndex<T extends Named> {
++  private readonly trees = new Map<string, Indexed<T>>()
++  private rows = 0
++  private units = 0
++  private bytes = 0
++
++  private remove(key: string, indexed: Indexed<T>): void {
++    this.trees.delete(key)
++    this.rows -= indexed.rows.length
++    this.units -= indexed.units
++    this.bytes -= indexed.bytes
++  }
++
++  find(key: string, rows: readonly T[], name: string): T | undefined {
++    const found = this.trees.get(key)
++    if (found !== undefined) {
++      if (found.rows === rows) {
++        this.trees.delete(key); this.trees.set(key, found)
++        return found.names.get(name)
++      }
++      this.remove(key, found)
++    }
++    // Charge all rows/names before allocating a Map, including duplicate names.
++    // Production arrays and their primitive fields never escape Truth's parser.
++    if (rows.length > MAX_NAME_INDEX_ROWS) return rows.find(row => row.name === name)
++    let units = 0
++    for (const row of rows) {
++      units += row.name.length
++      if (units > MAX_NAME_INDEX_UNITS) return rows.find(row => row.name === name)
++    }
++    const bytes = 128 + key.length * 2 + rows.length * 64 + units * 2
++    if (bytes > MAX_NAME_INDEX_BYTES) return rows.find(row => row.name === name)
++    // Release old retained indexes before allocating the next admitted Map.
++    while (this.trees.size >= MAX_NAME_INDEX_TREES || this.rows + rows.length > MAX_NAME_INDEX_ROWS ||
++      this.units + units > MAX_NAME_INDEX_UNITS || this.bytes + bytes > MAX_NAME_INDEX_BYTES) {
++      const oldest = this.trees.entries().next().value!
++      this.remove(oldest[0], oldest[1])
++    }
++    const names = new Map<string, T>()
++    for (const row of rows) {
++      // Array.find selects FIRST, even for duplicate or UTF-8-decoded alias names.
++      if (!names.has(row.name)) names.set(row.name, row)
++    }
++    const indexed = { rows, names, units, bytes }
++    this.trees.set(key, indexed)
++    this.rows += rows.length; this.units += units; this.bytes += bytes
++    return names.get(name)
++  }
++
++  clear(): void {
++    this.trees.clear()
++    this.rows = 0; this.units = 0; this.bytes = 0
++  }
++}
+diff --git a/src/truth/truth.ts b/src/truth/truth.ts
+index 7d643ac..cd08308 100644
+--- a/src/truth/truth.ts
++++ b/src/truth/truth.ts
+@@ -26,6 +26,7 @@ import type { Conflict, ConflictStage, Truth } from './contract.ts'
+ import type { DirEntry, EntryKind, EntryMeta, ObjectId, TreeEntry } from '../entries.ts'
+ import type { BlobId, CommitId, RefName, RelPath, TreeId } from '../terms.ts'
+ import { BlobLru } from './blob-lru.ts'
++import { TreeNameIndex } from './tree-name-index.ts'
+ 
+ /**
+  * 一个句柄读得到的那点账：git 那一侧（起过多少进程 · 发过多少请求 · 当前读档位）与本句柄
+@@ -224,6 +225,7 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
+ 
+   /** 内容寻址 → 缓存永远有效。tree id → 条目。 */
+   const trees = new Map<string, RawEntry[]>()
++  const treeNames = new TreeNameIndex<RawEntry>()
+   /** 提交不可变 → 同样永远有效。 */
+   const commitTrees = new Map<string, string>()
+   /**
+@@ -365,7 +367,7 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
+     if (segs.length === 0) return root
+     let node = root.id
+     for (let i = 0; i < segs.length; i++) {
+-      const hit = (await treeEntries(node)).find((e) => e.name === segs[i])
++      const hit = treeNames.find(node, await treeEntries(node), segs[i])
+       if (hit === undefined) return null
+       if (i === segs.length - 1) return hit
+       if (kindOf(hit.mode) !== 'dir') return null
+@@ -610,7 +612,7 @@ export function openTruth(root: string, opts: TruthOptions = {}): TruthHandle {
+       throw new GitError(args, r.status, r.stderr.trim() === '' ? chunks.join('\n') : r.stderr)
+     },
+ 
+-    close: () => git.close(),
++    close: () => { treeNames.clear(); return git.close() },
+     stats: () => ({
+       gitSpawns: git.spawns(),
+       gitRequests: git.requests(),

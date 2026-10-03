@@ -17,6 +17,7 @@ import type { Log, LogEvent } from '../log/events.ts'
 import type { AgentId, RelPath, ViewRev, WriterId } from '../terms.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { View } from './contract.ts'
+import { cloneDelta, copyBytes } from './owned.ts'
 
 export interface EditTarget {
   log: Log
@@ -78,10 +79,11 @@ async function pinDown(t: EditTarget, d: Delta): Promise<Delta | null> {
   if (d.kind !== 'chmod' && d.kind !== 'rename') return null
   const src = d.kind === 'chmod' ? d.path : d.from
   if (t.view.hasUpper(src)) return null
-  const meta = await t.view.stat(src)
+  const found = await t.view.stat(src)
+  const meta = found === null ? null : { ...found }
   if (meta === null) return null
   if (meta.kind === 'file') {
-    const bytes = (await t.view.read(src)) ?? new Uint8Array(0)
+    const bytes = copyBytes((await t.view.read(src)) ?? new Uint8Array(0))
     // 一定是 `add`：这条路只在"上层没有它"时才走（上面那句 hasUpper），而重放也是这么算的。
     return { kind: 'add', path: src, bytes, mode: meta.mode }
   }
@@ -113,7 +115,7 @@ async function chmodNoop(view: View, path: RelPath, mode: number): Promise<numbe
  * 它，而没有东西要改）。日志不动，重放自然也没有它（§ 8.3）。
  */
 export async function applyEdit(target: EditTarget, raw: Delta): Promise<EditResult> {
-  const named = normalize(target.view, raw)
+  const named = normalize(target.view, cloneDelta(raw))
   // **模式也在接缝上归一**：`Delta` 里 chmod 的 `mode` 是 git 的那两档，而命令面递进来的是人
   // 敲的那个八进制数（`chmod 700`）。写进日志之前收一次，日志里就只剩 100644 与 100755——
   // `diff()` 报出来的于是能与 `stat` 直接对照。规则只有 `normMode` 一处，两张面都从这里过。

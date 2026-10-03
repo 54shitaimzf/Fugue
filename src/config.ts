@@ -89,6 +89,11 @@ function isPlainObject(v: unknown): v is ConfigDoc {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
+/** JSON member names are data, including __proto__; never invoke an inherited setter. */
+function setOwnProperty(doc: ConfigDoc, key: string, value: unknown): void {
+  Object.defineProperty(doc, key, { value, enumerable: true, writable: true, configurable: true })
+}
+
 /**
  * 深合并（两级配置的叠放语义）：两边都是对象就递归合并，否则**右边那份整份赢**——数组与
  * 标量没有"合并"这个动作，一半来自系统一半来自工作区的数组比拼错的键更难查。
@@ -97,8 +102,8 @@ function isPlainObject(v: unknown): v is ConfigDoc {
 function deepMerge(system: ConfigDoc, workspace: ConfigDoc): ConfigDoc {
   const out: ConfigDoc = { ...system }
   for (const [k, v] of Object.entries(workspace)) {
-    const prev = out[k]
-    out[k] = isPlainObject(prev) && isPlainObject(v) ? deepMerge(prev, v) : v
+    const prev = Object.hasOwn(out, k) ? out[k] : undefined
+    setOwnProperty(out, k, isPlainObject(prev) && isPlainObject(v) ? deepMerge(prev, v) : v)
   }
   return out
 }
@@ -186,10 +191,39 @@ export async function readConfig(root: string, systemDir = defaultSystemDir()): 
 export function getConfig(doc: ConfigDoc, key: string): unknown {
   let cur: unknown = doc
   for (const seg of keySegments(key)) {
-    if (typeof cur !== 'object' || cur === null) return undefined
+    if (typeof cur !== 'object' || cur === null || !Object.hasOwn(cur, seg)) return undefined
     cur = (cur as Record<string, unknown>)[seg]
   }
   return cur
+}
+
+/** Present merged keys, not a schema/default registry. Arrays and empty objects are terminal values. */
+export function configuredKeyPaths(doc: ConfigDoc): string[][] {
+  const out: string[][] = []
+  const pending: { value: unknown; path: string[] }[] = []
+  for (const key of Object.keys(doc).sort().reverse()) pending.push({ value: doc[key], path: [key] })
+  while (pending.length > 0) {
+    const { value, path } = pending.pop()!
+    const keys = isPlainObject(value) ? Object.keys(value).sort() : []
+    if (keys.length === 0) out.push(path)
+    else for (const key of keys.reverse()) pending.push({ value: (value as ConfigDoc)[key], path: [...path, key] })
+  }
+  return out
+}
+
+/** Dot syntax only where every segment is unambiguous and printable; otherwise preserve the exact path. */
+export function formatConfigKeyPath(path: readonly string[]): string {
+  return path.every(part => part !== '' && !/[.\s\p{C}]/u.test(part)) ? path.join('.') : escapedKeyJson(path)
+}
+
+function escapedKeyJson(value: readonly string[] | readonly (readonly string[])[]): string {
+  // JSON.stringify handles ASCII controls, but leaves C1/bidi/format controls literal.
+  return JSON.stringify(value).replace(/\p{C}/gu, char => char.split('').map(unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`).join(''))
+}
+
+/** Exact path JSON without invisible control/format characters on the terminal. */
+export function configKeyPathsJson(paths: readonly (readonly string[])[]): string {
+  return escapedKeyJson(paths)
 }
 
 /**
@@ -200,10 +234,10 @@ export function setConfig(doc: ConfigDoc, key: string, value: unknown): void {
   const segs = keySegments(key)
   let cur: ConfigDoc = doc
   for (const seg of segs.slice(0, -1)) {
-    const next = cur[seg]
+    const next = Object.hasOwn(cur, seg) ? cur[seg] : undefined
     if (next === undefined) {
       const fresh: ConfigDoc = {}
-      cur[seg] = fresh
+      setOwnProperty(cur, seg, fresh)
       cur = fresh
       continue
     }
@@ -212,7 +246,7 @@ export function setConfig(doc: ConfigDoc, key: string, value: unknown): void {
     }
     cur = next as ConfigDoc
   }
-  cur[segs[segs.length - 1]] = value
+  setOwnProperty(cur, segs[segs.length - 1]!, value)
 }
 
 /** 一个命令行参数的读法：整份解析得了就当 JSON 值，否则当字符串。`5` 是数，`hello` 是字。 */

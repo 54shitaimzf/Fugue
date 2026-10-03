@@ -103,7 +103,7 @@ test('尾行截断：截到最后一个完整行内的任意字节，都止于�
   rmSync(root, { recursive: true, force: true })
 })
 
-test('整份文件就是一条半行：当作 0 条，序号从 1 重新起', async () => {
+test('整份文件就是一条半行：读为空，写拒绝且保留原字节', async () => {
   const root = tmp()
   const log = openLog(root, { sync: 'never' })
   await log.append('round', ev(1, A('round')))
@@ -115,8 +115,13 @@ test('整份文件就是一条半行：当作 0 条，序号从 1 重新起', as
 
   assert.equal(await countRows(root, 'round'), 0)
   const again = openLog(root, { sync: 'never' })
-  assert.equal(await again.append('round', ev(1, A('round'))), 1)
-  await again.close()
+  try {
+    await assert.rejects(again.append('round', ev(1, A('round'))), /未提交半行/)
+    assert.deepEqual(readFileSync(file), bytes.subarray(0, bytes.length - 5))
+    // 测试独占的生成夹具显式处置后，同一句柄可以重试；产品不会代替用户清理。
+    writeFileSync(file, Buffer.alloc(0))
+    assert.equal(await again.append('round', ev(1, A('round'))), 1)
+  } finally { await again.close() }
   rmSync(root, { recursive: true, force: true })
 })
 

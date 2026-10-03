@@ -1,3 +1,4 @@
+// tier: real —— actual SHA1/SHA256 Git object repositories; no provider traffic
 // 内容地址由真源给：**sha256 对象库上的判据**与它的负对照。出处：路线图维护批那一行 ③
 // （`Entry` 带 git 发的 id · 视图不再自己算一份）。
 //

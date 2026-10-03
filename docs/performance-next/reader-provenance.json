@@ -1,0 +1,11 @@
+{
+  "before": "82db8f754ca7859beaae62db088f245893ad1ceb",
+  "after": "4b67def9c7feae6360dd2b3225284f5004a66871",
+  "sourceHashVerification": "Every recorded before/after source hash matches these exact commits; both script hashes match current harness. Corpus hash is identical to the prior42.8MB reader benchmark.",
+  "scriptSha256": "61a42fbd0e67d7e00cd0c0c25cea94c3c29eb3ed1ea14815b1b7d4f4acbc94bf",
+  "rawSha256": {
+    "reader-stat-paired.json": "6310d1dcc48a67a27526ed870e686749b7bb0df3e763cab2a5204e9f8848e24d",
+    "reader-stat-smoke.json": "d819c9fa4371740007bae340b358e3661a15ce282fa209c93fc2f8b91ec33f55"
+  },
+  "sourceCheckpointScope": "The after4b67 hash identifies a local source checkpoint, not an already-public commit. Publication equivalence will be recorded only after the sole publisher supplies the admitted head; captured raw HEADs remain unchanged."
+}

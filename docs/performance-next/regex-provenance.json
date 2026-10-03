@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "beforeLocalSource": "82db8f754ca7859beaae62db088f245893ad1ceb",
+  "afterLocalSource": "9dbf5134c30afd0b4073fceeaca99a7bf29b136c",
+  "sourceScope": "Local immutable source checkpoints, not public publication claims. Raw HEADs remain captured; every after module hash matches9dbf513 and every before module hash matches82db.",
+  "scriptSha256": "72dd6d3e20a21a2324cbace4f7e8f32e91a5d0acdc3cc03e845a7fe681a111e3",
+  "ownershipCheckScriptSha256": "ac938e40a730b67792fad3bff85a0bed392fdaee2c925d12fea22dfa64da0064",
+  "exploratorySource": "f58e13139f2deab7b22aef3aa46c81779f9a0213",
+  "exploratoryMeasuredHarnessSha256": "9c29f6cd751d19df7030d06c1e37e9cea5498173a3dba6f38549acffa0890e0f",
+  "crossControlReceiptHashEquality": {
+    "reference": "Missing-cohort before backend complete scanning result. All code controls use identical corpus bytes. Equality here is SHA256 of complete FaceResult; per-run before/after actual deep equality is already asserted in harness.",
+    "verifiedFiles": [
+      "regex-code-512.json",
+      "regex-cohort-code-512.json",
+      "regex-plain-code-512.json",
+      "regex-no-prefetch-code-512.json"
+    ]
+  },
+  "rawSha256": {
+    "harness-failure-checks.json": "a98e47ee0e1e8bbc369372dc928f4ea88c7d41e0371db0ecbf30583e145bf911",
+    "regex-bytecap.json": "c9f5b0534f4929473cacb5c6952aee4c973ad6c847d203cd466adf82f29255e5",
+    "regex-code-512.json": "b413b62747238d4e43850d3bec904faaeeb2990268b5f6defeff8cfdfda41a93",
+    "regex-cohort-code-512.json": "3a22a8c0bb6c0268a403354db3ac60abdaa8f654e199d1472ee6eb09c3859386",
+    "regex-entropy-512.json": "d2e3cd9e0ac8ba1414a52e2248a234fd364dd84fe337acb73946ba5042ed1e30",
+    "regex-entrycap.json": "676c5a41af492598f09dbe12dcd9b0e69175c2a81a05841d7b1e809f00385860",
+    "regex-exploratory/regex-bytecap.json": "ed5e84da8deebf6578de568a96c37386f81286d57b17e6260d58e28b3b41b0bd",
+    "regex-exploratory/regex-code-512.json": "fce66a64504fa2d5ec9cad62151747e96ea9f5b03ec320dd607214501d64d552",
+    "regex-exploratory/regex-cohort-code-512.json": "52af8f84bba347f89e9254982a9d4afa240ad89afee9730b87cbcad5305cdaec",
+    "regex-exploratory/regex-entropy-512.json": "b712de75f6c11fbba97b28dadd7a630f5fbdde3269fa38053f52d1f2f31b9db8",
+    "regex-exploratory/regex-entrycap.json": "b318404a1e1d2e58c813ccb5dba533138c794abd4dfd8ced206922eb9197b5f2",
+    "regex-exploratory/regex-mixed-512.json": "ae5632b6c90ac37bd4fdf5b0481255ec2f9f9f4c5dee692b74dbb63ba592fbd2",
+    "regex-exploratory/regex-recordcap.json": "4c3117616af20027fea82aa4a871db921936983f1626028d5e6a2b686e722a8b",
+    "regex-exploratory/regex-smoke.json": "86e7a9b18fb0d2f3d1378ed4e0070b1c47b7e3c6be31d1e24d76d57faadeb75a",
+    "regex-exploratory/regex-sourcecap.json": "f95a01e360009b9ff21912bc90d0b55e57ebd2422d822fee3aab2c3cd733abaa",
+    "regex-mixed-512.json": "0447ed6bff1d440dd3198d94455dff730f4da1522868fb574d34f8c5ef5accc7",
+    "regex-no-prefetch-code-512.json": "0d6b0b95978c82879a451953022508f8545a2201ab9ac53978c4dc4697343fc0",
+    "regex-plain-code-512.json": "134e2bfb03d55c39f5281f62644231b292e3426b2df602adbca8e7a5e6570373",
+    "regex-recordcap.json": "5bc4e9bf00910a4ca50d905f22d63cf4b5685d48d6004ce4c011a7d02c78cd41",
+    "regex-smoke.json": "87f8d50c1facd7885de5df4d247b4dbd5970e508f6a99bad53e656daf92db24b",
+    "regex-sourcecap.json": "36ae209c7af455a77e1447826f42abad40fbf4fcece0e49754ce9e72b3d1638e"
+  },
+  "environment": {
+    "node": "v24.19.0",
+    "kernel": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "cpu": "model name\t: INTEL(R) XEON(R) PLATINUM 8573C",
+    "filesystem": "Filesystem     Type    1K-blocks   Used Available Use% Mounted on\noverlay        overlay  32978704 542856  30741744   2% /workspace/scratch/ec94b79c16e1\n"
+  },
+  "fullSourceManifestSha256": "45c60a62b0d6e3420facffeb03a006daa0748d73c77eb0c4a070bbb800aa89a2"
+}

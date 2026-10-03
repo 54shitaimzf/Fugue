@@ -28,7 +28,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
-import { statusOf } from '../probe/status.ts'
+import { linesOf, statusOf } from '../probe/status.ts'
+import { BUILTIN_CATALOG } from '../model/catalog.ts'
 import { bodyOf, footerOf, frameOf, innerOf, panelOf, windowOf } from './frame.ts'
 import { clip, widthOf, wrap } from './glyph.ts'
 import { readWrap } from './read.ts'
@@ -138,7 +139,7 @@ function snapshotOf(extra: readonly StatusRow[] = []): StatusSnapshot {
 const GOLDEN: readonly string[] = [
   "┌─ 处境 ───────────────────────────────┬─ 读数 ────────────────────────────────────────────────────┐",
   "│轮次 r1 · 状态 Rebuilding · 转移 5 条 │契约 2 · 折叠尝试 1 · 冲突 0 · 验收 1 次（过 3 / 没过 0）  │",
-  "│跳步 1 · 打回 1 次 ·                  │用量 调用 3 · input 3000 · cacheRead 4096 · cacheWrite 0 · │",
+  "│图上 6 步 · 打回 1 次 ·               │用量 调用 3 · input 3000 · cacheRead 4096 · cacheWrite 0 · │",
   "│最近一条落在这一轮                    │output 300 · 思考 120                                      │",
   "│  Idle ──land──> Planning             │detour-rate 0（0/2）                                       │",
   "│  Planning ──contracts-issued──>      │prefix-hit-rate 1（3/3）                                   │",
@@ -468,3 +469,44 @@ test('⑩ 一把尺：`innerOf` 是框内宽的唯一出处 · 长行折开印�
       ` · top 0/1/4/${narrow.length - 1} 屏上第一条都对得上`,
   )
 })
+
+for (const example of [
+  { name: 'unrouted rows never create a negative jump total',
+    chain: [['Idle', 'Planning'], ['Aborted', 'Working']], transitions: 2, hops: 1, unrouted: 1 },
+  { name: 'a self transition cannot cancel the detailed real extra graph hop',
+    chain: [['Idle', 'Planning'], ['Planning', 'Planning'], ['Verifying', 'Rebuilding']], transitions: 3, hops: 3, unrouted: 0 },
+  { name: 'ordinary transitions retain their exact logged and graph totals',
+    chain: [['Idle', 'Planning'], ['Planning', 'Delegated']], transitions: 2, hops: 2, unrouted: 0 },
+]) {
+  test(`actual statusOf rendering: ${example.name}`, () => {
+    seq = 0
+    const snapshot = statusOf(example.chain.map(([from, to]) =>
+      row({ t: 'round/state', round: 'totals' as never, from: from as never, to: to as never })))
+    const trail = snapshot.rounds[0]!
+    assert.equal(trail.transitions, example.transitions)
+    assert.equal(trail.hops, example.hops)
+    assert.equal(trail.unrouted, example.unrouted)
+    const before = JSON.stringify(snapshot)
+    const body = bodyOf({ snapshot }), text = linesOf(snapshot, { cat: BUILTIN_CATALOG })
+    const totals = `转移 ${example.transitions} 条 · 图上 ${example.hops} 步`
+    assert.ok(body.left[0]!.includes(totals), body.left[0])
+    assert.ok(text[0]!.includes(totals), text[0])
+    assert.doesNotMatch(body.left[0]!, /跳步/)
+    assert.doesNotMatch(text[0]!, /跳步/)
+    for (const edge of trail.edges) {
+      assert.ok(body.left.includes(`  ${edge}`), edge)
+      assert.ok(text.includes(`  ${edge}`), edge)
+    }
+    if (example.unrouted > 0) {
+      assert.match(body.left.join('\n'), /图上没有这条路/)
+      assert.match(text[0]!, /图外 1 条/)
+    }
+    if (example.chain.some(([from, to]) => from === to)) {
+      assert.match(body.left.join('\n'), /Planning ⇒ Planning（原地说了一次）/)
+      assert.match(body.left.join('\n'), /Verifying ⇒ Rebuilding（跳步，经 verdict-pass · advanced）/)
+    }
+    const frame = frameOf({ snapshot, width: 100, height: 20 })
+    assert.doesNotMatch(frame.lines.join('\n'), /跳步 -/)
+    assert.equal(JSON.stringify(snapshot), before, 'readouts preserve the folded snapshot byte for byte')
+  })
+}

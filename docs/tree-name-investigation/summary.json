@@ -1,0 +1,359 @@
+[
+  {
+    "profile": "code",
+    "files": 512,
+    "bytes": 16777216,
+    "logicalNameIndex": {
+      "trees": 2,
+      "rows": 513,
+      "units": 4102,
+      "accountedBytes": 41452,
+      "boundary": "Derived from final helper charging policy and complete unique two-tree generated corpus, not observed private stats, heap/RSS bound or inherited cache cost."
+    },
+    "fresh": [
+      {
+        "name": "sparseGrouped",
+        "samples": {
+          "before": {
+            "wallMs": [
+              73.87906300000031,
+              37.48505100000057,
+              30.79562199999964
+            ],
+            "medianWallMs": 37.48505100000057
+          },
+          "after": {
+            "wallMs": [
+              78.33839499999976,
+              44.848988000000645,
+              173.3979650000001
+            ],
+            "medianWallMs": 78.33839499999976
+          }
+        }
+      },
+      {
+        "name": "miss",
+        "samples": {
+          "before": {
+            "wallMs": [
+              83.88538599999993,
+              28.47981399999935,
+              37.12194199999976
+            ],
+            "medianWallMs": 37.12194199999976
+          },
+          "after": {
+            "wallMs": [
+              39.11000000000058,
+              36.602930000000015,
+              40.64350300000024
+            ],
+            "medianWallMs": 39.11000000000058
+          }
+        }
+      },
+      {
+        "name": "dense",
+        "samples": {
+          "before": {
+            "wallMs": [
+              37.74078999999983
+            ],
+            "medianWallMs": 37.74078999999983
+          },
+          "after": {
+            "wallMs": [
+              43.31634099999974
+            ],
+            "medianWallMs": 43.31634099999974
+          }
+        }
+      },
+      {
+        "name": "quantifiedFallback",
+        "samples": {
+          "before": {
+            "wallMs": [
+              168.31487000000016
+            ],
+            "medianWallMs": 168.31487000000016
+          },
+          "after": {
+            "wallMs": [
+              165.5972270000002
+            ],
+            "medianWallMs": 165.5972270000002
+          }
+        }
+      }
+    ],
+    "warmStat": {
+      "before": {
+        "wallMs": [
+          17.609551999999894,
+          19.341597000000547,
+          15.102632999999514,
+          17.698691999999937,
+          15.41473600000063,
+          15.669300999999905
+        ],
+        "medianWallMs": 16.6394264999999,
+        "medianProcessCpuMs": 17.602,
+        "primeMemoryDelta": {
+          "heapUsed": -6456,
+          "external": 110995,
+          "arrayBuffers": -32821,
+          "rss": 131072
+        }
+      },
+      "after": {
+        "wallMs": [
+          10.672951000000467,
+          11.028779999999642,
+          10.399422999999842,
+          10.756453999999394,
+          9.96466700000019,
+          8.290454000000864
+        ],
+        "medianWallMs": 10.536187000000155,
+        "medianProcessCpuMs": 11.8895,
+        "primeMemoryDelta": {
+          "heapUsed": 32560,
+          "external": 45419,
+          "arrayBuffers": 0,
+          "rss": 0
+        }
+      }
+    }
+  },
+  {
+    "profile": "mixed",
+    "files": 512,
+    "bytes": 16777216,
+    "logicalNameIndex": {
+      "trees": 2,
+      "rows": 513,
+      "units": 4102,
+      "accountedBytes": 41452,
+      "boundary": "Derived from final helper charging policy and complete unique two-tree generated corpus, not observed private stats, heap/RSS bound or inherited cache cost."
+    },
+    "fresh": [
+      {
+        "name": "sparseGrouped",
+        "samples": {
+          "before": {
+            "wallMs": [
+              62.566233999999895,
+              43.59593500000119,
+              38.60084199999983
+            ],
+            "medianWallMs": 43.59593500000119
+          },
+          "after": {
+            "wallMs": [
+              71.1885600000005,
+              71.20819500000107,
+              53.26364399999875
+            ],
+            "medianWallMs": 71.1885600000005
+          }
+        }
+      },
+      {
+        "name": "miss",
+        "samples": {
+          "before": {
+            "wallMs": [
+              47.76418999999987,
+              56.56503899999916,
+              94.75074499999937
+            ],
+            "medianWallMs": 56.56503899999916
+          },
+          "after": {
+            "wallMs": [
+              57.35938400000123,
+              36.02526100000068,
+              60.82116499999938
+            ],
+            "medianWallMs": 57.35938400000123
+          }
+        }
+      },
+      {
+        "name": "dense",
+        "samples": {
+          "before": {
+            "wallMs": [
+              48.552943999999115
+            ],
+            "medianWallMs": 48.552943999999115
+          },
+          "after": {
+            "wallMs": [
+              41.65781199999947
+            ],
+            "medianWallMs": 41.65781199999947
+          }
+        }
+      },
+      {
+        "name": "quantifiedFallback",
+        "samples": {
+          "before": {
+            "wallMs": [
+              183.41098299999976
+            ],
+            "medianWallMs": 183.41098299999976
+          },
+          "after": {
+            "wallMs": [
+              236.75598799999898
+            ],
+            "medianWallMs": 236.75598799999898
+          }
+        }
+      }
+    ],
+    "warmStat": {
+      "before": {
+        "wallMs": [
+          16.796738000000914,
+          33.573559999998906,
+          31.11785400000008,
+          19.927426999998715,
+          23.715323000000353,
+          14.024599000000308
+        ],
+        "medianWallMs": 21.821374999999534,
+        "medianProcessCpuMs": 26.043999999999997,
+        "primeMemoryDelta": {
+          "heapUsed": 57448,
+          "external": 110955,
+          "arrayBuffers": 0,
+          "rss": 0
+        }
+      },
+      "after": {
+        "wallMs": [
+          16.005458000001454,
+          17.85859800000071,
+          13.685529000000315,
+          10.585716000001412,
+          17.450598999999784,
+          10.585275999999794
+        ],
+        "medianWallMs": 14.845493500000885,
+        "medianProcessCpuMs": 17.921,
+        "primeMemoryDelta": {
+          "heapUsed": 87168,
+          "external": 45419,
+          "arrayBuffers": 0,
+          "rss": 131072
+        }
+      }
+    }
+  },
+  {
+    "profile": "pressure1024",
+    "files": 1024,
+    "bytes": 16777216,
+    "logicalNameIndex": {
+      "trees": 2,
+      "rows": 1025,
+      "units": 8222,
+      "accountedBytes": 82460,
+      "boundary": "Derived from final helper charging policy and complete unique two-tree generated corpus, not observed private stats, heap/RSS bound or inherited cache cost."
+    },
+    "fresh": [
+      {
+        "name": "miss",
+        "samples": {
+          "before": {
+            "wallMs": [
+              65.5821360000009,
+              56.41839899999832,
+              107.0780769999983
+            ],
+            "medianWallMs": 65.5821360000009
+          },
+          "after": {
+            "wallMs": [
+              71.3425279999974,
+              50.493751000001794,
+              63.084366999999475
+            ],
+            "medianWallMs": 63.084366999999475
+          }
+        }
+      }
+    ],
+    "warmStat": {
+      "before": {
+        "wallMs": [
+          41.13983399999779,
+          43.28290199999901,
+          58.57916199999818,
+          120.54836799999975,
+          48.88454999999885,
+          47.390189000001556
+        ],
+        "medianWallMs": 48.137369500000204,
+        "medianProcessCpuMs": 48.129999999999995,
+        "primeMemoryDelta": {
+          "heapUsed": 100208,
+          "external": -5595223,
+          "arrayBuffers": -1437434,
+          "rss": 0
+        }
+      },
+      "after": {
+        "wallMs": [
+          37.64010199999757,
+          34.89142499999798,
+          18.735294999998587,
+          17.473423000003095,
+          23.61376200000086,
+          18.629766999998537
+        ],
+        "medianWallMs": 21.174528499999724,
+        "medianProcessCpuMs": 25.496,
+        "primeMemoryDelta": {
+          "heapUsed": 252840,
+          "external": 127440,
+          "arrayBuffers": 38324,
+          "rss": 0
+        }
+      }
+    }
+  },
+  {
+    "oversizedNames": {
+      "units": 1075200,
+      "cap": 1048576,
+      "samples": {
+        "before": {
+          "wallMs": [
+            12.911126999999397,
+            13.8336739999977,
+            10.632108999998309,
+            11.914801999999327
+          ],
+          "medianWallMs": 12.412964499999362,
+          "medianProcessCpuMs": 12.770499999999998
+        },
+        "after": {
+          "wallMs": [
+            29.383678000001964,
+            23.340313999997306,
+            25.69791599999735,
+            20.986683999999514
+          ],
+          "medianWallMs": 24.519114999997328,
+          "medianProcessCpuMs": 24.481499999999997
+        }
+      }
+    }
+  }
+]

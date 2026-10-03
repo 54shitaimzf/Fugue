@@ -24,6 +24,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { CapabilityRow } from '../src/capability/table.ts'
+import { checkCapabilityInvariants } from './capability-invariants.ts'
 import { CAPABILITY_TABLE, checkInvariant } from '../src/capability/table.ts'
 import type { ToolEntry } from '../src/tools/catalog.ts'
 import { TOOL_ENTRIES, TOOL_NAMES } from '../src/tools/catalog.ts'
@@ -103,6 +104,7 @@ console.log('一 · 能力表 ↔ 工具目录（§ 8.9 全函数 · § 8.10 唯
 {
   const names: string[] = [...TOOL_NAMES]
   eq('真状态：能力表对得上目录那份名字', checkInvariant(CAPABILITY_TABLE, names), [])
+  eq('真状态：目录重名、层域、能力身份与声明集类型', checkCapabilityInvariants(), [])
   eq(
     '真状态：目录那份名字就是从 `TOOL_ENTRIES` 算出来的（名字只有一处）',
     names,
@@ -126,6 +128,18 @@ console.log('一 · 能力表 ↔ 工具目录（§ 8.9 全函数 · § 8.10 唯
     read: { layer: 'view', capability: 'read', decl: true },
   }
   expectProblems('负对照（声明集挂到了视图层）', checkInvariant(wrongDecl, names), 'read')
+
+  expectProblems('负对照（目录重名）', checkCapabilityInvariants([...TOOL_ENTRIES, TOOL_ENTRIES[0]!]), '工具目录重名')
+  const unknownLayer = {
+    ...CAPABILITY_TABLE, read: { ...CAPABILITY_TABLE.read!, layer: 'unknown', decl: false },
+  } as unknown as Readonly<Record<string, CapabilityRow>>
+  expectProblems('负对照（层域未声明）', checkCapabilityInvariants(TOOL_ENTRIES, unknownLayer), '层未声明')
+  const duplicateCapability = { ...CAPABILITY_TABLE, read: { ...CAPABILITY_TABLE.read!, capability: 'write' } }
+  expectProblems('负对照（能力标识重名）', checkCapabilityInvariants(TOOL_ENTRIES, duplicateCapability), '能力标识重名')
+  const nonBooleanDecl = {
+    ...CAPABILITY_TABLE, bash: { ...CAPABILITY_TABLE.bash!, decl: 'false' },
+  } as unknown as Readonly<Record<string, CapabilityRow>>
+  expectProblems('负对照（声明集标记非布尔）', checkCapabilityInvariants(TOOL_ENTRIES, nonBooleanDecl), '不是布尔值')
 }
 
 // ── 二 · 协议的两份声明 ────────────────────────────────────────────────────────
