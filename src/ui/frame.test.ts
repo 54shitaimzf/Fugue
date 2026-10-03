@@ -187,13 +187,14 @@ test('⑫ 跳步那一栏：两张读脸同一个数、同一句话（判据改�
   // 一处做减法两处就一起错（这正是这一条要钉住的）。
   assert.match(linesOf(loops, { cat: BUILTIN_CATALOG }).join('\n'), /转移 3 条 · 跳步 2/)
 
-  // 图外边那一档：旧判据印「跳步 -1」（1 - 2）——负数不是读数，修后一个字都不印。
+  // 图外边那一档：旧判据印「跳步 -1」（1 - 2）——负数不是读数；修后 0 那一档不印（恒印 0 那一版
+  // 要动 `ui/term.test.ts` 的黄金帧，没采纳），而负数一个都不出现。
   const outside = statusOf([
     row({ t: 'round/state', round: 'r1' as never, from: 'Aborted' as never, to: 'Idle' as never }),
     row({ t: 'round/state', round: 'r1' as never, from: 'Idle' as never, to: 'Planning' as never }),
   ])
   const outLeft = bodyOf({ snapshot: outside }).left.join('\n')
-  assert.doesNotMatch(outLeft, /跳步/, `图外那一档不该印跳步：${outLeft}`)
+  assert.doesNotMatch(outLeft, /跳步/, `图外那一档不印跳步：${outLeft}`)
   assert.doesNotMatch(outLeft, /-\d/, `读面上不许出现负数：${outLeft}`)
 })
 

@@ -26,9 +26,10 @@
 //      同一个渲染**；没要的那一栏不出现（不是空数组）；账动两边一起动
 //   ⑪ **范围写进读数**：`conflicts` 与 `rejects` 带 `[本轮]`（递了轮次时）· `denied` 两处都是
 //      `[整账]`（`run/end` 事件里没有轮次那一栏）——⑩ 两边递的都是空范围，看不见这一层
-//   ①d **跳步按边数**（本站）：图外边（一条转移零步）不再印「跳步 -1」· 自环边（一条转移 ·
-//      零步）不许把别的转移里真的跳步抵掉；两条都点名旧判据 `hops - transitions`——改回减法
-//      这两条当场红。跳步那一栏的字只有一处（`skipsNote`），`ui/frame.ts` 读的是同一处。
+//   ①d **跳步按边数**（本站）：图外边（一条转移零步）不再印「跳步 -1」，0 那一档不印（**恒印 0 那一版
+//      是远端那一支的做法，没采纳**——它要动 `ui/term.test.ts` 的黄金帧，见疑点清单）· 自环边
+//      （一条转移 · 零步）不许把别的转移里真的跳步抵掉；两条都点名旧判据 `hops - transitions`——
+//      改回减法这两条当场红。跳步那一栏的字只有一处（`skipsNote`），`ui/frame.ts` 读的是同一处。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -167,7 +168,8 @@ test('①d 跳步按边数：图外边不印负数 · 自环吃不掉真跳步�
   assert.equal(outside.rounds[0]?.unrouted, 1, '图外是另一种事实，它自己有一栏')
   assert.equal(outside.rounds[0]?.skips, 0, '图外边不许掺进跳步，也不许把别的抵成负数')
   const outsideLine = linesOf(outside, { cat: BUILTIN_CATALOG }).join('\n')
-  assert.doesNotMatch(outsideLine, /跳步/, `图外那一档不该印跳步：${outsideLine}`)
+  // 0 那一档不印（恒印 0 那一版要动 `ui/term.test.ts` 的黄金帧，没采纳；见 `skipsNote` 的说明）。
+  assert.doesNotMatch(outsideLine, /跳步/, `图外那一档不印跳步：${outsideLine}`)
   assert.doesNotMatch(outsideLine, /-\d/, `读面上不许出现负数：${outsideLine}`)
 
   // ── 形态二 · 自环边加真跳步：两条自环（一条转移 · 零步）＋一条三跳的转移。
@@ -751,6 +753,11 @@ test('⑬ `status --ledger`：这一栏挂在同一个出口上，不给开关�
   assert.equal(l?.calls[1]?.model, 'deepseek-flash/anthropic', '分组键从同格同一步那条 `llm/call` 补')
   assert.equal(l?.calls[1]?.tool?.detour, true, '这一行里提到了 grep → 绕行')
   assert.equal(l?.calls[1]?.tool?.denied, true)
+  assert.equal(l?.truncated, false, '这两条调用没到上限')
+  assert.equal(l?.totalCalls, 2)
+  // **每一行指得回日志里那一条**：坐标就是那一行自己的位置（`row()` 给的），不是另算一个序号。
+  assert.deepEqual(l?.calls[0]?.source, rows[0]?.pos)
+  assert.deepEqual(l?.calls[1]?.source, rows[2]?.pos)
   // 三 · 没给峰谷档：钱那一栏是 `null`（不是 0）——与 `status --once` 同一条口径。
   const noPhase = await readings(fake, { ledger: { cat: BUILTIN_CATALOG } })
   assert.equal(noPhase.ledger?.calls[0]?.usd, null, '没给峰谷档就不算钱')

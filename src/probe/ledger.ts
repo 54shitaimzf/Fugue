@@ -51,6 +51,9 @@
 //
 // **它从日志重算，不采集**：同一份日志重算两次得到同一份账；改动之前的既有日志照读照重算
 // （没量到的栏如实给「未量到」）。
+//
+// **逐条那一份有界**（缺省 `LEDGER_MAX_CALLS` 条）：截了账自己说出来（`truncated` 与 `totalCalls`），
+// 而合计与分组照旧是全量——它们从每一条调用上累积，不是从留的那一份上数出来的。
 import type { Catalog } from '../model/catalog.ts'
 import type { Billable, Phase, TokenTotal } from '../model/price.ts'
 import { costOf, formatUsd, matchModels } from '../model/price.ts'
@@ -181,6 +184,8 @@ export interface LedgerTool {
 /** 一行账。`kind` 决定哪几栏有话说（表在 `LEDGER_COLUMNS`）。 */
 export interface LedgerCall {
   readonly kind: LedgerKind
+  /** 这一行是哪一条事件算出来的（writer + seq：账上的唯一坐标）——**每一行都指得回日志**。 */
+  readonly source: { readonly writer: string; readonly seq: number }
   readonly agent: string
   readonly step: string
   readonly model: string | null
@@ -213,6 +218,12 @@ export interface Ledger {
   readonly groups: readonly LedgerGroup[]
   /** 读了几条事件（"从日志重算"那句话的凭据）。 */
   readonly events: number
+  /** 逐条那一份一共几条（**保留的那一份可能比它少**：上限见 `maxCalls`）。 */
+  readonly totalCalls: number
+  /** 逐条那一份被上限截住了吗（**截了要说**，与回执那一条同一条纪律）。 */
+  readonly truncated: boolean
+  /** 逐条那一份最多留几条（库入口与读面共用的那一个数）。 */
+  readonly maxCalls: number
   /** `llm/call` 里带着 `ms` 的条数 · 没带的条数（**旧账那一档就是这个数，不静默**）。 */
   readonly msSeen: number
   readonly msMissing: number
@@ -247,9 +258,13 @@ export const LEDGER_HEAD = '每调用成本台账（从日志重算，不采集�
 
 /**
  * 读账那一侧递进来的行：`probe/status.ts` 的 `StatusRow` 与 `probe/metrics.ts` 的 `MergedRow`
- * 都满足它（只要带着事件本身那一栏）——**两条读路共用这一处折法**，不各折一份。
+ * 都满足它（带着事件本身与它的日志位置）——**两条读路共用这一处折法**，不各折一份。
+ *
+ * `pos` 那一栏是**每一行指得回一条事件**的凭据（writer + seq 是账上的唯一坐标），不是装饰：
+ * 读账的人拿着账上那一行要能回到日志里那一条。
  */
 export interface LedgerRow {
+  readonly pos: { readonly writer: string; readonly seq: number }
   readonly e: LogEvent
 }
 
@@ -257,6 +272,11 @@ export interface LedgerRow {
 function sumOrNull(vals: readonly (number | null)[]): number | null {
   const seen = vals.filter((v): v is number => typeof v === 'number')
   return seen.length === 0 ? null : seen.reduce((a, b) => a + b, 0)
+}
+
+/** 加上一个读数（`null` 就是不加上去，**不拿 0 顶**）。 */
+function plus(sum: number | null, v: number | null): number | null {
+  return v === null ? sum : (sum ?? 0) + v
 }
 
 /** 那一行四个 token 数 × 读的时候那份价目。**没给峰谷档就不算钱**（与 `status --once` 同一口径）。 */
@@ -288,25 +308,110 @@ function tokensOf(u: {
   return { input: u.inputTokens, cacheRead: u.cacheReadTokens, cacheWrite: u.cacheWriteTokens, output: u.outputTokens }
 }
 
+/** 逐条那一份的缺省上限：**库入口与读面共用这一个数**（与 `receipt.ts` 那套常数同一个意思）。 */
+export const LEDGER_MAX_CALLS = 5000
+
+/** 一格的累计（合计与分组都从**全部**调用上累积，与「逐条保留了几条」无关）。 */
+interface GroupAcc {
+  readonly model: string | null
+  readonly wire: string | null
+  calls: number
+  toolCalls: number
+  ms: number | null
+  msMissing: number
+  input: number | null
+  cacheRead: number | null
+  cacheWrite: number | null
+  output: number | null
+  tokensMissing: number
+  usd: number | null
+  usdMissing: number
+}
+
 /**
  * **从一串事件重算一本账。** 纯函数：同一串行算两次得到同一本账；它不读文件、不碰时钟、不缓存。
  *
  * 两条调用各走各的路：
  *   · `llm/call` 一条一行（模型那一类）；同一格同一步的那一条同时进 `at` 那张表，给工具那一类当分组键。
  *   · `run/start` 进队、`run/end` 出队配成一次工具调用——**一个键一队**（同一步可以起两次）。
+ *     那几条工具调用今天是**顺序执行**的，所以先进先出配得准；哪天它们并行起来，这一处的口径要重看。
  *     起了没落地的那几条（日志从半截起读 · 那一趟没收尾）**照样进账**：耗时与退出码是「未量到」，
  *     而少记一笔就是少一份读数。
+ *
+ * **逐条那一份有界**（`maxCalls`，缺省 `LEDGER_MAX_CALLS` 条）：截了账自己说出来（`truncated` 与
+ * `totalCalls`），而**合计与分组照旧是全量**——它们从每一条调用上累积，不是从留的那一份上数出来的
+ * （截的是「印几条」，不是读数）。
  */
-export function ledgerOf(rows: readonly LedgerRow[], inputs: LedgerInputs): Ledger {
+export function ledgerOf(rows: readonly LedgerRow[], inputs: LedgerInputs, maxCalls = LEDGER_MAX_CALLS): Ledger {
   const calls: LedgerCall[] = []
   /** 同一格同一步那条 `llm/call`（工具那一类的分组键）。**后写的那条盖前一条**。 */
   const at = new Map<string, { readonly model: string; readonly wire: string }>()
-  /** 起了还没落地的 `run/start`：**一个键一队**。 */
-  const open = new Map<string, { readonly action: string; readonly argv0: string; readonly argv: readonly string[] }[]>()
+  /** 起了还没落地的 `run/start`：**一个键一队**（队里带着它自己那条事件的坐标）。 */
+  const open = new Map<
+    string,
+    {
+      readonly action: string
+      readonly argv0: string
+      readonly argv: readonly string[]
+      readonly pos: { readonly writer: string; readonly seq: number }
+    }[]
+  >()
+  const acc = new Map<string, GroupAcc>()
   const bound = inputs.bindings ?? []
+  let totalCalls = 0
+  let msSeen = 0
+  let msMissing = 0
+
+  /** 一条调用进账：合计与分组从**全部**调用上累积，逐条那一份只留前 `maxCalls` 条。 */
+  const book = (c: LedgerCall): void => {
+    totalCalls += 1
+    if (calls.length < maxCalls) calls.push(c)
+    if (c.kind === 'model') {
+      if (c.ms === null) msMissing += 1
+      else msSeen += 1
+    }
+    const k = groupKeyOf(c.model, c.wire)
+    let g = acc.get(k)
+    if (g === undefined) {
+      g = {
+        model: c.model,
+        wire: c.wire,
+        calls: 0,
+        toolCalls: 0,
+        ms: null,
+        msMissing: 0,
+        input: null,
+        cacheRead: null,
+        cacheWrite: null,
+        output: null,
+        tokensMissing: 0,
+        usd: null,
+        usdMissing: 0,
+      }
+      acc.set(k, g)
+    }
+    g.ms = plus(g.ms, c.ms)
+    if (c.ms === null) g.msMissing += 1
+    g.usd = plus(g.usd, c.usd)
+    if (c.kind !== 'model') {
+      g.toolCalls += 1
+      return
+    }
+    g.calls += 1
+    const t = c.tokens
+    if (t === null || t.input === null || t.cacheRead === null || t.cacheWrite === null || t.output === null) {
+      g.tokensMissing += 1
+    }
+    g.input = plus(g.input, t?.input ?? null)
+    g.cacheRead = plus(g.cacheRead, t?.cacheRead ?? null)
+    g.cacheWrite = plus(g.cacheWrite, t?.cacheWrite ?? null)
+    g.output = plus(g.output, t?.output ?? null)
+    if (c.usd === null) g.usdMissing += 1
+  }
 
   /** 一条工具调用：分组键从 `at` 那张表补（补不到就是「未量到」）。 */
   const toolOf = (
+    pos: { readonly writer: string; readonly seq: number },
     agent: string,
     step: string,
     one: { readonly action: string; readonly argv0: string; readonly argv: readonly string[] } | undefined,
@@ -315,6 +420,7 @@ export function ledgerOf(rows: readonly LedgerRow[], inputs: LedgerInputs): Ledg
     const g = at.get(`${agent}\u0000${step}`)
     return {
       kind: 'tool',
+      source: pos,
       agent,
       step,
       model: g?.model ?? null,
@@ -332,12 +438,14 @@ export function ledgerOf(rows: readonly LedgerRow[], inputs: LedgerInputs): Ledg
     }
   }
 
-  for (const { e } of rows) {
+  for (const row of rows) {
+    const e = row.e
     if (e.t === 'llm/call') {
       const tokens = tokensOf(e.usage)
       at.set(`${e.agent}\u0000${e.step}`, { model: e.model, wire: e.wire })
-      calls.push({
+      book({
         kind: 'model',
+        source: row.pos,
         agent: e.agent,
         step: e.step,
         model: e.model,
@@ -352,7 +460,7 @@ export function ledgerOf(rows: readonly LedgerRow[], inputs: LedgerInputs): Ledg
     }
     if (e.t === 'run/start') {
       const k = `${e.agent}\u0000${e.step}`
-      const one = { action: e.action, argv0: e.argv0, argv: e.argv ?? [e.argv0] }
+      const one = { action: e.action, argv0: e.argv0, argv: e.argv ?? [e.argv0], pos: row.pos }
       const q = open.get(k)
       if (q === undefined) open.set(k, [one])
       else q.push(one)
@@ -362,66 +470,46 @@ export function ledgerOf(rows: readonly LedgerRow[], inputs: LedgerInputs): Ledg
       const k = `${e.agent}\u0000${e.step}`
       const q = open.get(k)
       const one = q?.shift()
-      calls.push(toolOf(e.agent, e.step, one, { ms: e.ms, exit: e.exit, denied: e.denied }))
+      book(toolOf(row.pos, e.agent, e.step, one, { ms: e.ms, exit: e.exit, denied: e.denied }))
     }
   }
-  // 起了没落地的那几条：**照样进账**（日志从半截起读那一档就是这样）。
+  // 起了没落地的那几条：**照样进账**（日志从半截起读那一档就是这样）——坐标取它自己那条 `run/start`。
   for (const [k, q] of open) {
     const parts = k.split('\u0000')
     const agent = parts[0] ?? ''
     const step = parts[1] ?? ''
-    for (const one of q) calls.push(toolOf(agent, step, one, null))
+    for (const one of q) book(toolOf(one.pos, agent, step, one, null))
   }
 
   // 分组那一份：按分组键排序（**结果与事件次序无关**：同一份账重算两次逐字相同）。
-  const keyed = calls.map((c) => ({ k: groupKeyOf(c.model, c.wire), c }))
-  keyed.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0))
-  const groups: LedgerGroup[] = []
-  for (let i = 0; i < keyed.length; ) {
-    const k = keyed[i]?.k ?? ''
-    const list: LedgerCall[] = []
-    while (i < keyed.length && keyed[i]?.k === k) {
-      const one = keyed[i]?.c
-      if (one !== undefined) list.push(one)
-      i += 1
-    }
-    const models = list.filter((x) => x.kind === 'model')
-    const tok = (pick: (t: LedgerTokens) => number | null): number | null =>
-      sumOrNull(models.map((x) => (x.tokens === null ? null : pick(x.tokens))))
-    groups.push({
-      model: list[0]?.model ?? null,
-      wire: list[0]?.wire ?? null,
-      calls: models.length,
-      toolCalls: list.length - models.length,
-      ms: sumOrNull(list.map((x) => x.ms)),
-      msMissing: list.filter((x) => x.ms === null).length,
-      tokens: {
-        input: tok((t) => t.input),
-        cacheRead: tok((t) => t.cacheRead),
-        cacheWrite: tok((t) => t.cacheWrite),
-        output: tok((t) => t.output),
-      },
-      tokensMissing: models.filter(
-        (x) =>
-          x.tokens === null ||
-          x.tokens.input === null ||
-          x.tokens.cacheRead === null ||
-          x.tokens.cacheWrite === null ||
-          x.tokens.output === null,
-      ).length,
-      usd: sumOrNull(list.map((x) => x.usd)),
-      // **工具那几条不算「算不出来」**：它们本来就不进钱那一栏（不是少给了价目）。
-      usdMissing: models.filter((x) => x.usd === null).length,
+  const groups: LedgerGroup[] = [...acc.values()]
+    .map((g) => ({
+      model: g.model,
+      wire: g.wire,
+      calls: g.calls,
+      toolCalls: g.toolCalls,
+      ms: g.ms,
+      msMissing: g.msMissing,
+      tokens: { input: g.input, cacheRead: g.cacheRead, cacheWrite: g.cacheWrite, output: g.output },
+      tokensMissing: g.tokensMissing,
+      usd: g.usd,
+      usdMissing: g.usdMissing,
+    }))
+    .sort((a, b) => {
+      const ka = groupKeyOf(a.model, a.wire)
+      const kb = groupKeyOf(b.model, b.wire)
+      return ka < kb ? -1 : ka > kb ? 1 : 0
     })
-  }
 
-  const modelCalls = calls.filter((c) => c.kind === 'model')
   return {
     calls,
     groups,
     events: rows.length,
-    msSeen: modelCalls.filter((c) => c.ms !== null).length,
-    msMissing: modelCalls.filter((c) => c.ms === null).length,
+    totalCalls,
+    truncated: totalCalls > calls.length,
+    maxCalls,
+    msSeen,
+    msMissing,
     boundCommands: bound.length,
   }
 }
@@ -436,16 +524,18 @@ function numText(v: number | null, unit: string): string {
  *
  * 文字面印**分组**那一份（模型 · 线协议 → 调用 · 耗时 · 钱 · 四个 token 数），逐条那一份在 `--json`
  * 里（`Ledger.calls`）：一份账几万条调用时逐条印满屏，等于把「这一轮花了多少」这件事淹掉。**这里不
- * 截断也不静默**——一条都不少印的是合计与分组，而「逐条在哪」写在下面那一行里。
+ * 截断也不静默**——合计与分组是从**每一条**调用上累积的（不是从留的那一份上数的），而「逐条印了几条
+ * · 一共几条」写在下面那一行里；截了就直说。
  */
 export function ledgerLines(l: Ledger): readonly string[] {
   const out: string[] = []
-  const models = l.calls.filter((c) => c.kind === 'model').length
-  const tools = l.calls.length - models
-  const ms = sumOrNull(l.calls.map((c) => c.ms))
-  const msMissing = l.calls.filter((c) => c.ms === null).length
-  const usd = sumOrNull(l.calls.map((c) => c.usd))
-  const usdMissing = l.calls.filter((c) => c.kind === 'model' && c.usd === null).length
+  // 合计从**分组**上折：分组是全量累积的，逐条那一份可能被上限截过。
+  const models = l.groups.reduce((n, g) => n + g.calls, 0)
+  const tools = l.groups.reduce((n, g) => n + g.toolCalls, 0)
+  const ms = l.groups.reduce((a: number | null, g) => plus(a, g.ms), null)
+  const msMissing = l.groups.reduce((n, g) => n + g.msMissing, 0)
+  const usd = l.groups.reduce((a: number | null, g) => plus(a, g.usd), null)
+  const usdMissing = l.groups.reduce((n, g) => n + g.usdMissing, 0)
   const tok = (v: number | null): string => (v === null ? '未量到' : String(v))
   out.push(
     `合计 模型调用 ${models} 次 · 起进程 ${tools} 次 · 耗时 ${numText(ms, ' ms')}（未量到 ${msMissing} 条）` +
@@ -462,7 +552,11 @@ export function ledgerLines(l: Ledger): readonly string[] {
         `${g.tokensMissing === 0 ? '' : `（缺 ${g.tokensMissing} 条）`}`,
     )
   }
-  out.push(`读了 ${l.events} 条事件 · 逐条那一份在 --json 里（${l.calls.length} 条）——这一本账是读的时候从日志重算的，不落盘、不缓存`)
+  const perCall =
+    l.truncated === false
+      ? `逐条那一份在 --json 里（${l.calls.length} 条）`
+      : `逐条那一份在 --json 里印了 ${l.calls.length} 条 · 一共 ${l.totalCalls} 条——到上限 ${l.maxCalls} 条就停（合计与分组照旧是全量）`
+  out.push(`读了 ${l.events} 条事件 · ${perCall}——这一本账是读的时候从日志重算的，不落盘、不缓存`)
   if (l.msMissing > 0) {
     out.push(
       `耗时那一栏有 ${l.msMissing} 条模型调用没量到（这一栏是后来加的：更早的日志里没有 llm/call.ms 那一栏——回放照旧，不去猜它）`,

@@ -156,10 +156,18 @@ test('⑤ 重算一本账：两条路各配各的 · 分组键从同格同一步
     runEndOf('a1', '0', 3),
     llmOf('a1', '1'),
     runStartOf('a1', '1', ['/bin/sh', '-c', 'sleep 1']),
-  ].map((e) => ({ e }))
+  ].map((e, at) => ({ pos: { writer: 'a1', seq: at + 1 }, e }))
   const l = ledgerOf(rows, INPUTS)
   assert.equal(l.calls.length, 4, `两条模型调用 + 两次起进程，实际 ${l.calls.length} 条`)
   assert.equal(l.events, 5)
+  // **每一行指得回一条事件**：坐标就是那一行在日志里的位置。
+  assert.deepEqual(l.calls[0]?.source, { writer: 'a1', seq: 1 })
+  // 工具那一条的坐标是**它自己那条 `run/end`**（配对的另一半在 `run/start`，不进这个坐标）。
+  assert.deepEqual(l.calls[1]?.source, { writer: 'a1', seq: 3 })
+  assert.deepEqual(l.calls[2]?.source, { writer: 'a1', seq: 4 })
+  assert.deepEqual(l.calls[3]?.source, { writer: 'a1', seq: 5 }, '起了没落地那一条用自己那条 run/start 的坐标')
+  assert.equal(l.truncated, false)
+  assert.equal(l.totalCalls, 4)
   assert.deepEqual(
     l.calls.map((c) => c.kind),
     ['model', 'tool', 'model', 'tool'],
@@ -204,7 +212,7 @@ test('⑤ 重算一本账：两条路各配各的 · 分组键从同格同一步
 
 test('⑥ 走法那一栏：老判据一个字没变，加进来的那一半只认「原样抄了那条命令行」', () => {
   const one = (bindings: readonly string[]): ReturnType<typeof ledgerOf> =>
-    ledgerOf([{ e: runStartOf('a1', '0', ['make', 'build']) }], { ...INPUTS, bindings })
+    ledgerOf([{ pos: { writer: 'a1', seq: 1 }, e: runStartOf('a1', '0', ['make', 'build']) }], { ...INPUTS, bindings })
   // 一 · 老那一半：这一行里没有工具名 → 不判绕行（既有可见形态的读数不因修而变）。
   assert.equal(looksLikeDetour(['make', 'build']), false)
   assert.equal(one([]).calls[0]?.tool?.detour, false)
@@ -213,7 +221,7 @@ test('⑥ 走法那一栏：老判据一个字没变，加进来的那一半只�
   // 三 · 抄的不是那一条（多一个参数）就不认：判据是「原文在不在这一行里」，不是「像不像」。
   assert.equal(one(['make -j8 build']).calls[0]?.tool?.detour, false)
   // 四 · 老那一半照旧抓得住：命令里提到工具名，两半都不给也判绕行。
-  const g = ledgerOf([{ e: runStartOf('a1', '0', ['/bin/sh', '-c', 'grep -n x a.ts']) }], INPUTS)
+  const g = ledgerOf([{ pos: { writer: 'a1', seq: 1 }, e: runStartOf('a1', '0', ['/bin/sh', '-c', 'grep -n x a.ts']) }], INPUTS)
   assert.equal(g.calls[0]?.tool?.detour, true)
   // 五 · 读账的人没递绑定：账自己把「只有一半」说出来（**少一份读数不许静默**）。
   assert.equal(g.boundCommands, 0)
@@ -229,5 +237,34 @@ test('⑥ 走法那一栏：老判据一个字没变，加进来的那一半只�
   console.log(
     '⑥ 读数：`make build` 原样抄给 bash —— 不给绑定 false · 给绑定 true · 多一个参数 false；' +
       '命令里有工具名那一半照旧 true',
+  )
+})
+
+test('⑦ 逐条那一份有界：截了就说出来，而合计与分组照旧是全量', () => {
+  const rows = [llmOf('a1', '0', { ms: 1 }), llmOf('a1', '1', { ms: 2 }), llmOf('a1', '2', { ms: 3 })].map((e, at) => ({
+    pos: { writer: 'a1', seq: at + 1 },
+    e,
+  }))
+  const l = ledgerOf(rows, INPUTS, 2)
+  assert.equal(l.calls.length, 2, '逐条那一份留到上限')
+  assert.equal(l.totalCalls, 3)
+  assert.equal(l.truncated, true)
+  assert.equal(l.maxCalls, 2)
+  // **截的是「印几条」，不是读数**：合计 · 分组 · 量到没量到，全是从每一条调用上累积的。
+  assert.equal(l.groups[0]?.calls, 3, '分组是全量')
+  assert.equal(l.groups[0]?.ms, 6, '合计是全量')
+  assert.equal(l.groups[0]?.tokens.input, 300, 'token 合计是全量')
+  assert.equal(l.msSeen, 3, '量到没量到也是全量')
+  const lines = ledgerLines(l).join('\n')
+  assert.match(lines, /印了 2 条 · 一共 3 条/, `截了要说出来：\n${lines}`)
+  assert.match(lines, /合计 模型调用 3 次/, `合计那一行也是全量（它不许从留的那一份上数）：\n${lines}`)
+  // 不截那一档：一个字都不许提「截」。
+  const full = ledgerOf(rows, INPUTS)
+  assert.equal(full.truncated, false)
+  assert.equal(full.calls.length, 3)
+  assert.equal(/一共 \d+ 条/.test(ledgerLines(full).join('\n')), false, '没截就不许说截')
+  console.log(
+    '⑦ 读数：上限 2 条 → 逐条印 2 / 共 3（截了）· 分组照旧 calls=3 ms=6 tokens.input=300' +
+      ' · 上限松开那一档印 3 条且不提截 · 合计那一行也是全量',
   )
 })
