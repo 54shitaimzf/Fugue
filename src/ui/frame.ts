@@ -39,6 +39,7 @@ import { costOf, matchModels, moneyText } from '../model/price.ts'
 import type { Phase } from '../model/price.ts'
 import type { Catalog } from '../model/catalog.ts'
 import type { MetricReading } from '../probe/round.ts'
+import { skipsNote } from '../probe/status.ts'
 import type { StatusSnapshot } from '../probe/status.ts'
 import { clip, widthOf, wrap } from './glyph.ts'
 
@@ -181,8 +182,9 @@ export function bodyOf(o: {
   }
   for (const r of s.rounds) {
     const here = r.round === s.current ? ' · 最近一条落在这一轮' : ''
-    const jumps = r.hops === r.transitions ? '' : ` · 跳步 ${r.hops - r.transitions}`
-    left.push(`轮次 ${r.round} · 状态 ${r.state} · 转移 ${r.transitions} 条${jumps} · 打回 ${r.rejects} 次${here}`)
+    // 跳步那一栏**不再自己做减法**（`hops - transitions` 在图外边那一档印出过 -1，在自环那一档
+    // 把真的跳步抵成不印）；数与写法都从 `probe/status.ts` 那一处取，与命令行那一张脸同源。
+    left.push(`轮次 ${r.round} · 状态 ${r.state} · 转移 ${r.transitions} 条${skipsNote(r.skips)} · 打回 ${r.rejects} 次${here}`)
     for (const e of r.edges) left.push(`  ${e}`)
     if (r.unrouted > 0) left.push(`  （图上走不通的 ${r.unrouted} 条：账与图对不上）`)
   }

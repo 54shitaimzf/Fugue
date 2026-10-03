@@ -26,6 +26,9 @@
 //      同一个渲染**；没要的那一栏不出现（不是空数组）；账动两边一起动
 //   ⑪ **范围写进读数**：`conflicts` 与 `rejects` 带 `[本轮]`（递了轮次时）· `denied` 两处都是
 //      `[整账]`（`run/end` 事件里没有轮次那一栏）——⑩ 两边递的都是空范围，看不见这一层
+//   ①d **跳步按边数**（0.3.0）：图外边（一条转移零步）不再印「跳步 -1」· 自环边（一条转移 ·
+//      零步）不许把别的转移里真的跳步抵掉；两条都点名旧判据 `hops - transitions`——改回减法
+//      这两条当场红。跳步那一栏的字只有一处（`skipsNote`），`ui/frame.ts` 读的是同一处。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -151,6 +154,31 @@ test('①c 负对照：图外的记数不炸；图上没有的路 routeOf 给 nu
   assert.match(linesOf(s, { cat: BUILTIN_CATALOG }).join('\n'), /图上没有这条路/)
   // 状态本身不认识 → 账坏了，当场拒。
   assert.throws(() => statusOf(chain('r1' as RoundId, [['Idle', 'Dreaming']])), /不认识的轮次状态/)
+})
+
+test('①d 跳步按边数：图外边不印负数 · 自环吃不掉真跳步（判据改回减法这两条当场红）', () => {
+  // ── 形态一 · 图外边：一条转移在图上走不通（零步）＋一条单边。
+  // 旧判据 `hops - transitions` 在这一档印的是「跳步 -1」（1 - 2）——负数，而且它不是读数。
+  const outside = statusOf(chain('r1' as RoundId, [['Aborted', 'Idle'], ['Idle', 'Planning']]))
+  assert.equal(outside.rounds[0]?.transitions, 2)
+  assert.equal(outside.rounds[0]?.hops, 1, '图外那一条零步 · 另一条一步')
+  assert.equal(outside.rounds[0]?.unrouted, 1, '图外是另一种事实，它自己有一栏')
+  assert.equal(outside.rounds[0]?.skips, 0, '图外边不许掺进跳步，也不许把别的抵成负数')
+  const outsideLine = linesOf(outside, { cat: BUILTIN_CATALOG }).join('\n')
+  assert.doesNotMatch(outsideLine, /跳步/, `图外那一档不该印跳步：${outsideLine}`)
+  assert.doesNotMatch(outsideLine, /-\d/, `读面上不许出现负数：${outsideLine}`)
+
+  // ── 形态二 · 自环边加真跳步：两条自环（一条转移 · 零步）＋一条三跳的转移。
+  // 旧判据在这一档是 3 - 3 = 0 →「有跳步」那句话一个字都不印（真的跳步被自环抵掉了）。
+  const loops = statusOf(chain('r1' as RoundId, [['Idle', 'Idle'], ['Planning', 'Planning'], ['Idle', 'Working']]))
+  assert.equal(loops.rounds[0]?.transitions, 3)
+  assert.equal(loops.rounds[0]?.hops, 3, '两条自环零步 ＋ 一条三跳')
+  assert.equal(loops.rounds[0]?.unrouted, 0)
+  assert.equal(loops.rounds[0]?.skips, 2, '自环自己不是跳步，也不许把那条三跳的转移抵掉')
+  const loopsLine = linesOf(loops, { cat: BUILTIN_CATALOG }).join('\n')
+  assert.match(loopsLine, /跳步 2/, `真跳步要被印出来：${loopsLine}`)
+  // 同一份账那两张读脸读的是同一个数（`ui/frame.ts` 那一处也走 `skipsNote`）。
+  assert.equal(loops.rounds[0]?.skips, 2)
 })
 
 test('② 用量缺项不拿 0 顶：没量到的进 missing', () => {

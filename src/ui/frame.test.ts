@@ -24,11 +24,14 @@
 //      尾巴永远看不见）· `top` 数到的那一行就是屏上第一条正文。
 //   ⑪ **层次**（0.2.8 U3）：阅读面那一档收成单栏、框名换「阅读面」，那一行报 `readHeading`
 //      （主题里加粗）· 遗漏数算上被那句提示顶掉的一行（`below + 1`）。
+//   ⑫ **跳步那一栏**（0.3.0）：左栏印的那个数与命令行那一张脸**同源**（`probe/status.ts` 的
+//      `skipsNote`）；自环边吃不掉真跳步 · 图外边不印负数——判据改回 `hops - transitions` 当场红。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
-import { statusOf } from '../probe/status.ts'
+import { linesOf, statusOf } from '../probe/status.ts'
+import { BUILTIN_CATALOG } from '../model/catalog.ts'
 import { bodyOf, footerOf, frameOf, innerOf, panelOf, windowOf } from './frame.ts'
 import { clip, widthOf, wrap } from './glyph.ts'
 import { readWrap } from './read.ts'
@@ -168,6 +171,30 @@ test('① 黄金帧：整帧逐字节等于那一份原文，而且每一行恰�
     `① 读数：${f.lines.length} 行 · 每行 ${f.width} 列 · 左 ${f.columns.left} / 右 ${f.columns.right}` +
       ` · 账尾「${f.footer}」· 处境 ${bodyOf({ snapshot: snapshotOf() }).left.length} 行`,
   )
+})
+
+test('⑫ 跳步那一栏：两张读脸同一个数、同一句话（判据改回减法当场红）', () => {
+  // 自环两条（各一条转移 · 零步）＋ 一条三跳的转移（`Idle ⇒ Working` 是三条边）。
+  // 旧判据 `hops - transitions` 在这一档是 3 - 3 = 0——真的跳步被自环抵掉，一个字都不印。
+  const loops = statusOf([
+    row({ t: 'round/state', round: 'r1' as never, from: 'Idle' as never, to: 'Idle' as never }),
+    row({ t: 'round/state', round: 'r1' as never, from: 'Planning' as never, to: 'Planning' as never }),
+    row({ t: 'round/state', round: 'r1' as never, from: 'Idle' as never, to: 'Working' as never }),
+  ])
+  const left = bodyOf({ snapshot: loops }).left.join('\n')
+  assert.match(left, /转移 3 条 · 跳步 2/, `左栏要印真跳步（一条三跳的转移记 2）：${left}`)
+  // 命令行那一张脸印的是同一个数、同一句话——两处都从 `probe/status.ts` 的 `skipsNote` 取，
+  // 一处做减法两处就一起错（这正是这一条要钉住的）。
+  assert.match(linesOf(loops, { cat: BUILTIN_CATALOG }).join('\n'), /转移 3 条 · 跳步 2/)
+
+  // 图外边那一档：旧判据印「跳步 -1」（1 - 2）——负数不是读数，修后一个字都不印。
+  const outside = statusOf([
+    row({ t: 'round/state', round: 'r1' as never, from: 'Aborted' as never, to: 'Idle' as never }),
+    row({ t: 'round/state', round: 'r1' as never, from: 'Idle' as never, to: 'Planning' as never }),
+  ])
+  const outLeft = bodyOf({ snapshot: outside }).left.join('\n')
+  assert.doesNotMatch(outLeft, /跳步/, `图外那一档不该印跳步：${outLeft}`)
+  assert.doesNotMatch(outLeft, /-\d/, `读面上不许出现负数：${outLeft}`)
 })
 
 test('② 负对照 · 左栏：多一条 round/state → 左栏变、右栏一字不变（账尾会动，它是全账的读数）', () => {

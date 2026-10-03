@@ -106,12 +106,41 @@ export interface RoundTrail {
   readonly transitions: number
   /** 那几条在图上**一共走了几步**（单边算一步；跳步按最短路算）——它与上面那一栏不同就是跳步了。 */
   readonly hops: number
+  /**
+   * **跳步数按边数**：图上找回来的每一条多步转移，**它那条路上超出第一条的那些边，一条记一次**
+   * （一条两跳的转移记 1，三跳的记 2）。
+   *
+   * 为什么不是 `hops - transitions`（从前那一处就是那么印的）：那是拿两个不同来源的数相减，
+   * 于是两种形态都错——图外边（一条转移零步）让总数变成负数，自环边（原地说了一次，零步而
+   * 仍是一条转移）把别的转移里真的跳步抵掉。这一栏是**逐条转移累加**出来的，不做减法。
+   *
+   * 三条边界：**单边与自环都是零**（自环是一条转移，不是一次跳步）· **图外边不掺进来**
+   * （`unrouted` 是另一种事实，它也不抵消别人）· 只数一次、只住这一处（两张读脸都读它）。
+   *
+   * **它是逐条累加出来的，按构造不可能为负**——`hops - transitions` 那种减法才会印出 -1，
+   * 而"负数"本身就是"这个数不是这么算的"的证据。
+   */
+  readonly skips: number
   /** 打回了几次（`Verifying → Working` 的条数）。**判据在 `probe/round.ts` 那一份里**，这里只是转手。 */
   readonly rejects: number
   /** 图上走不通的那几条（**记数，不炸**）：它是"账与图对不上"的证据。 */
   readonly unrouted: number
   /** 人读的每一步：单边是 `from ──on──> to`，跳步是 `from ⇒ to（经 a · b）`。 */
   readonly edges: readonly string[]
+}
+
+/**
+ * 跳步那一栏的字。**两张读脸都从这里取**（命令行的 `linesOf` 与 TUI 的 `ui/frame.ts`）：
+ * 数只有一处（`RoundTrail.skips`），写法也只有一处——两处各写一遍，迟早有一处先漂，而漂了不报错。
+ *
+ * 0 就是没有跳步，一个字节都不印（与从前"没有跳步就不印"同形）。
+ *
+ * **负的不许被这道门吃掉**：判据要是退回到那个减法（`hops - transitions`），这一栏就得把那个
+ * 负数**原样印出来**——读了它才知道判据坏了。原先那一处是 `skips > 0`，负的会静默变成"没有
+ * 跳步"，与"真的没有跳步"长得一模一样，而那正是这一条要拦下的东西。
+ */
+export function skipsNote(skips: number): string {
+  return skips === 0 ? '' : ` · 跳步 ${skips}`
 }
 
 /** 验收的两半：过了几条断言 · 没过的几条。**"跑不起来"不进没过那一栏**（架构 § 8.12 末段）。 */
@@ -248,24 +277,29 @@ interface RoundFold {
   state: RoundState
   transitions: number
   hops: number
+  skips: number
   unrouted: number
   edges: string[]
   states: { from: RoundState; to: RoundState }[]
 }
 
 /** 每一步印成一句话：单边印边名，跳步把找回来的那几步印出来。 */
-function renderRoute(from: RoundState, to: RoundState): { text: string; hops: number; routed: boolean } {
+function renderRoute(from: RoundState, to: RoundState): { text: string; hops: number; skips: number; routed: boolean } {
   const route = routeOf(from, to)
-  if (route === null) return { text: `${from} ⇒ ${to}（图上没有这条路）`, hops: 0, routed: false }
+  if (route === null) return { text: `${from} ⇒ ${to}（图上没有这条路）`, hops: 0, skips: 0, routed: false }
   if (route.length <= 1) {
     const e = route[0]
     return e === undefined
-      ? { text: `${from} ⇒ ${to}（原地说了一次）`, hops: 0, routed: true }
-      : { text: `${from} ──${e.on}──> ${to}`, hops: 1, routed: true }
+      ? { text: `${from} ⇒ ${to}（原地说了一次）`, hops: 0, skips: 0, routed: true }
+      : { text: `${from} ──${e.on}──> ${to}`, hops: 1, skips: 0, routed: true }
   }
   return {
     text: `${from} ⇒ ${to}（跳步，经 ${route.map((e) => e.on).join(' · ')}）`,
     hops: route.length,
+    // **一条边记一次**：跳掉的是一条转移里超出第一条的那些边——一条两跳的记 1，三跳的记 2。
+    // **不是"这条路上一共几条边"**：那样一算，健康账（每一条转移都是单边、只有零星几条两跳）
+    // 的读数也会跟着变，而这一站只该改那两种坏形态（黄金帧那一条钉的就是这件事）。
+    skips: route.length - 1,
     routed: true,
   }
 }
@@ -335,7 +369,7 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
       }
       let fold = rounds.get(e.round)
       if (fold === undefined) {
-        fold = { state: 'Idle', transitions: 0, hops: 0, unrouted: 0, edges: [], states: [] }
+        fold = { state: 'Idle', transitions: 0, hops: 0, skips: 0, unrouted: 0, edges: [], states: [] }
         rounds.set(e.round, fold)
         roundOrder.push(e.round)
       }
@@ -343,6 +377,7 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
       fold.state = e.to
       fold.transitions++
       fold.hops += r.hops
+      fold.skips += r.skips
       if (!r.routed) fold.unrouted++
       fold.edges.push(r.text)
       fold.states.push({ from: e.from, to: e.to })
@@ -451,6 +486,7 @@ export function statusOf(rows: readonly StatusRow[]): StatusSnapshot {
         state: fold.state,
         transitions: fold.transitions,
         hops: fold.hops,
+        skips: fold.skips,
         // **同一个数不许有两份写法**：打回那一条的判据在 `probe/round.ts` 里。
         rejects: rejectsIn(fold.states),
         unrouted: fold.unrouted,
@@ -649,7 +685,8 @@ export function callLinesOf(rows: readonly StatusRow[], opts: LinesOptions): rea
 /**
  * 一份快照排成人读的几行。**`--json` 那一档直接吐对象，不走这里。**
  *
- * 跳步与"图上没有这条路"都在这里印出来：读面不许把"账与图对不上"这件事咽下去。
+ * 跳步（`skipsNote`，数与写法都住 `probe/status.ts` 那一处）与"图上没有这条路"都在这里印出来：
+ * 读面不许把"账与图对不上"这件事咽下去。
  */
 export interface LinesOptions {
   /**
@@ -667,9 +704,10 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions): readonly string[
   if (s.rounds.length === 0) out.push('一条轮次状态都没有：这份日志里还没开过轮次')
   for (const r of s.rounds) {
     const here = r.round === s.current ? ' · 最近一条落在这一轮' : ''
-    const hops = r.hops === r.transitions ? '' : `（图上走了 ${r.hops} 步：${r.transitions} 条里有跳步）`
+    // 跳步那一栏与 TUI 逐字同源（`skipsNote`）：**这两个数从前各写各的减法，两处都能印出负数**。
+    // `hops` 不再单独印一句——每一跳印在哪几条边上，下面那几行边自己写着。
     const odd = r.unrouted > 0 ? ` · 图外 ${r.unrouted} 条` : ''
-    out.push(`轮次 ${r.round} · 状态 ${r.state} · 转移 ${r.transitions} 条${hops} · 打回 ${r.rejects} 次${odd}${here}`)
+    out.push(`轮次 ${r.round} · 状态 ${r.state} · 转移 ${r.transitions} 条${skipsNote(r.skips)} · 打回 ${r.rejects} 次${odd}${here}`)
     for (const e of r.edges) out.push(`  ${e}`)
   }
   for (const a of s.agents) {
