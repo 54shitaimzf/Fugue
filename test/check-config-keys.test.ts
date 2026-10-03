@@ -6,6 +6,9 @@
 //   ② 端到端负对照：换一份**顶层键拼错**的文档 → 当场红（证明它读的是给它的那份文件，
 //      不是自己搓的夹具）
 //   ③ 端到端负对照：把「config 有 N 条」改成 N-1 → 当场红
+//   ④ 端到端负对照：规格散文（架构 § 15.3.a 那句「顶层键域是闭的」）里删掉一个顶层键
+//      → 当场红。0.2.10 就是在这里漏了 `ui` 漂了一个版本——这条负对照量的正是那个缺口。
+//   ⑤ 规格散文那一整段找不到也当场红（闸不许沉默）
 //
 // 跑法：cd ~/fugue && node --test test/check-config-keys.test.ts
 import assert from 'node:assert/strict'
@@ -18,6 +21,7 @@ import { tmpDir } from './helpers/tmp.ts'
 const REPO = join(import.meta.dirname, '..')
 const TOOL = join(REPO, 'tools', 'check-config-keys.js')
 const README = join(REPO, 'README.md')
+const ARCH = join(REPO, 'design', 'ARCHITECTURE.md')
 
 function run(docs: readonly string[] = []): { status: number; stdout: string; stderr: string } {
   const r = spawnSync(process.execPath, [TOOL, ...docs], { cwd: REPO, encoding: 'utf8' })
@@ -30,6 +34,16 @@ function readmeWith(fix: (text: string) => string): string {
   const after = fix(before)
   assert.notEqual(after, before, '那一处没改到——这条负对照本身是空的')
   const file = join(tmpDir('fugue-keys-'), 'README.md')
+  writeFileSync(file, after)
+  return file
+}
+
+/** 仓库里那份架构篇改一处，落在临时目录里当输入（仓库里那份一个字节不动）。 */
+function archWith(fix: (text: string) => string): string {
+  const before = readFileSync(ARCH, 'utf8')
+  const after = fix(before)
+  assert.notEqual(after, before, '那一处没改到——这条负对照本身是空的')
+  const file = join(tmpDir('fugue-keys-arch-'), 'ARCHITECTURE.md')
   writeFileSync(file, after)
   return file
 }
@@ -65,4 +79,21 @@ test('③ 端到端负对照：把「config 有 N 条」写成 N-1 → 当场红
   assert.match(r.stdout, /FAIL/)
   assert.match(r.stdout, /数成「config 有 /, '报文要点名那个数')
   console.log(`③ 负对照读数：${readings(r.stdout)}`)
+})
+
+test('④ 端到端负对照：规格散文里删掉一个顶层键 → 当场红', () => {
+  const file = archWith((t) => t.replace(' · ui`', '`'))
+  const r = run(['--arch', file])
+  assert.notEqual(r.status, 0, `散文少一个键没被抓住：\n${r.stdout}`)
+  assert.match(r.stdout, /FAIL/)
+  assert.match(r.stdout, /散文里少了 .*ui/, '报文要点名少了哪一个键')
+  console.log(`④ 负对照读数：${readings(r.stdout)}`)
+})
+
+test('⑤ 规格散文那一整段找不到也当场红（闸不许沉默）', () => {
+  const file = archWith((t) => t.replace('顶层键域是闭的', '顶层键名是开放的那一批'))
+  const r = run(['--arch', file])
+  assert.notEqual(r.status, 0, `那一整段没了还绿着：\n${r.stdout}`)
+  assert.match(r.stdout, /找不到「顶层键域是闭的/, '报文要说是那一段找不到')
+  console.log(`⑤ 负对照读数：${readings(r.stdout)}`)
 })
