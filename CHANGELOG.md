@@ -13,11 +13,12 @@
 
 ## [0.2.11] - 2026-10-03
 
-这一版是配置与文档面的对账收口：配置的读 · 写 · 查询三面只走自有属性（`__proto__` 这类键段当字面数据存取），架构里的键域清单与代码对上了、并由校验器常驻盯着，代码仓两份给用户的文档上那两条引用红清零。正常输入上的输出逐字节不变。
+这一版是配置与文档面的对账收口：配置与 `-- k=v` 注入的读 · 写 · 查询只走自有属性（`__proto__` 这类键名当字面数据存取），架构里的键域清单与代码对上了、并由校验器常驻盯着，代码仓两份给用户的文档上那两条引用红清零。正常输入上的输出逐字节不变。
 
 ### 修复
 
 - **`fugue config set` 报成功却没落盘的那一类**：`config.__proto__.x` · `config.constructor.prototype.x` 这种键段会写进 `Object.prototype`——命令报「改成了」，配置文件里却什么都没有（`JSON.stringify` 只看得见自有属性），而 `config get config.toString` 还会把继承来的成员当配置读出来、退 0 打印 `undefined`。现在配置的读 · 写 · 合并三面只认自有属性：这样写下去的值真在文件里，继承成员一律算「没有这条键」。
+- **`fugue run <动作> -- k=v` 里 `__proto__=2` 这一对被无声丢掉**：注入键是人给的键名，普通赋值撞上原型设值器而值又不是对象，就整个无声无效——命令照常成功，子进程里却没有那个变量。现在与配置键同一口径：当字面数据注入（自有可枚举格），保留键检查（坐标那几样）照旧当场拒。
 
 ### 改进
 
@@ -27,10 +28,10 @@
 
 ### 技术细节
 
-- `src/config.ts` 只留一个写口子 `setOwnKey()`（`Object.defineProperty` 全描述符：`enumerable` · `writable` · `configurable`）——`defineProperty` 缺省不可枚举，少给一个就把「假成功」换成「静默丢键」。`getConfig` · `deepMerge` · `setConfig` 的每一层与 `assertUiShape` 的两处读都改成 `Object.hasOwn` 巡路。
-- 新断言 9 条：`src/config-own-keys.test.ts` 6 条（写面 JSON 往返与描述符 · `Object.prototype` 全程干净 · 查询面继承成员不算 · 两级合并当字面数据 · 端到端 CLI 往返 · 原型上挂着可枚举成员时读也不看它）· `test/check-config-keys.test.ts` 3 条（规格散文删一个键 · 多一个键 · 整段找不到）。负对照都是「改红 → 复原」跑过的，其中 ① 那一族的负对照是**新断言先对着没改过的源码跑**——那一支六条全红。
+- 写口子 `setOwnKey()` 提成 `src/own-key.ts` 小模块（`Object.defineProperty` 全描述符：`enumerable` · `writable` · `configurable`）——`defineProperty` 缺省不可枚举，少给一个就把「假成功」换成「静默丢键」；配置的读 · 写 · 合并 · `ui.keys` 暂存 · `-- k=v` 注入，五处共用这一个口子。`getConfig` · `deepMerge` · `setConfig` 的每一层与 `assertUiShape` 的两处读都改成 `Object.hasOwn` 巡路。
+- 新断言 11 条：`src/config-own-keys.test.ts` 6 条（写面 JSON 往返与描述符 · `Object.prototype` 全程干净 · 查询面继承成员不算 · 两级合并当字面数据 · 端到端 CLI 往返 · 原型上挂着可枚举成员时读也不看它）· `test/check-config-keys.test.ts` 3 条（规格散文删一个键 · 多一个键 · 整段找不到）· `src/boundary/binding-own-keys.test.ts` 2 条（原型样注入键当字面数据 · 正常注入与保留键检查照旧）。负对照都是「改红 → 复原」跑过的，其中 ① 那一族的负对照是**新断言先对着没改过的源码跑**——那一支六条全红。
 - `tools/check-config-keys.js` 仍是零依赖、仍挂在 fast 组；架构篇路径缺省 `design/ARCHITECTURE.md`，`--arch <路径>` 可换（负对照用它喂一份改过的）。
-- 读数（20 核 ext4）：fast 652 · 全量 796，全绿。
+- 读数（20 核 ext4）：fast 654 · 全量 798，全绿。
 
 **完整对比**：[v0.2.10...v0.2.11](https://github.com/54shitaimzf/Fugue/compare/v0.2.10...v0.2.11)
 

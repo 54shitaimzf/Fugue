@@ -25,6 +25,7 @@ import {
 } from '../../config.ts'
 import { agentFor } from '../../identity.ts'
 import { keymapOf } from '../../ui/keymap.ts'
+import { setOwnKey } from '../../own-key.ts'
 import { createRoots } from '../../roots/roots.ts'
 import { resolve } from 'node:path'
 import { emitJson, emitLine, fail, modeOf, usageFail, writerOf } from '../shared.ts'
@@ -111,17 +112,16 @@ export async function config(
             if (typeof k !== 'string') {
               return fail(`config set：ui.keys.${a} 的值要是键串 —— ${JSON.stringify(k)}`, json)
             }
-            // 暂存对象也按自有属性写：`over['__proto__'] = 'g'` 会撞上设值器，那一个动作名就
-            // 从下面的语义校验里静默消失——写面报成功，而它其实一眼没看。
-            Object.defineProperty(over, a, { value: k, enumerable: true, writable: true, configurable: true })
+            // 暂存对象走写口子：`over['__proto__'] = 'g'` 撞设值器会让那个动作名从下面的语义
+            // 校验里静默消失——写面报成功，而它其实一眼没看。
+            setOwnKey(over, a, k)
           }
         } else if (segs.length === 3) {
           if (typeof value !== 'string') {
             return fail(`config set：ui.keys.${segs[2]} 的值要是键串 —— ${JSON.stringify(value)}`, json)
           }
-          // 同一处口径：暂存对象按自有属性写，`__proto__` 那个动作名才不会从下面的语义校验里
-          // 静默消失（普通赋值撞上设值器，键串进不去）。
-          Object.defineProperty(over, segs[2], { value, enumerable: true, writable: true, configurable: true })
+          // 同一处口径：走写口子，`__proto__` 那个动作名才不会从下面的语义校验里静默消失。
+          setOwnKey(over, segs[2], value)
         } else {
           return fail(`config set：ui.keys 下面没有更深一层 —— ${key}`, json)
         }

@@ -29,6 +29,7 @@
 import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { setOwnKey } from './own-key.ts'
 
 /** 一份配置文档。值就是 JSON 的那几种，没有别的类型要照顾。 */
 export interface ConfigDoc {
@@ -87,18 +88,6 @@ export function keySegments(key: string): string[] {
 
 function isPlainObject(v: unknown): v is ConfigDoc {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
-
-/**
- * 写**自有**一格：JSON 的成员名是数据，`__proto__` 也在内——走 `Object.defineProperty` 才不
- * 碰原型链。普通赋值撞上 `Object.prototype` 上那个设值器，值就写进了原型，而 `JSON.stringify`
- * 只看得见自有属性：**报成功，那份里什么都没有**。
- *
- * **描述符要给全**：`defineProperty` 缺省 `enumerable: false`，少给一个就是把"假成功"换成
- * "静默丢键"——两种都不及格，所以这一处只留一个写口子，别处不要再手写 `cur[k] = v`。
- */
-function setOwnKey(doc: ConfigDoc, key: string, value: unknown): void {
-  Object.defineProperty(doc, key, { value, enumerable: true, writable: true, configurable: true })
 }
 
 /**
