@@ -24,7 +24,7 @@ export interface FlagTable {
 export const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
   log: { flags: ['root', 'agent', 'json', 'help'], note: 'log 是抄本——不渲染、不筛选' },
   status: {
-    flags: ['root', 'json', 'help', 'once', 'metrics', 'report', 'agent'],
+    flags: ['root', 'json', 'help', 'once', 'metrics', 'report', 'ledger', 'agent'],
     note: '一次快照就加 --once，跟随是另一条命令：watch --follow；只读某一格加 --agent <id>',
   },
   watch: { flags: ['root', 'agent', 'json', 'help', 'follow', 'interval'], note: '不给 --follow 就把账上有的念一遍就停' },

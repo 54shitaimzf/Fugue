@@ -52,7 +52,10 @@
 // **它从日志重算，不采集**：同一份日志重算两次得到同一份账；改动之前的既有日志照读照重算
 // （没量到的栏如实给「未量到」）。
 import type { Catalog } from '../model/catalog.ts'
-import type { Phase } from '../model/price.ts'
+import type { Billable, Phase, TokenTotal } from '../model/price.ts'
+import { costOf, formatUsd, matchModels } from '../model/price.ts'
+import type { LogEvent } from '../log/events.ts'
+import { looksLikeDetour } from './metrics.ts'
 
 /** 一次「调用」是哪一类。**两类，没有第三类**（加一类要先动 `LEDGER_COLUMNS` 与那张不进账的表）。 */
 export type LedgerKind = 'model' | 'tool'
@@ -101,7 +104,7 @@ export const LEDGER_COLUMNS: Readonly<Record<LedgerKind, readonly LedgerColumn[]
     { name: '步', from: 'run/start.step', missing: '（这一栏恒在）' },
     { name: '耗时', from: 'run/end.ms', missing: '未量到' },
     { name: '退出码', from: 'run/end.exit', missing: '未量到' },
-    { name: '被拒', from: 'run/end.denied', missing: '（这一栏恒在）' },
+    { name: '被拒', from: 'run/end.denied', missing: '未量到（起了没落地的那几条没有 run/end）' },
     { name: '模型', from: '同一格同一步那条 llm/call.model（分组键）', missing: '未量到' },
     { name: '线协议', from: '同一格同一步那条 llm/call.wire（分组键）', missing: '未量到' },
     { name: '走法', from: 'argv 与已绑定动作的命令行比一次（probe/metrics.ts 的 looksLikeDetour）', missing: '（这一栏恒在）' },
@@ -194,7 +197,8 @@ export interface LedgerGroup {
   readonly wire: string | null
   readonly calls: number
   readonly toolCalls: number
-  readonly ms: number
+  /** 这一组里所有调用（模型 + 工具）量到的耗时之和；**一条都没量到就是 `null`**（不拿 0 顶）。 */
+  readonly ms: number | null
   readonly msMissing: number
   readonly tokens: LedgerTokens
   readonly tokensMissing: number
@@ -212,6 +216,12 @@ export interface Ledger {
   /** `llm/call` 里带着 `ms` 的条数 · 没带的条数（**旧账那一档就是这个数，不静默**）。 */
   readonly msSeen: number
   readonly msMissing: number
+  /**
+   * 读账的人递进来几条**已绑定动作的命令行**（账上「走法」那一栏的第二半用它）。
+   *
+   * `0` 说的是这一趟读账只认「命令里提到工具名」那一半——**少一份读数要说出来**，不静默。
+   */
+  readonly boundCommands: number
 }
 
 /** 读账的时候由读的人递进来的那几样（与钱那一栏的峰谷档同一个形状：账上没有，只有读的人知道）。 */
@@ -232,3 +242,235 @@ export interface LedgerInputs {
 
 /** 账那一块的表头（`status --ledger` 印它）。 */
 export const LEDGER_HEAD = '每调用成本台账（从日志重算，不采集）：'
+
+// ── 从日志重算：读面那一侧的唯一一处折法 ──────────────────────────────────────
+
+/**
+ * 读账那一侧递进来的行：`probe/status.ts` 的 `StatusRow` 与 `probe/metrics.ts` 的 `MergedRow`
+ * 都满足它（只要带着事件本身那一栏）——**两条读路共用这一处折法**，不各折一份。
+ */
+export interface LedgerRow {
+  readonly e: LogEvent
+}
+
+/** 一个数：量到的那些加起来；**一条都没量到就是 `null`**（不拿 0 顶）。 */
+function sumOrNull(vals: readonly (number | null)[]): number | null {
+  const seen = vals.filter((v): v is number => typeof v === 'number')
+  return seen.length === 0 ? null : seen.reduce((a, b) => a + b, 0)
+}
+
+/** 那一行四个 token 数 × 读的时候那份价目。**没给峰谷档就不算钱**（与 `status --once` 同一口径）。 */
+function usdOf(model: string, tokens: LedgerTokens, inputs: LedgerInputs): number | null {
+  if (inputs.phase === undefined) return null
+  const one = (v: number | null): TokenTotal => ({ total: v ?? 0, missing: v === null ? 1 : 0 })
+  const b: Billable = {
+    calls: 1,
+    inputTokens: one(tokens.input),
+    cacheReadTokens: one(tokens.cacheRead),
+    cacheWriteTokens: one(tokens.cacheWrite),
+    outputTokens: one(tokens.output),
+  }
+  return costOf(b, matchModels([model], inputs.cat).row, inputs.phase).usd
+}
+
+/** 分组键（模型 · 线协议）。**没量到的那一档自己一组**——`null` 与一个名字不许并成一组。 */
+function groupKeyOf(model: string | null, wire: string | null): string {
+  return `${model ?? '未量到'}\u0000${wire ?? '未量到'}`
+}
+
+/** 用量那四个数进账那一栏（`reasoningTokens` 不在钱里：它在 `outputTokens` 里面）。 */
+function tokensOf(u: {
+  readonly inputTokens: number | null
+  readonly cacheReadTokens: number | null
+  readonly cacheWriteTokens: number | null
+  readonly outputTokens: number | null
+}): LedgerTokens {
+  return { input: u.inputTokens, cacheRead: u.cacheReadTokens, cacheWrite: u.cacheWriteTokens, output: u.outputTokens }
+}
+
+/**
+ * **从一串事件重算一本账。** 纯函数：同一串行算两次得到同一本账；它不读文件、不碰时钟、不缓存。
+ *
+ * 两条调用各走各的路：
+ *   · `llm/call` 一条一行（模型那一类）；同一格同一步的那一条同时进 `at` 那张表，给工具那一类当分组键。
+ *   · `run/start` 进队、`run/end` 出队配成一次工具调用——**一个键一队**（同一步可以起两次）。
+ *     起了没落地的那几条（日志从半截起读 · 那一趟没收尾）**照样进账**：耗时与退出码是「未量到」，
+ *     而少记一笔就是少一份读数。
+ */
+export function ledgerOf(rows: readonly LedgerRow[], inputs: LedgerInputs): Ledger {
+  const calls: LedgerCall[] = []
+  /** 同一格同一步那条 `llm/call`（工具那一类的分组键）。**后写的那条盖前一条**。 */
+  const at = new Map<string, { readonly model: string; readonly wire: string }>()
+  /** 起了还没落地的 `run/start`：**一个键一队**。 */
+  const open = new Map<string, { readonly action: string; readonly argv0: string; readonly argv: readonly string[] }[]>()
+  const bound = inputs.bindings ?? []
+
+  /** 一条工具调用：分组键从 `at` 那张表补（补不到就是「未量到」）。 */
+  const toolOf = (
+    agent: string,
+    step: string,
+    one: { readonly action: string; readonly argv0: string; readonly argv: readonly string[] } | undefined,
+    end: { readonly ms: number; readonly exit: number; readonly denied: boolean } | null,
+  ): LedgerCall => {
+    const g = at.get(`${agent}\u0000${step}`)
+    return {
+      kind: 'tool',
+      agent,
+      step,
+      model: g?.model ?? null,
+      wire: g?.wire ?? null,
+      ms: end === null ? null : end.ms,
+      tokens: null,
+      usd: null,
+      tool: {
+        name: one?.action ?? '（没等到 run/start 的那一条）',
+        argv0: one?.argv0 ?? '',
+        exit: end === null ? null : end.exit,
+        denied: end === null ? null : end.denied,
+        detour: looksLikeDetour(one?.argv ?? [], bound),
+      },
+    }
+  }
+
+  for (const { e } of rows) {
+    if (e.t === 'llm/call') {
+      const tokens = tokensOf(e.usage)
+      at.set(`${e.agent}\u0000${e.step}`, { model: e.model, wire: e.wire })
+      calls.push({
+        kind: 'model',
+        agent: e.agent,
+        step: e.step,
+        model: e.model,
+        wire: e.wire,
+        // **没量到就不是 0**：旧日志没有这一栏（0.3.0 之前的账）。
+        ms: typeof e.ms === 'number' ? e.ms : null,
+        tokens,
+        usd: usdOf(e.model, tokens, inputs),
+        tool: null,
+      })
+      continue
+    }
+    if (e.t === 'run/start') {
+      const k = `${e.agent}\u0000${e.step}`
+      const one = { action: e.action, argv0: e.argv0, argv: e.argv ?? [e.argv0] }
+      const q = open.get(k)
+      if (q === undefined) open.set(k, [one])
+      else q.push(one)
+      continue
+    }
+    if (e.t === 'run/end') {
+      const k = `${e.agent}\u0000${e.step}`
+      const q = open.get(k)
+      const one = q?.shift()
+      calls.push(toolOf(e.agent, e.step, one, { ms: e.ms, exit: e.exit, denied: e.denied }))
+    }
+  }
+  // 起了没落地的那几条：**照样进账**（日志从半截起读那一档就是这样）。
+  for (const [k, q] of open) {
+    const parts = k.split('\u0000')
+    const agent = parts[0] ?? ''
+    const step = parts[1] ?? ''
+    for (const one of q) calls.push(toolOf(agent, step, one, null))
+  }
+
+  // 分组那一份：按分组键排序（**结果与事件次序无关**：同一份账重算两次逐字相同）。
+  const keyed = calls.map((c) => ({ k: groupKeyOf(c.model, c.wire), c }))
+  keyed.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0))
+  const groups: LedgerGroup[] = []
+  for (let i = 0; i < keyed.length; ) {
+    const k = keyed[i]?.k ?? ''
+    const list: LedgerCall[] = []
+    while (i < keyed.length && keyed[i]?.k === k) {
+      const one = keyed[i]?.c
+      if (one !== undefined) list.push(one)
+      i += 1
+    }
+    const models = list.filter((x) => x.kind === 'model')
+    const tok = (pick: (t: LedgerTokens) => number | null): number | null =>
+      sumOrNull(models.map((x) => (x.tokens === null ? null : pick(x.tokens))))
+    groups.push({
+      model: list[0]?.model ?? null,
+      wire: list[0]?.wire ?? null,
+      calls: models.length,
+      toolCalls: list.length - models.length,
+      ms: sumOrNull(list.map((x) => x.ms)),
+      msMissing: list.filter((x) => x.ms === null).length,
+      tokens: {
+        input: tok((t) => t.input),
+        cacheRead: tok((t) => t.cacheRead),
+        cacheWrite: tok((t) => t.cacheWrite),
+        output: tok((t) => t.output),
+      },
+      tokensMissing: models.filter(
+        (x) =>
+          x.tokens === null ||
+          x.tokens.input === null ||
+          x.tokens.cacheRead === null ||
+          x.tokens.cacheWrite === null ||
+          x.tokens.output === null,
+      ).length,
+      usd: sumOrNull(list.map((x) => x.usd)),
+      // **工具那几条不算「算不出来」**：它们本来就不进钱那一栏（不是少给了价目）。
+      usdMissing: models.filter((x) => x.usd === null).length,
+    })
+  }
+
+  const modelCalls = calls.filter((c) => c.kind === 'model')
+  return {
+    calls,
+    groups,
+    events: rows.length,
+    msSeen: modelCalls.filter((c) => c.ms !== null).length,
+    msMissing: modelCalls.filter((c) => c.ms === null).length,
+    boundCommands: bound.length,
+  }
+}
+
+/** 一个数的人读写法：**没量到就写「未量到」**，不拿 0 顶。 */
+function numText(v: number | null, unit: string): string {
+  return v === null ? `未量到${unit}` : `${v}${unit}`
+}
+
+/**
+ * 账那一块的人读几行（**不含表头**：表头是 `LEDGER_HEAD`，与打回读数 · 八元指标同一处取值处）。
+ *
+ * 文字面印**分组**那一份（模型 · 线协议 → 调用 · 耗时 · 钱 · 四个 token 数），逐条那一份在 `--json`
+ * 里（`Ledger.calls`）：一份账几万条调用时逐条印满屏，等于把「这一轮花了多少」这件事淹掉。**这里不
+ * 截断也不静默**——一条都不少印的是合计与分组，而「逐条在哪」写在下面那一行里。
+ */
+export function ledgerLines(l: Ledger): readonly string[] {
+  const out: string[] = []
+  const models = l.calls.filter((c) => c.kind === 'model').length
+  const tools = l.calls.length - models
+  const ms = sumOrNull(l.calls.map((c) => c.ms))
+  const msMissing = l.calls.filter((c) => c.ms === null).length
+  const usd = sumOrNull(l.calls.map((c) => c.usd))
+  const usdMissing = l.calls.filter((c) => c.kind === 'model' && c.usd === null).length
+  const tok = (v: number | null): string => (v === null ? '未量到' : String(v))
+  out.push(
+    `合计 模型调用 ${models} 次 · 起进程 ${tools} 次 · 耗时 ${numText(ms, ' ms')}（未量到 ${msMissing} 条）` +
+      ` · 钱 ${usd === null ? '算不出来（没有一条能算）' : formatUsd(usd)}` +
+      `${usdMissing === 0 ? '' : `（${usdMissing} 条算不出来）`}`,
+  )
+  for (const g of l.groups) {
+    out.push(
+      `模型 ${g.model ?? '未量到'} · 线 ${g.wire ?? '未量到'} · 模型调用 ${g.calls} 次 · 起进程 ${g.toolCalls} 次` +
+        ` · 耗时 ${numText(g.ms, ' ms')}${g.msMissing === 0 ? '' : `（未量到 ${g.msMissing} 条）`}` +
+        ` · 钱 ${g.usd === null ? '算不出来' : formatUsd(g.usd)}${g.usdMissing === 0 ? '' : `（${g.usdMissing} 条算不出来）`}` +
+        ` · input ${tok(g.tokens.input)} · cacheRead ${tok(g.tokens.cacheRead)}` +
+        ` · cacheWrite ${tok(g.tokens.cacheWrite)} · output ${tok(g.tokens.output)}` +
+        `${g.tokensMissing === 0 ? '' : `（缺 ${g.tokensMissing} 条）`}`,
+    )
+  }
+  out.push(`读了 ${l.events} 条事件 · 逐条那一份在 --json 里（${l.calls.length} 条）——这一本账是读的时候从日志重算的，不落盘、不缓存`)
+  if (l.msMissing > 0) {
+    out.push(
+      `耗时那一栏有 ${l.msMissing} 条模型调用没量到（0.3.0 之前的日志没有 llm/call.ms 那一栏——回放照旧，不去猜它）`,
+    )
+  }
+  if (l.boundCommands === 0) {
+    out.push('走法那一栏只用了「命令里提到工具名」那一半：这一趟读账没拿到已绑定动作的命令行')
+  }
+  out.push(`不进账的：${EXCLUDED_CALLS.map((x) => x.calls).join('；')}——理由与改主意的条件写在 probe/ledger.ts`)
+  return out
+}

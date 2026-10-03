@@ -52,6 +52,22 @@ export function emit(pos: LogPos, e: LogEvent, json: boolean): void {
  * 同一个渲染（`readingsLines`）。于是 `--json` 那一份对象去掉 `width` / `height` 就是 TUI 的输入
  * 契约（`ui/frame.ts` 的 `FrameInput`）：命令面与第一个渲染器读的是同一份，不许有两份。
  */
+/**
+ * **这一台机器上已绑定动作的命令行**（账上「走法」那一栏的第二半用它）。
+ *
+ * 从配置里读（`actions` 那一节），解析只有一处（`boundary/binding.ts` 的 `readBinding`，`round.ts`
+ * 的 `actionCommandsOf` 包了一圈）。**读不出来就是空的那一份**：这一栏说的是「读账的人手里有什么」，
+ * 配置坏了不该让整条 `status` 读不出来——而少了这一半这件事账自己会说（`Ledger.boundCommands === 0`
+ * 那一行）。
+ */
+async function boundCommandsOf(root: string): Promise<readonly string[]> {
+  try {
+    return Object.values(actionCommandsOf(await readConfig(root)))
+  } catch {
+    return []
+  }
+}
+
 export async function statusCmd(
   root: string,
   flags: Map<string, string | true>,
@@ -67,6 +83,8 @@ export async function statusCmd(
     const r = await readings(log, {
       metrics: flags.has('metrics'),
       report: flags.has('report'),
+      // **每调用成本台账**（0.3.0 ④）：钱要价目与峰谷档，走法那一栏要这一台已绑定动作的命令行。
+      ...(flags.has('ledger') ? { ledger: { cat, phase, bindings: await boundCommandsOf(root) } } : {}),
       ...(typeof only === 'string' ? { agent: only } : {}),
     })
     if (json) {

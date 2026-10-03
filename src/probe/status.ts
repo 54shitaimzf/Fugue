@@ -26,7 +26,8 @@
 //
 // **序 32 给它加了一个出口**（PLAN § 5.12 那一格）：八元指标与打回三数原先只挂在 `round run` /
 // `round work` 的 `--report --metrics` 上——**跑完才有，跑着读不到**——而 TUI 与第二个渲染器读的
-// 正是"跑着"的那一份。`readings()` 就是那个出口：一遍读齐三栏，`--json` 吐出去的那一份去掉
+// 正是"跑着"的那一份。`readings()` 就是那个出口：一遍读齐那几栏（0.3.0 ④ 起多了「每调用成本台账」
+// 这一栏，表头与行都住 `probe/ledger.ts`），`--json` 吐出去的那一份去掉
 // `width` / `height` 就是 `ui/frame.ts` 的 `FrameInput`（命令面与渲染器同一个输入契约）。
 // 三栏各自的折法一处都没另立：快照是这一份自己的 `statusOf`，另两栏借 `probe/round.ts` 与
 // `probe/metrics.ts` 那两处。
@@ -38,6 +39,8 @@ import { EDGES, STATES, abortEdges } from '../round/machine.ts'
 import type { Cause, Edge } from '../round/machine.ts'
 import { countsOf, rejectsIn, linesOfReadings } from './round.ts'
 import type { MetricReading } from './round.ts'
+import { LEDGER_HEAD, ledgerLines, ledgerOf } from './ledger.ts'
+import type { Ledger, LedgerInputs } from './ledger.ts'
 import { lineOf, metricsOf } from './metrics.ts'
 import type { MetricValue } from './metrics.ts'
 import type { AgentId, RoundId, RoundState } from '../terms.ts'
@@ -557,12 +560,27 @@ export interface StatusReadings {
   readonly metrics?: readonly MetricValue[]
   /** 读源三：打回那三个数。**给了 `--report` 才有这一栏**。 */
   readonly report?: readonly MetricReading[]
+  /**
+   * 读源四：**每调用成本台账**（0.3.0 ④）。**给了 `--ledger` 才有这一栏**。
+   *
+   * 折法住 `probe/ledger.ts`（一处）：这一栏与上面那两栏读的是同一份行、同一个 `readings()` 出口，
+   * 于是 `--json` 那一份对象去掉 `width` / `height` 还是 `ui/frame.ts` 的 `FrameInput`——第二个渲染器
+   * 要吃这一份不用新开一条路。
+   */
+  readonly ledger?: Ledger
 }
 
 /** 那两个开关（与 `round run` / `round work` 上同名同义）。 */
 export interface ReadingsOptions {
   readonly metrics?: boolean
   readonly report?: boolean
+  /**
+   * **每调用成本台账**（0.3.0 ④）：给了它才算这一栏。
+   *
+   * 与那两个布尔开关不同，它要几样读的人才知道的东西：价目与模型目录（钱的来源，**必给**）·
+   * 峰谷档（不给就不印钱那一栏）· 已绑定动作的命令行（走法那一栏的第二半）。口径在 `probe/ledger.ts`。
+   */
+  readonly ledger?: LedgerInputs
   /**
    * **只读某一个 writer 的那一份**（`status --agent <x>`；`T8` 的"切过去"就是它）。口径与 `log
    * --agent` / `watch --agent` 是同一句：**只按 writer 选一份**（架构 § 9.6 那三行）。
@@ -601,9 +619,11 @@ export function readingsOf(rows: readonly StatusRow[], opts: ReadingsOptions = {
     snapshot: StatusSnapshot
     metrics?: readonly MetricValue[]
     report?: readonly MetricReading[]
+    ledger?: Ledger
   } = { snapshot: statusOf(rows) }
   if (opts.metrics === true) out.metrics = metricsOf(rows, {})
   if (opts.report === true) out.report = countsOf(rows, {})
+  if (opts.ledger !== undefined) out.ledger = ledgerOf(rows, opts.ledger)
   return out
 }
 
@@ -767,5 +787,6 @@ export function readingsLines(r: StatusReadings, opts: LinesOptions): readonly s
   const out = [...linesOf(r.snapshot, opts)]
   if (r.report !== undefined) out.push(REPORT_HEAD, ...linesOfReadings(r.report).map((l) => `  ${l}`))
   if (r.metrics !== undefined) out.push(METRICS_HEAD, ...r.metrics.map((m) => `  ${lineOf(m)}`))
+  if (r.ledger !== undefined) out.push(LEDGER_HEAD, ...ledgerLines(r.ledger).map((l) => `  ${l}`))
   return out
 }

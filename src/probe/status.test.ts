@@ -58,6 +58,8 @@ import { readingsOf } from './status.ts'
 import type { StatusRow } from './status.ts'
 import { BUILTIN_CATALOG } from '../model/catalog.ts'
 import { follow, readNew } from './watch.ts'
+import { LEDGER_HEAD } from './ledger.ts'
+import { FLAGS_OF } from '../cli/flags.ts'
 
 let seq = 0
 /** 一条 `round` 那一份上的事件（纯函数那几条用不着真日志）。 */
@@ -700,4 +702,68 @@ test('⑫ `--agent` 那一档与界面「切过去」读的是同一批行（T8�
       String(lines.length) +
       ' 行）与它不同',
   )
+})
+
+// ⑬ 0.3.0 ④：`status --ledger`（每调用成本台账）那一栏。
+//
+// 三条：一 · **不给开关就不出现**（「没算」与「算出来是空」要分得开，与另两栏同一条规矩）；
+// 二 · 文字面那一块的表头与行都住 `probe/ledger.ts`（一处取值处，排在打回 · 八元之后）；
+// 三 · **命令面真认得这个开关**（`FLAGS_OF` 那张表里声明了——「声明了没人接」与「没声明」在读数上
+// 都读不出来，所以这一条量的是那张表）。
+//
+// 这一份账是**旧账那一档**：那一条 `llm/call` 没有 `ms` 那一栏 → 耗时写「未量到」，而账自己把这件事
+// 说出来（不静默、不拿 0 顶）。钱那一栏：给了峰谷档才算，不给就是 `null`。
+test('⑬ `status --ledger`：这一栏挂在同一个出口上，不给开关就不出现', async () => {
+  const A = 'agent/r1/1'
+  const rows: readonly StatusRow[] = [
+    row(call(A, '0', 1, 0), A),
+    row(
+      {
+        t: 'run/start',
+        agent: A as never,
+        step: '0' as never,
+        action: 'bash',
+        argv0: '/bin/sh',
+        argv: ['/bin/sh', '-c', 'grep -n 数完了 notes.md'],
+      },
+      A,
+    ),
+    row({ t: 'run/end', agent: A as never, step: '0' as never, exit: 1, ms: 3, denied: true }, A),
+  ]
+  const fake = {
+    readMerged: async function* () {
+      for (const r of rows) yield r
+    },
+  }
+  // 一 · 不给开关：只读处境那一栏。
+  const bare = (await readings(fake)) as Record<string, unknown>
+  assert.deepEqual(Object.keys(bare), ['snapshot'], `不给开关时那一份对象：${JSON.stringify(Object.keys(bare))}`)
+  // 二 · 给了：两条调用各一行，钱按读的时候那份价目算。
+  const withLedger = await readings(fake, { ledger: { cat: BUILTIN_CATALOG, phase: 'off-peak', bindings: [] } })
+  const l = withLedger.ledger
+  assert.ok(l !== undefined, '给了 --ledger 却没有那一栏')
+  assert.equal(l?.calls.length, 2)
+  assert.equal(l?.calls[0]?.kind, 'model')
+  assert.equal(l?.calls[0]?.ms, null, '这一条 `llm/call` 是旧账那一档（没有 ms）→ 未量到')
+  assert.equal(l?.msMissing, 1, '没量到的那条要数得出来')
+  assert.equal(typeof l?.calls[0]?.usd, 'number', `给了峰谷档就该算得出钱：${String(l?.calls[0]?.usd)}`)
+  assert.equal(l?.calls[1]?.ms, 3, '工具那一类的耗时取 `run/end.ms`')
+  assert.equal(l?.calls[1]?.model, 'deepseek-flash/anthropic', '分组键从同格同一步那条 `llm/call` 补')
+  assert.equal(l?.calls[1]?.tool?.detour, true, '这一行里提到了 grep → 绕行')
+  assert.equal(l?.calls[1]?.tool?.denied, true)
+  // 三 · 没给峰谷档：钱那一栏是 `null`（不是 0）——与 `status --once` 同一条口径。
+  const noPhase = await readings(fake, { ledger: { cat: BUILTIN_CATALOG } })
+  assert.equal(noPhase.ledger?.calls[0]?.usd, null, '没给峰谷档就不算钱')
+  // 四 · 文字面：表头 + 行（一处取值处），排在打回与八元之后。
+  const blocks = readingsLines(withLedger, { phase: 'off-peak', cat: BUILTIN_CATALOG })
+  assert.ok(blocks.includes(LEDGER_HEAD), `文字面里没有台账那一块：\n${blocks.join('\n')}`)
+  assert.ok(blocks.some((t) => t.includes('模型调用 1 次')), '台账那一块没有合计那一行')
+  assert.ok(blocks.some((t) => t.includes('没量到')), '旧账那一档少了「未量到」那一句')
+  // 五 · 命令面真认得这个开关。
+  assert.ok(
+    FLAGS_OF['status']?.flags.includes('ledger') === true,
+    '`status` 那张开关表里没有 ledger——声明了没人接与没声明在读数上都读不出来',
+  )
+  console.log(`⑬ 读数：台账 ${String(l?.calls.length)} 条调用（模型 1 · 工具 1）· 未量到 ${String(l?.msMissing)} 条`)
+  console.log(`⑬ 文字面那一块（不含快照那几行）：\n${blocks.slice(blocks.indexOf(LEDGER_HEAD)).join('\n')}`)
 })
