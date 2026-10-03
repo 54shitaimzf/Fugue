@@ -28,9 +28,9 @@
 ### 技术细节
 
 - `src/config.ts` 只留一个写口子 `setOwnKey()`（`Object.defineProperty` 全描述符：`enumerable` · `writable` · `configurable`）——`defineProperty` 缺省不可枚举，少给一个就把「假成功」换成「静默丢键」。`getConfig` · `deepMerge` · `setConfig` 的每一层与 `assertUiShape` 的两处读都改成 `Object.hasOwn` 巡路。
-- 新断言 8 条：`src/config-own-keys.test.ts` 6 条（写面 JSON 往返与描述符 · `Object.prototype` 全程干净 · 查询面继承成员不算 · 两级合并当字面数据 · 端到端 CLI 往返 · 原型上挂着可枚举成员时读也不看它）· `test/check-config-keys.test.ts` 2 条（规格散文删一个键 · 整段找不到）。负对照都是「改红 → 复原」跑过的，其中 ① 那一族的负对照是**新断言先对着没改过的源码跑**（5 条全红）。
+- 新断言 9 条：`src/config-own-keys.test.ts` 6 条（写面 JSON 往返与描述符 · `Object.prototype` 全程干净 · 查询面继承成员不算 · 两级合并当字面数据 · 端到端 CLI 往返 · 原型上挂着可枚举成员时读也不看它）· `test/check-config-keys.test.ts` 3 条（规格散文删一个键 · 多一个键 · 整段找不到）。负对照都是「改红 → 复原」跑过的，其中 ① 那一族的负对照是**新断言先对着没改过的源码跑**——那一支六条全红。
 - `tools/check-config-keys.js` 仍是零依赖、仍挂在 fast 组；架构篇路径缺省 `design/ARCHITECTURE.md`，`--arch <路径>` 可换（负对照用它喂一份改过的）。
-- 读数（20 核 ext4）：fast 651 · 全量 795，全绿。
+- 读数（20 核 ext4）：fast 652 · 全量 796，全绿。
 
 **完整对比**：[v0.2.10...v0.2.11](https://github.com/54shitaimzf/Fugue/compare/v0.2.10...v0.2.11)
 

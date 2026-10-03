@@ -9,6 +9,8 @@
 //   ④ 端到端负对照：规格散文（架构 § 15.3.a 那句「顶层键域是闭的」）里删掉一个顶层键
 //      → 当场红。0.2.10 就是在这里漏了 `ui` 漂了一个版本——这条负对照量的正是那个缺口。
 //   ⑤ 规格散文那一整段找不到也当场红（闸不许沉默）
+//   ⑥ 规格散文里**多**一个键域里没有的顶层键 → 也当场红（另一个方向；那等于规格许了一个
+//      读面会拒的键）
 //
 // 跑法：cd ~/fugue && node --test test/check-config-keys.test.ts
 import assert from 'node:assert/strict'
@@ -96,4 +98,12 @@ test('⑤ 规格散文那一整段找不到也当场红（闸不许沉默）', (
   assert.notEqual(r.status, 0, `那一整段没了还绿着：\n${r.stdout}`)
   assert.match(r.stdout, /找不到「顶层键域是闭的/, '报文要说是那一段找不到')
   console.log(`⑤ 负对照读数：${readings(r.stdout)}`)
+})
+
+test('⑥ 端到端负对照：规格散文里多一个键域里没有的顶层键 → 当场红', () => {
+  const file = archWith((t) => t.replace(' · toolchain · ui`', ' · toolchain · ui · nosuchkey`'))
+  const r = run(['--arch', file])
+  assert.notEqual(r.status, 0, `散文多写一个键没被抓住：\n${r.stdout}`)
+  assert.match(r.stdout, /散文里多了 .*nosuchkey/, '报文要点名多出来的是哪一个（读面会拒它）')
+  console.log(`⑥ 负对照读数：${readings(r.stdout)}`)
 })
