@@ -1,7 +1,7 @@
 // fugue 的配置组（`config` · `policy`）——U4c 自 `cli/fugue.ts` 抽出，内容逐字未动
 // （出处：架构 § 15.3.a 工作区配置 · § 8.8 策略值）。**两处都不建视图、不读日志**：
 // 配置是工作区的输入，不是它的状态；策略值的输入是配置与探针。
-// `config ls`（0.2.10）列的是顶层键域，比另外三条更省：它连配置都不读（见下面那一支）。
+// `config ls` 列的是顶层键域，比另外三条更省：它连配置都不读（见下面那一支）。
 import { PolicyError, probeLayers, resolvePolicy } from '../../boundary/policy.ts'
 import { BindingError, readBinding } from '../../boundary/binding.ts'
 import {
