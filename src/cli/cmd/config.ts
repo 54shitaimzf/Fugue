@@ -1,6 +1,7 @@
 // fugue 的配置组（`config` · `policy`）——U4c 自 `cli/fugue.ts` 抽出，内容逐字未动
 // （出处：架构 § 15.3.a 工作区配置 · § 8.8 策略值）。**两处都不建视图、不读日志**：
 // 配置是工作区的输入，不是它的状态；策略值的输入是配置与探针。
+// `config ls`（0.2.10）列的是顶层键域，比另外三条更省：它连配置都不读（见下面那一支）。
 import { PolicyError, probeLayers, resolvePolicy } from '../../boundary/policy.ts'
 import { BindingError, readBinding } from '../../boundary/binding.ts'
 import {
@@ -28,6 +29,13 @@ import { createRoots } from '../../roots/roots.ts'
 import { resolve } from 'node:path'
 import { emitJson, emitLine, fail, modeOf, usageFail, writerOf } from '../shared.ts'
 
+/**
+ * `config` 认的子命令名单，唯一一处。未知 verb 的提示句由它拼，`tools/check-config-keys.js`
+ * 也从它读（文档里「config 有 N 条」对着它核）。分发那一串 `verb === '…'` 各承一段实现，
+ * 两者一不一致由那份校验器当场判——不一致就红，不静默漂。
+ */
+export const CONFIG_VERBS: readonly string[] = ['ls', 'show', 'get', 'set']
+
 export async function config(
   root: string,
   flags: Map<string, string | true>,
@@ -36,6 +44,18 @@ export async function config(
 ): Promise<number> {
   const verb = args[0]
   try {
+    // `config ls`：**合法顶层键域**（`src/config.ts` 的 `TOP_LEVEL_KEYS` 是唯一真源），
+    // 一条现值都不报——那是 `config show` 的事。所以它既不读配置、也不建视图、不落盘：
+    // 配置读不动的那一刻（正是要查「合法键有哪些」的时刻）它照样给得出这张清单。
+    // 人面一行一键；`--json` 那一面是数组（给脚本用）。
+    if (verb === 'ls') {
+      if (json) {
+        emitJson([...TOP_LEVEL_KEYS])
+      } else {
+        for (const key of TOP_LEVEL_KEYS) emitLine(key)
+      }
+      return 0
+    }
     if (verb === 'show') {
       const doc = await readConfig(root)
       emitLine(json ? JSON.stringify(doc) : JSON.stringify(doc, null, 2))
@@ -129,7 +149,7 @@ export async function config(
       }
       return 0
     }
-    return usageFail(`config 需要 show|get|set，收到：${verb ?? '(空)'}`, json)
+    return usageFail(`config 需要 ${CONFIG_VERBS.join('|')}，收到：${verb ?? '(空)'}`, json)
   } catch (err) {
     if (err instanceof ConfigError) return fail(err.message, json)
     throw err
