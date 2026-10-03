@@ -90,6 +90,18 @@ function isPlainObject(v: unknown): v is ConfigDoc {
 }
 
 /**
+ * 写**自有**一格：JSON 的成员名是数据，`__proto__` 也在内——走 `Object.defineProperty` 才不
+ * 碰原型链。普通赋值撞上 `Object.prototype` 上那个设值器，值就写进了原型，而 `JSON.stringify`
+ * 只看得见自有属性：**报成功，那份里什么都没有**。
+ *
+ * **描述符要给全**：`defineProperty` 缺省 `enumerable: false`，少给一个就是把"假成功"换成
+ * "静默丢键"——两种都不及格，所以这一处只留一个写口子，别处不要再手写 `cur[k] = v`。
+ */
+function setOwnKey(doc: ConfigDoc, key: string, value: unknown): void {
+  Object.defineProperty(doc, key, { value, enumerable: true, writable: true, configurable: true })
+}
+
+/**
  * 深合并（两级配置的叠放语义）：两边都是对象就递归合并，否则**右边那份整份赢**——数组与
  * 标量没有"合并"这个动作，一半来自系统一半来自工作区的数组比拼错的键更难查。
  * 不改任何一边的入参。
@@ -97,8 +109,10 @@ function isPlainObject(v: unknown): v is ConfigDoc {
 function deepMerge(system: ConfigDoc, workspace: ConfigDoc): ConfigDoc {
   const out: ConfigDoc = { ...system }
   for (const [k, v] of Object.entries(workspace)) {
-    const prev = out[k]
-    out[k] = isPlainObject(prev) && isPlainObject(v) ? deepMerge(prev, v) : v
+    // 前一份也要**按自有属性**看：`out['__proto__']` 在缺这一格时读到的是原型，拿它去深合并
+    // 就是把"没配过"当成"配了一个对象"，再顺手把 out 的原型换掉（写进去的东西 JSON 里还看不见）。
+    const prev = Object.hasOwn(out, k) ? out[k] : undefined
+    setOwnKey(out, k, isPlainObject(prev) && isPlainObject(v) ? deepMerge(prev, v) : v)
   }
   return out
 }
@@ -118,10 +132,10 @@ function assertTopLevel(doc: ConfigDoc, file: string): void {
 /** `ui` 那一节的形状：`ui.keys` 若在，必须是「动作 → 键串」的对象。只挡"根本不是键位表"的
  * 坏形状（与"没配过"分开）；动作名与键名认不认得是两级语义，各自在写那面与 TUI 读那面把关。 */
 function assertUiShape(doc: ConfigDoc, file: string): void {
-  const ui = doc.ui
+  const ui = Object.hasOwn(doc, 'ui') ? doc.ui : undefined
   if (ui === undefined) return
   if (!isPlainObject(ui)) throw new ConfigError(`配置里的 ui 要是一个对象：${file}`)
-  const keys = ui.keys
+  const keys = Object.hasOwn(ui, 'keys') ? ui.keys : undefined
   if (keys === undefined) return
   if (!isPlainObject(keys)) {
     throw new ConfigError(`配置里的 ui.keys 要是一个「动作 → 键串」的对象：${file}`)
@@ -186,7 +200,9 @@ export async function readConfig(root: string, systemDir = defaultSystemDir()): 
 export function getConfig(doc: ConfigDoc, key: string): unknown {
   let cur: unknown = doc
   for (const seg of keySegments(key)) {
-    if (typeof cur !== 'object' || cur === null) return undefined
+    // **只认自有属性**：继承来的成员（`toString` · `constructor` 那一类）不是配置——读到它们
+    // 等于把"没配过"报成配好了，而人要看的是「没有这条键」。
+    if (typeof cur !== 'object' || cur === null || !Object.hasOwn(cur, seg)) return undefined
     cur = (cur as Record<string, unknown>)[seg]
   }
   return cur
@@ -200,10 +216,10 @@ export function setConfig(doc: ConfigDoc, key: string, value: unknown): void {
   const segs = keySegments(key)
   let cur: ConfigDoc = doc
   for (const seg of segs.slice(0, -1)) {
-    const next = cur[seg]
+    const next = Object.hasOwn(cur, seg) ? cur[seg] : undefined
     if (next === undefined) {
       const fresh: ConfigDoc = {}
-      cur[seg] = fresh
+      setOwnKey(cur, seg, fresh)
       cur = fresh
       continue
     }
@@ -212,7 +228,7 @@ export function setConfig(doc: ConfigDoc, key: string, value: unknown): void {
     }
     cur = next as ConfigDoc
   }
-  cur[segs[segs.length - 1]] = value
+  setOwnKey(cur, segs[segs.length - 1]!, value)
 }
 
 /** 一个命令行参数的读法：整份解析得了就当 JSON 值，否则当字符串。`5` 是数，`hello` 是字。 */
