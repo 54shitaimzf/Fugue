@@ -6,6 +6,8 @@
 //
 //  ① 超上限的回执：头 4 KiB 与尾 4 KiB 逐字是原文的头尾（切点回退到完整字符，半个汉字都没有）；
 //     标记与定死的那句逐字相符，M · N · L 与原文逐个数对得上；回执 ≤ 8 KiB + 标记那一行
+//     · 链路那一条：`read` 照旧走到那一刀上；`grep` 超上限那一档自 0.3.0 ③ 起**早停**
+//     （拼够上限即停 · 自己说停在哪儿 · 不再落回字节截断），判据（截在回执那一层）没动
 //  ② 不到上限的：回执逐字节原样（截断不许误伤小输出）
 //  ③ `bash` / `run_action` 的回执里逐字查不到「毫秒」
 //  ④ `exit_plan_mode` / `ask_user_question` 的回执里提到的每一个命令，在命令面真实存在
@@ -214,7 +216,7 @@ test('① 超上限的回执：头尾逐字是原文的头尾，标记与 M · N
   )
 })
 
-test('① 真实链路：`read` 与 `grep` 两条超上限的回执都带同一份标记（同一句话）', async () => {
+test('① 真实链路：回执那一层的截断照旧（`read` 那一句标记）· `grep` 那一档改成早停（0.3.0 ③）', async () => {
   const b = await bench()
   try {
     const text = bigText(400)
@@ -233,19 +235,30 @@ test('① 真实链路：`read` 与 `grep` 两条超上限的回执都带同一�
     assert.equal(r1.L, lineCount(receiptText), 'L 是那条回执原文的行数')
     assert.ok(read.output.endsWith(text.slice(-12)), '尾就是原文的尾')
 
-    // `grep`：所有行都命中 → 命中那一串同样超上限。
+    // `grep`：所有行都命中 → **拼够回执上限就停**（0.3.0 ③）。
+    //
+    // **这一条从前量的是"命中列表超上限时也被回执那一层掐一刀"**；早停落地之后它量的是同一件事
+    // 在新形状下的样子：那一路**不再走到**回执那一层的字节截断上，它自己在上限之内停下，并如实
+    // 说出停在哪儿。判据（文本工具统一走回执那一层那一刀）没动——`read` 那一半照旧量它。
+    // 出处是路线图 § 3 的 0.3.0 行那一句：「早停截断（拼够回执上限即停——**超限时命中列表的
+    // 呈现语义随之变**）」。
     const grep = await exec.execute(callOf('grep', { pattern: '第' }, 'c2'), h)
     assert.equal(grep.ok, true, `grep 该成：${grep.output.slice(0, 200)}`)
-    const r2 = splitCapped(grep.output)
-    assert.ok(r2.M > 0, '这一份该真的被截了')
-    assertNoHalfChar(r2.head, 'grep 头')
-    assertNoHalfChar(r2.tail, 'grep 尾')
+    assert.ok(!grep.output.includes('bytes omitted'), `早停那一档不该再落回字节截断：${grep.output.slice(0, 120)}`)
+    assert.ok(bytesOf(grep.output) <= MAX_RECEIPT_BYTES, `早停之后回执自身要在上限之内：${bytesOf(grep.output)}`)
+    assert.match(grep.output, /the search stopped early/, '停在哪要说出来')
+    assert.match(grep.output, /after \d+ of \d+ files/, '扫到哪儿也要说出来')
+    assert.ok(grep.output.split('\n').length - 1 > 30, `这一趟该真的印了一串命中行：${grep.output.split('\n').length - 1}`)
+    // 半个字符一个都不许进回执——早停那一刀切在**行**上，这条路比字节那一刀更好守，也照旧要守。
+    assertNoHalfChar(grep.output, 'grep 回执')
 
     // `bash`：这台子没接执行面（`execRoot` 不给就是 `fugue run` 之前那条形状，子进程跑在真实工作区），
-    // 所以不走它——`bash` 那一份的截断与 `read` / `grep` 走的是同一个出口（回执那一层），
+    // 所以不走它——`bash` 那一份的截断与 `read` 走的是同一个出口（回执那一层），
     // 判据 ① 的纯函数那一条与链路这几条已经把那条缝量到了。
-    assert.ok(r1.M > 0 && r2.M > 0, '两条都真的被截了')
-    console.log(`① 链路读数：read 略去 ${r1.M} · grep 略去 ${r2.M}（两条都是同一句话的标记）`)
+    assert.ok(r1.M > 0, 'read 那一条照旧被截（截断那一层没动）')
+    console.log(
+      `① 链路读数：read 略去 ${r1.M} 字节（回执那一层那一刀）· grep 早停在 ${bytesOf(grep.output)} 字节之内`,
+    )
   } finally {
     await b.close()
   }

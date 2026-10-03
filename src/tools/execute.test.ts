@@ -10,6 +10,11 @@
 //   ⑨ **模型读到的每一个字节都是英文**（口径：谁读谁的语言——人读的走中文 · 见证 § 8.11）
 //   ⑪ **清单被走树的上限截住时照实说**（0.3.0 ②）：那一句挂在回执尾上，`glob` 与 `grep` 同源
 //      （`walk-cache.ts` 的 `walkCutOf`）；没截的那一档逐字节与从前相同（负对照）
+//   ⑫ **拼够回执上限即停**（0.3.0 ③）：停了要说（扫到哪儿 · 后面可能还有）· 头上那一栏不许把
+//      "印了几条"说成总数 · 少读的东西量得出来（读了几份 / 取了几份）· **计数那一档不早停**
+//      （它的答案是一个全量数），逐文件那一份被掐了也要说清总数是全的
+//   ⑬ **公布的参数面一格不落**（架构 § 8.10 硬纪律 1）：`glob` 与 `output_mode` 三档各有一种
+//      被断言钉住的形状，坏值拒在伸手之前
 //   格 3 **`grep` 的候选先按一批取回内容**：冷的那一趟请求数不随文件数线性涨，
 //   热的那一趟一次都不发；这道缝缺席时退回逐文件读（回执逐字节不变）
 
@@ -374,6 +379,99 @@ test('⑪ 走树上限截住清单时，吃到截断的回执照实说；没截�
     assert.match(wholeGrep.output, /^3 lines:\n/, wholeGrep.output)
     assert.equal(/this listing is cut/.test(wholeGrep.output), false, '没截就不许加这一句')
     console.log(`⑪ 读数：截住那一档「${cutGlob.output.split('\n').pop()}」 · 没截那一档 ${wholeGlob.output.length} 字节与从前相同`)
+  } finally {
+    await b.close()
+  }
+})
+
+/**
+ * 一份手搓的宿主：`count` 份一模一样的小文件，每一份一行命中。
+ *
+ * 为什么手搓：真台子上造一千份要走一千次 git 写，快档付不起；而这一条要量的两样（**少读了多少**
+ * · **全量数还是不是全量数**）都只与"有几份候选 · 读了几份"有关，与内容从哪儿来无关。
+ * 只给这一条用，所以只实现它走到的那三样（`walk` · `readBytes` · `prefetch`）。
+ */
+function wideHost(count: number): { readonly host: ToolHost; readonly reads: string[]; readonly batched: string[] } {
+  const files = Array.from({ length: count }, (_, i) => `f${String(i).padStart(4, '0')}.ts`)
+  const reads: string[] = []
+  const batched: string[] = []
+  const host = {
+    walk: async () => files,
+    readBytes: async (p: string) => {
+      reads.push(p)
+      return { bytes: new TextEncoder().encode('const a = 1 // 记号\n'), mode: 0o100644 }
+    },
+    prefetch: async (paths: readonly string[]) => {
+      batched.push(...paths)
+    },
+  } as unknown as ToolHost
+  return { host, reads, batched }
+}
+
+test('⑫ 早停截断：拼够回执上限就停（少读的东西量得出来）· 计数那一档照旧是全量数（0.3.0 ③）', async () => {
+  // ── 甲 · 内容那一档：一千份候选，回执拼够上限就停。
+  const wide = wideHost(1000)
+  const out = await face('grep', { pattern: '记号' }, wide.host)
+  assert.equal(out.ok, true)
+  assert.match(out.output, /lines \(not a total — the search stopped early\):/, `头上那一栏不许把印了几条说成总数：${out.output.slice(0, 90)}`)
+  assert.match(out.output, /the search stopped early/, '停了要说')
+  assert.match(out.output, /after \d+ of 1000 files/, '扫到哪儿也要说')
+  const outBytes = Buffer.byteLength(out.output, 'utf8')
+  assert.ok(outBytes <= MAX_RECEIPT_BYTES, `早停之后回执要在上限之内：${outBytes}`)
+  assert.ok(!out.output.includes('bytes omitted'), '早停那一档不该再落回字节截断')
+  // **收益的读数**：读了几份内容、取了几份。
+  const scanned = Number(/after (\d+) of 1000 files/.exec(out.output)?.[1])
+  assert.equal(wide.reads.length, scanned, '印出来的"读了几份"就是真的读了几份')
+  assert.ok(wide.reads.length < 1000, `一千份里该少读很多：实际 ${wide.reads.length}`)
+  assert.ok(wide.batched.length < 1000, `预取也该早停（不该把一千份全取回来）：实际 ${wide.batched.length}`)
+  // 每一条命中行都是完整的一行（切在行上，不是切在字节上）。
+  for (const line of out.output.split('\n').slice(1)) {
+    if (line.startsWith('…(') || line === '') continue
+    assert.match(line, /^f\d{4}\.ts:\d+:const a = 1 \/\/ 记号$/, `那一行不完整：${line}`)
+  }
+  const contentReads = wide.reads.length
+  const contentBatched = wide.batched.length
+
+  // ── 乙 · 计数那一档：**答案是一个全量数**，所以它不早停（机制上做不到半截就不做半截）。
+  const all = wideHost(1000)
+  const counted = await face('grep', { pattern: '记号', output_mode: 'count' }, all.host)
+  assert.equal(counted.ok, true)
+  assert.match(counted.output, /^1000 matches in 1000 files:/, `头一行要是全量数：${counted.output.slice(0, 90)}`)
+  assert.equal(all.reads.length, 1000, '计数那一档要把每一份都读过才敢报总数')
+  assert.match(counted.output, /every file was read, so the totals are complete/, '逐文件那一份被掐了就要说，并说清总数是全的')
+  console.log(
+    `⑫ 读数：一千份候选 · 内容档读了 ${contentReads} 份 / 取了 ${contentBatched} 份 · ` +
+      `回执 ${outBytes} 字节（上限 ${MAX_RECEIPT_BYTES}）· 计数档读完 1000 份报 ${(counted.output.split('\n')[0] as string)}`,
+  )
+})
+
+test('⑬ 公布的参数面一格不落：`glob` 过滤 · `output_mode` 三档各一种形状 · 坏值拒在伸手之前（0.3.0 ③）', async () => {
+  const b = await bench()
+  try {
+    await b.host.writeBytes('a.ts', new Uint8Array(Buffer.from('// 记号 a\n', 'utf8')))
+    await b.host.writeBytes('b.ts', new Uint8Array(Buffer.from('// 记号 b\n// 记号 b2\n', 'utf8')))
+    await b.host.writeBytes('c.md', new Uint8Array(Buffer.from('// 记号 c\n', 'utf8')))
+
+    // 一 · `output_mode` 缺省那一档：逐行（**与从前逐字节同形**）。
+    const lines = await face('grep', { pattern: '记号' }, b.host)
+    assert.match(lines.output, /^4 lines:\n/, lines.output)
+    // 二 · `files_with_matches`：一份文件一行（与 `glob` 那一档同一个头）。
+    const files = await face('grep', { pattern: '记号', output_mode: 'files_with_matches' }, b.host)
+    assert.deepEqual(files.output.split('\n'), ['3 paths:', 'a.ts', 'b.ts', 'c.md'])
+    // 三 · `count`：全量总数在前，逐文件在后。
+    const count = await face('grep', { pattern: '记号', output_mode: 'count' }, b.host)
+    assert.deepEqual(count.output.split('\n'), ['4 matches in 3 files:', 'a.ts:1', 'b.ts:2', 'c.md:1'])
+    // 四 · `glob` 那一栏：只在这些路径里找（与 `glob` 工具同一份模式方言）。
+    const only = await face('grep', { pattern: '记号', glob: '*.md' }, b.host)
+    assert.deepEqual(only.output.split('\n'), ['1 lines:', 'c.md:1:// 记号 c'])
+    const wideOnly = await face('grep', { pattern: '记号', glob: '**/*.ts' }, b.host)
+    assert.match(wideOnly.output, /^3 lines:/, wideOnly.output)
+    assert.equal(wideOnly.output.includes('c.md'), false, `模式外的路径进了 grep：${wideOnly.output}`)
+    // 五 · 坏值拒在伸手之前，话里把三档列出来（公布面与兑现面不一致时模型无从判起）。
+    const bad = await face('grep', { pattern: '记号', output_mode: 'lines' }, b.host)
+    assert.equal(bad.ok, false)
+    assert.match(bad.output, /output_mode has to be one of content · files_with_matches · count/, bad.output)
+    console.log(`⑬ 读数：四栏各有形状（content 4 行 · files 3 路径 · count 4 命中/3 文件 · glob *.md 1 行）· 坏值当场拒`)
   } finally {
     await b.close()
   }

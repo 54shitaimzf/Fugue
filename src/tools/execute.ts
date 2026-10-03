@@ -18,7 +18,7 @@ import type { Capability, Denied } from '../capability/table.ts'
 // **路径形状那一个错来自叶子**（`src/path-shape.ts`）：视图那一层抛它，这一层按它接成一条结果。
 // 不 import 视图那边——这一层的头注写着"不认识视图"，而这条规矩两层共用，所以它有一条自己的家。
 import { PathShapeError } from '../path-shape.ts'
-import { lineCountOfBytes } from './receipt.ts'
+import { MAX_RECEIPT_BYTES, lineCountOfBytes } from './receipt.ts'
 // **行窗口住工具面**（`window.ts`）：字节已经是整对象，要省的是解码与行切——在这里做窗口算术
 // 零接口改动、逐字节可证，将来 serve 化时它跟 `readBytes` 一起搬，形状不返工。
 import { lineWindow, windowNote } from './window.ts'
@@ -434,6 +434,40 @@ const readImageFace: ToolFn = async (args, host) => {
 }
 
 /**
+ * `grep` 公布的那三档输出（`catalog.ts` 里那个 `enum` 逐字）。**一处取值处**：解析与渲染都
+ * 从这一张表来，目录改了这里不改的话，公布的第四档会被静默当成第三档。
+ */
+const GREP_MODES = ['content', 'files_with_matches', 'count'] as const
+type GrepMode = (typeof GREP_MODES)[number]
+
+/**
+ * `output_mode` 那一栏。**不给就是 `content`**（从前的形状，逐字节照旧）；给了别的形状当场拒
+ * ——拒在伸手之前，话里点出这一栏叫什么都行（架构 § 8.10 硬纪律 1 的另一半）。
+ */
+function grepModeOf(args: Readonly<Record<string, unknown>>): { readonly value: GrepMode } | { readonly why: string } {
+  const v = arg(args, 'output_mode')
+  if (v === undefined) return { value: 'content' }
+  if (typeof v === 'string' && (GREP_MODES as readonly string[]).includes(v)) return { value: v as GrepMode }
+  return { why: `output_mode has to be one of ${GREP_MODES.join(' · ')} — this call gave ${JSON.stringify(v)}.` }
+}
+
+/**
+ * 一窗取几条内容。**它不是回执上限**——上限只有一套，住 `receipt.ts`（`MAX_RECEIPT_BYTES`）；
+ * 这一条是"取内容"那道缝的批量大小。
+ *
+ * 为什么按窗取，而不是像 0.2.4 那样一次把候选全取回来：一次全取时，回执虽然早停了，内容却已经
+ * 全取回来了——"超限靶上少读的东西"就成了空话。窗也不宜太小：没到上限的那些问法会把每一窗都
+ * 取一遍，窗越小，`objectMany` 的往返越多。
+ */
+const PREFETCH_WINDOW = 128
+
+/**
+ * 收尾那几句话给自己留的地方。**它是 `MAX_RECEIPT_BYTES` 里的一部分，不是第二个上限**：
+ * 早停那一句 · 计数档那一句 · 走树截尾那一句，三句加起来远不到这么多。
+ */
+const STOP_NOTE_RESERVE = 768
+
+/**
  * 发现类那两条工具共用的「范围」那一栏（`path`）。**三句话，各管一处细节**：
  *
  *   · `scopeOf`：尾巴上的斜杠折掉——`src/` 与 `src` 说的是同一个范围，而两种写法模型都会给。
@@ -508,12 +542,20 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   const pattern = text(args, 'pattern')
   if (pattern === null) return missing('grep', 'pattern')
   const dir = scopeOf(text(args, 'path'), ctx.cwd)
+  // **公布的参数面一格不落**（架构 § 8.10 硬纪律 1：只公布能兑现的选项——公布了就要有人接）。
+  // `output_mode` 与 `glob` 这两栏原先公布了没人接：按公布面给的参数被静默忽略，而回执看起来
+  // 只是"那儿真没有"——同一个入口，一个参数有人接、一个没人接，读的人分不出来。
+  const mode = grepModeOf(args)
+  if ('why' in mode) return no(mode.why)
+  const only = text(args, 'glob')
   let re: RegExp
   try {
     re = new RegExp(pattern)
   } catch (err) {
     return no(`that is not a regular expression: ${(err as Error).message}`)
   }
+  // `glob` 那一栏走与 `glob` 工具**同一份**方言（`globToRe`）：不另立第二套模式语法。
+  const onlyRe = only === null ? null : globToRe(only)
   const all = await host.walk()
   // **先按一次批量把候选的内容取回来**：它是提示，缺席或失败都退回今天的逐文件读
   // ——这台宿主没有那道缝（测试夹具）、或者那一层没接上真源，都只是慢一点。
@@ -526,27 +568,96 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   } catch {
     prefetch = undefined
   }
-  // **候选先按范围收窄，再取那一批**：预取是"接下来要读的那几份先取回来"，范围外的不该占这一批
-  // ——一条窄范围加上一棵大树的问法上，差的就是几十上百份的内容。
-  //
-  // **收窄只改那一批，不改结果**：结果那一路的判据在下面那个循环里，它自己按范围判一次；预取
-  // 始终只是提示（缺席 · 失败 · 少几份，都只是慢一点）。
-  if (prefetch !== undefined) await prefetch(all.filter((p) => inScope(p, dir)))
+  // **候选先按范围与 `glob` 收窄**：预取是"接下来要读的那几份先取回来"，范围外 · 模式外的都不该
+  // 占这一窗。**它只改取法，不改结果**：结果那一路在下面那个循环里自己把范围与模式判一次
+  // ——预取始终只是提示（缺席 · 失败 · 少几份，都只是慢一点）。
   const cut = walkCutNote(all)
+  const candidates = all.filter((p) => inScope(p, dir) && (onlyRe === null || matchesInScope(onlyRe, p, dir)))
+
+  // **拼够回执上限即停**（0.3.0 ③ · `T16` ①）。上限就是 `receipt.ts` 那一套常数——这里不另立
+  // 第二套，只是**在拼的时候就知道自己要满了**，于是后面的窗不必取、后面的文件不必读。
+  //
+  // 停了要说（`scanned` / `candidates.length` 那一句）："少印"与"没扫完"是两件事，后者不许被
+  // 当成本次问法的结论（正确性不为机制让路）。
   const hits: string[] = []
-  for (const path of all) {
-    if (!inScope(path, dir)) continue
-    const got = await host.readBytes(path)
-    if (got === null) continue
-    utf8Of(got.bytes)
-      .split('\n')
-      .forEach((line, i) => {
-        if (re.test(line)) hits.push(`${path}:${i + 1}:${line}`)
-      })
+  const counted = new Map<string, number>()
+  /** 已经拼进回执的字节数（与上限那一套常数同一把尺）。 */
+  let used = 0
+  /** 内容那两档：回执满了，搜索停在这里。 */
+  let stopped = false
+  /** 计数档：逐文件那一份印不下了（**数照旧数完**——那一档的答案是一个全量数）。 */
+  let listCut = false
+  let total = 0
+  let scanned = 0
+  const budget = MAX_RECEIPT_BYTES - STOP_NOTE_RESERVE
+
+  scan: for (let at = 0; at < candidates.length; at += PREFETCH_WINDOW) {
+    const window = candidates.slice(at, at + PREFETCH_WINDOW)
+    // 预取是提示：这一窗取不回来（或这道缝压根不在），下面照样逐文件读。
+    if (prefetch !== undefined) await prefetch(window)
+    for (const path of window) {
+      scanned += 1
+      const got = await host.readBytes(path)
+      if (got === null) continue
+      const body = utf8Of(got.bytes).split('\n')
+      let here = 0
+      for (let i = 0; i < body.length; i += 1) {
+        const line = body[i] as string
+        if (!re.test(line)) continue
+        here += 1
+        if (mode.value !== 'content') continue
+        const one = `${path}:${i + 1}:${line}`
+        const size = Buffer.byteLength(one, 'utf8') + 1
+        if (used + size > budget) {
+          stopped = true
+          break scan
+        }
+        hits.push(one)
+        used += size
+      }
+      if (here === 0) continue
+      if (mode.value === 'files_with_matches') {
+        const size = Buffer.byteLength(path, 'utf8') + 1
+        if (used + size > budget) {
+          stopped = true
+          break scan
+        }
+        hits.push(path)
+        used += size
+        continue
+      }
+      if (mode.value === 'count') {
+        // **数完是必须的**：这一档的答案是一个全量数，所以它不早停（回执本来就短）。
+        counted.set(path, here)
+        total += here
+        const size = Buffer.byteLength(`${path}:${here}`, 'utf8') + 1
+        if (used + size <= budget) {
+          hits.push(`${path}:${here}`)
+          used += size
+        } else listCut = true
+      }
+    }
   }
+
   // 与 `glob` 同一处（`walkCutNote`）：这一趟搜的候选是从那份清单里来的，清单被截过，
   // 那"没有一行匹配"就不是一句结论（0.3.0 ②）。
-  return ok(hits.length === 0 ? `no line matches ${pattern}.${cut}` : `${hits.length} lines:\n${hits.join('\n')}${cut}`)
+  if (hits.length === 0 && !stopped) return ok(`no line matches ${pattern}.${cut}`)
+  /** 早停那一句：**扫到哪儿 · 后面可能还有**（两件事都要说）。 */
+  const stopNote = stopped
+    ? `\n…(the search stopped early: this receipt reached its ${MAX_RECEIPT_BYTES}-byte limit after ${scanned} of ${candidates.length} files — more matches may exist; narrow the search to see them)…`
+    : ''
+  const listNote = listCut ? '\n…(the per-file lines above stop at the receipt limit; every file was read, so the totals are complete)…' : ''
+  // **数出来的数不许被当成全量数**：停了的那两档，头上那一栏说的是"印了几条"，不是总数。
+  const head = stopped
+    ? mode.value === 'content'
+      ? `${hits.length} lines (not a total — the search stopped early):`
+      : `${hits.length} paths (not a total — the search stopped early):`
+    : mode.value === 'content'
+      ? `${hits.length} lines:`
+      : mode.value === 'files_with_matches'
+        ? `${hits.length} paths:`
+        : `${total} matches in ${counted.size} files:`
+  return ok(`${head}\n${hits.join('\n')}${stopNote}${listNote}${cut}`)
 }
 
 // ── 执行类那两个 ───────────────────────────────────────────────────────────────
