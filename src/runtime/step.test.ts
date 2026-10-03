@@ -14,6 +14,9 @@
 //
 // ⑨ 是 W11 那一轮真档照出来的那三句收工口径（预算 · 怎么交卷 · 断言谁跑）：它们进的是 B 区，
 //    而预算那个数逐字跟着状态走——负对照两条（换一个数 → 那一句跟着变；不给 → 那一句不写）。
+//
+// ⑩ 是 0.3.0 ④b 加上的那一栏（每调用成本台账的耗时）：区间读数，不是时刻——`deps.call` 那一趟的
+//    两头各取一次单调钟相减，慢的那一趟量得出来（旧日志里没有这一栏 → 「未量到」，不是 0）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -631,4 +634,56 @@ test('⑨ 「我的任务」带三句收工口径（预算 · 交卷 · 断言�
     `⑨ 读数：B 区带预算 ${p5.zoneB.length} 字节 · 不带预算 ${bare.zoneB.length} 字节（差 ${p5.zoneB.length - bare.zoneB.length}）` +
       ` · 改步号 B 区指纹 ${hashOf(p1.zoneB)} 与带预算那份相同 · C 区指纹 ${hashOf(p1.zoneC)} ≠ ${hashOf(p5.zoneC)}`,
   )
+})
+
+// ── ⑩ 每调用成本台账那一栏：`llm/call.ms`（0.3.0 ④b）────────────────────────────
+
+/**
+ * 一份脚本，但**先等一会儿再吐**——`ms` 要量到真区间，不是恒 0 的装饰。
+ *
+ * 等待放在生成器里（`events` 那一头）：`step` 那一趟是从 `deps.call` 到把流读完（两头各取一次钟），
+ * 所以这一段等待落在区间里。`CallModel` 本身照旧同步返回（与 `scriptedModel` 同一个形状）。
+ */
+function slowModel(scripts: readonly (readonly ModelEvent[])[], waitMs: number): CallModel {
+  const base = scriptedModel(scripts)
+  return () => {
+    const r = base()
+    return {
+      ...r,
+      events: (async function* (): AsyncGenerator<ModelEvent> {
+        await new Promise((res) => setTimeout(res, waitMs))
+        for await (const e of r.events) yield e
+      })(),
+    }
+  }
+}
+
+test('⑩ `llm/call` 带上这一趟的耗时读数：慢的那一趟量得出来，它是区间不是时刻', async () => {
+  const one: readonly (readonly ModelEvent[])[] = [
+    [
+      { t: 'delta', text: '想了一会儿。' },
+      { t: 'usage', usage: USAGE },
+      { t: 'stop', reason: 'end-turn', raw: 'end_turn' },
+    ],
+  ]
+  await withRoot(async (root, log) => {
+    const rt = createRuntime({
+      logOf: () => log,
+      call: slowModel(one, 30),
+      execute: recordingExecutor((call) => ({ ok: true, output: `${call.name} 回了：2 个文件` })),
+      tools,
+    })
+    await rt.step(handleOf(fixtureState(0)), new AbortController().signal)
+    const calls = (await eventsOf(root)).filter((e) => e.t === 'llm/call') as { ms?: number }[]
+    assert.equal(calls.length, 1)
+    const ms = calls[0]?.ms
+    assert.equal(typeof ms, 'number', '`llm/call` 没带这一趟的耗时读数')
+    assert.ok((ms as number) >= 25, `这一趟至少等了 30 ms，量到的却是 ${String(ms)} ms —— 那一栏要量的是真区间`)
+    assert.ok((ms as number) < 5000, `量出来的区间不合理：${String(ms)} ms`)
+    // **区间不是时刻**：这一栏是一个数；日志上没有「什么时候开始」那一栏（墙钟是 0.4.1 的前置审批件）。
+    console.log(
+      `⑩ 读数：这一趟等了 30 ms · \`llm/call.ms\` 量到 ${String(ms)} ms` +
+        ` · 旧日志里没有这一栏（回放照旧，读账那一侧给「未量到」）`,
+    )
+  })
 })
