@@ -11,6 +11,29 @@
 
 ## [未发布]
 
+## [0.2.11] - 2026-10-03
+
+这一版是配置与文档面的对账收口：配置的读 · 写 · 查询三面只走自有属性（`__proto__` 这类键段当字面数据存取），架构里的键域清单与代码对上了、并由校验器常驻盯着，代码仓两份给用户的文档上那两条引用红清零。正常输入上的输出逐字节不变。
+
+### 修复
+
+- **`fugue config set` 报成功却没落盘的那一类**：`config.__proto__.x` · `config.constructor.prototype.x` 这种键段会写进 `Object.prototype`——命令报「改成了」，配置文件里却什么都没有（`JSON.stringify` 只看得见自有属性），而 `config get config.toString` 还会把继承来的成员当配置读出来、退 0 打印 `undefined`。现在配置的读 · 写 · 合并三面只认自有属性：这样写下去的值真在文件里，继承成员一律算「没有这条键」。
+
+### 改进
+
+- **键域规格与代码对上，并进闸**：架构 § 15.3.a 那句顶层键域清单少写 `ui`（代码里 11 个、规格里 10 个——0.2.10 立的键域闸只管给使用者的那两份文档，规格自己不在闸内）。现在这一处由 `tools/check-config-keys.js` 常驻核对：规格少了 · 多了 · 整段找不到，三种都当场红。
+- **代码仓两份文档的引用红清零**：README 与 AGENTS 里指向架构 § 9.6 · § 16–18 的写法统一成引用校验认得的那一种（「架构文档 § 9.6」与孤立的「§ 16」都解析不出来）。`node tools/check-doc.js` 对这两份现在都是「全部通过」。
+- **`config set ui.keys.__proto__ <键串>` 与别的认不出的动作名同一面**：那个动作名会从写面的语义校验里静默消失（暂存对象也是普通赋值）——写面报成功，其实一眼没看。现在当场拒，与 `ui.keys.<认不出的动作>` 一样。
+
+### 技术细节
+
+- `src/config.ts` 只留一个写口子 `setOwnKey()`（`Object.defineProperty` 全描述符：`enumerable` · `writable` · `configurable`）——`defineProperty` 缺省不可枚举，少给一个就把「假成功」换成「静默丢键」。`getConfig` · `deepMerge` · `setConfig` 的每一层与 `assertUiShape` 的两处读都改成 `Object.hasOwn` 巡路。
+- 新断言 8 条：`src/config-own-keys.test.ts` 6 条（写面 JSON 往返与描述符 · `Object.prototype` 全程干净 · 查询面继承成员不算 · 两级合并当字面数据 · 端到端 CLI 往返 · 原型上挂着可枚举成员时读也不看它）· `test/check-config-keys.test.ts` 2 条（规格散文删一个键 · 整段找不到）。负对照都是「改红 → 复原」跑过的，其中 ① 那一族的负对照是**新断言先对着没改过的源码跑**（5 条全红）。
+- `tools/check-config-keys.js` 仍是零依赖、仍挂在 fast 组；架构篇路径缺省 `design/ARCHITECTURE.md`，`--arch <路径>` 可换（负对照用它喂一份改过的）。
+- 读数（20 核 ext4）：fast 651 · 全量 795，全绿。
+
+**完整对比**：[v0.2.10...v0.2.11](https://github.com/54shitaimzf/Fugue/compare/v0.2.10...v0.2.11)
+
 ## [0.2.10] - 2026-10-03
 
 这一版是设置面的维护收口：加一条只读命令 `fugue config ls`（列出配置认得的全部顶层键），把文档里教过的配置键纳入自动校验，并把命令速查表与命令面重新对账。既有使用方式没有变化，正常输入上的输出逐字节不变（新命令是加法）。
