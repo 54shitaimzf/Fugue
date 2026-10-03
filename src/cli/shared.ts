@@ -103,10 +103,15 @@ fugue 是住在终端里的编码 agent：给它一句目标，它自己拆活�
                              跟它聊一句：说你的要求或限制，它记下来并照着调计划。
                              默认接真模型（花钱）
 
+  装配
+  assemble <protocol> [--agent <id>] [--against <protocol>]
+                             把要发给模型的前缀拼出来核对（协议名 subagent 或 holder）：
+                             三区哈希 · 每区字节数 · 四条约束
   环境与配置
   doctor                     环境自检：node · git · bwrap … 一项项报给你（只读；「缺」算
                              读数不算失败）
   config show                看全部配置
+  config ls                  只列顶层键域（合法键有哪些），不读配置
   config get <key>           看一条（点分路径，如 round.id）
   config set <key> <value>   改一条（值能按 JSON 解析就当 JSON，否则当字符串）
 

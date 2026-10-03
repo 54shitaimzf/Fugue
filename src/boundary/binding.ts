@@ -22,6 +22,7 @@ import { XDG_DIR } from '../roots/coords.ts'
 import type { Policy } from './policy.ts'
 import type { ConfigDoc } from '../config.ts'
 import { getConfig } from '../config.ts'
+import { setOwnKey } from '../own-key.ts'
 import type { ActionName, AgentId, NetMode } from '../terms.ts'
 
 /** 这一层自己的失败：配置里的动作绑定不成立。**拒绝并指路**，与围栏同一个口径。 */
@@ -236,7 +237,8 @@ export function parseInjections(rest: readonly string[]): Record<string, string>
     const eq = item.indexOf('=')
     if (eq <= 0) throw new BindingError(`-- 之后要的是 k=v：${JSON.stringify(item)}`)
     const k = item.slice(0, eq)
-    out[k] = item.slice(eq + 1)
+    // 键是人给的，走写口子：`__proto__=2` 普通赋值无声无效——注入丢了还一个字不说。
+    setOwnKey(out, k, item.slice(eq + 1))
   }
   assertNotReserved(Object.keys(out), '-- 之后的注入')
   return out
