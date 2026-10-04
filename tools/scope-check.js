@@ -93,11 +93,15 @@ function checkRun() {
       spawnSync(process.execPath, [CLI, '--root', tmp, 'read', 'a.txt'], { encoding: 'utf8' }),
       spawnSync(process.execPath, [CLI, '--root', tmp, 'commit', '-m', '范围断言'], { encoding: 'utf8' }),
       // 配置也跑一条：它是第四个声明过的持久化位置，不跑一遍就等于把 `config` 白加进白名单，
-      // 而"原子写留下的临时名"恰好只有跑过才看得见。
-      spawnSync(process.execPath, [CLI, '--root', tmp, 'config', 'set', 'policy.readOnly', 'true'], {
+      // 而"原子写留下的临时名"恰好只有跑过才看得见。**键用 `round.id`**（README 教过的那一个）：
+      // 探针拿的必须是现役可写键——写成键域里没有的名字，第 4 条会以"命令退非零"的样子红，
+      // 而红的原因与持久化位置毫无关系（2026-10-04 之前用的 `policy.readOnly` 就是这样）。
+      // 这一跑同时落下 `config` 与它的**原值记录** `config-history`（§ 15.3.a 的 P2a：每次改动
+      // 一行 JSONL，与目标级 config 同目录）——两处都在下面那张白名单里。
+      spawnSync(process.execPath, [CLI, '--root', tmp, 'config', 'set', 'round.id', 'scope-check'], {
         encoding: 'utf8',
       }),
-      spawnSync(process.execPath, [CLI, '--root', tmp, 'config', 'get', 'policy.readOnly'], {
+      spawnSync(process.execPath, [CLI, '--root', tmp, 'config', 'get', 'round.id'], {
         encoding: 'utf8',
       }),
     ]
@@ -121,6 +125,8 @@ function checkRun() {
     runs.push(spawnSync(process.execPath, [CLI, '--root', tmp, 'ensure'], { encoding: 'utf8' }))
     // **Y6 起多一条 `policy`**：它现探那两层，而第二层要 `cc` 编一份包装器落在 `.fugue/bin/`
     // ——那是第六个声明过的位置。不跑一遍就等于把它白加进白名单（这一条与上一条同一个道理）。
+    // **2026-10-04 复核：`policy` 是现役命令**（`src/cli/fugue.ts` 的分发里有它）· 退 0 · 真落
+    // `.fugue/bin/landlock-exec` 与它的源码——这一条留着，不是过期探针。
     runs.push(spawnSync(process.execPath, [CLI, '--root', tmp, 'policy'], { encoding: 'utf8' }))
     // 物化那一组收尾：`dispose` 把四个坐标删干净（它不新增位置，但它**删**位置——留在白名单
     // 底下的一堆空目录也是"跑过之后留下的东西"）。
@@ -144,6 +150,8 @@ function checkRun() {
       '.fugue/log/',
       '.fugue/snap/',
       '.fugue/config',
+      // 原值记录（§ 15.3.a 的 P2a）：与目标级 `config` 同目录，`config set` 每改一次写一行。
+      '.fugue/config-history',
       '.fugue/mat/',
       // Y6：第二层那个包装器（§ 8.8 · PLAN § 5.5 的 Y6 行）——派生，可弃、可重生成。
       '.fugue/bin/',
@@ -152,7 +160,7 @@ function checkRun() {
     const outside = walk(tmp)
       .map((p) => relative(tmp, p))
       .filter((p) => !declared(p))
-    if (outside.length === 0) ok(`持久化位置只有声明过的六处：${ALLOWED.join(' · ')}`)
+    if (outside.length === 0) ok(`持久化位置只有声明过的 ${ALLOWED.length} 处：${ALLOWED.join(' · ')}`)
     else bad(`出现了声明之外的持久化位置：${outside.join(' · ')}`)
     if (!existsSync(join(tmp, '.git', 'index'))) ok('没有落索引（§ 8.2 硬约束 1 的第二种形态）')
     else bad('落下了 .git/index')
