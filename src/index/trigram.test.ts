@@ -239,6 +239,33 @@ test('④ blob 表的宽度由长度推：同一个集合编两次宽度不变',
   assert.equal(encodeBlobTable([], 20).byteLength, 4)
 })
 
+// ── ⑥ 冻结面：字节钉住 ─────────────────────────────────────────────────────
+
+test('⑥ 冻结面：那份固定语料的工件字节钉在这儿（键空间 · 布局 · 编码一起钉住）', () => {
+  // 这一条抓的是"改动落在字节上"：键的算法、字典记录的布局、postings 的编码、节表的写法——任何一处
+  // 动了，这两个数就动。跳版本号（口径里写着的那两个时机）就要在这里改它们，**那是要人批的改动**，
+  // 不是顺手改的；而重写编码这一类"应当逐字节不变"的改动，过不了这一条就是过不了。
+  const texts = [
+    'export function lineWindow(bytes, offset, limit) {',
+    'postings 键控 blob id —— 一处真相',
+    'abc',
+    'abcdef',
+  ]
+  const parts = buildTrigram(texts.map((text) => blobOf(text)))
+  const encoded = encodeTrigram(parts)
+  assert.equal(parts.blobIds.length, 4)
+  assert.equal(parts.textUnits, 86)
+  assert.equal(parts.grams.length, 76)
+  assert.equal(encoded.byteLength, 1761)
+  assert.equal(
+    createHash('sha256').update(encoded).digest('hex'),
+    '72152968c8ef7ea5b233dcd4a9c450c8c90a8e4b674f0d33c939edd76ad564e8',
+  )
+  // 纯函数那一半：同一组输入换个顺序喂，钉在同一个字节上。
+  const rotated = encodeTrigram(buildTrigram([...texts.slice(2), ...texts.slice(0, 2)].map((text) => blobOf(text))))
+  assert.deepEqual(rotated, encoded)
+})
+
 // ── ⑤ 键与匹配器同空间（口径五）─────────────────────────────────────────────
 
 test('⑤ 键与匹配器同空间：非法 UTF-8 · 半个代理 · NUL 混在一起，三个单元一个窗口也一份不漏', () => {

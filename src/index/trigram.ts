@@ -231,24 +231,24 @@ export function findGram(dict: Uint8Array, gram: Trigram, postingsBytes: number)
   return null
 }
 
-/** 顺序号表 → 差分 + varint（无符号 LEB128）。 */
-export function encodeOrdinals(ordinals: readonly number[]): Uint8Array {
-  const out: number[] = []
-  let prev = 0
-  for (const n of ordinals) {
-    let delta = n - prev
-    prev = n
+/** 一份顺序号表按差分 varint（无符号 LEB128）写进 `out` 的第 `at` 个字节，返回写了几个字节。 */
+function writeOrdinals(out: Uint8Array, at: number, ordinals: readonly number[]): number {
+  let put = at
+  let previous = 0
+  for (const ordinal of ordinals) {
+    let delta = ordinal - previous
+    previous = ordinal
     for (;;) {
       const byte = delta % 128
       delta = Math.floor(delta / 128)
       if (delta === 0) {
-        out.push(byte)
+        out[put++] = byte
         break
       }
-      out.push(byte | 0x80)
+      out[put++] = byte | 0x80
     }
   }
-  return new Uint8Array(out)
+  return put - at
 }
 
 /** 一个差分写成 varint 要几个字节。**算得出来就不必先编一遍再数**（编码那一趟按它排偏移）。 */
@@ -361,24 +361,25 @@ export function encodedBytesOf(parts: TrigramParts): number {
   )
 }
 
-/** 三节编成一份工件（容器那一层在 `format.ts`）。 */
+/**
+ * 三节编成一份工件（容器那一层在 `format.ts`）。
+ *
+ * **两趟走，不给每个三字组造一个数组。** 先把 postings 那一块按算出来的长度一次要到手，再把 varint
+ * 直接写进去。原先每个 gram 先编一段小 `Uint8Array` 再逐段拼起来：最杂那一档上要造 857k 个对象，
+ * 量到瞬时堆 +230 MiB，而那 230 MiB 一个字节的信息都不多带。
+ *
+ * 代价是长度算了两遍（`store.ts` 的预算那一关也要它）：最杂那一档上多出来的一遍是几十毫秒量级，
+ * 换的是"分配之前先判"。
+ */
 export function encodeTrigram(parts: TrigramParts): Uint8Array {
   const idBytes = idBytesOf(parts.blobIds)
   const dict = new Uint8Array(parts.grams.length * GRAM_RECORD_BYTES)
-  const bodies: Uint8Array[] = []
+  const postings = new Uint8Array(postingsBytesOf(parts))
   let at = 0
   parts.grams.forEach((g, index) => {
-    const body = encodeOrdinals(g.ordinals)
     writeGramRecord(dict, gramRecordOffset(index), { gram: g.gram, count: g.ordinals.length, offset: at })
-    bodies.push(body)
-    at += body.byteLength
+    at += writeOrdinals(postings, at, g.ordinals)
   })
-  const postings = new Uint8Array(at)
-  let put = 0
-  for (const body of bodies) {
-    postings.set(body, put)
-    put += body.byteLength
-  }
   const sections: SectionInput[] = [
     { kind: SECTION.blobs, codec: CODEC.raw, body: encodeBlobTable(parts.blobIds, idBytes) },
     { kind: SECTION.dict, codec: CODEC.raw, body: dict },
