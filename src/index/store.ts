@@ -4,7 +4,7 @@
 // （派生物，损坏即重建、miss 回扫描）· TARGETS `T16` ②。容器在 `format.ts`，载荷在 `trigram.ts`，
 // 这一份只管文件系统与退化档。
 //
-// 五条口径：
+// 八条口径：
 //
 //   一 · **索引是派生体，伤不到真源。** 它只从 `BlobSource` 读真源字节，只写
 //        `<realRoot>/.fugue/idx/` 一个目录；不碰视图、不碰日志、不碰工作树。所以它死了系统只是
@@ -30,7 +30,13 @@
 //        三字组数 · 工件字节）都在越过的**当场**止住，报出是哪一条（数字与来处都在 `budget.ts`
 //        一处）。`rebuildIndex` 把上限抛出来（明着要建就给明着的错），`openOrRebuild` 把它收成
 //        一态交回——调用方据此记住不再重建，而不是每问一次就重来一遍。库这一层不留记忆。
-import { mkdir, open, rename, stat, writeFile } from 'node:fs/promises'
+//   八 · **盘上那一份说的是旧一组时，只读新进来的那一份真源。** 这是**增量构建**那一站：`growIndex`
+//        拿旧工件的三段载荷（blob 表 · 字典 · postings）与新解的 gram 合并，编出新工件；旧那一组
+//        的真源一个字节都不读。它靠的是**键控 blob id**（`trigram.ts` 口径二）：id 就是内容的名字，
+//        所以旧工件里那些顺序号对今天的真源照样作数。**合并只付旧工件的字节，不付旧语料的重读与
+//        重解码**——省下的与付出的都要有读数（`GrowReading` 与本站收口的对照读数）。走不通
+//        （没有工件 · 读不动 · 形状不对）就给 `null` 回全量重建：增量的地板是全量。
+import { mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -52,8 +58,10 @@ import {
   encodeTrigram,
   findGram,
   indexOfParts,
+  mergeTrigram,
+  sectionsOf,
 } from './trigram.ts'
-import type { BlobBytes, Trigram, TrigramIndex } from './trigram.ts'
+import type { BlobBytes, Trigram, TrigramIndex, TrigramSections } from './trigram.ts'
 import { INDEX_LIMITS, IndexBudgetExceeded } from './budget.ts'
 import type { IndexBudget, IndexBudgetLimits } from './budget.ts'
 import { kindOf } from '../truth/truth.ts'
@@ -114,7 +122,7 @@ export async function sourceOfView(view: View, truth: Truth): Promise<BlobSource
   }
 }
 
-/** 一次全量构建的读数。**都不是判据，是账**：0.3.2 的增量就是与这一份比出来的。 */
+/** 一次全量构建的读数。**都不是判据，是账**：增量那一趟就是与这一份比出来的。 */
 export interface BuildReading {
   /** 编出来的整份工件（还没落盘）。 */
   readonly bytes: Uint8Array
@@ -129,12 +137,16 @@ export interface BuildReading {
 }
 
 /**
- * 全量构建：把 `source` 给的那一组 blob 读一遍，编一份工件。**不落盘**（落盘是 `writeIndex`）。
+ * 收真源：**按 id 去重 · 随读随判上限**。收进来的字节留在内存里（`sourceBytes` 管的就是它）。
  *
- * `limits` 是那道闸（缺省就是出货那一套）。收进来的两条账**随读随判**：每多收一份就是多留一份
- * 字节在内存里，等收完再判等于先把它全吃下去。工件字节那一关判在分配之前（`encodedBytesOf`）。
+ * 全量构建与增量那一趟共用这一句：两边都只读「这一趟要读的那些 id」，判的也是同一对上限
+ * （blob 数与真源字节数）。**增量那一趟给的名单是新进来的那些**：它收的字节与付的常数都只与
+ * 新 blob 成正比——上限在那一趟里管的是这一趟收了多少，不是整组的字节总数（头注释口径八）。
  */
-export async function buildFrom(source: BlobSource, limits: IndexBudgetLimits = INDEX_LIMITS): Promise<BuildReading> {
+async function collectBlobs(
+  source: BlobSource,
+  limits: IndexBudgetLimits,
+): Promise<{ blobs: BlobBytes[]; sourceBytes: number }> {
   const ids = await source.ids()
   const seen = new Set<BlobId>()
   const blobs: BlobBytes[] = []
@@ -152,6 +164,17 @@ export async function buildFrom(source: BlobSource, limits: IndexBudgetLimits = 
     seen.add(id)
     blobs.push({ id, bytes })
   }
+  return { blobs, sourceBytes }
+}
+
+/**
+ * 全量构建：把 `source` 给的那一组 blob 读一遍，编一份工件。**不落盘**（落盘是 `writeIndex`）。
+ *
+ * `limits` 是那道闸（缺省就是出货那一套）。收进来的两条账**随读随判**：每多收一份就是多留一份
+ * 字节在内存里，等收完再判等于先把它全吃下去。工件字节那一关判在分配之前（`encodedBytesOf`）。
+ */
+export async function buildFrom(source: BlobSource, limits: IndexBudgetLimits = INDEX_LIMITS): Promise<BuildReading> {
+  const { blobs, sourceBytes } = await collectBlobs(source, limits)
   const parts = buildTrigram(blobs, limits.grams)
   const planned = encodedBytesOf(parts)
   if (planned > limits.artifactBytes) {
@@ -331,13 +354,97 @@ export async function rebuildIndex(
   return { index, build, wrote }
 }
 
+/** 增量那一趟的账。**每个数都指得出是"这一趟"还是"合起来"**（读数，不进判据）。 */
+export interface GrowReading {
+  /** 编出来的整份工件（还没落盘）。 */
+  readonly bytes: Uint8Array
+  /** 合起来那一份工件的性质——与同一组 blob 走全量重建同值。 */
+  readonly blobCount: number
+  readonly gramCount: number
+  readonly artifactBytes: number
+  readonly postingsBytes: number
+  readonly dictBytes: number
+  /** 这一趟读真源那一边：旧的那些**一个字节都没读**（`freshBlobs` 份 · `sourceBytes` 字节）。 */
+  readonly freshBlobs: number
+  readonly sourceBytes: number
+  /** 这一趟解码出来的单元数。**旧那些的单元数不在里面**——增量路上它们没被解码过。 */
+  readonly textUnits: number
+  /** 旧工件那一边：接着用的有多少 · 丢掉的有多少（增删分账就靠这两个数与 `freshBlobs`）。 */
+  readonly reusedBlobs: number
+  readonly droppedBlobs: number
+}
+
 /**
- * 读得到就用，读不到就重建。**这是"miss · 损坏 · 认不出版本 → 重建"那条退化档的入口**：
- * 三个状态在这里合成同一条路，调用方不必分开判。
+ * 增量那一趟的核：**旧工件已经拿在手里**（同一趟里刚核过摘要），不必再读一次盘。
  *
- * **回扫描那一侧不在这里**：索引只出候选，真正的答案永远从真源字节里验出来（0.3.3 的验证那一
- * 格）。这一份能保证的是"拿不到索引时不抛"——调用方拿到 `null`（`readIndex`）就照旧走全扫。
+ * 走不通给 `null`——调用方回全量重建（**增量的地板是全量**）；越限**抛**（`IndexBudgetExceeded`，
+ * 与全量那一趟同一条：这一份的 blob 数 · gram 数 · 工件字节与全量重建同值，而真源字节
+ * 这一趟收的更少，所以增量路越限 ⇒ 全量路也越限——不必先花一整趟全量读再得到同一个答案）。
  */
+async function growFrom(
+  root: string,
+  old: TrigramSections,
+  source: BlobSource,
+  ids: readonly BlobId[],
+  limits: IndexBudgetLimits,
+): Promise<{ index: TrigramIndex; build: GrowReading; wrote: boolean } | null> {
+  // 这一份该说的那组 id：顺序与重复都不算差别（口径六），先收成"升序去重"再看谁要读。
+  const keep = [...new Set(ids)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  if (keep.length > limits.blobs) {
+    throw new IndexBudgetExceeded('blobs', `blob 数超过这一档的上限：${keep.length} > ${limits.blobs}`)
+  }
+  const had = new Set(old.blobIds)
+  const wanted = keep.filter((id) => !had.has(id))
+  // **只对这两个名单读真源**：旧工件里已经有的那些，字节一个都不读（口径八）。
+  const { blobs, sourceBytes } = await collectBlobs({ ids: async () => wanted, read: (id) => source.read(id) }, limits)
+  const fresh = buildTrigram(blobs, limits.grams)
+  const parts = mergeTrigram(old, fresh, keep, limits.grams)
+  const planned = encodedBytesOf(parts)
+  if (planned > limits.artifactBytes) {
+    throw new IndexBudgetExceeded('artifact-bytes', `工件字节超过这一档的上限：${planned} > ${limits.artifactBytes}`)
+  }
+  const bytes = encodeTrigram(parts)
+  const header = decodeIndexHeader(bytes)
+  const index = decodeTrigram(bytes)
+  if (header === null || index === null) throw new Error('刚编出来的索引读不回来——编码器与解码器对不上')
+  const sizes = new Map(header.sections.map((s) => [s.kind, s.length]))
+  const reused = keep.length - blobs.length
+  return {
+    index,
+    wrote: await writeIndex(root, bytes),
+    build: {
+      bytes,
+      blobCount: parts.blobIds.length,
+      gramCount: parts.grams.length,
+      artifactBytes: bytes.byteLength,
+      postingsBytes: sizes.get(SECTION.postings) ?? 0,
+      dictBytes: sizes.get(SECTION.dict) ?? 0,
+      freshBlobs: blobs.length,
+      sourceBytes,
+      textUnits: parts.textUnits,
+      reusedBlobs: reused,
+      droppedBlobs: old.blobIds.length - reused,
+    },
+  }
+}
+
+/**
+ * 增量构建的独立入口：自己把盘上那一份读回来，读不动 · 形状不对就当走不通（`null`）。
+ *
+ * 它是给测试 · bench 与 0.3.3 接线用的那一面——`openOrRebuild` 走的是同一段核（`growFrom`），
+ * 只是它手里本来就有一份刚核过的旧工件，不必再读一次盘。
+ */
+export async function growIndex(
+  root: string,
+  source: BlobSource,
+  limits: IndexBudgetLimits = INDEX_LIMITS,
+): Promise<{ index: TrigramIndex; build: GrowReading; wrote: boolean } | null> {
+  const artifact = await readFile(idxFileOf(root)).catch(() => null)
+  const old = artifact === null ? null : sectionsOf(artifact)
+  if (old === null) return null
+  return await growFrom(root, old, source, await source.ids(), limits)
+}
+
 /**
  * `openOrRebuild` 的两态：建出来了（`rebuilt` 说这一趟是不是新建的），或者**这一组输入建不出来**
  * （`over` 指得出是哪一条上限）。后者不是一次失败：再问一次还是它，内容变了才会变。
@@ -346,16 +453,32 @@ export type IndexOutcome =
   | { readonly ready: true; readonly index: TrigramIndex; readonly rebuilt: boolean }
   | { readonly ready: false; readonly over: IndexBudget }
 
+/**
+ * 读得到就用，读不到就重建。**这是"miss · 损坏 · 认不出版本 → 重建"那条退化档的入口**：
+ * 三个状态在这里合成同一条路，调用方不必分开判。
+ *
+ * 盘上那一份说的是旧一组时走**增量**（口径八）：只读新进来的那些 blob，与旧工件合并。增量走不通
+ * （那份工件读不动 · 形状不对）就回全量重建——**增量的地板是全量，全量的地板是回扫描**。
+ * 旧工件在这一趟里只读一次：身份那一问与合并那一趟共用同一份读回来的字节。
+ *
+ * **回扫描那一侧不在这里**：索引只出候选，真正的答案永远从真源字节里验出来（0.3.3 的验证那一
+ * 格）。这一份能保证的是"拿不到索引时不抛"——调用方拿到 `null`（`readIndex`）就照旧走全扫。
+ */
 export async function openOrRebuild(
   root: string,
   source: BlobSource,
   limits: IndexBudgetLimits = INDEX_LIMITS,
 ): Promise<IndexOutcome> {
-  const hit = await readIndex(root)
+  const artifact = await readFile(idxFileOf(root)).catch(() => null)
+  const old = artifact === null ? null : sectionsOf(artifact)
+  const ids = await source.ids()
+  const hit = old === null ? null : indexOfParts(old.blobs, old.dict, old.postings)
   // 读得回来还不够：还要问它说的是不是**这一组** blob（口径六）。少这一问，换了内容之后旧那一份
   // 照旧被当成命中，而它对新 blob 一个候选都答不出来——那是漏报。
-  if (hit !== null && sameBlobSet(hit, await source.ids())) return { ready: true, index: hit, rebuilt: false }
+  if (hit !== null && sameBlobSet(hit, ids)) return { ready: true, index: hit, rebuilt: false }
   try {
+    const grown = old === null ? null : await growFrom(root, old, source, ids, limits)
+    if (grown !== null) return { ready: true, index: grown.index, rebuilt: true }
     const fresh = await rebuildIndex(root, source, limits)
     return { ready: true, index: fresh.index, rebuilt: true }
   } catch (error) {
