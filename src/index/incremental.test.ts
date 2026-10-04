@@ -21,6 +21,7 @@
 //   ⑤ 四条上限在增量路上也报得出那一条，且盘上那一份不动
 //   ⑥ 退化档：旧工件读不动（四种坏法）· 没有旧工件 → 回全量重建（整组都读一遍），结果与全量相同
 //   ⑦ 真链：真 git 仓 · 真视图 · `sourceOfView`，加一份文件只读那一份，工件与全量重建逐字节相同
+//   ⑧ 摘要重算过、形状坏掉的旧工件：读的一侧当损坏，增量那一趟给"走不通"，结果回全量重建
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -32,10 +33,18 @@ import { lowerAt } from '../view/lower.ts'
 import { loadView } from '../view/view.ts'
 import { INDEX_LIMITS } from './budget.ts'
 import type { IndexBudgetLimits } from './budget.ts'
+import { CODEC, SECTION, encodeIndex } from './format.ts'
 import { buildFrom, growIndex, idxFileOf, openOrRebuild, rebuildIndex, sourceOfView } from './store.ts'
 import type { BlobSource } from './store.ts'
-import { buildTrigram, encodeTrigram, mergeTrigram, sectionsOf } from './trigram.ts'
-import type { BlobBytes } from './trigram.ts'
+import {
+  ArtifactShapeError,
+  GRAM_RECORD_BYTES,
+  buildTrigram,
+  encodeTrigram,
+  mergeTrigram,
+  sectionsOf,
+} from './trigram.ts'
+import type { BlobBytes, Trigram } from './trigram.ts'
 import { tmpDir } from '../../test/helpers/tmp.ts'
 import type { AgentId, BlobId, CommitId } from '../terms.ts'
 
@@ -438,4 +447,77 @@ test('⑦ 真链：加一份文件只读那一份，工件与全量重建逐字�
     await logA.close().catch(() => undefined)
     await truth.close().catch(() => undefined)
   }
+})
+
+// ── ⑧ 摘要重算过、形状坏掉的旧工件 ─────────────────────────────────────────
+
+test('⑧ 形状坏了但每节摘要都对得上：读的一侧当损坏，增量那一趟走不通（回全量）', async () => {
+  // 这一格的对手是**"摘要对得上就是好工件"**：⑥ 那四种坏法挡的是字节被改，挡不住一份
+  // **自相矛盾的载荷**——今天的写者造不出它，而"照读不误"的合并会照它合出一份**错的**工件，
+  // 错的工件不会自己报错。这里用编码器自己重编（每节摘要由它重算），造出这种工件。
+  const pool = poolOf(['abc xyz', 'abc xyz more', 'xyz 中文 abc', 'more 中文 abc'])
+  const universe = [...pool.keys()].sort()
+  const root = tmpDir('fugue-idx-grow-')
+  const base = universe.slice(0, 3)
+  await rebuildIndex(root, sourceOf(pool, base))
+  const good = new Uint8Array(readFileSync(idxFileOf(root)))
+  const want = (await buildFrom(sourceOf(pool, universe))).bytes
+
+  const sections = sectionsOf(good)
+  assert.notEqual(sections, null, '这一份基准工件该读得回来')
+  const whole = {
+    blobs: Uint8Array.prototype.slice.call((sections as NonNullable<typeof sections>).blobs),
+    dict: Uint8Array.prototype.slice.call((sections as NonNullable<typeof sections>).dict),
+    postings: Uint8Array.prototype.slice.call((sections as NonNullable<typeof sections>).postings),
+  }
+  /** 换掉一段载荷再重编：**每节摘要由 `encodeIndex` 重算**，坏的是形状不是字节。 */
+  const mended = (bodies: typeof whole): Uint8Array =>
+    encodeIndex({
+      sections: [
+        { kind: SECTION.blobs, codec: CODEC.raw, body: bodies.blobs },
+        { kind: SECTION.dict, codec: CODEC.raw, body: bodies.dict },
+        { kind: SECTION.postings, codec: CODEC.raw, body: bodies.postings },
+      ],
+    })
+
+  // 一 · 字典长度不是 18 的整数倍：**粗检那一关就当损坏**（`sectionsOf` 给 null）。
+  const cut = { ...whole, dict: whole.dict.subarray(0, whole.dict.byteLength - 1) }
+  // 二 · 字典不按键升序：把前两条 18 字节记录对调（长度不变、粗检过得去）。
+  const swapped = { ...whole, dict: Uint8Array.prototype.slice.call(whole.dict) }
+  const first = swapped.dict.slice(0, GRAM_RECORD_BYTES)
+  swapped.dict.set(swapped.dict.subarray(GRAM_RECORD_BYTES, 2 * GRAM_RECORD_BYTES), 0)
+  swapped.dict.set(first, GRAM_RECORD_BYTES)
+  // 三 · 顺序号越出 blob 表：第一条 gram 的顺序号写成 127（这一组只有 4 份 blob）。
+  const far = { ...whole, postings: Uint8Array.prototype.slice.call(whole.postings) }
+  far.postings[0] = 0x7f
+
+  const bends: [string, typeof whole, boolean][] = [
+    ['字典长度不是 18 的整数倍', cut, true],
+    ['字典不按键升序', swapped, false],
+    ['顺序号越出 blob 表', far, false],
+  ]
+  for (const [what, bodies, unreadable] of bends) {
+    const bent = mended(bodies)
+    writeFileSync(idxFileOf(root), bent)
+    // 一 · 读的一侧：粗检过不去的那一档整份当损坏；过得去的两档留给合并那一趟认。
+    assert.equal(sectionsOf(bent) === null, unreadable, `${what}：sectionsOf 的答案与预期不符`)
+    if (!unreadable) {
+      const old = sectionsOf(bent) as NonNullable<ReturnType<typeof sectionsOf>>
+      const had = new Set(base)
+      const fresh = buildTrigram(blobsOf(pool, universe.filter((id) => !had.has(id))))
+      assert.throws(
+        () => mergeTrigram(old, fresh, universe),
+        ArtifactShapeError,
+        `${what}：合并那一趟该当场认出形状不对，不许静默合出一份错的`,
+      )
+    }
+    // 二 · 增量那一趟：形状读不出语义 = 走不通（给 null），不是抛出去、更不是照读不误。
+    assert.equal(await growIndex(root, sourceOf(pool, universe)), null, `${what}：增量那一趟该给"走不通"`)
+    // 三 · 地板走通了：调用方回全量重建，结果与全量那一趟逐字节相同。
+    const outcome = await openOrRebuild(root, sourceOf(pool, universe))
+    assert.equal(outcome.ready, true)
+    assert.equal(outcome.rebuilt, true, `${what}之后该走重建`)
+    assertSameBytes(readFileSync(idxFileOf(root)), want, what)
+  }
+  console.log(`⑧ 读数：三种形状坏法（字典长度 · 字典倒序 · 顺序号越界，摘要都由编码器重算过）· 读的一侧与合并那一趟各自认出 · 三趟都回全量重建且逐字节等于全量`)
 })

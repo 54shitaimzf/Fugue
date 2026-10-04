@@ -35,7 +35,9 @@
 //        的真源一个字节都不读。它靠的是**键控 blob id**（`trigram.ts` 口径二）：id 就是内容的名字，
 //        所以旧工件里那些顺序号对今天的真源照样作数。**合并只付旧工件的字节，不付旧语料的重读与
 //        重解码**——省下的与付出的都要有读数（`GrowReading` 与本站收口的对照读数）。走不通
-//        （没有工件 · 读不动 · 形状不对）就给 `null` 回全量重建：增量的地板是全量。
+//        （没有工件 · 读不动 · 形状不对）就给 `null` 回全量重建：增量的地板是全量。**形状不对
+//        这一类走 `ArtifactShapeError`**：节摘要挡得住字节被改，挡不住一份自相矛盾的工件
+//        （增量那一趟拿它当种子就会合出一份错的），所以它有自己的类型、由这一层收成"走不通"。
 import { mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -51,6 +53,7 @@ import {
 } from './format.ts'
 import type { SectionRef } from './format.ts'
 import {
+  ArtifactShapeError,
   GRAM_RECORD_BYTES,
   buildTrigram,
   decodeTrigram,
@@ -398,7 +401,16 @@ async function growFrom(
   // **只对这两个名单读真源**：旧工件里已经有的那些，字节一个都不读（口径八）。
   const { blobs, sourceBytes } = await collectBlobs({ ids: async () => wanted, read: (id) => source.read(id) }, limits)
   const fresh = buildTrigram(blobs, limits.grams)
-  const parts = mergeTrigram(old, fresh, keep, limits.grams)
+  let parts: TrigramParts
+  try {
+    parts = mergeTrigram(old, fresh, keep, limits.grams)
+  } catch (error) {
+    // 旧工件的**形状**读不出可用语义（字典不升序 · 顺序号越界 · postings 段越界）：这一趟走不通，
+    // 回全量重建（**增量的地板是全量**）。别的错照旧抛出去——兜住它们就是把"代码写错了"装成
+    // "这一趟不顺"，而那种错必须看得见。
+    if (error instanceof ArtifactShapeError) return null
+    throw error
+  }
   const planned = encodedBytesOf(parts)
   if (planned > limits.artifactBytes) {
     throw new IndexBudgetExceeded('artifact-bytes', `工件字节超过这一档的上限：${planned} > ${limits.artifactBytes}`)

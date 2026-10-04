@@ -461,6 +461,22 @@ export function decodeTrigram(bytes: Uint8Array): TrigramIndex | null {
 
 // ── 增量：旧工件与这一趟新解的 gram 合并 ─────────────────────────────────────
 
+/**
+ * 旧工件的三段载荷**形状**读不出可用语义：字典不按键升序或有重复的键 · 同一个 gram 的顺序号
+ * 不升序或越出旧 blob 表 · postings 段的范围越出那一节。
+ *
+ * **与"读到坏字节"分开报**：节摘要挡得住字节被改，挡不住一份形状自相矛盾的工件（今天的写者
+ * 造不出它——形状这一层是给"合成一份工件"这一类输入留的判据）。这一类的去处是**回全量重建**
+ * （变慢，不是出错），所以它有自己的类型：调用方按类型兜住它，而别的错（真的写错了）照旧抛出去，
+ * 不被兜成"看起来成功了"。
+ */
+export class ArtifactShapeError extends Error {
+  constructor(detail: string) {
+    super(detail)
+    this.name = 'ArtifactShapeError'
+  }
+}
+
 /** 两份都升序的 id 名单：`from` 里每个 id 在 `to` 里的下标；不在 `to` 里的给 −1。 */
 function ordinalsInto(from: readonly BlobId[], to: readonly BlobId[]): Int32Array {
   const out = new Int32Array(from.length).fill(-1)
@@ -493,10 +509,11 @@ function mergedOrdinals(a: readonly number[], b: readonly number[]): number[] {
  * 不读真源——增量路上旧那一组真源一个字节都不读，靠的就是这一句。
  *
  * `keep` 是这一份该说的那组 id（可以带重复、顺序任意，与 `buildTrigram` 的输入同一条口径）；
- * `fresh.blobIds` 必须是它的一部分。**三种输入当场抛**（调用方回全量重建）：字典不按键升序或
- * 有重复的键 · 同一个 gram 的顺序号不升序或越出旧 blob 表 · postings 段的范围越出那一节。
- * 它们过不了四问的头一问（今天的写者造不出这种字节），却是「静默合并出一份错的工件」唯一的
- * 入口——错的工件不会自己报错，所以宁可当场回头重建。
+ * `fresh.blobIds` 必须是它的一部分。**旧工件形状读不出语义的那三种输入当场抛
+ * `ArtifactShapeError`**（字典不按键升序或有重复的键 · 同一个 gram 的顺序号不升序或越出旧 blob
+ * 表 · postings 段的范围越出那一节）：它们过不了四问的头一问（今天的写者造不出这种字节），却是
+ * 「静默合并出一份错的工件」唯一的入口——错的工件不会自己报错，所以宁可当场回头重建。调用方
+ * 按类型把它们收成"这一趟走不通"（回全量），别的错照旧抛出去。
  *
  * 三条能逐字节对照全量重建的等式（`incremental.test.ts` 逐条量）：
  *
@@ -527,9 +544,9 @@ export function mergeTrigram(
     const out: number[] = []
     let previous = -1
     for (const ordinal of list) {
-      if (ordinal <= previous) throw new Error(`旧工件的顺序号在同一个 gram 里不升序：${ordinal}`)
+      if (ordinal <= previous) throw new ArtifactShapeError(`旧工件的顺序号在同一个 gram 里不升序：${ordinal}`)
       previous = ordinal
-      if (ordinal >= into.length) throw new Error(`旧工件的顺序号越出了 blob 表：${ordinal}`)
+      if (ordinal >= into.length) throw new ArtifactShapeError(`旧工件的顺序号越出了 blob 表：${ordinal}`)
       const at = into[ordinal]
       if (at >= 0) out.push(at)
     }
@@ -549,10 +566,10 @@ export function mergeTrigram(
   /** 旧字典第 `at` 条那一段 postings：**范围越出那一节当场抛**，不静默读一段空字节。 */
   const oldListAt = (at: number): number[] => {
     const row = decodeGramRecord(old.dict, gramRecordOffset(at))
-    if (row === null) throw new Error(`旧工件的字典在第 ${at} 条上读不回来`)
+    if (row === null) throw new ArtifactShapeError(`旧工件的字典在第 ${at} 条上读不回来`)
     const end = endOf(old.dict, at, old.postings.byteLength)
     if (row.offset < 0 || row.offset > end || end > old.postings.byteLength) {
-      throw new Error(`旧工件第 ${at} 条的 postings 段越出了那一节`)
+      throw new ArtifactShapeError(`旧工件第 ${at} 条的 postings 段越出了那一节`)
     }
     return remapOld(decodeOrdinals(old.postings.subarray(row.offset, end)))
   }
@@ -566,7 +583,7 @@ export function mergeTrigram(
     const oldKey = row === null ? Number.POSITIVE_INFINITY : row.gram
     const newKey = added === null ? Number.POSITIVE_INFINITY : added.gram
     // 两路都必须严格升序：字典按键升序是二分查找与这一趟归并共用的前提，重复的键没有唯一答案。
-    if (oldKey <= last || newKey <= last) throw new Error('旧工件的字典不是按键升序，或者出现了重复的键')
+    if (oldKey <= last || newKey <= last) throw new ArtifactShapeError('旧工件的字典不是按键升序，或者出现了重复的键')
     if (oldKey < newKey) {
       take(oldKey, oldListAt(i))
       i += 1
