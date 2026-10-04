@@ -110,11 +110,27 @@ async function fixture(files: Record<string, string> = CORPUS): Promise<Fixture>
   }
 }
 
+/**
+ * 与 `trigram.ts` 同一套算术，这里独立写一遍：**解码之后的文本**里每一个三单元窗口。
+ *
+ * 不按字节找子串——口径五是"键与匹配器同空间"，这一句就是那条口径在全扫那一侧的对照物。
+ */
+function textWindows(bytes: Uint8Array): Set<Trigram> {
+  const text = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8')
+  const out = new Set<Trigram>()
+  for (let at = 0; at + 3 <= text.length; at++) {
+    out.add(text.charCodeAt(at) * 0x1_0000_0000 + text.charCodeAt(at + 1) * 0x1_0000 + text.charCodeAt(at + 2))
+  }
+  return out
+}
+
+const gramOf = (s: string): Trigram =>
+  s.charCodeAt(0) * 0x1_0000_0000 + s.charCodeAt(1) * 0x1_0000 + s.charCodeAt(2)
+
 /** 全扫那一侧：这个三字组真正出现在哪些 blob 里。 */
 function bruteSet(blobs: ReadonlyMap<BlobId, Uint8Array>, gram: Trigram): string[] {
-  const needle = Buffer.from([(gram >>> 16) & 0xff, (gram >>> 8) & 0xff, gram & 0xff])
   return [...blobs]
-    .filter(([, bytes]) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).indexOf(needle) !== -1)
+    .filter(([, bytes]) => textWindows(bytes).has(gram))
     .map(([id]) => id)
     .sort()
 }
@@ -122,11 +138,7 @@ function bruteSet(blobs: ReadonlyMap<BlobId, Uint8Array>, gram: Trigram): string
 /** 语料里出现过的三字组，取前 `limit` 个（升序，量的就是同一批）。 */
 function gramsOf(blobs: ReadonlyMap<BlobId, Uint8Array>, limit = 60): Trigram[] {
   const all = new Set<Trigram>()
-  for (const bytes of blobs.values()) {
-    for (let i = 0; i + 3 <= bytes.byteLength; i++) {
-      all.add(((bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2]) >>> 0)
-    }
-  }
+  for (const bytes of blobs.values()) for (const gram of textWindows(bytes)) all.add(gram)
   return [...all].sort((a, b) => a - b).slice(0, limit)
 }
 
@@ -174,7 +186,8 @@ test('① 全量构建走通：工件落在 .fugue/idx/，候选集对照真源�
     assert.equal(index!.blobIds.length, f.blobs.size)
     console.log(
       `① 读数：语料 ${build.sourceBytes} 字节 / ${build.blobCount} 份 blob → 工件 ${build.artifactBytes} 字节` +
-        `（字典 ${build.dictBytes} · postings ${build.postingsBytes}）· ${build.gramCount} 个三字组`,
+        `（字典 ${build.dictBytes} · postings ${build.postingsBytes}）· ${build.gramCount} 个三字组 ·` +
+        ` 三字组量的是 ${build.textUnits} 个单元`,
     )
   } finally {
     await f.close()
@@ -373,7 +386,7 @@ test('⑦ 真源是 blob：工件里没有原文，删掉真源读不回来', as
     const index = decodeTrigram(build.bytes)!
     assert.equal(index.blobIds.length, 1)
     // 顺序号回 id 那一步走的是 blob 表——**没有一处从索引里读原文**。
-    assert.deepEqual(index.candidatesOf(((0x75 << 16) | (0x6e << 8) | 0x69) >>> 0), [index.blobIds[0]])
+    assert.deepEqual(index.candidatesOf(gramOf('uni')), [index.blobIds[0]])
   } finally {
     await f.close()
   }

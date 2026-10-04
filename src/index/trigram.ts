@@ -4,10 +4,10 @@
 // 三节的分工（形状见 `format.ts`）：
 //
 //   blobs    u32 idBytes + N 个定宽 id（**按 id 升序**）。顺序号就是它的下标。
-//   dict     N 条定宽 16 字节记录（gram u32 · count u32 · offset u64），按 gram 升序。
+//   dict     N 条定宽 18 字节记录（三个 UTF-16 单元 · count u32 · offset u64），按 gram 升序。
 //   postings 各 gram 的顺序号表依次相接：**差分 + varint**（无符号 LEB128）。
 //
-// 四条口径：
+// 五条口径：
 //
 //   一 · **只出候选。** `candidatesOf` 给的是"这个三字组可能出现在哪些 blob 里"；答案永远从真源
 //        字节里验出来（0.3.3 的验证那一格）。这份载荷里没有一处判断"原文怎么匹配"。
@@ -15,11 +15,18 @@
 //        而改名不动索引——0.3.2 的增量只爬新 blob，靠的就是这一条。
 //   三 · **工件是 blob 集合的纯函数**：顺序号按 id 升序发、gram 表按 gram 升序排，于是同一组
 //        (id, 字节) 无论以什么顺序喂进来，编出来的字节逐字节相同。
-//   四 · **字典定宽是为了"先拿计数"**：第 k 条记录就在 `k × 16`，二分查找既能在一份读回来的
+//   四 · **字典定宽是为了"先拿计数"**：第 k 条记录就在 `k × 18`，二分查找既能在一份读回来的
 //        字典里做，也能按偏移逐条读。变长编码的字典要把整段走一遍才找得到一个 gram——
 //        "不读完就拿到计数"那条路会当场堵死，而 `countOf` 正是选择性派发要的那一问。
 //        长度那一栏**不存**：它就是"下一条的起点减这一条的起点"（末条减到 postings 那一节的
 //        长度）。存一份推得出来的东西，就是给漂移留一个不报错的位置。
+//   五 · **三字组是"解码之后那三个 UTF-16 单元"，不是三个字节。** 匹配那一侧是 `tools/execute.ts`
+//        的 `utf8Of(...)` 之后按行 `RegExp.test`——它眼里的"字符"是解码出来的单元。索引若按原始
+//        字节取键，两边就不在同一个空间里：blob 里一处非法 UTF-8 解码之后是 U+FFFD，而查询串里的
+//        U+FFFD 编回 UTF-8 是 `EF BF BD`，三个字节哪一个都不在那份 blob 的字节里。于是候选集把一份
+//        **真能匹配**的 blob 判成"不候选"——候选集少了就是漏报，而漏报是这一层唯一不能犯的错。
+//        键 = `u0 × 2^32 + u1 × 2^16 + u2`（≤ 2^48−1，在 Number 的 53 位精确整数之内），数值序
+//        与三个单元的字典序一致，所以字典按数值升序排就是按单元字典序排。
 //
 // **载荷解出来之后不再自己核一遍摘要**：节体在进到这里之前已经按节核对过（`format.ts` 口径二），
 // 所以解码循环信任手里的字节，不为"不可能到达的输入"付常数代价。
@@ -27,14 +34,18 @@ import { CODEC, SECTION, decodeIndexHeader, encodeIndex, sameBytes, sectionBody,
 import type { SectionInput } from './format.ts'
 import type { BlobId } from '../terms.ts'
 
-/** 三字组的键：三个字节拼成 24 位整数，高位在前（`(b0<<16)|(b1<<8)|b2`）。 */
+/** 三字组的键：三个 UTF-16 单元拼成一个 48 位整数（高位在前）。 */
 export type Trigram = number
-export const TRIGRAM_BYTES = 3
+/** 一个三字组占几个单元。**是单元不是字节**（口径五）。 */
+export const TRIGRAM_UNITS = 3
+/** 一个三字组的键在字典里占几个字节（三个 u16 相接）。 */
+export const GRAM_KEY_BYTES = 6
 /** 字典一条记录的字节数。**定宽**是口径四那条路的前提。 */
-export const GRAM_RECORD_BYTES = 16
-/** 三字组的值域与那面用于"每个 blob 内去重"的位图。 */
-const GRAM_SPACE = 1 << 24
-const MARK_BYTES = GRAM_SPACE >> 3
+export const GRAM_RECORD_BYTES = 18
+/** 键的上界：三个码元全满。 */
+export const GRAM_MAX = 0xff_ffff_ffff_ffff
+const UNIT_BASE = 0x1_0000
+const HIGH_BASE = 0x1_0000_0000
 
 export interface BlobBytes {
   readonly id: BlobId
@@ -60,6 +71,8 @@ export interface TrigramParts {
   readonly blobIds: readonly BlobId[]
   /** 按 gram 升序。 */
   readonly grams: readonly { readonly gram: Trigram; readonly ordinals: readonly number[] }[]
+  /** 收进来的这些 blob 一共解出多少个单元（读数，不进判据）。 */
+  readonly textUnits: number
 }
 
 /**
@@ -82,6 +95,23 @@ export interface TrigramIndex {
    * 选择性派发要的就是这一问：候选多（密集）走扫描，候选少（稀疏）走索引。
    */
   countOf(gram: Trigram): number
+}
+
+// ── 键：解码之后的单元（口径五）──────────────────────────────────────────────
+
+/**
+ * blob 字节 → 匹配那一侧看到的文本。
+ *
+ * **这一句必须与 `tools/execute.ts` 的 `utf8Of` 逐字同义**：三个单元的三字组只有落在同一个解码
+ * 结果上，候选集与匹配器才在同一个空间里。改那一处就要回来改这一处。
+ */
+export function textOf(bytes: Uint8Array): string {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8')
+}
+
+/** 文本里第 `at` 个单元起的那三个单元 → 键。调用方保证 `at + 3 <= text.length`。 */
+export function gramAt(text: string, at: number): Trigram {
+  return text.charCodeAt(at) * HIGH_BASE + text.charCodeAt(at + 1) * UNIT_BASE + text.charCodeAt(at + 2)
 }
 
 // ── 载荷编解码（纯字节，不碰文件系统）────────────────────────────────────────
@@ -132,13 +162,20 @@ export function decodeBlobTable(body: Uint8Array): { idBytes: number; ids: BlobI
   return { idBytes, ids }
 }
 
-/** 字典的一条记录，16 字节定宽。 */
+/** 把一条记录写进 `out` 的第 `at` 个字节：三个单元（u16 各一）· count u32 · offset u64。 */
+function writeGramRecord(out: Uint8Array, at: number, row: GramRow): void {
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength)
+  view.setUint16(at, Math.floor(row.gram / HIGH_BASE), true)
+  view.setUint16(at + 2, Math.floor(row.gram / UNIT_BASE) % UNIT_BASE, true)
+  view.setUint16(at + 4, row.gram % UNIT_BASE, true)
+  view.setUint32(at + 6, row.count, true)
+  view.setBigUint64(at + 10, BigInt(row.offset), true)
+}
+
+/** 字典的一条记录，18 字节定宽。 */
 export function encodeGramRecord(row: GramRow): Uint8Array {
   const out = new Uint8Array(GRAM_RECORD_BYTES)
-  const view = new DataView(out.buffer)
-  view.setUint32(0, row.gram, true)
-  view.setUint32(4, row.count, true)
-  view.setBigUint64(8, BigInt(row.offset), true)
+  writeGramRecord(out, 0, row)
   return out
 }
 
@@ -151,9 +188,9 @@ export function decodeGramRecord(dict: Uint8Array, at: number): GramRow | null {
   if (at < 0 || at + GRAM_RECORD_BYTES > dict.byteLength) return null
   const view = new DataView(dict.buffer, dict.byteOffset, dict.byteLength)
   return {
-    gram: view.getUint32(at, true),
-    count: view.getUint32(at + 4, true),
-    offset: Number(view.getBigUint64(at + 8, true)),
+    gram: view.getUint16(at, true) * HIGH_BASE + view.getUint16(at + 2, true) * UNIT_BASE + view.getUint16(at + 4, true),
+    count: view.getUint32(at + 6, true),
+    offset: Number(view.getBigUint64(at + 10, true)),
   }
 }
 
@@ -204,6 +241,13 @@ export function encodeOrdinals(ordinals: readonly number[]): Uint8Array {
   return new Uint8Array(out)
 }
 
+/** 一个差分写成 varint 要几个字节。**算得出来就不必先编一遍再数**（编码那一趟按它排偏移）。 */
+export function varintBytes(delta: number): number {
+  let bytes = 1
+  for (let rest = Math.floor(delta / 128); rest > 0; rest = Math.floor(rest / 128)) bytes += 1
+  return bytes
+}
+
 /**
  * 差分 + varint → 顺序号表。
  *
@@ -233,8 +277,9 @@ export function decodeOrdinals(slice: Uint8Array): number[] {
 /**
  * 一份 (id, 字节) 集合 → postings。**顺序号由 id 升序定，与喂进来的顺序无关**（口径三）。
  *
- * 每个 blob 走一遍字节，用一张 2 MiB 的位图在本 blob 内去重——同一条 posting 一个 blob 只落
- * 一次，而这张位图是复用的，不随 blob 数长。
+ * 每个 blob 先按匹配那一侧的解码变成文本，再走三个单元一个窗口（口径五）。同一个 blob 里的重复
+ * 窗口只落一条 posting：这一趟只有本 blob 在往表里追加，于是"这一条的末尾已经是本顺序号"就等于
+ * "本 blob 已经收过它"——不必另起一张去重表，也就不必为它付一份与文本等长的内存。
  */
 export function buildTrigram(blobs: readonly BlobBytes[]): TrigramParts {
   const byId = new Map<BlobId, Uint8Array>()
@@ -250,30 +295,22 @@ export function buildTrigram(blobs: readonly BlobBytes[]): TrigramParts {
   }
   const ids = [...byId.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 
-  const mark = new Uint8Array(MARK_BYTES)
   const lists = new Map<Trigram, number[]>()
-  const seen: Trigram[] = []
+  let textUnits = 0
   ids.forEach((id, ordinal) => {
-    const bytes = byId.get(id) as Uint8Array
-    seen.length = 0
-    for (let i = 0; i + TRIGRAM_BYTES <= bytes.byteLength; i++) {
-      const gram = ((bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2]) >>> 0
-      const bit = 1 << (gram & 7)
-      if ((mark[gram >> 3] & bit) !== 0) continue
-      mark[gram >> 3] |= bit
-      seen.push(gram)
-    }
-    for (const gram of seen) {
-      mark[gram >> 3] &= ~(1 << (gram & 7))
+    const text = textOf(byId.get(id) as Uint8Array)
+    textUnits += text.length
+    for (let at = 0; at + TRIGRAM_UNITS <= text.length; at++) {
+      const gram = gramAt(text, at)
       const list = lists.get(gram)
       if (list === undefined) lists.set(gram, [ordinal])
-      else list.push(ordinal)
+      else if (list[list.length - 1] !== ordinal) list.push(ordinal)
     }
   })
   const grams = [...lists.keys()]
     .sort((a, b) => a - b)
     .map((gram) => ({ gram, ordinals: lists.get(gram) as number[] }))
-  return { blobIds: ids, grams }
+  return { blobIds: ids, grams, textUnits }
 }
 
 /** 三节编成一份工件（容器那一层在 `format.ts`）。 */
@@ -284,7 +321,7 @@ export function encodeTrigram(parts: TrigramParts): Uint8Array {
   let at = 0
   parts.grams.forEach((g, index) => {
     const body = encodeOrdinals(g.ordinals)
-    dict.set(encodeGramRecord({ gram: g.gram, count: g.ordinals.length, offset: at }), gramRecordOffset(index))
+    writeGramRecord(dict, gramRecordOffset(index), { gram: g.gram, count: g.ordinals.length, offset: at })
     bodies.push(body)
     at += body.byteLength
   })

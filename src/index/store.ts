@@ -102,6 +102,8 @@ export interface BuildReading {
   readonly blobCount: number
   readonly gramCount: number
   readonly sourceBytes: number
+  /** 收进来的这些 blob 一共解出多少个 UTF-16 单元——**三字组量的是它，不是字节数**。 */
+  readonly textUnits: number
   readonly artifactBytes: number
   readonly postingsBytes: number
   readonly dictBytes: number
@@ -130,6 +132,7 @@ export async function buildFrom(source: BlobSource): Promise<BuildReading> {
     blobCount: parts.blobIds.length,
     gramCount: parts.grams.length,
     sourceBytes,
+    textUnits: parts.textUnits,
     artifactBytes: bytes.byteLength,
     postingsBytes: sizes.get(SECTION.postings) ?? 0,
     dictBytes: sizes.get(SECTION.dict) ?? 0,
