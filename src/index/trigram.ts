@@ -1,4 +1,4 @@
-// 三字组 postings：**键是 blob id**。出处：ROADMAP § 4 的 0.3.1 行「trigram postings 键控 blob id」·
+// 三字组 postings：**键是 blob id**。出处：ROADMAP § 4 的「trigram postings 键控 blob id」那一行 ·
 // TARGETS `T16` ②。容器在 `format.ts`，这一份只有语义与载荷。
 //
 // 三节的分工（形状见 `format.ts`）：
@@ -22,7 +22,7 @@
 //        长度）。存一份推得出来的东西，就是给漂移留一个不报错的位置。
 //
 // **载荷解出来之后不再自己核一遍摘要**：节体在进到这里之前已经按节核对过（`format.ts` 口径二），
-// 所以解码循环信任手里的字节，不为"不可能到达的输入"付常数代价（圣典第 4 条那四问）。
+// 所以解码循环信任手里的字节，不为"不可能到达的输入"付常数代价。
 import { CODEC, SECTION, decodeIndexHeader, encodeIndex, sameBytes, sectionBody, sectionRefOf } from './format.ts'
 import type { SectionInput } from './format.ts'
 import type { BlobId } from '../terms.ts'

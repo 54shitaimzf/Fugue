@@ -1,5 +1,5 @@
 // trigram postings 的判据：**键控 blob id · 只出候选 · 顺序号由内容定**。
-// 出处：ROADMAP § 4 的 0.3.1 行「trigram postings 键控 blob id」· TARGETS `T16` ②。
+// 出处：ROADMAP § 4 的「trigram postings 键控 blob id」那一行 · TARGETS `T16` ②。
 // 跑法：cd ~/fugue && node --test src/index/trigram.test.ts
 //
 //   ① 记录级往返：编出来再读回来，blob 表与每个 gram 的候选集一模一样
