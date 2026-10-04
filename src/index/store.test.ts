@@ -24,6 +24,8 @@ import { loadView } from '../view/view.ts'
 import { snapshotOf } from '../view/snapshot.ts'
 import type { View } from '../view/contract.ts'
 import { HEADER_BYTES, SECTION, SECTION_ENTRY_BYTES, decodeIndexHeader, sectionRefOf } from './format.ts'
+import { INDEX_LIMITS } from './budget.ts'
+import type { IndexBudgetLimits } from './budget.ts'
 import {
   IDX_FILE_NAME,
   buildFrom,
@@ -170,6 +172,16 @@ function treeUnder(root: string): string[] {
     .sort()
 }
 
+/**
+ * 走退化档那一条：这一组该建得出来（建不出来就当场红，并说出是哪一条上限），把判别之后那一态
+ * 交出来。**它不改任何一条既有判据**——只是把 `openOrRebuild` 的返回形状在测试里收平。
+ */
+async function ready(root: string, source: BlobSource, limits?: IndexBudgetLimits) {
+  const outcome = await openOrRebuild(root, source, limits)
+  if (!outcome.ready) throw new Error(`这一组该建得出来，报的是 ${outcome.over}`)
+  return outcome
+}
+
 // ── ① 全量构建走通 ─────────────────────────────────────────────────────────
 
 test('① 全量构建走通：工件落在 .fugue/idx/，候选集对照真源全扫', async () => {
@@ -227,7 +239,7 @@ test('② 损坏一份分片 → 重建后查询等价：四种坏法各来一�
       // 一 · 认不出来就是损坏：读的一侧给 null，不硬读。
       assert.equal(await readIndex(f.root), null, `${what}之后 readIndex 该给 null`)
       // 二 · 重建之后**查询等价**：同一批三字组给同一批候选。
-      const again = await openOrRebuild(f.root, f.source)
+      const again = await ready(f.root, f.source)
       assert.equal(again.rebuilt, true, `${what}之后该走重建`)
       assert.deepEqual(answerTable(again.index, grams), before, `${what}之后重建的答案与坏之前不同`)
       // 三 · 盘上那一份也真换了：再读一次不再 null。
@@ -267,10 +279,10 @@ test('④ 缺席 → null → 重建；`.fugue/idx` 落不下去时照样能用'
   try {
     assert.equal(await indexExists(f.root), false)
     assert.equal(await readIndex(f.root), null)
-    const first = await openOrRebuild(f.root, f.source)
+    const first = await ready(f.root, f.source)
     assert.equal(first.rebuilt, true)
     // 第二次读得到，就不该再重建。
-    const second = await openOrRebuild(f.root, f.source)
+    const second = await ready(f.root, f.source)
     assert.equal(second.rebuilt, false)
     const sizeOfFirst = first.index.blobIds.length
 
@@ -402,7 +414,7 @@ test('⑧ 工件认领的是哪一组 blob：换了一组就不再算命中', as
     const stale = await readIndex(f.root)
     assert.notEqual(stale, null)
     // 同一组再问一次：命中，不重建。
-    assert.equal((await openOrRebuild(f.root, f.source)).rebuilt, false)
+    assert.equal((await ready(f.root, f.source)).rebuilt, false)
 
     // 往同一个真源里再放一份 blob，换一组名单（顺序打乱、还带重复——`sourceOfView` 本来就会那样）。
     const extra = (await f.truth.putBlob(asBytes('a second set entirely\n'))) as BlobId
@@ -410,11 +422,11 @@ test('⑧ 工件认领的是哪一组 blob：换了一组就不再算命中', as
       ids: async () => [stale!.blobIds[0], extra, extra],
       read: (id) => f.truth.getBlob(id),
     }
-    const moved = await openOrRebuild(f.root, other)
+    const moved = await ready(f.root, other)
     assert.equal(moved.rebuilt, true, '说的是另一组 blob，就该走重建')
     assert.deepEqual(moved.index.blobIds, [stale!.blobIds[0], extra].sort())
     // 反向也一样：原来那一组现在对不上了（身份是双向的，不是"曾经对过就永久算数"）。
-    assert.equal((await openOrRebuild(f.root, f.source)).rebuilt, true)
+    assert.equal((await ready(f.root, f.source)).rebuilt, true)
 
     // 纯判据那一半：顺序与重复都不算差别，少一份或多一份都算。
     const ids = stale!.blobIds
@@ -423,6 +435,27 @@ test('⑧ 工件认领的是哪一组 blob：换了一组就不再算命中', as
     assert.equal(sameBlobSet(stale!, [...ids, extra]), false)
     assert.equal(sameBlobSet(stale!, ids.slice(1)), false)
     console.log(`⑧ 读数：一组的 ${ids.length} 份 → 换一组（${moved.index.blobIds.length} 份）之后重建 · 顺序与重复不算差别`)
+  } finally {
+    await f.close()
+  }
+})
+
+test('⑨ 建不出来的那一组给一态：不是 null，也不是每问一次就重来一遍', async () => {
+  const f = await fixture()
+  try {
+    const tight: IndexBudgetLimits = { ...INDEX_LIMITS, grams: 1 }
+    const first = await openOrRebuild(f.root, f.source, tight)
+    if (first.ready) throw new Error('越限那一组不该给 ready')
+    assert.equal(first.over, 'grams')
+    assert.equal(await indexExists(f.root), false, '建不出来就不该落盘')
+    // 同一组再问一次还是同一态——报得出"这一组建不出来"，调用方才能记住别再重建。
+    const second = await openOrRebuild(f.root, f.source, tight)
+    if (second.ready) throw new Error('第二问不该变')
+    assert.equal(second.over, 'grams')
+    // 换成出货那一套：照样建得出来——"建不出来"是这一组输入加上这一档的性质，不是这份源坏了。
+    const ok = await ready(f.root, f.source)
+    assert.equal(ok.rebuilt, true)
+    console.log(`⑨ 读数：越限那一组两问都是 ready:false（over: grams）且不落盘 · 换回出货那一档立刻建得出来`)
   } finally {
     await f.close()
   }

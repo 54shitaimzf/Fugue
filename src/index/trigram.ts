@@ -30,8 +30,18 @@
 //
 // **载荷解出来之后不再自己核一遍摘要**：节体在进到这里之前已经按节核对过（`format.ts` 口径二），
 // 所以解码循环信任手里的字节，不为"不可能到达的输入"付常数代价。
-import { CODEC, SECTION, decodeIndexHeader, encodeIndex, sameBytes, sectionBody, sectionRefOf } from './format.ts'
+import {
+  CODEC,
+  SECTION,
+  decodeIndexHeader,
+  encodeIndex,
+  indexHeadBytes,
+  sameBytes,
+  sectionBody,
+  sectionRefOf,
+} from './format.ts'
 import type { SectionInput } from './format.ts'
+import { INDEX_LIMITS, IndexBudgetExceeded } from './budget.ts'
 import type { BlobId } from '../terms.ts'
 
 /** 三字组的键：三个 UTF-16 单元拼成一个 48 位整数（高位在前）。 */
@@ -280,8 +290,12 @@ export function decodeOrdinals(slice: Uint8Array): number[] {
  * 每个 blob 先按匹配那一侧的解码变成文本，再走三个单元一个窗口（口径五）。同一个 blob 里的重复
  * 窗口只落一条 posting：这一趟只有本 blob 在往表里追加，于是"这一条的末尾已经是本顺序号"就等于
  * "本 blob 已经收过它"——不必另起一张去重表，也就不必为它付一份与文本等长的内存。
+ *
+ * `maxGrams` 是**收表这一趟的闸**（缺省就是出货那一套的 `grams`）：三字组数就是这一层的内存与
+ * 时间那把尺（一个三字组一条记录 + 一个数组，量到约 0.3 KB），所以越限要在插入的当场止住，
+ * 不能等收完表再判。
  */
-export function buildTrigram(blobs: readonly BlobBytes[]): TrigramParts {
+export function buildTrigram(blobs: readonly BlobBytes[], maxGrams: number = INDEX_LIMITS.grams): TrigramParts {
   const byId = new Map<BlobId, Uint8Array>()
   for (const b of blobs) {
     const had = byId.get(b.id)
@@ -303,14 +317,48 @@ export function buildTrigram(blobs: readonly BlobBytes[]): TrigramParts {
     for (let at = 0; at + TRIGRAM_UNITS <= text.length; at++) {
       const gram = gramAt(text, at)
       const list = lists.get(gram)
-      if (list === undefined) lists.set(gram, [ordinal])
-      else if (list[list.length - 1] !== ordinal) list.push(ordinal)
+      if (list === undefined) {
+        // 越限的当场就止住：再往下是几十秒与几 GB，等收完表再判已经太晚（上限是允许的最大值）。
+        if (lists.size >= maxGrams) {
+          throw new IndexBudgetExceeded('grams', `三字组数超过这一档的上限：${lists.size + 1} > ${maxGrams}`)
+        }
+        lists.set(gram, [ordinal])
+      } else if (list[list.length - 1] !== ordinal) list.push(ordinal)
     }
   })
   const grams = [...lists.keys()]
     .sort((a, b) => a - b)
     .map((gram) => ({ gram, ordinals: lists.get(gram) as number[] }))
   return { blobIds: ids, grams, textUnits }
+}
+
+/** postings 那一节会有多少字节：差分 varint 逐条算，一个字节都不分配。 */
+function postingsBytesOf(parts: TrigramParts): number {
+  let total = 0
+  for (const g of parts.grams) {
+    let previous = 0
+    for (const ordinal of g.ordinals) {
+      total += varintBytes(ordinal - previous)
+      previous = ordinal
+    }
+  }
+  return total
+}
+
+/**
+ * 这一组载荷编出来会有多少字节（头部 + 节表 + 三节），**不分配**。
+ *
+ * 预算那一关据它判，而且必须判在分配之前——越过上限的那一边是几十 MB 的数组，先分配再判等于把
+ * 上限做成了摆设。所以它算的是**真值**，不是上界（`budget.test.ts` ③ 拿真编出来的长度钉这一条）。
+ */
+export function encodedBytesOf(parts: TrigramParts): number {
+  const idBytes = idBytesOf(parts.blobIds)
+  return (
+    indexHeadBytes(3) +
+    (4 + parts.blobIds.length * idBytes) +
+    parts.grams.length * GRAM_RECORD_BYTES +
+    postingsBytesOf(parts)
+  )
 }
 
 /** 三节编成一份工件（容器那一层在 `format.ts`）。 */

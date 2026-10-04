@@ -26,6 +26,10 @@
 //        这一节）。`openOrRebuild` 拿源给的名单与它比对，对不上就重建。少这一问，"读得回来但是
 //        另一组"会被当成命中——旧表里没有新 blob 的顺序号，新内容一个候选都拿不到，而候选少了
 //        就是漏报。`readIndex` 只管"读得回来"，要身份那一问走 `openOrRebuild`。
+//   七 · **构建有上限，越过去是"这一组建不出来"，不是一次失败。** 四条上限（真源字节 · blob 数 ·
+//        三字组数 · 工件字节）都在越过的**当场**止住，报出是哪一条（数字与来处都在 `budget.ts`
+//        一处）。`rebuildIndex` 把上限抛出来（明着要建就给明着的错），`openOrRebuild` 把它收成
+//        一态交回——调用方据此记住不再重建，而不是每问一次就重来一遍。库这一层不留记忆。
 import { mkdir, open, rename, stat, writeFile } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -40,8 +44,18 @@ import {
   sameBytes,
 } from './format.ts'
 import type { SectionRef } from './format.ts'
-import { GRAM_RECORD_BYTES, buildTrigram, decodeTrigram, encodeTrigram, findGram, indexOfParts } from './trigram.ts'
+import {
+  GRAM_RECORD_BYTES,
+  buildTrigram,
+  decodeTrigram,
+  encodedBytesOf,
+  encodeTrigram,
+  findGram,
+  indexOfParts,
+} from './trigram.ts'
 import type { BlobBytes, Trigram, TrigramIndex } from './trigram.ts'
+import { INDEX_LIMITS, IndexBudgetExceeded } from './budget.ts'
+import type { IndexBudget, IndexBudgetLimits } from './budget.ts'
 import { kindOf } from '../truth/truth.ts'
 import { snapshotOf } from '../view/snapshot.ts'
 import type { View } from '../view/contract.ts'
@@ -114,20 +128,35 @@ export interface BuildReading {
   readonly dictBytes: number
 }
 
-/** 全量构建：把 `source` 给的那一组 blob 读一遍，编一份工件。**不落盘**（落盘是 `writeIndex`）。 */
-export async function buildFrom(source: BlobSource): Promise<BuildReading> {
+/**
+ * 全量构建：把 `source` 给的那一组 blob 读一遍，编一份工件。**不落盘**（落盘是 `writeIndex`）。
+ *
+ * `limits` 是那道闸（缺省就是出货那一套）。收进来的两条账**随读随判**：每多收一份就是多留一份
+ * 字节在内存里，等收完再判等于先把它全吃下去。工件字节那一关判在分配之前（`encodedBytesOf`）。
+ */
+export async function buildFrom(source: BlobSource, limits: IndexBudgetLimits = INDEX_LIMITS): Promise<BuildReading> {
   const ids = await source.ids()
   const seen = new Set<BlobId>()
   const blobs: BlobBytes[] = []
   let sourceBytes = 0
   for (const id of ids) {
     if (seen.has(id)) continue
-    seen.add(id)
+    if (seen.size >= limits.blobs) {
+      throw new IndexBudgetExceeded('blobs', `blob 数超过这一档的上限：${seen.size + 1} > ${limits.blobs}`)
+    }
     const bytes = await source.read(id)
     sourceBytes += bytes.byteLength
+    if (sourceBytes > limits.sourceBytes) {
+      throw new IndexBudgetExceeded('source-bytes', `真源字节超过这一档的上限：${sourceBytes} > ${limits.sourceBytes}`)
+    }
+    seen.add(id)
     blobs.push({ id, bytes })
   }
-  const parts = buildTrigram(blobs)
+  const parts = buildTrigram(blobs, limits.grams)
+  const planned = encodedBytesOf(parts)
+  if (planned > limits.artifactBytes) {
+    throw new IndexBudgetExceeded('artifact-bytes', `工件字节超过这一档的上限：${planned} > ${limits.artifactBytes}`)
+  }
   const bytes = encodeTrigram(parts)
   const header = decodeIndexHeader(bytes)
   if (header === null) throw new Error('刚编出来的索引读不回来——编码器与解码器对不上')
@@ -293,8 +322,9 @@ export async function readIndex(root: string): Promise<TrigramIndex | null> {
 export async function rebuildIndex(
   root: string,
   source: BlobSource,
+  limits: IndexBudgetLimits = INDEX_LIMITS,
 ): Promise<{ index: TrigramIndex; build: BuildReading; wrote: boolean }> {
-  const build = await buildFrom(source)
+  const build = await buildFrom(source, limits)
   const wrote = await writeIndex(root, build.bytes)
   const index = decodeTrigram(build.bytes)
   if (index === null) throw new Error('刚编出来的索引读不回来——编码器与解码器对不上')
@@ -308,16 +338,32 @@ export async function rebuildIndex(
  * **回扫描那一侧不在这里**：索引只出候选，真正的答案永远从真源字节里验出来（0.3.3 的验证那一
  * 格）。这一份能保证的是"拿不到索引时不抛"——调用方拿到 `null`（`readIndex`）就照旧走全扫。
  */
+/**
+ * `openOrRebuild` 的两态：建出来了（`rebuilt` 说这一趟是不是新建的），或者**这一组输入建不出来**
+ * （`over` 指得出是哪一条上限）。后者不是一次失败：再问一次还是它，内容变了才会变。
+ */
+export type IndexOutcome =
+  | { readonly ready: true; readonly index: TrigramIndex; readonly rebuilt: boolean }
+  | { readonly ready: false; readonly over: IndexBudget }
+
 export async function openOrRebuild(
   root: string,
   source: BlobSource,
-): Promise<{ index: TrigramIndex; rebuilt: boolean }> {
+  limits: IndexBudgetLimits = INDEX_LIMITS,
+): Promise<IndexOutcome> {
   const hit = await readIndex(root)
   // 读得回来还不够：还要问它说的是不是**这一组** blob（口径六）。少这一问，换了内容之后旧那一份
   // 照旧被当成命中，而它对新 blob 一个候选都答不出来——那是漏报。
-  if (hit !== null && sameBlobSet(hit, await source.ids())) return { index: hit, rebuilt: false }
-  const fresh = await rebuildIndex(root, source)
-  return { index: fresh.index, rebuilt: true }
+  if (hit !== null && sameBlobSet(hit, await source.ids())) return { ready: true, index: hit, rebuilt: false }
+  try {
+    const fresh = await rebuildIndex(root, source, limits)
+    return { ready: true, index: fresh.index, rebuilt: true }
+  } catch (error) {
+    // 越限是**这一组输入**的性质（口径七），不是"读不回来"那一类。收成一态交回：调用方据此记住
+    // 别再重建，而不是每问一次就重来一遍。库这一层不留记忆——记忆是调用方的事。
+    if (error instanceof IndexBudgetExceeded) return { ready: false, over: error.over }
+    throw error
+  }
 }
 
 /** 索引在不在盘上（读数与测试用；不解析内容）。 */
