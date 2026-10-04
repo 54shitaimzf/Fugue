@@ -33,8 +33,8 @@ PR 上跑全量套件；`bwrap` 与 userns 装在 runner 一侧，属于 runner 
 
 **三档里的每一档，本地都有一条命令能复现**：测试入口是 `node tools/test-entry.js`，文档校验是
 `tools/check-*.js`；workflow 只是搬运工，路只有本地这一条。它是哨兵，不承重：它停掉的那一天，
-本地照跑照绿，地板照旧。变异审计这类一次性的重工具只在 nightly 的 runner 上现取现用，
-**不进 `package.json`**；仓库侧零依赖，CI 也不例外。
+本地照跑照绿，地板照旧。变异审计这类一次性的重工具只住在 nightly 的审档那一档——自写零依赖（`tools/mutation-audit.js`，
+不在 runner 上现取），**不进 `package.json`**；仓库侧零依赖，CI 也不例外。
 
 | 档 | 触发 | 跑什么 | 挡合 |
 |---|---|---|---|
