@@ -142,6 +142,7 @@ fugue round work --live --max-steps 8
 |---|---|
 | 现在的状态：在跑哪一轮、每个子任务到哪一步了、花了多少钱 | `fugue status --once` |
 | 上面的信息，再加上质量指标和打回次数统计 | `fugue status --once --metrics --report` |
+| 每一笔调用的耗时与费用（模型调用 · 起进程各一行，从日志重算） | `fugue status --ledger` |
 | 原始的工作记录（每行一条，不做任何处理） | `fugue log` |
 | 实时跟踪进度（只读，不会影响正在运行的任务） | `fugue watch --follow` |
 | 一边看一边用快捷键操作 | `fugue tui` |
