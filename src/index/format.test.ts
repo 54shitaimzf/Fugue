@@ -79,6 +79,8 @@ test('① 往返：编出来再读回来，节按类型都找得到，字节逐�
   const header = decodeIndexHeader(bytes)
   assert.notEqual(header, null)
   assert.equal(header?.version, INDEX_VERSION)
+  // **只给头部与节表、另报整份文件大小**：节体不在手里也读得出节表（按需读的那条路走它）。
+  assert.deepEqual(decodeIndexHeader(bytes.subarray(0, indexHeadBytes(3)), bytes.byteLength), header)
   assert.equal(header?.sections.length, 3)
   assert.equal(
     bytes.byteLength,

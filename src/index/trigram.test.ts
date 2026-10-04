@@ -201,16 +201,18 @@ test('④ 选择性：countOf 只看字典就答得出——postings 那一节�
   for (const g of built.grams) assert.equal(whole!.countOf(g.gram), whole!.candidatesOf(g.gram).length)
 })
 
-test('④ 字典定宽：第 k 条记录就在 k × 20，二分查找按它走', () => {
-  const rows = [7, 100, 5000].map((gram, i) => ({ gram, count: i + 1, offset: i * 4, length: 4 }))
+test('④ 字典定宽 16 字节：第 k 条记录就在 k × 16，二分查找按它走', () => {
+  const rows = [7, 100, 5000].map((gram, i) => ({ gram, count: i + 1, offset: i * 4 }))
   const dict = new Uint8Array(rows.length * GRAM_RECORD_BYTES)
   rows.forEach((r, i) => dict.set(encodeGramRecord(r), gramRecordOffset(i)))
   assert.deepEqual(decodeGramRecord(dict, gramRecordOffset(1)), rows[1])
-  assert.equal(findGram(dict, 5000)?.count, 3)
-  assert.equal(findGram(dict, 101), null)
-  assert.equal(GRAM_RECORD_BYTES, 20)
-  assert.equal(gramRecordOffset(3), 60)
-  // 定宽那一栏自己是算得出来的：记录条数 = 节体长度 ÷ 20。
+  // 末条的终点就是 postings 那一节的长度（80 是随便给的一个上界）。
+  assert.deepEqual(findGram(dict, 5000, 80), { ...rows[2], length: 80 - rows[2].offset })
+  assert.deepEqual(findGram(dict, 100, 80), { ...rows[1], length: rows[2].offset - rows[1].offset })
+  assert.equal(findGram(dict, 101, 80), null)
+  assert.equal(GRAM_RECORD_BYTES, 16)
+  assert.equal(gramRecordOffset(3), 48)
+  // 定宽那一栏自己是算得出来的：记录条数 = 节体长度 ÷ 16。
   assert.equal(dict.byteLength / GRAM_RECORD_BYTES, 3)
 })
 

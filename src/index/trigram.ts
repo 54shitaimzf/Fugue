@@ -4,7 +4,7 @@
 // 三节的分工（形状见 `format.ts`）：
 //
 //   blobs    u32 idBytes + N 个定宽 id（**按 id 升序**）。顺序号就是它的下标。
-//   dict     N 条定宽 20 字节记录（gram u32 · count u32 · offset u64 · length u32），按 gram 升序。
+//   dict     N 条定宽 16 字节记录（gram u32 · count u32 · offset u64），按 gram 升序。
 //   postings 各 gram 的顺序号表依次相接：**差分 + varint**（无符号 LEB128）。
 //
 // 四条口径：
@@ -15,9 +15,11 @@
 //        而改名不动索引——0.3.2 的增量只爬新 blob，靠的就是这一条。
 //   三 · **工件是 blob 集合的纯函数**：顺序号按 id 升序发、gram 表按 gram 升序排，于是同一组
 //        (id, 字节) 无论以什么顺序喂进来，编出来的字节逐字节相同。
-//   四 · **字典定宽是为了"先拿计数"**：第 k 条记录就在 `k × 20`，二分查找既能在一份读回来的
+//   四 · **字典定宽是为了"先拿计数"**：第 k 条记录就在 `k × 16`，二分查找既能在一份读回来的
 //        字典里做，也能按偏移逐条读。变长编码的字典要把整段走一遍才找得到一个 gram——
 //        "不读完就拿到计数"那条路会当场堵死，而 `countOf` 正是选择性派发要的那一问。
+//        长度那一栏**不存**：它就是"下一条的起点减这一条的起点"（末条减到 postings 那一节的
+//        长度）。存一份推得出来的东西，就是给漂移留一个不报错的位置。
 //
 // **载荷解出来之后不再自己核一遍摘要**：节体在进到这里之前已经按节核对过（`format.ts` 口径二），
 // 所以解码循环信任手里的字节，不为"不可能到达的输入"付常数代价（圣典第 4 条那四问）。
@@ -29,7 +31,7 @@ import type { BlobId } from '../terms.ts'
 export type Trigram = number
 export const TRIGRAM_BYTES = 3
 /** 字典一条记录的字节数。**定宽**是口径四那条路的前提。 */
-export const GRAM_RECORD_BYTES = 20
+export const GRAM_RECORD_BYTES = 16
 /** 三字组的值域与那面用于"每个 blob 内去重"的位图。 */
 const GRAM_SPACE = 1 << 24
 const MARK_BYTES = GRAM_SPACE >> 3
@@ -39,12 +41,17 @@ export interface BlobBytes {
   readonly bytes: Uint8Array
 }
 
-/** 字典的一条：这个 gram 的计数与它在 postings 那一节里的那一段。 */
-export interface GramEntry {
+/** 字典里存着的那三栏。 */
+export interface GramRow {
   readonly gram: Trigram
+  /** 这个 gram 在几个 blob 里出现过——**选择性派发要的就是它**。 */
   readonly count: number
   /** 相对 postings 那一节起点的偏移。 */
   readonly offset: number
+}
+
+/** 解出来的一条：那三栏，加上由邻居推出来的长度。 */
+export interface GramEntry extends GramRow {
   readonly length: number
 }
 
@@ -125,14 +132,13 @@ export function decodeBlobTable(body: Uint8Array): { idBytes: number; ids: BlobI
   return { idBytes, ids }
 }
 
-/** 字典的一条记录，20 字节定宽。 */
-export function encodeGramRecord(e: GramEntry): Uint8Array {
+/** 字典的一条记录，16 字节定宽。 */
+export function encodeGramRecord(row: GramRow): Uint8Array {
   const out = new Uint8Array(GRAM_RECORD_BYTES)
   const view = new DataView(out.buffer)
-  view.setUint32(0, e.gram, true)
-  view.setUint32(4, e.count, true)
-  view.setBigUint64(8, BigInt(e.offset), true)
-  view.setUint32(16, e.length, true)
+  view.setUint32(0, row.gram, true)
+  view.setUint32(4, row.count, true)
+  view.setBigUint64(8, BigInt(row.offset), true)
   return out
 }
 
@@ -141,15 +147,41 @@ export function gramRecordOffset(index: number): number {
   return index * GRAM_RECORD_BYTES
 }
 
-export function decodeGramRecord(dict: Uint8Array, at: number): GramEntry | null {
+export function decodeGramRecord(dict: Uint8Array, at: number): GramRow | null {
   if (at < 0 || at + GRAM_RECORD_BYTES > dict.byteLength) return null
   const view = new DataView(dict.buffer, dict.byteOffset, dict.byteLength)
   return {
     gram: view.getUint32(at, true),
     count: view.getUint32(at + 4, true),
     offset: Number(view.getBigUint64(at + 8, true)),
-    length: view.getUint32(at + 16, true),
   }
+}
+
+/** 第 `index` 条那一截到哪儿为止：下一条的起点，末条到 postings 那一节的末尾。 */
+function endOf(dict: Uint8Array, index: number, postingsBytes: number): number {
+  const next = decodeGramRecord(dict, gramRecordOffset(index + 1))
+  return next === null ? postingsBytes : next.offset
+}
+
+/** 按 gram 二分查找。**只看这一段字节**——postings 那一节一个字节都不碰（口径四）。 */
+export function findGram(dict: Uint8Array, gram: Trigram, postingsBytes: number): GramEntry | null {
+  let lo = 0
+  let hi = dict.byteLength / GRAM_RECORD_BYTES - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    const row = decodeGramRecord(dict, gramRecordOffset(mid))
+    if (row === null) return null
+    if (row.gram < gram) {
+      lo = mid + 1
+      continue
+    }
+    if (row.gram > gram) {
+      hi = mid - 1
+      continue
+    }
+    return { ...row, length: endOf(dict, mid, postingsBytes) - row.offset }
+  }
+  return null
 }
 
 /** 顺序号表 → 差分 + varint（无符号 LEB128）。 */
@@ -252,10 +284,7 @@ export function encodeTrigram(parts: TrigramParts): Uint8Array {
   let at = 0
   parts.grams.forEach((g, index) => {
     const body = encodeOrdinals(g.ordinals)
-    dict.set(
-      encodeGramRecord({ gram: g.gram, count: g.ordinals.length, offset: at, length: body.byteLength }),
-      gramRecordOffset(index),
-    )
+    dict.set(encodeGramRecord({ gram: g.gram, count: g.ordinals.length, offset: at }), gramRecordOffset(index))
     bodies.push(body)
     at += body.byteLength
   })
@@ -273,39 +302,26 @@ export function encodeTrigram(parts: TrigramParts): Uint8Array {
   return encodeIndex({ sections })
 }
 
-/** 字典里按 gram 二分查找。**只看这一段字节**——postings 一个字节都不碰。 */
-export function findGram(dict: Uint8Array, gram: Trigram): GramEntry | null {
-  let lo = 0
-  let hi = dict.byteLength / GRAM_RECORD_BYTES - 1
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1
-    const rec = decodeGramRecord(dict, gramRecordOffset(mid))
-    if (rec === null) return null
-    if (rec.gram === gram) return rec
-    if (rec.gram < gram) lo = mid + 1
-    else hi = mid - 1
-  }
-  return null
-}
-
 /** 一份读回来的三段载荷 → `TrigramIndex`。三节缺一不可；缺了给 `null`（当损坏）。 */
 export function indexOfParts(blobsBody: Uint8Array, dict: Uint8Array, postings: Uint8Array): TrigramIndex | null {
   const table = decodeBlobTable(blobsBody)
   if (table === null) return null
   if (dict.byteLength % GRAM_RECORD_BYTES !== 0) return null
+  const idsOf = (rec: GramEntry): BlobId[] => {
+    const out: BlobId[] = []
+    for (const ordinal of decodeOrdinals(postings.subarray(rec.offset, rec.offset + rec.length))) {
+      const id = table.ids[ordinal]
+      if (id !== undefined) out.push(id)
+    }
+    return out
+  }
   return {
     blobIds: table.ids,
     gramCount: dict.byteLength / GRAM_RECORD_BYTES,
-    countOf: (gram) => findGram(dict, gram)?.count ?? 0,
+    countOf: (gram) => findGram(dict, gram, postings.byteLength)?.count ?? 0,
     candidatesOf: (gram) => {
-      const rec = findGram(dict, gram)
-      if (rec === null) return []
-      const out: BlobId[] = []
-      for (const ordinal of decodeOrdinals(postings.subarray(rec.offset, rec.offset + rec.length))) {
-        const id = table.ids[ordinal]
-        if (id !== undefined) out.push(id)
-      }
-      return out
+      const rec = findGram(dict, gram, postings.byteLength)
+      return rec === null ? [] : idsOf(rec)
     },
   }
 }

@@ -145,8 +145,11 @@ export function encodeIndex(parts: IndexParts): Uint8Array {
  *
  * 这里不认识的只有容器这一层：版本、魔数、节表形状、类型重复。**哪几节是必须有的由上层说**
  * （`trigram.ts` 认前三节）——容器不该知道索引需要三字组。
+ *
+ * 第二个参数是**整份文件有多大**，给"只读了头部与节表"的那条路用（`store.ts` 的句柄：打开
+ * 一份索引只读这两段，节体按需再读）。缺省就是手里这段字节的长度——整份读回来那一侧照旧。
  */
-export function decodeIndexHeader(bytes: Uint8Array): IndexHeader | null {
+export function decodeIndexHeader(bytes: Uint8Array, fileBytes: number = bytes.byteLength): IndexHeader | null {
   if (bytes.byteLength < HEADER_BYTES) return null
   for (let i = 0; i < INDEX_MAGIC_BYTES; i++) if (bytes[i] !== INDEX_MAGIC.charCodeAt(i)) return null
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
@@ -167,7 +170,7 @@ export function decodeIndexHeader(bytes: Uint8Array): IndexHeader | null {
     if (seen.has(kind)) return null
     seen.add(kind)
     // 节体只能落在节表之后、文件之内。两条一起判，"表中表"与"越过末尾"都当场落空。
-    if (offset < indexHeadBytes(count) || offset + length > bytes.byteLength) return null
+    if (offset < indexHeadBytes(count) || offset + length > fileBytes) return null
     sections.push({ kind, codec, offset, length, digest: bytes.slice(row + 24, row + 24 + DIGEST_BYTES) })
   }
   // **节体把文件铺满，不留缝。** 按起点排一遍，要求第一段紧接节表、段段相接、末段正好到末尾
@@ -180,7 +183,7 @@ export function decodeIndexHeader(bytes: Uint8Array): IndexHeader | null {
     if (s.offset !== at) return null
     at += s.length
   }
-  if (at !== bytes.byteLength) return null
+  if (at !== fileBytes) return null
   return { version, sections }
 }
 
