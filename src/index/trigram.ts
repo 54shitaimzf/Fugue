@@ -12,7 +12,7 @@
 //   一 · **只出候选。** `candidatesOf` 给的是"这个三字组可能出现在哪些 blob 里"；答案永远从真源
 //        字节里验出来（0.3.3 的验证那一格）。这份载荷里没有一处判断"原文怎么匹配"。
 //   二 · **键是 blob id，不是路径。** 内容寻址 ⇒ 同一份内容出现在几条路径上只有一条 posting，
-//        而改名不动索引——0.3.2 的增量只爬新 blob，靠的就是这一条。
+//        而改名不动索引——增量构建只爬新 blob，靠的就是这一条。
 //   三 · **工件是 blob 集合的纯函数**：顺序号按 id 升序发、gram 表按 gram 升序排，于是同一组
 //        (id, 字节) 无论以什么顺序喂进来，编出来的字节逐字节相同。
 //   四 · **字典定宽是为了"先拿计数"**：第 k 条记录就在 `k × 18`，二分查找既能在一份读回来的
@@ -413,10 +413,26 @@ export function indexOfParts(blobsBody: Uint8Array, dict: Uint8Array, postings: 
 }
 
 /**
- * 整份工件 → `TrigramIndex`。**认不出的版本、缺节、摘要对不上、形状不对，一律 `null`**：
- * 调用方拿到 `null` 就重建，不硬读。
+ * 一份工件的三段载荷（原样字节）＋它认领的那组 id。**增量那一趟要的就是这几段**：合并只要旧的
+ * blob 表 · 字典 · postings，不必把旧的那一组真源重读一遍。
+ *
+ * `blobIds` 由 `blobs` 那一节推出来（一处真相：它不是另存的一份，是同一段字节的读法）。
  */
-export function decodeTrigram(bytes: Uint8Array): TrigramIndex | null {
+export interface TrigramSections {
+  readonly blobIds: readonly BlobId[]
+  readonly blobs: Uint8Array
+  readonly dict: Uint8Array
+  readonly postings: Uint8Array
+}
+
+/**
+ * 整份工件 → 三段载荷。**认不出的版本 · 缺节 · 摘要对不上 · 形状不对，一律 `null`**：
+ * 调用方拿到 `null` 就重建，不硬读。
+ *
+ * 三节**载荷**的形状判据也在这里（blob 表读得回来 · 字典是整数条记录）：`decodeTrigram` 与增量
+ * 那一趟共用这一句，于是「这份工件可读吗」只有一处答案。
+ */
+export function sectionsOf(bytes: Uint8Array): TrigramSections | null {
   const header = decodeIndexHeader(bytes)
   if (header === null) return null
   const bodies: Uint8Array[] = []
@@ -427,5 +443,164 @@ export function decodeTrigram(bytes: Uint8Array): TrigramIndex | null {
     if (body === null) return null
     bodies.push(body)
   }
-  return indexOfParts(bodies[0], bodies[1], bodies[2])
+  const table = decodeBlobTable(bodies[0])
+  if (table === null) return null
+  if (bodies[1].byteLength % GRAM_RECORD_BYTES !== 0) return null
+  return { blobIds: table.ids, blobs: bodies[0], dict: bodies[1], postings: bodies[2] }
+}
+
+/**
+ * 整份工件 → `TrigramIndex`。**走同一句「这份工件可读吗」**（`sectionsOf`），再按三节的形状收成
+ * 一个值。认不出的版本、缺节、摘要对不上、形状不对，一律 `null`：调用方拿到 `null` 就重建，不硬读。
+ */
+export function decodeTrigram(bytes: Uint8Array): TrigramIndex | null {
+  const sections = sectionsOf(bytes)
+  if (sections === null) return null
+  return indexOfParts(sections.blobs, sections.dict, sections.postings)
+}
+
+// ── 增量：旧工件与这一趟新解的 gram 合并 ─────────────────────────────────────
+
+/**
+ * 旧工件的三段载荷**形状**读不出可用语义：字典不按键升序或有重复的键 · 同一个 gram 的顺序号
+ * 不升序或越出旧 blob 表 · postings 段的范围越出那一节。
+ *
+ * **与"读到坏字节"分开报**：节摘要挡得住字节被改，挡不住一份形状自相矛盾的工件（今天的写者
+ * 造不出它——形状这一层是给"合成一份工件"这一类输入留的判据）。这一类的去处是**回全量重建**
+ * （变慢，不是出错），所以它有自己的类型：调用方按类型兜住它，而别的错（真的写错了）照旧抛出去，
+ * 不被兜成"看起来成功了"。
+ */
+export class ArtifactShapeError extends Error {
+  constructor(detail: string) {
+    super(detail)
+    this.name = 'ArtifactShapeError'
+  }
+}
+
+/** 两份都升序的 id 名单：`from` 里每个 id 在 `to` 里的下标；不在 `to` 里的给 −1。 */
+function ordinalsInto(from: readonly BlobId[], to: readonly BlobId[]): Int32Array {
+  const out = new Int32Array(from.length).fill(-1)
+  let at = 0
+  for (let i = 0; i < from.length; i++) {
+    while (at < to.length && to[at] < from[i]) at += 1
+    if (at < to.length && to[at] === from[i]) out[i] = at
+  }
+  return out
+}
+
+/** 两份升序去重的顺序号表合成一份。**归并**——两路各自已经升序去重，只有两路相等的那一处要去。 */
+function mergedOrdinals(a: readonly number[], b: readonly number[]): number[] {
+  const out: number[] = []
+  let x = 0
+  let y = 0
+  while (x < a.length || y < b.length) {
+    const left = x < a.length ? a[x] : Number.POSITIVE_INFINITY
+    const right = y < b.length ? b[y] : Number.POSITIVE_INFINITY
+    const next = left <= right ? left : right
+    if (left <= right) x += 1
+    else y += 1
+    if (out.length === 0 || out[out.length - 1] !== next) out.push(next)
+  }
+  return out
+}
+
+/**
+ * 旧工件 + 这一趟新解的 gram + 这一份该说的那组 id → 合并后的 parts。**纯函数**：不碰文件系统、
+ * 不读真源——增量路上旧那一组真源一个字节都不读，靠的就是这一句。
+ *
+ * `keep` 是这一份该说的那组 id（可以带重复、顺序任意，与 `buildTrigram` 的输入同一条口径）；
+ * `fresh.blobIds` 必须是它的一部分。**旧工件形状读不出语义的那三种输入当场抛
+ * `ArtifactShapeError`**（字典不按键升序或有重复的键 · 同一个 gram 的顺序号不升序或越出旧 blob
+ * 表 · postings 段的范围越出那一节）：它们过不了四问的头一问（今天的写者造不出这种字节），却是
+ * 「静默合并出一份错的工件」唯一的入口——错的工件不会自己报错，所以宁可当场回头重建。调用方
+ * 按类型把它们收成"这一趟走不通"（回全量），别的错照旧抛出去。
+ *
+ * 三条能逐字节对照全量重建的等式（`incremental.test.ts` 逐条量）：
+ *
+ *   一 · blob 表 = `keep` 升序去重（**旧表里没有的那些就是"丢掉"**）。
+ *   二 · 每个 gram 的顺序号 = 旧那一份的顺序号**按 id 映射到新的位置**，与新解的那一份归并
+ *        （丢掉的 blob 不给位置，它的贡献于是自然消失）。
+ *   三 · 键集合 = 两路键的并；一个 gram 若映射之后一个顺序号都不剩，它就不在新工件里——
+ *        少了这一条，删光一份 blob 之后旧 gram 会留下一串空 postings。
+ *
+ * 于是 `encodeTrigram(mergeTrigram(...))` 与同一组 blob 走 `buildTrigram` 编出来的字节相同：
+ * 两边的 parts 是同一个值，而 `encodeTrigram` 是纯函数。**这是「增量 = 全量」的底**，不是一句
+ * 愿望——旧的顺序号不原样搬，是按 id 重排过的。
+ */
+export function mergeTrigram(
+  old: TrigramSections,
+  fresh: TrigramParts,
+  keep: readonly BlobId[],
+  maxGrams: number = INDEX_LIMITS.grams,
+): TrigramParts {
+  const ids = [...new Set(keep)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const into = ordinalsInto(old.blobIds, ids)
+  const intoFresh = ordinalsInto(fresh.blobIds, ids)
+  for (const at of intoFresh) {
+    if (at < 0) throw new Error('这一趟新解的那些 blob 不在这一份该说的那组 id 里')
+  }
+  /** 旧那一份的顺序号 → 新的位置；丢掉的不给位置。**越界与不升序当场抛**（不静默丢）。 */
+  const remapOld = (list: readonly number[]): number[] => {
+    const out: number[] = []
+    let previous = -1
+    for (const ordinal of list) {
+      if (ordinal <= previous) throw new ArtifactShapeError(`旧工件的顺序号在同一个 gram 里不升序：${ordinal}`)
+      previous = ordinal
+      if (ordinal >= into.length) throw new ArtifactShapeError(`旧工件的顺序号越出了 blob 表：${ordinal}`)
+      const at = into[ordinal]
+      if (at >= 0) out.push(at)
+    }
+    return out
+  }
+  const remapFresh = (list: readonly number[]): number[] => list.map((ordinal) => intoFresh[ordinal])
+  const oldRows = old.dict.byteLength / GRAM_RECORD_BYTES
+  const grams: { gram: Trigram; ordinals: number[] }[] = []
+  /** 收一条 gram。**一个顺序号都不剩的那条不收**（等式三）；越限在收的当场止住（与 `buildTrigram` 同一句）。 */
+  const take = (gram: Trigram, ordinals: number[]): void => {
+    if (ordinals.length === 0) return
+    if (grams.length >= maxGrams) {
+      throw new IndexBudgetExceeded('grams', `三字组数超过这一档的上限：${grams.length + 1} > ${maxGrams}`)
+    }
+    grams.push({ gram, ordinals })
+  }
+  /** 旧字典第 `at` 条那一段 postings：**范围越出那一节当场抛**，不静默读一段空字节。 */
+  const oldListAt = (at: number): number[] => {
+    const row = decodeGramRecord(old.dict, gramRecordOffset(at))
+    if (row === null) throw new ArtifactShapeError(`旧工件的字典在第 ${at} 条上读不回来`)
+    const end = endOf(old.dict, at, old.postings.byteLength)
+    if (row.offset < 0 || row.offset > end || end > old.postings.byteLength) {
+      throw new ArtifactShapeError(`旧工件第 ${at} 条的 postings 段越出了那一节`)
+    }
+    return remapOld(decodeOrdinals(old.postings.subarray(row.offset, end)))
+  }
+
+  let i = 0
+  let j = 0
+  let last = -1
+  while (i < oldRows || j < fresh.grams.length) {
+    const row = i < oldRows ? decodeGramRecord(old.dict, gramRecordOffset(i)) : null
+    const added = j < fresh.grams.length ? fresh.grams[j] : null
+    const oldKey = row === null ? Number.POSITIVE_INFINITY : row.gram
+    const newKey = added === null ? Number.POSITIVE_INFINITY : added.gram
+    // 两路都必须严格升序：字典按键升序是二分查找与这一趟归并共用的前提，重复的键没有唯一答案。
+    if (oldKey <= last || newKey <= last) throw new ArtifactShapeError('旧工件的字典不是按键升序，或者出现了重复的键')
+    if (oldKey < newKey) {
+      take(oldKey, oldListAt(i))
+      i += 1
+      last = oldKey
+      continue
+    }
+    if (newKey < oldKey) {
+      take(newKey, remapFresh(added === null ? [] : added.ordinals))
+      j += 1
+      last = newKey
+      continue
+    }
+    take(oldKey, mergedOrdinals(oldListAt(i), remapFresh(added === null ? [] : added.ordinals)))
+    i += 1
+    j += 1
+    last = oldKey
+  }
+  // `textUnits` 是**这一趟解码出来的单元数**：旧那些的单元在增量路上没被解码过（读数，不进判据）。
+  return { blobIds: ids, grams, textUnits: fresh.textUnits }
 }
