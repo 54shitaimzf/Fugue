@@ -33,6 +33,7 @@ import {
   openOrRebuild,
   readIndex,
   rebuildIndex,
+  sameBlobSet,
   sourceOfView,
   writeIndex,
 } from './store.ts'
@@ -387,6 +388,41 @@ test('⑦ 真源是 blob：工件里没有原文，删掉真源读不回来', as
     assert.equal(index.blobIds.length, 1)
     // 顺序号回 id 那一步走的是 blob 表——**没有一处从索引里读原文**。
     assert.deepEqual(index.candidatesOf(gramOf('uni')), [index.blobIds[0]])
+  } finally {
+    await f.close()
+  }
+})
+
+// ── ⑧ 工件认领的是哪一组 blob（身份）────────────────────────────────────────
+
+test('⑧ 工件认领的是哪一组 blob：换了一组就不再算命中', async () => {
+  const f = await fixture()
+  try {
+    await rebuildIndex(f.root, f.source)
+    const stale = await readIndex(f.root)
+    assert.notEqual(stale, null)
+    // 同一组再问一次：命中，不重建。
+    assert.equal((await openOrRebuild(f.root, f.source)).rebuilt, false)
+
+    // 往同一个真源里再放一份 blob，换一组名单（顺序打乱、还带重复——`sourceOfView` 本来就会那样）。
+    const extra = (await f.truth.putBlob(asBytes('a second set entirely\n'))) as BlobId
+    const other: BlobSource = {
+      ids: async () => [stale!.blobIds[0], extra, extra],
+      read: (id) => f.truth.getBlob(id),
+    }
+    const moved = await openOrRebuild(f.root, other)
+    assert.equal(moved.rebuilt, true, '说的是另一组 blob，就该走重建')
+    assert.deepEqual(moved.index.blobIds, [stale!.blobIds[0], extra].sort())
+    // 反向也一样：原来那一组现在对不上了（身份是双向的，不是"曾经对过就永久算数"）。
+    assert.equal((await openOrRebuild(f.root, f.source)).rebuilt, true)
+
+    // 纯判据那一半：顺序与重复都不算差别，少一份或多一份都算。
+    const ids = stale!.blobIds
+    assert.equal(sameBlobSet(stale!, [...ids].reverse()), true)
+    assert.equal(sameBlobSet(stale!, [...ids, ...ids]), true)
+    assert.equal(sameBlobSet(stale!, [...ids, extra]), false)
+    assert.equal(sameBlobSet(stale!, ids.slice(1)), false)
+    console.log(`⑧ 读数：一组的 ${ids.length} 份 → 换一组（${moved.index.blobIds.length} 份）之后重建 · 顺序与重复不算差别`)
   } finally {
     await f.close()
   }

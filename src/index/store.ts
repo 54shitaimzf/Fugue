@@ -21,6 +21,11 @@
 //   五 · **两条读法分工。** `readIndex` / `openOrRebuild` 是**给退化档用**的：三节都验一遍，
 //        任何一处坏了都给 `null`（调用方据此回扫描或重建）。`openIndexAt` 是给"要那个粒度"的
 //        调用方用的：按需读，读到的节当场核摘要，核不过**抛**——它不会把坏字节当成好字节答出去。
+//   六 · **盘上那一份必须说的是这一组 blob。** 工件的身份就是 `blobs` 那一节自己（**不另存一份
+//        摘要**：存一份推得出来的东西，就是给漂移留一个不报错的位置，而且候选那条路本来就要读
+//        这一节）。`openOrRebuild` 拿源给的名单与它比对，对不上就重建。少这一问，"读得回来但是
+//        另一组"会被当成命中——旧表里没有新 blob 的顺序号，新内容一个候选都拿不到，而候选少了
+//        就是漏报。`readIndex` 只管"读得回来"，要身份那一问走 `openOrRebuild`。
 import { mkdir, open, rename, stat, writeFile } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -251,9 +256,26 @@ export async function openIndexAt(path: string): Promise<IndexHandle | null> {
 }
 
 /**
+ * 这一份索引说的是不是这一组 blob。**顺序与重复都不算差别**（`sourceOfView` 本来就可能给重复，
+ * 走树的顺序也不必与 id 升序一致）；比的只是"同一组 id"。
+ *
+ * `index.blobIds` 按约定是升序去重的（构建那一侧保证），所以这边只把交进来的名单收一遍。
+ * 对不上就交给调用方重建——**偏向重建那一侧是安全的**。
+ */
+export function sameBlobSet(index: TrigramIndex, ids: readonly BlobId[]): boolean {
+  const want = [...new Set(ids)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const has = index.blobIds
+  if (want.length !== has.length) return false
+  for (let i = 0; i < want.length; i++) if (want[i] !== has[i]) return false
+  return true
+}
+
+/**
  * 图省事的那一条：读一份、三节都验一遍、关掉、把索引值交出去。**任何一处坏了都是 `null`。**
  *
  * 给退化档用（口径五）：调用方拿到 `null` 就回扫描或重建，不需要分辨是哪一种坏。
+ * **它不问身份**（口径六）："读得回来但说的是另一组 blob"在这里读得回来，要那一问走
+ * `openOrRebuild`。
  */
 export async function readIndex(root: string): Promise<TrigramIndex | null> {
   const handle = await openIndexAt(idxFileOf(root))
@@ -291,7 +313,9 @@ export async function openOrRebuild(
   source: BlobSource,
 ): Promise<{ index: TrigramIndex; rebuilt: boolean }> {
   const hit = await readIndex(root)
-  if (hit !== null) return { index: hit, rebuilt: false }
+  // 读得回来还不够：还要问它说的是不是**这一组** blob（口径六）。少这一问，换了内容之后旧那一份
+  // 照旧被当成命中，而它对新 blob 一个候选都答不出来——那是漏报。
+  if (hit !== null && sameBlobSet(hit, await source.ids())) return { index: hit, rebuilt: false }
   const fresh = await rebuildIndex(root, source)
   return { index: fresh.index, rebuilt: true }
 }
