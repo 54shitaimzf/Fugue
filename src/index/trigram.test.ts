@@ -267,7 +267,7 @@ test('⑥ 冻结面：那份固定语料的工件字节钉在这儿（键空间 
   assert.equal(parts.blobIds.length, 4)
   assert.equal(parts.textUnits, 86)
   assert.equal(parts.grams.length, 76)
-  // 0.3.4 ⑥ 换过样本：字典记录 18 → 13 字节，这一份的字典那一节短了 76 × 5 = 380 字节
+  // 本站 ⑥ 换过样本：字典记录 18 → 13 字节，这一份的字典那一节短了 76 × 5 = 380 字节
   // （1761 → 1381），摘要跟着换。方案 § 三 批的就是这第二处例外。
   assert.equal(encoded.byteLength, 1381)
   assert.equal(

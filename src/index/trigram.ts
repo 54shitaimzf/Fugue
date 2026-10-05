@@ -53,7 +53,7 @@ export const GRAM_KEY_BYTES = 6
 /**
  * 字典一条记录的字节数 = 键 6 + count 3 + offset 4。**定宽**是口径四那条路的前提。
  *
- * 后两栏的宽度是从 `INDEX_LIMITS` 反推的，不是估的（0.3.4 ⑥ 把 u32/u64 收到 u24/u32）：
+ * 后两栏的宽度是从 `INDEX_LIMITS` 反推的，不是估的（本站 ⑥ 把 u32/u64 收到 u24/u32）：
  *
  *   count  装的是"这个 gram 出现在几个 blob 里"，而 blob 表最多 `INDEX_LIMITS.blobs` = 65,536 条
  *          （`collectBlobs` 与 `growFrom` 都在收的当场止住）——65,536 < 2^24，三个字节够。
