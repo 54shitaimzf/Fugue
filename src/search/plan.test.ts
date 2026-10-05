@@ -13,9 +13,10 @@
 //   ⑥ 地板四态：缺席 · 损坏 · 没接线（手搓清单）· 短查询 → 一律 `paths: null`（回扫描）
 //   ⑦ 固定开销那一关：工件整份比全扫还贵 → 连读都不读（本仓那种"字典与语料一样大"的形状）
 //   ⑧ 进程内那一份值：同一份工件连问两次答案相同；盘上换了一份就重读（认账的键是 size:mtime）
+//   ⑨ 大小那一关在读之前：`artifact-heavy` 那一格上工件**零字节读**（chmod 000 的工件把两种形态分开）
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { copyFileSync, mkdtempSync, rmSync, truncateSync } from 'node:fs'
+import { chmodSync, copyFileSync, mkdtempSync, rmSync, truncateSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -264,5 +265,42 @@ test('⑧ 同一份工件连问两次答案相同；盘上换了一份就重读'
   } finally {
     rmSync(root, { recursive: true, force: true })
     rmSync(spare.root, { recursive: true, force: true })
+  }
+})
+
+// ── ⑨ 大小那一关在读之前 ─────────────────────────────────────────────────────
+
+test('⑨ 大小那一关挪到读之前：`artifact-heavy` 那一格上工件零字节读（chmod 000 照拒）', async () => {
+  // 语料小到工件本身（头部 + 节表 + 三节）就比这些文件加起来还大——与 ⑦ 同一档。
+  const docs = narrow(4, 32, (i) => (i === 0 ? 'zzz' : null))
+  const { root, bytes } = await build(docs)
+  const file = idxFileOf(root)
+  try {
+    // 夹具要**新装配**（每一次 `planOf` 都造一个新 planner）：同一个 planner 的第二问会撞上
+    // `readOnce` 那条 `size:mtimeMs` 缓存，而热的那一份根本不再开文件。
+    const warm = await planOf(root, docs, 'zzz')
+    assert.equal(warm.why, 'artifact-heavy', '这一档该落在 artifact-heavy 上')
+    assert.equal(warm.reading.artifactBytes, bytes)
+    assert.ok(bytes * 4 >= warm.reading.scanBytes, '这一档没有真的"贵"——这一条对照是空话')
+
+    // 工件 chmod 000：`stat` 拿得到 size、`read` 吃 EACCES。**两种形态在这里分得开**——
+    // 大小关在读之前 → 照旧 `artifact-heavy`；把它挪回读之后 → `readIndex` 读失败交 `null`，
+    // `why` 变成 `artifact-absent`。所以这一格同时抓着"把大小关挪回去"这一处改动。
+    chmodSync(file, 0o000)
+    const blind = await planOf(root, docs, 'zzz')
+    assert.equal(
+      blind.why,
+      'artifact-heavy',
+      '大小关那一趟读了工件：chmod 000 之后 readIndex 读失败，why 会变成 artifact-absent',
+    )
+    assert.equal(blind.reading.artifactBytes, bytes, '工件字节数该来自 stat 那一个 size，而不是读回来的那一份')
+    assert.equal(blind.paths, null)
+    console.log(
+      `⑨ 读数：工件 chmod 000（${bytes} 字节 · stat 拿得到 size · read 吃 EACCES）→ 仍旧 ${blind.why}` +
+        ` · 工件零字节读（全扫 ${blind.reading.scanBytes} 字节）`,
+    )
+  } finally {
+    chmodSync(file, 0o644)
+    rmSync(root, { recursive: true, force: true })
   }
 })

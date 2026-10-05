@@ -10,7 +10,8 @@
 //        里本来就有 id 与 size，不必为查询再枚举一遍视图。取不到（夹具里那种手搓的 `walk()`）
 //        → 走扫描。
 //   三 · **盘上那一份工件**：`readIndex` 读回来（三节都核过摘要）· 读不回来就是缺席/损坏，
-//        走扫描。工件整份要读的字节数从文件大小拿——这是这一层的固定开销。
+//        走扫描。工件整份要读的字节数从文件大小拿——这是这一层的固定开销。**"这份值不值得读"
+//        判在它之前**（大小那一关），所以拒绝的那一趟一个字节都不读（本站 ③）。
 //   四 · **候选 ∩ 视图**：拿最稀的那一条必须三字组的 postings，与视图里那些 blob 求交，
 //        得出"这一趟可能命中的路径"。交完再算一次账：只有省下的字节够多才真的走它。
 //
@@ -140,25 +141,40 @@ export function createPlanner(deps: PlanDeps): Planner {
   let cached: Cached | null = null
 
   /**
+   * 盘上那一份有多大 · 以及"要不要重读"的认账键。**只 `stat`，一个字节都不读。**
+   *
+   * 它是大小那一关（`artifact-heavy`）的落点：`st.size` 在 `readIndex` 之前就拿到了，而拒绝的
+   * 那一趟原先还白读了一整份工件（三节全读、三节各核一遍 sha256）。夹具把这一条钉在两种形态上
+   * ——`plan.test.ts` ⑨ 用 chmod 000 的工件：`stat` 拿得到 size、`read` 吃 EACCES，于是
+   * 「大小关在读之前」给 `artifact-heavy`、「挪回读之后」给 `artifact-absent`，两者分得开。
+   *
+   * 拿不到（缺席 · 不是文件）给 `null`（当缺席）。
+   */
+  async function probeOnce(): Promise<{ bytes: number; key: string } | null> {
+    const st = await stat(idxFileOf(deps.root)).catch(() => null)
+    if (st === null || !st.isFile()) return null
+    return { bytes: st.size, key: `${st.size}:${st.mtimeMs}` }
+  }
+
+  /**
    * 读一次盘上那一份。**同进程里读一次就够**（一轮里连发几问时，"每问重核一遍索引"正是要
    * 避开的常数）；文件变了（大小或 mtime 变了）就重读。读不回来给 `null`（当缺席）。
+   *
+   * **它只在"这一问值得读"之后才被走到**：大小那一关夹在 `probeOnce` 与这一句之间（`plan` 里）。
    *
    * 认账的键（大小 · mtime）**只是「要不要重读」那一个提示，正确性不靠它**：靠的是上面那条
    * 覆盖。blob id 是内容的名字，所以一份旧工件只要罩得住视图，它对这些 id 的 postings 就与
    * 它是哪一代工件无关；罩不住就回扫描。于是「缓存读到旧的那一份」最多是少一次重读，不是漏报。
    */
-  async function readOnce(): Promise<{ index: TrigramIndex; bytes: number } | null> {
-    const st = await stat(idxFileOf(deps.root)).catch(() => null)
-    if (st === null || !st.isFile()) return null
-    const key = `${st.size}:${st.mtimeMs}`
-    if (cached !== null && cached.key === key) return { index: cached.index, bytes: st.size }
+  async function readOnce(probe: { bytes: number; key: string }): Promise<{ index: TrigramIndex; bytes: number } | null> {
+    if (cached !== null && cached.key === probe.key) return { index: cached.index, bytes: probe.bytes }
     const index = await readIndex(deps.root)
     if (index === null) {
       cached = null
       return null
     }
-    cached = { key, index }
-    return { index, bytes: st.size }
+    cached = { key: probe.key, index }
+    return { index, bytes: probe.bytes }
   }
 
   return async function plan(ask: PlanAsk): Promise<SearchPlan> {
@@ -199,20 +215,28 @@ export function createPlanner(deps: PlanDeps): Planner {
       }
 
       const factor = ask.earlyStop ? DENSE_FACTOR : 1
-      const read = await readOnce()
-      if (read === null) return give('artifact-absent', { scanBytes, viewBlobs: viewIds.size })
+      // **大小那一关挪到读之前**（本站 ③）：`st.size` 这一刻就在手里，而拒绝的那一趟原先在判它
+      // 之前就把整份工件读完了（三节全读、三节各核一遍 sha256）。读数那一栏跟着挪——拒绝这一档
+      // 没有读工件，`artifactGrams` 报手里正好有同一份（缓存键对得上）时的那个数，否则报 0
+      // （0 在这里是"这一问没读"，不是"这一份里一个三字组都没有"）。
+      const probe = await probeOnce()
+      if (probe === null) return give('artifact-absent', { scanBytes, viewBlobs: viewIds.size })
       const base: Partial<PlanReading> = {
-        artifactBytes: read.bytes,
+        artifactBytes: probe.bytes,
         scanBytes,
         viewBlobs: viewIds.size,
-        artifactGrams: read.index.gramCount,
+        artifactGrams: cached !== null && cached.key === probe.key ? cached.index.gramCount : 0,
       }
       // 固定开销那一关先过：工件整份比全扫的 1/factor 还大，读它就已经亏了。
-      if (read.bytes * factor >= scanBytes) return give('artifact-heavy', base)
+      if (probe.bytes * factor >= scanBytes) return give('artifact-heavy', base)
+
+      const read = await readOnce(probe)
+      if (read === null) return give('artifact-absent', base)
+      const loaded: Partial<PlanReading> = { ...base, artifactGrams: read.index.gramCount }
 
       // 覆盖：视图里每一个 blob 都要在盘上那一份的名单里（少一个就是漏报那一档）。
       const known = new Set(read.index.blobIds)
-      for (const id of viewIds) if (!known.has(id)) return give('view-uncovered', base)
+      for (const id of viewIds) if (!known.has(id)) return give('view-uncovered', loaded)
 
       // 挑最稀的那一条（`countOf` 只看字典那一节；三节这时已经在手里，一个字节都不再读）。
       let gram: Trigram | null = null
@@ -224,7 +248,7 @@ export function createPlanner(deps: PlanDeps): Planner {
           gram = g
         }
       }
-      if (gram === null) return give('no-grams', base)
+      if (gram === null) return give('no-grams', loaded)
       const hit = new Set(read.index.candidatesOf(gram))
 
       const paths = new Set<string>()
@@ -236,7 +260,7 @@ export function createPlanner(deps: PlanDeps): Planner {
         candidateBytes += rows.sizes.get(path) ?? 0
       }
 
-      const reading: Partial<PlanReading> = { ...base, candidateBytes, gram, gramCount: count }
+      const reading: Partial<PlanReading> = { ...loaded, candidateBytes, gram, gramCount: count }
       // 兑现那一关：工件 + 候选要读的字节，仍然要小于全扫的 1/factor 才走（读到这一步才知道
       // 候选有多少；不够格就回扫描，欠的是这一步判断，不是把候选当答案）。
       if ((read.bytes + candidateBytes) * factor >= scanBytes) return give('candidates-dense', reading)
