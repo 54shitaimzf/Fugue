@@ -11,6 +11,9 @@
 //   ④ 键空间与匹配器同一格：中文 · U+FFFD（非法 UTF-8 解码之后那一个单元）都在表里
 //   ⑥ 必含字面量那一栏（②）：同一条性质在字面量上重跑一遍——**单汉字与两字在这一栏上有一条**
 //      （三字组那一栏对它们是空表）；字面量含 U+FFFD 或落单代理时**整条交回空表**
+//   ⑦ 连接处那三栏（0.3.4 提案 5）：择一紧挨着字面量时**跨过连接处**的那条三字组取出来了
+//      ——`(get|set)Value` 的 `etV`；零增益那几条**一条都不许多**（`read(only|write)` 仍是两条）；
+//      备选那一栏超上限（`MAX_EXACT = 7`）就退回"不知道"，而**开头/结尾那两栏接得住**
 //
 // **只少不多是这一层的口径**：认不出、可省、重复次数不定，一律少取几条（少几条只是候选集不够小，
 // 候选集大了只是慢）；取错一条才是漏报。所以下面有几条是"保守地取不到"，它们由注释点明，不写成
@@ -46,6 +49,11 @@ function has(pattern: string, ...grams: string[]): void {
 function lacks(pattern: string, ...grams: string[]): void {
   const got = new Set(requiredTrigrams(pattern).map(textOfGram))
   for (const g of grams) assert.ok(!got.has(g), `${JSON.stringify(pattern)} 多取了 ${JSON.stringify(g)}——那一条不在每一段匹配文本里`)
+}
+
+/** 这条模式抽出来的三字组，**排过序**：这一格量的是"哪几条"，抽取的先后不是判据。 */
+function gramsOf(pattern: string): string[] {
+  return requiredTrigrams(pattern).map(textOfGram).sort()
 }
 
 /** 这条模式抽出来的字面量（② 那一栏）。 */
@@ -205,6 +213,43 @@ test('④ 键空间与匹配器同一格：中文 · U+FFFD · 码点转义', ()
 })
 
 // ── ⑥ 必含字面量（② 的抽取器一侧）────────────────────────────────────────────
+
+test('⑦ 连接处那三栏：跨过连接处的三字组取出来了 · 零增益的一条不多 · 超上限退回"不知道"', () => {
+  // **批复的那一条断言**：`(get|set)Value` 抽出来的"必须有"里要含 `etV`——它前两个单元来自择一
+  // 那一支、后一个来自 `Value`，两边的"自己含什么"里都没有它（只有跨过连接处才算得出来）。
+  // 整张表一起钉住：多一条就是"其实不必有"的错报，少一条就是没拿到这一项的增益。
+  assert.deepEqual(gramsOf('(get|set)Value'), ['Val', 'alu', 'etV', 'lue', 'tVa'])
+  // 零增益那一条**一条都不许多**（把"备选"当"合取"做叉积，就会在这儿多出一族不必有的）。
+  assert.deepEqual(gramsOf('read(only|write)'), ['ead', 'rea'])
+  assert.deepEqual(gramsOf('(async|await) function'), [' fu', 'cti', 'fun', 'ion', 'nct', 'tio', 'unc'])
+  assert.deepEqual(gramsOf('trigram(s|es)?'), ['gra', 'igr', 'ram', 'rig', 'tri'])
+  // 同名那一份是"备选之间一个单元都不共享"的那一档：跨边界那条取不出来。
+  assert.deepEqual(gramsOf('x(Value|Vector)'), [])
+  // **codesearch 测试里那四个三字组在本站一个都不是"必须有"的**：它走的是择一档（析取），本站的
+  // 派发是逐条取交——`abcghi` 里没有 `bcd`。取公共的那一部分才是这一条路上安全的一半。
+  assert.deepEqual(gramsOf('abc(def|ghi)'), ['abc'])
+  // 两条性质测试抓回来的形状**单列在这儿**（它们各自值一条负对照）：
+  //   一 · `xbc` 的结尾是"备选"、`(a|b)` 的整体也是"备选"——两层备选直接做叉积会得到 `bca`，
+  //        而 `^xbc(a|b)` 匹配 `xbcb` 时里面没有 `bca`。
+  assert.deepEqual(gramsOf('^xbc(a|b)'), ['xbc'])
+  //   二 · `.*` **可能**匹配空串，于是 `foo.*` 的结尾差一点被 `foo` 定住——`foo---bar` 里没有
+  //        `obar`。只有那一段**一定**空（零宽）才轮得到继承。
+  assert.deepEqual(gramsOf('foo.*bar'), ['bar', 'foo'])
+  // 括号不是连接处的墙：`(foo)bar` 与 `foobar` 一样跨得过去（多出来的是 `oba` `oob`）。
+  assert.deepEqual(gramsOf('(foo)bar'), ['bar', 'foo', 'oba', 'oob'])
+  // **备选那一栏的上限**：7 条备选时 `exact` 还在（`(get|set|put|let|net|bet|vet)Value` 里其实
+  // 只有 `tVa` 是每一条备选都产出的）；8 条就把 `exact` 顶掉（`MAX_EXACT = 7`），而**开头/结尾那
+  // 两栏接得住**——八条备选全都以 `t` 结尾，所以 `tVa` 照旧取出来。这正是三栏比"只做备选叉积"
+  // 多出来的那一块：备选一多就退回"不知道"的那一栏，恰是它接住了。
+  assert.deepEqual(gramsOf('(get|set|put|let|net|bet|vet)Value'), ['Val', 'alu', 'lue', 'tVa'])
+  assert.deepEqual(gramsOf('(get|set|put|let|net|bet|vet|met)Value'), ['Val', 'alu', 'lue', 'tVa'])
+  // 顶着上限那一档是**退回"不知道"**，不是"顺手多报一条"：八条首字母互不相同的备选跨不过去。
+  assert.deepEqual(gramsOf('(a|b|c|d|e|f|g|h)xyz'), ['xyz'])
+  console.log(
+    '⑦ 读数：跨边界取出来了（`(get|set)Value` 5 条，含 `etV`）· 零增益那三条一条不多（`read(only|write)` 2 条 · ' +
+      '`(async|await) function` 7 条 · `trigram(s|es)?` 5 条）· 备选 8 条时 `exact` 退回而 `suffix` 接住（仍是 `tVa`）',
+  )
+})
 
 test('⑥ 必含字面量：每一条都出现在每一段匹配文本里；含 U+FFFD 或落单代理时整条交回空表', () => {
   // 一 · 手写表（与 ① 共用同一张）：抽出来的每一条字面量都在每一段匹配文本里。对手是**漏报**：
