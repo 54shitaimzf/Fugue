@@ -157,6 +157,36 @@ function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Prom
 }
 
 /**
+ * **一趟预取最多先取回多少字节 = 缓存容量的一半**（人批的定稿规格，0.3.3）。
+ *
+ * 为什么是一半：预取的字节回来之后要**留在**缓存里等到真被读——`BlobLru` 是按字节封顶的 LRU，
+ * 装不下的从最旧那一头挤掉。一趟预取要是能取满整个容量，它自己就能把缓存转一圈：先取的那几条
+ * 在真被读之前就被自己挤走，取回来等于白取（0.3.1 那张账在 1 MiB 那一档上量到的负收益）。
+ * 留一半给这一趟真在读的那几份与下一批，挤占就不会发生在本趟自己身上。
+ *
+ * **代价是覆盖不全**：一趟只覆盖到预算满为止，这一窗剩下的路径交给按需读那一趟（那就是“预取
+ * 缺席”那条地板，只是慢），下一窗重新起一批。容量 0 在这里就是预算 0 = 一条都不取。
+ */
+export function prefetchBudgetOf(cacheBytes: number): number {
+  return Math.floor(cacheBytes / 2)
+}
+
+/**
+ * 真源那一层报的 blob 缓存容量。**冻结的 `Truth` 契约一个字不动**：`stats()` 与 `prefetchBlobs`
+ * 一样只落在句柄层（`TruthHandle`），所以这里与 `prefetchOf` 同一形状地探一次。
+ *
+ * 问不到容量那一档预算就是 0（这一趟不预取）：两栏都在句柄层，夹具里那几份假体都没有；
+ * **不猜一个容量出来**——猜大了会挤占，猜小了白付结构化开销，而少预取只是慢。
+ */
+function cacheBytesOf(truth: Truth | undefined): number {
+  const stats = (truth as unknown as { stats?: unknown } | undefined)?.stats
+  if (typeof stats !== 'function') return 0
+  const got = (stats as () => { readonly blobCacheBytes?: unknown }).call(truth) as { readonly blobCacheBytes?: unknown }
+  const bytes = got?.blobCacheBytes
+  return typeof bytes === 'number' && bytes >= 0 ? bytes : 0
+}
+
+/**
  * 一份 `ToolHost`。
  *
  * `view` 是读与写的唯一去处（写走 `view/edit.ts` 那一份：blob → 日志 → 内存，顺序在那儿）；
@@ -247,6 +277,8 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
   async function prefetchNow(paths: readonly string[]): Promise<void> {
     const blobs = prefetchOf(opts.actions?.truth)
     if (blobs === undefined) return
+    // **这一趟先取多少字节是由缓存容量算出来的**（`prefetchBudgetOf`），不是由这一窗有多少条算出来的。
+    const budget = prefetchBudgetOf(cacheBytesOf(opts.actions?.truth))
     const metas = await Promise.all(
       paths.map(async (rel) => {
         try {
@@ -258,11 +290,18 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
       }),
     )
     const out: BlobId[] = []
+    let planned = 0
     for (const meta of metas) {
       const id = meta === null || meta.kind !== 'file' ? undefined : meta.id
       if (id === undefined || id === null || id === '') continue
+      // **预算在这儿生效**：加起来过了半个缓存就跳过这一条（跳过而不是停——后面小份的还能进这一批），
+      // 剩下的交给读那一趟按需取。
+      if (planned + meta.size > budget) continue
+      planned += meta.size
       out.push(id as BlobId)
     }
+    // 一条都没排上就不发这一趟（容量 0 那条地板也走这里）。
+    if (out.length === 0) return
     await blobs(out)
   }
 

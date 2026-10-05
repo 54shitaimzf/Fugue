@@ -21,6 +21,8 @@
 //   ⑯ **收尾留量是算出来的**（对照吸收）：真收工句 + 最长的说明与头，都装在留量里
 //   格 3 **`grep` 的候选先按一批取回内容**：冷的那一趟请求数不随文件数线性涨，
 //   热的那一趟一次都不发；这道缝缺席时退回逐文件读（回执逐字节不变）
+//   格 3 **一趟预取最多先取半个缓存**（定稿规格：预算 × 2 ≤ 缓存容量）：取回来的字节不许把
+//   自己挤掉（挤占那一支被杀）· 排不上的那几份按需读、回执逐字节不变 · 容量 0 是那条地板
 
 import assert from 'node:assert/strict'
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
@@ -53,7 +55,7 @@ import { GREP_MODES, RUNTIME_TAIL_RESERVE, STOP_NOTE_RESERVE, faceOf, noFace, pa
 import { capReceipt, lineCount, MAX_RECEIPT_BYTES } from './receipt.ts'
 import { createWalk } from './walk-cache.ts'
 import type { ToolHost } from './execute.ts'
-import { createToolHost } from './host.ts'
+import { createToolHost, prefetchBudgetOf } from './host.ts'
 import { refHeadOf } from '../round/head.ts'
 import { AGENT_LAND_NOW } from '../round/driver.ts'
 import { HOLDER_LAND_NOW } from '../round/plan.ts'
@@ -1179,6 +1181,80 @@ test('格 3 · 预取只取范围内那几份：范围外的路径不进那一�
     )
   } finally {
     await c.close()
+  }
+})
+
+/**
+ * 格 3 · **一趟预取最多先取半个缓存**（人批的定稿规格：预算 = 缓存容量 ÷ 2）。
+ *
+ * 为什么这一条要在测试里：预算不是一句注释，它得抓住那个变异——"有就全取"（`prefetchBudgetOf`
+ * 返回容量本身）。那时这一批自己就能把缓存转一圈，先取的几份在真被读之前被自己挤走，
+ * `blobEvictions` 从 0 涨起来，下面第 ② 条当场红。
+ *
+ * 台子：8 份 16 KiB（每份都带记号，8 份内容全够得着）· 缓存 64 KiB → 预算 32 KiB = 2 份。
+ * 取谁不取谁**只由预算决定**，与路径顺序 · 内容都无关。
+ */
+test('格 3 · 预取字节预算：一趟最多先取半个缓存（挤占那一支被杀）· 剩的按需读、回执不变', async () => {
+  const CAP = 64 * 1024
+  const EACH = 16 * 1024
+  const files: Record<string, string> = {}
+  for (let i = 0; i < 8; i++) {
+    const head = `第 ${i} 行有个记号\n`
+    const body = head + 'x'.repeat(EACH - Buffer.byteLength(head) - 1) + '\n'
+    assert.equal(Buffer.byteLength(body), EACH, '每份正好 16 KiB——预算那一栏才算得出来')
+    files[`p${i}.txt`] = body
+  }
+  const paths = Object.keys(files)
+  const budget = prefetchBudgetOf(CAP)
+
+  // ① **规格那一条**：预算 × 2 ≤ 缓存容量。几个容量档都成立（含 0 与出货的缺省那一档）。
+  for (const cap of [0, 1, 3, EACH, CAP, 8 * 1024 * 1024]) {
+    const got = prefetchBudgetOf(cap)
+    assert.ok(got * 2 <= cap, `预算 × 2 超过容量：容量 ${cap} → 预算 ${got}`)
+    assert.ok(got <= cap, `预算本身也不该超过容量：${got} > ${cap}`)
+  }
+
+  let reference = ''
+  const b = await lowerBench(files, { cache: CAP })
+  try {
+    assert.equal(b.truth.stats().blobCacheBytes, CAP, '台子该按给的容量起')
+    assert.equal(b.truth.stats().blobBytes, 0, '测量句柄从零起（建语料那个句柄已经关了）')
+
+    // ② **一趟取回来的字节 ≤ 半个缓存，且一条都不挤掉**（8 份共 128 KiB 都够得着，只放得下 2 份）。
+    await b.host.prefetch(paths)
+    const after = b.truth.stats()
+    assert.equal(after.blobEvictions, 0, `半个缓存装得下这一批——先取的一条都不许被挤掉：实际挤掉 ${after.blobEvictions} 条`)
+    assert.equal(after.blobBytes, budget, `取回来的字节该正好是预算：${after.blobBytes} ≠ ${budget}`)
+    assert.equal(after.blobEntries, budget / EACH, `预算只放得下 ${budget / EACH} 份：实际 ${after.blobEntries} 份`)
+
+    // ③ **排不上的那几份走按需读**（预取缺席那条地板），答案一个字节都不变。
+    const before = b.truth.stats()
+    const counted = await face('grep', { pattern: '记号', output_mode: 'count' }, b.host)
+    assert.equal(counted.ok, true, counted.output)
+    assert.match(counted.output, /^8 matches in 8 files/, `8 份都命中：${counted.output.slice(0, 80)}`)
+    const t = b.truth.stats()
+    assert.equal(t.blobHits - before.blobHits, budget / EACH, `先取回来的那 ${budget / EACH} 份读的时候该是命中`)
+    assert.equal(t.blobMisses - before.blobMisses, paths.length - budget / EACH, '其余几份该走按需取')
+    reference = counted.output
+    console.log(
+      `格 3 预算读数：缓存 ${CAP / 1024} KiB · 预算 ${budget / 1024} KiB（= ${budget / EACH} 份）· ` +
+        `${paths.length} 份候选里先取回 ${budget / EACH} 份、挤掉 0 条，剩 ${paths.length - budget / EACH} 份按需取 · 计数档「${counted.output.split('\n')[0]}」`,
+    )
+  } finally {
+    await b.close()
+  }
+
+  // ④ **地板**：容量 0 = 预算 0 = 一条都不取；读那一趟照旧把 8 份取回来，回执与上一台逐字节相同。
+  const off = await lowerBench(files, { cache: 0 })
+  try {
+    await off.host.prefetch(paths)
+    assert.equal(off.truth.stats().blobEntries, 0, '容量 0 的台上一条都不许存')
+    assert.equal(off.truth.stats().blobEvictions, 0, '容量 0 是直通：不存也就无所谓挤')
+    const got = await face('grep', { pattern: '记号', output_mode: 'count' }, off.host)
+    assert.equal(got.output, reference, '预取不许参与结果：容量 0 那一档回执逐字节相同')
+    console.log(`格 3 预算地板读数：缓存 0 → 预算 0 → 一条都不取，回执（${Buffer.byteLength(reference, 'utf8')} 字节）逐字节相同`)
+  } finally {
+    await off.close()
   }
 })
 // ── ⑩ `read` 的窗口档：offset/limit 下推（T16 ① 的第二半）──────────────────────
