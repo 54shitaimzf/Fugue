@@ -25,7 +25,10 @@ import type { ActionAsk, AskItem, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, T
 import { refuse } from './execute.ts'
 import { shellArgv } from './argv.ts'
 // **清单缓存**：`walk()` 的实现与它的键（视图代）都住这一份，宿主只接线（见 `walk-cache.ts`）。
-import { createWalk } from './walk-cache.ts'
+import { createWalk, walkRowsOf } from './walk-cache.ts'
+// **查询接线那一份计划**（0.3.3）：按模式收窄这一趟要读的路径。它住在 `src/search/`，不进冻结面。
+import { createPlanner } from '../search/plan.ts'
+import type { Planner } from '../search/plan.ts'
 import { digestOf } from '../runtime/restart.ts'
 import { lstatSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -160,7 +163,19 @@ function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Prom
  * `roots` 只用来过围栏——**它不拼物理路径**：这一档里文件的字节住在视图的上层，不在物化出来的
  * 那棵树上（`B6` 把"执行前物化"接上时，`bash` 那一条才真的落在树里）。
  */
-export function createToolHost(view: View, roots: Roots, opts: HostOptions = {}): ToolHost {
+/**
+ * 装配起来的那一份宿主：冻结的 `ToolHost` ＋ **句柄层多出来的那一栏**。
+ *
+ * `searchPlan` 是 0.3.3 的查询接线：按模式给出"这一趟可能命中的路径"，`tools/execute.ts` 那一趟
+ * 读它、照它跳过不可能命中的文件（答案照旧在原卷上逐行验出来，索引只指路）。**它不是
+ * `ToolHost` 的一栏**——那张面冻结着；加方法只落在句柄层、由 `execute.ts` 运行时探一次，与
+ * `truth.prefetchBlobs` · `stats()` 同一条先例（本文件 `prefetchOf` 就是那么探的）。
+ */
+export interface WiredToolHost extends ToolHost {
+  readonly searchPlan: Planner
+}
+
+export function createToolHost(view: View, roots: Roots, opts: HostOptions = {}): WiredToolHost {
   const parts = opts.actions
 
   async function deny(d: DenyAsk): Promise<void> {
@@ -257,6 +272,12 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
    * 就是新的一代——深度 · 条数 · 软链不跟三条语义逐字照旧（同一份视图缓存前后给出的清单相同）。
    */
   const walk = createWalk(view, { depth: MAX_DEPTH, rows: MAX_ROWS })
+
+  /**
+   * 查询接线那一份计划（`src/search/plan.ts`）：索引住 `<root>/.fugue/idx/`，视图那一份 id 与
+   * 字节数取自走树缓存——**同一个 `view.list` 的行，不为一次查询再枚举一遍视图**。
+   */
+  const searchPlan = createPlanner({ root: roots.realRoot, rowsOf: walkRowsOf })
 
   // ── 执行面（W8：视图是读面，物化根是执行面）──────────────────────────
   //
@@ -577,6 +598,7 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
 
     walk,
     prefetch: prefetchNow,
+    searchPlan,
 
     async run(ask: RunAsk) {
 
