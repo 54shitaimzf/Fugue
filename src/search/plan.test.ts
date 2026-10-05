@@ -14,13 +14,15 @@
 //   ⑦ 固定开销那一关：工件整份比全扫还贵 → 连读都不读（本仓那种"字典与语料一样大"的形状）
 //   ⑧ 进程内那一份值：同一份工件连问两次答案相同；盘上换了一份就重读（认账的键是 size:mtime）
 //   ⑨ 大小那一关在读之前：`artifact-heavy` 那一格上工件**零字节读**（chmod 000 的工件把两种形态分开）
+//   ⑩ 两档字节分价：工件不比语料小、候选稀 → 走索引（同价记账下这一格变 `artifact-heavy`）；
+//      同一份语料上候选接近全扫 → 照旧拒（权重调到 0「凡有索引就走」这一格才会红）
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { chmodSync, copyFileSync, mkdtempSync, rmSync, truncateSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createPlanner } from './plan.ts'
+import { ARTIFACT_WEIGHT, createPlanner } from './plan.ts'
 import type { PlanAsk, PlanReading, SearchPlan, ViewRows } from './plan.ts'
 import { idxFileOf, rebuildIndex } from '../index/store.ts'
 import type { BlobSource } from '../index/store.ts'
@@ -45,6 +47,31 @@ function narrow(n: number, size: number, marker: (i: number) => string | null): 
     const mark = marker(i)
     if (mark !== null) text += mark
     out.push({ path: `f${String(i).padStart(3, '0')}.txt`, text, id: hashOf(text) })
+  }
+  return out
+}
+
+/**
+ * 一份"**工件与语料同量级**"的语料：字母表 16 个符号、每一份的正文各自伪随机（同一颗种子量出来
+ * 就是同一份），于是三字组几乎铺满 16³ = 4096 条——字典那一节长到与真源同量级。
+ *
+ * `narrow` 做不到这个形状：`abcdefgh` 周期排下去只有 8 条三字组，字典永远几百字节，工件远小于
+ * 语料（`plan.test.ts` ⑦ 量的那一档）。本仓"字典 4.4 MB / 语料 4.5 MB"那种形状要的是这一份
+ * （⑩ 的两格靠它）。标记写大写字母＋`z`，语料里不会自然出现。
+ */
+function spread(n: number, size: number, marker: (i: number) => string | null): Doc[] {
+  const alphabet = 'abcdefghijklmnop'
+  const out: Doc[] = []
+  for (let i = 0; i < n; i++) {
+    let s = (20261005 + i * 2654435761) >>> 0
+    let text = ''
+    for (let at = 0; at < size; at++) {
+      s = (s * 1664525 + 1013904223) >>> 0
+      text += alphabet[(s >>> 16) % alphabet.length] as string
+    }
+    const mark = marker(i)
+    if (mark !== null) text += mark
+    out.push({ path: `s${String(i).padStart(3, '0')}.txt`, text, id: hashOf(text) })
   }
   return out
 }
@@ -225,15 +252,20 @@ test('⑥ 地板：缺席 · 损坏 · 没接线 · 短查询 → 一律回扫�
 
 // ── ⑦ 固定开销那一关 ────────────────────────────────────────────────────────
 
-test('⑦ 工件整份比全扫还贵：连读都不读（本仓那种形状）', async () => {
-  // 语料小到工件本身（头部 + 节表 + 三节）就比这些文件加起来还大。
-  const docs = narrow(4, 64, (i) => (i === 0 ? 'zzz' : null))
+test('⑦ 固定开销那一关：工件折算之后仍比全扫贵 → 连读都不读（本仓那种形状）', async () => {
+  // 语料小到工件本身（头部 + 节表 + 三节）**折算之后**还比这些文件加起来大。
+  //
+  // **夹具随 ④ 重设（动夹具不动判据）**：`ARTIFACT_WEIGHT` 之后原来 `narrow(4, 64)` 那一档过闸
+  // （`445 × 0.1 × 4 = 178 < 259`），这一格会悄悄变成一格 `candidates` 夹具——固定开销那一关就
+  // 没人看着了。缩到 `narrow(2, 32)`：工件那一边基本不随语料缩，而全扫从 259 掉到 67，
+  // `≈448 × 0.1 × 4 = 179 ≥ 67` 重新成立。**不许只改期望值**。
+  const docs = narrow(2, 32, (i) => (i === 0 ? 'zzz' : null))
   const { root, bytes } = await build(docs)
   try {
     const plan = await planOf(root, docs, 'zzz')
     assert.equal(plan.why, 'artifact-heavy')
     assert.equal(plan.paths, null)
-    assert.ok(bytes * 4 >= plan.reading.scanBytes, '这一档没有真的"贵"——这一条对照是空话')
+    assert.ok(bytes * ARTIFACT_WEIGHT * 4 >= plan.reading.scanBytes, '这一档没有真的"贵"——这一条对照是空话')
     console.log(`⑦ 读数：${show(plan.reading)} → artifact-heavy（连工件都不读）`)
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -301,6 +333,51 @@ test('⑨ 大小那一关挪到读之前：`artifact-heavy` 那一格上工件�
     )
   } finally {
     chmodSync(file, 0o644)
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+// ── ⑩ 两档字节分价 ───────────────────────────────────────────────────────────
+
+test('⑩ 两档分价双向：工件不比语料小、候选稀 → 走索引；候选接近全扫 → 照旧拒', async () => {
+  // **本仓那种形状的最小件**：工件（字典 4096 × 18 字节那一段）与语料同量级。这一份语料上
+  // 「工件 + 候选 < 全扫」按同一单价算永远不成立——④ 量的就是这一笔账。
+  const docs = spread(7, 7168, (i) => `${i === 0 ? 'zzz' : ''}${i <= 5 ? 'QRS' : ''}`)
+  const { root, bytes } = await build(docs)
+  try {
+    // ① 候选只落在 1 份里（计数档：它不早停，折扣是 1）→ 走索引。
+    const sparse = await planOf(root, docs, 'zzz', false)
+    assert.equal(sparse.why, 'candidates', '候选只有 1 份而工件并不比语料小——这一格该走索引')
+    assert.deepEqual(pathsOf(sparse), ['s000.txt'])
+    // ② 同一份语料上候选接近全扫（6/7）→ 照旧拒（两档都拒：候选那一笔与折扣无关）。
+    const dense = await planOf(root, docs, 'QRS', false)
+    assert.equal(dense.why, 'candidates-dense', '候选接近全扫时索引白读——这一格该回扫描')
+    assert.equal((await planOf(root, docs, 'QRS', true)).why, 'candidates-dense')
+
+    // **自证（三条：一个方向一条，各自对着一个负对照）**：
+    //  · 同价那一侧本来该拒——把权重拿掉（`ARTIFACT_WEIGHT` 调回 1）① 当场变 `artifact-heavy`。
+    assert.ok(bytes * 4 >= sparse.reading.scanBytes, '这一档没有真的"工件不比语料小"——① 是空话')
+    //  · 加权那一侧真的放行了——① 不是被别的判据放过去的（`bytes × w × 4 < 全扫` 成立才谈得上分价）。
+    assert.ok(
+      bytes * ARTIFACT_WEIGHT * 4 < sparse.reading.scanBytes,
+      '加权之后仍过不了固定开销那一关——① 走不到分价那一笔',
+    )
+    //  · 候选那一侧真的接近全扫、而且**没到**全扫——权重调到 0（凡有索引就走）时 ② 才会红。
+    assert.ok(
+      dense.reading.candidateBytes >= dense.reading.scanBytes * 0.75,
+      `候选没接近全扫（${dense.reading.candidateBytes} / ${dense.reading.scanBytes}）——② 是空话`,
+    )
+    assert.ok(
+      dense.reading.candidateBytes < dense.reading.scanBytes,
+      '候选到了全扫——权重调到 0 也拒得住，② 的负对照是空话',
+    )
+
+    console.log(
+      `⑩ 读数：工件 ${bytes} 字节 / 全扫 ${sparse.reading.scanBytes}（${(bytes / sparse.reading.scanBytes).toFixed(2)} 倍）·` +
+        ` ① 候选 ${sparse.reading.candidateBytes} 字节 → ${sparse.why} ·` +
+        ` ② 候选 ${dense.reading.candidateBytes}（${Math.round((dense.reading.candidateBytes / dense.reading.scanBytes) * 100)}%）→ ${dense.why}`,
+    )
+  } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })

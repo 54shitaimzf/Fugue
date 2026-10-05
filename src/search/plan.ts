@@ -27,10 +27,14 @@
 //   覆盖共同保证。验证永远在原卷上做（`tools/execute.ts` 那一趟照旧逐行试正则），这一层
 //   只指路，不作证。
 //
-// 代价模型（**字节数**，量的是"这一趟要读的字节"）：
+// 代价模型（**折算成真源字节**，量的是"这一趟要读的字节值多少"）：
 //
-//   走索引 = 工件整份（固定开销）+ 候选那些文件的字节（验证那一趟要读的）
+//   走索引 = 工件整份（固定开销）× `ARTIFACT_WEIGHT` + 候选那些文件的字节（验证那一趟要读的）
 //   全扫   = 这一趟范围内所有文件的字节
+//
+//   **两档的字节价相差约十倍**（工件 ≈ 0.65 ms/MB · 真源 ≈ 6.5 ms/MB），所以工件那一侧的字节先
+//   折算再进两道闸（来处与改主意的条件都写在 `ARTIFACT_WEIGHT` 旁边）。按同一单价记会把"工件
+//   不比语料小、但候选很稀"的问法一律拒掉——本仓那种形状四档两态一个数，就是这一笔记错的账。
 //
 //   判据是"索引那一侧更少"，而且要少到 `DENSE_FACTOR` 那个份上——有早停的那两档（内容 ·
 //   路径）扫描会提前收工，密集模式下它读三五份就把回执填满了，索引再省也省不过它。
@@ -131,6 +135,25 @@ export type Planner = (ask: PlanAsk) => Promise<SearchPlan>
  */
 export const DENSE_FACTOR = 4
 
+/**
+ * **工件字节的单价 / 真源字节的单价**（0.3.4 方案里写作 `w`）。代价模型两侧的字节不再是同一把
+ * 尺：同一份字节，从工件那一节读回来比从真源读回来便宜约十倍。所以工件那一侧的字节先折算成
+ * "值多少真源字节"再进两道闸。`DENSE_FACTOR` 那一笔照旧只当早停折扣，不再兼职价格比。
+ *
+ * 来处（一等档 ext4 · 20 核 · Node v24.21.0 · 页缓存热 7 趟中位，原始输出在 0.3.4 方案 § 五.7）：
+ *
+ *   工件 `readIndex`   0.62–0.72 ms/MB（本仓 5,515,652 字节 3.98 ms = 0.72；16 MiB 三档 0.62–0.66）
+ *   真源 整篇扫        6.41–7.00 ms/MB（窄字母表 16 MB 6.41 · 中文注释 64 字 7.00 · 最杂 ASCII
+ *                      6.55；本仓那一档 12.5 ms/MB——每份小文件一笔协议开销，所以它是最贵的一档）
+ *
+ * 取 0.1（0.65 / 6.5）。**它不改任何一次读盘，只改一次比较**——改的是把已经量到的两个单价带进
+ * 模型，所以这一条的常数是 0。
+ *
+ * **改主意的条件**：一等档上重新取的两处单价之比离开 0.1 一个量级（比如工件那一侧换成了按节读、
+ * 或者真源那一侧换成了批量预取），或者四档读数上出现"该走却没走"与"走了更慢"。
+ */
+export const ARTIFACT_WEIGHT = 0.1
+
 /** 这一层读回来的那一份：工件是不可变内容，同进程里读一次就一直在（键里带 `size:mtime` 认账）。 */
 interface Cached {
   readonly key: string
@@ -227,8 +250,8 @@ export function createPlanner(deps: PlanDeps): Planner {
         viewBlobs: viewIds.size,
         artifactGrams: cached !== null && cached.key === probe.key ? cached.index.gramCount : 0,
       }
-      // 固定开销那一关先过：工件整份比全扫的 1/factor 还大，读它就已经亏了。
-      if (probe.bytes * factor >= scanBytes) return give('artifact-heavy', base)
+      // 固定开销那一关先过：工件整份**折算之后**比全扫的 1/factor 还大，读它就已经亏了。
+      if (probe.bytes * ARTIFACT_WEIGHT * factor >= scanBytes) return give('artifact-heavy', base)
 
       const read = await readOnce(probe)
       if (read === null) return give('artifact-absent', base)
@@ -261,9 +284,9 @@ export function createPlanner(deps: PlanDeps): Planner {
       }
 
       const reading: Partial<PlanReading> = { ...loaded, candidateBytes, gram, gramCount: count }
-      // 兑现那一关：工件 + 候选要读的字节，仍然要小于全扫的 1/factor 才走（读到这一步才知道
-      // 候选有多少；不够格就回扫描，欠的是这一步判断，不是把候选当答案）。
-      if ((read.bytes + candidateBytes) * factor >= scanBytes) return give('candidates-dense', reading)
+      // 兑现那一关：工件**折算之后** + 候选要读的字节，仍然要小于全扫的 1/factor 才走（读到这一步
+      // 才知道候选有多少；不够格就回扫描，欠的是这一步判断，不是把候选当答案）。
+      if ((read.bytes * ARTIFACT_WEIGHT + candidateBytes) * factor >= scanBytes) return give('candidates-dense', reading)
       return { why: 'candidates', paths, reading: { ...blank, ...reading } }
     } catch {
       // 意外一律回扫描——**这一档今天按构造到不了**（解析器每一支都有出口 · `readIndex` 自己把
