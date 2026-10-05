@@ -1,13 +1,16 @@
-// 本站的边界断言：**索引在不在场，既有命令的输出逐字节相同**。
-// 验收句：**索引在场/缺席两态下既有命令输出逐字节相同**。索引不接查询（查询接线是 0.3.3 的
-// 事）· 派生物纪律：`.fugue/idx/` 不进视图 · 不进事件 · 不进提交。
+// 本站的边界断言：**索引只指路，不改答案——既有命令的输出在两态下逐字节相同**。
+// 验收句：**索引在场/缺席两态下既有命令输出逐字节相同**。查询接线接上之后（本站），工具面那一条
+// 的判据翻了一半：输出照旧逐字节相同，而**在场那一趟少读**（接线就在这个“少读”上）。
+// 派生物纪律：`.fugue/idx/` 不进视图 · 不进事件 · 不进提交。
 // 跑法：cd ~/fugue && node --test src/index/unwired.test.ts
 //
 // 两态各起一套**全新装配**（新句柄 · 新视图 · 新宿主）：真源那一层的 blob 缓存随句柄生死，
 // 两态因此都在冷档上比——不然"索引在场"那一趟会带着建索引时留下的热缓存，量到的是缓存不是接线。
 //
-//   ① 工具面：`grep` 两档 + `glob`，两态输出逐字节相同，且**向真源发的请求数也相同**
-//      对手：任何一处"查询路上顺手用一下索引"的接线——一旦候选集被索引过滤过，两态就会分叉
+//   ① 工具面：`grep` 两档 + `glob`，两态输出逐字节相同；而**索引在场那一趟少读**
+//      （这一站之前断的是“查询路上没人读它”，本站把这一半翻过来：候选 ∩ 视图 → 不可能的路径不读）
+//      对手：任何一处**把索引当证据**的接线——答案只要有一份是从索引那一侧来（不是从真源字节
+//      逐行验出来），编码 · 大小写 · 正则语义 · 超长行里总有一条让两态分叉
 //   ② 命令面：`fugue list` / `read` / `revs` 三条只读命令的 stdout · stderr · 退出码逐字节相同
 //      对手：把索引塞进视图或日志（那样命令的输出会多一条、少一条，或者形状变了）
 //   ③ 建索引这一趟自己不写账：账的字节数在建设前后一个不差（② 的另一半）
@@ -56,6 +59,17 @@ const CORPUS: Record<string, string> = {
   'src/other.txt': 'export function delta(w) {}\n',
 }
 
+/**
+ * **一批不可能命中的大文件**：这一条要量的是“索引在场时少读了几份”，而少读要看得出来，就得让
+ * 全扫那一趟真的有事可做（4 份候选之外还有 20 份要读）。
+ *
+ * 字母表收得很窄（`ab` 两个字母加空格）：字典的条数是**全语料出现过的三字组**，宽字母表会让产物
+ * 比语料还重，那一侧就要退化成扫描（`plan.ts` 的 `artifact-heavy`）——这个夹具要的是“索引这一趟
+ * 真的被用上”，所以形状要与本仓那种窄字母表语料一致。
+ */
+const FILLER = 'abab abab abab\n'.repeat(128)
+for (let i = 0; i < 20; i++) CORPUS[`bulk/f${String(i).padStart(2, '0')}.txt`] = FILLER
+
 /** 建一份临时仓：真 git 对象库 + 一个 writer 的 ref，产品那一边读得到的那一份。 */
 async function makeRepo(): Promise<{ where: string; base: CommitId }> {
   const where = tmpDir('fugue-idx-wire-')
@@ -103,8 +117,8 @@ async function grepOnce(host: ToolHost, mode: string): Promise<string> {
   return r.output
 }
 
-/** 工具面那一趟：两档 grep + glob，外加向真源发的请求数。 */
-async function toolRun(where: string, base: CommitId): Promise<{ outputs: string[]; requests: number }> {
+/** 工具面那一趟：两档 grep + glob，外加向真源发的请求数与**真源被问到的内容份数**。 */
+async function toolRun(where: string, base: CommitId): Promise<{ outputs: string[]; requests: number; reads: number }> {
   const a = await assemble(where, base)
   try {
     const outputs = [
@@ -117,7 +131,10 @@ async function toolRun(where: string, base: CommitId): Promise<{ outputs: string
         holder: false,
       }).then((r) => r.output),
     ]
-    return { outputs, requests: a.truth.stats().gitRequests }
+    const stats = a.truth.stats()
+    // `blobHits + blobMisses` 就是“这一趟向真源要了几份内容”（预取那一道缝只写 `set`、
+    // 不记 hit/miss）——本站量“真少读了”用的就是它。
+    return { outputs, requests: stats.gitRequests, reads: stats.blobHits + stats.blobMisses }
   } finally {
     await a.close()
   }
@@ -167,7 +184,7 @@ async function withIndex<T>(where: string, base: CommitId, fn: () => Promise<T> 
   return await fn()
 }
 
-test('① 工具面：索引在场与缺席，grep 两档 + glob 的输出与请求数逐字节相同', async () => {
+test('① 工具面：索引在场与缺席，grep 两档 + glob 的输出逐字节相同，而场下少读', async () => {
   const { where, base } = await makeRepo()
   // 缺席那一趟。
   assert.equal(await indexExists(where), false)
@@ -176,12 +193,21 @@ test('① 工具面：索引在场与缺席，grep 两档 + glob 的输出与请
   // 建索引（走产品那一条入口：`sourceOfView` + `rebuildIndex`），然后在场那一趟：全新装配，冷档。
   const present = await withIndex(where, base, () => toolRun(where, base))
 
-  assert.deepEqual(present.outputs, absent.outputs, '索引在场时工具面的输出变了——那就是接进查询的路了')
-  assert.equal(present.requests, absent.requests, '索引在场时向真源发的请求数变了——查询路上有东西在读它')
-  assert.ok(absent.requests > 0, '这一趟一个请求都没发，那这条对照是空话')
+  // **等价那一半不动的判据**：答案逐字节相同。索引只指路、不作证——它说哪几条值得读，命中与否
+  // 照旧在真源字节上逐行验出来。
+  assert.deepEqual(present.outputs, absent.outputs, '索引在场时工具面的输出变了——接线不许改答案')
   assert.ok(absent.outputs.every((o) => o.length > 0), '两态都是空回执，那这条对照是空话')
+  // **接线那一半翻过来的判据**：在场那一趟向真源要的内容份数少了（不可能命中的路径没读）。
+  assert.ok(
+    present.reads < absent.reads,
+    `索引在场时该少读那几条不可能命中的路径：缺席 ${absent.reads} 份 → 在场 ${present.reads} 份`,
+  )
+  // 请求数只许不涨（少读不一定少发：批量档下一批 256 条算一趟，这个语料两态都装得下一批）。
+  assert.ok(present.requests <= absent.requests, `索引在场不许比缺席多发请求：${absent.requests} → ${present.requests}`)
+  assert.ok(absent.requests > 0 && absent.reads > 0, '缺席那一趟什么都没问，那这条对照是空话')
   console.log(
-    `① 读数：两态各 ${absent.requests} 次真源请求 · 三段回执逐字节相同（${absent.outputs.map((o) => o.length).join(' / ')} 字节）`,
+    `① 读数：三段回执两态逐字节相同（${absent.outputs.map((o) => o.length).join(' / ')} 字节）· ` +
+      `真源内容份数 缺席 ${absent.reads} → 在场 ${present.reads} · 请求数 ${absent.requests} → ${present.requests}`,
   )
 })
 
