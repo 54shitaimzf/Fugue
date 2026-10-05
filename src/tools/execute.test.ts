@@ -15,6 +15,9 @@
 //      （它的答案是一个全量数），逐文件那一份被掐了也要说清总数是全的
 //   ⑬ **公布的参数面一格不落**（架构 § 8.10 硬纪律 1）：`glob` 与 `output_mode` 三档各有一种
 //      被断言钉住的形状，坏值拒在伸手之前
+//   ⑱ **整段先试一次**（本站 ①）：整段不命中的那一份**不切行**（被切行的份数 0）；`^` 与 `$`
+//      两格落在"命中行不在第一行 / 不在最后一行"上，环视那一格（`foo(?!\n)`）照旧逐行——三份
+//      都必须照旧被切行。对手是**漏报**
 //   ⑭ **公布面与服务面逐字对齐**（架构 § 8.10 硬纪律 1）：`grep` 的 `output_mode` 三档，目录里公布
 //      的就是服务面认的那一组（各写一份 → 当场红）
 //   ⑮ **一条超长行不许把回执挤成 0 行**（对照吸收）：印一条 UTF-8 安全的前缀并说出来
@@ -500,6 +503,104 @@ test('⑬ 公布的参数面一格不落：`glob` 过滤 · `output_mode` 三档
   } finally {
     await b.close()
   }
+})
+
+// ── ⑱ 整段先试一次（本站 ①）──────────────────────────────────────────────────
+
+/** 一份手搓宿主：路径 → 内容（这条路只用到 `walk` 与 `readBytes` 两条）。 */
+function textHost(files: Readonly<Record<string, string>>): { host: ToolHost; reads: string[] } {
+  const paths = Object.keys(files).sort()
+  const reads: string[] = []
+  const host = {
+    walk: async () => paths,
+    readBytes: async (p: string) => {
+      reads.push(p)
+      const text = files[p]
+      return text === undefined ? null : { bytes: new TextEncoder().encode(text), mode: 0o100644 }
+    },
+  } as unknown as ToolHost
+  return { host, reads }
+}
+
+/**
+ * 这一趟 `grep` 把几份文件切了行。
+ *
+ * 量法：临时把 `String.prototype.split` 包一层，**只数分隔符是 `'\n'`、而且受者是这一份夹具的内容**
+ * 的那些调用——`grepFace` 里那一句 `text.split('\n')` 是这条路上唯一一处切行，而按内容过滤让别处
+ * 的 `split` 不被误数。量完在 `finally` 里还原，产品代码一个字节都不动。
+ */
+async function splitCountOf(fn: () => Promise<unknown>, isOurs: (s: string) => boolean): Promise<number> {
+  const real = String.prototype.split
+  let count = 0
+  const counting = function (this: string, sep?: unknown, limit?: number): string[] {
+    if (sep === '\n' && isOurs(this)) count += 1
+    return (real as unknown as (this: string, sep: unknown, limit: number | undefined) => string[]).call(this, sep, limit)
+  }
+  String.prototype.split = counting as unknown as typeof String.prototype.split
+  try {
+    await fn()
+  } finally {
+    String.prototype.split = real
+  }
+  return count
+}
+
+test('⑱ 整段先试一次：整段不命中的那一份不切行；锚点两格与环视那一格照旧切行（本站 ①）', async () => {
+  const TAG = 'whole-text-probe'
+  // 四份：甲 命中行**不在第一行**（`^import`）· 乙 命中行**不在最后一行**（`b$`）· 丙 只看行尾的
+  // 负向环视（`foo(?!\n)`）· 丁 一行都不命中（这一份才是"整段先试"真正跳过的那一格）。
+  //
+  // **四份都各有一行 `foo`**（都在行尾）：丙 那一格要的就是"整段试回 false · 逐行 true"，而四份
+  // 都含 `foo` 让那一格**只**量整段试这一处机制。
+  const files: Record<string, string> = {
+    'a.ts': `${TAG}\nimport x from 'y'\nfoo\n`,
+    'b.ts': `${TAG}\nlet b\nconst a = 1\nfoo\n`,
+    'c.ts': `${TAG}\nfoo\nbar\n`,
+    'd.ts': `${TAG}\n// 一条都不命中\nfoo\n`,
+  }
+  const isOurs = (s: string): boolean => s.startsWith(TAG)
+  /** 跑一问，同时数这一趟切了几份行。 */
+  const run = async (pattern: string): Promise<{ output: string; split: number }> => {
+    const h = textHost(files)
+    let output = ''
+    const split = await splitCountOf(async () => {
+      const out = await face('grep', { pattern }, h.host)
+      assert.equal(out.ok, true)
+      output = out.output
+    }, isOurs)
+    return { output, split }
+  }
+
+  // 甲 · `^import`：命中在第 2 行。整段那一趟必须带 `m` 才判得出"这一份有命中"——不带 `m` 回 false，
+  // 这一份被整份跳过（回执从"有命中"变成 `no line matches`），那是漏报。被切行的份数因此是 1。
+  const anchored = await run('^import')
+  assert.equal(anchored.output, "1 lines:\na.ts:2:import x from 'y'")
+  assert.equal(anchored.split, 1, '`^` 那一格：整段那一趟没带 `m`，a.ts 被整份跳过了')
+
+  // 乙 · `b$`：命中在第 2 行而后面还有一行（`$` 那一格）。
+  const atEnd = await run('b$')
+  assert.equal(atEnd.output, '1 lines:\nb.ts:2:let b')
+  assert.equal(atEnd.split, 1, '`$` 那一格：整段那一趟没带 `m`，b.ts 被整份跳过了')
+
+  // 丙 · `foo(?!\n)`：环视只看行尾那个 `\n`（四份的 `foo` 都在行尾），`m` 补不上——这一格**不跳**，
+  // 四份照旧全部切行、全部命中。
+  const look = await run('foo(?!\\n)')
+  assert.equal(look.output, '4 lines:\na.ts:3:foo\nb.ts:4:foo\nc.ts:2:foo\nd.ts:3:foo')
+  assert.equal(look.split, 4, '环视那一格该照旧逐行（不跳）——四份都切行')
+
+  // 丁 · 一行都不命中：四份整段都不命中 → **一份都不切行**，回执照旧是"没有匹配"。
+  const miss = await run('no-such-thing-here')
+  assert.equal(miss.output, 'no line matches no-such-thing-here.')
+  assert.equal(miss.split, 0, '整段不命中的那些份不切行——这一格才量得到"整段先试"真的在跳')
+
+  // 戊 · 整段命中的那些份照旧切行（四份都在第 1 行含 `TAG`）：跳过只发生在"整段不命中"那一侧。
+  const all = await run(TAG)
+  assert.match(all.output, /^4 lines:\n/)
+  assert.equal(all.split, 4, '整段命中的份必须照旧切行——少切一份就是漏报')
+
+  console.log(
+    `⑱ 读数：被切行的份数 —— \`^import\` ${anchored.split} · \`b$\` ${atEnd.split} · \`foo(?!\\n)\` ${look.split} · 未命中 ${miss.split} · 整段命中 ${all.split}`,
+  )
 })
 
 test('④ 假模型驱动 读 → 写 → 检查点：走到一次真提交，而真工作树一个文件都没多', async () => {

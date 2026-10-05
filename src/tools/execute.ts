@@ -521,6 +521,27 @@ async function narrowedBy(host: ToolHost, ask: PlanAsk): Promise<ReadonlySet<str
   }
 }
 
+/** 前瞻与后顾在模式源里的样子（`(?=` · `(?!` · `(?<=` · `(?<!`）。 */
+const LOOKAROUND = /\(\?<?[=!]/
+
+/**
+ * **整段那一趟用的那一份**（本站 ①）：`re` 的 `m` 克隆；模式里出现环视时给 `null`（这一格不跳）。
+ *
+ * 为什么整段也要 `m`：`^` 与 `$` 判的是"行的两端"，多行拼成一整段之后判的位置就变了——一份文件
+ * 第 30 行是 `import x` 而模式写 `^import`，不带 `m` 的整段试回 false，这一份被整份跳过，而那是
+ * **漏报**。加一个 `m` 就对上了（整段上也按行的两端判）。
+ *
+ * **环视不跳**：`foo(?!\n)` 逐行 true · 整段 false · 加 `m` 还是 false（读数在 0.3.4 方案 § 5.10
+ * 那三行），照它跳就是把一份真含命中的文件整份跳过。认环视只扫一遍模式源：扫错（把 `(?:` 或者
+ * 字符组里的 `(?` 也当成环视）只是少省一次，方向安全——不必让 `pattern.ts` 出一个精确信号。
+ */
+function wholeLineTrial(re: RegExp): RegExp | null {
+  if (LOOKAROUND.test(re.source)) return null
+  // 生产这条路的 flags 恒空（上面那一行是 `new RegExp(pattern)`），所以 `m` 只加不减。那一栏哪天
+  // 真有别的 flag，这里跟上去：已有的 `m` 不再写一遍（同一个 flag 写两次是 `SyntaxError`）。
+  return new RegExp(re.source, re.flags.includes('m') ? re.flags : `${re.flags}m`)
+}
+
 /**
  * 收尾那几句话的**原文各一处**（早停 · 逐文件被掐 · 超长行缩短 · 走树截尾）。
  *
@@ -692,6 +713,8 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   } catch (err) {
     return no(`that is not a regular expression: ${(err as Error).message}`)
   }
+  // **整段那一趟用的那一份**（本站 ①）：模式里出现环视时是 `null`（那一格不跳）。
+  const wholeRe = wholeLineTrial(re)
   // `glob` 那一栏走与 `glob` 工具**同一份**方言（`globToRe`）：不另立第二套模式语法。
   const onlyRe = only.value === null ? null : globToRe(only.value)
   const all = await host.walk()
@@ -758,7 +781,13 @@ const grepFace: ToolFn = async (args, host, ctx) => {
       if (mayHit !== null && !mayHit.has(path)) continue
       const got = await host.readBytes(path)
       if (got === null) continue
-      const body = utf8Of(got.bytes).split('\n')
+      const text = utf8Of(got.bytes)
+      // **整段先试一次**（本站 ①）：这一份整段一次都匹配不上就不切行、不进逐行循环——切行是这条
+      // 循环里最贵的一步（本仓 4.47 MB 上解码 2.72 · 切行 5.23 · 逐行 3.64 ms，切行占 45%）。
+      // 跳过点坐在 `mayHit` 过滤**之后**，而 `scanned` 照旧按清单位次累加（早停那一句数的是
+      // "走过清单的第几条"，少读几份不改它一个字节）。整段匹配的那些份一个字都不改。
+      if (wholeRe !== null && !wholeRe.test(text)) continue
+      const body = text.split('\n')
       let here = 0
       for (let i = 0; i < body.length; i += 1) {
         const line = body[i] as string
