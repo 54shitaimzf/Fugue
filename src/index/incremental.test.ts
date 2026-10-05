@@ -1,6 +1,6 @@
 // 增量构建的判据：**只碰新进来的 blob** · **与全量重建逐字节相同** · 退化档。
 // 出处：ROADMAP § 4 的增量构建那一行（随读随建 · 只爬新 blob）与它的验收格；底座是 § 9 的
-// 「索引在盘格式」那一格（`trigram.idx` v1 冻结——格式面一个字节不动）。跑法：
+// 「索引在盘格式」那一格（`trigram.idx` v2——字典记录 13 字节定宽，格式面其余部分一个字节不动）。跑法：
 //   cd ~/fugue && node --test src/index/incremental.test.ts
 //
 // 两条验收句各有一个点名对手，而且**互相补位**——这一对要一起看：
@@ -33,7 +33,7 @@ import { lowerAt } from '../view/lower.ts'
 import { loadView } from '../view/view.ts'
 import { INDEX_LIMITS } from './budget.ts'
 import type { IndexBudgetLimits } from './budget.ts'
-import { CODEC, SECTION, encodeIndex } from './format.ts'
+import { CODEC, INDEX_VERSION, SECTION, encodeIndex } from './format.ts'
 import { buildFrom, growIndex, idxFileOf, openOrRebuild, rebuildIndex, sourceOfView } from './store.ts'
 import type { BlobSource } from './store.ts'
 import {
@@ -371,6 +371,14 @@ test('⑥ 退化档：旧工件读不动 → 回全量重建（整组重读）�
       bent[8] = 0x7f
       return bent
     }],
+    // **上一版那一个版本号（v1 → v2 那一档）**：盘上今天真有的那一份工件就是它写的。它不是"坏
+    // 字节"，是**上一版的产品**；按"版本认不出当损坏"那条口径走的就是这条路，而迁移动作就是这
+    // 一条——不必另写一段读旧格式的代码，也不必在盘上留两份。
+    ['上一版的版本号（v1）', (bytes) => {
+      const bent = Buffer.from(bytes)
+      bent[8] = INDEX_VERSION - 1
+      return bent
+    }],
   ]
   for (const [what, bend] of bends) {
     writeFileSync(idxFileOf(root), bend(good))
@@ -390,7 +398,7 @@ test('⑥ 退化档：旧工件读不动 → 回全量重建（整组重读）�
   assert.equal(outcome.rebuilt, true)
   assert.equal(absent.reads.length, grown.length)
   assertSameBytes(readFileSync(idxFileOf(root)), want, '工件缺席')
-  console.log(`⑥ 读数：四种坏法 + 缺席，五趟都回全量重建（每趟读 ${grown.length} 份真源）· 结果与全量那一趟逐字节相同`)
+  console.log(`⑥ 读数：五种坏法 + 缺席，六趟都回全量重建（每趟读 ${grown.length} 份真源）· 结果与全量那一趟逐字节相同`)
 })
 
 // ── ⑦ 真链：真 git 仓 · 真视图 · 真真源 ─────────────────────────────────────
@@ -480,9 +488,9 @@ test('⑧ 形状坏了但每节摘要都对得上：读的一侧当损坏，增�
       ],
     })
 
-  // 一 · 字典长度不是 18 的整数倍：**粗检那一关就当损坏**（`sectionsOf` 给 null）。
+  // 一 · 字典长度不是 13 的整数倍：**粗检那一关就当损坏**（`sectionsOf` 给 null）。
   const cut = { ...whole, dict: whole.dict.subarray(0, whole.dict.byteLength - 1) }
-  // 二 · 字典不按键升序：把前两条 18 字节记录对调（长度不变、粗检过得去）。
+  // 二 · 字典不按键升序：把前两条 13 字节记录对调（长度不变、粗检过得去）。
   const swapped = { ...whole, dict: Uint8Array.prototype.slice.call(whole.dict) }
   const first = swapped.dict.slice(0, GRAM_RECORD_BYTES)
   swapped.dict.set(swapped.dict.subarray(GRAM_RECORD_BYTES, 2 * GRAM_RECORD_BYTES), 0)
@@ -492,7 +500,7 @@ test('⑧ 形状坏了但每节摘要都对得上：读的一侧当损坏，增�
   far.postings[0] = 0x7f
 
   const bends: [string, typeof whole, boolean][] = [
-    ['字典长度不是 18 的整数倍', cut, true],
+    ['字典长度不是 13 的整数倍', cut, true],
     ['字典不按键升序', swapped, false],
     ['顺序号越出 blob 表', far, false],
   ]

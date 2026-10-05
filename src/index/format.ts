@@ -43,8 +43,12 @@ export const INDEX_MAGIC_BYTES = 8
  *
  * 跳它的两个时机：前三节里任何一节的编码或形状变了 · 某张今天可选的新表变成必须有的。
  * 只是"多带了一张表"不跳——那由节表按类型找这条性质接住。
+ *
+ * **跳过的两次**：0.3.1 起是 1；0.3.4 ⑥ 把字典记录从 18 字节收到 13 字节（计数 u24 · 偏移 u32），
+ * 于是 2。盘上那些 1 的工件**按损坏处理**（上面那条口径），调用方回全量重建——迁移动作就是这一条，
+ * 不必另写一段读旧格式的代码，也不必在盘上留两份。
  */
-export const INDEX_VERSION = 1
+export const INDEX_VERSION = 2
 export const HEADER_BYTES = 16
 export const SECTION_ENTRY_BYTES = 56
 export const DIGEST_BYTES = 32
