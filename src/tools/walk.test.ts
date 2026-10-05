@@ -5,6 +5,7 @@
 //   ② 产品失效路径：真 `MemoryView` 上走 write / rename / chmod / remove（墓碑）/ 执行回写 /
 //      重建——每一步之后 `host.walk()` 如实变，且同代第二次不再列目录
 //   ③ 语义逐项不变：行序 · 深度与条数截断 · 软链与 gitlink 不跟——与一份不同源的参照逐项比
+//   ⑤ 清单里那两栏（id · 字节数）：与 view.list 的行同源 · 代变跟着换 · 手搓清单没有
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -24,7 +25,7 @@ import type { AgentId, RelPath, WriterId } from '../terms.ts'
 import type { ToolHost } from './execute.ts'
 import { createToolHost } from './host.ts'
 import { refHeadOf } from '../round/head.ts'
-import { createWalk, walkCutOf } from './walk-cache.ts'
+import { createWalk, walkCutOf, walkRowsOf } from './walk-cache.ts'
 import type { DirRow, WalkView } from './walk-cache.ts'
 
 const AGENT = 'agent-1' as AgentId
@@ -348,6 +349,53 @@ test('② 产品失效路径：write / rename / chmod / remove / 执行回写 / 
     console.log(
       `② 读数：六种变更（write · rename · chmod · remove · 执行回写 · 重建）各推一代，清单逐次如实变 · 同代第二次 0 次列目录`,
     )
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ⑤ 清单里那两栏（id · 字节数）──────────────────────────────────────────────
+
+test('⑤ 清单里带着 id 与字节数：与 view.list 的行同源 · 代变跟着换 · 手搓清单没有', async () => {
+  // 一 · 纯机制：行里给了就收下，没给就没有（查询接线据此不接线）。
+  const withIds = fakeWalk({
+    '': [
+      { name: 'a.ts', kind: 'file', id: 'aa', size: 5 },
+      { name: 'd', kind: 'dir' },
+    ],
+    d: [
+      { name: 'b.ts', kind: 'file', id: 'bb', size: 7 },
+      { name: 'link', kind: 'symlink', id: 'cc', size: 3 },
+    ],
+  })
+  const walked = await createWalk(withIds.view, { depth: 24, rows: 5000 })()
+  const rows = walkRowsOf(walked)
+  assert.deepEqual([...(rows?.ids ?? new Map())], [['a.ts', 'aa'], ['d/b.ts', 'bb']])
+  assert.deepEqual([...(rows?.sizes ?? new Map())], [['a.ts', 5], ['d/b.ts', 7]])
+  assert.equal(rows?.ids.has('d/link'), false, '软链不进清单，也就不该有它那一栏')
+
+  const bare = await createWalk(fakeWalk({ '': [row('a.ts', 'file')] }).view, { depth: 24, rows: 5000 })()
+  assert.equal(walkRowsOf(bare)?.ids.size, 0, '行里没给 id：那一栏就是空的（查询接线据此回扫描）')
+  assert.equal(walkRowsOf(Object.freeze(['x.ts'])), null, '不是枚举出来的清单就是没有这两栏')
+
+  // 二 · 真视图：与 `view.stat` 逐条相同，而且代一变就跟着换（内容变了 → 新 id）。
+  const b = await bench()
+  try {
+    await b.host.writeBytes('a.ts', asBytes('第一份\n'))
+    const first = await b.host.walk()
+    const rows1 = walkRowsOf(first)
+    for (const p of first) {
+      const meta = await b.view.stat(p as RelPath)
+      assert.equal(rows1?.ids.get(p), meta?.id, `${p} 的 id 与 view.stat 不一致`)
+      assert.equal(rows1?.sizes.get(p), meta?.size, `${p} 的字节数与 view.stat 不一致`)
+    }
+    await b.host.writeBytes('a.ts', asBytes('第一份改过了，写长一点\n'))
+    const second = await b.host.walk()
+    const rows2 = walkRowsOf(second)
+    assert.notEqual(rows2?.ids.get('a.ts'), rows1?.ids.get('a.ts'), '内容改了，id 该换一个')
+    assert.ok((rows2?.sizes.get('a.ts') ?? 0) > (rows1?.sizes.get('a.ts') ?? 0), '写长了，字节数该跟着长')
+    assert.equal(walkRowsOf(first)?.ids.get('a.ts'), rows1?.ids.get('a.ts'), '旧那一份清单的读数不许被后来的走树改写')
+    console.log(`⑤ 读数：${first.length} 条路径的 id 与字节数逐条对上 view.stat · 改写一份之后 id 换新`)
   } finally {
     await b.close()
   }
