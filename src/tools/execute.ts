@@ -499,7 +499,7 @@ function globOf(args: Readonly<Record<string, unknown>>): { readonly value: stri
 const PREFETCH_WINDOW = 128
 
 /**
- * **查询接线那道缝**（0.3.3）：按模式问一句"这一趟哪些路径可能命中"。
+ * **查询接线那道缝**（本站）：按模式问一句"这一趟哪些路径可能命中"。
  *
  * 它是**句柄层的方法**（`host.ts` 的 `WiredToolHost.searchPlan`），冻结的 `ToolHost` 一个字不动
  * ——与 `truth.prefetchBlobs` 同一条先例，所以在这里运行时探一次。探不到（夹具里那些宿主 ·

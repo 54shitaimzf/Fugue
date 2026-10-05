@@ -26,7 +26,7 @@ import { refuse } from './execute.ts'
 import { shellArgv } from './argv.ts'
 // **清单缓存**：`walk()` 的实现与它的键（视图代）都住这一份，宿主只接线（见 `walk-cache.ts`）。
 import { createWalk, walkRowsOf } from './walk-cache.ts'
-// **查询接线那一份计划**（0.3.3）：按模式收窄这一趟要读的路径。它住在 `src/search/`，不进冻结面。
+// **查询接线那一份计划**（本站）：按模式收窄这一趟要读的路径。它住在 `src/search/`，不进冻结面。
 import { createPlanner } from '../search/plan.ts'
 import type { Planner } from '../search/plan.ts'
 import { digestOf } from '../runtime/restart.ts'
@@ -157,7 +157,7 @@ function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Prom
 }
 
 /**
- * **一趟预取最多先取回多少字节 = 缓存容量的一半**（人批的定稿规格，0.3.3）。
+ * **一趟预取最多先取回多少字节 = 缓存容量的一半**（人批的定稿规格）。
  *
  * 为什么是一半：预取的字节回来之后要**留在**缓存里等到真被读——`BlobLru` 是按字节封顶的 LRU，
  * 装不下的从最旧那一头挤掉。一趟预取要是能取满整个容量，它自己就能把缓存转一圈：先取的那几条
@@ -196,7 +196,7 @@ function cacheBytesOf(truth: Truth | undefined): number {
 /**
  * 装配起来的那一份宿主：冻结的 `ToolHost` ＋ **句柄层多出来的那一栏**。
  *
- * `searchPlan` 是 0.3.3 的查询接线：按模式给出"这一趟可能命中的路径"，`tools/execute.ts` 那一趟
+ * `searchPlan` 是查询接线的落点：按模式给出"这一趟可能命中的路径"，`tools/execute.ts` 那一趟
  * 读它、照它跳过不可能命中的文件（答案照旧在原卷上逐行验出来，索引只指路）。**它不是
  * `ToolHost` 的一栏**——那张面冻结着；加方法只落在句柄层、由 `execute.ts` 运行时探一次，与
  * `truth.prefetchBlobs` · `stats()` 同一条先例（本文件 `prefetchOf` 就是那么探的）。

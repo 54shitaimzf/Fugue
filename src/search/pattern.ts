@@ -1,4 +1,4 @@
-// 查询模式 → **匹配文本一定含有的那些三字组**。出处：ROADMAP § 4 的 0.3.3 行（trigram 候选 ∩
+// 查询模式 → **匹配文本一定含有的那些三字组**。出处：ROADMAP § 4 的查询接线那一行（trigram 候选 ∩
 // 视图 blob 集 → 验证）；手艺是 Russ Cox《Regular Expression Matching with a Trigram Index》
 // （Google Code Search 的 `regexp.go`：模式里的字面量段取三字组当筛子，认不出来就整条回退）与
 // Sourcegraph Zoekt 的 n-gram 查询计划。
