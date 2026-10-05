@@ -25,7 +25,10 @@ import type { ActionAsk, AskItem, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, T
 import { refuse } from './execute.ts'
 import { shellArgv } from './argv.ts'
 // **清单缓存**：`walk()` 的实现与它的键（视图代）都住这一份，宿主只接线（见 `walk-cache.ts`）。
-import { createWalk } from './walk-cache.ts'
+import { createWalk, walkRowsOf } from './walk-cache.ts'
+// **查询接线那一份计划**（本站）：按模式收窄这一趟要读的路径。它住在 `src/search/`，不进冻结面。
+import { createPlanner } from '../search/plan.ts'
+import type { Planner } from '../search/plan.ts'
 import { digestOf } from '../runtime/restart.ts'
 import { lstatSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -154,13 +157,55 @@ function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Prom
 }
 
 /**
+ * **一趟预取最多先取回多少字节 = 缓存容量的一半**（人批的定稿规格）。
+ *
+ * 为什么是一半：预取的字节回来之后要**留在**缓存里等到真被读——`BlobLru` 是按字节封顶的 LRU，
+ * 装不下的从最旧那一头挤掉。一趟预取要是能取满整个容量，它自己就能把缓存转一圈：先取的那几条
+ * 在真被读之前就被自己挤走，取回来等于白取（0.3.1 那张账在 1 MiB 那一档上量到的负收益）。
+ * 留一半给这一趟真在读的那几份与下一批，挤占就不会发生在本趟自己身上。
+ *
+ * **代价是覆盖不全**：一趟只覆盖到预算满为止，这一窗剩下的路径交给按需读那一趟（那就是“预取
+ * 缺席”那条地板，只是慢），下一窗重新起一批。容量 0 在这里就是预算 0 = 一条都不取。
+ */
+export function prefetchBudgetOf(cacheBytes: number): number {
+  return Math.floor(cacheBytes / 2)
+}
+
+/**
+ * 真源那一层报的 blob 缓存容量。**冻结的 `Truth` 契约一个字不动**：`stats()` 与 `prefetchBlobs`
+ * 一样只落在句柄层（`TruthHandle`），所以这里与 `prefetchOf` 同一形状地探一次。
+ *
+ * 问不到容量那一档预算就是 0（这一趟不预取）：两栏都在句柄层，夹具里那几份假体都没有；
+ * **不猜一个容量出来**——猜大了会挤占，猜小了白付结构化开销，而少预取只是慢。
+ */
+function cacheBytesOf(truth: Truth | undefined): number {
+  const stats = (truth as unknown as { stats?: unknown } | undefined)?.stats
+  if (typeof stats !== 'function') return 0
+  const got = (stats as () => { readonly blobCacheBytes?: unknown }).call(truth) as { readonly blobCacheBytes?: unknown }
+  const bytes = got?.blobCacheBytes
+  return typeof bytes === 'number' && bytes >= 0 ? bytes : 0
+}
+
+/**
  * 一份 `ToolHost`。
  *
  * `view` 是读与写的唯一去处（写走 `view/edit.ts` 那一份：blob → 日志 → 内存，顺序在那儿）；
  * `roots` 只用来过围栏——**它不拼物理路径**：这一档里文件的字节住在视图的上层，不在物化出来的
  * 那棵树上（`B6` 把"执行前物化"接上时，`bash` 那一条才真的落在树里）。
  */
-export function createToolHost(view: View, roots: Roots, opts: HostOptions = {}): ToolHost {
+/**
+ * 装配起来的那一份宿主：冻结的 `ToolHost` ＋ **句柄层多出来的那一栏**。
+ *
+ * `searchPlan` 是查询接线的落点：按模式给出"这一趟可能命中的路径"，`tools/execute.ts` 那一趟
+ * 读它、照它跳过不可能命中的文件（答案照旧在原卷上逐行验出来，索引只指路）。**它不是
+ * `ToolHost` 的一栏**——那张面冻结着；加方法只落在句柄层、由 `execute.ts` 运行时探一次，与
+ * `truth.prefetchBlobs` · `stats()` 同一条先例（本文件 `prefetchOf` 就是那么探的）。
+ */
+export interface WiredToolHost extends ToolHost {
+  readonly searchPlan: Planner
+}
+
+export function createToolHost(view: View, roots: Roots, opts: HostOptions = {}): WiredToolHost {
   const parts = opts.actions
 
   async function deny(d: DenyAsk): Promise<void> {
@@ -232,6 +277,8 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
   async function prefetchNow(paths: readonly string[]): Promise<void> {
     const blobs = prefetchOf(opts.actions?.truth)
     if (blobs === undefined) return
+    // **这一趟先取多少字节是由缓存容量算出来的**（`prefetchBudgetOf`），不是由这一窗有多少条算出来的。
+    const budget = prefetchBudgetOf(cacheBytesOf(opts.actions?.truth))
     const metas = await Promise.all(
       paths.map(async (rel) => {
         try {
@@ -243,11 +290,18 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
       }),
     )
     const out: BlobId[] = []
+    let planned = 0
     for (const meta of metas) {
       const id = meta === null || meta.kind !== 'file' ? undefined : meta.id
       if (id === undefined || id === null || id === '') continue
+      // **预算在这儿生效**：加起来过了半个缓存就跳过这一条（跳过而不是停——后面小份的还能进这一批），
+      // 剩下的交给读那一趟按需取。
+      if (planned + meta.size > budget) continue
+      planned += meta.size
       out.push(id as BlobId)
     }
+    // 一条都没排上就不发这一趟（容量 0 那条地板也走这里）。
+    if (out.length === 0) return
     await blobs(out)
   }
 
@@ -257,6 +311,12 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
    * 就是新的一代——深度 · 条数 · 软链不跟三条语义逐字照旧（同一份视图缓存前后给出的清单相同）。
    */
   const walk = createWalk(view, { depth: MAX_DEPTH, rows: MAX_ROWS })
+
+  /**
+   * 查询接线那一份计划（`src/search/plan.ts`）：索引住 `<root>/.fugue/idx/`，视图那一份 id 与
+   * 字节数取自走树缓存——**同一个 `view.list` 的行，不为一次查询再枚举一遍视图**。
+   */
+  const searchPlan = createPlanner({ root: roots.realRoot, rowsOf: walkRowsOf })
 
   // ── 执行面（W8：视图是读面，物化根是执行面）──────────────────────────
   //
@@ -577,6 +637,7 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
 
     walk,
     prefetch: prefetchNow,
+    searchPlan,
 
     async run(ask: RunAsk) {
 

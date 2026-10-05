@@ -4,18 +4,18 @@
 // 三节的分工（形状见 `format.ts`）：
 //
 //   blobs    u32 idBytes + N 个定宽 id（**按 id 升序**）。顺序号就是它的下标。
-//   dict     N 条定宽 18 字节记录（三个 UTF-16 单元 · count u32 · offset u64），按 gram 升序。
+//   dict     N 条定宽 13 字节记录（三个 UTF-16 单元 · count u24 · offset u32），按 gram 升序。
 //   postings 各 gram 的顺序号表依次相接：**差分 + varint**（无符号 LEB128）。
 //
 // 五条口径：
 //
 //   一 · **只出候选。** `candidatesOf` 给的是"这个三字组可能出现在哪些 blob 里"；答案永远从真源
-//        字节里验出来（0.3.3 的验证那一格）。这份载荷里没有一处判断"原文怎么匹配"。
+//        字节里验出来（查询接线那一格验的）。这份载荷里没有一处判断"原文怎么匹配"。
 //   二 · **键是 blob id，不是路径。** 内容寻址 ⇒ 同一份内容出现在几条路径上只有一条 posting，
 //        而改名不动索引——增量构建只爬新 blob，靠的就是这一条。
 //   三 · **工件是 blob 集合的纯函数**：顺序号按 id 升序发、gram 表按 gram 升序排，于是同一组
 //        (id, 字节) 无论以什么顺序喂进来，编出来的字节逐字节相同。
-//   四 · **字典定宽是为了"先拿计数"**：第 k 条记录就在 `k × 18`，二分查找既能在一份读回来的
+//   四 · **字典定宽是为了"先拿计数"**：第 k 条记录就在 `k × 13`，二分查找既能在一份读回来的
 //        字典里做，也能按偏移逐条读。变长编码的字典要把整段走一遍才找得到一个 gram——
 //        "不读完就拿到计数"那条路会当场堵死，而 `countOf` 正是选择性派发要的那一问。
 //        长度那一栏**不存**：它就是"下一条的起点减这一条的起点"（末条减到 postings 那一节的
@@ -50,8 +50,20 @@ export type Trigram = number
 export const TRIGRAM_UNITS = 3
 /** 一个三字组的键在字典里占几个字节（三个 u16 相接）。 */
 export const GRAM_KEY_BYTES = 6
-/** 字典一条记录的字节数。**定宽**是口径四那条路的前提。 */
-export const GRAM_RECORD_BYTES = 18
+/**
+ * 字典一条记录的字节数 = 键 6 + count 3 + offset 4。**定宽**是口径四那条路的前提。
+ *
+ * 后两栏的宽度是从 `INDEX_LIMITS` 反推的，不是估的（本站 ⑥ 把 u32/u64 收到 u24/u32）：
+ *
+ *   count  装的是"这个 gram 出现在几个 blob 里"，而 blob 表最多 `INDEX_LIMITS.blobs` = 65,536 条
+ *          （`collectBlobs` 与 `growFrom` 都在收的当场止住）——65,536 < 2^24，三个字节够。
+ *   offset 装的是 postings 那一节里的位置，而整份工件最多 `INDEX_LIMITS.artifactBytes` = 64 MiB
+ *          （`store.ts` 那一关判在分配之前）——64 MiB < 2^32，四个字节够。
+ *
+ * 于是这两栏**装不满**，写入那一侧不必再加边界检查：加一道也说不清挡的是什么灾，而上限那一边
+ * 已经先抛了（`IndexBudgetExceeded`）。两条上限哪一条动了，这两个宽度都得重新反推一遍。
+ */
+export const GRAM_RECORD_BYTES = GRAM_KEY_BYTES + 3 + 4
 /** 键的上界：三个码元全满。 */
 export const GRAM_MAX = 0xff_ffff_ffff_ffff
 const UNIT_BASE = 0x1_0000
@@ -172,17 +184,28 @@ export function decodeBlobTable(body: Uint8Array): { idBytes: number; ids: BlobI
   return { idBytes, ids }
 }
 
-/** 把一条记录写进 `out` 的第 `at` 个字节：三个单元（u16 各一）· count u32 · offset u64。 */
+/** 三个字节的无符号小端整数。`DataView` 没有 u24 这一档，两行手写。 */
+function setUint24(view: DataView, at: number, value: number): void {
+  view.setUint8(at, value & 0xff)
+  view.setUint8(at + 1, (value >>> 8) & 0xff)
+  view.setUint8(at + 2, (value >>> 16) & 0xff)
+}
+
+function getUint24(view: DataView, at: number): number {
+  return view.getUint8(at) | (view.getUint8(at + 1) << 8) | (view.getUint8(at + 2) << 16)
+}
+
+/** 把一条记录写进 `out` 的第 `at` 个字节：三个单元（u16 各一）· count u24 · offset u32。 */
 function writeGramRecord(out: Uint8Array, at: number, row: GramRow): void {
   const view = new DataView(out.buffer, out.byteOffset, out.byteLength)
   view.setUint16(at, Math.floor(row.gram / HIGH_BASE), true)
   view.setUint16(at + 2, Math.floor(row.gram / UNIT_BASE) % UNIT_BASE, true)
   view.setUint16(at + 4, row.gram % UNIT_BASE, true)
-  view.setUint32(at + 6, row.count, true)
-  view.setBigUint64(at + 10, BigInt(row.offset), true)
+  setUint24(view, at + 6, row.count)
+  view.setUint32(at + 9, row.offset, true)
 }
 
-/** 字典的一条记录，18 字节定宽。 */
+/** 字典的一条记录，13 字节定宽（宽度那份反推写在 `GRAM_RECORD_BYTES`）。 */
 export function encodeGramRecord(row: GramRow): Uint8Array {
   const out = new Uint8Array(GRAM_RECORD_BYTES)
   writeGramRecord(out, 0, row)
@@ -199,8 +222,8 @@ export function decodeGramRecord(dict: Uint8Array, at: number): GramRow | null {
   const view = new DataView(dict.buffer, dict.byteOffset, dict.byteLength)
   return {
     gram: view.getUint16(at, true) * HIGH_BASE + view.getUint16(at + 2, true) * UNIT_BASE + view.getUint16(at + 4, true),
-    count: view.getUint32(at + 6, true),
-    offset: Number(view.getBigUint64(at + 10, true)),
+    count: getUint24(view, at + 6),
+    offset: view.getUint32(at + 9, true),
   }
 }
 

@@ -5,7 +5,7 @@
 // （`stat` · `read` · 快照 · `ensure` 都在用它）——缓存进视图会改所有调用方的语义面。这一份是最小
 // 的派生体：清空随时安全，它死了系统只是**变慢**（AGENTS 第五节那条地板）。
 //
-// 三条硬性（测试里会红的那几条）：
+// 四条硬性（测试里会红的那几条）：
 //
 //   一 · **键只读 `view.rev` 这一个活读数**：`write` · `rename` · `chmod` · `remove`（墓碑）·
 //        执行回写的 `applyEdit` 都推进它，而它不是物化树的快照——"快路径以视图为基准"由此兑现。
@@ -14,7 +14,11 @@
 //        半份清单比没有清单更坏：它看着像"这棵树就这么大"。
 //   三 · **交出去的那一份是冻结的**：一位调用者改它不影响下一位，于是同代复用不必逐次拷贝。
 //        截没截（`WalkCut` · `walkCutOf`）**跟着那一份清单走**：它是枚举的读数，不是清单的一栏。
-import type { ViewRev } from '../terms.ts'
+//   四 · **清单里那两栏（内容标识 · 字节数）跟着清单走**：查询接线要拿它们与索引的候选求交
+//        （`src/search/plan.ts`），而 `view.list` 的那一行本来就有——收在同一张 `WeakMap` 里
+//        （与 `WalkCut` 同一条理由：它们不是路径）。**没记过就是没有**：夹具里手搓的 `walk()`
+//        拿不到，查询接线据此不接线，照旧全扫（地板：少一份读数，不是坏掉）。
+import type { BlobId, ViewRev } from '../terms.ts'
 
 /**
  * 走一遍树要的那两样：这一格现在是哪个号，以及怎么列一层。
@@ -28,10 +32,14 @@ export interface WalkView {
   list(dir: string): Promise<readonly DirRow[]>
 }
 
-/** 列目录的一行里这一层读得懂的两栏（`DirEntry` 的其余几栏这里不看）。 */
+/** 列目录的一行里这一层用到的几栏（`DirEntry` 的其余几栏这里不看）。 */
 export interface DirRow {
   readonly name: string
   readonly kind: string
+  /** 文件那一行的内容标识（`DirEntry.id`）。**查询接线要它**（`walkRowsOf`）；夹具可以不给。 */
+  readonly id?: string
+  /** 文件那一行的字节数（`DirEntry.size`）。同上。 */
+  readonly size?: number
 }
 
 /** 走多远就停。**两条都是必须的**（出处见 `host.ts` 那两条常数）：软链穿过去就绕开了路径围栏，
@@ -67,11 +75,28 @@ export interface WalkCut {
  * **没记过就是 `null`**（夹具与单测里那种手搓的 `walk()`）：机制缺席 = 少一份读数——不猜、
  * 不报错、也不改变既有回执的一个字节。
  */
+/** 交出去的那份清单 → 它枚举到的两栏（路径 → id · 路径 → 字节数）。与 `CUTS` 同一张表的写法。 */
+export interface WalkRows {
+  readonly ids: ReadonlyMap<string, BlobId>
+  readonly sizes: ReadonlyMap<string, number>
+}
+
 const CUTS = new WeakMap<readonly string[], WalkCut>()
+const ROWS = new WeakMap<readonly string[], WalkRows>()
 
 /** 读一次枚举的收尾事实。**只读，不改**（见上面那一张表的理由）。 */
 export function walkCutOf(paths: readonly string[]): WalkCut | null {
   return CUTS.get(paths) ?? null
+}
+
+/**
+ * 读一次枚举留下的那两栏。**与那份清单同源**：同一个 `view.list` 的行，不是为查询再枚举一遍
+ * 视图（`store.ts` 口径四那条「固定开销瘦身」里最容易被漏掉的一半）。
+ *
+ * **没记过就是 `null`**（夹具与单测里那种手搓的 `walk()`）：查询接线据此不接线，照旧全扫。
+ */
+export function walkRowsOf(paths: readonly string[]): WalkRows | null {
+  return ROWS.get(paths) ?? null
 }
 
 /**
@@ -88,6 +113,10 @@ export function createWalk(view: WalkView, limits: WalkLimits): () => Promise<re
     const rev = view.rev
     if (cached !== null && cached.rev === rev) return cached.paths
     const out: string[] = []
+    // **同一行里带着那两栏**：查询接线要它们去和索引的候选求交，这里顺手收下（原样取自
+    // `view.list` 的行，不另问一次）。行里没给就少一栏，`walkRowsOf` 那一侧按"没有"处理。
+    const ids = new Map<string, BlobId>()
+    const sizes = new Map<string, number>()
     // **两条上限各自记一笔**（本站 ②）：记的是"真的因为这一条停下来了"，不是"凑巧顶到了"——
     // 树里恰好 `limits.rows` 个文件的那一档，循环自然走完，两条都是假。
     let rowsCut = false
@@ -114,13 +143,18 @@ export function createWalk(view: WalkView, limits: WalkLimits): () => Promise<re
           return
         }
         if (row.kind === 'dir') await step(path, depth + 1)
-        else out.push(path)
+        else {
+          out.push(path)
+          if (typeof row.id === 'string') ids.set(path, row.id as BlobId)
+          if (typeof row.size === 'number') sizes.set(path, row.size)
+        }
       }
     }
     // **抛出去就不写缓存**（硬性二）：`await` 在这里把异常原样交给调用者，而 `cached` 一行不动。
     await step('', 0)
     const paths: readonly string[] = Object.freeze(out)
     CUTS.set(paths, { rows: rowsCut, depth: depthCut, limits })
+    ROWS.set(paths, { ids, sizes })
     cached = { rev, paths }
     return paths
   }

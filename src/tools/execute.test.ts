@@ -15,12 +15,19 @@
 //      （它的答案是一个全量数），逐文件那一份被掐了也要说清总数是全的
 //   ⑬ **公布的参数面一格不落**（架构 § 8.10 硬纪律 1）：`glob` 与 `output_mode` 三档各有一种
 //      被断言钉住的形状，坏值拒在伸手之前
+//   ⑱ **整段先试一次**（本站 ①）：整段不命中的那一份**不切行**（被切行的份数 0）；`^` 与 `$`
+//      两格落在"命中行不在第一行 / 不在最后一行"上，环视那一格（`foo(?!\n)`）照旧逐行——三份
+//      都必须照旧被切行。对手是**漏报**
+//   ⑲ **必含字面量的字节闸**（本站 ②）：抽得出字面量时按原始字节筛（环视那一格把闸单独隔出来）·
+//      字面量含 U+FFFD 时整条交回空表，那一份非法 UTF-8 的文件照旧命中。对手是**漏报**
 //   ⑭ **公布面与服务面逐字对齐**（架构 § 8.10 硬纪律 1）：`grep` 的 `output_mode` 三档，目录里公布
 //      的就是服务面认的那一组（各写一份 → 当场红）
 //   ⑮ **一条超长行不许把回执挤成 0 行**（对照吸收）：印一条 UTF-8 安全的前缀并说出来
 //   ⑯ **收尾留量是算出来的**（对照吸收）：真收工句 + 最长的说明与头，都装在留量里
 //   格 3 **`grep` 的候选先按一批取回内容**：冷的那一趟请求数不随文件数线性涨，
 //   热的那一趟一次都不发；这道缝缺席时退回逐文件读（回执逐字节不变）
+//   格 3 **一趟预取最多先取半个缓存**（定稿规格：预算 × 2 ≤ 缓存容量）：取回来的字节不许把
+//   自己挤掉（挤占那一支被杀）· 排不上的那几份按需读、回执逐字节不变 · 容量 0 是那条地板
 
 import assert from 'node:assert/strict'
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
@@ -53,7 +60,7 @@ import { GREP_MODES, RUNTIME_TAIL_RESERVE, STOP_NOTE_RESERVE, faceOf, noFace, pa
 import { capReceipt, lineCount, MAX_RECEIPT_BYTES } from './receipt.ts'
 import { createWalk } from './walk-cache.ts'
 import type { ToolHost } from './execute.ts'
-import { createToolHost } from './host.ts'
+import { createToolHost, prefetchBudgetOf } from './host.ts'
 import { refHeadOf } from '../round/head.ts'
 import { AGENT_LAND_NOW } from '../round/driver.ts'
 import { HOLDER_LAND_NOW } from '../round/plan.ts'
@@ -498,6 +505,168 @@ test('⑬ 公布的参数面一格不落：`glob` 过滤 · `output_mode` 三档
   } finally {
     await b.close()
   }
+})
+
+// ── ⑱ 整段先试一次（本站 ①）──────────────────────────────────────────────────
+
+/** 一份手搓宿主：路径 → 内容（字符串按 UTF-8 编；给字节就原样交出去——② 那一格要非法的字节）。 */
+function textHost(files: Readonly<Record<string, string | Uint8Array>>): { host: ToolHost; reads: string[] } {
+  const paths = Object.keys(files).sort()
+  const reads: string[] = []
+  const host = {
+    walk: async () => paths,
+    readBytes: async (p: string) => {
+      reads.push(p)
+      const body = files[p]
+      if (body === undefined) return null
+      return { bytes: typeof body === 'string' ? new TextEncoder().encode(body) : body, mode: 0o100644 }
+    },
+  } as unknown as ToolHost
+  return { host, reads }
+}
+
+/**
+ * 这一趟 `grep` 把几份文件切了行。
+ *
+ * 量法：临时把 `String.prototype.split` 包一层，**只数分隔符是 `'\n'`、而且受者是这一份夹具的内容**
+ * 的那些调用——`grepFace` 里那一句 `text.split('\n')` 是这条路上唯一一处切行，而按内容过滤让别处
+ * 的 `split` 不被误数。量完在 `finally` 里还原，产品代码一个字节都不动。
+ */
+async function splitCountOf(fn: () => Promise<unknown>, isOurs: (s: string) => boolean): Promise<number> {
+  const real = String.prototype.split
+  let count = 0
+  const counting = function (this: string, sep?: unknown, limit?: number): string[] {
+    if (sep === '\n' && isOurs(this)) count += 1
+    return (real as unknown as (this: string, sep: unknown, limit: number | undefined) => string[]).call(this, sep, limit)
+  }
+  String.prototype.split = counting as unknown as typeof String.prototype.split
+  try {
+    await fn()
+  } finally {
+    String.prototype.split = real
+  }
+  return count
+}
+
+test('⑱ 整段先试一次：整段不命中的那一份不切行；锚点两格与环视那一格照旧切行（本站 ①）', async () => {
+  const TAG = 'whole-text-probe'
+  // 四份：甲 命中行**不在第一行**（`^import`）· 乙 命中行**不在最后一行**（`b$`）· 丙 只看行尾的
+  // 负向环视（`foo(?!\n)`）· 丁 一行都不命中（这一份才是"整段先试"真正跳过的那一格）。
+  //
+  // **四份都各有一行 `foo`**（都在行尾）：丙 那一格要的就是"整段试回 false · 逐行 true"，而四份
+  // 都含 `foo` 让那一格**只**量整段试这一处机制。
+  const files: Record<string, string> = {
+    'a.ts': `${TAG}\nimport x from 'y'\nfoo\n`,
+    'b.ts': `${TAG}\nlet b\nconst a = 1\nfoo\n`,
+    'c.ts': `${TAG}\nfoo\nbar\n`,
+    'd.ts': `${TAG}\n// 一条都不命中\nfoo\n`,
+  }
+  const isOurs = (s: string): boolean => s.startsWith(TAG)
+  /** 跑一问，同时数这一趟切了几份行。 */
+  const run = async (pattern: string): Promise<{ output: string; split: number }> => {
+    const h = textHost(files)
+    let output = ''
+    const split = await splitCountOf(async () => {
+      const out = await face('grep', { pattern }, h.host)
+      assert.equal(out.ok, true)
+      output = out.output
+    }, isOurs)
+    return { output, split }
+  }
+
+  // 甲 · `^import`：命中在第 2 行。整段那一趟必须带 `m` 才判得出"这一份有命中"——不带 `m` 回 false，
+  // 这一份被整份跳过（回执从"有命中"变成 `no line matches`），那是漏报。被切行的份数因此是 1。
+  const anchored = await run('^import')
+  assert.equal(anchored.output, "1 lines:\na.ts:2:import x from 'y'")
+  assert.equal(anchored.split, 1, '`^` 那一格：整段那一趟没带 `m`，a.ts 被整份跳过了')
+
+  // 乙 · `b$`：命中在第 2 行而后面还有一行（`$` 那一格）。
+  const atEnd = await run('b$')
+  assert.equal(atEnd.output, '1 lines:\nb.ts:2:let b')
+  assert.equal(atEnd.split, 1, '`$` 那一格：整段那一趟没带 `m`，b.ts 被整份跳过了')
+
+  // 丙 · `foo(?!\n)`：环视只看行尾那个 `\n`（四份的 `foo` 都在行尾），`m` 补不上——这一格**不跳**，
+  // 四份照旧全部切行、全部命中。
+  const look = await run('foo(?!\\n)')
+  assert.equal(look.output, '4 lines:\na.ts:3:foo\nb.ts:4:foo\nc.ts:2:foo\nd.ts:3:foo')
+  assert.equal(look.split, 4, '环视那一格该照旧逐行（不跳）——四份都切行')
+
+  // 丁 · 一行都不命中：四份整段都不命中 → **一份都不切行**，回执照旧是"没有匹配"。
+  const miss = await run('no-such-thing-here')
+  assert.equal(miss.output, 'no line matches no-such-thing-here.')
+  assert.equal(miss.split, 0, '整段不命中的那些份不切行——这一格才量得到"整段先试"真的在跳')
+
+  // 戊 · 整段命中的那些份照旧切行（四份都在第 1 行含 `TAG`）：跳过只发生在"整段不命中"那一侧。
+  const all = await run(TAG)
+  assert.match(all.output, /^4 lines:\n/)
+  assert.equal(all.split, 4, '整段命中的份必须照旧切行——少切一份就是漏报')
+
+  console.log(
+    `⑱ 读数：被切行的份数 —— \`^import\` ${anchored.split} · \`b$\` ${atEnd.split} · \`foo(?!\\n)\` ${look.split} · 未命中 ${miss.split} · 整段命中 ${all.split}`,
+  )
+})
+
+// ── ⑲ 必含字面量的字节闸（本站 ②）────────────────────────────────────────────
+
+test('⑲ 字节闸：抽得出的字面量按原始字节筛（连解码都省）· 含 U+FFFD 时整条交回空表', async () => {
+  const TAG = 'byte-gate-probe'
+  const isOurs = (s: string): boolean => s.startsWith(TAG)
+  /** 跑一问：回执 · 这一趟切了几份行 · 读了几份（闸坐在读之后，所以读份数不该变）。 */
+  const run = async (
+    files: Readonly<Record<string, string | Uint8Array>>,
+    pattern: string,
+  ): Promise<{ output: string; split: number; reads: number }> => {
+    const h = textHost(files)
+    let output = ''
+    const split = await splitCountOf(async () => {
+      const out = await face('grep', { pattern }, h.host)
+      assert.equal(out.ok, true)
+      output = out.output
+    }, isOurs)
+    return { output, split, reads: h.reads.length }
+  }
+
+  // 一 · **环视那一格把闸单独隔出来**：`bar(?!\n)` 含环视，所以"整段先试"（①）整个不参与；这一趟
+  // 还能少切行，只可能是字节闸干的。四份里两份含 `bar`，另外两份不含。
+  const look = await run(
+    {
+      'a.ts': `${TAG}\nfoo x bar\n`,
+      'b.ts': `${TAG}\nfoo x baz\n`,
+      'c.ts': `${TAG}\nqux x bar\n`,
+      'd.ts': `${TAG}\nnothing here\n`,
+    },
+    'bar(?!\\n)',
+  )
+  assert.equal(look.output, '2 lines:\na.ts:2:foo x bar\nc.ts:2:qux x bar', '回执该逐字节就是那两条命中')
+  assert.equal(look.split, 2, '不含 `bar` 的那两份该被字节闸跳过——没跳就是四份都切了行')
+  assert.equal(look.reads, 4, '闸坐在读之后：四份都读了（省的是一趟解码与切行，不是读盘）')
+
+  // 二 · **闸放行不等于命中**：另一个环视模式（整段试同样不参与），这一份的字节里有 `bar` 而模式
+  // 匹配不上（`bar` 后面紧跟着 `x`，负向环视不成立）——它过了闸、被逐行试了，回执照旧是"没有
+  // 匹配"。闸只跳过，不作证。
+  const near = await run({ 'a.ts': `${TAG}\nfoo x barx\n` }, 'bar(?!x)')
+  assert.equal(near.output, 'no line matches bar(?!x).')
+  assert.equal(near.split, 1, '`bar` 在字节里——这一份该过闸、该被逐行试')
+
+  // 三 · **含 U+FFFD 那一档**：这一份的字节是 `61 C3 62 0A`——非法 UTF-8，解码之后是 `a\uFFFDb\n`。
+  // 查询串里的 U+FFFD 编回 UTF-8 是 `EF BF BD`，那三个字节一个都不在这份文件的字节里。抽取器对含
+  // U+FFFD 的字面量**整条交回空表** → 这一问没有闸 → 它照旧命中。闸要是照字面放行，回执变成
+  // `no line matches`——那正是漏报。
+  const broken = new Uint8Array([...new TextEncoder().encode(`${TAG}\n`), 0x61, 0xc3, 0x62, 0x0a])
+  assert.equal(Buffer.from(broken).toString('utf8'), `${TAG}\na\uFFFDb\n`, '这一份夹具要真的非法')
+  const invalid = await run({ 'bad.ts': broken }, 'a\uFFFDb')
+  assert.equal(invalid.output, `1 lines:\nbad.ts:2:a\uFFFDb`)
+  assert.equal(invalid.split, 1, '含 U+FFFD 的字面量交回空表——这一份该照旧被逐行试')
+
+  // 四 · 字面量一处都不在：每一份都被闸跳过（一份都不切行）。
+  const absent = await run({ 'a.ts': `${TAG}\nnothing here\n` }, 'no-such-literal-anywhere')
+  assert.equal(absent.output, 'no line matches no-such-literal-anywhere.')
+  assert.equal(absent.split, 0, '谁都不含那个字面量——一份都不该切行')
+
+  console.log(
+    `⑲ 读数：环视那一格切行 ${look.split}/4（读 ${look.reads} 份）· 字面量在不匹配 ${near.split} · ` +
+      `含 U+FFFD 的非法字节那一份切行 ${invalid.split} 且照旧命中 · 字面量缺席切行 ${absent.split}`,
+  )
 })
 
 test('④ 假模型驱动 读 → 写 → 检查点：走到一次真提交，而真工作树一个文件都没多', async () => {
@@ -1179,6 +1348,80 @@ test('格 3 · 预取只取范围内那几份：范围外的路径不进那一�
     )
   } finally {
     await c.close()
+  }
+})
+
+/**
+ * 格 3 · **一趟预取最多先取半个缓存**（人批的定稿规格：预算 = 缓存容量 ÷ 2）。
+ *
+ * 为什么这一条要在测试里：预算不是一句注释，它得抓住那个变异——"有就全取"（`prefetchBudgetOf`
+ * 返回容量本身）。那时这一批自己就能把缓存转一圈，先取的几份在真被读之前被自己挤走，
+ * `blobEvictions` 从 0 涨起来，下面第 ② 条当场红。
+ *
+ * 台子：8 份 16 KiB（每份都带记号，8 份内容全够得着）· 缓存 64 KiB → 预算 32 KiB = 2 份。
+ * 取谁不取谁**只由预算决定**，与路径顺序 · 内容都无关。
+ */
+test('格 3 · 预取字节预算：一趟最多先取半个缓存（挤占那一支被杀）· 剩的按需读、回执不变', async () => {
+  const CAP = 64 * 1024
+  const EACH = 16 * 1024
+  const files: Record<string, string> = {}
+  for (let i = 0; i < 8; i++) {
+    const head = `第 ${i} 行有个记号\n`
+    const body = head + 'x'.repeat(EACH - Buffer.byteLength(head) - 1) + '\n'
+    assert.equal(Buffer.byteLength(body), EACH, '每份正好 16 KiB——预算那一栏才算得出来')
+    files[`p${i}.txt`] = body
+  }
+  const paths = Object.keys(files)
+  const budget = prefetchBudgetOf(CAP)
+
+  // ① **规格那一条**：预算 × 2 ≤ 缓存容量。几个容量档都成立（含 0 与出货的缺省那一档）。
+  for (const cap of [0, 1, 3, EACH, CAP, 8 * 1024 * 1024]) {
+    const got = prefetchBudgetOf(cap)
+    assert.ok(got * 2 <= cap, `预算 × 2 超过容量：容量 ${cap} → 预算 ${got}`)
+    assert.ok(got <= cap, `预算本身也不该超过容量：${got} > ${cap}`)
+  }
+
+  let reference = ''
+  const b = await lowerBench(files, { cache: CAP })
+  try {
+    assert.equal(b.truth.stats().blobCacheBytes, CAP, '台子该按给的容量起')
+    assert.equal(b.truth.stats().blobBytes, 0, '测量句柄从零起（建语料那个句柄已经关了）')
+
+    // ② **一趟取回来的字节 ≤ 半个缓存，且一条都不挤掉**（8 份共 128 KiB 都够得着，只放得下 2 份）。
+    await b.host.prefetch(paths)
+    const after = b.truth.stats()
+    assert.equal(after.blobEvictions, 0, `半个缓存装得下这一批——先取的一条都不许被挤掉：实际挤掉 ${after.blobEvictions} 条`)
+    assert.equal(after.blobBytes, budget, `取回来的字节该正好是预算：${after.blobBytes} ≠ ${budget}`)
+    assert.equal(after.blobEntries, budget / EACH, `预算只放得下 ${budget / EACH} 份：实际 ${after.blobEntries} 份`)
+
+    // ③ **排不上的那几份走按需读**（预取缺席那条地板），答案一个字节都不变。
+    const before = b.truth.stats()
+    const counted = await face('grep', { pattern: '记号', output_mode: 'count' }, b.host)
+    assert.equal(counted.ok, true, counted.output)
+    assert.match(counted.output, /^8 matches in 8 files/, `8 份都命中：${counted.output.slice(0, 80)}`)
+    const t = b.truth.stats()
+    assert.equal(t.blobHits - before.blobHits, budget / EACH, `先取回来的那 ${budget / EACH} 份读的时候该是命中`)
+    assert.equal(t.blobMisses - before.blobMisses, paths.length - budget / EACH, '其余几份该走按需取')
+    reference = counted.output
+    console.log(
+      `格 3 预算读数：缓存 ${CAP / 1024} KiB · 预算 ${budget / 1024} KiB（= ${budget / EACH} 份）· ` +
+        `${paths.length} 份候选里先取回 ${budget / EACH} 份、挤掉 0 条，剩 ${paths.length - budget / EACH} 份按需取 · 计数档「${counted.output.split('\n')[0]}」`,
+    )
+  } finally {
+    await b.close()
+  }
+
+  // ④ **地板**：容量 0 = 预算 0 = 一条都不取；读那一趟照旧把 8 份取回来，回执与上一台逐字节相同。
+  const off = await lowerBench(files, { cache: 0 })
+  try {
+    await off.host.prefetch(paths)
+    assert.equal(off.truth.stats().blobEntries, 0, '容量 0 的台上一条都不许存')
+    assert.equal(off.truth.stats().blobEvictions, 0, '容量 0 是直通：不存也就无所谓挤')
+    const got = await face('grep', { pattern: '记号', output_mode: 'count' }, off.host)
+    assert.equal(got.output, reference, '预取不许参与结果：容量 0 那一档回执逐字节相同')
+    console.log(`格 3 预算地板读数：缓存 0 → 预算 0 → 一条都不取，回执（${Buffer.byteLength(reference, 'utf8')} 字节）逐字节相同`)
+  } finally {
+    await off.close()
   }
 })
 // ── ⑩ `read` 的窗口档：offset/limit 下推（T16 ① 的第二半）──────────────────────

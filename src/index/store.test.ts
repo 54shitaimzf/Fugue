@@ -23,7 +23,7 @@ import { lowerAt } from '../view/lower.ts'
 import { loadView } from '../view/view.ts'
 import { snapshotOf } from '../view/snapshot.ts'
 import type { View } from '../view/contract.ts'
-import { HEADER_BYTES, SECTION, SECTION_ENTRY_BYTES, decodeIndexHeader, sectionRefOf } from './format.ts'
+import { HEADER_BYTES, INDEX_VERSION, SECTION, SECTION_ENTRY_BYTES, decodeIndexHeader, sectionRefOf } from './format.ts'
 import { INDEX_LIMITS } from './budget.ts'
 import type { IndexBudgetLimits } from './budget.ts'
 import {
@@ -259,14 +259,16 @@ test('③ 认不出的版本当损坏：给 null，不是"照今天的布局硬�
     await rebuildIndex(f.root, f.source)
     const file = idxFileOf(f.root)
     const bent = Uint8Array.prototype.slice.call(readFileSync(file))
-    // 版本那一栏整片换成另一个数（四个字节都改）。
-    new DataView(bent.buffer).setUint32(8, 2, true)
+    // 版本那一栏整片换成另一个数（四个字节都改）。**那个数从 `INDEX_VERSION` 推**：写死一个字面量
+    // 的话，下一次跳版本号时这一格会变成"今天的版本"，于是它不再量任何东西而照样绿——本站 ⑥
+    // 18 → 13 那一跳正好撞上（原先写死的 2 成了今天的那一个）。
+    new DataView(bent.buffer).setUint32(8, INDEX_VERSION + 1, true)
     writeFileSync(file, bent)
     assert.equal(await readIndex(f.root), null)
     const again = await openOrRebuild(f.root, f.source)
     assert.equal(again.rebuilt, true)
     const after = Uint8Array.prototype.slice.call(readFileSync(file))
-    assert.equal(new DataView(after.buffer).getUint32(8, true), 1, '重建出来的那一份该是今天的版本')
+    assert.equal(new DataView(after.buffer).getUint32(8, true), INDEX_VERSION, '重建出来的那一份该是今天的版本')
   } finally {
     await f.close()
   }

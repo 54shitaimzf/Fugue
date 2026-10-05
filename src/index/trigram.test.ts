@@ -213,7 +213,7 @@ test('④ 选择性：countOf 只看字典就答得出——postings 那一节�
   for (const g of built.grams) assert.equal(whole!.countOf(g.gram), whole!.candidatesOf(g.gram).length)
 })
 
-test('④ 字典定宽 18 字节：第 k 条记录就在 k × 18，二分查找按它走', () => {
+test('④ 字典定宽 13 字节：第 k 条记录就在 k × 13，二分查找按它走', () => {
   const rows = [7, 100, 5000].map((gram, i) => ({ gram, count: i + 1, offset: i * 4 }))
   const dict = new Uint8Array(rows.length * GRAM_RECORD_BYTES)
   rows.forEach((r, i) => dict.set(encodeGramRecord(r), gramRecordOffset(i)))
@@ -222,15 +222,26 @@ test('④ 字典定宽 18 字节：第 k 条记录就在 k × 18，二分查找�
   assert.deepEqual(findGram(dict, 5000, 80), { ...rows[2], length: 80 - rows[2].offset })
   assert.deepEqual(findGram(dict, 100, 80), { ...rows[1], length: rows[2].offset - rows[1].offset })
   assert.equal(findGram(dict, 101, 80), null)
-  assert.equal(GRAM_RECORD_BYTES, 18)
-  assert.equal(gramRecordOffset(3), 54)
-  // 定宽那一栏自己是算得出来的：记录条数 = 节体长度 ÷ 18。
+  assert.equal(GRAM_RECORD_BYTES, 13)
+  assert.equal(gramRecordOffset(3), 39)
+  // 定宽那一栏自己是算得出来的：记录条数 = 节体长度 ÷ 13。
   assert.equal(dict.byteLength / GRAM_RECORD_BYTES, 3)
   // 键是三个 u16：超过 2^32 的那一段也得原样回来（只按低 32 位存就会在这里塌掉）。
   const wide = new Uint8Array(GRAM_RECORD_BYTES)
   const big = 0xffff * 0x1_0000_0000 + 0x1234 * 0x1_0000 + 0x5678
   wide.set(encodeGramRecord({ gram: big, count: 2, offset: 3 }))
   assert.deepEqual(decodeGramRecord(wide, 0), { gram: big, count: 2, offset: 3 })
+  // 收窄之后那两栏各自到顶也要原样回来：计数 2^24−1 · 偏移 2^32−1。**这一格量的是位宽，不是上限**
+  // ——上限那一头由 `budget.test.ts` ① 与 `store.test.ts` 各自钉住。
+  const top = new Uint8Array(GRAM_RECORD_BYTES)
+  top.set(encodeGramRecord({ gram: 0, count: 0xff_ffff, offset: 0xffff_ffff }))
+  assert.deepEqual(decodeGramRecord(top, 0), { gram: 0, count: 0xff_ffff, offset: 0xffff_ffff })
+  // 到顶那一格三个字节**全是 0xff**，于是"位移写错一位"在那上面看不出来——这一格补上它：计数
+  // 0x12_3456 的三个字节是 56 34 12，各不相同；偏移那一栏也给一个四个字节都不一样的图案，两栏
+  // 挨着写串一位也在这里现形。
+  const mid = new Uint8Array(GRAM_RECORD_BYTES)
+  mid.set(encodeGramRecord({ gram: 0, count: 0x12_3456, offset: 0x0102_0304 }))
+  assert.deepEqual(decodeGramRecord(mid, 0), { gram: 0, count: 0x12_3456, offset: 0x0102_0304 })
 })
 
 test('④ blob 表的宽度由长度推：同一个集合编两次宽度不变', () => {
@@ -242,9 +253,9 @@ test('④ blob 表的宽度由长度推：同一个集合编两次宽度不变',
 // ── ⑥ 冻结面：字节钉住 ─────────────────────────────────────────────────────
 
 test('⑥ 冻结面：那份固定语料的工件字节钉在这儿（键空间 · 布局 · 编码一起钉住）', () => {
-  // 这一条抓的是"改动落在字节上"：键的算法、字典记录的布局、postings 的编码、节表的写法——任何一处
-  // 动了，这两个数就动。跳版本号（口径里写着的那两个时机）就要在这里改它们，**那是要人批的改动**，
-  // 不是顺手改的；而重写编码这一类"应当逐字节不变"的改动，过不了这一条就是过不了。
+  // 这一条抓的是"改动落在字节上"：键的算法、字典记录的布局、postings 的编码、节表的写法、**头部那
+  // 一栏版本号**——任何一处动了，这两个数就动。跳版本号（口径里写着的那两个时机）就要在这里改它们，
+  // **那是要人批的改动**，不是顺手改的；而重写编码这一类"应当逐字节不变"的改动，过不了这一条就是过不了。
   const texts = [
     'export function lineWindow(bytes, offset, limit) {',
     'postings 键控 blob id —— 一处真相',
@@ -256,10 +267,12 @@ test('⑥ 冻结面：那份固定语料的工件字节钉在这儿（键空间 
   assert.equal(parts.blobIds.length, 4)
   assert.equal(parts.textUnits, 86)
   assert.equal(parts.grams.length, 76)
-  assert.equal(encoded.byteLength, 1761)
+  // 本站 ⑥ 换过样本：字典记录 18 → 13 字节，这一份的字典那一节短了 76 × 5 = 380 字节
+  // （1761 → 1381），摘要跟着换。方案 § 三 批的就是这第二处例外。
+  assert.equal(encoded.byteLength, 1381)
   assert.equal(
     createHash('sha256').update(encoded).digest('hex'),
-    '72152968c8ef7ea5b233dcd4a9c450c8c90a8e4b674f0d33c939edd76ad564e8',
+    '86bbac478ab48b996451d1ba62c1eab1dc9a21a2601570128f8b8f3354a78261',
   )
   // 纯函数那一半：同一组输入换个顺序喂，钉在同一个字节上。
   const rotated = encodeTrigram(buildTrigram([...texts.slice(2), ...texts.slice(0, 2)].map((text) => blobOf(text))))

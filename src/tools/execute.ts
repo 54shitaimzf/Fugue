@@ -24,6 +24,10 @@ import { MAX_RECEIPT_BYTES, lineCountOfBytes } from './receipt.ts'
 import { lineWindow, windowNote } from './window.ts'
 // **截没截住在枚举那一份里**（`walk-cache.ts` 的 `WalkCut`）：回执这一层只读它，不猜（本站 ②）。
 import { walkCutOf } from './walk-cache.ts'
+import type { PlanAsk, SearchPlan } from '../search/plan.ts'
+// **必含字面量那一栏与三字组同一趟解析**（本站 ②）：`pattern.ts` 交出来的每一条都"必须有"，所以
+// "字节里没有它"按构造不可能命中——这一层拿它当筛子（只跳过，不作证）。
+import { requiredLiterals } from '../search/pattern.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -498,6 +502,50 @@ function globOf(args: Readonly<Record<string, unknown>>): { readonly value: stri
 const PREFETCH_WINDOW = 128
 
 /**
+ * **查询接线那道缝**（本站）：按模式问一句"这一趟哪些路径可能命中"。
+ *
+ * 它是**句柄层的方法**（`host.ts` 的 `WiredToolHost.searchPlan`），冻结的 `ToolHost` 一个字不动
+ * ——与 `truth.prefetchBlobs` 同一条先例，所以在这里运行时探一次。探不到（夹具里那些宿主 ·
+ * 负对照的假体）就是"没接线"，照旧全扫。
+ *
+ * **它自己不许抛**：索引那一层的任何意外都只是这一趟慢一点。探的那一下也包在里面——`host`
+ * 可能是负对照那种"读任何字段都抛"的假体（`execute.test.ts` 的 ①d）。
+ */
+type SearchSeam = (ask: PlanAsk) => Promise<SearchPlan>
+
+async function narrowedBy(host: ToolHost, ask: PlanAsk): Promise<ReadonlySet<string> | null> {
+  try {
+    const fn = (host as unknown as { searchPlan?: unknown }).searchPlan
+    if (typeof fn !== 'function') return null
+    const plan = (await (fn as SearchSeam).call(host, ask)) as SearchPlan | null
+    return plan?.paths ?? null
+  } catch {
+    return null
+  }
+}
+
+/** 前瞻与后顾在模式源里的样子（`(?=` · `(?!` · `(?<=` · `(?<!`）。 */
+const LOOKAROUND = /\(\?<?[=!]/
+
+/**
+ * **整段那一趟用的那一份**（本站 ①）：`re` 的 `m` 克隆；模式里出现环视时给 `null`（这一格不跳）。
+ *
+ * 为什么整段也要 `m`：`^` 与 `$` 判的是"行的两端"，多行拼成一整段之后判的位置就变了——一份文件
+ * 第 30 行是 `import x` 而模式写 `^import`，不带 `m` 的整段试回 false，这一份被整份跳过，而那是
+ * **漏报**。加一个 `m` 就对上了（整段上也按行的两端判）。
+ *
+ * **环视不跳**：`foo(?!\n)` 逐行 true · 整段 false · 加 `m` 还是 false（读数在方案 § 5.10
+ * 那三行），照它跳就是把一份真含命中的文件整份跳过。认环视只扫一遍模式源：扫错（把 `(?:` 或者
+ * 字符组里的 `(?` 也当成环视）只是少省一次，方向安全——不必让 `pattern.ts` 出一个精确信号。
+ */
+function wholeLineTrial(re: RegExp): RegExp | null {
+  if (LOOKAROUND.test(re.source)) return null
+  // 生产这条路的 flags 恒空（上面那一行是 `new RegExp(pattern)`），所以 `m` 只加不减。那一栏哪天
+  // 真有别的 flag，这里跟上去：已有的 `m` 不再写一遍（同一个 flag 写两次是 `SyntaxError`）。
+  return new RegExp(re.source, re.flags.includes('m') ? re.flags : `${re.flags}m`)
+}
+
+/**
  * 收尾那几句话的**原文各一处**（早停 · 逐文件被掐 · 超长行缩短 · 走树截尾）。
  *
  * 为什么是函数而不是散在 `render` 里的字面量：**留量要照着它们算**（见下面 `STOP_NOTE_RESERVE`）。
@@ -668,6 +716,12 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   } catch (err) {
     return no(`that is not a regular expression: ${(err as Error).message}`)
   }
+  // **整段那一趟用的那一份**（本站 ①）：模式里出现环视时是 `null`（那一格不跳）。
+  const wholeRe = wholeLineTrial(re)
+  // **必含字面量的字节闸**（本站 ②）：与三字组那一栏同一趟解析、同一套组合律，按**原始字节**筛。
+  // 抽不出来（认不出的形状 · 全是通配 · 含 U+FFFD · 落单代理 · 带 flags）就是空表——这一问落到
+  // ① 的整段试，再退是今天的整段扫描。抽得出来时它比整段试更靠前：**连解码都不必做**。
+  const requiredBytes = requiredLiterals(pattern, re.flags).map((run) => Buffer.from(run, 'utf8'))
   // `glob` 那一栏走与 `glob` 工具**同一份**方言（`globToRe`）：不另立第二套模式语法。
   const onlyRe = only.value === null ? null : globToRe(only.value)
   const all = await host.walk()
@@ -687,6 +741,20 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   // ——预取始终只是提示（缺席 · 失败 · 少几份，都只是慢一点）。
   const cut = walkCutNote(all)
   const candidates = all.filter((p) => inScope(p, dir) && (onlyRe === null || matchesInScope(onlyRe, p, dir)))
+  // **索引那一趟**：它只回答"哪几条路径值得读"，答案照旧在下面那个循环里从真源字节验出来
+  // ——**索引只指路，不作证**。索引缺席 · 读不回来 · 越限 · 短查询 · 密集 · 没接线：一律
+  // `null`，照旧全扫（四条地板都是"变慢"，没有一条是"跑不起来"）。
+  const mayHit = await narrowedBy(host, {
+    pattern,
+    // **匹配器那一套 flags 原样交过去**（上面那一行是 `new RegExp(pattern)`，今天恒为空串）：索引
+    // 那一侧只认"确证无 flags"的模式——哪一天查询面加上了 `i` 之类，抽取器会当场交回空表（这一问
+    // 回扫描），而不是拿不敏感模式抽出来的三字组去漏掉真命中。
+    flags: re.flags,
+    walked: all,
+    targets: candidates,
+    // 计数那一档不早停（它的答案是一个全量数），所以它不享受早停那两档的折扣。
+    earlyStop: mode.value !== 'count',
+  })
 
   // **拼够回执上限即停**（本站 ③ · `T16` ①）。上限就是 `receipt.ts` 那一套常数——这里不另立
   // 第二套，只是**在拼的时候就知道自己要满了**，于是后面的窗不必取、后面的文件不必读。
@@ -709,13 +777,31 @@ const grepFace: ToolFn = async (args, host, ctx) => {
 
   scan: for (let at = 0; at < candidates.length; at += PREFETCH_WINDOW) {
     const window = candidates.slice(at, at + PREFETCH_WINDOW)
-    // 预取是提示：这一窗取不回来（或这道缝压根不在），下面照样逐文件读。
-    if (prefetch !== undefined) await prefetch(window)
+    // 预取是提示：这一窗取不回来（或这道缝压根不在），下面照样逐文件读。**只取值得读的那几条**
+    // （索引说不会命中的不取——省的正是这一笔）。
+    const wanted = mayHit === null ? window : window.filter((p) => mayHit.has(p))
+    if (prefetch !== undefined && wanted.length > 0) await prefetch(wanted)
     for (const path of window) {
+      // **跳过的不许改变回执的形状**：`scanned` 数的是"这一趟走过清单的第几条"，不是"读了几份"
+      // ——早停那一句说的是扫到哪儿（第几条 / 共几条），少读几份不改那一句的一个字节。
       scanned += 1
+      if (mayHit !== null && !mayHit.has(path)) continue
       const got = await host.readBytes(path)
       if (got === null) continue
-      const body = utf8Of(got.bytes).split('\n')
+      // **字节闸**（本站 ②）：读回字节之后 · 解码之前。必须有的字面量只要有一条不在这一份的原始
+      // 字节里，这一份按构造不可能命中——跳过它，连解码与切行都省了。它只用来**跳过**：答案照旧
+      // 由下面那一趟逐行现验，闸放行不等于命中（`execute.test.ts` ⑲ 那一格量的是这件事）。
+      if (requiredBytes.length > 0) {
+        const hay = Buffer.from(got.bytes.buffer, got.bytes.byteOffset, got.bytes.byteLength)
+        if (!requiredBytes.every((needle) => hay.includes(needle))) continue
+      }
+      const text = utf8Of(got.bytes)
+      // **整段先试一次**（本站 ①）：这一份整段一次都匹配不上就不切行、不进逐行循环——切行是这条
+      // 循环里最贵的一步（本仓 4.47 MB 上解码 2.72 · 切行 5.23 · 逐行 3.64 ms，切行占 45%）。
+      // 跳过点坐在 `mayHit` 过滤**之后**，而 `scanned` 照旧按清单位次累加（早停那一句数的是
+      // "走过清单的第几条"，少读几份不改它一个字节）。整段匹配的那些份一个字都不改。
+      if (wholeRe !== null && !wholeRe.test(text)) continue
+      const body = text.split('\n')
       let here = 0
       for (let i = 0; i < body.length; i += 1) {
         const line = body[i] as string
