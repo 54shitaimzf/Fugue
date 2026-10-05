@@ -18,6 +18,8 @@
 //   ⑱ **整段先试一次**（本站 ①）：整段不命中的那一份**不切行**（被切行的份数 0）；`^` 与 `$`
 //      两格落在"命中行不在第一行 / 不在最后一行"上，环视那一格（`foo(?!\n)`）照旧逐行——三份
 //      都必须照旧被切行。对手是**漏报**
+//   ⑲ **必含字面量的字节闸**（本站 ②）：抽得出字面量时按原始字节筛（环视那一格把闸单独隔出来）·
+//      字面量含 U+FFFD 时整条交回空表，那一份非法 UTF-8 的文件照旧命中。对手是**漏报**
 //   ⑭ **公布面与服务面逐字对齐**（架构 § 8.10 硬纪律 1）：`grep` 的 `output_mode` 三档，目录里公布
 //      的就是服务面认的那一组（各写一份 → 当场红）
 //   ⑮ **一条超长行不许把回执挤成 0 行**（对照吸收）：印一条 UTF-8 安全的前缀并说出来
@@ -507,16 +509,17 @@ test('⑬ 公布的参数面一格不落：`glob` 过滤 · `output_mode` 三档
 
 // ── ⑱ 整段先试一次（本站 ①）──────────────────────────────────────────────────
 
-/** 一份手搓宿主：路径 → 内容（这条路只用到 `walk` 与 `readBytes` 两条）。 */
-function textHost(files: Readonly<Record<string, string>>): { host: ToolHost; reads: string[] } {
+/** 一份手搓宿主：路径 → 内容（字符串按 UTF-8 编；给字节就原样交出去——② 那一格要非法的字节）。 */
+function textHost(files: Readonly<Record<string, string | Uint8Array>>): { host: ToolHost; reads: string[] } {
   const paths = Object.keys(files).sort()
   const reads: string[] = []
   const host = {
     walk: async () => paths,
     readBytes: async (p: string) => {
       reads.push(p)
-      const text = files[p]
-      return text === undefined ? null : { bytes: new TextEncoder().encode(text), mode: 0o100644 }
+      const body = files[p]
+      if (body === undefined) return null
+      return { bytes: typeof body === 'string' ? new TextEncoder().encode(body) : body, mode: 0o100644 }
     },
   } as unknown as ToolHost
   return { host, reads }
@@ -600,6 +603,69 @@ test('⑱ 整段先试一次：整段不命中的那一份不切行；锚点两�
 
   console.log(
     `⑱ 读数：被切行的份数 —— \`^import\` ${anchored.split} · \`b$\` ${atEnd.split} · \`foo(?!\\n)\` ${look.split} · 未命中 ${miss.split} · 整段命中 ${all.split}`,
+  )
+})
+
+// ── ⑲ 必含字面量的字节闸（本站 ②）────────────────────────────────────────────
+
+test('⑲ 字节闸：抽得出的字面量按原始字节筛（连解码都省）· 含 U+FFFD 时整条交回空表', async () => {
+  const TAG = 'byte-gate-probe'
+  const isOurs = (s: string): boolean => s.startsWith(TAG)
+  /** 跑一问：回执 · 这一趟切了几份行 · 读了几份（闸坐在读之后，所以读份数不该变）。 */
+  const run = async (
+    files: Readonly<Record<string, string | Uint8Array>>,
+    pattern: string,
+  ): Promise<{ output: string; split: number; reads: number }> => {
+    const h = textHost(files)
+    let output = ''
+    const split = await splitCountOf(async () => {
+      const out = await face('grep', { pattern }, h.host)
+      assert.equal(out.ok, true)
+      output = out.output
+    }, isOurs)
+    return { output, split, reads: h.reads.length }
+  }
+
+  // 一 · **环视那一格把闸单独隔出来**：`bar(?!\n)` 含环视，所以"整段先试"（①）整个不参与；这一趟
+  // 还能少切行，只可能是字节闸干的。四份里两份含 `bar`，另外两份不含。
+  const look = await run(
+    {
+      'a.ts': `${TAG}\nfoo x bar\n`,
+      'b.ts': `${TAG}\nfoo x baz\n`,
+      'c.ts': `${TAG}\nqux x bar\n`,
+      'd.ts': `${TAG}\nnothing here\n`,
+    },
+    'bar(?!\\n)',
+  )
+  assert.equal(look.output, '2 lines:\na.ts:2:foo x bar\nc.ts:2:qux x bar', '回执该逐字节就是那两条命中')
+  assert.equal(look.split, 2, '不含 `bar` 的那两份该被字节闸跳过——没跳就是四份都切了行')
+  assert.equal(look.reads, 4, '闸坐在读之后：四份都读了（省的是一趟解码与切行，不是读盘）')
+
+  // 二 · **闸放行不等于命中**：另一个环视模式（整段试同样不参与），这一份的字节里有 `bar` 而模式
+  // 匹配不上（`bar` 后面紧跟着 `x`，负向环视不成立）——它过了闸、被逐行试了，回执照旧是"没有
+  // 匹配"。闸只跳过，不作证。
+  const near = await run({ 'a.ts': `${TAG}\nfoo x barx\n` }, 'bar(?!x)')
+  assert.equal(near.output, 'no line matches bar(?!x).')
+  assert.equal(near.split, 1, '`bar` 在字节里——这一份该过闸、该被逐行试')
+
+  // 三 · **含 U+FFFD 那一档**：这一份的字节是 `61 C3 62 0A`——非法 UTF-8，解码之后是 `a\uFFFDb\n`。
+  // 查询串里的 U+FFFD 编回 UTF-8 是 `EF BF BD`，那三个字节一个都不在这份文件的字节里。抽取器对含
+  // U+FFFD 的字面量**整条交回空表** → 这一问没有闸 → 它照旧命中。闸要是照字面放行，回执变成
+  // `no line matches`——那正是漏报。
+  const broken = new Uint8Array([...new TextEncoder().encode(`${TAG}\n`), 0x61, 0xc3, 0x62, 0x0a])
+  assert.equal(Buffer.from(broken).toString('utf8'), `${TAG}\na\uFFFDb\n`, '这一份夹具要真的非法')
+  const invalid = await run({ 'bad.ts': broken }, 'a\uFFFDb')
+  assert.equal(invalid.output, `1 lines:\nbad.ts:2:a\uFFFDb`)
+  assert.equal(invalid.split, 1, '含 U+FFFD 的字面量交回空表——这一份该照旧被逐行试')
+
+  // 四 · 字面量一处都不在：每一份都被闸跳过（一份都不切行）。
+  const absent = await run({ 'a.ts': `${TAG}\nnothing here\n` }, 'no-such-literal-anywhere')
+  assert.equal(absent.output, 'no line matches no-such-literal-anywhere.')
+  assert.equal(absent.split, 0, '谁都不含那个字面量——一份都不该切行')
+
+  console.log(
+    `⑲ 读数：环视那一格切行 ${look.split}/4（读 ${look.reads} 份）· 字面量在不匹配 ${near.split} · ` +
+      `含 U+FFFD 的非法字节那一份切行 ${invalid.split} 且照旧命中 · 字面量缺席切行 ${absent.split}`,
   )
 })
 

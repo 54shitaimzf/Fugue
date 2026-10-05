@@ -25,6 +25,9 @@ import { lineWindow, windowNote } from './window.ts'
 // **截没截住在枚举那一份里**（`walk-cache.ts` 的 `WalkCut`）：回执这一层只读它，不猜（本站 ②）。
 import { walkCutOf } from './walk-cache.ts'
 import type { PlanAsk, SearchPlan } from '../search/plan.ts'
+// **必含字面量那一栏与三字组同一趟解析**（本站 ②）：`pattern.ts` 交出来的每一条都"必须有"，所以
+// "字节里没有它"按构造不可能命中——这一层拿它当筛子（只跳过，不作证）。
+import { requiredLiterals } from '../search/pattern.ts'
 import type { ForkStrategy } from '../terms.ts'
 import type { ToolEntry } from './catalog.ts'
 // 这一份里没有一处 `Denied` 的字段被读：它只被原样交给 `noFace` 那一段话。留成 import type 是
@@ -715,6 +718,10 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   }
   // **整段那一趟用的那一份**（本站 ①）：模式里出现环视时是 `null`（那一格不跳）。
   const wholeRe = wholeLineTrial(re)
+  // **必含字面量的字节闸**（本站 ②）：与三字组那一栏同一趟解析、同一套组合律，按**原始字节**筛。
+  // 抽不出来（认不出的形状 · 全是通配 · 含 U+FFFD · 落单代理 · 带 flags）就是空表——这一问落到
+  // ① 的整段试，再退是今天的整段扫描。抽得出来时它比整段试更靠前：**连解码都不必做**。
+  const requiredBytes = requiredLiterals(pattern, re.flags).map((run) => Buffer.from(run, 'utf8'))
   // `glob` 那一栏走与 `glob` 工具**同一份**方言（`globToRe`）：不另立第二套模式语法。
   const onlyRe = only.value === null ? null : globToRe(only.value)
   const all = await host.walk()
@@ -781,6 +788,13 @@ const grepFace: ToolFn = async (args, host, ctx) => {
       if (mayHit !== null && !mayHit.has(path)) continue
       const got = await host.readBytes(path)
       if (got === null) continue
+      // **字节闸**（本站 ②）：读回字节之后 · 解码之前。必须有的字面量只要有一条不在这一份的原始
+      // 字节里，这一份按构造不可能命中——跳过它，连解码与切行都省了。它只用来**跳过**：答案照旧
+      // 由下面那一趟逐行现验，闸放行不等于命中（`execute.test.ts` ⑲ 那一格量的是这件事）。
+      if (requiredBytes.length > 0) {
+        const hay = Buffer.from(got.bytes.buffer, got.bytes.byteOffset, got.bytes.byteLength)
+        if (!requiredBytes.every((needle) => hay.includes(needle))) continue
+      }
       const text = utf8Of(got.bytes)
       // **整段先试一次**（本站 ①）：这一份整段一次都匹配不上就不切行、不进逐行循环——切行是这条
       // 循环里最贵的一步（本仓 4.47 MB 上解码 2.72 · 切行 5.23 · 逐行 3.64 ms，切行占 45%）。
