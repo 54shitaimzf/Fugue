@@ -148,6 +148,6 @@ test('③ encodedBytesOf 不是估的：算出来的长度与真编出来的相�
   assert.equal(encodedBytesOf(empty), encodeTrigram(empty).byteLength)
   console.log(
     `③ 读数：算出来的 ${encodedBytesOf(parts)} 字节 = 真编出来的 ${encoded.byteLength} 字节` +
-      `（字典 ${parts.grams.length} × 18 · postings 差分 varint 逐条算）`,
+      `（字典 ${parts.grams.length} × 13 · postings 差分 varint 逐条算）`,
   )
 })
