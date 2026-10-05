@@ -152,6 +152,21 @@ test('③ 单汉字/两字与认不出的形状：空表（调用方照旧走扫
   assert.deepEqual(requiredTrigrams('ab'), [])
 })
 
+test('⑤ flags 与深嵌套：认不出就交空表，绝不抛、也绝不猜', () => {
+  // flags 那一栏是"要调用点证明它没有"：`/hel/i` 匹配 `HELLO`，而 `hel` 不是 `HELLO` 的子串——
+  // 拿不敏感模式抽出来的三字组去筛，就是候选集少了的那一类漏报。
+  assert.deepEqual(requiredTrigrams('abcdef', 'i'), [], '带着 flags 还抽了三字组——那是漏报那一类')
+  assert.ok(requiredTrigrams('abcdef', '').length > 0, '空串那一档该照常抽（这一条是"两边都有东西"那一半）')
+  // 深嵌套：递归下降吃调用栈，超限与其它认不出的形状同一条出口（交空表，不抛）。
+  const deep = '('.repeat(600) + 'abc' + ')'.repeat(600)
+  assert.deepEqual(requiredTrigrams(deep), [], '深嵌套没有当场交出空表')
+  const wild = '('.repeat(5000) + 'abc' + ')'.repeat(5000)
+  assert.deepEqual(requiredTrigrams(wild), [], '五千层没有当场交出空表——这一块要么抛栈、要么算很久')
+  // 浅的那一档照常抽（上限不是"一律不抽"）。
+  assert.deepEqual(requiredTrigrams('('.repeat(20) + 'abc' + ')'.repeat(20)), requiredTrigrams('abc'))
+  console.log('⑤ 读数：flags 非空 → 空表 · 20 层嵌套照常抽 · 600 层与 5000 层 → 空表（不抛）')
+})
+
 test('④ 键空间与匹配器同一格：中文 · U+FFFD · 码点转义', () => {
   const replacement = 'a\uFFFDb'
   has(replacement, replacement)

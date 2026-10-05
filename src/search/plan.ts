@@ -68,6 +68,14 @@ export interface PlanAsk {
   readonly targets: readonly string[]
   /** 这一问的回执会不会早停：内容与路径两档会，计数那一档要读完才有全量数。 */
   readonly earlyStop: boolean
+  /**
+   * **匹配器身上那一套 flags**（`execute.ts` 的 `new RegExp(pattern, …)` 里那一栏，原样交过来）。
+   *
+   * 这一栏是**必需**的，不给缺省：`''` 才是"确证没有 flags"，而"没传"被读成"没有"正是
+   * `pattern.ts` 头部说的那条漏报通道（不敏感的一侧抽出来的三字组不再"必须有"）。带着 flags 的模式
+   * 在那一层直接交回空表 → 这一问回扫描。
+   */
+  readonly flags: string
 }
 
 /**
@@ -173,7 +181,8 @@ export function createPlanner(deps: PlanDeps): Planner {
     // **兜底包住整条**：索引那一层出任何意外都只是这一问回扫描，绝不许把问询打死
     // （地板：索引缺席 · 损坏 · 越限 · 短查询，四条都是"变慢"，没有一条是"跑不起来"）。
     try {
-      const grams = requiredTrigrams(ask.pattern)
+      // flags 与模式一起交进去：抽取器只认"确证无 flags"的那一档（`plan.ts` 的 `PlanAsk.flags`）。
+      const grams = requiredTrigrams(ask.pattern, ask.flags)
       if (grams.length === 0) return give('no-grams')
 
       const rows = deps.rowsOf(ask.walked)

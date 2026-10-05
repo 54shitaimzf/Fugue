@@ -74,7 +74,7 @@ async function build(docs: readonly Doc[]): Promise<{ root: string; bytes: numbe
 }
 
 function askOf(pattern: string, docs: readonly Doc[], earlyStop = true): PlanAsk {
-  return { pattern, walked: docs.map((d) => d.path), targets: docs.map((d) => d.path), earlyStop }
+  return { pattern, flags: '', walked: docs.map((d) => d.path), targets: docs.map((d) => d.path), earlyStop }
 }
 
 /** planner 的 `rowsOf` 是"按那份清单查两栏"——测试里清单就是 `docs`，查表忽略入参。 */

@@ -42,6 +42,8 @@ interface Cursor {
 /** 解析中途撞上认不出来的形状：这一条模式整条不当筛子用（`bail.bad`）。 */
 interface Bail {
   bad: boolean
+  /** 此刻的组嵌套深度（`parseGroup` 进出各记一次；封顶见 `MAX_GROUP_DEPTH`）。 */
+  depth: number
 }
 
 const NONE: ReadonlySet<Trigram> = new Set<Trigram>()
@@ -192,7 +194,16 @@ function parseGroup(src: string, pos: Cursor, bail: Bail): Atom {
       return { literal: null, grams: NONE }
     }
   }
+  // **组的嵌套深度在这儿封顶**（`MAX_GROUP_DEPTH`）：递归下降吃的是引擎的调用栈，超限与其它
+  // 认不出的形状走同一条出口——整条不当筛子用，调用方走扫描。
+  bail.depth += 1
+  if (bail.depth > MAX_GROUP_DEPTH) {
+    bail.depth -= 1
+    bail.bad = true
+    return { literal: null, grams: NONE }
+  }
   const inner = parseAlt(src, pos, bail)
+  bail.depth -= 1
   if (src[pos.at] !== ')') {
     bail.bad = true
     return { literal: null, grams: NONE }
@@ -261,13 +272,32 @@ function parseAlt(src: string, pos: Cursor, bail: Bail): Set<Trigram> {
 }
 
 /**
+ * 组的嵌套深度上限。**这是地板，不是性能常数**：抽取器是递归下降的（组里还是组），递归吃的是
+ * 引擎的调用栈。本地实测（把这行闸拆掉之后量的）：1000 层还抽得出，2000 层就抛 `RangeError: Maximum
+ * call stack size exceeded`——同一形状 `new RegExp` 那一侧能扛得多（实测四万层才抛 `SyntaxError`），
+ * 所以这不是模式的毛病，是这一份实现的毛病。超限与其它认不出的形状走同一条出口：
+ * 交回空表，调用方走扫描——**纯解析函数不该把"认不出"与"炸了"混成一件事**，也不该靠调用方兜异常。
+ *
+ * 256 的来处：人手写的模式深不过几层（真实查询在 10 层以内），而 256 层离栈顶还有一个量级。
+ * **改主意的条件**：出现真有几百层嵌套的查询（那说明模式是机器生成的）——要么抬高这条线，
+ * 要么把解析改成显式栈（那时这条常数可以删）。
+ */
+const MAX_GROUP_DEPTH = 256
+
+/**
  * 这条模式"必须含有"的三字组（去重，按第一次出现的顺序）。
  *
- * **空表是正常答案**：单汉字/两字查询 · 全是通配 · 整条形状认不出来，都给空表——调用方据此
- * 走扫描（这是"短查询走扫描"那条定稿规格的落点，不是一条特例分支）。
+ * **空表是正常答案**：单汉字/两字查询 · 全是通配 · 整条形状认不出来 · **带着 flags**，都给空表
+ * ——调用方据此走扫描（这是"短查询走扫描"那条定稿规格的落点，不是一条特例分支）。
+ *
+ * `flags` 那一栏是**要调用点证明它没有**：`new RegExp(pattern, 'i')` 那一侧大小写不敏感，而这里抽的
+ * 三字组按原样比——带着 flags 的模式抽出来的东西不再"必须有"，那是候选集少了的那一类漏报，最难查。
+ * 所以非空 flags 与"认不出"同一条出口。缺省 `''` 只给这一份自己的单测用；生产那一条路（`plan.ts`）
+ * 把匹配器身上的 `re.flags` 一路传进来。
  */
-export function requiredTrigrams(pattern: string): Trigram[] {
-  const bail: Bail = { bad: false }
+export function requiredTrigrams(pattern: string, flags = ''): Trigram[] {
+  if (flags !== '') return []
+  const bail: Bail = { bad: false, depth: 0 }
   const pos: Cursor = { at: 0 }
   const grams = parseAlt(pattern, pos, bail)
   if (bail.bad || pos.at !== pattern.length) return []

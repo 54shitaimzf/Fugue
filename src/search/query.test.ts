@@ -162,7 +162,7 @@ async function grepRun(where: string, base: CommitId, pattern: string, mode = 'c
       const seam = (a.host as unknown as {
         searchPlan: (ask: unknown) => Promise<{ paths: ReadonlySet<string> | null }>
       }).searchPlan
-      const got = await seam.call(a.host, { pattern, walked, targets: walked, earlyStop: mode !== 'count' })
+      const got = await seam.call(a.host, { pattern, flags: '', walked, targets: walked, earlyStop: mode !== 'count' })
       candidates = got.paths === null ? null : got.paths.size
     }
     return {

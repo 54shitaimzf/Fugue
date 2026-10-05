@@ -716,6 +716,10 @@ const grepFace: ToolFn = async (args, host, ctx) => {
   // `null`，照旧全扫（四条地板都是"变慢"，没有一条是"跑不起来"）。
   const mayHit = await narrowedBy(host, {
     pattern,
+    // **匹配器那一套 flags 原样交过去**（上面那一行是 `new RegExp(pattern)`，今天恒为空串）：索引
+    // 那一侧只认"确证无 flags"的模式——哪一天查询面加上了 `i` 之类，抽取器会当场交回空表（这一问
+    // 回扫描），而不是拿不敏感模式抽出来的三字组去漏掉真命中。
+    flags: re.flags,
     walked: all,
     targets: candidates,
     // 计数那一档不早停（它的答案是一个全量数），所以它不享受早停那两档的折扣。
