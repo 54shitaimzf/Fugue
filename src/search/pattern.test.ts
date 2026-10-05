@@ -9,13 +9,15 @@
 //   ② 性质（随机）：同一件事在伪随机生成的一大批模式与文本上重跑一遍，覆盖手写表想不到的组合
 //   ③ 认不出来是空表，不是"空候选"：单汉字/两字 · 通配 · 空字符组 · 认不出的形状 → 空表
 //   ④ 键空间与匹配器同一格：中文 · U+FFFD（非法 UTF-8 解码之后那一个单元）都在表里
+//   ⑥ 必含字面量那一栏（②）：同一条性质在字面量上重跑一遍——**单汉字与两字在这一栏上有一条**
+//      （三字组那一栏对它们是空表）；字面量含 U+FFFD 或落单代理时**整条交回空表**
 //
 // **只少不多是这一层的口径**：认不出、可省、重复次数不定，一律少取几条（少几条只是候选集不够小，
 // 候选集大了只是慢）；取错一条才是漏报。所以下面有几条是"保守地取不到"，它们由注释点明，不写成
 // 反向断言——`a{3}bc` 匹配的 `aaabc` 里其实有 `abc`，这一层不取它，是取舍不是错。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { requiredTrigrams } from './pattern.ts'
+import { requiredLiterals, requiredTrigrams } from './pattern.ts'
 import { gramAt } from '../index/trigram.ts'
 
 /** 一条三字组键 → 它那三个单元拼成的文本（与 `index/trigram.ts` 的取键同一条算术）。 */
@@ -46,33 +48,56 @@ function lacks(pattern: string, ...grams: string[]): void {
   for (const g of grams) assert.ok(!got.has(g), `${JSON.stringify(pattern)} 多取了 ${JSON.stringify(g)}——那一条不在每一段匹配文本里`)
 }
 
+/** 这条模式抽出来的字面量（② 那一栏）。 */
+function literalsOf(pattern: string, flags = ''): Set<string> {
+  return new Set(requiredLiterals(pattern, flags))
+}
+
+/** 字面量那一栏该抽到的抽到了（抓的是"取错"，不是"取少"）。 */
+function hasLiteral(pattern: string, ...want: string[]): void {
+  const got = literalsOf(pattern)
+  for (const w of want) {
+    assert.ok(got.has(w), `${JSON.stringify(pattern)} 少取了字面量 ${JSON.stringify(w)}：${[...got].join(' · ')}`)
+  }
+}
+
+/** 这条模式抽出来的字面量，有没有一条不在这段文本里（⑥ 的性质，与 `missingIn` 同一件事的另一栏）。 */
+function missingLiteralsIn(pattern: string, text: string): string[] {
+  return requiredLiterals(pattern).filter((run) => !text.includes(run))
+}
+
+/**
+ * 手写表：① 与 ⑥ 共用同一张（**一处真相**——两栏抽取各抄一份，迟早有一份落后）。
+ * 每一条是 `[模式, 它能匹配的那几段文本]`。
+ */
+const PATTERN_CASES: readonly (readonly [string, readonly string[]])[] = [
+  ['export function', ['export function alpha()', 'export function', 'xx export function yy']],
+  ['导出索引落盘', ['导出索引落盘格式', 'a 导出索引落盘 b']],
+  ['foo\\.bar', ['foo.bar', 'x foo.bar y', 'foo.barbaz']],
+  ['foo.*bar', ['foobar', 'foo---bar']],
+  ['export function|export class', ['export function f()', 'export class C {}']],
+  ['^[abc]def', ['adef', 'cdef']],
+  ['(foo|bar)baz', ['foobaz', 'barbaz']],
+  ['(?:ab)+cde', ['abcde', 'ababcde', 'abababcde']],
+  ['ab{2}c', ['abbc', 'xabbcy']],
+  ['ab{1}c', ['abc']],
+  ['a{3}bc', ['aaabc']],
+  ['\\u0041bcdef', ['Abcdef']],
+  ['(?=foo)foobar', ['foobar']],
+  ['foo$', ['foo']],
+  ['\\d\\d\\d\\d', ['1234', '9999']],
+  ['[\\s]defg', [' defg', 'x defg']],
+  ['x[^y]zabc', ['xqzabc', 'xazabc']],
+  ['foo(?:bar)?bazqux', ['foobazqux', 'foobarbazqux']],
+  ['\\bword\\b', ['a word here', 'word']],
+  ['foo\\1', ['foo\u0001', 'xfoo\u0001']],
+]
+
 // ── ① 性质：必须有 == 匹配文本里真有 ─────────────────────────────────────────
 
 test('① 手写表：每一条模式的每一段匹配文本，都含抽出来的每一条三字组', () => {
-  const cases: [string, string[]][] = [
-    ['export function', ['export function alpha()', 'export function', 'xx export function yy']],
-    ['导出索引落盘', ['导出索引落盘格式', 'a 导出索引落盘 b']],
-    ['foo\\.bar', ['foo.bar', 'x foo.bar y', 'foo.barbaz']],
-    ['foo.*bar', ['foobar', 'foo---bar']],
-    ['export function|export class', ['export function f()', 'export class C {}']],
-    ['^[abc]def', ['adef', 'cdef']],
-    ['(foo|bar)baz', ['foobaz', 'barbaz']],
-    ['(?:ab)+cde', ['abcde', 'ababcde', 'abababcde']],
-    ['ab{2}c', ['abbc', 'xabbcy']],
-    ['ab{1}c', ['abc']],
-    ['a{3}bc', ['aaabc']],
-    ['\\u0041bcdef', ['Abcdef']],
-    ['(?=foo)foobar', ['foobar']],
-    ['foo$', ['foo']],
-    ['\\d\\d\\d\\d', ['1234', '9999']],
-    ['[\\s]defg', [' defg', 'x defg']],
-    ['x[^y]zabc', ['xqzabc', 'xazabc']],
-    ['foo(?:bar)?bazqux', ['foobazqux', 'foobarbazqux']],
-    ['\\bword\\b', ['a word here', 'word']],
-    ['foo\\1', ['foo\u0001', 'xfoo\u0001']],
-  ]
   let checked = 0
-  for (const [pattern, texts] of cases) {
+  for (const [pattern, texts] of PATTERN_CASES) {
     const re = new RegExp(pattern)
     for (const text of texts) {
       assert.ok(re.test(text), `${JSON.stringify(pattern)} 匹配不了 ${JSON.stringify(text)}——这一条对照是空话`)
@@ -81,7 +106,7 @@ test('① 手写表：每一条模式的每一段匹配文本，都含抽出来�
       checked += 1
     }
   }
-  console.log(`① 读数：${cases.length} 条模式 · ${checked} 段匹配文本，抽出来的三字组一条不落都在文本里`)
+  console.log(`① 读数：${PATTERN_CASES.length} 条模式 · ${checked} 段匹配文本，抽出来的三字组一条不落都在文本里`)
 })
 
 test('①b 该抽到的抽到了（不是"空表也过"）', () => {
@@ -177,4 +202,97 @@ test('④ 键空间与匹配器同一格：中文 · U+FFFD · 码点转义', ()
   // `\u{…}` 与代理对：宽码点照样按单元取键
   has('\\u{1F600}x', '\u{1F600}x')
   has('\\uD83D\\uDE00x', '\u{1F600}x')
+})
+
+// ── ⑥ 必含字面量（② 的抽取器一侧）────────────────────────────────────────────
+
+test('⑥ 必含字面量：每一条都出现在每一段匹配文本里；含 U+FFFD 或落单代理时整条交回空表', () => {
+  // 一 · 手写表（与 ① 共用同一张）：抽出来的每一条字面量都在每一段匹配文本里。对手是**漏报**：
+  // 字面量不必需 ⇒ 整份文件被误跳。
+  let checked = 0
+  for (const [pattern, texts] of PATTERN_CASES) {
+    const re = new RegExp(pattern)
+    for (const text of texts) {
+      assert.ok(re.test(text), `${JSON.stringify(pattern)} 匹配不了 ${JSON.stringify(text)}——这一条对照是空话`)
+      const missing = missingLiteralsIn(pattern, text)
+      assert.deepEqual(missing, [], `${JSON.stringify(pattern)} 在 ${JSON.stringify(text)} 上取错了：${missing.join(' · ')}`)
+      checked += 1
+    }
+  }
+
+  // 二 · **不是"空表也过"**：该抽到的抽到了——含单汉字与两字那一档（三字组那一栏对它们是空表，
+  // 而这一栏有一条，那正是短查询按字节预筛的落点）。
+  hasLiteral('export function', 'export function')
+  hasLiteral('ab', 'ab')
+  hasLiteral('导', '导')
+  hasLiteral('导出', '导出')
+  hasLiteral('foo.*bar', 'foo', 'bar')
+  hasLiteral('(get|set)Value', 'Value')
+  hasLiteral('(foo|bar)baz', 'baz')
+  hasLiteral('ab{2}c', 'ab', 'c')
+  hasLiteral('\\u0041bcdef', 'Abcdef')
+  assert.equal(literalsOf('(foo|bar)baz').has('foo'), false, '择一取交：`foo` 不是每一条分支都含')
+  assert.equal(literalsOf('(foo|bar)baz').has('bar'), false, '择一取交：`bar` 也不是')
+  // 可省那一档的边界（`min = 0` 收段那条律的落点）：**可以一次都不出现的那一段不许收**。
+  assert.deepEqual([...literalsOf('abc?')].sort(), ['ab'], '`c?` 可以一次都不出现——`c` 不是"必须有"的')
+  assert.deepEqual([...literalsOf('fo?o')].sort(), ['f', 'o'], '`o?` 不收，而它两侧各有一个单元的字面量')
+  // 认不出来那一档照旧是空表（与三字组同一扇门）。
+  for (const pattern of ['', '\\d\\d\\d', '.*', '^$', '[abc][def]', 'a|b', '(?=x)']) {
+    assert.deepEqual(requiredLiterals(pattern), [], `${JSON.stringify(pattern)} 取出了字面量——它不是"必须有"的`)
+  }
+  assert.deepEqual(requiredLiterals('abcdef', 'i'), [], '带着 flags 还抽了字面量——那是漏报那一类')
+  assert.ok(requiredLiterals('abcdef').length > 0, '空串 flags 那一档该照常抽（这一条是"两边都有东西"那一半）')
+
+  // 三 · **字节面判不了的那两档：整条交回空表**（调用方落到整段试那一条路上）。
+  assert.deepEqual(requiredLiterals('a\uFFFDb'), [], '字面量含 U+FFFD：交回空表（非法 UTF-8 的文件解码之后会出现它）')
+  assert.deepEqual(requiredLiterals('\\uFFFDabc'), [], '源里写 `\\uFFFD` 是同一件事')
+  assert.deepEqual(requiredLiterals('\\uD83Dabc'), [], '落单的代理：编回字节是 EF BF BD、解回来是 U+FFFD，字节面同样判不准')
+  // 干净那一档照旧抽得出来（"两边都有东西"那一半）。
+  assert.deepEqual(requiredLiterals('abc'), ['abc'])
+  assert.deepEqual(requiredLiterals('\\u{1F600}xy'), ['\u{1F600}xy'])
+
+  // 四 · 伪随机：同一件事在大批模式与文本上重跑一遍（种子与 ② 不同——两条性质各扫自己那一批）。
+  let seed = 20261006
+  const rnd = (): number => {
+    seed = (seed * 1103515245 + 12345) % 0x8000_0000
+    return seed / 0x8000_0000
+  }
+  const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)] as T
+  const pieces = ['a', 'b', 'c', 'ab', 'bc', 'abc', 'abcd', '.', '[ab]', '[^a]', 'a?', 'b*', 'c+', 'a{2}', '(?:ab)', '(a|b)', 'ab|bc', '^', '$', '\\d', '\\.', 'x']
+  const texts: string[] = []
+  for (let i = 0; i < 400; i++) {
+    let line = ''
+    const width = 4 + Math.floor(rnd() * 12)
+    for (let j = 0; j < width; j++) line += pick(['a', 'b', 'c', 'd', 'x', '.', '1'])
+    texts.push(line)
+  }
+  let valid = 0
+  let matched = 0
+  let taken = 0
+  for (let i = 0; i < 300; i++) {
+    let pattern = ''
+    const width = 1 + Math.floor(rnd() * 4)
+    for (let j = 0; j < width; j++) pattern += pick(pieces)
+    let re: RegExp
+    try {
+      re = new RegExp(pattern)
+    } catch {
+      continue
+    }
+    valid += 1
+    for (const text of texts) {
+      if (!re.test(text)) continue
+      matched += 1
+      taken += requiredLiterals(pattern).length
+      const missing = missingLiteralsIn(pattern, text)
+      assert.deepEqual(missing, [], `模式 ${JSON.stringify(pattern)} 在 ${JSON.stringify(text)} 上取错了：${missing.join(' · ')}`)
+    }
+  }
+  assert.ok(valid >= 200, `合起来只有 ${valid} 条模式编得过——这一趟没量到东西`)
+  assert.ok(matched >= 200, `匹配上的（模式 · 文本）只有 ${matched} 对——这一趟没量到东西`)
+  assert.ok(taken >= 200, `抽出来的字面量一共只有 ${taken} 条——这一趟没量到东西（空表也过）`)
+  console.log(
+    `⑥ 读数：手写表 ${checked} 段匹配文本 · 伪随机 ${valid} 条模式 × ${texts.length} 段文本（匹配 ${matched} 对 · 抽到字面量 ${taken} 条）` +
+      ' 一条不落都在文本里 · U+FFFD 与落单代理两档整条交回空表',
+  )
 })

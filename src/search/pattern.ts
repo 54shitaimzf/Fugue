@@ -24,15 +24,46 @@
 // **串联那一支不跨过被量词打断的衔接**：`ab{2}c` 匹配的是 `abbc`/`abbbc`，里面没有 `abc` 那一段，
 // 所以量词一出现就把攒着的字面量段收掉、从这个原子之后重新起段。宁可少取几条（少几条只是不够
 // 挑，不会漏报），也不取一条匹配文本里其实没有的。
+//
+// **两种抽取，一趟解析。** `requiredTrigrams` 取"必须含有的三字组"（问索引那一侧用），
+// `requiredLiterals` 取"必须含有的字面量段"（按原始字节预筛那一侧用）。下面每个节点交回的都是
+// `Required`——两栏一起攒、一起并、一起交，组合律只有这一份；各写一份解析就多一处会漂的口径。
 import { TRIGRAM_UNITS, gramAt } from '../index/trigram.ts'
 import type { Trigram } from '../index/trigram.ts'
 
-/** 一个原子的两支：它是不是一段字面量（是的话，字面量段可以接着攒），以及它自己那几条必须三字组。 */
+/**
+ * 一趟解析攒下来的两栏：**必须有**的三字组（问索引那一侧用）与**必须有**的字面量段（按原始
+ * 字节预筛那一侧用）。两栏按同一套组合律走（串联并 · 择一交 · `min = 0` 收段）。
+ */
+interface Required {
+  readonly grams: Set<Trigram>
+  readonly runs: Set<string>
+}
+
+/** 空集那一份。**只读**：任何一处都是往新的一份里并，谁也不就地改它。 */
+const NOTHING: Required = { grams: new Set<Trigram>(), runs: new Set<string>() }
+
+/** 把 `other` 两栏都并进 `into`（串联：两边的"必须有"合起来还是"必须有"）。 */
+function union(into: Required, other: Required): void {
+  for (const g of other.grams) into.grams.add(g)
+  for (const r of other.runs) into.runs.add(r)
+}
+
+/** 两栏各自取交（择一：哪一支都含它，才是"必须有"）。 */
+function intersect(a: Required, b: Required): Required {
+  const grams = new Set<Trigram>()
+  for (const g of a.grams) if (b.grams.has(g)) grams.add(g)
+  const runs = new Set<string>()
+  for (const r of a.runs) if (b.runs.has(r)) runs.add(r)
+  return { grams, runs }
+}
+
+/** 一个原子的两支：它是不是一段字面量（是的话，字面量段可以接着攒），以及它自己那几条必须项。 */
 interface Atom {
   /** 字面量原子的文本（转义解过之后）；不是字面量时是 `null`。 */
   readonly literal: string | null
-  /** 这个原子自己交出来的"必须有"的三字组。 */
-  readonly grams: ReadonlySet<Trigram>
+  /** 这个原子自己交出来的"必须有"。 */
+  readonly must: Required
 }
 
 interface Cursor {
@@ -46,11 +77,14 @@ interface Bail {
   depth: number
 }
 
-const NONE: ReadonlySet<Trigram> = new Set<Trigram>()
-
-/** 一个字面量段里的全部三字组（少于三个单元的一段一条都不产出）。 */
-function addRun(into: Set<Trigram>, run: string): void {
-  for (let at = 0; at + TRIGRAM_UNITS <= run.length; at++) into.add(gramAt(run, at))
+/**
+ * 收下一段字面量：**三字组那一栏**收它的全部三单元窗口（少于三个单元的一段一条三字组都不产出），
+ * **字面量那一栏**收这一段自己——一个单元的段也是"必须有"的一段，单汉字/两字查询要的正是它。
+ */
+function addRun(into: Required, run: string): void {
+  if (run === '') return
+  for (let at = 0; at + TRIGRAM_UNITS <= run.length; at++) into.grams.add(gramAt(run, at))
+  into.runs.add(run)
 }
 
 /** 量词：最少出现几次 · 最多几次（`null` = 没有上限）。形状不合（`{` 不是量词）时给 `null`。 */
@@ -149,20 +183,20 @@ function escapedUnit(src: string, pos: Cursor, bail: Bail): string | null {
 function parseAtom(src: string, pos: Cursor, bail: Bail): Atom {
   const ch = src[pos.at]
   pos.at += 1
-  if (ch === '^' || ch === '$' || ch === '.') return { literal: null, grams: NONE }
+  if (ch === '^' || ch === '$' || ch === '.') return { literal: null, must: NOTHING }
   if (ch === '[') {
     skipClass(src, pos, bail)
-    return { literal: null, grams: NONE }
+    return { literal: null, must: NOTHING }
   }
   if (ch === '(') return parseGroup(src, pos, bail)
   if (ch === '\\') {
     const unit = escapedUnit(src, pos, bail)
-    return unit === null ? { literal: null, grams: NONE } : { literal: unit, grams: NONE }
+    return unit === null ? { literal: null, must: NOTHING } : { literal: unit, must: NOTHING }
   }
   // 剩下的都是字面量（`{` · `}` · `]` 这几个在 JS 里也能当字面量，这里当"认不出"处理：
   // 断开字面量段，少取几条，绝不会多取）
-  if (ch === '{' || ch === '}' || ch === ']') return { literal: null, grams: NONE }
-  return { literal: ch, grams: NONE }
+  if (ch === '{' || ch === '}' || ch === ']') return { literal: null, must: NOTHING }
+  return { literal: ch, must: NOTHING }
 }
 
 function parseGroup(src: string, pos: Cursor, bail: Bail): Atom {
@@ -185,13 +219,13 @@ function parseGroup(src: string, pos: Cursor, bail: Bail): Atom {
         while (pos.at < src.length && src[pos.at] !== '>') pos.at += 1
         if (pos.at >= src.length) {
           bail.bad = true
-          return { literal: null, grams: NONE }
+          return { literal: null, must: NOTHING }
         }
         pos.at += 1
       }
     } else {
       bail.bad = true
-      return { literal: null, grams: NONE }
+      return { literal: null, must: NOTHING }
     }
   }
   // **组的嵌套深度在这儿封顶**（`MAX_GROUP_DEPTH`）：递归下降吃的是引擎的调用栈，超限与其它
@@ -200,25 +234,25 @@ function parseGroup(src: string, pos: Cursor, bail: Bail): Atom {
   if (bail.depth > MAX_GROUP_DEPTH) {
     bail.depth -= 1
     bail.bad = true
-    return { literal: null, grams: NONE }
+    return { literal: null, must: NOTHING }
   }
   const inner = parseAlt(src, pos, bail)
   bail.depth -= 1
   if (src[pos.at] !== ')') {
     bail.bad = true
-    return { literal: null, grams: NONE }
+    return { literal: null, must: NOTHING }
   }
   pos.at += 1
   // 环视匹配的是"旁边有没有"，它自己不消费文本：里面的字面量**不一定**出现在匹配文本里。
-  return { literal: null, grams: look ? NONE : inner }
+  return { literal: null, must: look ? NOTHING : inner }
 }
 
-/** 一段串联：字面量段攒在一起取三字组，别的原子各交各的，两边并起来。 */
-function parseConcat(src: string, pos: Cursor, bail: Bail): Set<Trigram> {
-  const grams = new Set<Trigram>()
+/** 一段串联：字面量段攒在一起收，别的原子各交各的，两栏都并起来。 */
+function parseConcat(src: string, pos: Cursor, bail: Bail): Required {
+  const must: Required = { grams: new Set<Trigram>(), runs: new Set<string>() }
   let run = ''
   const flush = (): void => {
-    addRun(grams, run)
+    addRun(must, run)
     run = ''
   }
   while (pos.at < src.length) {
@@ -226,14 +260,14 @@ function parseConcat(src: string, pos: Cursor, bail: Bail): Set<Trigram> {
     if (ch === '|' || ch === ')') break
     const before = pos.at
     const atom = parseAtom(src, pos, bail)
-    if (bail.bad) return grams
+    if (bail.bad) return must
     const quant = parseQuantifier(src, pos)
     if (quant === null) {
       // 没有量词：这个原子接得上前面攒着的那一段。
       if (atom.literal !== null) run += atom.literal
       else {
         flush()
-        for (const g of atom.grams) grams.add(g)
+        union(must, atom.must)
       }
     } else if (quant.min === 0) {
       // 可以一次都不出现：攒着的那一段到此为止，它自己不贡献（`fo?o` 里没有 `foo`）。
@@ -246,27 +280,24 @@ function parseConcat(src: string, pos: Cursor, bail: Bail): Set<Trigram> {
       if (!(quant.min === 1 && quant.max === 1)) flush()
     } else {
       flush()
-      if (quant.min >= 1) for (const g of atom.grams) grams.add(g)
+      if (quant.min >= 1) union(must, atom.must)
     }
     if (pos.at === before) {
       // 解析器一步都没前进——形状认不出来，整条不当筛子（防死循环）
       bail.bad = true
-      return grams
+      return must
     }
   }
   flush()
-  return grams
+  return must
 }
 
-/** 一段择一：每一条分支都含的三字组才留（交集）。 */
-function parseAlt(src: string, pos: Cursor, bail: Bail): Set<Trigram> {
+/** 一段择一：每一条分支都含的那几条才留（两栏各自取交）。 */
+function parseAlt(src: string, pos: Cursor, bail: Bail): Required {
   let out = parseConcat(src, pos, bail)
   while (src[pos.at] === '|' && !bail.bad) {
     pos.at += 1
-    const next = parseConcat(src, pos, bail)
-    const kept = new Set<Trigram>()
-    for (const g of out) if (next.has(g)) kept.add(g)
-    out = kept
+    out = intersect(out, parseConcat(src, pos, bail))
   }
   return out
 }
@@ -285,21 +316,66 @@ function parseAlt(src: string, pos: Cursor, bail: Bail): Set<Trigram> {
 const MAX_GROUP_DEPTH = 256
 
 /**
+ * 这一趟解析（两种抽取共用）。**认不出来 · 带 flags → `null`**，两个调用方各按自己的空表出口走。
+ *
+ * `flags` 那一栏是**要调用点证明它没有**：`new RegExp(pattern, 'i')` 那一侧大小写不敏感，而这里抽的
+ * 东西按原样比——带着 flags 的模式抽出来的不再"必须有"，那是候选集少了的那一类漏报，最难查。
+ * 所以非空 flags 与"认不出"同一条出口。
+ */
+function requiredOf(pattern: string, flags: string): Required | null {
+  if (flags !== '') return null
+  const bail: Bail = { bad: false, depth: 0 }
+  const pos: Cursor = { at: 0 }
+  const must = parseAlt(pattern, pos, bail)
+  if (bail.bad || pos.at !== pattern.length) return null
+  return must
+}
+
+/**
  * 这条模式"必须含有"的三字组（去重，按第一次出现的顺序）。
  *
  * **空表是正常答案**：单汉字/两字查询 · 全是通配 · 整条形状认不出来 · **带着 flags**，都给空表
  * ——调用方据此走扫描（这是"短查询走扫描"那条定稿规格的落点，不是一条特例分支）。
  *
- * `flags` 那一栏是**要调用点证明它没有**：`new RegExp(pattern, 'i')` 那一侧大小写不敏感，而这里抽的
- * 三字组按原样比——带着 flags 的模式抽出来的东西不再"必须有"，那是候选集少了的那一类漏报，最难查。
- * 所以非空 flags 与"认不出"同一条出口。缺省 `''` 只给这一份自己的单测用；生产那一条路（`plan.ts`）
- * 把匹配器身上的 `re.flags` 一路传进来。
+ * 缺省 `''` 只给这一份自己的单测用；生产那一条路（`plan.ts`）把匹配器身上的 `re.flags` 一路传进来。
  */
 export function requiredTrigrams(pattern: string, flags = ''): Trigram[] {
-  if (flags !== '') return []
-  const bail: Bail = { bad: false, depth: 0 }
-  const pos: Cursor = { at: 0 }
-  const grams = parseAlt(pattern, pos, bail)
-  if (bail.bad || pos.at !== pattern.length) return []
-  return [...grams]
+  const must = requiredOf(pattern, flags)
+  return must === null ? [] : [...must.grams]
+}
+
+/**
+ * 这一段文本编回字节、再解回来还是它自己吗。**两道都要**：
+ *
+ *   · **U+FFFD** 那一档是本站 ② 单列的那一条：一份非法 UTF-8 的文件解码之后会出现 U+FFFD，而查询串
+ *     里的 U+FFFD 编回 UTF-8 是 `EF BF BD`——那三个字节不在那份文件的字节里。按字节判就会把一份
+ *     **真能匹配**的文件判成"不含"，那是漏报（`index/trigram.ts` 口径五为同一件事付过一次代价）。
+ *   · **往返**那一档挡的是落单的代理（`\uD83D` 这种）：它编出来是 `EF BF BD`、解回来是 U+FFFD，
+ *     与它自己不同——落到字节面上同样是"字节里有、解出来没有"。
+ *
+ * 这两档排掉之后，"字节里有它"与"解出来有它"等价：解出来的每一个非 U+FFFD 字符，它在原始字节里
+ * 就是它自己那一段（解码器只认规范编码，过长的写法当场落成 U+FFFD）。
+ */
+function byteClean(run: string): boolean {
+  if (run.includes('\uFFFD')) return false
+  return Buffer.from(run, 'utf8').toString('utf8') === run
+}
+
+/**
+ * 这条模式"必须含有"的字面量段（去重，按第一次出现的顺序）——**按原始字节预筛那一侧用它**。
+ *
+ * 与 `requiredTrigrams` 同一趟解析、同一套组合律，取的却是"这一整段字面量"而不是它的三单元窗口：
+ * 一个单元的段也是"必须有"的一段，所以**单汉字/两字查询在这一栏上有一条**（三字组那一栏对它们
+ * 是空表——那正是短查询走扫描的来处，这一栏不改变那件事）。
+ *
+ * **空表是正常答案**，而且比三字组那一栏多一种：抽出来的每一条只要有一条过不了字节面
+ * （`byteClean`），**整条交回空表**——调用方落到"整段先试"那一条路上，绝不拿一条判不准的字面量
+ * 去跳一份文件。
+ */
+export function requiredLiterals(pattern: string, flags = ''): string[] {
+  const must = requiredOf(pattern, flags)
+  if (must === null) return []
+  const out = [...must.runs]
+  for (const run of out) if (!byteClean(run)) return []
+  return out
 }
