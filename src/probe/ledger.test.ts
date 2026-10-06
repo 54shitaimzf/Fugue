@@ -89,7 +89,7 @@ test('③ 钱是重算 · 耗时是区间读数，且都写了没量到时不算
   assert.ok(/算不出来/.test(MONEY_HOW), '价目里没有这个模型要说"算不出来"')
   assert.ok(/不拿 0 顶/.test(MONEY_HOW), '缺一档不许拿 0 顶上去')
   assert.ok(TIME_HOW.includes('区间'), '耗时是区间读数')
-  assert.ok(/不落任何时刻/.test(TIME_HOW), '信封上不落时刻这一条要写出来')
+  assert.ok(/不落时刻/.test(TIME_HOW), '事件载荷上不落时刻这一条要写出来')
   assert.ok(/未量到/.test(TIME_HOW), '没量到的那一档是"未量到"')
   assert.ok(/重算/.test(LEDGER_HEAD), '表头那句话说得出这一本账是重算来的')
   assert.ok(/不采集/.test(LEDGER_HEAD), '表头那句话说得出它不是采集来的')
