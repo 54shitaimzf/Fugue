@@ -460,9 +460,18 @@ export async function growIndex(
 /**
  * `openOrRebuild` 的两态：建出来了（`rebuilt` 说这一趟是不是新建的），或者**这一组输入建不出来**
  * （`over` 指得出是哪一条上限）。后者不是一次失败：再问一次还是它，内容变了才会变。
+ *
+ * `rebuilt: true` 那一态还带着**是哪条路建出来的账**（本站的构建触发器要它）：接着旧工件增量
+ * 出来的那一趟给 `grew`，从零全量建的那一趟给 `built`，命中那一趟两个都是 `null`。
  */
 export type IndexOutcome =
-  | { readonly ready: true; readonly index: TrigramIndex; readonly rebuilt: boolean }
+  | {
+      readonly ready: true
+      readonly index: TrigramIndex
+      readonly rebuilt: boolean
+      readonly grew: GrowReading | null
+      readonly built: BuildReading | null
+    }
   | { readonly ready: false; readonly over: IndexBudget }
 
 /**
@@ -487,12 +496,14 @@ export async function openOrRebuild(
   const hit = old === null ? null : indexOfParts(old.blobs, old.dict, old.postings)
   // 读得回来还不够：还要问它说的是不是**这一组** blob（口径六）。少这一问，换了内容之后旧那一份
   // 照旧被当成命中，而它对新 blob 一个候选都答不出来——那是漏报。
-  if (hit !== null && sameBlobSet(hit, ids)) return { ready: true, index: hit, rebuilt: false }
+  if (hit !== null && sameBlobSet(hit, ids)) {
+    return { ready: true, index: hit, rebuilt: false, grew: null, built: null }
+  }
   try {
     const grown = old === null ? null : await growFrom(root, old, source, ids, limits)
-    if (grown !== null) return { ready: true, index: grown.index, rebuilt: true }
+    if (grown !== null) return { ready: true, index: grown.index, rebuilt: true, grew: grown.build, built: null }
     const fresh = await rebuildIndex(root, source, limits)
-    return { ready: true, index: fresh.index, rebuilt: true }
+    return { ready: true, index: fresh.index, rebuilt: true, grew: null, built: fresh.build }
   } catch (error) {
     // 越限是**这一组输入**的性质（口径七），不是"读不回来"那一类。收成一态交回：调用方据此记住
     // 别再重建，而不是每问一次就重来一遍。库这一层不留记忆——记忆是调用方的事。
