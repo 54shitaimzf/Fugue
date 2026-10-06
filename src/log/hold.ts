@@ -30,6 +30,7 @@
 // 第三份不是这一站该添的东西。
 import { existsSync, linkSync, mkdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { bootId, clockOf } from '../clock.ts'
 import { logFileOf } from './log.ts'
 import type { WriterId } from '../terms.ts'
 
@@ -115,14 +116,6 @@ const TAKEOVER_ROUNDS = 5
 
 /** USER_HZ：`/proc/<pid>/stat` 的 `starttime` 以它为刻度（Linux 上恒为 100）。 */
 const HZ = 100
-
-function bootId(): string | null {
-  try {
-    return readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()
-  } catch {
-    return null
-  }
-}
 
 /** 某个进程的起始时刻（内核 tick）。读不到——没有 `/proc`，或者 pid 不在——给 `null`。 */
 function startOf(pid: number): number | null {
@@ -248,13 +241,16 @@ export function holdWriter(root: string, w: WriterId): Hold {
   const madeLog = !existsSync(dir)
   const madeUp = !existsSync(up)
   mkdirSync(dir, { recursive: true })
-  const since = Date.now()
+  // **取钟只有一处**（`clock.ts`）：信封与锁读同一个"现在几点"。读不出启动标识时
+  // `boot` 写空串、`t` 退回本机的墙钟——与这一栏加钟之前逐字节相同。
+  const clock = clockOf()
+  const since = clock?.ts ?? Date.now()
   const rec: LockRecord = {
     v: 1,
     writer: w,
     pid: process.pid,
     start: startOf(process.pid) ?? 0,
-    boot: bootId() ?? '',
+    boot: clock?.boot ?? '',
     t: since,
   }
   const tmp = `${path}.tmp-${process.pid}`

@@ -347,18 +347,46 @@ test('readMerged(fromSeq) 只回 seq 大于它的事件', async () => {
 
 // ────────────────────────────────── 耐久档位与边界
 
-test('sync 三档：读回来的字节完全相同', async () => {
-  const bodies: string[] = []
+/** 去掉信封上的读数（`crc` 与钟那三栏）：比"内容"时它们不算（架构 § 9.2 的钟是读数）。 */
+function noReadings(text: string): string {
+  return text
+    .split('\n')
+    .filter((l) => l !== '')
+    .map((l) => {
+      const o = JSON.parse(l) as Record<string, unknown>
+      delete o.crc
+      delete o.ts
+      delete o.boot
+      delete o.inc
+      return JSON.stringify(o)
+    })
+    .join('\n')
+}
+
+test('sync 三档：读回来的字节完全相同（不给钟那一档逐字节；给钟那一档摘掉钟栏与 crc 再比）', async () => {
+  const plain: string[] = []
+  const clocked: string[] = []
   for (const sync of ['each', 'batch', 'never'] as SyncLevel[]) {
-    const root = tmp()
-    const log = openLog(root, { sync })
-    for (let i = 1; i <= 20; i++) await log.append('round', ev(i, A('round')))
-    await log.close()
-    bodies.push(readFileSync(logFile(root, 'round'), 'utf8'))
-    rmSync(root, { recursive: true, force: true })
+    for (const withClock of [false, true]) {
+      const root = tmp()
+      const log = openLog(root, { sync, ...(withClock ? {} : { clock: false }) })
+      for (let i = 1; i <= 20; i++) await log.append('round', ev(i, A('round')))
+      await log.close()
+      ;(withClock ? clocked : plain).push(readFileSync(logFile(root, 'round'), 'utf8'))
+      rmSync(root, { recursive: true, force: true })
+    }
   }
-  assert.equal(bodies[0], bodies[1], 'each 与 batch 的内容应逐字节相同')
-  assert.equal(bodies[1], bodies[2], 'batch 与 never 的内容应逐字节相同')
+  // **不给钟那一档是地板**：三档逐字节相同，与加这三栏之前一样。
+  assert.equal(plain[0], plain[1], 'each 与 batch 的内容应逐字节相同（不给钟那一档）')
+  assert.equal(plain[1], plain[2], 'batch 与 never 的内容应逐字节相同（不给钟那一档）')
+  // 给钟那一档：`sync` 仍然只动耐久性——摘掉钟栏与 crc 之后三档逐字节相同。
+  assert.equal(noReadings(clocked[0]!), noReadings(clocked[1]!), '给钟那一档 each 与 batch 该相同')
+  assert.equal(noReadings(clocked[1]!), noReadings(clocked[2]!), '给钟那一档 batch 与 never 该相同')
+  // **钟只多三栏，别的什么都没动**：给钟那一串摘掉读数，与不给钟那一串逐字节相同。
+  assert.equal(noReadings(clocked[0]!), noReadings(plain[0]!))
+  // 两条"X 真有东西"的负对照：免得上面那几条在没有钟的账上空转。
+  assert.match(clocked[0]!, /"ts":\d+,"boot":"[^"]+","inc":\d+/, '给钟那一档该真有那三栏')
+  assert.equal(plain[0]!.includes('"ts":'), false, '不给钟那一档一个钟栏都不该有')
 })
 
 test('writer 标识非法 → 拒绝，且不写出 log 目录', async () => {

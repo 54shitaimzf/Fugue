@@ -60,7 +60,7 @@ import { computeAllMetrics, computeAttribution, lineOf, lineOfAttribution } from
 import { METRICS_HEAD, REPORT_HEAD, callLinesOf, rowsOf } from '../../probe/status.ts'
 import { phaseOf } from '../../model/price.ts'
 import type { Ctx } from '../shared.ts'
-import { UsageError, emitJson, emitLine, fail, openCtx, selectedModelId, usageFail } from '../shared.ts'
+import { UsageError, clockOption, emitJson, emitLine, fail, openCtx, selectedModelId, usageFail } from '../shared.ts'
 import { dumpWireDir, modelLimitOf, publishedCatalog } from './assemble.ts'
 
 /**
@@ -199,7 +199,7 @@ export async function roundCmd(
       // 这一档（人拆）没有种子：那一栏由调用方给（架构 § 8.12）。
       seeds: [] as readonly RelPath[],
       // 物化那一档：每一条分支一个口，那个 agent 自己的日志。
-      logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
+      logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each', ...clockOption(flags) }),
       // **声明的上限接进 `seed` 那一条**：这一档没有种子（`seeds: []`），但读数那一行印的就是它。
       modelLimit: modelLimitOf(doc, readCatalog()),
       materialize,
@@ -345,7 +345,7 @@ export async function roundRun(
   const agentLogOf = (a: AgentId): Log => {
     const hit = agentLogs.get(a)
     if (hit !== undefined) return hit
-    const made = openLog(root, { write: a as WriterId, sync: 'each' })
+    const made = openLog(root, { write: a as WriterId, sync: 'each', ...clockOption(flags) })
     agentLogs.set(a, made)
     return made
   }
@@ -1180,7 +1180,7 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
   const agentLogOf = (a: AgentId): Log => {
     const hit = agentLogs.get(a)
     if (hit !== undefined) return hit
-    const made = openLog(root, { write: a as WriterId, sync: 'each' })
+    const made = openLog(root, { write: a as WriterId, sync: 'each', ...clockOption(flags) })
     agentLogs.set(a, made)
     return made
   }
@@ -1347,7 +1347,7 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
       // **声明的上限接进 `seed` 那一条**：判那一趟（`round plan`）读的是同一份声明。
       modelLimit: modelLimitOf(doc, readCatalog()),
       materialize,
-      logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each' }),
+      logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each', ...clockOption(flags) }),
     })
     const same = earlier.find((x) => x.fingerprint === r.fingerprint) ?? null
     if (json) {

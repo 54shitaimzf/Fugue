@@ -359,7 +359,7 @@ export async function openCtx(
   // `ensure` 的挂载与落地那两段同样不许有第二个进程插进来（PLAN § 5.3 的疑点第一条）。
   const log = openLog(root, {
     ...(opts.sync === undefined ? {} : { sync: opts.sync }),
-    ...(opts.write === true ? { write: writer } : {}),
+    ...(opts.write === true ? { write: writer, ...clockOption(flags) } : {}),
   })
   let truth: TruthHandle | null = null
   try {
@@ -423,6 +423,16 @@ export function unknownFlagsOf(
     `${cmd} 不认这几个开关：${bad.map((k) => '--' + k).join(' · ')}——这一条命令认的是 ` +
     allowed.map((k) => '--' + k).join(' · ')
   )
+}
+
+/**
+ * `--no-clock`（写面上那道开关）：给了它，这一条命令写进账的行**不带信封钟**——那一档与这三栏
+ * 之前编出来的行逐字节相同。只对会写账的命令有意义，所以只有写组那几张开关表收它。
+ *
+ * 模板一行：调用处 `...clockOption(flags)`，不给就一个键都不加（`openLog` 的缺省是给钟）。
+ */
+export function clockOption(flags: Map<string, string | true>): { clock?: boolean } {
+  return flags.has('no-clock') ? { clock: false } : {}
 }
 
 export function parseOctal(raw: string): number {

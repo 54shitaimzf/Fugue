@@ -237,14 +237,28 @@ function gatedRoot(): string {
   return root
 }
 
-/** 账上那一串（一行一条，原样）：**这就是"逐字节"里那个字节**。没有账时是空串。 */
+/**
+ * 账上那一串（一行一条）：**这就是"逐字段"里那个字段**，只把信封上的读数摘掉——`crc`（它盖的那
+ * 一行本身不同）与钟那三栏（`ts` · `boot` · `inc`，架构 § 9.2：时刻是读数）。载荷一个字段都不动。
+ * 没有账时是空串。
+ */
 function accountOf(root: string): readonly string[] {
   const at = join(root, '.fugue', 'log', 'round.jsonl')
   if (!existsSync(at)) return []
-  return readFileSync(at, 'utf8').split('\n').filter((l) => l !== '')
+  return readFileSync(at, 'utf8')
+    .split('\n')
+    .filter((l) => l !== '')
+    .map((l) => {
+      const o = JSON.parse(l) as Record<string, unknown>
+      delete o.crc
+      delete o.ts
+      delete o.boot
+      delete o.inc
+      return JSON.stringify(o)
+    })
 }
 
-test('③ 界面那一行字与手敲 round go 落下的账逐字节相同（负对照：界面自己往账上写 → 当场不同）', async () => {
+test('③ 界面那一行字与手敲 round go 落下的账逐字段相同（信封上的读数不比；负对照：界面自己往账上写 → 当场不同）', async () => {
   const gate = gatedRoot()
   // 三个孪生放在一个**登记过**的目录里：`tmpDir` 那张清理表是按目录收的（`test/helpers/tmp.ts`
   // 头上那段说的就是这件事——平铺着建就会攒在 `/tmp` 里，谁也不去看）。

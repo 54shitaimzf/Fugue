@@ -81,6 +81,8 @@ export async function statusCmd(
     const cat = readCatalog()
     const only = flags.get('agent')
     const r = await readings(log, {
+      // 钟那三栏（架构 § 9.2）：**看一眼账上的回拨**——它是读得出来的事实，不是账的错。
+      clocks: await log.clocks(),
       metrics: flags.has('metrics'),
       report: flags.has('report'),
       // **每调用成本台账**（本站 ④）：钱要价目与峰谷档，走法那一栏要这一台已绑定动作的命令行。

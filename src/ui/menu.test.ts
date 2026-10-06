@@ -99,7 +99,9 @@ test('② 两段都从同一张表推：名字前缀筛 · 一个都匹配不上
   assert.deepEqual(names('/round g'), ['round go'], '`round g` 还是命令那一段（不是开关那一段）')
   assert.deepEqual(names('/zzz'), [], '一条都匹配不上，而且不是任何一条命令的开头')
   // 第二段：已经选定了某一条命令（`名字 + 空格`）→ 那一条的开关。
-  assert.deepEqual(names('/round go '), ['--root', '--agent', '--json', '--help', '--materialize'])
+  assert.deepEqual(names('/round go '), [
+    '--root', '--agent', '--json', '--help', '--materialize', '--no-clock',
+  ])
   assert.deepEqual(names('/round go --r'), ['--root'], '手里那个词跟着筛')
   assert.deepEqual(names('/log '), ['--root', '--agent', '--json', '--help'])
   // 最长的那一条命令赢（`round go` 赢过 `round`）。

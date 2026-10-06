@@ -44,6 +44,10 @@ import type { Ledger, LedgerInputs } from './ledger.ts'
 import { lineOf, metricsOf } from './metrics.ts'
 import type { MetricValue } from './metrics.ts'
 import type { AgentId, RoundId, RoundState } from '../terms.ts'
+import { rollbackLine, rollbacksOf } from '../clock.ts'
+import type { Rollback } from '../clock.ts'
+import type { ClockedRow } from '../log/log.ts'
+import { PHRASES } from '../phrases.ts'
 
 /** 交错的读侧那一份形状（`probe/metrics.ts` 的 `MergedRow` 逐字，两处共用同一条读法）。 */
 export interface StatusRow {
@@ -573,6 +577,11 @@ export interface StatusReadings {
    * 要吃这一份不用新开一条路。
    */
   readonly ledger?: Ledger
+  /**
+   * 读源五：**账上读得到的钟回拨**（架构 § 9.2 的信封钟）。**有一条才出现这一栏**——"一条都没有"
+   * 与"没读这一栏"因此分得开，而**不给钟的账（旧账 · `--no-clock`）字节流一个不变**。
+   */
+  readonly clock?: readonly Rollback[]
 }
 
 /** 那两个开关（与 `round run` / `round work` 上同名同义）。 */
@@ -594,6 +603,11 @@ export interface ReadingsOptions {
    * 那一份日志里，主线那一档要的是全部。
    */
   readonly agent?: string
+  /**
+   * 每一行的钟（`log.clocks()` 那一份）。**给了才算回拨这一栏**：折法是纯函数
+   * （`clock.ts` 的 `rollbacksOf`），判决不在这一份里。
+   */
+  readonly clocks?: readonly ClockedRow[]
 }
 
 /**
@@ -629,6 +643,11 @@ export function readingsOf(rows: readonly StatusRow[], opts: ReadingsOptions = {
   if (opts.metrics === true) out.metrics = metricsOf(rows, {})
   if (opts.report === true) out.report = countsOf(rows, {})
   if (opts.ledger !== undefined) out.ledger = ledgerOf(rows, opts.ledger)
+  // **一条回拨都没有时不出现这一栏**（不是空数组）：旧账与不给钟的账因此与从前逐字节相同。
+  if (opts.clocks !== undefined) {
+    const hit = rollbacksOf(opts.clocks)
+    if (hit.length > 0) out.clock = hit
+  }
   return out
 }
 
@@ -790,6 +809,7 @@ export const METRICS_HEAD = '八元指标（从日志重算，不采集；分子
  */
 export function readingsLines(r: StatusReadings, opts: LinesOptions): readonly string[] {
   const out = [...linesOf(r.snapshot, opts)]
+  if (r.clock !== undefined) out.push(PHRASES.clockRollbackHead, ...r.clock.map((b) => '  ' + rollbackLine(b)))
   if (r.report !== undefined) out.push(REPORT_HEAD, ...linesOfReadings(r.report).map((l) => `  ${l}`))
   if (r.metrics !== undefined) out.push(METRICS_HEAD, ...r.metrics.map((m) => `  ${lineOf(m)}`))
   if (r.ledger !== undefined) out.push(LEDGER_HEAD, ...ledgerLines(r.ledger).map((l) => `  ${l}`))

@@ -7,8 +7,18 @@
 // 导出个同名的东西，是两个消费者读同一个对象。原先它住在 `fugue.ts` 里，界面要读它就绕出一条
 // `fugue.ts → cmd/observe.ts → fugue.ts` 的环；搬出来环就没了，"哪些命令存在"这件事也只剩一处。
 
+import { PHRASES } from '../phrases.ts'
+
 /** 视图上那九条无开关的命令共用的底表（`write` · `diff` · `commit` 等各有自己的加项）。 */
 export const VIEW_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help']
+
+/**
+ * **写组那一份底表**（`remove` · `rename` · `chmod`）：与读组只差一个 `no-clock`。
+ *
+ * `--no-clock` 是**写面上那道开关**：给了它，这一条命令写进账的行不带信封钟（架构 § 9.11 的方法面
+ * 与 § 9.2 的信封表）。读命令不写账，所以它们的表里没有这一格——**表外开关当场退 2，不静默忽略**。
+ */
+export const WRITE_FLAGS: readonly string[] = [...VIEW_FLAGS, 'no-clock']
 
 /** 一张开关表：`flags` 是这条命令认得的全部开关；`note` 是拒的时候跟在后面那句指路。 */
 export interface FlagTable {
@@ -27,7 +37,7 @@ export const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
     flags: ['root', 'json', 'help', 'once', 'metrics', 'report', 'ledger', 'agent'],
     note: '一次快照就加 --once，跟随是另一条命令：watch --follow；只读某一格加 --agent <id>',
   },
-  watch: { flags: ['root', 'agent', 'json', 'help', 'follow', 'interval'], note: '不给 --follow 就把账上有的念一遍就停' },
+  watch: { flags: ['root', 'agent', 'json', 'help', 'follow', 'interval'], note: PHRASES.watchNote },
   tui: {
     flags: ['root', 'help', 'once', 'follow', 'metrics', 'report', 'interval', 'full', 'tail', 'no-style'],
     note: 'tui 是同一读面的第二档渲染——要机器读的那一份用 status --json；整屏那一档是 --full（缺省关）',
@@ -35,29 +45,29 @@ export const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
   read: { flags: VIEW_FLAGS },
   list: { flags: VIEW_FLAGS },
   stat: { flags: VIEW_FLAGS },
-  remove: { flags: VIEW_FLAGS },
-  rename: { flags: VIEW_FLAGS },
-  chmod: { flags: VIEW_FLAGS },
+  remove: { flags: WRITE_FLAGS },
+  rename: { flags: WRITE_FLAGS },
+  chmod: { flags: WRITE_FLAGS },
   revs: { flags: VIEW_FLAGS },
   branch: { flags: VIEW_FLAGS },
   'verify-mat': { flags: VIEW_FLAGS },
   dispose: { flags: VIEW_FLAGS },
-  write: { flags: ['root', 'agent', 'json', 'help', 'from', 'stdin'] },
+  write: { flags: ['root', 'agent', 'json', 'help', 'from', 'stdin', 'no-clock'] },
   diff: { flags: ['root', 'agent', 'json', 'help', 'since'] },
-  commit: { flags: ['root', 'agent', 'json', 'help', 'm'] },
+  commit: { flags: ['root', 'agent', 'json', 'help', 'm', 'no-clock'] },
   replay: { flags: ['root', 'agent', 'json', 'help', 'to', 'verify'] },
   'diff-stat': { flags: ['root', 'agent', 'json', 'help', 'baseline', 'save'] },
-  fork: { flags: ['root', 'agent', 'json', 'help', 'strategy', 'ro', 'no-preserve-mtime'] },
-  ensure: { flags: ['root', 'agent', 'json', 'help', 'to'] },
-  run: { flags: ['root', 'agent', 'json', 'help', 'step', 'mode'] },
+  fork: { flags: ['root', 'agent', 'json', 'help', 'strategy', 'ro', 'no-preserve-mtime', 'no-clock'], note: PHRASES.noClockNote },
+  ensure: { flags: ['root', 'agent', 'json', 'help', 'to', 'no-clock'], note: PHRASES.noClockNote },
+  run: { flags: ['root', 'agent', 'json', 'help', 'step', 'mode', 'no-clock'], note: PHRASES.noClockNote },
   policy: { flags: ['root', 'agent', 'json', 'help', 'mode'] },
   config: { flags: ['root', 'json', 'help', 'system'], note: 'config set --system 写系统那一级（~/.fugue）；不带它写工作区' },
   doctor: { flags: ['root', 'json', 'help'] },
   assemble: { flags: ['root', 'agent', 'json', 'help', 'against'] },
-  say: { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'max-steps', 'credential', 'dump-wire', 'model'] },
-  'round new': { flags: ['root', 'agent', 'json', 'help', 'materialize', 'split'] },
-  'round plan': { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'judge', 'max-steps', 'credential', 'dump-wire', 'model'] },
-  'round go': { flags: ['root', 'agent', 'json', 'help', 'materialize'] },
-  'round run': { flags: ['root', 'agent', 'json', 'help', 'split', 'fail', 'deny', 'retry', 'materialize', 'report', 'metrics', 'live', 'wire-in', 'max-steps', 'credential', 'dump-wire', 'no-handoff', 'strict-merge-gate', 'poke', 'poke-exact', 'model'] },
-  'round work': { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'retry', 'report', 'metrics', 'max-steps', 'credential', 'dump-wire', 'model'] },
+  say: { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'max-steps', 'credential', 'dump-wire', 'model', 'no-clock'], note: PHRASES.noClockNote },
+  'round new': { flags: ['root', 'agent', 'json', 'help', 'materialize', 'split', 'no-clock'], note: PHRASES.noClockNote },
+  'round plan': { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'judge', 'max-steps', 'credential', 'dump-wire', 'model', 'no-clock'], note: PHRASES.noClockNote },
+  'round go': { flags: ['root', 'agent', 'json', 'help', 'materialize', 'no-clock'], note: PHRASES.noClockNote },
+  'round run': { flags: ['root', 'agent', 'json', 'help', 'split', 'fail', 'deny', 'retry', 'materialize', 'report', 'metrics', 'live', 'wire-in', 'max-steps', 'credential', 'dump-wire', 'no-handoff', 'strict-merge-gate', 'poke', 'poke-exact', 'model', 'no-clock'], note: PHRASES.noClockNote },
+  'round work': { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'retry', 'report', 'metrics', 'max-steps', 'credential', 'dump-wire', 'model', 'no-clock'], note: PHRASES.noClockNote },
 }
