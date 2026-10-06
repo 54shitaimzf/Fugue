@@ -8,7 +8,8 @@ import { phaseOf } from '../../model/price.ts'
 import { readCatalog } from '../../model/catalog.ts'
 import { readings, readingsLines } from '../../probe/status.ts'
 import type { StatusRow } from '../../probe/status.ts'
-import { follow, readNew } from '../../probe/watch.ts'
+import { cursorsOf, follow, readNew, tokenOf } from '../../probe/watch.ts'
+import type { Cursors } from '../../probe/watch.ts'
 import { KEYMAP, hintLimitOf, hintLineOf, keymapOf, openKeys } from '../../ui/keymap.ts'
 import type { KeySource, Keymap } from '../../ui/keymap.ts'
 import { readConfig } from '../../config.ts'
@@ -26,6 +27,7 @@ import { pendingOf } from '../../round/dispatch.ts'
 import { identFor } from '../../identity.ts'
 import { actionCommandsOf, actionsTableOf } from './round.ts'
 import { emitJson, emitLine, usageFail } from '../shared.ts'
+import { PHRASES } from '../../phrases.ts'
 
 export function emit(pos: LogPos, e: LogEvent, json: boolean): void {
   if (json) {
@@ -81,6 +83,8 @@ export async function statusCmd(
     const cat = readCatalog()
     const only = flags.get('agent')
     const r = await readings(log, {
+      // 钟那三栏（架构 § 9.2）：**看一眼账上的回拨**——它是读得出来的事实，不是账的错。
+      clocks: await log.clocks(),
       metrics: flags.has('metrics'),
       report: flags.has('report'),
       // **每调用成本台账**（本站 ④）：钱要价目与峰谷档，走法那一栏要这一台已绑定动作的命令行。
@@ -119,6 +123,19 @@ function intervalOf(flags: Map<string, string | true>): number | string {
  * 与 `--interval` 同一道门）。跳过的前几条**不折了也不印**：旧账想全看有 `fugue log` /
  * `fugue watch`，这一档是"接着看"的入口。
  */
+/**
+ * `--resume <游标串>`：接着读的入口（架构 § 9.11 的事件通道——游标是每个 writer 一个，语义是排他
+ * 下界）。游标串就是 `watch --follow` 退出时印出来的那一串；读不动是用法错（退 2），不猜。
+ */
+function resumeFrom(flags: Map<string, string | true>): Cursors | string | undefined {
+  const raw = flags.get('resume')
+  if (raw === undefined) return undefined
+  if (typeof raw !== 'string' || raw === '') {
+    return '--resume 要一个游标串：--resume agent/r1/2:7,round:3'
+  }
+  return cursorsOf(raw)
+}
+
 function tailOf(flags: Map<string, string | true>): number | undefined | string {
   const raw = flags.get('tail')
   if (raw === undefined) return undefined
@@ -142,6 +159,8 @@ export async function watchCmd(
   const interval = intervalOf(flags)
   if (typeof interval === 'string') return usageFail(interval, json)
   const intervalMs = interval
+  const from = resumeFrom(flags)
+  if (typeof from === 'string') return usageFail(from, json)
   const only = flags.get('agent')
   const log = openLog(root)
   const ac = new AbortController()
@@ -151,20 +170,37 @@ export async function watchCmd(
     if (typeof only === 'string' && row.pos.writer !== only) return
     emit(row.pos, row.e, json)
   }
+  // **游标自己记**（每个 writer 一个）：记的是"读到哪了"，不是"印了哪几条"——`--agent` 只筛印出去
+  // 的那些，而游标串要能接着读整份账。
+  const cursors: Record<string, number> = { ...(from ?? {}) }
+  const keep = (row: StatusRow): void => {
+    if (row.pos.seq > (cursors[row.pos.writer] ?? 0)) cursors[row.pos.writer] = row.pos.seq
+  }
   try {
     if (!flags.has('follow')) {
-      const p = await readNew(log, {})
-      for (const row of p.rows) print(row)
+      const p = await readNew(log, from ?? {})
+      for (const row of p.rows) {
+        keep(row)
+        print(row)
+      }
       return 0
     }
     // 一趟一批（U4）：印出去的字节与逐条那一档逐字相同——变的是跟随器吐的形状，不是印的内容。
-    for await (const batch of follow(log, { intervalMs, signal: ac.signal })) {
-      for (const row of batch) print(row)
+    const opts = { intervalMs, signal: ac.signal, ...(from === undefined ? {} : { from }) }
+    for await (const batch of follow(log, opts)) {
+      for (const row of batch) {
+        keep(row)
+        print(row)
+      }
     }
     return 0
   } finally {
     process.removeListener('SIGINT', onSig)
     await log.close()
+    // **退出时印游标串**（只在跟随那一档）：接着读的入口。走 stderr——stdout 只放事件流（§ 9.8）。
+    if (flags.has('follow')) {
+      process.stderr.write(PHRASES.resumeHead + '：--resume ' + tokenOf(cursors) + '\n')
+    }
   }
 }
 

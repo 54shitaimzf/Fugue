@@ -109,3 +109,34 @@ export async function* follow(
     await sleep(interval, opts.signal)
   }
 }
+
+/**
+ * **游标串** ⇄ `Cursors`：`writer:seq` 用逗号连起来，按 writer 排序。**它不是不透明串**——外部要能
+ * 自己构造它（架构 § 9.11 的事件通道）：`--follow` 退出时印出来的那一串，人看一眼就知道接着从
+ * 哪儿读，`--resume` 原样吃回去。
+ */
+export function tokenOf(cursors: Cursors): string {
+  return Object.keys(cursors)
+    .sort()
+    .map((w) => w + ':' + String(cursors[w]))
+    .join(',')
+}
+
+/**
+ * 游标串的逆。**读不动就给一句话（用法错），不猜**：猜出来的游标会把"接着读"变成"读错地方"，
+ * 而错在哪儿要等到对账的时候才看得出来。
+ */
+export function cursorsOf(token: string): Cursors | string {
+  const out: Record<string, number> = {}
+  for (const part of token.split(',')) {
+    if (part === '') continue
+    const at = part.lastIndexOf(':')
+    if (at <= 0) return '游标串读不动：' + JSON.stringify(part) + '——形如 agent/r1/2:7,round:3'
+    const n = Number(part.slice(at + 1))
+    if (!Number.isInteger(n) || n < 0) {
+      return '游标串里的序号要一个非负整数：' + JSON.stringify(part)
+    }
+    out[part.slice(0, at)] = n
+  }
+  return out
+}

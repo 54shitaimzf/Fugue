@@ -680,7 +680,7 @@ test('⑩ `llm/call` 带上这一趟的耗时读数：慢的那一趟量得出�
     assert.equal(typeof ms, 'number', '`llm/call` 没带这一趟的耗时读数')
     assert.ok((ms as number) >= 25, `这一趟至少等了 30 ms，量到的却是 ${String(ms)} ms —— 那一栏要量的是真区间`)
     assert.ok((ms as number) < 5000, `量出来的区间不合理：${String(ms)} ms`)
-    // **区间不是时刻**：这一栏是一个数；日志上没有「什么时候开始」那一栏（墙钟是 0.4.1 的前置审批件）。
+    // **区间不是时刻**：这一栏是一个数；「什么时候」那一族住在信封上（§ 9.2），不在事件载荷里。
     console.log(
       `⑩ 读数：这一趟等了 30 ms · \`llm/call.ms\` 量到 ${String(ms)} ms` +
         ` · 旧日志里没有这一栏（回放照旧，读账那一侧给「未量到」）`,

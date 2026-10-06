@@ -12,6 +12,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { PROTOCOL_VERSION } from '../src/protocol.ts'
 
 const REPO = join(import.meta.dirname, '..')
 const CLI = join(REPO, 'src', 'cli', 'fugue.ts')
@@ -163,7 +164,11 @@ test('壳：--version 在非仓库目录可用，--root 不存在也不初始化
     assert.deepEqual(result(hand), result(direct), `fugue ${args.join(' ')}`)
     assert.deepEqual(result(hand), {
       code: 0,
-      stdout: (args.includes('--json') ? JSON.stringify({ name, version }) : `${name} ${version}`) + '\n',
+      // `--json` 那一面多一栏 `protocol`（serve 协议的版本，架构 § 9.11）：机器 pin 行为的查询点。
+      stdout:
+        (args.includes('--json')
+          ? JSON.stringify({ name, version, protocol: PROTOCOL_VERSION })
+          : `${name} ${version}`) + '\n',
       stderr: '',
     })
   }

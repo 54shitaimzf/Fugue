@@ -242,7 +242,10 @@ function seqsOf(dir: string, agent: string): number[] {
     .map((l) => (JSON.parse(l) as { seq: number }).seq)
 }
 
-/** 日志事件，去掉信封的 `crc` 与读数 `ms`——两趟之间只有这两样该不一样。 */
+/**
+ * 日志事件，去掉**信封上的读数**——两趟之间只有这几样该不一样：`crc`（它盖的那一行本身不同）·
+ * `ms`（区间读数）· 信封钟那三栏（`ts` · `boot` · `inc`，架构 § 9.2：时刻是读数）。
+ */
 function eventsOf(dir: string, agent: string): string[] {
   const f = join(dir, '.fugue', 'log', agent + '.jsonl')
   if (!existsSync(f)) return []
@@ -253,6 +256,9 @@ function eventsOf(dir: string, agent: string): string[] {
       const o = JSON.parse(l) as Record<string, unknown>
       delete o.crc
       delete o.ms
+      delete o.ts
+      delete o.boot
+      delete o.inc
       return JSON.stringify(o)
     })
 }
@@ -393,7 +399,7 @@ test('① 四路并发 fork + 四路并发 ensure：四个都成，各自的树 
   }
 })
 
-test('② 并发与串行逐字节一致：全树摘要 · 日志事件（ms 与 crc 是读数，不比）', async () => {
+test('② 并发与串行逐字节一致：全树摘要 · 日志事件（ms · crc 与信封钟是读数，不比）', async () => {
   const c = await pass(true)
   const s = await pass(false)
   assert.equal(c.base, s.base, '两趟夹具的 base 该是同一个提交（时间戳钉死了）')

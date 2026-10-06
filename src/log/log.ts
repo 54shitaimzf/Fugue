@@ -13,6 +13,8 @@ import type { FileHandle } from 'node:fs/promises'
 import { mkdir, open, readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { assertIdent } from '../identity.ts'
+import { clockOf } from '../clock.ts'
+import type { Clock } from '../clock.ts'
 import { decodeLine, encodeEvent } from './envelope.ts'
 import type { Log, LogEvent, LogReader } from './events.ts'
 import { holdWriter } from './hold.ts'
@@ -38,6 +40,14 @@ export interface LogOptions {
    * 挂载与落地那两段同样不许有第二个进程插进来（PLAN § 5.3 的疑点第一条）。
    */
   write?: WriterId
+  /**
+   * **给不给信封钟**（`ts` · `boot` · `inc`，架构 § 9.2 的表）。缺省给：判据在写者一侧，
+   * 命令行那一侧用 `--no-clock` 关掉。
+   *
+   * **关了的那一档一个字节都不多**——与这三栏之前编出来的行逐字节相同，而读的那一侧两种行
+   * 都收（旧日志零迁移照读）。
+   */
+  clock?: boolean
 }
 
 /** `Log` 加一个生命周期口。契约本身仍是 § 8.1 的三个方法。 */
@@ -50,6 +60,20 @@ export interface LogHandle extends Log {
    * 知道。`readMerged` 也能枚举出来，但那是拿一个流去回答一个集合问题。
    */
   writers(): Promise<WriterId[]>
+  /**
+   * 每一行的钟（没给钟的行给 `null`），按 `(seq, writer)` 的合并序。
+   *
+   * **它读的是同一份日志、同一份解析记忆**（`readWriter` 的 `(mtimeMs, size)` 缓存），所以
+   * "先把账重放一遍，再看一遍钟"那两趟不比一趟贵。它**不在 § 8.1 的三个方法里**——与
+   * `writers()` 同一档：`Log` 的契约一个字不动，这是句柄自己的一个只读口。
+   */
+  clocks(): Promise<readonly ClockedRow[]>
+}
+
+/** 一行在账上的位置，加它信封里的钟。 */
+export interface ClockedRow {
+  readonly pos: LogPos
+  readonly clock: Clock | null
 }
 
 // 只用可擦除语法：Node 直跑 .ts 是 strip-only，参数属性带运行时语义，用不了。
@@ -96,6 +120,8 @@ export function logFileOf(root: string, w: WriterId): string {
 interface Row {
   pos: LogPos
   e: LogEvent
+  /** 信封里的钟；没给钟的行是 `null`。**它不进 `readMerged` 的输出**（那是 § 8.1 的形状）。 */
+  clock: Clock | null
 }
 
 /**
@@ -117,7 +143,7 @@ function parseWriterText(w: WriterId, text: string): Row[] {
     if (d.pos.writer !== w) {
       throw new LogCorruptError(w, line, `信封里的 writer 与文件名不符：${d.pos.writer}`)
     }
-    rows.push({ pos: d.pos, e: d.event })
+    rows.push({ pos: d.pos, e: d.event, clock: d.clock })
   }
   return rows
 }
@@ -246,6 +272,8 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
   const initializing = new Map<WriterId, Promise<WriterState>>()
   // **拿不到就当场抛**——不等一个不知道多久的持者（`hold.ts` 的头一段）。
   const hold: Hold | null = opts.write === undefined ? null : holdWriter(root, opts.write)
+  // **给钟的判据在写者一侧**：缺省给，`clock: false` 是不给的那一档（命令行是 `--no-clock`）。
+  const stamp = opts.clock !== false
 
   /**
    * **句柄内的解析记忆**（U5）。`readMerged` 每一趟对每份日志全量 `readFile` + 逐行
@@ -325,7 +353,8 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
     const s = await state(w)
     return serialize(s, async () => {
       const seq = s.nextSeq
-      await s.fh.write(encodeEvent(seq, w, e) + '\n')
+      // 取钟**只在写者那一侧**（渲染器不塑造事件模型，也不产生时刻）；不给钟时给 `null`。
+      await s.fh.write(encodeEvent(seq, w, e, stamp ? clockOf() : null) + '\n')
       s.nextSeq = seq + 1
       s.sinceSync++
       if (sync === 'each' || (sync === 'batch' && s.sinceSync >= batchEvery)) {
@@ -344,9 +373,9 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
 
   /**
    * 按 `(seq, writer)` 的字典序合并全部 writer。k 路归并，每取一条比较 k 次——
-   * writer 数以十计，比堆的常数因子划算。
+   * writer 数以十计，比堆的常数因子划算。**内部那一份带钟**，对外的两条读法各自摘自己那几栏。
    */
-  async function* readMerged(fromSeq: LogSeq = 0): AsyncGenerator<{ pos: LogPos; e: LogEvent }> {
+  async function* mergedRows(fromSeq: LogSeq = 0): AsyncGenerator<Row> {
     const lists: Row[][] = []
     for (const w of await listWriters(root)) {
       lists.push((await readWriter(w)).filter((r) => r.pos.seq > fromSeq))
@@ -367,8 +396,19 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
       if (best === -1) return
       const row = lists[best][idx[best]]
       idx[best]++
-      yield { pos: row.pos, e: row.e }
+      yield row
     }
+  }
+
+  /** § 8.1 的那一条读法：`{ pos, e }`——钟不进这里。 */
+  async function* readMerged(fromSeq: LogSeq = 0): AsyncGenerator<{ pos: LogPos; e: LogEvent }> {
+    for await (const row of mergedRows(fromSeq)) yield { pos: row.pos, e: row.e }
+  }
+
+  async function clocks(): Promise<readonly ClockedRow[]> {
+    const out: ClockedRow[] = []
+    for await (const row of mergedRows()) out.push({ pos: row.pos, clock: row.clock })
+    return out
   }
 
   async function close(): Promise<void> {
@@ -378,7 +418,7 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
     if (hold !== null) hold.release()
   }
 
-  return { append, readByWriter, readMerged, writers: () => listWriters(root), close }
+  return { append, readByWriter, readMerged, writers: () => listWriters(root), clocks, close }
 }
 
 /**

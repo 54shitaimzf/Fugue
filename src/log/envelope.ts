@@ -19,6 +19,7 @@
 // 是不是一个完好的信封"；载荷里面那一层是事件形状的事（§ 8.1）。**什么条件下改主意**：树里
 // 出现第二套实现、而且它也往载荷里写——那时把扫描器按同一个形状扩到每一层（深度栈）。
 import { crc32 } from 'node:zlib'
+import type { Clock } from '../clock.ts'
 import type { LogEvent } from './events.ts'
 import type { LogPos, LogSeq, WriterId } from '../terms.ts'
 
@@ -58,17 +59,29 @@ export function canonicalJson(value: unknown): string {
   }
 }
 
-/** 把一条事件编成一行（不含行终止符）。 */
-export function encodeEvent(seq: LogSeq, writer: WriterId, event: LogEvent): string {
+/**
+ * 把一条事件编成一行（不含行终止符）。
+ *
+ * `clock` 不给（或给 `null`）时**一个字节都不多**——那一档与没有这三栏之前逐字节相同。
+ * 给了就把 `ts` · `boot` · `inc` 写进信封层，并**算进校验形状**：`crc` 覆盖"本行出现的钟栏"，
+ * 于是旧行照旧、新行照新，两侧都把"没出现的栏"丢掉即可对上。
+ */
+export function encodeEvent(
+  seq: LogSeq,
+  writer: WriterId,
+  event: LogEvent,
+  clock: Clock | null = null,
+): string {
   const { t, ...payload } = event as { t: string } & Record<string, unknown>
   // **载荷里没有信封那四个键这件事不在这一趟判**（清障批 ⑥）：它是两份声明之间的事，判据在
   // `tools/check-invariants.ts` 第五节。理由见上面那一段。
-  const crc = crcHex(canonicalJson({ seq, writer, t, ...payload }))
-  return JSON.stringify({ seq, writer, crc, t, ...payload })
+  const stamp = clock === null ? {} : { ts: clock.ts, boot: clock.boot, inc: clock.inc }
+  const crc = crcHex(canonicalJson({ seq, writer, t, ...stamp, ...payload }))
+  return JSON.stringify({ seq, writer, crc, t, ...stamp, ...payload })
 }
 
 export type DecodeResult =
-  | { ok: true; pos: LogPos; event: LogEvent }
+  | { ok: true; pos: LogPos; event: LogEvent; clock: Clock | null }
   | { ok: false; reason: string }
 
 /**
@@ -149,7 +162,8 @@ export function decodeLine(line: string): DecodeResult {
   if (dup !== null) {
     return { ok: false, reason: `顶层重复键：${JSON.stringify(dup)}——一行里每个键只许出现一次` }
   }
-  const { seq, writer, crc, t, ...payload } = raw as Record<string, unknown>
+  // **钟栏从载荷里摘出来**：它们住信封层，事件模型里没有这三栏（§ 9.2 那张表）。
+  const { seq, writer, crc, t, ts, boot, inc, ...payload } = raw as Record<string, unknown>
 
   if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1) {
     return { ok: false, reason: `seq 非法：${JSON.stringify(seq)}` }
@@ -163,7 +177,13 @@ export function decodeLine(line: string): DecodeResult {
   if (typeof crc !== 'string') {
     return { ok: false, reason: `缺少 crc 字段：${JSON.stringify(crc)}` }
   }
-  const want = crcHex(canonicalJson({ seq, writer, t, ...payload }))
+  // **校验形状 = `{seq, writer, t, …载荷}` 加「本行出现的钟栏」**：三栏都不在的旧行照旧，
+  // 新行照新——两侧都把"没出现的栏"丢掉即可对上，所以旧日志零迁移照读。
+  const stamp: Record<string, unknown> = {}
+  if (ts !== undefined) stamp.ts = ts
+  if (boot !== undefined) stamp.boot = boot
+  if (inc !== undefined) stamp.inc = inc
+  const want = crcHex(canonicalJson({ seq, writer, t, ...stamp, ...payload }))
   if (want !== crc.toLowerCase()) {
     return { ok: false, reason: `crc 不符：行内 ${crc}，重算 ${want}` }
   }
@@ -172,5 +192,11 @@ export function decodeLine(line: string): DecodeResult {
     ok: true,
     pos: { writer: writer as WriterId, seq },
     event: { t, ...payload } as unknown as LogEvent,
+    // 三栏齐了才是"给了钟"；只出现一两栏的行**照样读得进来**（校验形状管的是 crc 覆盖哪几栏，
+    // 不是"这几栏合不合法"），只是读不出一个完整的钟。
+    clock:
+      ts !== undefined && boot !== undefined && inc !== undefined
+        ? { ts: ts as number, boot: boot as string, inc: inc as number }
+        : null,
   }
 }

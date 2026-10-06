@@ -27,7 +27,7 @@ import { openTruth } from '../../truth/truth.ts'
 import type { TruthHandle } from '../../truth/truth.ts'
 import { baseFor, lowerAt } from '../../view/lower.ts'
 import type { Ctx } from '../shared.ts'
-import { emitJson, emitLine, fail, openCtx, usageFail, writerOf } from '../shared.ts'
+import { clockOption, emitJson, emitLine, fail, openCtx, usageFail, writerOf } from '../shared.ts'
 
 /** 策略名——给用法错与 `--json` 用；次序就是 § 8.5 策略表里的那三档（`reflink` 不在列）。 */
 const STRATEGIES: readonly ForkStrategy[] = ['overlayfs', 'hardlink-ro', 'copy']
@@ -144,7 +144,7 @@ export async function forkCmd(
   const writer = writerOf(flags)
   const agent = agentFor(writer)
   // `fork` 既要追加一条 `mat/fork`，又要挂载——同样整条命令一个写者。
-  const log = openLog(abs, { write: writer })
+  const log = openLog(abs, { write: writer, ...clockOption(flags) })
   let truth: TruthHandle | null = null
   try {
     truth = openTruth(abs)
