@@ -159,6 +159,9 @@ const VALUED: ReadonlySet<string> = new Set([
   'wire-in',
   // `--model <id>`：模型选择（`round.model` 的旗标那一档，P2b）。同一条纪律——它取一个值。
   'model',
+  // `--resume <游标串>`（watch 接着读，架构 § 9.11 的事件通道）：同一条纪律——它取一个值。
+  // 不列在这里的话游标串会被当成位置参数，而 `--resume` 成了 `true`：接着读变成从零读。
+  'resume',
 ])
 export { VALUED }
 

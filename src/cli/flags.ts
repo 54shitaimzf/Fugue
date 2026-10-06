@@ -37,7 +37,7 @@ export const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
     flags: ['root', 'json', 'help', 'once', 'metrics', 'report', 'ledger', 'agent'],
     note: '一次快照就加 --once，跟随是另一条命令：watch --follow；只读某一格加 --agent <id>',
   },
-  watch: { flags: ['root', 'agent', 'json', 'help', 'follow', 'interval'], note: PHRASES.watchNote },
+  watch: { flags: ['root', 'agent', 'json', 'help', 'follow', 'interval', 'resume'], note: PHRASES.watchNote },
   tui: {
     flags: ['root', 'help', 'once', 'follow', 'metrics', 'report', 'interval', 'full', 'tail', 'no-style'],
     note: 'tui 是同一读面的第二档渲染——要机器读的那一份用 status --json；整屏那一档是 --full（缺省关）',

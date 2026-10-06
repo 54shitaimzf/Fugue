@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { tmpDir } from '../../test/helpers/tmp.ts'
+import { PROTOCOL_VERSION } from '../protocol.ts'
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url))
 const CLI = join(REPO, 'src', 'cli', 'fugue.ts')
@@ -31,13 +32,15 @@ test('--version：非仓库目录 · 不存在的 --root · 不碰任何工作�
   assert.equal(existsSync(missing), false)
 })
 
-test('--version --json：一行 {name, version}，与人面同源且不初始化工作区', () => {
+test('--version --json：一行 {name, version, protocol}，与人面同源且不初始化工作区', () => {
   const cwd = tmpDir('fugue-version-json-')
   const missing = join(cwd, 'missing')
   for (const args of [['--json', '--version'], ['--version', '--json', `--root=${missing}`]]) {
     assert.deepEqual(fugue(cwd, args), {
       code: 0,
-      stdout: JSON.stringify({ name: manifest.name, version: manifest.version }) + '\n',
+      // `protocol` 是 **serve 协议的版本**（架构 § 9.11）：机器 pin 行为的查询点。它比产品版本稳
+      // ——协议只在报文形状与语义变时跳，所以它住 `src/protocol.ts`，不跟 `package.json` 走。
+      stdout: JSON.stringify({ name: manifest.name, version: manifest.version, protocol: PROTOCOL_VERSION }) + '\n',
       stderr: '',
     })
   }
@@ -54,8 +57,9 @@ test('--version：只改安装目录的 package.json 就换版本，不靠生成
   assert.deepEqual(fugue(cwd, ['--version'], cli), {
     code: 0, stdout: `${manifest.name} 7.8.9-test\n`, stderr: '',
   })
+  // **产品版本换了，协议版本不动**：两者各自一个计数器（这正是"外部按协议版本 pin"要的性质）。
   assert.deepEqual(JSON.parse(fugue(cwd, ['--version', '--json'], cli).stdout), {
-    name: manifest.name, version: '7.8.9-test',
+    name: manifest.name, version: '7.8.9-test', protocol: PROTOCOL_VERSION,
   })
   assert.deepEqual(readdirSync(cwd), [])
   assert.deepEqual(readdirSync(installed).sort(), ['package.json', 'src'])

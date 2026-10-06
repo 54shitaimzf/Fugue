@@ -1,0 +1,1174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fugue/log/events",
+  "title": "LogEvent（架构 § 8.1）",
+  "description": "事件联合的一份外部契约：一族一个分支，`t` 是判别栏。**从 src/log/events.ts 的联合推出来**（`tools/export-schema.ts`），联合变了它就跟着变。它描述的是**载荷那一层**——读一行的人先摘掉信封（`seq` · `writer` · `crc`，以及给钟时的 `ts` · `boot` · `inc`），剩下的正是这一份。",
+  "oneOf": [
+    {
+      "title": "view/write",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "path",
+        "rev",
+        "blob",
+        "mode"
+      ],
+      "properties": {
+        "t": {
+          "const": "view/write"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "rev": {
+          "type": "number"
+        },
+        "blob": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "number"
+        }
+      }
+    },
+    {
+      "title": "view/symlink",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "path",
+        "rev",
+        "target"
+      ],
+      "properties": {
+        "t": {
+          "const": "view/symlink"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "rev": {
+          "type": "number"
+        },
+        "target": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "view/remove",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "path",
+        "rev"
+      ],
+      "properties": {
+        "t": {
+          "const": "view/remove"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "rev": {
+          "type": "number"
+        }
+      }
+    },
+    {
+      "title": "view/rename",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "from",
+        "to",
+        "rev"
+      ],
+      "properties": {
+        "t": {
+          "const": "view/rename"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "rev": {
+          "type": "number"
+        }
+      }
+    },
+    {
+      "title": "view/chmod",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "path",
+        "rev",
+        "mode"
+      ],
+      "properties": {
+        "t": {
+          "const": "view/chmod"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "rev": {
+          "type": "number"
+        },
+        "mode": {
+          "type": "number"
+        }
+      }
+    },
+    {
+      "title": "ckpt/commit",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "commit",
+        "rev",
+        "msg"
+      ],
+      "properties": {
+        "t": {
+          "const": "ckpt/commit"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "rev": {
+          "type": "number"
+        },
+        "msg": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "mat/fork",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "base",
+        "strategy",
+        "paths",
+        "hashes",
+        "ms"
+      ],
+      "properties": {
+        "t": {
+          "const": "mat/fork"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "base": {
+          "type": "string"
+        },
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "reflink",
+            "overlayfs",
+            "hardlink-ro",
+            "copy"
+          ]
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hashes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ms": {
+          "type": "number"
+        }
+      }
+    },
+    {
+      "title": "mat/sync",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "from",
+        "to",
+        "paths",
+        "hashes",
+        "ms"
+      ],
+      "properties": {
+        "t": {
+          "const": "mat/sync"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "from": {
+          "type": "number"
+        },
+        "to": {
+          "type": "number"
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hashes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ms": {
+          "type": "number"
+        }
+      }
+    },
+    {
+      "title": "mat/reclaim",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "declared",
+        "changed"
+      ],
+      "properties": {
+        "t": {
+          "const": "mat/reclaim"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "declared": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "changed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "title": "run/start",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "step",
+        "action",
+        "argv0"
+      ],
+      "properties": {
+        "t": {
+          "const": "run/start"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "step": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "argv0": {
+          "type": "string"
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "run/end",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "step",
+        "exit",
+        "ms",
+        "denied"
+      ],
+      "properties": {
+        "t": {
+          "const": "run/end"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "step": {
+          "type": "string"
+        },
+        "exit": {
+          "type": "number"
+        },
+        "ms": {
+          "type": "number"
+        },
+        "denied": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "title": "agent/stop",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "steps",
+        "stopped",
+        "handoffs"
+      ],
+      "properties": {
+        "t": {
+          "const": "agent/stop"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "number"
+        },
+        "stopped": {
+          "type": "string"
+        },
+        "handoffs": {
+          "type": "number"
+        }
+      }
+    },
+    {
+      "title": "run/confined",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "mode",
+        "enforcement",
+        "net",
+        "layers",
+        "reach"
+      ],
+      "properties": {
+        "t": {
+          "const": "run/confined"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "read-only",
+            "workspace-write"
+          ]
+        },
+        "enforcement": {
+          "type": "string",
+          "enum": [
+            "full",
+            "partial"
+          ]
+        },
+        "net": {
+          "type": "string",
+          "enum": [
+            "none",
+            "host"
+          ]
+        },
+        "layers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "bwrap",
+              "landlock"
+            ]
+          }
+        },
+        "reach": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "title": "bound/deny",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "path",
+        "space",
+        "rule"
+      ],
+      "properties": {
+        "t": {
+          "const": "bound/deny"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "space": {
+          "type": "string",
+          "enum": [
+            "virtual",
+            "physical"
+          ]
+        },
+        "rule": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "signal",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "id",
+        "kind",
+        "digest"
+      ],
+      "properties": {
+        "t": {
+          "const": "signal"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "agent/handoff",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "successor",
+        "contract",
+        "digest",
+        "body"
+      ],
+      "properties": {
+        "t": {
+          "const": "agent/handoff"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "successor": {
+          "type": "string"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "round/state",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "round",
+        "from",
+        "to"
+      ],
+      "properties": {
+        "t": {
+          "const": "round/state"
+        },
+        "round": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string",
+          "enum": [
+            "Idle",
+            "Planning",
+            "Delegated",
+            "Working",
+            "Collecting",
+            "Merging",
+            "Verifying",
+            "Committed",
+            "Rebuilding",
+            "Aborted"
+          ]
+        },
+        "to": {
+          "type": "string",
+          "enum": [
+            "Idle",
+            "Planning",
+            "Delegated",
+            "Working",
+            "Collecting",
+            "Merging",
+            "Verifying",
+            "Committed",
+            "Rebuilding",
+            "Aborted"
+          ]
+        }
+      }
+    },
+    {
+      "title": "round/intent",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "round",
+        "base",
+        "digest",
+        "body"
+      ],
+      "properties": {
+        "t": {
+          "const": "round/intent"
+        },
+        "round": {
+          "type": "string"
+        },
+        "base": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "holder/distill",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "round",
+        "agent",
+        "digest",
+        "body"
+      ],
+      "properties": {
+        "t": {
+          "const": "holder/distill"
+        },
+        "round": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "against": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "holder/todos",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "digest",
+        "body"
+      ],
+      "properties": {
+        "t": {
+          "const": "holder/todos"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "holder/plan",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "digest",
+        "body"
+      ],
+      "properties": {
+        "t": {
+          "const": "holder/plan"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "holder/ask",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "digest",
+        "body"
+      ],
+      "properties": {
+        "t": {
+          "const": "holder/ask"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "ask/raised",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "contract",
+        "digest",
+        "body"
+      ],
+      "properties": {
+        "t": {
+          "const": "ask/raised"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "ask/ruling",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "asked",
+        "forwarded",
+        "ruler",
+        "digest",
+        "body"
+      ],
+      "properties": {
+        "t": {
+          "const": "ask/ruling"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "asked": {
+          "type": "string"
+        },
+        "forwarded": {
+          "type": "boolean"
+        },
+        "tier": {
+          "type": "string",
+          "enum": [
+            "contract",
+            "design",
+            "user"
+          ]
+        },
+        "ruler": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "round/approve",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "round",
+        "fingerprint",
+        "contracts"
+      ],
+      "properties": {
+        "t": {
+          "const": "round/approve"
+        },
+        "round": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "contracts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "title": "contract/issue",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "round",
+        "contract",
+        "owner",
+        "paths",
+        "body"
+      ],
+      "properties": {
+        "t": {
+          "const": "contract/issue"
+        },
+        "round": {
+          "type": "string"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "body": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "merge/attempt",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "round",
+        "branches",
+        "conflicts"
+      ],
+      "properties": {
+        "t": {
+          "const": "merge/attempt"
+        },
+        "round": {
+          "type": "string"
+        },
+        "branches": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "conflicts": {
+          "type": "number"
+        }
+      }
+    },
+    {
+      "title": "merge/accept",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "round",
+        "commit",
+        "assertions"
+      ],
+      "properties": {
+        "t": {
+          "const": "merge/accept"
+        },
+        "round": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "assertions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "assertion",
+              "verdict"
+            ],
+            "properties": {
+              "assertion": {
+                "type": "string"
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "pass",
+                  "fail",
+                  "unrunnable"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "prefix/assemble",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "zoneAHash",
+        "zoneBHash",
+        "zoneCHash"
+      ],
+      "properties": {
+        "t": {
+          "const": "prefix/assemble"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "zoneAHash": {
+          "type": "string"
+        },
+        "zoneBHash": {
+          "type": "string"
+        },
+        "zoneCHash": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "llm/call",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "step",
+        "model",
+        "wire",
+        "thinking",
+        "toolCount",
+        "invocations",
+        "status",
+        "headers",
+        "usage",
+        "rawStop",
+        "stop"
+      ],
+      "properties": {
+        "t": {
+          "const": "llm/call"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "step": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "wire": {
+          "type": "string"
+        },
+        "thinking": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "low",
+                "high",
+                "max"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "toolCount": {
+          "type": "number"
+        },
+        "invocations": {
+          "type": "number"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "headers": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "inputTokens",
+            "cacheReadTokens",
+            "cacheWriteTokens",
+            "outputTokens",
+            "reasoningTokens"
+          ],
+          "properties": {
+            "inputTokens": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cacheReadTokens": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cacheWriteTokens": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "outputTokens": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reasoningTokens": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "rawStop": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "tool-calls",
+                "end-turn",
+                "max-tokens",
+                "stop-sequence",
+                "refusal",
+                "incomplete"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "ms": {
+          "type": "number"
+        }
+      }
+    }
+  ]
+}

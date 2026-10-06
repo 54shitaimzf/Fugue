@@ -20,6 +20,7 @@ import type { WriterId } from '../terms.ts'
 import { HostError, assertHost } from '../roots/host.ts'
 import { USAGE, UsageError, emitFail, emitJson, emitLine, fail, parseArgv, unknownFlagsOf, usageFail } from './shared.ts'
 import { FLAGS_OF } from './flags.ts'
+import { PROTOCOL_VERSION } from '../protocol.ts'
 export { USAGE } from './shared.ts'
 export { driverSupport } from './cmd/round.ts'
 import { branchCmd, commitCmd, replay, viewCmd } from './cmd/view.ts'
@@ -76,7 +77,7 @@ async function run(argv: readonly string[]): Promise<number> {
       return usageFail('--version 单独使用，不接命令或其他参数', json)
     }
     const { name, version } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
-    if (json) emitJson({ name, version })
+    if (json) emitJson({ name, version, protocol: PROTOCOL_VERSION })
     else emitLine(`${name} ${version}`)
     return 0
   }
