@@ -93,6 +93,9 @@ async function openBench(where, base, cacheBytes, noPrefetch = false) {
   const view = await loadView(log, AGENT, { lower: lowerAt(truth, base) })
   const built = createToolHost(view, createRoots(where), {
     actions: { writer: AGENT, log, truth, head: await refHeadOf(log, AGENT, base) },
+    // 这一份量的是"纯扫描 + 预取"那条路（0.2.4 的口径，热/冷都在这条路上取）：触发器关掉，
+    // 免得一跑就在语料里建一份工件、把这条路的读数换掉。缺省档那一半另一套量法。
+    indexBuild: false,
   })
   // `--no-prefetch`：把那道缝摘掉，就是"预取缺席"那一档（今天的逐文件读）。
   const host = noPrefetch ? (({ prefetch, ...rest }) => rest)(built) : built

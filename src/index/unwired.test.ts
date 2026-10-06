@@ -92,13 +92,19 @@ interface Assembly {
   readonly close: () => Promise<void>
 }
 
-/** 一套全新装配（与 `tools/bench-grep.js` 用同一组零件、同一条链）。 */
+/**
+ * 一套全新装配（与 `tools/bench-grep.js` 用同一组零件、同一条链）。
+ *
+ * `indexBuild: false` 是**必须的**：这一份量的就是"索引在场与缺席"那两态，而缺省档（触发器接上）
+ * 会把"缺席"那一态自己建出来——那两态于是都不存在了。缺省那一档另有它自己的断言。
+ */
 async function assemble(where: string, base: CommitId): Promise<Assembly> {
   const truth = openTruth(where)
   const log = openLog(where, { write: AGENT, sync: 'never' })
   const view = await loadView(log, AGENT, { lower: lowerAt(truth, base) })
   const host = createToolHost(view, createRoots(where), {
     actions: { writer: AGENT, log, truth, head: await refHeadOf(log, AGENT, base) },
+    indexBuild: false,
   })
   return {
     host,

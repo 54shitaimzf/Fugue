@@ -16,6 +16,7 @@
 //   ⑨ 大小那一关在读之前：`artifact-heavy` 那一格上工件**零字节读**（chmod 000 的工件把两种形态分开）
 //   ⑩ 两档字节分价：工件不比语料小、候选稀 → 走索引（同价记账下这一格变 `artifact-heavy`）；
 //      同一份语料上候选接近全扫 → 照旧拒（权重调到 0「凡有索引就走」这一格才会红）
+//   ⑪ 备好的那一份当场采用：触发器交回工件之后这一问**不再读盘**（盘上那份当场挪走也照旧走索引）
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { chmodSync, copyFileSync, mkdtempSync, rmSync, truncateSync } from 'node:fs'
@@ -24,8 +25,10 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { ARTIFACT_WEIGHT, createPlanner } from './plan.ts'
 import type { PlanAsk, PlanReading, SearchPlan, ViewRows } from './plan.ts'
+import { createTrigger } from './trigger.ts'
 import { idxFileOf, rebuildIndex } from '../index/store.ts'
 import type { BlobSource } from '../index/store.ts'
+import type { TrigramIndex } from '../index/trigram.ts'
 import type { BlobId } from '../terms.ts'
 
 /** 一份纯内存的语料：路径 · 文本 · id（id 是真的内容哈希——同一份内容在几条路径上共一个 id）。 */
@@ -87,18 +90,24 @@ function rowsOfDocs(docs: readonly Doc[]): ViewRows {
   return { ids, sizes }
 }
 
-/** 把这份语料建成索引，落在临时根上。返回根与它的字节数。 */
-async function build(docs: readonly Doc[]): Promise<{ root: string; bytes: number }> {
+/** 把这份语料建成索引，落在临时根上。返回根 · 字节数 · 刚解出来的那一份 · 真源那一侧的取字节。 */
+async function build(docs: readonly Doc[]): Promise<{
+  root: string
+  bytes: number
+  index: TrigramIndex
+  readBlob: (id: BlobId) => Promise<Uint8Array>
+}> {
   const root = mkdtempSync(join(tmpdir(), 'fugue-plan-'))
   const bodies = new Map<string, Uint8Array>()
   for (const d of docs) bodies.set(d.id, new Uint8Array(Buffer.from(d.text, 'utf8')))
+  const readBlob = async (id: BlobId): Promise<Uint8Array> => bodies.get(id) as Uint8Array
   const source: BlobSource = {
     ids: async () => docs.map((d) => d.id as BlobId),
-    read: async (id) => bodies.get(id) as Uint8Array,
+    read: readBlob,
   }
   const built = await rebuildIndex(root, source)
   assert.equal(built.wrote, true, '索引没落盘——这一条对照是空话')
-  return { root, bytes: built.build.artifactBytes }
+  return { root, bytes: built.build.artifactBytes, index: built.index, readBlob }
 }
 
 function askOf(pattern: string, docs: readonly Doc[], earlyStop = true): PlanAsk {
@@ -376,6 +385,41 @@ test('⑩ 两档分价双向：工件不比语料小、候选稀 → 走索引�
       `⑩ 读数：工件 ${bytes} 字节 / 全扫 ${sparse.reading.scanBytes}（${(bytes / sparse.reading.scanBytes).toFixed(2)} 倍）·` +
         ` ① 候选 ${sparse.reading.candidateBytes} 字节 → ${sparse.why} ·` +
         ` ② 候选 ${dense.reading.candidateBytes}（${Math.round((dense.reading.candidateBytes / dense.reading.scanBytes) * 100)}%）→ ${dense.why}`,
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+// ── ⑪ 备好的那一份当场采用 ───────────────────────────────────────────────────
+
+test('⑪ 触发器交回来的那一份当场采用：盘上那份挪走，这一问照旧走索引（一问答只读一次）', async () => {
+  const docs = narrow(40, 8 * 1024, (i) => (i === 3 || i === 17 ? 'zzz' : null))
+  const { root, bytes, index, readBlob } = await build(docs)
+  const rows = rowsOfDocs(docs)
+  const file = idxFileOf(root)
+  try {
+    // 探针：真触发器读完之后、这一问读盘之前，把盘上那份挪走。两条路在这里分得开——
+    // 触发器没把手里那一份交出来（或者下一层不采用），它就会去读第二遍：文件没了 → 退成
+    // `artifact-absent`（回扫描）；交出来了、也采用了 → 照旧 `candidates`。
+    // 语料是纯内存的，所以这一格只量判决，不掺真源 I/O（与 ①② 同一档的语料）。
+    const real = createTrigger({ root, readBlob })
+    const plan = await createPlanner({
+      root,
+      rowsOf: () => rows,
+      ensureIndex: async (ask) => {
+        const ensured = await real(ask)
+        rmSync(file, { force: true })
+        return ensured
+      },
+    })(askOf('zzz', docs))
+    assert.equal(plan.reading.build.kind, 'hit', '这一格要的是"盘上那一份就是这一组 blob"那条路')
+    assert.equal(plan.why, 'candidates', '触发器交了工件回来却没被采用——这一问又去盘上读了一遍')
+    assert.deepEqual(pathsOf(plan), ['f003.txt', 'f017.txt'])
+    assert.equal(plan.reading.artifactGrams, index.gramCount, '手里那一份的三字组数没进读数——采用落空了')
+    console.log(
+      `⑪ 读数：真触发器交回 ${bytes} 字节的那一份（${index.gramCount} 条三字组）· 盘上那份当场挪走 → 仍旧` +
+        ` ${plan.why} · 路径 ${pathsOf(plan).length} 条`,
     )
   } finally {
     rmSync(root, { recursive: true, force: true })

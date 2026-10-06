@@ -2,6 +2,9 @@
 // 出处：ROADMAP § 4 的查询接线那一行（trigram 候选 ∩ 视图 blob 集 → 缓存正则验证）· 它下面那一行
 // （按档派发：稀疏与 miss 走索引 · 密集走扫描早停）。
 //
+// 本站起这一层还多接一件事：**缺省档下这一问要不要先把工件建出来**（`trigger.ts` 那条闸与它的账）。
+// 建与不建不改答案、不改回执——它只决定这一问走哪条路，与派发是同一件事的两半。
+//
 // 四件事，按代价从低到高排：
 //
 //   一 · **模式那边先要得出"必须有"的三字组**（`pattern.ts`）。一条都取不出（单汉字/两字 ·
@@ -44,6 +47,9 @@
 import { stat } from 'node:fs/promises'
 import { idxFileOf, readIndex } from '../index/store.ts'
 import { requiredTrigrams } from './pattern.ts'
+// **构建触发器**（本站）：缺省档下"盘上没有工件就建一份"那件事与它的闸、它的账，都在那一份里。
+import { NO_BUILD } from './trigger.ts'
+import type { BuildAccount, EnsureIndex } from './trigger.ts'
 import type { Trigram, TrigramIndex } from '../index/trigram.ts'
 import type { BlobId } from '../terms.ts'
 
@@ -63,6 +69,13 @@ export interface PlanDeps {
   readonly root: string
   /** 走树那一份清单 → 那两栏。取不到给 `null`（没接线）。 */
   readonly rowsOf: (walked: readonly string[]) => ViewRows | null
+  /**
+   * **构建触发器**（本站的缺省档那一半）：盘上没有工件（或者说的不是这一组 blob）时按闸建一份。
+   *
+   * 不给就是今天的形态——**盘上没有工件就回扫描，查询路不建**（显式口 `openOrRebuild` 照旧在，
+   * 那是"整体关回纯扫描"那一档）。产品那一条装配给（`host.ts`），夹具与两态对照不给。
+   */
+  readonly ensureIndex?: EnsureIndex
 }
 
 export interface PlanAsk {
@@ -115,6 +128,8 @@ export interface PlanReading {
   /** 挑中的那一条三字组与它在几个 blob 里出现过。 */
   readonly gram: Trigram | null
   readonly gramCount: number
+  /** 构建那一侧的账（本站）：这一问建了没有 · 哪一档 · 为什么没建。**不进回执。** */
+  readonly build: BuildAccount
 }
 
 export interface SearchPlan {
@@ -210,11 +225,14 @@ export function createPlanner(deps: PlanDeps): Planner {
       artifactGrams: 0,
       gram: null,
       gramCount: 0,
+      build: NO_BUILD,
     }
+    /** 这一问在构建那一侧做了什么（下面那一笔建过之后，`give` 交出去的每一档都带着它）。 */
+    let build: BuildAccount = NO_BUILD
     const give = (why: PlanWhy, reading: Partial<PlanReading> = {}): SearchPlan => ({
       why,
       paths: null,
-      reading: { ...blank, ...reading },
+      reading: { ...blank, build, ...reading },
     })
 
     // **兜底包住整条**：索引那一层出任何意外都只是这一问回扫描，绝不许把问询打死
@@ -226,6 +244,27 @@ export function createPlanner(deps: PlanDeps): Planner {
 
       const rows = deps.rowsOf(ask.walked)
       if (rows === null) return give('no-rows')
+
+      // **缺省档那一半：先把工件备好**（`trigger.ts`）。这一层只递三样——这一代的那份清单 · 那两栏
+      // · 盘上此刻的认账；"建不建 · 建哪一档 · 为什么没建"全归它，交回来的那份账进 `reading.build`。
+      //
+      // 它同时把**备好的那一份**交回来（`EnsuredIndex.index`）：工件是不可变内容，同一份一问答只读
+      // 一次、只解一次。采用的落点就是下面 `readOnce` 那本 `size:mtime` 认账——不采用的话，`hit`
+      // 这一档会紧接着把盘上同一份再读一遍再解一遍（本仓那一档背靠背读数：32.45 → 26.15 ms）。
+      //
+      // `stat` 在这儿只算一次：触发器没接线时它就是下面那两道闸用的那一次（与上一版逐字相同）；
+      // 建过之后要再 `stat` 一次——大小与认账键都变了，读回来的那一份才是刚写下去的那一份。
+      let probe = await probeOnce()
+      if (deps.ensureIndex !== undefined) {
+        const ensured = await deps.ensureIndex({
+          walked: ask.walked,
+          rows,
+          artifact: probe === null ? null : { bytes: probe.bytes, key: probe.key },
+        })
+        build = ensured.build
+        if (build.kind === 'grown' || build.kind === 'rebuilt') probe = await probeOnce()
+        if (ensured.index !== null && probe !== null) cached = { key: probe.key, index: ensured.index }
+      }
 
       let scanBytes = 0
       const viewIds = new Set<BlobId>()
@@ -242,7 +281,6 @@ export function createPlanner(deps: PlanDeps): Planner {
       // 之前就把整份工件读完了（三节全读、三节各核一遍 sha256）。读数那一栏跟着挪——拒绝这一档
       // 没有读工件，`artifactGrams` 报手里正好有同一份（缓存键对得上）时的那个数，否则报 0
       // （0 在这里是"这一问没读"，不是"这一份里一个三字组都没有"）。
-      const probe = await probeOnce()
       if (probe === null) return give('artifact-absent', { scanBytes, viewBlobs: viewIds.size })
       const base: Partial<PlanReading> = {
         artifactBytes: probe.bytes,
@@ -287,7 +325,8 @@ export function createPlanner(deps: PlanDeps): Planner {
       // 兑现那一关：工件**折算之后** + 候选要读的字节，仍然要小于全扫的 1/factor 才走（读到这一步
       // 才知道候选有多少；不够格就回扫描，欠的是这一步判断，不是把候选当答案）。
       if ((read.bytes * ARTIFACT_WEIGHT + candidateBytes) * factor >= scanBytes) return give('candidates-dense', reading)
-      return { why: 'candidates', paths, reading: { ...blank, ...reading } }
+      // **这一支自己拼**（它还要交一份 `paths`），所以构建那笔账要在这儿补上——与 `give` 同一形状。
+      return { why: 'candidates', paths, reading: { ...blank, build, ...reading } }
     } catch {
       // 意外一律回扫描——**这一档今天按构造到不了**（解析器每一支都有出口 · `readIndex` 自己把
       // 六种坏法收成 `null`）。留着它是为了这道地板：索引那一层出任何意外都只是这一问慢一点，

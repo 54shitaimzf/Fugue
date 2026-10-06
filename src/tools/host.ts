@@ -29,6 +29,9 @@ import { createWalk, walkRowsOf } from './walk-cache.ts'
 // **查询接线那一份计划**（本站）：按模式收窄这一趟要读的路径。它住在 `src/search/`，不进冻结面。
 import { createPlanner } from '../search/plan.ts'
 import type { Planner } from '../search/plan.ts'
+// **构建触发器**（本站的缺省档那一半）：盘上没有工件就按闸建一份，建不建 · 建哪一档 · 为什么没建
+// 全在那一份里。这一层只决定"接不接上"（HostOptions.indexBuild 那一栏）。
+import { createTrigger } from '../search/trigger.ts'
 import { digestOf } from '../runtime/restart.ts'
 import { lstatSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -95,6 +98,16 @@ export interface HostOptions {
   readonly actionFor?: (ask: ActionAsk) => CommandPlan | Promise<CommandPlan>
   /** 没有它这一份宿主只能读：写与提交会改视图，而视图的每一次变更都要落日志（§ 9.3 的顺序）。 */
   readonly actions?: HostActions
+  /**
+   * **工件那一档**（本站的缺省翻转）：缺省是**开**——查询路按需把工件建出来（`trigger.ts` 那条闸与
+   * 它的账），于是缺省运行模式下查询自己按档派发（稀疏与未命中走索引 · 密集走扫描早停），
+   * 不要求显式打开。
+   *
+   * 给 `false` 就是今天的形态：**查询路只消费、不生产**——盘上没有工件就回扫描（显式口
+   * `openOrRebuild` 照旧在）。那是对照与退化用的口："索引在场与缺席"那两态、地板那一档，以及
+   * 本就量纯扫描的那些夹具与基准脚本。
+   */
+  readonly indexBuild?: boolean
   /**
    * **这一格的写入面**（架构 § 8.9 那条反向通道的声明集）。W8 起它是**契约的写入面**
    * （`contract/types.ts` 的 `declaredSetOf`），由调用点递进来——不开新配置面。
@@ -169,6 +182,16 @@ function prefetchOf(truth: Truth | undefined): ((ids: readonly BlobId[]) => Prom
  */
 export function prefetchBudgetOf(cacheBytes: number): number {
   return Math.floor(cacheBytes / 2)
+}
+
+/**
+ * 真源那一层的取字节口（构建触发器要它：**索引不自己存原文**）。冻结的 `Truth` 契约一个字不动
+ * ——`getBlob` 本来就是它的一栏。没接真源（夹具档与单测里那几份宿主）就是 `undefined`：
+ * 触发器据此不建，查询照旧扫描（机制缺席只是慢，不是坏掉）。
+ */
+function blobReaderOf(truth: Truth | undefined): ((id: BlobId) => Promise<Uint8Array>) | undefined {
+  if (truth === undefined) return undefined
+  return (id) => truth.getBlob(id)
 }
 
 /**
@@ -316,7 +339,16 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
    * 查询接线那一份计划（`src/search/plan.ts`）：索引住 `<root>/.fugue/idx/`，视图那一份 id 与
    * 字节数取自走树缓存——**同一个 `view.list` 的行，不为一次查询再枚举一遍视图**。
    */
-  const searchPlan = createPlanner({ root: roots.realRoot, rowsOf: walkRowsOf })
+  const searchPlan = createPlanner({
+    root: roots.realRoot,
+    rowsOf: walkRowsOf,
+    // **缺省翻转的落点**：`openOrRebuild` 是显式口，这一行把它接到查询路上——"建不建 · 建哪一档 ·
+    // 为什么没建"归 `trigger.ts`（一条字节闸 + 一笔账）。`indexBuild: false` 就是今天的形态。
+    ensureIndex:
+      opts.indexBuild === false
+        ? undefined
+        : createTrigger({ root: roots.realRoot, readBlob: blobReaderOf(opts.actions?.truth) }),
+  })
 
   // ── 执行面（W8：视图是读面，物化根是执行面）──────────────────────────
   //
