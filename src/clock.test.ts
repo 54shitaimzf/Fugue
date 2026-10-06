@@ -208,6 +208,43 @@ test('信封钟 ② 端到端：同一份账重放两次（一次带钟栏、一
   }
 })
 
+// ────────────────────────────────── ① 不给钟那一档在命令面上
+
+test('信封钟 ① 命令行面：`fork --no-clock` 那一行不带三栏，同一条命令不给它则带（两条一起量）', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fugue-clock-cli-'))
+  try {
+    const env: NodeJS.ProcessEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' }
+    const git = (args: readonly string[]): ReturnType<typeof spawnSync> =>
+      spawnSync('git', [...args], { cwd: root, env, encoding: 'utf8' })
+    assert.equal(git(['init', '-q', '-b', 'main', '.']).status, 0)
+    const made = git(['-c', 'user.email=a@b', '-c', 'user.name=a', 'commit', '-q', '--allow-empty', '-m', 'init'])
+    assert.equal(made.status, 0, String(made.stderr))
+    const cli = (args: readonly string[]): ReturnType<typeof spawnSync> =>
+      spawnSync(process.execPath, [CLI, '--root', root, ...args], { encoding: 'utf8', env })
+
+    assert.equal(cli(['fork', '--strategy', 'copy', 'main']).status, 0, '不给 --no-clock 的那一趟要成')
+    assert.equal(cli(['fork', '--strategy', 'copy', '--no-clock', 'main']).status, 0, '带 --no-clock 的那一趟要成')
+
+    const lines = readFileSync(join(logDir(root), 'round.jsonl'), 'utf8').trim().split('\n')
+    // 用 `--strategy copy`：物化树是一份普通拷贝，收尾 `rmSync` 收得干净（overlayfs 档会留下
+    // 挂过的目录，收尾要请产品那一份 `removeTree`——`chain.test.ts` 的 `wireCleanup` 记着这一处）。
+    assert.equal(lines.length, 2, '两趟 fork 该写两条')
+    assert.match(lines[0] ?? '', /"ts":\d+/, '缺省那一档要带信封钟')
+    assert.equal(
+      (lines[1] ?? '').includes('"ts":'),
+      false,
+      '`fork --no-clock` 那一档还是写了钟栏——开关收下了却没接到写句柄上',
+    )
+    // 地板：不带钟的那一条照样读得回来（旧行那一档）。
+    const back = cli(['log', '--json'])
+    assert.equal(back.status, 0, String(back.stderr))
+    assert.equal(String(back.stdout).trim().split('\n').length, 2)
+    console.log('① 读数：两趟 fork 各一条 · 缺省那条带 ts/boot/inc · --no-clock 那条三栏全无 · 两条都读得回来')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 // ────────────────────────────────── ③ 无钟源不静默造值
 
 test('信封钟 ③ 读不出启动标识：一栏都不给（不是 0 · 不是空串）', () => {
