@@ -10,6 +10,9 @@
 //   ③ 早停那一句逐字节照旧：索引在场但仍然早停时，"扫到哪儿"数的是清单的第几条，不是读了几份。
 //   ④ 地板五态：短查询（单汉字/两字）· 密集 · 越限（这一组建不出工件）· 损坏（工件截短）·
 //      陈旧（视图里多了一份没进索引的）——回执与账都回到缺席那一趟。对手：**漏报**。
+//   ⑤ 缺省翻转（本站）：缺省宿主（装配一个字不加）第一问就把工件建出来并按档派发；显式关掉
+//      （indexBuild: false）= 今天的形态——两态回执逐字节相同。对手：**等价回归**（缺省与显式
+//      两态不再逐字节相同）与**派发错报**（该走没走 · 不该走走了）。
 //
 // 语料是"窄字母表 · 多份文件"那个形状（工件小、语料大）：本仓那种"字典与语料一样大"的形状上
 // 派发直接回扫描（`plan.test.ts` ⑦ 量的就是它），接线走不到，所以这一份另起一份合用的语料。
@@ -29,7 +32,7 @@ import { loadView } from '../view/view.ts'
 import { createToolHost } from '../tools/host.ts'
 import { faceOf, parseArgs } from '../tools/execute.ts'
 import type { ToolHost } from '../tools/execute.ts'
-import { idxFileOf, rebuildIndex, sourceOfView } from '../index/store.ts'
+import { idxFileOf, indexExists, rebuildIndex, sourceOfView } from '../index/store.ts'
 import { INDEX_LIMITS, IndexBudgetExceeded } from '../index/budget.ts'
 import { tmpDir } from '../../test/helpers/tmp.ts'
 import type { View } from '../view/contract.ts'
@@ -115,12 +118,24 @@ interface Assembly {
   readonly close: () => Promise<void>
 }
 
-async function assemble(where: string, base: CommitId): Promise<Assembly> {
+/**
+ * 一套装配。第三个参数原样递给宿主那一层——**给什么就是什么**。
+ *
+ * 缺省（不给第三个参数）是这一份绝大多数格要的形态：查询路只消费、不生产（indexBuild: false），
+ * 两态量的是"索引在场与缺席"，而触发器一接上，"缺席"那一态根本不存在（第一问就会把它建出来）。
+ * **空对象 {} 才是产品那一条装配的缺省**（触发器接上），缺省翻转那一格（⑤）用它。
+ */
+async function assemble(
+  where: string,
+  base: CommitId,
+  opts: { readonly indexBuild?: boolean } = { indexBuild: false },
+): Promise<Assembly> {
   const truth = openTruth(where)
   const log = openLog(where, { write: AGENT, sync: 'never' })
   const view = await loadView(log, AGENT, { lower: lowerAt(truth, base) })
   const host = createToolHost(view, createRoots(where), {
     actions: { writer: AGENT, log, truth, head: await refHeadOf(log, AGENT, base) },
+    ...opts,
   })
   return {
     host,
@@ -326,4 +341,71 @@ test('④ 地板：短查询 · 密集 · 越限 · 损坏 · 陈旧——回执
   assert.ok(stale.output.includes('docs/new.txt'), '新加进来的那一份没被找到——漏报')
   assert.equal(stale.output, (await grepRun(where, base, 'zebra')).output)
   console.log('④ 读数：短查询 2 种 · 密集 · 越限 · 损坏 · 陈旧——五态都回扫描，回执与账与缺席相同')
+})
+
+// ── ⑤ 缺省翻转（本站） ───────────────────────────────────────────────────────
+
+/**
+ * 缺省翻转那一格的一趟：按 indexBuild 装配 → 一问 → 那道缝再问一次（看它交了几条候选）。
+ *
+ * **那道缝排在 grep 之后**：缺省档那一趟的工件是"第一问自己建出来的"，排在前面看的就是建之前
+ * 那一态了。
+ */
+async function flipRun(
+  where: string,
+  base: CommitId,
+  opts: { readonly indexBuild?: boolean },
+  pattern = 'zebra',
+): Promise<Run> {
+  const a = await assemble(where, base, opts)
+  try {
+    const parsed = parseArgs(JSON.stringify({ pattern }))
+    assert.equal(parsed.ok, true)
+    const r = await faceOf('grep')(parsed.value, a.host, { agent: AGENT, step: 0, cwd: '', holder: false })
+    const walked = await a.host.walk()
+    const seam = (a.host as unknown as {
+      searchPlan: (ask: unknown) => Promise<{ paths: ReadonlySet<string> | null }>
+    }).searchPlan
+    const got = await seam.call(a.host, { pattern, flags: '', walked, targets: walked, earlyStop: true })
+    const stats = a.truth.stats()
+    return {
+      output: r.output,
+      reads: stats.blobHits + stats.blobMisses,
+      requests: stats.gitRequests,
+      misses: stats.blobMisses,
+      candidates: got.paths === null ? null : got.paths.size,
+    }
+  } finally {
+    await a.close()
+  }
+}
+
+test('⑤ 缺省翻转：缺省宿主第一问就建工件并按档派发；显式关掉 = 今天的形态，两态回执逐字节相同', async () => {
+  // **自己起一份仓**：④ 那一格往共用的那份里写过 docs/new.txt，候选数会跟着变——这一格要一个定数。
+  const { where, base } = await makeRepo(corpus().files)
+
+  // 一 · 显式关掉（今天的形态）：装配明说不要工件那一档——不建、不派发。
+  dropIndex(where)
+  const plain = await flipRun(where, base, { indexBuild: false })
+  assert.equal(await indexExists(where), false, '显式关掉那一趟往盘上写了工件')
+  assert.equal(plain.candidates, null, '显式关掉那一趟还在按索引派发')
+
+  // 二 · 缺省（第三个参数给一个空对象 = 装配一个字不加）：第一问自己把工件建出来，同一问按档派发。
+  dropIndex(where)
+  const flipped = await flipRun(where, base, {})
+  assert.equal(await indexExists(where), true, '缺省档那一趟没把工件建出来')
+  assert.equal(flipped.candidates, 3, '缺省档那一趟没按档派发（候选该是那 3 条）')
+  // **等价回归**那一半：路与时延变了，回执一个字节不许变。
+  assert.equal(flipped.output, plain.output, '缺省与显式两态的回执不再逐字节相同')
+
+  // 三 · 工件在场之后再问一次。**两态分开报**：第二趟里含"建工件"那一笔（全量重建要读整份视图），
+  // 第三趟才是"工件在场"的那一问——"少读"那一句说的是它，不是首查那一趟。
+  const warm = await flipRun(where, base, {})
+  assert.equal(warm.candidates, 3, '工件在场那一趟没按档派发')
+  assert.equal(warm.output, plain.output, '工件在场那一趟的回执变了')
+  assert.ok(warm.reads < plain.reads, '工件在场那一趟该少读（' + plain.reads + ' → ' + warm.reads + '）')
+  console.log(
+    '⑤ 读数：显式关掉（今天的形态）' + line(plain) + ' · 缺省首查（含建工件那一笔）' + line(flipped) +
+      ' · 工件在场 ' + line(warm) + ' · 回执 ' + plain.output.length + ' 字节三态逐字节相同 · 候选 ' + warm.candidates + ' 条',
+  )
 })
