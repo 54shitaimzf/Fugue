@@ -16,6 +16,7 @@ import type { Clock } from './clock.ts'
 import { canonicalJson, decodeLine, encodeEvent } from './log/envelope.ts'
 import type { LogEvent } from './log/events.ts'
 import { logDir, openLog } from './log/log.ts'
+import { PHRASES } from './phrases.ts'
 import type { AgentId } from './terms.ts'
 
 const A = (s: string): AgentId => s as AgentId
@@ -240,6 +241,60 @@ test('信封钟 ① 命令行面：`fork --no-clock` 那一行不带三栏，同
     assert.equal(back.status, 0, String(back.stderr))
     assert.equal(String(back.stdout).trim().split('\n').length, 2)
     console.log('① 读数：两趟 fork 各一条 · 缺省那条带 ts/boot/inc · --no-clock 那条三栏全无 · 两条都读得回来')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+// ────────────────────────────────── ② 回拨在命令面上的呈现
+
+test('信封钟 ② 命令行面：\`status\` 把钟回拨印出来，账上没有回拨时那一行不出现（两条一起量）', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fugue-clock-status-'))
+  try {
+    const env: NodeJS.ProcessEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' }
+    const git = (args: readonly string[]): ReturnType<typeof spawnSync> =>
+      spawnSync('git', [...args], { cwd: root, env, encoding: 'utf8' })
+    assert.equal(git(['init', '-q', '-b', 'main', '.']).status, 0)
+    const made = git(['-c', 'user.email=a@b', '-c', 'user.name=a', 'commit', '-q', '--allow-empty', '-m', 'init'])
+    assert.equal(made.status, 0, String(made.stderr))
+    const cli = (args: readonly string[]): ReturnType<typeof spawnSync> =>
+      spawnSync(process.execPath, [CLI, '--root', root, ...args], { encoding: 'utf8', env })
+    assert.equal(cli(['fork', '--strategy', 'copy', 'main']).status, 0, '先得有一条带钟的账')
+
+    const at = join(logDir(root), 'round.jsonl')
+    const one = readFileSync(at, 'utf8')
+
+    // **没有回拨时那一行一个字都不印**：旧账与正常账不许添噪声。
+    const quiet = cli(['status', '--once'])
+    assert.equal(quiet.status, 0, String(quiet.stderr))
+    assert.equal(
+      String(quiet.stdout).includes(PHRASES.clockRollbackHead),
+      false,
+      '账上没有回拨，却把回拨那一行印出来了',
+    )
+
+    // 造一条真回拨：同一 writer 相邻两条 `inc` 递增而 `ts` 递减（crc 按新的校验形状重算）。
+    const line = JSON.parse(one.trim()) as Record<string, unknown>
+    const rolled: Record<string, unknown> = {
+      ...line,
+      seq: 2,
+      ts: (line.ts as number) - 1000,
+      inc: (line.inc as number) + 1000,
+    }
+    const { crc: _dropped, ...rest } = rolled
+    writeFileSync(at, one.trim() + '\n' + JSON.stringify({ ...rest, crc: crcHex(canonicalJson(rest)) }) + '\n')
+
+    const loud = cli(['status', '--once'])
+    assert.equal(loud.status, 0, String(loud.stderr))
+    const text = String(loud.stdout)
+    assert.ok(text.includes(PHRASES.clockRollbackHead), '账上有一条回拨，`status` 却没印那一行')
+    assert.ok(text.includes('round · seq 1→2'), '回拨那一行要指得出是哪两条（writer · seq）')
+    // **回拨是事实不是错**：账本身照旧读得动。
+    assert.equal(cli(['replay', '--verify']).status, 0, '回拨不该让账读不动')
+    console.log(
+      '② 读数：没有回拨时那一行不出现 · 造一条（ts 回头 1000 ms · inc 前进 1000 µs）→ 印出「round · seq 1→2」· ' +
+        '账照旧 replay --verify 退 0',
+    )
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
