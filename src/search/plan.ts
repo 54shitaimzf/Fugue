@@ -248,16 +248,22 @@ export function createPlanner(deps: PlanDeps): Planner {
       // **缺省档那一半：先把工件备好**（`trigger.ts`）。这一层只递三样——这一代的那份清单 · 那两栏
       // · 盘上此刻的认账；"建不建 · 建哪一档 · 为什么没建"全归它，交回来的那份账进 `reading.build`。
       //
+      // 它同时把**备好的那一份**交回来（`EnsuredIndex.index`）：工件是不可变内容，同一份一问答只读
+      // 一次、只解一次。采用的落点就是下面 `readOnce` 那本 `size:mtime` 认账——不采用的话，`hit`
+      // 这一档会紧接着把盘上同一份再读一遍再解一遍（本仓那一档背靠背读数：32.45 → 26.15 ms）。
+      //
       // `stat` 在这儿只算一次：触发器没接线时它就是下面那两道闸用的那一次（与上一版逐字相同）；
       // 建过之后要再 `stat` 一次——大小与认账键都变了，读回来的那一份才是刚写下去的那一份。
       let probe = await probeOnce()
       if (deps.ensureIndex !== undefined) {
-        build = await deps.ensureIndex({
+        const ensured = await deps.ensureIndex({
           walked: ask.walked,
           rows,
           artifact: probe === null ? null : { bytes: probe.bytes, key: probe.key },
         })
+        build = ensured.build
         if (build.kind === 'grown' || build.kind === 'rebuilt') probe = await probeOnce()
+        if (ensured.index !== null && probe !== null) cached = { key: probe.key, index: ensured.index }
       }
 
       let scanBytes = 0

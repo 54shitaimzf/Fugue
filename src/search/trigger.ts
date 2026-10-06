@@ -21,6 +21,7 @@
 // 新增的持久化位置仍然只有 `.fugue/idx/` 那一处（派生体纪律：不进提交 · 不进视图 · 不进事件 · 不写账）。
 import { openOrRebuild } from '../index/store.ts'
 import type { BlobSource } from '../index/store.ts'
+import type { TrigramIndex } from '../index/trigram.ts'
 import type { IndexBudget, IndexBudgetLimits } from '../index/budget.ts'
 import type { ViewRows } from './plan.ts'
 import type { BlobId } from '../terms.ts'
@@ -102,8 +103,21 @@ export interface TriggerAsk {
   readonly artifact: { readonly bytes: number; readonly key: string } | null
 }
 
+/**
+ * 触发器交回来的两样：**这一趟做了什么**（`build`）与**备好的那一份**（`index`；没备好给 `null`）。
+ *
+ * 后一样是给下一层当场用的。工件是不可变内容，同一份工件一问答**只读一次、只解一次**——不把它
+ * 交回去，`hit` 那一档会紧接着把盘上同一份再读一遍、再解一遍。背靠背读数（本仓那一档 · 稀疏问 ·
+ * 同一台子同一份语料 · `tools/bench-grep-index.js --only repo`）：读两遍 **32.45 ms → 采用 26.15 ms**。
+ * `plan.ts` 里 `readOnce` 那本账（`size:mtime` 认账）就是为接这一手准备的。
+ */
+export interface EnsuredIndex {
+  readonly build: BuildAccount
+  readonly index: TrigramIndex | null
+}
+
 /** 触发器的出口形状：与 `plan.ts` 的 `PlanDeps.ensureIndex` 同一件事。 */
-export type EnsureIndex = (ask: TriggerAsk) => Promise<BuildAccount>
+export type EnsureIndex = (ask: TriggerAsk) => Promise<EnsuredIndex>
 
 export interface TriggerDeps {
   /** 真源根（索引住 `<root>/.fugue/idx/`）。 */
@@ -159,14 +173,15 @@ export function createTrigger(deps: TriggerDeps): EnsureIndex {
    */
   let settled: { readonly walked: readonly string[]; readonly key: string } | null = null
 
-  return async function ensure(ask: TriggerAsk): Promise<BuildAccount> {
+  return async function ensure(ask: TriggerAsk): Promise<EnsuredIndex> {
     const key = ask.artifact === null ? 'absent' : ask.artifact.key
+    // 没建的两档一律 `index: null`：手里没有那一份，下一层照它自己的路走（读盘上那份，或者扫描）。
     if (settled !== null && settled.walked === ask.walked && settled.key === key) {
-      return account('none', 0)
+      return { build: account('none', 0), index: null }
     }
-    const remember = (one: BuildAccount): BuildAccount => {
+    const remember = (one: BuildAccount, index: TrigramIndex | null = null): EnsuredIndex => {
       settled = { walked: ask.walked, key }
-      return one
+      return { build: one, index }
     }
 
     const viewBytes = viewBytesOf(ask)
@@ -188,22 +203,28 @@ export function createTrigger(deps: TriggerDeps): EnsureIndex {
       return remember({ ...account('skipped', viewBytes, 'over-limits'), over: outcome.over })
     }
     if (!outcome.rebuilt) {
-      return remember({
-        ...account('hit', viewBytes),
-        artifactBytes: ask.artifact === null ? 0 : ask.artifact.bytes,
-      })
+      return remember(
+        {
+          ...account('hit', viewBytes),
+          artifactBytes: ask.artifact === null ? 0 : ask.artifact.bytes,
+        },
+        outcome.index,
+      )
     }
     // 增量那一趟报得出"这一趟读了几份、几字节"；全量重建那一趟的账在 `BuildReading` 里。两条都收。
     const grown = outcome.grew
     const full = outcome.built
-    return remember({
-      kind: grown === null ? 'rebuilt' : 'grown',
-      why: '',
-      viewBytes,
-      freshBlobs: grown === null ? (full === null ? 0 : full.blobCount) : grown.freshBlobs,
-      sourceBytes: grown === null ? (full === null ? 0 : full.sourceBytes) : grown.sourceBytes,
-      artifactBytes: grown === null ? (full === null ? 0 : full.artifactBytes) : grown.artifactBytes,
-      over: null,
-    })
+    return remember(
+      {
+        kind: grown === null ? 'rebuilt' : 'grown',
+        why: '',
+        viewBytes,
+        freshBlobs: grown === null ? (full === null ? 0 : full.blobCount) : grown.freshBlobs,
+        sourceBytes: grown === null ? (full === null ? 0 : full.sourceBytes) : grown.sourceBytes,
+        artifactBytes: grown === null ? (full === null ? 0 : full.artifactBytes) : grown.artifactBytes,
+        over: null,
+      },
+      outcome.index,
+    )
   }
 }
