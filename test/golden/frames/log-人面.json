@@ -1,0 +1,16 @@
+{
+  "id": "log-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "log"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "round\t1\tview/write\tagent=\"round\" path=\"a.txt\" rev=1 blob=\"4a58007052a65fbc2fc3f910f2855f45a4058e74\" mode=33188\nround\t2\tview/write\tagent=\"round\" path=\"b.txt\" rev=2 blob=\"65b2df87f7df3aeedef04be96703e55ac19c2cfb\" mode=33188\nround\t3\tckpt/commit\tagent=\"round\" commit=\"d9f0832b39fd75ad0b82695e5ef9a5e7a1380a2b\" rev=2 msg=\"第一版\"\nround\t4\tview/write\tagent=\"round\" path=\"a.txt\" rev=3 blob=\"d8280f3bbe6ebf92576f31e4b419278236432678\" mode=33188\nround\t5\tckpt/commit\tagent=\"round\" commit=\"562151d97429fda94cd79b517b4f2b5b28cd219d\" rev=3 msg=\"第二版\"\n",
+    "stderr": ""
+  }
+}

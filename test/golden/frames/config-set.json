@@ -1,0 +1,19 @@
+{
+  "id": "config-set",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "config",
+        "set",
+        "actions.build",
+        "{\"argv\":[\"true\"]}"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "actions.build\t(没有)\t→\t{\"argv\":[\"true\"]}\n",
+    "stderr": ""
+  }
+}

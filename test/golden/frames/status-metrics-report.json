@@ -1,0 +1,19 @@
+{
+  "id": "status-metrics-report",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "status",
+        "--metrics",
+        "--report"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"snapshot\":{\"rounds\":[],\"current\":null,\"agents\":[{\"agent\":\"round\",\"calls\":0,\"steps\":0,\"invocations\":0,\"actions\":0,\"denies\":0,\"bounds\":0,\"handoffs\":0,\"stopSteps\":null,\"stopped\":null,\"last\":\"ckpt/commit\"}],\"contracts\":0,\"attempts\":0,\"conflicts\":0,\"accepts\":{\"pass\":0,\"fail\":0,\"accepts\":0},\"refusals\":{\"total\":0,\"kernel\":0,\"byRule\":[]},\"outside\":{\"rows\":0,\"paths\":[]},\"usage\":{\"calls\":0,\"inputTokens\":{\"total\":0,\"missing\":0},\"cacheReadTokens\":{\"total\":0,\"missing\":0},\"cacheWriteTokens\":{\"total\":0,\"missing\":0},\"outputTokens\":{\"total\":0,\"missing\":0},\"reasoningTokens\":{\"total\":0,\"missing\":0}},\"models\":[],\"events\":5,\"last\":{\"writer\":\"round\",\"seq\":5,\"t\":\"ckpt/commit\"}},\"metrics\":[{\"metric\":\"zero-tool-call-rate\",\"value\":null,\"numerator\":null,\"denominator\":null,\"how\":\"分子：`llm/call` 里 **`invocations`（模型这一趟调了几条工具）为 0** 的条数（**它一次都没伸手**）；分母：全部 `llm/call` 的条数。本架构最危险的失败模式：约束导致模型不伸手。**分子用的是 `invocations`，不是 `toolCount`**：后者是\\\"我们公布了几条\\\"，与它伸不伸手无关。\"},{\"metric\":\"detour-rate\",\"value\":null,\"numerator\":null,\"denominator\":null,\"how\":\"分子：`run/start` 的 `argv` 里那一行命令**提到了某个已公布工具的名字**（`read` · `grep` · …）的条数——模型绕开工具、用 shell 干同一件事；分母：全部 `run/start` 的条数。**它是接口不兼容的唯一直接证据。**\"},{\"metric\":\"prefix-hit-rate\",\"value\":null,\"numerator\":null,\"denominator\":null,\"how\":\"分子：`llm/call` 里 `usage.cacheReadTokens > 0` 的条数（**上游说这一趟读到了缓存**）；分母：全部 `llm/call` 的条数。**分母不是 token 数**——那是\\\"省了多少\\\"的读法，而这里问的是\\\"有几趟命中了\\\"。\"},{\"metric\":\"prefix-versions\",\"value\":0,\"numerator\":0,\"denominator\":1,\"how\":\"**分子**：`prefix/assemble` 里 `(zoneAHash, zoneBHash)` **变化**的次数（第一次也算一次）——跨步稳定的那一段被重装配了几版。**逐 writer 各数一份、再加起来**：B 区是逐 writer 一份（架构 § 8.11），而事件流是**交错**的——合成一条链数的话，每换一个 writer 都算一次「变了」。真档那一趟（53 次调用 · 5 个 writer）这一栏读出 51，逐 writer 查一遍是 5。**分母恒为 1**（它是一个计数，不是一个比；`value` 就是分子）。\"},{\"metric\":\"materialize-precision\",\"value\":null,\"numerator\":0,\"denominator\":0,\"how\":\"分子：`mat/fork` 与 `mat/sync` 的 `paths` 条数之和（**物化碰过的路径**）；分母：`mat/reclaim` 的 `changed` 条数之和（**实际变更的路径**）。承重性质的度量化：两者应恒等；一旦不等，`tsc --incremental` 正在失效。\"},{\"metric\":\"ensure-latency\",\"value\":null,\"numerator\":0,\"denominator\":1,\"how\":\"**分子**：`mat/fork` 与 `mat/sync` 的条数（每一次 ensure 一趟）；**分母恒为 1**（计数类）。`value` 是那些 `ms` 的**中位数**，`detail` 里给最小 · 最大 · 求和 · 条数。\",\"detail\":{\"count\":0}},{\"metric\":\"git-calls-per-round\",\"value\":7,\"numerator\":7,\"denominator\":1,\"how\":\"分子：一个轮次里会碰对象库的那几条事件的条数（`view/write` 与 `view/symlink` 各一次 `putBlob` ·`mat/fork` 一次 fork · `ckpt/commit` 一次 `putTree` + 一次 `commit`）；分母：`round/state` 里见到过几个不同的轮次号（**一个都没有时给全部**）。\",\"detail\":{\"rounds\":0}},{\"metric\":\"handoff-yield\",\"value\":null,\"numerator\":null,\"denominator\":null,\"how\":\"**分子**：每一次 `agent/handoff` 到它**后继那一个 agent** 头一次成功写视图（`view/*` 或 `ckpt/commit`）之间，属主落了几个 `llm/call`（**步数**）之和；**分母**：真的等到了一次产出的交接条数。`value` 是平均值（步/交接）。接续的失败是静默的——不报错，只是重做已完成的工作；这个数把它从感觉变成读数。\",\"detail\":{\"handoffs\":0,\"settled\":0}}],\"report\":[{\"metric\":\"conflicts\",\"count\":0,\"how\":\"[整账] merge/attempt 的 conflicts 求和——合并那一趟撞了几条路径\"},{\"metric\":\"rejects\",\"count\":0,\"how\":\"[整账] round/state 里 Verifying → Working 的条数——验收打回了几次（断言\\\"没通过\\\"那一档）\"},{\"metric\":\"denied\",\"count\":0,\"how\":\"[整账] run/end 的 denied 为真的条数——动作被内核拒了几次\"}]}\n",
+    "stderr": ""
+  }
+}

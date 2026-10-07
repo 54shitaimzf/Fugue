@@ -1,0 +1,29 @@
+{
+  "id": "verify-mat-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "fork",
+        "{{C1}}",
+        "--strategy",
+        "copy"
+      ]
+    },
+    {
+      "argv": [
+        "ensure"
+      ]
+    },
+    {
+      "argv": [
+        "verify-mat"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "ok\t清单 0 条\t差异集 0 条\t落地 0 条\tmaterialize-precision （差异集为空）\n",
+    "stderr": ""
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "diff-stat-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "fork",
+        "{{C1}}",
+        "--strategy",
+        "copy"
+      ]
+    },
+    {
+      "argv": [
+        "--json",
+        "diff-stat"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"root\":\"<ROOT>/.fugue/mat/round/merged\",\"paths\":0,\"leaves\":[]}\n",
+    "stderr": "没有给 --baseline：这是一张快照，不是对比——--save <f> 存下来，下一次 --baseline <f> 读它\n"
+  }
+}

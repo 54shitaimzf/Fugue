@@ -26,7 +26,7 @@ import type { Ctx } from '../shared.ts'
 import { UsageError, emitJson, emitLine, fail, fence, openCtx, parseOctal, readStdin, usageFail, writerOf } from '../shared.ts'
 
 /** `--json` 的 delta 形状。**字节不进去**——它可能是二进制，`JSON.stringify` 会把它摊成下标表。 */
-function deltaJson(d: Delta): Record<string, unknown> {
+export function deltaJson(d: Delta): Record<string, unknown> {
   switch (d.kind) {
     case 'add':
     case 'modify':
@@ -36,7 +36,7 @@ function deltaJson(d: Delta): Record<string, unknown> {
   }
 }
 
-function deltaLine(d: Delta): string {
+export function deltaLine(d: Delta): string {
   switch (d.kind) {
     case 'add':
     case 'modify':
@@ -459,7 +459,7 @@ async function verify(
  *
  * 四条写命令共用它；与模型侧共用的是更下面那次 `applyEdit`——这里只做参数那一半。
  */
-async function deltaFrom(
+export async function deltaFrom(
   roots: Roots,
   cmd: string,
   args: string[],

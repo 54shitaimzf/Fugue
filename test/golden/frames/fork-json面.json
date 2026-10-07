@@ -1,0 +1,20 @@
+{
+  "id": "fork-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "fork",
+        "{{C1}}",
+        "--strategy",
+        "copy"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"agent\":\"round\",\"base\":\"562151d97429fda94cd79b517b4f2b5b28cd219d\",\"strategy\":\"copy\",\"mount\":null,\"merged\":\"<ROOT>/.fugue/mat/round/merged\",\"laid\":{\"files\":0,\"links\":0,\"symlinks\":0,\"dirs\":1},\"ms\":\"<NOW>\",\"why\":\"copy 档：处处可用（§ 8.5 的策略表）；代价是 N × 全树\",\"platform\":{\"fs\":\"ext2/3/4\",\"overlayfs\":\"sudo\",\"overlayfsNote\":\"借 sudo -n 挂在当前命名空间里\",\"hardlink\":true,\"whiteout\":\"direct\",\"whiteoutNote\":\"非特权 mknod 造得出字符设备 0:0（内核对 0:0 留了豁免）\"}}\n",
+    "stderr": ""
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "assemble-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "assemble",
+        "subagent"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"protocol\":\"subagent\",\"version\":\"s6-1\",\"agent\":null,\"segments\":11,\"toolCatalog\":12,\"zones\":{\"A\":{\"hash\":\"a062dd4952b935e4\",\"bytes\":3},\"B\":{\"hash\":\"45c2ccc78f19017f\",\"bytes\":334},\"C\":{\"hash\":\"75a11da44c802486\",\"bytes\":2}},\"firstDivergence\":null,\"violations\":[]}\n",
+    "stderr": ""
+  }
+}

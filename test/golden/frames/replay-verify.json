@@ -1,0 +1,17 @@
+{
+  "id": "replay-verify",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "replay",
+        "--verify"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "ok  \tround\trev 3\t2 个条目\n1 个视图全部一致\n",
+    "stderr": ""
+  }
+}

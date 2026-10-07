@@ -1,0 +1,17 @@
+{
+  "id": "assemble-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "assemble",
+        "subagent"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "协议 subagent · 版本 s6-1 · 持轮者那条路\n段 11 段 · 工具目录 12 个\nA 区 3 字节 · a062dd4952b935e4\nB 区 334 字节 · 45c2ccc78f19017f\nC 区 2 字节 · 75a11da44c802486\n四条约束：一处都不报\n",
+    "stderr": ""
+  }
+}

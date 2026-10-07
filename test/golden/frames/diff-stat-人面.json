@@ -1,0 +1,24 @@
+{
+  "id": "diff-stat-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "fork",
+        "{{C1}}",
+        "--strategy",
+        "copy"
+      ]
+    },
+    {
+      "argv": [
+        "diff-stat"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "0 个叶子\t<ROOT>/.fugue/mat/round/merged\n",
+    "stderr": "没有给 --baseline：这是一张快照，不是对比——--save <f> 存下来，下一次 --baseline <f> 读它\n"
+  }
+}

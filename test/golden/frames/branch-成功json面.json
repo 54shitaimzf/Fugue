@@ -1,0 +1,20 @@
+{
+  "id": "branch-成功json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--agent",
+        "worker1",
+        "--json",
+        "branch",
+        "{{C1}}"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"agent\":\"worker1\",\"ref\":\"refs/heads/worker1\",\"base\":\"562151d97429fda94cd79b517b4f2b5b28cd219d\",\"moved\":true}\n",
+    "stderr": "refs/heads/worker1 定格在 562151d97429fda94cd79b517b4f2b5b28cd219d\n"
+  }
+}

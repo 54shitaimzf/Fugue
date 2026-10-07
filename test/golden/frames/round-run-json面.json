@@ -1,0 +1,34 @@
+{
+  "id": "round-run-json面",
+  "note": "同上一档，`--json` 那一面",
+  "fresh": true,
+  "freshCommand": [
+    "--json",
+    "round",
+    "run",
+    "edit a.txt"
+  ],
+  "steps": [
+    {
+      "argv": [
+        "config",
+        "set",
+        "round.split",
+        "[{\"goal\":\"edit a.txt\",\"ownedPaths\":[\"a.txt\"],\"assertions\":[{\"action\":\"build\",\"name\":\"build ok\"}]}]"
+      ]
+    },
+    {
+      "argv": [
+        "config",
+        "set",
+        "round.assertions",
+        "[{\"name\":\"build ok\",\"argv\":[\"/bin/sh\",\"-c\",\"true\"]}]"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"round\":\"r1\",\"base\":\"562151d97429fda94cd79b517b4f2b5b28cd219d\",\"state\":\"Rebuilding\",\"contracts\":[{\"id\":\"r1.implement.1\",\"agent\":\"agent/r1/1\",\"kind\":\"implement\"}],\"precheckPlanning\":0,\"precheckMerge\":{\"ok\":true,\"count\":0},\"drift\":{\"ok\":true},\"fold\":{\"kind\":\"folded\",\"steps\":0},\"conflictTree\":null,\"verify\":{\"pass\":1,\"fail\":0,\"unrunnable\":0,\"ok\":true},\"assertions\":[{\"assertion\":\"build ok\",\"verdict\":\"pass\",\"note\":\"exit 0\",\"exit\":0,\"expect\":0,\"ms\":\"<NOW>\"}],\"advanced\":{\"written\":[\"a.txt\",\"b.txt\"],\"removed\":[],\"skipped\":[\".fugue\",\".git\"]},\"deniedAction\":null,\"agents\":[],\"metrics\":null,\"report\":[{\"metric\":\"conflicts\",\"count\":0,\"how\":\"[本轮] merge/attempt 的 conflicts 求和——合并那一趟撞了几条路径\"},{\"metric\":\"rejects\",\"count\":0,\"how\":\"[本轮] round/state 里 Verifying → Working 的条数——验收打回了几次（断言\\\"没通过\\\"那一档）\"},{\"metric\":\"denied\",\"count\":0,\"how\":\"[整账] run/end 的 denied 为真的条数——动作被内核拒了几次\"}],\"attribution\":[{\"where\":\"（没有 agent） 第 0 步（冷）\",\"agent\":null,\"step\":null,\"inputTokens\":null,\"cacheReadTokens\":null,\"note\":\"没有读数：这一趟一条 `llm/call` 都没有（打桩那一档就是这一种）\"},{\"where\":\"（没有第二个 agent） 第 0 步（共享头）\",\"agent\":null,\"step\":null,\"inputTokens\":null,\"cacheReadTokens\":null,\"note\":\"没有读数：这一趟只有一格（共享头要两格才读得到）\"},{\"where\":\"（没有 agent） 第 k 步\",\"agent\":null,\"step\":null,\"inputTokens\":null,\"cacheReadTokens\":null,\"note\":\"没有读数：这一格只走了一步（第 k 步与第 0 步是同一处）\"}],\"callLines\":[\"合计 调用 0 · input 0 · cacheRead 0 · cacheWrite 0 · output 0 · 思考 0——这一份日志里一次调用都还没有\"]}\n",
+    "stderr": "漂移检：HEAD 没动 · 这次合并动到 [a.txt] · 盘上与目标树不同 [] · 会被覆盖的（盘上既不是底也不是目标树）[（没有）]\n"
+  }
+}

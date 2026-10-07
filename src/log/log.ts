@@ -41,6 +41,16 @@ export interface LogOptions {
    */
   write?: WriterId
   /**
+   * **已经拿到的那一把**（上一版拆件：`Hold` 外置）。给了它，这条句柄照常持有、`close()` 里
+   * 放——但它**可以离开 `openLog` 单独发生**：调用方先把 N 把栅栏拿全（`holdWriter`），再一条
+   * 一条开句柄。「要 N 把先拿全再开口」那条语义（§ 9.11）要的就是这个形状——中途撞上任何
+   * 一把，已经拿到的由调用方全部放掉，**一个字节都没写**。
+   *
+   * `write` 与 `hold` 一起给是用法错（两种来路说不清谁持有）；两个都不给就是只读句柄
+   * （§ 9.7：观察不加锁）。
+   */
+  hold?: Hold
+  /**
    * **给不给信封钟**（`ts` · `boot` · `inc`，架构 § 9.2 的表）。缺省给：判据在写者一侧，
    * 命令行那一侧用 `--no-clock` 关掉。
    *
@@ -271,7 +281,13 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
   // 一份表里，后来的人等它。
   const initializing = new Map<WriterId, Promise<WriterState>>()
   // **拿不到就当场抛**——不等一个不知道多久的持者（`hold.ts` 的头一段）。
-  const hold: Hold | null = opts.write === undefined ? null : holdWriter(root, opts.write)
+  if (opts.write !== undefined && opts.hold !== undefined) {
+    throw new Error('openLog：`write` 与 `hold` 只能给一个——两种来路说不清谁持有那一把栅栏')
+  }
+  // **栅栏的两条来路**（上一版拆件）：`write` 是「这条句柄自己取」（单 writer 那八条写命令），
+  // `hold` 是「调用方已经拿全了再开口」（多 writer 的命令——「要 N 把先拿全再开口」，§ 9.11）。
+  const hold: Hold | null =
+    opts.hold ?? (opts.write === undefined ? null : holdWriter(root, opts.write))
   // **给钟的判据在写者一侧**：缺省给，`clock: false` 是不给的那一档（命令行是 `--no-clock`）。
   const stamp = opts.clock !== false
 

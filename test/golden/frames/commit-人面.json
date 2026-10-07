@@ -1,0 +1,18 @@
+{
+  "id": "commit-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "commit",
+        "-m",
+        "第二版"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "1e94c42956373bed3d9313cecbe02294e8ac2315\trefs/heads/main\t2 个条目\n",
+    "stderr": ""
+  }
+}

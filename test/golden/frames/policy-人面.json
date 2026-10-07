@@ -1,0 +1,17 @@
+{
+  "id": "policy-人面",
+  "note": "",
+  "pinLayers": true,
+  "steps": [
+    {
+      "argv": [
+        "policy"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "档 read-only · enforcement partial · 在场的层 landlock\n网络 host（动作点名要的）\nenv 基线 core（core 定位那几样 · all 宿主整份 · none 空）\n可达集 6 条只读根 · 4 条软链 · 2 处设备与进程 · 树里挖掉 .fugue\n  只读根 /usr · /opt · /etc/ld.so.cache · /etc/ssl · /etc/alternatives · /etc/resolv.conf\n可写落点 <ROOT>/.fugue/mat/round/cache · <ROOT>/.fugue/mat/round<TMP>\nPATH 里起不来 bwrap：spawnSync bwrap ENOENT\n",
+    "stderr": ""
+  }
+}

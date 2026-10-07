@@ -1,0 +1,26 @@
+{
+  "id": "config-get",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "config",
+        "set",
+        "actions.build",
+        "{\"argv\":[\"true\"]}"
+      ]
+    },
+    {
+      "argv": [
+        "config",
+        "get",
+        "actions.build"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"argv\":[\"true\"]}\n",
+    "stderr": ""
+  }
+}

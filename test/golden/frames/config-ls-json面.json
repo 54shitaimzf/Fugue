@@ -1,0 +1,18 @@
+{
+  "id": "config-ls-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "config",
+        "ls"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "[\"actions\",\"ports\",\"boundary\",\"platform\",\"round\",\"config\",\"docs\",\"workspace\",\"credentials\",\"toolchain\",\"ui\"]\n",
+    "stderr": ""
+  }
+}

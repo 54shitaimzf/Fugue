@@ -1,0 +1,17 @@
+{
+  "id": "read-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "read",
+        "a.txt"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "alpha 第二版\n",
+    "stderr": ""
+  }
+}

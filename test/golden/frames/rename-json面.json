@@ -1,0 +1,19 @@
+{
+  "id": "rename-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "rename",
+        "b.txt",
+        "b2.txt"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"rev\":4,\"agent\":\"round\"}\n",
+    "stderr": ""
+  }
+}

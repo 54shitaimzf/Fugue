@@ -1,0 +1,18 @@
+{
+  "id": "remove-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "remove",
+        "b.txt"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"rev\":4,\"agent\":\"round\"}\n",
+    "stderr": ""
+  }
+}

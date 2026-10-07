@@ -1,0 +1,35 @@
+{
+  "id": "round-plan-judge",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "config",
+        "set",
+        "round.split",
+        "[{\"goal\":\"edit a.txt\",\"ownedPaths\":[\"a.txt\"],\"assertions\":[{\"action\":\"build\",\"name\":\"build ok\"}]}]"
+      ]
+    },
+    {
+      "argv": [
+        "config",
+        "set",
+        "round.assertions",
+        "[{\"name\":\"build ok\",\"argv\":[\"/bin/sh\",\"-c\",\"true\"]}]"
+      ]
+    },
+    {
+      "argv": [
+        "round",
+        "plan",
+        "edit a.txt",
+        "--judge"
+      ]
+    }
+  ],
+  "face": {
+    "code": 1,
+    "stdout": "r1\t退回\t0 步\tjudged\n  收工：judged（人喊停：这一趟不请模型跑，拿手里那一份直接判）\n  草案：.fugue/plan/r1.md\t没有写出来\n",
+    "stderr": "草案退回了（构造器不猜、不补）：\n  草案不在视图里：.fugue/plan/r1.md——持轮者这一趟没写出那一份（一个任务一节，每节一个标 `json` 的围栏块，键就是契约的键）\n改完再跑一遍：fugue --root <ROOT> round plan \"edit a.txt\"\n"
+  }
+}

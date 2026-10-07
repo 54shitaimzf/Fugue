@@ -34,7 +34,7 @@ export interface FlagTable {
 export const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
   log: { flags: ['root', 'agent', 'json', 'help'], note: 'log 是抄本——不渲染、不筛选' },
   status: {
-    flags: ['root', 'json', 'help', 'once', 'metrics', 'report', 'ledger', 'agent'],
+    flags: ['root', 'json', 'help', 'once', 'metrics', 'report', 'ledger', 'agent', 'wait', 'timeout'],
     note: '一次快照就加 --once，跟随是另一条命令：watch --follow；只读某一格加 --agent <id>',
   },
   watch: { flags: ['root', 'agent', 'json', 'help', 'follow', 'interval', 'resume'], note: PHRASES.watchNote },
@@ -63,6 +63,12 @@ export const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
   policy: { flags: ['root', 'agent', 'json', 'help', 'mode'] },
   config: { flags: ['root', 'json', 'help', 'system'], note: 'config set --system 写系统那一级（~/.fugue）；不带它写工作区' },
   doctor: { flags: ['root', 'json', 'help'] },
+  // **`serve` 是入口，不是动词**（架构 § 9.11「表里两类行分得开」）：它说的是这份东西怎么跑，
+  // 因此虽然在这张表里（命令面单一真源：速查表与它对账），**它不出方法名**。
+  serve: {
+    flags: ['root', 'help', 'idle-ms'],
+    note: 'serve 是另一种进程角色：stdio 上一行一调用给客户端连；它不出方法名——方法面就是这张表里的动词',
+  },
   assemble: { flags: ['root', 'agent', 'json', 'help', 'against'] },
   say: { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'max-steps', 'credential', 'dump-wire', 'model', 'no-clock'], note: PHRASES.noClockNote },
   'round new': { flags: ['root', 'agent', 'json', 'help', 'materialize', 'split', 'no-clock'], note: PHRASES.noClockNote },

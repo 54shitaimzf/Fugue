@@ -1,0 +1,18 @@
+{
+  "id": "config-bad-key",
+  "note": "拒绝那一档",
+  "steps": [
+    {
+      "argv": [
+        "config",
+        "get",
+        "nope.nope"
+      ]
+    }
+  ],
+  "face": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "config get：没有这条键 —— nope.nope\n"
+  }
+}

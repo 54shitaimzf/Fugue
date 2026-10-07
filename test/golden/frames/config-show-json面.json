@@ -1,0 +1,26 @@
+{
+  "id": "config-show-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "config",
+        "set",
+        "actions.build",
+        "{\"argv\":[\"true\"]}"
+      ]
+    },
+    {
+      "argv": [
+        "--json",
+        "config",
+        "show"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"actions\":{\"build\":{\"argv\":[\"true\"]}}}\n",
+    "stderr": ""
+  }
+}

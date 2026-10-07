@@ -1,0 +1,18 @@
+{
+  "id": "doctor-json面",
+  "note": "",
+  "pinLayers": true,
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "doctor"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"rows\":[{\"name\":\"node\",\"ok\":true,\"note\":\"v<N>（engines 要 ≥22.6：strip-only 直跑 .ts）\"},{\"name\":\"node:zlib.crc32\",\"ok\":true,\"note\":\"crc32(\"<TEXT>\") = <CRC>（信封校验和用的同一函数，log/envelope.ts）\"},{\"name\":\"bwrap\",\"ok\":false,\"note\":\"PATH 里起不来 bwrap：spawnSync bwrap ENOENT\"},{\"name\":\"landlock\",\"ok\":true,\"note\":\"包装器未铺（<ROOT>/.fugue/bin/<WRAPPER>）：fork/run 那一步按需铺，doctor 纯读不落盘——没铺不是缺\"},{\"name\":\"git\",\"ok\":true,\"note\":\"PATH 里有 git（<PATH>）· 版本门槛 ≥2.38 由真跑那一层说话\"},{\"name\":\"落点\",\"ok\":true,\"note\":\"ext2/3/4 · native（探的是 <ROOT>）\"}],\"allOk\":false,\"host\":{\"root\":\"<ROOT>\",\"probed\":\"<ROOT>\",\"fs\":\"ext2/3/4\",\"class\":\"native\"}}\n",
+    "stderr": ""
+  }
+}

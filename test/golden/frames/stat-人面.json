@@ -1,0 +1,17 @@
+{
+  "id": "stat-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "stat",
+        "a.txt"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "file\t100644\t16\td8280f3bbe6ebf92576f31e4b419278236432678\n",
+    "stderr": ""
+  }
+}

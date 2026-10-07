@@ -1,0 +1,16 @@
+{
+  "id": "replay-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "replay"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "3\t562151d97429fda94cd79b517b4f2b5b28cd219d\t2 个条目\t从快照 seq 5（rev 3）起\n",
+    "stderr": ""
+  }
+}

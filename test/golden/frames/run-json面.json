@@ -1,0 +1,35 @@
+{
+  "id": "run-json面",
+  "note": "",
+  "pinLayers": true,
+  "steps": [
+    {
+      "argv": [
+        "config",
+        "set",
+        "actions.build",
+        "{\"argv\":[\"true\"]}"
+      ]
+    },
+    {
+      "argv": [
+        "fork",
+        "{{C1}}",
+        "--strategy",
+        "copy"
+      ]
+    },
+    {
+      "argv": [
+        "--json",
+        "run",
+        "build"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"agent\":\"round\",\"action\":\"build\",\"step\":\"-\",\"exit\":0,\"ms\":\"<NOW>\",\"denied\":false,\"mode\":\"read-only\",\"enforcement\":\"partial\",\"mechanism\":\"landlock\",\"net\":\"host\",\"layers\":[\"landlock\"],\"reach\":[\"/usr\",\"/opt\",\"/etc/ld.so.cache\",\"/etc/ssl\",\"/etc/alternatives\",\"/etc/resolv.conf\"],\"argv0\":\"true\",\"cwd\":\"\",\"declared\":[],\"outputs\":[],\"sandbox\":false,\"sandboxNote\":\"PATH 里起不来 bwrap：spawnSync bwrap ENOENT\",\"reclaimed\":[],\"missing\":[],\"undeclared\":[],\"prepared\":[],\"merged\":\"<ROOT>/.fugue/mat/round/merged\",\"tree\":\"<ROOT>/.fugue/mat/round/merged\",\"home\":\"<ROOT>/.fugue/mat/round/cache\",\"tmp\":\"<ROOT>/.fugue/mat/round<TMP>\",\"xdgCache\":\"<ROOT>/.fugue/mat/round/cache/xdg-cache\",\"port\":31000,\"ports\":\"31000-31003\"}\n",
+    "stderr": ""
+  }
+}

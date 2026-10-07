@@ -30,6 +30,9 @@ import { doctorCmd } from './cmd/doctor.ts'
 import { diffStatCmd, disposeCmd, ensureCmd, forkCmd, verifyMatCmd } from './cmd/materialize.ts'
 import { runCmd } from './cmd/execute.ts'
 import { assembleCmd } from './cmd/assemble.ts'
+import { serveCmd } from './cmd/serve.ts'
+import { isSpecial, migrated, valueResultOf, watchAndWrite } from '../value/cli.ts'
+import { writeValue } from '../value/shell.ts'
 import { roundCmd, roundGo, roundPlan, roundRun, roundWork, sayCommand } from './cmd/round.ts'
 
 /**
@@ -114,6 +117,19 @@ async function run(argv: readonly string[]): Promise<number> {
     }
   }
 
+  // ── 值层这一站：迁过来的命令从这里出去 ──────────────────────────────────────
+  // 出处：架构 § 9.6「**命令本身是一份值层，CLI 是它的第一个壳**」。这条支路做的只有壳那三件事
+  // 里的两件：把 argv 解析成参数（上面已经做完）· 把值排成人读或 `--json`（`writeValue`）；退出码
+  // 那一件在 `writeValue` 的返回值里。**它不碰下面的老路**——没迁的命令一个字节都没动。
+  //
+  // 放在开关表检查**之后**：表外开关当场退 2 那条纪律（§ 9.8）对值层这一档同样成立，而它比
+  // 值层更靠前——两条脸不该因为出口换了就少一道门。
+  const valueKey = cmd === 'round' ? `round ${positional[1] ?? ''}` : cmd === undefined ? '' : cmd
+  if (valueKey !== '' && migrated(valueKey)) {
+    const valueArgs = { root, flags, args: positional.slice(1), rest }
+    if (isSpecial(valueKey)) return await watchAndWrite(valueArgs, json)
+    return writeValue(await valueResultOf(valueKey, valueArgs), json)
+  }
   if (cmd === 'log') {
     const only = flags.get('agent')
     const log = openLog(root)
@@ -133,6 +149,7 @@ async function run(argv: readonly string[]): Promise<number> {
   if (cmd === 'status') return await statusCmd(root, flags, json)
   if (cmd === 'watch') return await watchCmd(root, flags, json)
   if (cmd === 'tui') return await tuiCmd(root, flags)
+  if (cmd === 'serve') return await serveCmd(root, flags, json)
 
   if (cmd === 'replay') return await replay(root, flags, json)
 
