@@ -3,7 +3,7 @@
 // 一份现场 = 一次性工作区（git 仓）· 一串把状态摆到位的命令（`PRELUDE`）· 那份钉住的 git 环境。
 // **两处共用同一份**是为了让录制与它的断言不可能各写一遍：录制时怎么摆，重放时就怎么摆。
 import { spawnSync } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -44,6 +44,49 @@ export function substitute(argv, vars) {
       return v
     }),
   )
+}
+
+/**
+ * 钉层的那一间「无 bwrap 的 PATH」（0.4.2 收尾后的 CI 修）：`doctor` · `policy` · `run` 的
+ * 回执跟着「这一趟在场的层」走，而层是**现探**的（policy.ts 的 `probeLayers`：`bwrap` 起一次
+ * `--version`，Landlock 走包装器 `--probe`）——开发机上有 bwrap、GitHub runner 上没有，同一条
+ * 命令两种字节，帧跟着宿主红。带 `pinLayers` 的探针走这一份 PATH：把 `bwrap` 藏起来，录制与
+ * 重放就都落在「只有 Landlock 那一层」的档上，任何宿主同一字节。（不钉「一层都不在」那一档：
+ * 它让 `run` 按 § 8.5 直接拒绝，成功路径就锁不到了。）软链先到先得——PATH 里排前面的目录说了算。
+ */
+let farm = null
+export function pathWithoutBwrap() {
+  if (farm !== null) return farm
+  const dir = mkdtempSync(join(tmpdir(), 'fugue-golden-nobwrap-'))
+  for (const d of String(process.env.PATH ?? '').split(':')) {
+    if (d === '' || !existsSync(d)) continue
+    let entries
+    try {
+      entries = readdirSync(d)
+    } catch {
+      continue
+    }
+    for (const e of entries) {
+      if (e === 'bwrap') continue
+      const to = join(dir, e)
+      if (existsSync(to)) continue
+      const from = join(d, e)
+      try {
+        if (!statSync(from).isFile()) continue
+        symlinkSync(from, to)
+      } catch {
+        /* 这一条链不上就让它缺：探针认的是「出得来出不来」，不是「每条都在」 */
+      }
+    }
+  }
+  farm = dir
+  return dir
+}
+
+/** 收掉那一间软链目录（录制器与断言各在收尾叫一次；没建过就是空操作）。 */
+export function disposePathFarm() {
+  if (farm !== null) rmSync(farm, { recursive: true, force: true })
+  farm = null
 }
 
 /**

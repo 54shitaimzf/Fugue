@@ -16,7 +16,7 @@ import { readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { normalizeFace } from './normalize.mjs'
-import { FRAMES, seedSnapshot } from './fixture.mjs'
+import { FRAMES, disposePathFarm, seedSnapshot } from './fixture.mjs'
 import { PROBES, recordProbe } from './record.mjs'
 
 /** 探针表（`record.mjs` 那一份）按 id 查。 */
@@ -28,6 +28,7 @@ before(() => {
 })
 after(() => {
   if (seed !== null) rmSync(seed.root, { recursive: true, force: true })
+  disposePathFarm()
 })
 
 /** 帧目录里那一份录制。**一条都没有就是红**——静默跳过等于把这一站的第一件丢在地上。 */

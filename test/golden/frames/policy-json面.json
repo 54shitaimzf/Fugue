@@ -1,6 +1,7 @@
 {
   "id": "policy-json面",
   "note": "",
+  "pinLayers": true,
   "steps": [
     {
       "argv": [
@@ -11,7 +12,7 @@
   ],
   "face": {
     "code": 0,
-    "stdout": "{\"agent\":\"round\",\"action\":null,\"mode\":\"read-only\",\"writableRoots\":[\"/cache\",\"<TMP>\"],\"enforcement\":\"full\",\"reach\":{\"roRoots\":[\"/usr\",\"/opt\",\"/etc/ld.so.cache\",\"/etc/ssl\",\"/etc/alternatives\",\"/etc/resolv.conf\"],\"symlinks\":[{\"at\":\"<NOW>\",\"to\":\"usr/bin\"},{\"at\":\"<NOW>\",\"to\":\"usr/sbin\"},{\"at\":\"<NOW>\",\"to\":\"usr/lib\"},{\"at\":\"<NOW>\",\"to\":\"usr/lib64\"}],\"devices\":[\"/dev\",\"/proc\"],\"mask\":[\".fugue\"]},\"env\":{\"inherit\":\"core\",\"set\":{},\"exclude\":[],\"includeOnly\":[]},\"coords\":{\"tree\":\"/work\",\"home\":\"/cache\",\"tmp\":\"<TMP>\"},\"net\":\"none\",\"layers\":[\"bwrap\",\"landlock\"],\"note\":\"\"}\n",
+    "stdout": "{\"agent\":\"round\",\"action\":null,\"mode\":\"read-only\",\"writableRoots\":[\"<ROOT>/.fugue/mat/round/cache\",\"<ROOT>/.fugue/mat/round<TMP>\"],\"enforcement\":\"partial\",\"reach\":{\"roRoots\":[\"/usr\",\"/opt\",\"/etc/ld.so.cache\",\"/etc/ssl\",\"/etc/alternatives\",\"/etc/resolv.conf\"],\"symlinks\":[{\"at\":\"<NOW>\",\"to\":\"usr/bin\"},{\"at\":\"<NOW>\",\"to\":\"usr/sbin\"},{\"at\":\"<NOW>\",\"to\":\"usr/lib\"},{\"at\":\"<NOW>\",\"to\":\"usr/lib64\"}],\"devices\":[\"/dev\",\"/proc\"],\"mask\":[\".fugue\"]},\"env\":{\"inherit\":\"core\",\"set\":{},\"exclude\":[],\"includeOnly\":[]},\"coords\":{\"tree\":\"<ROOT>/.fugue/mat/round/merged\",\"home\":\"<ROOT>/.fugue/mat/round/cache\",\"tmp\":\"<ROOT>/.fugue/mat/round<TMP>\"},\"net\":\"host\",\"layers\":[\"landlock\"],\"note\":\"PATH 里起不来 bwrap：spawnSync bwrap ENOENT\"}\n",
     "stderr": ""
   }
 }

@@ -18,7 +18,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { normalizeFace } from './normalize.mjs'
-import { FRAMES, cloneSeed, runStep, seedSnapshot } from './fixture.mjs'
+import { FRAMES, cloneSeed, disposePathFarm, pathWithoutBwrap, runStep, seedSnapshot } from './fixture.mjs'
 
 /** 配置里那几条（值全是 ASCII——`config set` 的值按 JSON 解析，非 ASCII 那一档会当场拒）。 */
 const SET_ACTION = { argv: ['config', 'set', 'actions.build', '{"argv":["true"]}'] }
@@ -85,10 +85,10 @@ export const PROBES = [
   { id: 'config-get', steps: [SET_ACTION, { argv: ['config', 'get', 'actions.build'] }] },
   { id: 'config-show-json面', steps: [SET_ACTION, { argv: ['--json', 'config', 'show'] }] },
   { id: 'config-bad-key', note: '拒绝那一档', steps: [{ argv: ['config', 'get', 'nope.nope'] }] },
-  { id: 'policy-人面', steps: [{ argv: ['policy'] }] },
-  { id: 'policy-json面', steps: [{ argv: ['--json', 'policy'] }] },
-  { id: 'doctor-人面', steps: [{ argv: ['doctor'] }] },
-  { id: 'doctor-json面', steps: [{ argv: ['--json', 'doctor'] }] },
+  { id: 'policy-人面', pinLayers: true, steps: [{ argv: ['policy'] }] },
+  { id: 'policy-json面', pinLayers: true, steps: [{ argv: ['--json', 'policy'] }] },
+  { id: 'doctor-人面', pinLayers: true, steps: [{ argv: ['doctor'] }] },
+  { id: 'doctor-json面', pinLayers: true, steps: [{ argv: ['--json', 'doctor'] }] },
   { id: 'assemble-人面', steps: [{ argv: ['assemble', 'subagent'] }] },
   { id: 'assemble-json面', steps: [{ argv: ['--json', 'assemble', 'subagent'] }] },
   { id: 'branch-人面', steps: [{ argv: ['branch', '{{C1}}'] }] },
@@ -129,9 +129,10 @@ export const PROBES = [
       { argv: ['dispose'] },
     ],
   },
-  { id: 'run-人面', steps: [SET_ACTION, { argv: ['fork', '{{C1}}', '--strategy', 'copy'] }, { argv: ['run', 'build'] }] },
+  { id: 'run-人面', pinLayers: true, steps: [SET_ACTION, { argv: ['fork', '{{C1}}', '--strategy', 'copy'] }, { argv: ['run', 'build'] }] },
   {
     id: 'run-json面',
+    pinLayers: true,
     steps: [SET_ACTION, { argv: ['fork', '{{C1}}', '--strategy', 'copy'] }, { argv: ['--json', 'run', 'build'] }],
   },
   { id: 'say-人面', steps: [{ argv: ['say', '把目标记下来'] }] },
@@ -176,6 +177,7 @@ export function frameOf(probe, face, norm) {
   return {
     id: probe.id,
     note: probe.note ?? '',
+    ...(probe.pinLayers === true ? { pinLayers: true } : {}),
     ...(probe.fresh === true ? { fresh: true, freshCommand: probe.freshCommand } : {}),
     steps: probe.steps.map((s) => ({
       argv: s.argv,
@@ -194,16 +196,19 @@ export function frameOf(probe, face, norm) {
 export function recordProbe(probe, seed) {
   const { root, sys } = cloneSeed(seed)
   const vars = { C1: seed.c1 }
+  // 钉层：带 `pinLayers` 的探针，它的每一步（含另起那一档的 `freshCommand`）都走无 bwrap 的 PATH。
+  const pin = probe.pinLayers === true ? { PATH: pathWithoutBwrap() } : undefined
+  const steps = pin === undefined ? probe.steps : probe.steps.map((s) => ({ ...s, env: { ...pin, ...(s.env ?? {}) } }))
   let face = null
   try {
-    for (const [i, step] of probe.steps.entries()) {
+    for (const [i, step] of steps.entries()) {
       const r = runStep(root, sys, step, vars)
       if (probe.fresh !== true && i === probe.steps.length - 1) face = r
     }
     if (probe.fresh === true) {
       const fresh = cloneSeed({ root, sys }, 'fugue-golden-fresh-')
       try {
-        face = runStep(fresh.root, fresh.sys, { argv: probe.freshCommand, timeoutMs: 180_000 }, vars)
+        face = runStep(fresh.root, fresh.sys, { argv: probe.freshCommand, timeoutMs: 180_000, ...(pin === undefined ? {} : { env: { ...pin } }) }, vars)
       } finally {
         rmSync(fresh.root, { recursive: true, force: true })
       }
@@ -235,6 +240,7 @@ function main() {
     }
   } finally {
     rmSync(seed.root, { recursive: true, force: true })
+    disposePathFarm()
   }
   process.stdout.write(report.join('\n') + `\n（帧目录：${FRAMES}；共 ${picked.length} 条）\n`)
 }
