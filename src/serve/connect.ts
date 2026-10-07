@@ -162,7 +162,7 @@ export interface ConnIo {
  * 跑一条连接：读到断开为止。
  *
  * 三档死法各有形状（§ 9.11）：**干净断开**走收尾（读口一结束就返回）· **超时/`shutdown`** 只停止
- * 接受新请求（之后来的调用回一个失败，**不伪造成功**）· **`kill -9`** 什么都不做（这一份连钩子
+ * 接受新请求（之后来的调用回 `-32600`，**不伪造成功**）· **`kill -9`** 什么都不做（这一份连钩子
  * 都没有——锁留盘，下一条命令按 § 9.2 的既有判据接管）。
  */
 export async function serveConnection(io: ConnIo): Promise<void> {
@@ -255,7 +255,7 @@ export async function serveConnection(io: ConnIo): Promise<void> {
       return
     }
     if (closed) {
-      answer(req.id, encodeError(req.id, { code: -32000, message: '这一条连接已经收尾：不再接受新请求' }))
+      answer(req.id, encodeError(req.id, { code: -32600, message: '这一条连接已经收尾：不再接受新请求' }))
       return
     }
     const key = keyOfMethod(req.method)

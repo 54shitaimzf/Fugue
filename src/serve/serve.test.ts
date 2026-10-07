@@ -320,10 +320,10 @@ test('④ `shutdown` 只停止接受新请求——不伪造成功', async () =>
   assert.deepEqual(replies[0].result, { stopping: true })
   for (const r of [replies[1], replies[2]]) {
     const err = errorOf(r)
-    assert.equal(err.code, -32000)
+    assert.equal(err.code, -32600)
     assert.match(err.message, /不再接受新请求/)
   }
-  console.log('④ 读数：shutdown 之后两条调用各回 -32000（不是成功，也不是静默丢掉）')
+  console.log('④ 读数：shutdown 之后两条调用各回 -32600（不是成功，也不是静默丢掉）')
 })
 
 test('④ 闲时自退：到点自己走（onClose 被调到）', async () => {
