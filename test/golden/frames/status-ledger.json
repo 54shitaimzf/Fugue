@@ -1,0 +1,18 @@
+{
+  "id": "status-ledger",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "status",
+        "--ledger"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"snapshot\":{\"rounds\":[],\"current\":null,\"agents\":[{\"agent\":\"round\",\"calls\":0,\"steps\":0,\"invocations\":0,\"actions\":0,\"denies\":0,\"bounds\":0,\"handoffs\":0,\"stopSteps\":null,\"stopped\":null,\"last\":\"ckpt/commit\"}],\"contracts\":0,\"attempts\":0,\"conflicts\":0,\"accepts\":{\"pass\":0,\"fail\":0,\"accepts\":0},\"refusals\":{\"total\":0,\"kernel\":0,\"byRule\":[]},\"outside\":{\"rows\":0,\"paths\":[]},\"usage\":{\"calls\":0,\"inputTokens\":{\"total\":0,\"missing\":0},\"cacheReadTokens\":{\"total\":0,\"missing\":0},\"cacheWriteTokens\":{\"total\":0,\"missing\":0},\"outputTokens\":{\"total\":0,\"missing\":0},\"reasoningTokens\":{\"total\":0,\"missing\":0}},\"models\":[],\"events\":5,\"last\":{\"writer\":\"round\",\"seq\":5,\"t\":\"ckpt/commit\"}},\"ledger\":{\"calls\":[],\"groups\":[],\"events\":5,\"totalCalls\":0,\"truncated\":false,\"maxCalls\":5000,\"msSeen\":0,\"msMissing\":0,\"boundCommands\":0}}\n",
+    "stderr": ""
+  }
+}

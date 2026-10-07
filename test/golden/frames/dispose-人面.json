@@ -1,0 +1,29 @@
+{
+  "id": "dispose-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "fork",
+        "{{C1}}",
+        "--strategy",
+        "copy"
+      ]
+    },
+    {
+      "argv": [
+        "ensure"
+      ]
+    },
+    {
+      "argv": [
+        "dispose"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "<ROOT>/.fugue/mat/round\n",
+    "stderr": "卸下并删掉 <ROOT>/.fugue/mat/round：四个坐标一个不剩 · <MS>\n"
+  }
+}

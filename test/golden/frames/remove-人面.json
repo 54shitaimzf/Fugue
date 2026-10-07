@@ -1,0 +1,17 @@
+{
+  "id": "remove-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "remove",
+        "b.txt"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "4\tround\n",
+    "stderr": ""
+  }
+}

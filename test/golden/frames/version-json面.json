@@ -1,0 +1,17 @@
+{
+  "id": "version-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "--version"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"name\":\"fugue\",\"version\":\"<VERSION>\",\"protocol\":\"0.1\"}\n",
+    "stderr": ""
+  }
+}

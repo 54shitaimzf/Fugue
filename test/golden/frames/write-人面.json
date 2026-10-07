@@ -1,0 +1,19 @@
+{
+  "id": "write-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "write",
+        "c.txt",
+        "--stdin"
+      ],
+      "stdin": "gamma\n"
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "4\tround\n",
+    "stderr": ""
+  }
+}

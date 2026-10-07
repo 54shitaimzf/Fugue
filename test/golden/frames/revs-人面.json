@@ -1,0 +1,16 @@
+{
+  "id": "revs-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "revs"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "0\n1\n2\n3\n",
+    "stderr": ""
+  }
+}

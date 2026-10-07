@@ -1,0 +1,24 @@
+{
+  "id": "ensure-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "fork",
+        "{{C1}}",
+        "--strategy",
+        "copy"
+      ]
+    },
+    {
+      "argv": [
+        "ensure"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "<ROOT>/.fugue/mat/round/merged\n",
+    "stderr": "rev <N> → <N> · 落地 <N> 条 · 原样 <N> 条 · <MS> · copy 档\n"
+  }
+}

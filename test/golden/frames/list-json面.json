@@ -1,0 +1,17 @@
+{
+  "id": "list-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "list"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "[{\"name\":\"a.txt\",\"kind\":\"file\",\"mode\":33188,\"size\":16,\"id\":\"d8280f3bbe6ebf92576f31e4b419278236432678\"},{\"name\":\"b.txt\",\"kind\":\"file\",\"mode\":33188,\"size\":5,\"id\":\"65b2df87f7df3aeedef04be96703e55ac19c2cfb\"}]\n",
+    "stderr": ""
+  }
+}

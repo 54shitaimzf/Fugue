@@ -1,0 +1,16 @@
+{
+  "id": "diff-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "diff"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "add\ta.txt\t6 字节\t100644\nadd\tb.txt\t5 字节\t100644\nmodify\ta.txt\t16 字节\t100644\n",
+    "stderr": ""
+  }
+}

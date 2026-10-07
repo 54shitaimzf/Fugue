@@ -1,0 +1,17 @@
+{
+  "id": "policy-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "policy"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"agent\":\"round\",\"action\":null,\"mode\":\"read-only\",\"writableRoots\":[\"/cache\",\"<TMP>\"],\"enforcement\":\"full\",\"reach\":{\"roRoots\":[\"/usr\",\"/opt\",\"/etc/ld.so.cache\",\"/etc/ssl\",\"/etc/alternatives\",\"/etc/resolv.conf\"],\"symlinks\":[{\"at\":\"<NOW>\",\"to\":\"usr/bin\"},{\"at\":\"<NOW>\",\"to\":\"usr/sbin\"},{\"at\":\"<NOW>\",\"to\":\"usr/lib\"},{\"at\":\"<NOW>\",\"to\":\"usr/lib64\"}],\"devices\":[\"/dev\",\"/proc\"],\"mask\":[\".fugue\"]},\"env\":{\"inherit\":\"core\",\"set\":{},\"exclude\":[],\"includeOnly\":[]},\"coords\":{\"tree\":\"/work\",\"home\":\"/cache\",\"tmp\":\"<TMP>\"},\"net\":\"none\",\"layers\":[\"bwrap\",\"landlock\"],\"note\":\"\"}\n",
+    "stderr": ""
+  }
+}

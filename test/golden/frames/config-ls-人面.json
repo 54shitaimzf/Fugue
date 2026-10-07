@@ -1,0 +1,17 @@
+{
+  "id": "config-ls-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "config",
+        "ls"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "actions\nports\nboundary\nplatform\nround\nconfig\ndocs\nworkspace\ncredentials\ntoolchain\nui\n",
+    "stderr": ""
+  }
+}

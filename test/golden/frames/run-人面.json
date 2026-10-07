@@ -1,0 +1,33 @@
+{
+  "id": "run-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "config",
+        "set",
+        "actions.build",
+        "{\"argv\":[\"true\"]}"
+      ]
+    },
+    {
+      "argv": [
+        "fork",
+        "{{C1}}",
+        "--strategy",
+        "copy"
+      ]
+    },
+    {
+      "argv": [
+        "run",
+        "build"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "0\t<MS>\tfull\n",
+    "stderr": "退出码 0 · <MS> · read-only · full 档\n"
+  }
+}

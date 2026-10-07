@@ -1,0 +1,16 @@
+{
+  "id": "status-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "status"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "一条轮次状态都没有：这份日志里还没开过轮次\n格 round · 调 0 次 · 0 步 · 工具调用 0 · 动作 0 · 内核拒 0 · 边界挡 0 · 交接 0 · 停：没停 · 最近 ckpt/commit\n契约 0 · 折叠尝试 0 · 冲突 0 · 验收 0 次（过 0 / 没过 0）\n越界 被挡 0 次（内核拒 0） · 树上报了没挡的 0 条\n用量 调用 0 · input 0 · cacheRead 0 · cacheWrite 0 · output 0 · 思考 0\n费用 算不出来：账上还没有一次调用（一次调用都还没有）——不拿 0 顶\n事件 5 条 · 最近 ckpt/commit（writer=round seq=5）\n",
+    "stderr": ""
+  }
+}

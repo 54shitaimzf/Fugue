@@ -1,0 +1,25 @@
+{
+  "id": "ensure-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "fork",
+        "{{C1}}",
+        "--strategy",
+        "copy"
+      ]
+    },
+    {
+      "argv": [
+        "--json",
+        "ensure"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"agent\":\"round\",\"from\":0,\"to\":3,\"strategy\":\"copy\",\"merged\":\"<ROOT>/.fugue/mat/round/merged\",\"upper\":\"<ROOT>/.fugue/mat/round/upper\",\"landed\":[\"a.txt\",\"b.txt\"],\"untouched\":[],\"whiteouts\":0,\"pruned\":0,\"touched\":0,\"noop\":false,\"ms\":\"<NOW>\",\"platform\":null}\n",
+    "stderr": ""
+  }
+}

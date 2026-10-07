@@ -1,0 +1,17 @@
+{
+  "id": "revs-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "revs"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "[0,1,2,3]\n",
+    "stderr": ""
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "watch-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "watch"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"pos\":{\"writer\":\"round\",\"seq\":1},\"e\":{\"t\":\"view/write\",\"agent\":\"round\",\"path\":\"a.txt\",\"rev\":1,\"blob\":\"4a58007052a65fbc2fc3f910f2855f45a4058e74\",\"mode\":33188}}\n{\"pos\":{\"writer\":\"round\",\"seq\":2},\"e\":{\"t\":\"view/write\",\"agent\":\"round\",\"path\":\"b.txt\",\"rev\":2,\"blob\":\"65b2df87f7df3aeedef04be96703e55ac19c2cfb\",\"mode\":33188}}\n{\"pos\":{\"writer\":\"round\",\"seq\":3},\"e\":{\"t\":\"ckpt/commit\",\"agent\":\"round\",\"commit\":\"d9f0832b39fd75ad0b82695e5ef9a5e7a1380a2b\",\"rev\":2,\"msg\":\"第一版\"}}\n{\"pos\":{\"writer\":\"round\",\"seq\":4},\"e\":{\"t\":\"view/write\",\"agent\":\"round\",\"path\":\"a.txt\",\"rev\":3,\"blob\":\"d8280f3bbe6ebf92576f31e4b419278236432678\",\"mode\":33188}}\n{\"pos\":{\"writer\":\"round\",\"seq\":5},\"e\":{\"t\":\"ckpt/commit\",\"agent\":\"round\",\"commit\":\"562151d97429fda94cd79b517b4f2b5b28cd219d\",\"rev\":3,\"msg\":\"第二版\"}}\n",
+    "stderr": ""
+  }
+}

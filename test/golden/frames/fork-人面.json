@@ -1,0 +1,19 @@
+{
+  "id": "fork-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "fork",
+        "{{C1}}",
+        "--strategy",
+        "copy"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "<ROOT>/.fugue/mat/round/merged\n",
+    "stderr": "copy 档：处处可用（§ 8.5 的策略表）；代价是 N × 全树\n"
+  }
+}

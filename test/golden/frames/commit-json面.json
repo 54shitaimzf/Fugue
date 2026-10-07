@@ -1,0 +1,19 @@
+{
+  "id": "commit-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "commit",
+        "-m",
+        "第二版"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"commit\":\"1e94c42956373bed3d9313cecbe02294e8ac2315\",\"ref\":\"refs/heads/main\",\"tree\":\"7843c08242d475c8d91f3af2ef22d47e70c41a7b\",\"parents\":[\"562151d97429fda94cd79b517b4f2b5b28cd219d\"],\"entries\":2,\"seq\":6,\"rev\":3}\n",
+    "stderr": ""
+  }
+}

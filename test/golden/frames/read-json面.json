@@ -1,0 +1,18 @@
+{
+  "id": "read-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "read",
+        "a.txt"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"path\":\"a.txt\",\"size\":16,\"kind\":\"file\",\"mode\":33188,\"id\":\"d8280f3bbe6ebf92576f31e4b419278236432678\"}\n",
+    "stderr": ""
+  }
+}

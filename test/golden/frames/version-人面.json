@@ -1,0 +1,16 @@
+{
+  "id": "version-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--version"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "fugue <VERSION>\n",
+    "stderr": ""
+  }
+}

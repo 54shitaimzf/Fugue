@@ -1,0 +1,20 @@
+{
+  "id": "write-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "write",
+        "c.txt",
+        "--stdin"
+      ],
+      "stdin": "gamma\n"
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"rev\":4,\"agent\":\"round\"}\n",
+    "stderr": ""
+  }
+}

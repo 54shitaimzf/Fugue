@@ -1,0 +1,18 @@
+{
+  "id": "stat-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "stat",
+        "a.txt"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"path\":\"a.txt\",\"kind\":\"file\",\"mode\":33188,\"size\":16,\"id\":\"d8280f3bbe6ebf92576f31e4b419278236432678\"}\n",
+    "stderr": ""
+  }
+}

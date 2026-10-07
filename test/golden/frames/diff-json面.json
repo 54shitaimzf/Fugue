@@ -1,0 +1,19 @@
+{
+  "id": "diff-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "diff",
+        "--since",
+        "0"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "[{\"kind\":\"add\",\"path\":\"a.txt\",\"mode\":33188,\"size\":6},{\"kind\":\"add\",\"path\":\"b.txt\",\"mode\":33188,\"size\":5},{\"kind\":\"modify\",\"path\":\"a.txt\",\"mode\":33188,\"size\":16}]\n",
+    "stderr": ""
+  }
+}

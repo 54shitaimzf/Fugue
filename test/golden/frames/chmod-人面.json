@@ -1,0 +1,18 @@
+{
+  "id": "chmod-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "chmod",
+        "a.txt",
+        "755"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "4\tround\n",
+    "stderr": ""
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "id": "round-new-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "config",
+        "set",
+        "round.split",
+        "[{\"goal\":\"edit a.txt\",\"ownedPaths\":[\"a.txt\"],\"assertions\":[{\"action\":\"build\",\"name\":\"build ok\"}]}]"
+      ]
+    },
+    {
+      "argv": [
+        "--json",
+        "round",
+        "new",
+        "edit a.txt"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"round\":\"r1\",\"base\":\"562151d97429fda94cd79b517b4f2b5b28cd219d\",\"contracts\":[{\"kind\":\"implement\",\"id\":\"r1.implement.1\",\"agent\":\"agent/r1/1\",\"branch\":\"refs/heads/agent/r1/1\",\"goal\":\"edit a.txt\",\"ownedPaths\":[\"a.txt\"],\"deliverables\":[],\"assertions\":[{\"action\":\"build\",\"name\":\"build ok\"}],\"seed\":[],\"actionOutputs\":{}}],\"owners\":{\"r1.implement.1\":\"agent/r1/1\"},\"seedLimit\":948689,\"seedTokens\":[8],\"seedRead\":{\"from\":\"tree\",\"loaded\":0,\"missing\":[]},\"intersections\":[],\"materialized\":false,\"branches\":[],\"trail\":[{\"from\":\"Idle\",\"on\":\"land\",\"to\":\"Planning\"},{\"from\":\"Planning\",\"on\":\"contracts-issued\",\"to\":\"Delegated\"},{\"from\":\"Delegated\",\"on\":\"branches-started\",\"to\":\"Working\"}]}\n",
+    "stderr": ""
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "branch-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "branch",
+        "{{C1}}"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"agent\":\"round\",\"ref\":\"refs/heads/main\",\"base\":\"562151d97429fda94cd79b517b4f2b5b28cd219d\",\"moved\":false}\n",
+    "stderr": "refs/heads/main 本来就指着 562151d97429fda94cd79b517b4f2b5b28cd219d——幂等，什么都没动\n"
+  }
+}

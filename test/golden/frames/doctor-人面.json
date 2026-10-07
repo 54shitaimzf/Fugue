@@ -1,0 +1,16 @@
+{
+  "id": "doctor-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "doctor"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "ok  \tnode\tv<N>（engines 要 ≥22.6：strip-only 直跑 .ts）\nok  \tnode:zlib.crc32\tcrc32(\"<TEXT>\") = <CRC>（信封校验和用的同一函数，log/envelope.ts）\nok  \tbwrap\tbubblewrap <N>（user namespace 与 mount 围栏都在）\nok  \tlandlock\t包装器未铺（<ROOT>/.fugue/bin/<WRAPPER>）：fork/run 那一步按需铺，doctor 纯读不落盘——没铺不是缺\nok  \tgit\tPATH 里有 git（<PATH>）· 版本门槛 ≥2.38 由真跑那一层说话\nok  \t落点\text2/3/4 · native（探的是 <ROOT>）\n全绿\n",
+    "stderr": ""
+  }
+}

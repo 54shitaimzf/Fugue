@@ -1,0 +1,17 @@
+{
+  "id": "tui-once",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "tui",
+        "--once"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "",
+    "stderr": ""
+  }
+}

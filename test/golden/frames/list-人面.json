@@ -1,0 +1,16 @@
+{
+  "id": "list-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "list"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "file\t100644\t16\ta.txt\nfile\t100644\t5\tb.txt\n",
+    "stderr": ""
+  }
+}

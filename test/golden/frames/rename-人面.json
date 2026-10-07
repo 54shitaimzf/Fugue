@@ -1,0 +1,18 @@
+{
+  "id": "rename-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "rename",
+        "b.txt",
+        "b2.txt"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "4\tround\n",
+    "stderr": ""
+  }
+}

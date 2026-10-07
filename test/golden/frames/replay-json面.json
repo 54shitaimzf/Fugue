@@ -1,0 +1,17 @@
+{
+  "id": "replay-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "replay"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"agent\":\"round\",\"rev\":3,\"base\":\"562151d97429fda94cd79b517b4f2b5b28cd219d\",\"from\":{\"kind\":\"snapshot\",\"seq\":5,\"rev\":3},\"entries\":[{\"name\":\"a.txt\",\"mode\":33188,\"id\":\"d8280f3bbe6ebf92576f31e4b419278236432678\"},{\"name\":\"b.txt\",\"mode\":33188,\"id\":\"65b2df87f7df3aeedef04be96703e55ac19c2cfb\"}],\"ms\":\"<NOW>\"}\n",
+    "stderr": ""
+  }
+}

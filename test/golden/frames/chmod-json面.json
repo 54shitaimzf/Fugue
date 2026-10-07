@@ -1,0 +1,19 @@
+{
+  "id": "chmod-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "chmod",
+        "b.txt",
+        "755"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "{\"rev\":4,\"agent\":\"round\"}\n",
+    "stderr": ""
+  }
+}

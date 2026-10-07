@@ -1,0 +1,17 @@
+{
+  "id": "say-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "say",
+        "把目标记下来"
+      ]
+    }
+  ],
+  "face": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "提供方 deepseek 的凭据没有配：配置键 credentials.deepseek 不在，或不是一份合形状的引用表（要非空 · 每条是 {\"from\":\"env\",\"name\":…} 或 {\"from\":\"file\",\"path\":…}）。\n  配一条（值是引用不是凭据本身：env 收**名字**，file 收**路径**，两样都不把密钥写进配置）：\n  fugue config set --system credentials.deepseek '[{\"from\":\"env\",\"name\":\"密钥的环境变量名\"},{\"from\":\"file\",\"path\":\"工作区外的密钥文件\"}]'\n  不给 --live 就是打桩那一档，它一条断言都不需要凭据（PLAN § 5.8 的口径一）。\n"
+  }
+}
