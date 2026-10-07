@@ -19,7 +19,11 @@ import { getConfig } from '../config.ts'
 import type { ConfigDoc } from '../config.ts'
 
 /** 用法错（旗子少一个值 · 互斥的两档一起给）：`run()` 那一层把它收成退出码 2。 */
-export class UsageError extends Error {}
+// **一份错误词表**：这一类由值层定义（`value/types.ts`），这里只是把它摆回老位置。
+// 从前这一文件另立过一个同名类，`instanceof` 于是分两种情况——值层那条特别的出口（`watch`）
+// 抛出来的用法错逃到最外层就是裸异常：`--json` 那一面不再是一行 JSON，退出码也不是那四档。
+import { UsageError } from '../value/types.ts'
+export { UsageError }
 
 export const USAGE = `用法: fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 
@@ -45,6 +49,9 @@ fugue 是住在终端里的编码 agent：给它一句目标，它自己拆活�
                              默认带一点样式（框线与脚注暗一档 · 弹层加粗，不用颜色）；
                              --no-style 或环境变量 NO_COLOR 非空时全关
   log [--agent <id>]         把账原样列出来：一行一条事件，不做任何加工
+  serve                      换一种进程角色：stdio 上一行一调用（JSON-RPC 2.0），给客户端连着问
+                             用（仓库 tools/sample-client.mjs 是最小样例）。命绑客户端：stdin 一断它
+                             就走收尾；没人问它 30 秒自己走——不引守护进程。参数只有 --root <dir>
 
   动文件与提交（动的是 fugue 眼里的那份视图，不直接是你的工作树）
   read <path>                读一个文件
@@ -162,6 +169,10 @@ const VALUED: ReadonlySet<string> = new Set([
   // `--resume <游标串>`（watch 接着读，架构 § 9.11 的事件通道）：同一条纪律——它取一个值。
   // 不列在这里的话游标串会被当成位置参数，而 `--resume` 成了 `true`：接着读变成从零读。
   'resume',
+  // `--wait <状态>` 与 `--timeout <秒>`（`status` 的等待糖）：同一条纪律——两个都取值。
+  'wait', 'timeout',
+  // `--idle-ms <毫秒>`（`serve` 的闲时阈值，走查与测试要一个短的）：同一条纪律。
+  'idle-ms',
 ])
 export { VALUED }
 
