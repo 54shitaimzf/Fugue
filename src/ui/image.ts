@@ -48,6 +48,11 @@ export function graphicsOf(env: Readonly<Record<string, string | undefined>>): G
   return 'none'
 }
 
+/** 图位只在用户选择 auto 后探测；没有配置时保持完整的纯文字界面。 */
+export function graphicsFor(setting: unknown, env: Readonly<Record<string, string | undefined>>): GraphicsTier {
+  return setting === 'auto' ? graphicsOf(env) : DEFAULT_GRAPHICS_TIER
+}
+
 /** 这条路径像不像图（按后缀；大小写不认）。 */
 export function isImagePath(path: string): boolean {
   const low = path.toLowerCase()
@@ -78,7 +83,7 @@ export function graphics(): GraphicsTier {
 export function imageRowsOf(path: string, tier: GraphicsTier = CURRENT): readonly string[] {
   if (tier === 'none' || !isImagePath(path)) return []
   const name = path.slice(path.lastIndexOf('/') + 1)
-  const rows: string[] = [`  （${name}：这一台终端认 ${tier}，图位先留在这里——本站只探测不编码）`]
+  const rows: string[] = [`  ${name}`]
   for (let i = 0; i < IMAGE_RESERVE_ROWS; i += 1) rows.push('  ')
   return rows
 }

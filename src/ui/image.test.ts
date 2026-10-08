@@ -48,7 +48,7 @@ test('③ 留白：档是 none 给空表，探到才给（头一行 + 三行空�
   const rows = imageRowsOf('docs/shot.png', 'kitty')
   assert.equal(rows.length, IMAGE_RESERVE_ROWS + 1, '头一行 + 留白那几行')
   assert.ok(rows[0]?.includes('shot.png') === true, `头一行该点出文件名：${String(rows[0])}`)
-  assert.ok(rows[0]?.includes('kitty') === true, '头一行该说这一台认哪一档')
+  assert.equal(rows[0], '  shot.png', '正文只显示文件名')
   assert.deepEqual([...rows.slice(1)], Array.from({ length: IMAGE_RESERVE_ROWS }, () => '  '), '底下那几行是空的')
   console.log(`③ 读数：none→0 行 · 不是图→0 行 · kitty+docs/shot.png→${rows.length} 行（「${String(rows[0]).trim()}」+ ${IMAGE_RESERVE_ROWS} 行留白）`)
 })
@@ -94,4 +94,17 @@ test('⑤ 全关那一格开关认得它：`ui.images off` 通 · 别的值拒�
   assert.notEqual(bad.status, 0, '只有 auto / off 两个值')
   assert.ok(`${bad.stdout}${bad.stderr}`.includes('auto'), '拒的那一句该把认得的两个值说出来')
   console.log(`⑤ 读数：ui.images=off 写通 · 读回 ${got.stdout.trim()} · 坏值 sixel 退出码 ${bad.status}`)
+})
+
+
+test('没有显式开启图片时，协议能力不会开启留白', async () => {
+  const { graphicsFor } = await import('./image.ts')
+  const env = { TERM: 'xterm-kitty', KITTY_WINDOW_ID: '1' }
+  assert.equal(graphicsFor(undefined, env), 'none')
+  assert.equal(graphicsFor('off', env), 'none')
+  assert.equal(graphicsFor('auto', env), 'kitty')
+  assert.deepEqual(imageRowsOf('screens/main.png', graphicsFor('off', env)), [])
+  const rows = imageRowsOf('screens/main.png', graphicsFor('auto', env))
+  assert.equal(rows[0], '  main.png')
+  assert.ok(rows.slice(1).every((s) => s.trim() === ''))
 })
