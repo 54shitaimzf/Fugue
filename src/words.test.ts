@@ -124,11 +124,11 @@ test('② 两个点名面照表印：新词在 · 旧词一个都不在', () => 
 })
 
 test('③ 三处源码去注释之后不再出现那几个词（这就是"主面上中文字面量即红"）', () => {
-  // 四处＝主面那几层：面板（`ui/frame.ts`）· 命令行那一张人读脸（`probe/status.ts`）·
+  // 五处＝主面那几层：面板（`ui/frame.ts`）· 命令行那一张人读脸（`probe/status.ts`）·
   // **对话流那一栏**（`ui/stream.ts`，第二幕 ⑦ 收进来的）· **视图表**（`ui/views.ts`，
-  // 三档视图的名字）。进阶面（阅读面 · 命令面的 `round` 那几行）不在这条断言里，口径见
-  // 停点报告的疑点清单。
-  for (const rel of ['./ui/frame.ts', './probe/status.ts', './ui/stream.ts', './ui/views.ts'] as const) {
+  // 三档视图的名字）· **门口那一批**（`ui/gate.ts`，第二幕 ⑧ 的结论行与那几张卡的标签）。
+  // 进阶面（阅读面 · 命令面的 `round` 那几行）不在这条断言里，口径见停点报告的疑点清单。
+  for (const rel of ['./ui/frame.ts', './probe/status.ts', './ui/stream.ts', './ui/views.ts', './ui/gate.ts'] as const) {
     const code = codeOf(readSrc(rel))
     for (const w of RETIRED) {
       assert.ok(!code.includes(w), `${rel} 的代码里还留着「${w}」——那一批词只许住 src/words.ts 一处`)
@@ -136,7 +136,7 @@ test('③ 三处源码去注释之后不再出现那几个词（这就是"主面
     // 反面：这一份确实读到了（不然上面那几条量的是空气）。
     assert.ok(code.includes('WORDS.'), `${rel} 该从词表取词（读到的是 ${code.length} 字节）`)
   }
-  console.log(`③ 读数：四份源码去注释后各 ${RETIRED.length} 个旧词 0 处命中 · 四份都从 WORDS 取词`)
+  console.log(`③ 读数：五份源码去注释后各 ${RETIRED.length} 个旧词 0 处命中 · 五份都从 WORDS 取词`)
 })
 
 test('④ 值层没被顺手翻：--json 那几个字段名照旧（换的只是人面那几个词）', () => {

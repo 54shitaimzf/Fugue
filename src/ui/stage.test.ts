@@ -8,7 +8,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { StatusRow } from '../probe/status.ts'
-import { gateFaceOf, lineOf } from './gate.ts'
+import { conclusionLineOf, gateFaceOf, lineOf } from './gate.ts'
+import type { Contract } from '../contract/types.ts'
 import type { GateFace } from './gate.ts'
 import { openStage } from './stage.ts'
 import { panelWantOf } from './layout.ts'
@@ -267,4 +268,38 @@ test('⑦ 一把尺：舞台递给阅读面的列宽就是 `innerOf`——屏上
   for (let i = 0; i < 40; i += 1) stage.onAction({ action: 'historyNewer' })
   assert.equal(stage.view().read?.top, want2.length - 1, '`↓` 翻到底：`top` 停在新列宽那一串的末行')
   console.log(`⑦ 读数：200 列（框内 ${innerOf(200)}）折成 ${want2.length} 行 · 翻到底 top=${want2.length - 1}`)
+})
+
+// ── ⑧ 结论行进永久行（第二幕 ⑧）──────────────────────────────────────────────────
+test('⑧ 门口一开就推一条结论行：一批恰一条 · 同一批再算一遍不再说 · 换一批才说', async () => {
+  // 一份最小的调查契约（不占路径 · 不算验收——三个数里只有 tasks 那一栏非零）。
+  const contract = {
+    id: 'r1.investigate.1',
+    agent: 'agent/r1/1',
+    kind: 'investigate',
+    question: '现状怎么写的',
+    evidenceRequired: [],
+    seed: [],
+  } as unknown as Contract
+  const said = (): readonly string[] => ctl.notes.filter((n) => n.includes('打算开'))
+  const { stage, ctl } = stageOf({ face: gateFaceOf({ round: 'r1', fingerprint: 'fp-1', same: [], contracts: [contract] }, {}) })
+  await stage.refreshGate()
+  assert.deepEqual(
+    [...said()],
+    [conclusionLineOf({ tasks: 1, paths: 0, accepts: 0 })],
+    `门口开一次恰一条结论行：${JSON.stringify(said())}`,
+  )
+  // 账又往前动了一条（`round/*` / `holder/*`）→ 重算一遍：**同一批不再说第二遍**。
+  await stage.refreshGate()
+  assert.equal(said().length, 1, '同一批重算不重复推')
+  // 换一批（编号变了）：再说一条，而且是新那一批的数。
+  ctl.face = gateFaceOf({ round: 'r1', fingerprint: 'fp-2', same: [], contracts: [contract, contract] }, {})
+  await stage.refreshGate()
+  assert.equal(said().length, 2, '换了一批要说')
+  assert.ok(said()[1]?.includes('2 个'), `第二条说的是新那一批：${said()[1]}`)
+  // 门口没了（那一批发出去了）：不推任何东西。
+  ctl.face = null
+  await stage.refreshGate()
+  assert.equal(said().length, 2, '门口没了不再推')
+  console.log(`⑧ 读数：结论行 ${said().length} 条（一批一条）· 第一条「${said()[0] ?? ''}」`)
 })

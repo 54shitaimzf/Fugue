@@ -14,13 +14,16 @@
 //      一个字都不出现（人拍的：那三档要 S5 的能力闸，见 `gate.ts` 头注）。
 //   ⑤ **放行那一档跑的就是 `round go`**：`lineOf('approve')` 与 `g` 那一键是同一条命令；`reject`
 //      不跑命令（一个字节都不落）。
+//   ⑥ **结论行**（第二幕 ⑧）：那一批的三个数（几件事 · 覆盖几条路径 · 验收几项）与那一行原文；
+//      **负对照**：调查那一档不占路径也不算验收（把它当实现那一档数，三个数当场不同）。
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Contract } from '../contract/types.ts'
-import { GATE_KEEP, GATE_VIEW, clampAt, gateFaceOf, gateRowsOf, lineOf, optionRowOf, pressGate, previewLinesOf, gateQueueRowOf, stepAt } from './gate.ts'
+import { GATE_KEEP, GATE_VIEW, clampAt, conclusionLineOf, conclusionOf, gateFaceOf, gateRowsOf, lineOf, optionRowOf, pressGate, previewLinesOf, gateQueueRowOf, stepAt } from './gate.ts'
 import type { GateBatch, GateCard } from './gate.ts'
 import { widthOf } from './glyph.ts'
 import { GO_LINE } from './run.ts'
+import { WORDS } from '../words.ts'
 
 /** 品牌类型那一栏（`RelPath` 一类）：这一份里那些值是拿来喂接口的，不是账上真发生过的。 */
 const brand = (v: string): never => v as never
@@ -93,7 +96,11 @@ test('① 队列行逐字来自那一批：第 i/N 份就是第 i 份 · 下标�
   assert.equal(stepAt(3, 0, -1), 0, '头一份再往上还是头一份（夹住，不环形）')
   assert.equal(stepAt(3, 2, 1), 2, '最后一份再往下还是最后一份')
   assert.equal(stepAt(3, 1, 1), 2)
-  assert.equal(gateQueueRowOf(gateFaceOf({ ...BATCH, contracts: [] }), 0), '门口这一批一份契约都没有（门不会停在这样一批上——报出来）')
+  assert.equal(
+    gateQueueRowOf(gateFaceOf({ ...BATCH, contracts: [] }), 0),
+    `门口这一批一份${WORDS.task}都没有（门不会停在这样一批上——报出来）`,
+    '一份都没有时要说出来（第二幕 ⑧ 起这句话里的那个词从词表取）',
+  )
   console.log(`① 读数：三份各扫一遍都带自己那个 id · 夹回来的五档（-1 → 0 · 3 → 2 · 1.5 → 0 · 空批次那一句）· ` +
     `行里的字：${gateQueueRowOf(face, 1)}`)
 })
@@ -192,4 +199,38 @@ test('⑤ 放行跑的就是 `round go`（与 `g` 那一键同一条）· 拒了
   assert.equal(lineOf('approve'), 'round go', '与 `g` 那一键按下去发的那一条逐字相同（界面里没有第二条放行路径）')
   assert.equal(lineOf('reject'), '', '拒了就是一个字节都不落：没有命令可跑')
   console.log(`⑤ 读数：approve → 「${lineOf('approve')}」（= GO_LINE）· reject → 「」（空串）`)
+})
+
+// ── ⑥ 结论行（第二幕 ⑧）──────────────────────────────────────────────────────
+test('⑥ 结论行：打算开几件事 · 覆盖哪些 · 按什么验收（三个数只在一处算）', () => {
+  // 这一批三份：一份实现（1 条写路径 · 1 条验收）· 一份调查（不占路径 · 不算验收）· 一份解冲突
+  // （1 条冲突路径 · 1 条验收）。
+  assert.deepEqual(
+    { ...conclusionOf(BATCH) },
+    { tasks: 3, paths: 2, accepts: 2 },
+    '三个数：3 件事 · 1 写入面 + 1 冲突路径 = 2 · 1 + 1 = 2',
+  )
+  // 算术那一处真的在读每一份契约（不是把第一份乘三）：两份实现契约各自那几条路径都算进去。
+  const two: GateBatch = {
+    ...BATCH,
+    contracts: [
+      { ...IMPL, ownedPaths: [brand('a'), brand('b')], assertions: [{ name: '甲', action: brand('test') }] } as unknown as Contract,
+      { ...IMPL, id: brand('r1.implement.2'), ownedPaths: [brand('c'), brand('d'), brand('e')], assertions: [] } as unknown as Contract,
+    ],
+  }
+  assert.deepEqual({ ...conclusionOf(two) }, { tasks: 2, paths: 5, accepts: 1 }, '两份实现：路径 2 + 3 = 5 · 验收 1 + 0 = 1')
+  // 空批次照数：0 也是一个读数（不印成语义不明的空话——门根本不会停在这样一批上，门口那一行自己会报）。
+  assert.deepEqual({ ...conclusionOf({ ...BATCH, contracts: [] }) }, { tasks: 0, paths: 0, accepts: 0 }, '空批次三个数都是 0')
+  // 那一行原文：词从词表取（表那一格改了，这一行跟着改）。
+  const line = conclusionLineOf(conclusionOf(BATCH))
+  // **钉成字面量**（与黄金帧同一条做法）：拿 `WORDS.*` 拼期望值的话，改词表那一格而没改站点这一条
+  // 照样绿——两种漂法（表漂 / 站点写死）它一种都抓不住。下面那一圈反过来证明这几个词确实从表取。
+  assert.equal(line, '这一轮打算开 3 个任务 · 覆盖 2 条路径 · 验收 2 条 · 门口停着等你', `结论行原文：${line}`)
+  for (const k of ['task', 'paths', 'accepts', 'gate'] as const) {
+    assert.ok(line.includes(WORDS[k]), `结论行里该有词表那一个词「${WORDS[k]}」：${line}`)
+  }
+  // **负对照**：把调查那一份也按实现那一档数（只读 `ownedPaths`、不看 `kind`），路径数当场不同。
+  const naive = BATCH.contracts.reduce((n, c) => n + ((c as { readonly ownedPaths?: readonly unknown[] }).ownedPaths?.length ?? 0), 0)
+  assert.notEqual(naive, conclusionOf(BATCH).paths, '分档数（1 + 0 + 1）与「只读 ownedPaths」那一版（1 + 0 + 0）该分得开')
+  console.log(`⑥ 读数：${line} · 三份契约（${BATCH.contracts.map((c) => c.kind).join(' · ')}）· 空批次 → 0/0/0`)
 })

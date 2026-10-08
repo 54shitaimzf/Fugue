@@ -16,7 +16,7 @@ import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmi
 import type { Editor } from './input.ts'
 import { acceptOf, candidatesOf, clampSel, completeOf, moveSel, pathsOf, queryOf, rowsTextOf, specsOf } from './menu.ts'
 import type { MenuRow, MenuSource } from './menu.ts'
-import { GATE_KEEP, GATE_VIEW, gateRowsOf, lineOf, pressGate, stepAt } from './gate.ts'
+import { GATE_KEEP, GATE_VIEW, conclusionLineOf, gateRowsOf, lineOf, pressGate, stepAt } from './gate.ts'
 import type { GateFace, GateOption, GateView } from './gate.ts'
 import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from './queue.ts'
 import { altAt, clampNav, navNodesOf, navRowsOf, writerAt } from './nav.ts'
@@ -185,6 +185,9 @@ export function openStage(deps: StageDeps): Stage {
     gateHidden = false
     // **批次换了就把选中那一份与举手那一栏都归零**：上一批举过的手不许带到这一批上。
     gateView = GATE_VIEW
+    // **结论行进永久行**（第二幕 ⑧）：门口一开就说清这一批「打算开几件事 · 覆盖哪些 · 按什么验收」。
+    // **一批只说一次**——上面那道 `key` 已经挡住重复（同一批再算几遍都不说）；换了一批才再说一条。
+    if (next !== null) deps.note(conclusionLineOf(next.conclusion))
     deps.redraw()
   }
   /** 这一刻树上选的是哪一格（`null` = 整份账）。阅读面读的就是它。 */

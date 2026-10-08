@@ -24,6 +24,7 @@
 // **diff 不在这儿**（§ 5.19 五说"写路径给 diff"）：diff 要开真源读基线，那是 `T9` 阅读面那一格
 // （"面板与 `fugue diff --json` 读同一份数据"）。这一格给的是**写入面与交付物**，逐字来自契约。
 import type { Contract } from '../contract/types.ts'
+import { WORDS } from '../words.ts'
 import { GO_LINE } from './run.ts'
 import { wrap } from './glyph.ts'
 
@@ -59,6 +60,58 @@ export interface GateFace {
   readonly fingerprint: string
   readonly same: readonly string[]
   readonly cards: readonly GateCard[]
+  /** 这一批的结论（第二幕 ⑧）：结论行印的就是它。 */
+  readonly conclusion: GateConclusion
+}
+
+/**
+ * 门口那一批的**结论**（第二幕 ⑧）：打算开几件事 · 覆盖哪些地方 · 按什么验收。
+ *
+ * 三个数**只在这一处算**（`conclusionOf`）：界面那一头不再自己数一遍——「两处算术」就是两处会漂的。
+ * 调查那一档不写路径、也不算验收（它要的是那个问题与那几份证据），所以它只进 `tasks`。
+ */
+export interface GateConclusion {
+  /** 这一批几份契约（一份一件事）。 */
+  readonly tasks: number
+  /** 覆盖几条路径：`implement` 的写入面 + `resolve` 的冲突路径。 */
+  readonly paths: number
+  /** 验收几项：`implement` 与 `resolve` 各自的 `assertions`。 */
+  readonly accepts: number
+}
+
+/** 一批 → 那三个数。**一处算术**（表 A 那句「打算开几件事 · 覆盖哪些 · 按什么验收」）。 */
+export function conclusionOf(batch: GateBatch): GateConclusion {
+  let paths = 0
+  let accepts = 0
+  for (const c of batch.contracts) {
+    if (c.kind === 'implement') {
+      paths += c.ownedPaths.length
+      accepts += c.assertions.length
+      continue
+    }
+    if (c.kind === 'resolve') {
+      paths += c.conflictPaths.length
+      accepts += c.assertions.length
+    }
+  }
+  return { tasks: batch.contracts.length, paths, accepts }
+}
+
+/**
+ * 结论行（第二幕 ⑧）：**每轮开头那一行**——门口一开就推进终端历史。
+ *
+ * 出处：决策材料表 A 那条例句（`这一轮打算开 2 个任务 · 覆盖 5 条路径 · 验收 3 项 · 门口停着等你`）
+ * 与交接单 § 五 ⑧。**它是这一批的「打算」，不是批过的账**：所以它从 `Pending` 那一份（`pendingOf`
+ * ——与门口那几张卡同一个来路）算，而不是从 `round/approve` 算——那一条是**批完**才写账的，而这一行
+ * 要赶在人按键之前就摆到历史里。
+ *
+ * 量词与 ⑦ 落地的同形（`验收 N 条`；决策材料那两句写的是「项」——同一件事一个量词，取条）。
+ */
+export function conclusionLineOf(c: GateConclusion): string {
+  return (
+    `这一轮打算开 ${c.tasks} 个${WORDS.task} · 覆盖 ${c.paths} 条${WORDS.paths}` +
+    ` · ${WORDS.accepts} ${c.accepts} 条 · ${WORDS.gate}停着等你`
+  )
 }
 
 /**
@@ -72,6 +125,7 @@ export function gateFaceOf(batch: GateBatch, commands: Readonly<Record<string, s
     fingerprint: batch.fingerprint,
     same: [...batch.same],
     cards: batch.contracts.map((c) => cardOf(c, commands)),
+    conclusion: conclusionOf(batch),
   }
 }
 
@@ -84,9 +138,9 @@ function cardOf(c: Contract, commands: Readonly<Record<string, string>>): GateCa
     // **起进程那一档先给命令原文**：要人点头的首先是"它要跑什么"。
     const cmds = [...new Set(c.assertions.map((a) => cmdOf(a.action)))]
     if (cmds.length > 0) detail.push(`  起进程：${cmds.join(' · ')}`)
-    detail.push(`  写路径：${c.ownedPaths.join(' · ') || '（空）'}`)
+    detail.push(`  写${WORDS.paths}：${c.ownedPaths.join(' · ') || '（空）'}`)
     if (c.deliverables.length > 0) detail.push(`  交付物：${c.deliverables.map((d) => `${d.path}（${d.form}）`).join(' · ')}`)
-    if (c.assertions.length > 0) detail.push(`  验收：${c.assertions.map((a) => `${a.name}（${a.action}）`).join(' · ')}`)
+    if (c.assertions.length > 0) detail.push(`  ${WORDS.accepts}：${c.assertions.map((a) => `${a.name}（${a.action}）`).join(' · ')}`)
     if (c.seed.length > 0) detail.push(`  种子：${c.seed.join(' · ')}`)
     return { ...base, head: `实现：${c.goal}`, detail }
   }
@@ -104,8 +158,8 @@ function cardOf(c: Contract, commands: Readonly<Record<string, string>>): GateCa
   const detail: string[] = []
   const cmds = [...new Set(c.assertions.map((a) => cmdOf(a.action)))]
   if (cmds.length > 0) detail.push(`  起进程：${cmds.join(' · ')}`)
-  detail.push(`  要动的冲突路径：${c.conflictPaths.join(' · ') || '（空）'}`)
-  if (c.assertions.length > 0) detail.push(`  验收：${c.assertions.map((a) => `${a.name}（${a.action}）`).join(' · ')}`)
+  detail.push(`  要动的${WORDS.conflicts}${WORDS.paths}：${c.conflictPaths.join(' · ') || '（空）'}`)
+  if (c.assertions.length > 0) detail.push(`  ${WORDS.accepts}：${c.assertions.map((a) => `${a.name}（${a.action}）`).join(' · ')}`)
   return { ...base, head: `解冲突：${c.conflictPaths.join(' · ')}`, detail }
 }
 
@@ -180,7 +234,7 @@ export function lineOf(option: GateOption): string {
 /** 队列行：**还有几份 · 第几份 · 这一份是谁**（`index/total` 就是 § 5.19 那一条）。 */
 export function gateQueueRowOf(face: GateFace, at: number): string {
   const n = face.cards.length
-  if (n === 0) return '门口这一批一份契约都没有（门不会停在这样一批上——报出来）'
+  if (n === 0) return `门口这一批一份${WORDS.task}都没有（门不会停在这样一批上——报出来）`
   const i = clampAt(n, at)
   const c = face.cards[i] as GateCard
   return `还有 ${n} 份等你点头 · 第 ${i + 1}/${n} 份 · ${c.id} · ${c.agent} · ${c.kind}（↑↓ 翻）`
