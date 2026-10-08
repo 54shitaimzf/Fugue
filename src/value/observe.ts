@@ -312,6 +312,10 @@ export async function watchValue(
     cursors,
     resume: token,
   }
+  // **实时那一档的行已经随读随印了**（壳给了 `onBatch`）：收尾这一份人读面因此是空的——
+  // 两处都印的话，人按一下 Ctrl-C 之后每一行都会出现两次（实测 2 条事件印出 4 行）。
+  // 这不是"少印"：印出去的那些行已经在 stdout 上了，这一份只是同一批行的第二份拷贝。
+  const streamed = hooks.onBatch !== undefined
   const notes = a.flags.has('follow') ? [`${PHRASES.resumeHead}：--resume ${token}`] : []
   return {
     result: ok(
@@ -319,7 +323,7 @@ export async function watchValue(
         value,
         faces: {
           json: rows.map((r) => eventJson(r.pos, r.e)).join('\n'),
-          human: rows.map((r) => eventLine(r.pos, r.e)).join('\n'),
+          human: streamed ? '' : rows.map((r) => eventLine(r.pos, r.e)).join('\n'),
         },
       },
       notes,
