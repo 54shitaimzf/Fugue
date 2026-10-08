@@ -379,7 +379,7 @@ export function chatOf(o: { readonly snapshot: StatusSnapshot; readonly conversa
 /** 账尾只显示运行状态，不重复历史，也不显示内部事件坐标。 */
 export function footerOf(s: StatusSnapshot, _permanent?: readonly string[]): string {
   const state = s.rounds.find((r) => r.round === s.current)?.state
-  const running = s.agents.filter((a) => a.stopped === null).length
+  const running = s.agents.filter((a) => a.agent !== 'round' && a.stopped === null).length
   return (state === undefined ? '等待输入' : stateFaceOf(state)) +
     (running > 0 ? ` · ${humanNumber(running)} 项任务在运行` : '')
 }

@@ -80,9 +80,9 @@ test('① 队列行逐字来自那一批：第 i/N 份就是第 i 份 · 下标�
   for (let at = 0; at < 3; at += 1) {
     const row = gateQueueRowOf(face, at)
     const id = (BATCH.contracts[at] as Contract).id
-    assert.ok(row.includes(`第 ${at + 1}/3 份`), `第 ${at} 份那一行该说"第 ${at + 1}/3 份"：${row}`)
-    assert.ok(row.includes(id), `那一行该带着这一份的 id（${id}）：${row}`)
-    assert.ok(row.includes('还有 3 份等你点头'), `那一行该说还有几份：${row}`)
+    assert.ok(row.includes(`当前 ${at + 1}/3`), `第 ${at} 份那一行该说"第 ${at + 1}/3 份"：${row}`)
+    assert.ok(!row.includes(id), `那一行该带着这一份的 id（${id}）：${row}`)
+    assert.ok(row.includes('待确认 3 项任务'), `那一行该说还有几份：${row}`)
     for (const other of BATCH.contracts) {
       if (other.id === id) continue
       assert.equal(row.includes(other.id), false, `第 ${at} 份那一行里混进了别的契约：${row}`)
@@ -145,11 +145,11 @@ test('③ 预览按类型分派：三种契约三种话；认不出来的动作�
   // `implement`：头一行是目标，随后是**命令原文**（从配置里读来的那一条，逐字）与写入面。
   const impl = previewLinesOf(implCard).join('\n')
   assert.ok(impl.includes('实现：把解析器拆出来'), impl)
-  assert.ok(impl.includes('起进程：/bin/sh -c true'), impl)
+  assert.ok(impl.includes('运行命令：/bin/sh -c true'), impl)
   assert.ok(impl.includes('写路径：src/parse.ts'), impl)
   assert.ok(impl.includes('交付物：src/parse.ts（模块）'), impl)
   assert.ok(impl.includes('验收：单元测试全过（test）'), impl)
-  assert.ok(impl.includes('种子：src/parse.ts'), impl)
+  assert.ok(impl.includes('参考文件：src/parse.ts'), impl)
   // `investigate`：问什么 · 要交什么证据 · 交上来的说明是什么。**不给命令那一栏**（它不跑动作）。
   const inv = previewLinesOf(invCard).join('\n')
   assert.ok(inv.includes('调查：现状是怎么写的'), inv)
@@ -160,7 +160,7 @@ test('③ 预览按类型分派：三种契约三种话；认不出来的动作�
   const res = previewLinesOf(resCard).join('\n')
   assert.ok(res.includes('解冲突：src/parse.ts'), res)
   assert.ok(res.includes('要动的冲突路径：src/parse.ts'), res)
-  assert.ok(res.includes('起进程：/bin/sh -c true'), res)
+  assert.ok(res.includes('运行命令：/bin/sh -c true'), res)
   // **负对照**：配置里没绑那个动作 → 那一行说出**哪个名字**没绑，而不是印一条不存在的命令。
   const bare = gateFaceOf(BATCH, {})
   const bareImpl = previewLinesOf((bare.cards as readonly GateCard[])[0] as GateCard).join('\n')
@@ -175,7 +175,7 @@ test('③ 预览按类型分派：三种契约三种话；认不出来的动作�
   const tail = rows.slice(-GATE_KEEP)
   assert.equal(tail.length, GATE_KEEP)
   for (const l of preview) assert.ok(widthOf(l) <= 30, `这一行超宽了（${widthOf(l)}）：${l}`)
-  assert.ok((tail[0] as string).startsWith('还有 3 份等你点头 · 第 1/3 份'), `队列行被截也要先留着头几个字：${String(tail[0])}`)
+  assert.ok((tail[0] as string).startsWith('待确认 3 项任务 · 当前 1/3'), `队列行被截也要先留着头几个字：${String(tail[0])}`)
   assert.ok((tail[1] as string).startsWith('放行一次(y)'), `选项行也一样：${String(tail[1])}`)
   console.log(`③ 读数：三张卡各 ${face.cards.map((c) => c.detail.length).join('/')} 行明细 · ` +
     `没绑动作那一档印「（配置里没绑这个动作：test）」· 30 列下预览折成 ${preview.length} 行、每行 ≤ 30 列 · ` +
@@ -233,4 +233,18 @@ test('⑥ 结论行：打算开几件事 · 覆盖哪些 · 按什么验收（�
   const naive = BATCH.contracts.reduce((n, c) => n + ((c as { readonly ownedPaths?: readonly unknown[] }).ownedPaths?.length ?? 0), 0)
   assert.notEqual(naive, conclusionOf(BATCH).paths, '分档数（1 + 0 + 1）与「只读 ownedPaths」那一版（1 + 0 + 0）该分得开')
   console.log(`⑥ 读数：${line} · 三份契约（${BATCH.contracts.map((c) => c.kind).join(' · ')}）· 空批次 → 0/0/0`)
+})
+
+
+test('缺省十行框中，执行命令与写入路径靠近确认选项保留', async () => {
+  const { frameOf } = await import('./frame.ts')
+  const { statusOf } = await import('../probe/status.ts')
+  const face = gateFaceOf(BATCH, CMDS)
+  const rows = gateRowsOf({ face, view: GATE_VIEW, columns: 96 })
+  const f = frameOf({ snapshot: statusOf([]), width:100, height:10, bottom:{rows,keep:GATE_KEEP,waitingAt:rows.length-1} })
+  const text = f.lines.join('\n')
+  assert.ok(text.includes('运行命令：/bin/sh -c true'))
+  assert.ok(text.includes('写路径：src/parse.ts'))
+  assert.ok(text.includes('放行一次(y)'))
+  assert.ok(!text.includes('agent/r1/'))
 })

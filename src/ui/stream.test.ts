@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow } from '../probe/status.ts'
-import { BODY_CHARS, BODY_LIMIT, FAMILY_KIND, permanentLinesOf, unclassified } from './stream.ts'
+import { BODY_CHARS, BODY_LIMIT, FAMILY_KIND, conversationOf, permanentLinesOf, unclassified } from './stream.ts'
 import type { EventFamily, FamilyKind } from './stream.ts'
 
 /** 类型上不必较真的那几栏（品牌类型与几个值域）：这些行是喂给渲染的，不是账上真发生过的。 */
@@ -235,12 +235,12 @@ test('③ 负对照 · 挪一格：round/state 挪进"只计数"，那一趟历�
   const lines = permanentLinesOf(m)
   assert.equal(lines.length, MIX_GOLDEN.length, '正着那一趟进历史的行数')
   assert.ok(lines.some((l) => l.includes('进展：准备计划')), `正着那一趟该有那条转移：${lines.join(' ｜ ')}`)
-  const moved = permanentLinesOf(m, { ...FAMILY_KIND, 'round/state': 'transient' })
+  const moved = permanentLinesOf(m, { ...FAMILY_KIND, conversationOf, 'round/state': 'transient' })
   assert.equal(moved.length, lines.length - 1, '挪走一族，历史该正好少一行')
   assert.equal(moved.some((l) => l.includes('进展：准备计划')), false, '挪进只计数了，历史里却还有那条转移')
   // 反面：只计数的那一族挪进"永久"——分法说它配得上一行历史，而渲染里没有它的写法，当场抛。
   assert.throws(
-    () => permanentLinesOf([row(llmCall('agent/r1/1', '1'), 'agent/r1/1')], { ...FAMILY_KIND, 'llm/call': 'permanent' }),
+    () => permanentLinesOf([row(llmCall('agent/r1/1', '1'), 'agent/r1/1')], { ...FAMILY_KIND, conversationOf, 'llm/call': 'permanent' }),
     /这一族没有分到永久行：llm\/call/,
     'llm/call 挪进永久却没抛——那就成了静默给一个空行',
   )
@@ -309,4 +309,12 @@ test('⑥ 纯：两次逐字节相同、进去的 rows 一个字段都没被改 
   assert.deepEqual([...permanentLinesOf([])], [], '账上一条都没有时该给空历史')
   assert.equal(permanentLinesOf([row(llmCall('agent/r1/1', '1'), 'agent/r1/1')]).length, 0, '只有只计数那一族时该给空历史')
   console.log(`⑥ 读数：两次逐字节相同（${one.length} 行 · ${before.length} 字节的行两趟同值）· 空账 0 行 · 只有 llm/call 0 行 · 截断按族（80）兜 ${BODY_CHARS}`)
+})
+
+
+test('生产格式的目标按人话显示，损坏的已识别 JSON 不被吞掉', () => {
+  reset()
+  const event = { t: 'round/intent' as const, round: brand('r1'), base: brand('b0'), digest: 'd', body: JSON.stringify({goal:'改善终端阅读体验'}) }
+  assert.deepEqual(permanentLinesOf([row(event)]), ['任务：「改善终端阅读体验」'])
+  assert.throws(() => permanentLinesOf([row({...event, body:'{"goal":'})]), SyntaxError)
 })

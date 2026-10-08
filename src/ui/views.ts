@@ -55,7 +55,7 @@ export function stepView(at: number, delta: number): number {
  *   · `tail` 账尾那一行 · `flow` 对话流（永久行）· `chat` 对话视图那一栏（框内）
  *   · `progress` 处境视图 · `spending` 读数视图 · `gone` 哪儿都不印（值层照旧，进 `--json`）
  */
-export type CellHome = 'tail' | 'flow' | 'chat' | 'progress' | 'spending' | 'gone'
+export type CellHome = 'tail' | 'flow' | 'chat' | 'progress' | 'spending' | 'detail' | 'gone'
 
 /** 去处 → 人读的说法（报告与断言都用这一份，不另写）。视图那三档的名字从词表取。 */
 export const HOME_NAME: Readonly<Record<CellHome, string>> = {
@@ -64,11 +64,12 @@ export const HOME_NAME: Readonly<Record<CellHome, string>> = {
   chat: `${WORDS.chat}视图`,
   progress: `${WORDS.progress}视图`,
   spending: `${WORDS.spending}视图`,
-  gone: '删（哪儿都不印）',
+  detail: '阅读面详情',
+  gone: '仅 JSON 与详情',
 }
 
 /**
- * 27 格的三分表（第二幕 ⑦）。**一格一行**：`cell` 是账上那一格的名字，`home` 是它这一站去哪儿，
+ * 27 格的信息去处（本轮按聊天优先重新分配）。**一格一行**：`cell` 是账上那一格的名字，`home` 是它这一站去哪儿，
  * `why` 是判据或来路。数与去向都是决策材料那两张表的并表结果；`删` 那四格是交接单 § 五 ⑦
  * 点名的四个（`hops` 与界面里无读者的 `denies` / `bounds` / `last`）。
  *
@@ -77,20 +78,20 @@ export const HOME_NAME: Readonly<Record<CellHome, string>> = {
  * 合起来算一格。合计 12 + 11 + 4 = 27。
  */
 export const CELL_TABLE: readonly { readonly cell: string; readonly home: CellHome; readonly why: string }[] = [
-  // 一 · 保留（12）：账尾与对话流——"用户该看见的是对话与结论"
-  { cell: 'rounds[].round', home: 'chat', why: '对话视图的轮次头那一行（进展视图里那一整条链也印）' },
-  { cell: 'rounds[].state', home: 'chat', why: '轮次头的另一半（同上）' },
-  { cell: 'agents[].agent', home: 'chat', why: '在飞那一格的行首：谁在跑' },
-  { cell: 'agents[].calls', home: 'chat', why: '在飞那一格的行内' },
-  { cell: 'agents[].steps', home: 'chat', why: '同上（停下来的那一档印成 `N 步就停（停因）`）' },
-  { cell: 'agents[].invocations', home: 'chat', why: '工具调用几次——这一格一共动了多少手' },
-  { cell: 'agents[].stopped + stopSteps', home: 'chat', why: '一格里两个数：还在跑 / 几步停' },
+  // 运行状态进账尾；结果进对话流；计数与内部编号按需查看。
+  { cell: 'rounds[].round', home: 'progress', why: '轮次编号在进展视图查看' },
+  { cell: 'rounds[].state', home: 'tail', why: '账尾只显示当前运行状态' },
+  { cell: 'agents[].agent', home: 'progress', why: '执行者编号在进展视图查看' },
+  { cell: 'agents[].calls', home: 'progress', why: '调用次数在进展视图查看' },
+  { cell: 'agents[].steps', home: 'progress', why: '步数与停止原因在进展视图查看' },
+  { cell: 'agents[].invocations', home: 'progress', why: '工具调用次数在进展视图查看' },
+  { cell: 'agents[].stopped + stopSteps', home: 'progress', why: '停止状态与步数在进展视图查看' },
   { cell: 'accepts.pass / accepts.fail', home: 'flow', why: '`merge/accept` 那条永久行本来就有' },
   { cell: 'conflicts', home: 'flow', why: '`merge/attempt` 那条永久行本来就有' },
-  { cell: 'rejects', home: 'chat', why: '轮次头那一行，**非零才印**（零就不印：不需要每屏确认一次）' },
-  { cell: 'refusals.byRule（contract-scope 那一档）', home: 'flow', why: '`bound/deny` 那条永久行本来就有' },
-  { cell: 'events + last（兜底）', home: 'tail', why: '一条永久行都还没有时的账尾' },
-  // 二 · 降级（11）：Tab 视图——查得到，而不是要常看
+  { cell: 'rejects', home: 'progress', why: '退回次数在进展视图查看' },
+  { cell: 'refusals.byRule（contract-scope 那一档）', home: 'detail', why: '主面只报被拒绝的路径，规则编号进入详情' },
+  { cell: 'events + last（兜底）', home: 'detail', why: '内部事件坐标进入阅读面详情' },
+  // Tab 视图：查得到，不占对话主面。
   { cell: 'rounds[].transitions', home: 'progress', why: '问三判据：这一条是"查得到"，不是常看' },
   { cell: 'rounds[].skips', home: 'progress', why: '同上；零就不印是今天的行为，一个字没动' },
   { cell: 'rounds[].edges', home: 'progress', why: '那条链的骨架' },
@@ -98,7 +99,7 @@ export const CELL_TABLE: readonly { readonly cell: string; readonly home: CellHo
   { cell: 'agents[].actions', home: 'progress', why: '运行命令几次——细目，进 `progress` 那一档视图' },
   { cell: 'contracts', home: 'spending', why: '记账那一行' },
   { cell: 'attempts', home: 'spending', why: '同上（定义待核，词先按"合并试了"出）' },
-  { cell: 'usage（调用数 + 六个 token 数）', home: 'spending', why: '对话面只留合计（账尾那一行），拆解进 `spending` 那一档视图' },
+  { cell: 'usage（调用数 + 六个 token 数）', home: 'spending', why: '用量只在结果与花费视图查看' },
   { cell: 'metrics 八元', home: 'spending', why: '重算出来的指标，按需看' },
   { cell: 'report 打回三数（含 denied 那一格）', home: 'spending', why: '与 `refusals.kernel` 同源同数——那处重复留在详读那一面' },
   { cell: 'refusals 全部 + outside + ledger/clock', home: 'spending', why: '界面今天一处都不印的那几族，按需读' },
@@ -109,9 +110,9 @@ export const CELL_TABLE: readonly { readonly cell: string; readonly home: CellHo
   { cell: 'agents[].last', home: 'gone', why: '同上（最近一条落在哪：账尾已经说了整账的最近）' },
 ]
 
-/** 表里那些去处的格数（`{ tail: 2, … }`）——`views.test.ts` ③ 拿它数 12/11/4。 */
+/** 表里那些去处的格数（`{ tail: 2, … }`）——`views.test.ts` 同时核对去处与实际渲染。 */
 export function cellCounts(): Readonly<Record<CellHome, number>> {
-  const out: Record<CellHome, number> = { tail: 0, flow: 0, chat: 0, progress: 0, spending: 0, gone: 0 }
+  const out: Record<CellHome, number> = { tail: 0, flow: 0, chat: 0, progress: 0, spending: 0, detail: 0, gone: 0 }
   for (const one of CELL_TABLE) out[one.home] += 1
   return out
 }

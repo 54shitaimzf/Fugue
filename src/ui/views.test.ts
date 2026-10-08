@@ -54,12 +54,13 @@ test('② 走：`Tab` 环形（走到头绕回第一个）· 越界夹住', () =
   )
 })
 
-test('③ 三分表：12 / 11 / 4，而且"删"那四格值层照旧在、人读两面一处都不印', () => {
+test('③ 信息去处与实际渲染一致：主面收起计数，值层四格照旧', () => {
   const n = cellCounts()
   assert.equal(CELL_TABLE.length, 27, `三分表该是 27 格，拿到 ${CELL_TABLE.length}`)
   const kept = n.tail + n.flow + n.chat
-  assert.equal(kept, 12, `保留那 12 格（账尾 + 对话流 + 对话视图），拿到 ${kept}`)
-  assert.equal(n.progress + n.spending, 11, `降级那 11 格（Tab 里两档视图），拿到 ${n.progress + n.spending}`)
+  assert.equal(kept, 3, `保留状态与结果的 3 格（账尾 + 对话流 + 对话视图），拿到 ${kept}`)
+  assert.equal(n.progress + n.spending, 18, `按需查看的 18 格（Tab 里两档视图），拿到 ${n.progress + n.spending}`)
+  assert.equal(n.detail, 2, '内部规则与事件坐标进入详情')
   assert.equal(n.gone, 4, `删那 4 格，拿到 ${n.gone}`)
   for (const key of Object.keys(n) as readonly CellHome[]) {
     assert.ok(HOME_NAME[key] !== '', `${key} 有一个人读的说法`)

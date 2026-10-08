@@ -142,13 +142,18 @@ function excerpt(body: string, family: EventFamily): string {
 }
 
 
+/** 生产者 round/start 与 round/plan 将目标序列化为 {goal}；旧的纯文本记录照读。 */
+function intentText(body: string): string {
+  return body.startsWith('{"goal":') ? (JSON.parse(body) as { goal: string }).goal : body
+}
+
 function lineOf(row: StatusRow): ConversationRow {
   const e = row.e
   switch (e.t) {
     case 'round/state':
       return { text: `进展：${stateFaceOf(e.to)}`, role: e.to === 'Aborted' ? 'refuse' : e.to === 'Committed' ? 'ok' : 'body' }
     case 'round/intent':
-      return { text: `${WORDS.task}：「${excerpt(e.body, 'round/intent')}」`, role: 'body' }
+      return { text: `${WORDS.task}：「${excerpt(intentText(e.body), 'round/intent')}」`, role: 'body' }
     case 'contract/issue':
       return { text: `已安排一项任务${e.paths.length > 0 ? `，涉及 ${e.paths.length} 个文件` : ''}。`, role: 'body' }
     case 'round/approve':

@@ -135,13 +135,13 @@ function cardOf(c: Contract, commands: Readonly<Record<string, string>>): GateCa
   const base = { id: c.id, agent: c.agent, kind: c.kind }
   if (c.kind === 'implement') {
     const detail: string[] = []
-    // **起进程那一档先给命令原文**：要人点头的首先是"它要跑什么"。
+    // 命令与写入路径靠近确认行；矮屏先裁掉补充资料。
     const cmds = [...new Set(c.assertions.map((a) => cmdOf(a.action)))]
-    if (cmds.length > 0) detail.push(`  起进程：${cmds.join(' · ')}`)
-    detail.push(`  写${WORDS.paths}：${c.ownedPaths.join(' · ') || '（空）'}`)
     if (c.deliverables.length > 0) detail.push(`  交付物：${c.deliverables.map((d) => `${d.path}（${d.form}）`).join(' · ')}`)
     if (c.assertions.length > 0) detail.push(`  ${WORDS.accepts}：${c.assertions.map((a) => `${a.name}（${a.action}）`).join(' · ')}`)
-    if (c.seed.length > 0) detail.push(`  种子：${c.seed.join(' · ')}`)
+    if (c.seed.length > 0) detail.unshift(`  参考文件：${c.seed.join(' · ')}`)
+    if (cmds.length > 0) detail.push(`  ${WORDS.commands}：${cmds.join(' · ')}`)
+    detail.push(`  写${WORDS.paths}：${c.ownedPaths.join(' · ') || '（空）'}`)
     return { ...base, head: `实现：${c.goal}`, detail }
   }
   if (c.kind === 'investigate') {
@@ -157,7 +157,7 @@ function cardOf(c: Contract, commands: Readonly<Record<string, string>>): GateCa
   }
   const detail: string[] = []
   const cmds = [...new Set(c.assertions.map((a) => cmdOf(a.action)))]
-  if (cmds.length > 0) detail.push(`  起进程：${cmds.join(' · ')}`)
+  if (cmds.length > 0) detail.push(`  ${WORDS.commands}：${cmds.join(' · ')}`)
   detail.push(`  要动的${WORDS.conflicts}${WORDS.paths}：${c.conflictPaths.join(' · ') || '（空）'}`)
   if (c.assertions.length > 0) detail.push(`  ${WORDS.accepts}：${c.assertions.map((a) => `${a.name}（${a.action}）`).join(' · ')}`)
   return { ...base, head: `解冲突：${c.conflictPaths.join(' · ')}`, detail }
@@ -236,8 +236,7 @@ export function gateQueueRowOf(face: GateFace, at: number): string {
   const n = face.cards.length
   if (n === 0) return `门口这一批一份${WORDS.task}都没有（门不会停在这样一批上——报出来）`
   const i = clampAt(n, at)
-  const c = face.cards[i] as GateCard
-  return `还有 ${n} 份等你点头 · 第 ${i + 1}/${n} 份 · ${c.id} · ${c.agent} · ${c.kind}`
+  return `待确认 ${n} 项${WORDS.task} · 当前 ${i + 1}/${n}`
 }
 
 /** 选项行：**三档**；举过手就把那一句"再按一次"说出来（二段确认要对人可见）。 */

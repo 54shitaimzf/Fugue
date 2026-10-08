@@ -633,3 +633,9 @@ test('对话只显示最近汇报；内部编号与调用计数留在进展视�
   const details = frameOf({ snapshot, width: 100, height: 30, view: 'progress' }).lines.join('')
   assert.ok(details.includes('agent/r1/1') && details.includes('调用'))
 })
+
+
+test('持轮者的计划记录不计作运行中的子任务', () => {
+  const snapshot = statusOf([{pos:{writer:'round',seq:1},e:{t:'holder/distill',round:'r1',agent:'round',digest:'d',body:'计划'}}] as unknown as StatusRow[])
+  assert.equal(footerOf(snapshot), '等待输入')
+})
