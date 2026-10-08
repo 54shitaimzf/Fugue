@@ -201,11 +201,11 @@ function mix(): StatusRow[] {
 
 /** ④ 的黄金：只计数那三族（`llm/call` · `view/write`）一条都不进历史。 */
 const MIX_GOLDEN: readonly string[] = [
-  'round 1 · 轮次 r1 · 意图「给记账库加一条按天汇总 第二条约束：别越界写」· 底 01234567…',
-  'round 2 · 轮次 r1 · Idle → Planning',
-  'agent/r1/1 3 · 格 agent/r1/1 · 3 步就停（收敛） · 交过 2 次接',
-  'round 3 · 轮次 r1 · 合并尝试 2 条分支 · 冲突 1',
-  'round 4 · 轮次 r1 · 合并接受 abcdef01… · 验收 3 条（过 2 / 没过 0 / 跑不起来 1）',
+  "任务：「给记账库加一条按天汇总 第二条约束：别越界写」",
+  "进展：准备计划",
+  "一项任务已停止，交接说明可在阅读面查看。",
+  "正在合并结果，有 1 处冲突需要处理。",
+  "验收：2 项通过，1 项无法运行。"
 ]
 
 test('① 表与联合逐字对得上：30 族一个不多一个不少', () => {
@@ -234,10 +234,10 @@ test('③ 负对照 · 挪一格：round/state 挪进"只计数"，那一趟历�
   const m = mix()
   const lines = permanentLinesOf(m)
   assert.equal(lines.length, MIX_GOLDEN.length, '正着那一趟进历史的行数')
-  assert.ok(lines.some((l) => l.includes('Idle → Planning')), `正着那一趟该有那条转移：${lines.join(' ｜ ')}`)
+  assert.ok(lines.some((l) => l.includes('进展：准备计划')), `正着那一趟该有那条转移：${lines.join(' ｜ ')}`)
   const moved = permanentLinesOf(m, { ...FAMILY_KIND, 'round/state': 'transient' })
   assert.equal(moved.length, lines.length - 1, '挪走一族，历史该正好少一行')
-  assert.equal(moved.some((l) => l.includes('Idle → Planning')), false, '挪进只计数了，历史里却还有那条转移')
+  assert.equal(moved.some((l) => l.includes('进展：准备计划')), false, '挪进只计数了，历史里却还有那条转移')
   // 反面：只计数的那一族挪进"永久"——分法说它配得上一行历史，而渲染里没有它的写法，当场抛。
   assert.throws(
     () => permanentLinesOf([row(llmCall('agent/r1/1', '1'), 'agent/r1/1')], { ...FAMILY_KIND, 'llm/call': 'permanent' }),
@@ -290,9 +290,8 @@ test('⑤ 一族一行都不少：夹具覆盖 30 族、进历史的正好那 10
   for (let i = 0; i < permanent.length; i += 1) {
     const r = permanent[i] as StatusRow
     const line = lines[i] as string
-    const prefix = `${r.pos.writer} ${r.pos.seq} · `
-    assert.ok(line.startsWith(prefix), `第 ${i + 1} 行的前缀不是账上的坐标：${line}`)
-    assert.ok(line.length > prefix.length, `第 ${i + 1} 行只有坐标、没有内容：${line}`)
+    assert.ok(line.length > 0, '永久事件必须有可读汇报')
+    assert.ok(!line.includes(r.pos.writer + ' ' + r.pos.seq + ' · '), '内部坐标不进入对话历史')
     assert.equal(line.includes('undefined'), false, `第 ${i + 1} 行里漏了一栏（那一族没有写法）：${line}`)
     assert.equal(line.includes('\n'), false, `第 ${i + 1} 行里带换行：${line}`)
   }

@@ -95,16 +95,16 @@ export function archNameOf(k: WordKey): string {
  * 表里没有的取值**照原样印**（新状态落地时先让人看见英文，好过印一个猜出来的词）。
  */
 export const STATE_FACE: Readonly<Record<string, string>> = {
-  Idle: '待命',
-  Planning: '规划',
-  Delegated: '派活',
-  Working: '干活',
-  Collecting: '收拢',
-  Merging: '合并',
+  Idle: '准备就绪',
+  Planning: '准备计划',
+  Delegated: '准备执行',
+  Working: '正在执行',
+  Collecting: '收集结果',
+  Merging: '合并结果',
   Verifying: '验收',
-  Committed: '已定格',
-  Rebuilding: '重建',
-  Aborted: '中止',
+  Committed: '已完成',
+  Rebuilding: '修改中',
+  Aborted: '已中止',
 }
 
 /** 状态那一个值人话怎么说（表里没有就照原样——不猜）。 */

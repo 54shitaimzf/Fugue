@@ -143,15 +143,15 @@ function snapshotOf(extra: readonly StatusRow[] = []): StatusSnapshot {
 
 const GOLDEN: readonly string[] = [
   "┌─ 对话 ───────────────────────────────────────────────────────────────────────────────────────────┐",
-  "│ 轮次 r1 · 重建 · 还在跑 1 格 · 打回 1 次                                                         │",
-  "│ ──────────────────────────────────────────────────────────────────────────────────────────────── │",
-  "│ 格 agent/r1/1 · 2 步就停（收敛）                                                                 │",
-  "│   调用 2 次 · 走了 2 步 · 工具调用 3                                                             │",
-  "│ 格 agent/r1/2 · 还在跑                                                                           │",
-  "│   调用 1 次 · 走了 1 步 · 工具调用 3                                                             │",
+  "│ 正在处理你的任务。                                                                               │",
+  "│                                                                                                  │",
+  "│                                                                                                  │",
+  "│                                                                                                  │",
+  "│                                                                                                  │",
+  "│                                                                                                  │",
   "├──────────────────────────────────────────────────────────────────────────────────────────────────┤",
-  "│ 最近 merge/accept（round 13）· 事件 13 条                                                        │",
-  "└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+  "│ 修改中 · 1 项任务在运行                                                                          │",
+  "└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
 ]
 test('① 黄金帧：整帧逐字节等于那一份原文，而且每一行恰好 width 列', () => {
   // 高度取**真终端上框的那 10 行**（`ui/layout.ts` 的 `FRAME_ROWS`，一处真源）：第二幕 ⑦ 起框
@@ -259,7 +259,7 @@ test('⑤ 地板：窄屏照画（没有第二栏这回事了）· 矮了截断�
   assert.equal(narrow.columns.left, innerOf(40), '内容那一栏就是框内宽')
   assert.equal(narrow.lines.some((l) => l.includes('┬')), false, '不该有中间那根竖线')
   const text = narrow.lines.join('\n')
-  for (const one of ['轮次 r1 · 重建', '格 agent/r1/1', '还在跑']) {
+  for (const one of ['正在处理你的任务。', '修改中', '1 项任务在运行']) {
     assert.ok(text.includes(one), `对话视图窄屏那一档少了这一处：${one}`)
   }
   // 另两档在窄屏上也画得出来（折得更勤，一格不丢）——这一条量的是「窄了不丢档」。
@@ -267,12 +267,12 @@ test('⑤ 地板：窄屏照画（没有第二栏这回事了）· 矮了截断�
   assert.ok(spend.includes('任务 2') && spend.includes('用量 调用 3'), `结果与花费视图窄屏上该有记账与用量：\n${spend}`)
   // 账尾是**状态条**：40 列那一档它装不下，从右边截并留一个 `…`（说了它被截过）。截掉的是尾巴上
   // 那半截（`…· 事件 13 条`），留下的是"账在动"那个信号——次序就是为这个排的。
-  assert.ok(text.includes('最近 merge/accept'), '单栏那一档也该有账尾')
-  assert.ok(text.includes('…'), '账尾在这一档截过，该留一个 `…`——不然就是静默少印')
+  assert.ok(text.includes('修改中'), '单栏那一档也该有账尾')
+  assert.ok(!text.includes('agent/r1/'), '主面不显示内部任务编号')
 
   // 矮：压到 5 行（`MIN_HEIGHT`，画得出框的下限）——对话视图的内容自己就 4 行，给 8 行装得下、
   // 不会被截，所以这一档要真压到装不下才量得到那句「还有几行没印」。
-  const short = frameOf({ snapshot, metrics: METRICS, report: REPORT, width: 100, height: 5 })
+  const short = frameOf({ snapshot, metrics: METRICS, report: REPORT, width: 100, height: 5, conversation: [{ text: '第一段汇报', role: 'body' }, { text: '第二段汇报', role: 'body' }] })
   assert.ok(short.lines.length <= 5, `这一屏只给 5 行，印出来 ${short.lines.length} 行`)
   const cut = short.lines.find((l) => l.includes('还有'))
   assert.ok(cut !== undefined, `截断了却没说出还剩几行：${short.lines.join('\n')}`)
@@ -315,16 +315,16 @@ test('⑤ 地板：窄屏照画（没有第二栏这回事了）· 矮了截断�
   )
 })
 
-test('⑦ 账尾那一列：给了"永久行"就印它的最后一条（没给照旧印最近一条事件）', () => {
+test('⑦ 账尾只显示运行状态；永久历史不重复打印到状态栏', () => {
   const snapshot = snapshotOf()
   const permanent = ['round 1 · 轮次 r1 · Idle → Planning', 'round 5 · 轮次 r1 · 合并接受 abcdef01… · 验收 3 条（过 3 / 没过 0）']
-  assert.equal(footerOf(snapshot), '最近 merge/accept（round 13）· 事件 13 条', '没给那一列时账尾该是最近一条事件')
+  assert.equal(footerOf(snapshot), '修改中 · 1 项任务在运行')
   assert.equal(footerOf(snapshot, []), footerOf(snapshot), '一条永久行都没有时照旧')
-  assert.equal(footerOf(snapshot, permanent), permanent[1], `给了那一列，账尾该是它最后一条：${footerOf(snapshot, permanent)}`)
+  assert.equal(footerOf(snapshot, permanent), footerOf(snapshot), `给了那一列，账尾该是它最后一条：${footerOf(snapshot, permanent)}`)
   const withRow = frameOf({ snapshot, permanent, width: 100, height: 16 })
-  assert.equal(withRow.footer, permanent[1], '整帧那一栏也是它')
+  assert.equal(withRow.footer, footerOf(snapshot), '整帧状态栏不重复历史')
   assert.equal(withRow.lines.length, frameOf({ snapshot, width: 100, height: 16 }).lines.length, '多这一列不该动行数')
-  assert.notEqual(withRow.footer, frameOf({ snapshot, width: 100, height: 16 }).footer, '两条路该分得开')
+  assert.equal(withRow.footer, frameOf({ snapshot, width: 100, height: 16 }).footer)
   // 补到 K 行那一处（终端那一层要的）：多出来的行不写，少的那几行补空白（不是补内容）。
   assert.deepEqual([...panelOf(['ab'], 2, 4)], ['ab  ', '    '], '补空行那一处不对')
   assert.deepEqual([...panelOf(['ab', 'cd', 'ef'], 2, 4)], ['ab  ', 'cd  '], '多出来的行该不写')
@@ -432,8 +432,8 @@ test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账
   assert.equal(f.roles[f.roles.length - 1], 'border', '末行是框线')
   assert.equal(
     f.roles.filter((r) => r === 'border').length,
-    4,
-    '框线四行（上下两根 + 账尾那根分隔 + 对话视图里那条块间细线——它也是框线那一档的颜色）',
+    3,
+    '框线三行（上下两根 + 账尾那根分隔 + 对话视图里那条块间细线——它也是框线那一档的颜色）',
   )
   const footAt = f.lines.findIndex((l) => l.includes(f.footer))
   assert.ok(footAt >= 0, '账尾那一行找得到')
@@ -442,7 +442,7 @@ test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账
   assert.ok(menuAt >= 0 && f.roles[menuAt] === 'overlay', '候选那一层报 overlay')
   const gateAt = f.lines.findIndex((l) => l.includes('门口那一块'))
   assert.ok(gateAt >= 0 && f.roles[gateAt] === 'overlay', '门口那一块报 overlay')
-  const bodyAt = f.lines.findIndex((l) => l.includes('轮次 r1 · 重建'))
+  const bodyAt = f.lines.findIndex((l) => l.includes('正在处理你的任务。'))
   assert.ok(bodyAt >= 0 && f.roles[bodyAt] === 'body', '读数那一行报 body')
 
   // 阅读面开着：框名那一行报 `readHeading`（U3），正文那些行报 `read`。
@@ -615,4 +615,21 @@ test('正文统一留白、长内容不挤走账尾；极窄档保留完整几�
       }
     }
   }
+})
+
+
+test('对话只显示最近汇报；内部编号与调用计数留在进展视图', () => {
+  const snapshot = snapshotOf()
+  const conversation = [
+    { text: '任务：「改善终端阅读体验」', role: 'body' as const },
+    { text: '验收通过：3 项。', role: 'ok' as const },
+    { text: '已拒绝越界写入：src/private.ts', role: 'refuse' as const },
+  ]
+  const main = frameOf({ snapshot, conversation, width: 100, height: FRAME_ROWS, focus: 'agent/r1/1' })
+  assert.ok(main.lines.some((l) => l.includes('改善终端阅读体验')))
+  assert.ok(!main.lines.join('').includes('agent/r1/'))
+  assert.ok(!main.lines.join('').includes('工具调用'))
+  assert.ok(main.roles.includes('ok') && main.roles.includes('refuse'))
+  const details = frameOf({ snapshot, width: 100, height: 30, view: 'progress' }).lines.join('')
+  assert.ok(details.includes('agent/r1/1') && details.includes('调用'))
 })

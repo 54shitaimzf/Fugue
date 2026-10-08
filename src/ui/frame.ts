@@ -129,9 +129,15 @@ export interface Frame {
  * 任何样式。（**永久行与输入行不在这张表里**：U20 那条形状不动——永久行进终端历史要保持干净
  * 流水，输入行是光标算术那一行。）
  */
-export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'waiting' | 'read' | 'readHeading' | 'hint'
+export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'waiting' | 'read' | 'readHeading' | 'hint' | 'ok' | 'refuse' | 'hit'
+
+export interface ConversationRow {
+  readonly text: string
+  readonly role: LineRole
+}
 
 export interface FrameInput {
+  readonly conversation?: readonly ConversationRow[]
   /** 读源一：那一刻的处境（`status --once` 印的那一份）。 */
   readonly snapshot: StatusSnapshot
   /** 读源二：八元指标。**不给就不印那一栏**——不拿 0 顶（`B1` 那一条）。 */
@@ -338,12 +344,9 @@ export function bodyOf(o: {
  */
 export interface ChatRow {
   readonly kind: 'head' | 'rule' | 'agent' | 'aside'
-  /**
-   * 这一行要哪一颗图标（第二幕 ⑨）。**由折这一栏的那一处点名**（`chatOf` 知道这一行是轮次头还是
-   * 停下来的格），而不是由图标那一档去猜行的内容。不点名（`rule` 那一行）就是没有图标。
-   */
   readonly icon?: IconName | undefined
   readonly text: string
+  readonly role?: LineRole
 }
 
 /**
@@ -356,69 +359,29 @@ function iconPrefixOf(icon: IconName | undefined): string {
   return glyph === '' ? '' : `${glyph} `
 }
 
-/**
- * 对话视图那几行（第二幕 ⑦ 的主面）。**只读快照**，与 `bodyOf` 同一个来路。
- *
- * 次序就是决策材料问三那张切法表的次序：**轮次头 1 行 · 块间细线 1 行 · 在飞那几格**（一格一行）。
- * 留下的那 12 格落在这一栏里的正是这几样：当前轮次与状态（同一对也进账尾）· 每一格的名字 /
- * 调用 / 步数 / 工具调用 / 停因。`agents[].actions` 那一格降级走了（进处境视图），所以这一行
- * **不印「运行命令几次」**——这一栏里少的那一格在那一档视图里读。
- *
- * 零就不印（第二幕 ⑦：任何状态显示先问必要性与大小）：打回 0 次时那半句不占宽度。
- *
- * 装不下不在这里管：`frameOf` 那一层按屏高截断并印「还有 N 行没印」（读面那条「少印要说出来」）。
- */
-export function chatOf(o: { readonly snapshot: StatusSnapshot }): readonly ChatRow[] {
-  const s = o.snapshot
-  const r = s.rounds.find((x) => x.round === s.current)
-  const running = s.agents.filter((a) => a.stopped === null).length
-  // 零就不印这两半（第二幕 ⑦：任何状态显示先问必要性与大小——「没有在跑的格」「没有打回」
-  // 都不需要每一屏确认一次）。
-  const run = running > 0 ? ` · ${WORDS.moving} ${running} ${WORDS.agent}` : ''
-  const rej = r !== undefined && r.rejects > 0 ? ` · ${WORDS.rejects} ${humanNumber(r.rejects)} 次` : ''
-  const head =
-    r === undefined
-      ? '还没开过轮次（账上一条 round/state 都没有）'
-      : `${WORDS.round} ${r.round} · ${stateFaceOf(r.state)}${run}${rej}`
-  const rows: ChatRow[] = [
-    { kind: 'head', icon: 'round', text: head },
-    { kind: 'rule', text: '' },
-  ]
-  for (const a of s.agents) {
-    const stop =
-      a.stopped === null
-        ? WORDS.moving
-        : `${a.stopSteps === undefined ? '?' : humanNumber(a.stopSteps)} ${WORDS.steps}${WORDS.halted}（${a.stopped}）`
-    // **一行只放一件事**：第一行"这是谁 · 还在跑还是停了"，第二行缩进着放计数那几样。
-    rows.push({ kind: 'agent', icon: a.stopped === null ? 'moving' : 'halted', text: `${WORDS.agent} ${a.agent} · ${stop}` })
-    rows.push({
-      kind: 'aside',
-      text:
-        `${WORDS.calls} ${humanNumber(a.calls)} 次 · 走了 ${humanNumber(a.steps)} ${WORDS.steps}` +
-        ` · ${WORDS.invocations} ${humanNumber(a.invocations)}`,
-    })
+/** 最近汇报占据主面；状态与计数分别进入账尾和视图。 */
+export function chatOf(o: { readonly snapshot: StatusSnapshot; readonly conversation?: readonly ConversationRow[] }): readonly ChatRow[] {
+  if ((o.conversation?.length ?? 0) > 0) {
+    return (o.conversation as readonly ConversationRow[]).map((r) => ({ kind: 'head', text: r.text, role: r.role }))
   }
-  return rows
+  const s = o.snapshot
+  const state = s.rounds.find((r) => r.round === s.current)?.state
+  if (state === 'Planning') return [{ kind: 'head', text: '计划已准备，等待你确认。', role: 'waiting' }]
+  if (state === 'Committed') return [{ kind: 'head', text: '任务已完成，可以继续对话。', role: 'ok' }]
+  if (state === 'Aborted') return [{ kind: 'head', text: '任务已中止，进展视图可查看原因。', role: 'refuse' }]
+  if (state !== undefined || s.agents.some((a) => a.stopped === null)) return [{ kind: 'head', icon: 'round', text: '正在处理你的任务。' }]
+  return [
+    { kind: 'head', icon: 'round', text: '说说你想做什么。' },
+    { kind: 'aside', text: '输入问题开始对话；/ 查看命令。', role: 'hint' },
+  ]
 }
 
-/**
- * 账尾那一行（全账的读数，**不属于任何一栏**）：**最近那条永久行的原文**；一条永久行都还没有时
- * 才是"最近一条事件是什么 + 一共几条"。
- *
- * 次序是"最近一条"在前：这一行窄起来要从右边截（状态条那一档），先留住的是"账还在动"这个信号。
- * 永久行那一栏由分法给（`ui/stream.ts` 那一张表），这一份只读它的最后一条——不分法、不重算。
- */
-export function footerOf(s: StatusSnapshot, permanent?: readonly string[]): string {
-  // 账尾 = **最近那条永久行的原文**（次序上的道理见上）；一条永久行都还没有时才是「最近一条
-  // 事件是什么 + 一共几条」。
-  // **第二幕 ⑦ 没往这一行加东西**：当前轮次 · 状态 · 打回几次留在对话视图的**轮次头那一行**
-  // ——同一屏上同一件事印两处是白占宽度（注意力管理：K 是硬顶，一屏只留三类东西）。改主意的
-  // 条件：若实测发现「切到别的视图就看不见现在第几轮」这件事碍事，就把状态标记加回来，同时把
-  // 轮次头那一行收掉同样的三样。
-  const last = permanent?.[permanent.length - 1]
-  if (last !== undefined) return last
-  if (s.last === null) return `${WORDS.events} 0 条（账上还没有一条）`
-  return `最近 ${s.last.t}（${s.last.writer} ${s.last.seq}）· ${WORDS.events} ${humanNumber(s.events)} 条`
+/** 账尾只显示运行状态，不重复历史，也不显示内部事件坐标。 */
+export function footerOf(s: StatusSnapshot, _permanent?: readonly string[]): string {
+  const state = s.rounds.find((r) => r.round === s.current)?.state
+  const running = s.agents.filter((a) => a.stopped === null).length
+  return (state === undefined ? '等待输入' : stateFaceOf(state)) +
+    (running > 0 ? ` · ${humanNumber(running)} 项任务在运行` : '')
 }
 
 /**
@@ -563,8 +526,8 @@ export function frameOf(o: FrameInput): Frame {
           x.kind === 'rule'
             ? { l: `${''}${glyphs().div.repeat(inner)}`, role: 'border' as const }
             : x.kind === 'aside'
-              ? { l: `  ${x.text}`, role: 'body' as const }
-              : { l: `${iconPrefixOf(x.icon)}${x.text}`, role: 'body' as const },
+              ? { l: `  ${x.text}`, role: x.role ?? 'body' as const }
+              : { l: `${iconPrefixOf(x.icon)}${x.text}`, role: x.role ?? 'body' as const },
         )
       : (view === 'progress' ? body.left : body.right).map((l) => ({ l, role: 'body' as const }))
   const rows = bodyRows.flatMap((one) => wrap(one.l, inner).map((x) => ({ l: x, role: one.role })))
@@ -680,7 +643,7 @@ export function frameOf(o: FrameInput): Frame {
   // 那一格：对话视图不印树，框名是「读的是哪一格」这件事唯一的落点。
   const g = glyphs()
   const focus = o.focus === undefined || o.focus === null ? '' : ` · ${o.focus}`
-  const head = readingOn ? '阅读面' : `${viewNameOf(view)}${focus}`
+  const head = readingOn ? '阅读面' : `${viewNameOf(view)}${view === 'chat' ? '' : focus}`
   lines.push(`${g.tl}${bar(edge, head)}${g.tr}`)
   roles.push(readingOn ? 'readHeading' : 'border')
   for (const one of shown) {

@@ -113,7 +113,8 @@ test('② 两个点名面照表印：新词在 · 旧词一个都不在', () => 
   assert.ok(frameChat.includes(WORDS.chat), `对话视图的框名该叫「${WORDS.chat}」`)
   // 对话视图也照表印：轮次头与在飞那几格在它上面，旧词一个都不许有。
   for (const w of RETIRED) assert.ok(!frameChat.includes(w), `对话视图上不该出现「${w}」：\n${frameChat}`)
-  assert.ok(frameChat.includes(WORDS.agent) && frameChat.includes(WORDS.invocations), '对话视图该印在飞那一格')
+  assert.ok(!frameChat.includes(WORDS.invocations), '调用计数留在进展视图')
+  assert.ok(frameProgress.includes(WORDS.agent) && frameProgress.includes(WORDS.invocations), '进展视图保留执行详情')
   // 主面一律 `验收`，不许出现 `断言`（`--json` 的字段名 `assertions` 不在此列——它在 ④ 里）。
   assert.ok(!frameSpending.includes('断言') && !cmd.includes('断言'), '主面上不许出现「断言」')
   console.log(

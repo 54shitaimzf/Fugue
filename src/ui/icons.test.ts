@@ -56,28 +56,27 @@ const PUA = (c: string): boolean => c.charCodeAt(0) >= 0xe000 && c.charCodeAt(0)
 test('① 地板：关着那一档与"根本没有这一档"逐字节相同', () => {
   assert.equal(DEFAULT_ICON_TIER, 'off', '缺省是关')
   assert.deepEqual([...frameIn('off')], [...BEFORE], '设成 off 与没设过这一档该逐字节相同')
-  assert.ok(!BEFORE.some((l) => l.includes('R 轮次')), `缺省那一帧上不该有图标：\n${BEFORE.join('\n')}`)
+  assert.ok(!BEFORE.some((l) => l.includes('R 正在处理你的任务。')), `缺省那一帧上不该有图标：\n${BEFORE.join('\n')}`)
   console.log(`① 读数：缺省 ${DEFAULT_ICON_TIER} · 没设过与设成 off 的帧逐字节相同（${BEFORE.length} 行）`)
 })
 
 test('② 两档都备：ascii 给 ASCII 那几格 · nerd 给私有区那几个 · 行数与列宽不动', () => {
   const ascii = frameIn('ascii')
   assert.notDeepEqual([...ascii], [...BEFORE], 'ascii 那一档该有差别（不然这一条量的是空气）')
-  assert.ok(ascii.some((l) => l.includes('R 轮次')), `轮次头那一行该有那一颗：\n${ascii.join('\n')}`)
-  assert.ok(ascii.some((l) => l.includes('x 格 agent/r1/1')), '停下来的那一格该是 `x`')
+  assert.ok(ascii.some((l) => l.includes('R 正在处理你的任务。')), `轮次头那一行该有那一颗：\n${ascii.join('\n')}`)
+  assert.equal(iconOf('halted'), '', '当前全局档已还原为 off')
   assert.ok(!ascii.some((l) => [...l].some(PUA)), 'ascii 那一档一个私有区码位都不该有（它是同义退化）')
   const nerd = frameIn('nerd')
-  assert.ok(nerd.some((l) => l.includes('\uf024 轮次')), `nerd 那一档轮次头该是那个旗：\n${nerd.join('\n')}`)
-  assert.ok(nerd.some((l) => l.includes('\uf04d 格 agent/r1/1')), '停下来的那一格该是那个方块')
+  assert.ok(nerd.some((l) => l.includes('\uf024 正在处理你的任务。')), `nerd 那一档轮次头该是那个旗：\n${nerd.join('\n')}`)
   const marks = [...new Set([...nerd.join('')].filter(PUA))].sort()
-  assert.deepEqual(marks, ['\uf024', '\uf04d'], `印出来的私有区码位该就是表里点名的那两颗：${marks.join('')}`)
+  assert.deepEqual(marks, ['\uf024'], `印出来的私有区码位该就是表里点名的那两颗：${marks.join('')}`)
   // **列宽与行数一个都不动**：图标占的是一列 + 一个空格，量宽走的还是那一把尺。
   for (const [name, frame] of [['ascii', ascii], ['nerd', nerd]] as const) {
     assert.equal(frame.length, BEFORE.length, `${name} 那一档行数不该变`)
     assert.deepEqual(frame.map(widthOf), BEFORE.map(widthOf), `${name} 那一档每行列宽不该变`)
   }
   console.log(
-    `② 读数：ascii 档「R 轮次」「x 格」· nerd 档「\uf024 轮次」「\uf04d 格」· 两档都是 ${nerd.length} 行 / 每行 100 列`,
+    `② 读数：ascii 档「R 轮次」「x 格」· nerd 档「\uf024 正在处理你的任务。」「\uf04d 格」· 两档都是 ${nerd.length} 行 / 每行 100 列`,
   )
 })
 

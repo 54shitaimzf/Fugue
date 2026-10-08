@@ -24,7 +24,7 @@ function sinkOf(o: { columns: number }): { written: string[]; out: TermOut } {
 test('① DEFAULT_THEME：四个角色有值，body 与 read 不在表里；两族名单从这张表推', () => {
   assert.deepEqual(
     Object.keys(DEFAULT_THEME).sort(),
-    ['border', 'footer', 'overlay', 'readHeading', 'waiting'],
+    ['border', 'footer', 'hit', 'ok', 'overlay', 'readHeading', 'refuse', 'waiting'],
     '主题只动"边与弹出"与阅读面那个框名，正文（body · read）缺省不动',
   )
   assert.equal(DEFAULT_THEME.border, '\x1b[2m', '框线：暗一档')
@@ -34,7 +34,7 @@ test('① DEFAULT_THEME：四个角色有值，body 与 read 不在表里；两�
   assert.deepEqual(byValue('\x1b[2m'), ['border'], '只有框线暗一档')
   assert.deepEqual(
     byValue('\x1b[1m'),
-    ['footer', 'overlay', 'readHeading', 'waiting'],
+    ['footer', 'hit', 'ok', 'overlay', 'readHeading', 'refuse', 'waiting'],
     '账尾改粗（U3）· 弹层 · 阅读面框名 · 门口要按的那一行（第 1 级与弹层同一条属性）',
   )
   assert.equal(
@@ -59,8 +59,8 @@ test('③ 退回档的字节流与没有主题那一档逐字节相同（五族�
   // 后两档的字节流与第一份逐字节相同——退回是"一个字节都不多"，不是"另写一份"。
   // **五族角色全在场**（U3 之后是 border · footer · overlay · readHeading，第三幕 ① 加了 waiting）：
   // 少一族在场，这条对照就量不到那一族的退回，是句空话。
-  const rows = ['┌────────────────────────────────────┐', '│阅读面 · 框名那一行│', '│阅读面正文│', '├────────────────────────────────────┤', '│账尾│', '│候选│', '│放行一次(y) · 拒(n) · 中止(Esc)│', '└────────────────────────────────────┘']
-  const roles = ['readHeading', 'read', 'body', 'border', 'footer', 'overlay', 'waiting', 'border']
+  const rows = ['┌────────────────────────────────────┐', '│阅读面 · 框名那一行│', '│阅读面正文│', '├────────────────────────────────────┤', '│账尾│', '│候选│', '│放行一次(y) · 拒(n) · 中止(Esc)│', '│成功│', '│错误│', '│命中│', '└────────────────────────────────────┘']
+  const roles = ['readHeading', 'read', 'body', 'border', 'footer', 'overlay', 'waiting', 'ok', 'refuse', 'hit', 'border']
   const themedRoles = Object.keys(DEFAULT_THEME) as readonly string[]
   for (const role of themedRoles) assert.ok(roles.includes(role), `这一帧里要有 ${role}（五族齐了才量得动退回）`)
   const drawOnce = (theme: Parameters<typeof openTerm>[0]['theme']): string => {

@@ -77,7 +77,7 @@ test('③ 三分表：12 / 11 / 4，而且"删"那四格值层照旧在、人读
   assert.ok(r !== undefined && 'hops' in r, '`rounds[].hops` 还在值层（这一站删的是读者，不是字段）')
   assert.ok(a !== undefined && 'denies' in a && 'bounds' in a && 'last' in a, '`agents[].denies/bounds/last` 还在值层')
   const cmd = linesOf(s, { cat: readCatalog() }).join('\n')
-  const frame = frameOf({ snapshot: s, permanent: [], width: 100, height: 14 }).lines.join('\n')
+  const frame = frameOf({ snapshot: s, permanent: [], width: 100, height: 14, view: 'progress' }).lines.join('\n')
   for (const [name, text] of [['命令行人面（probe/status.ts）', cmd], ['面板（ui/frame.ts）', frame]] as const) {
     // **格那一行**里那三个格子一个都不许再印（`越界 被挡 N 次（内核拒 N）` 那一行不是这三格：
     // 它带 `byRule` 分组，信息量严格更大，留着）。

@@ -37,7 +37,7 @@ import type { Frame } from './frame.ts'
 import { frameOf, panelOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
 import type { FamilyTable } from './stream.ts'
-import { FAMILY_KIND, permanentLinesOf } from './stream.ts'
+import { FAMILY_KIND, conversationOf, permanentLinesOf } from './stream.ts'
 import { K } from './term.ts'
 import type { Term } from './term.ts'
 import type { Tui, TuiCounts, TuiMode } from './follow.ts'
@@ -257,6 +257,7 @@ async function oneShot(chapters: readonly (readonly StatusRow[])[]): Promise<{ r
   const frame = frameOf({
     ...readingsOf(all.rows),
     permanent: permanentLinesOf(all.rows),
+    conversation: conversationOf(all.rows).slice(-3),
     width: 80,
     height: K,
   })
@@ -268,7 +269,7 @@ const panelOfFrame = (f: Frame): string[] => [...panelOf(f.lines, K, 80)]
 
 /** 折一帧（尺寸与记录器一致）。 */
 function frameAt(rows: readonly StatusRow[]): Frame {
-  return frameOf({ ...readingsOf(rows), permanent: permanentLinesOf(rows), width: 80, height: K })
+  return frameOf({ ...readingsOf(rows), permanent: permanentLinesOf(rows), conversation: conversationOf(rows).slice(-3), width: 80, height: K })
 }
 
 /** 跟随那一档画帧的那几步：**一片一帧**（每趟读齐一片、一趟一画，U4）。 */
@@ -314,14 +315,14 @@ test('② 一条都不少：晚出现的 writer（seq=1 排在读过的 seq=3 �
   assert.deepEqual([...written].sort(), [...still].sort(), '同一个集合（次序那一档两条路本来就不同）')
   assert.equal(written.length, still.length, `历史条数对不上：跟随 ${written.length} 条 · 一次性 ${still.length} 条`)
   assert.equal(
-    written.some((l) => l.startsWith('agent/r1/1 1 · ')),
+    written.some((l) => l === '一项任务已停止。'),
     true,
     `晚出现那个 writer 的那一条该在历史里：${written.join(' ｜ ')}`,
   )
   assert.notDeepEqual(written, still, '这一份夹具里到达序与全序本来就不同——相同就量不到"到达序"这件事了')
   assert.equal(r.counts.rows, one.rows.length, '跟随读进来的行数与一次性读齐的行数对不上（漏了或重了）')
   console.log(
-    `② 读数：跟随 ${r.counts.rows} 行（到达序，含 agent/r1/1 的 ${written.filter((l) => l.startsWith('agent/r1/1')).length} 条）· ` +
+    `② 读数：跟随 ${r.counts.rows} 行（到达序，含 agent/r1/1 的 ${written.filter((l) => l.startsWith('一项任务已停止')).length} 条）· ` +
       `一次性 ${one.rows.length} 行（全序）· 集合逐字相同、次序不同（就此一条）`,
   )
 })

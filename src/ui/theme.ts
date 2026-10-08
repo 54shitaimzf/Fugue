@@ -76,6 +76,9 @@ export const ROLE_SLOT: Readonly<Record<LineRole, Slot>> = {
   read: 'body',
   readHeading: 'readHeading',
   hint: 'dim',
+  ok: 'ok',
+  refuse: 'refuse',
+  hit: 'hit',
 }
 
 /**
@@ -114,6 +117,9 @@ export const DEFAULT_THEME: Readonly<Partial<Record<LineRole, string>>> = {
   // （地板逐字节锁着那条不动）。黄只在第 2 级上出现（`SLOT_256.waiting`）。
   waiting: '\x1b[1m',
   readHeading: '\x1b[1m',
+  ok: '\x1b[1m',
+  refuse: '\x1b[1m',
+  hit: '\x1b[1m',
 }
 
 /**

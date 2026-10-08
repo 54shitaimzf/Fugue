@@ -32,7 +32,9 @@
 // 从而证明这一栏真的在读那张表（`stream.test.ts` ②/③ 那两条负对照），所以它是一等入参。
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow } from '../probe/status.ts'
-import { WORDS } from '../words.ts'
+import { WORDS, stateFaceOf } from '../words.ts'
+import { glyphs } from './glyph.ts'
+import type { ConversationRow } from './frame.ts'
 
 /** 联合里那一族（就是事件的 `t`）。**它是这一份的键**：一族一格，一个都不许漏。 */
 export type EventFamily = LogEvent['t']
@@ -126,7 +128,7 @@ export const BODY_CHARS = 40
 /** 前 `n` 个字符，截了就留一个 `…`（散列那几栏：`base` · `commit` · `fingerprint`）。 */
 function head(s: string, n: number): string {
   const chars = [...s]
-  return chars.length <= n ? s : `${chars.slice(0, n).join('')}…`
+  return chars.length <= n ? s : `${chars.slice(0, n).join('')}${glyphs().mark}`
 }
 
 /**
@@ -139,57 +141,37 @@ function excerpt(body: string, family: EventFamily): string {
   return head(body.replace(/\s+/g, ' ').trim(), BODY_LIMIT[family] ?? BODY_CHARS)
 }
 
-/** 写入面：**先条数，再前三条**（一份任务的路径可以几十条），多的那几条不挤进这一行。 */
-function surfaceOf(paths: readonly string[]): string {
-  if (paths.length === 0) return '写入面 0 条'
-  const shown = paths.slice(0, 3).join(' · ')
-  return paths.length <= 3 ? `写入面 ${paths.length} 条（${shown}）` : `写入面 ${paths.length} 条（${shown} · …）`
-}
 
-/** 一行历史的前缀：**账上的坐标**（`(writer, seq)`，与 `fugue log` 前两栏同一个写法）。 */
-function at(row: StatusRow): string {
-  return `${row.pos.writer} ${row.pos.seq} · `
-}
-
-/**
- * 一条永久行。**只许传表上分到 `permanent` 的那些族**：别的族走到这里当场抛——分法说它配得上
- * 一行历史，而这里没有那一行的写法，那是分法与渲染对不上，是错的（不静默给一个空行）。
- */
-function lineOf(row: StatusRow): string {
+function lineOf(row: StatusRow): ConversationRow {
   const e = row.e
   switch (e.t) {
     case 'round/state':
-      return `${at(row)}${WORDS.round} ${e.round} · ${e.from} → ${e.to}`
+      return { text: `进展：${stateFaceOf(e.to)}`, role: e.to === 'Aborted' ? 'refuse' : e.to === 'Committed' ? 'ok' : 'body' }
     case 'round/intent':
-      return `${at(row)}${WORDS.round} ${e.round} · 意图「${excerpt(e.body, 'round/intent')}」· 底 ${head(e.base, 8)}`
+      return { text: `${WORDS.task}：「${excerpt(e.body, 'round/intent')}」`, role: 'body' }
     case 'contract/issue':
-      return `${at(row)}${WORDS.round} ${e.round} · ${WORDS.task} ${e.contract} → ${e.owner} · ${surfaceOf(e.paths)}`
+      return { text: `已安排一项任务${e.paths.length > 0 ? `，涉及 ${e.paths.length} 个文件` : ''}。`, role: 'body' }
     case 'round/approve':
-      return `${at(row)}${WORDS.round} ${e.round} · 人放行 ${e.contracts.length} 份${WORDS.task} · 批号 ${head(e.fingerprint, 8)}`
+      return { text: `计划已确认，开始执行 ${e.contracts.length} 项任务。`, role: 'body' }
     case 'agent/stop':
-      return (
-        `${at(row)}${WORDS.agent} ${e.agent} · ${e.steps} ${WORDS.steps}${WORDS.halted}（${e.stopped}）` +
-        (e.handoffs > 0 ? ` · 交过 ${e.handoffs} 次接` : '')
-      )
+      return { text: `一项任务已停止${e.handoffs > 0 ? '，交接说明可在阅读面查看' : ''}。`, role: 'body' }
     case 'agent/handoff':
-      return `${at(row)}${WORDS.agent} ${e.agent} → ${e.successor} · ${WORDS.task} ${e.contract} · 交的是「${excerpt(e.body, 'agent/handoff')}」`
+      return { text: `交接说明：「${excerpt(e.body, 'agent/handoff')}」`, role: 'body' }
     case 'merge/attempt':
-      return `${at(row)}${WORDS.round} ${e.round} · 合并尝试 ${e.branches.length} 条分支 · ${WORDS.conflicts} ${e.conflicts}`
+      return { text: `正在合并结果${e.conflicts > 0 ? `，有 ${e.conflicts} 处冲突需要处理` : ''}。`, role: e.conflicts > 0 ? 'waiting' : 'body' }
     case 'merge/accept': {
       const pass = e.assertions.filter((a) => a.verdict === 'pass').length
       const fail = e.assertions.filter((a) => a.verdict === 'fail').length
       const broken = e.assertions.length - pass - fail
-      // 三档与 `probe/status.ts` 同一处口径：**"跑不起来"既不进过也不进没过**（架构 § 8.12 末段：
-      // 仪器故障不算活干错了）。它不为 0 时说出来，为 0 时不占这一行的宽度。
-      return (
-        `${at(row)}${WORDS.round} ${e.round} · 合并接受 ${head(e.commit, 8)} · ${WORDS.accepts} ${e.assertions.length} 条` +
-        `（过 ${pass} / 没过 ${fail}${broken > 0 ? ` / 跑不起来 ${broken}` : ''}）`
-      )
+      const problems = [fail > 0 ? `${fail} 项未通过` : '', broken > 0 ? `${broken} 项无法运行` : ''].filter(Boolean)
+      return problems.length > 0
+        ? { text: `${WORDS.accepts}：${pass} 项通过，${problems.join('，')}。`, role: 'refuse' }
+        : { text: `${WORDS.accepts}通过${pass > 0 ? `：${pass} 项` : ''}。`, role: 'ok' }
     }
     case 'bound/deny':
-      return `${at(row)}${WORDS.agent} ${e.agent} · 边界拦下 ${e.path}（${e.space === 'virtual' ? '视图' : '物化树'}）· 规则 ${e.rule}`
+      return { text: `已拒绝越界写入：${e.path}`, role: 'refuse' }
     case 'signal':
-      return `${at(row)}${WORDS.agent} ${e.agent} · 信号 ${e.kind}（${e.id}）`
+      return { text: '收到通知，详情可在阅读面查看。', role: 'waiting' }
     default:
       throw new Error(`这一族没有分到永久行：${(e as { readonly t: string }).t}`)
   }
@@ -202,6 +184,14 @@ function lineOf(row: StatusRow): string {
  */
 export function permanentLinesOf(rows: readonly StatusRow[], table: FamilyTable = FAMILY_KIND): readonly string[] {
   const out: string[] = []
-  for (const row of rows) if (table[row.e.t] === 'permanent') out.push(lineOf(row))
+  for (const row of rows) if (table[row.e.t] === 'permanent') out.push(lineOf(row).text)
   return out
+}
+
+
+/** 对话区保留最近汇报；状态转移和任务拆分留在历史与进展视图。 */
+export function conversationOf(rows: readonly StatusRow[], table: FamilyTable = FAMILY_KIND): readonly ConversationRow[] {
+  return rows.filter((r) => table[r.e.t] === 'permanent' &&
+    r.e.t !== 'round/state' && r.e.t !== 'contract/issue' && r.e.t !== 'round/approve' && r.e.t !== 'merge/attempt')
+    .map(lineOf)
 }

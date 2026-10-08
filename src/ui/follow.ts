@@ -50,10 +50,10 @@ import type { Catalog } from '../model/catalog.ts'
 import type { ReadingsOptions, RoundUsage, StatusReadings, StatusRow } from '../probe/status.ts'
 import { readingsOf, usageByRoundOf } from '../probe/status.ts'
 import type { LedgerSource } from '../serve/source.ts'
-import type { FrameInput } from './frame.ts'
+import type { ConversationRow, FrameInput } from './frame.ts'
 import { frameOf } from './frame.ts'
 import type { FamilyTable } from './stream.ts'
-import { permanentLinesOf } from './stream.ts'
+import { conversationOf, permanentLinesOf } from './stream.ts'
 import type { Panel, Term, ViewInput } from './term.ts'
 
 /**
@@ -188,9 +188,12 @@ export function openSession(o: SessionOptions = {}): TuiSession {
   // 前缀检查照旧当场抛——错位不会静默。
   let folded: readonly string[] = []
   let foldedAt = 0
+  let conversation: readonly ConversationRow[] = []
   const permanent = (): readonly string[] => {
     if (foldedAt === rows.length) return folded
-    folded = [...folded, ...permanentLinesOf(rows.slice(foldedAt), o.table)]
+    const fresh = rows.slice(foldedAt)
+    folded = [...folded, ...permanentLinesOf(fresh, o.table)]
+    conversation = [...conversation, ...conversationOf(fresh, o.table)].slice(-3)
     foldedAt = rows.length
     return folded
   }
@@ -251,6 +254,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(v?.view === 'spending' ? { usageByRound: sparkAt() } : {}),
       ...(v?.focus === undefined ? {} : { focus: v.focus }),
       permanent: permanent(),
+      conversation,
       width: size.columns,
       height: size.height,
     }
