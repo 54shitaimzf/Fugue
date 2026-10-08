@@ -247,7 +247,7 @@ test('④ 同一串事件折两次 → 同一份快照', () => {
   const text = linesOf(a, { cat: BUILTIN_CATALOG }).join('\n')
   assert.match(text, /状态 Rebuilding/)
   assert.match(text, /停：1 步 · 收敛/)
-  assert.match(text, /cacheRead 1920/)
+  assert.match(text, /cacheRead 1,920/)
 })
 
 test('⑤ readNew 两趟不重不漏，晚出现的 writer 那一档在', async () => {
@@ -448,9 +448,9 @@ test('⑨ 逐趟账：每一条 `llm/call` 一行 + 合计；半截的流与"没
   // **没给档**：逐趟与合计都说"钱没印"，而"没印"这件事本身印出来了（少印要说）。
   const bare = callLinesOf(rows, { cat: BUILTIN_CATALOG })
   assert.equal(bare.length, 3, `两条调用 + 一行合计，盘上是 ${bare.length} 行`)
-  assert.match(bare[0] as string, /步 0 · end-turn（end_turn） · 思考 high · input 未量到 · cacheRead 1920 · cacheWrite 0 · output 10（思考 未量到） · 钱 没印/)
+  assert.match(bare[0] as string, /步 0 · end-turn（end_turn） · 思考 high · input 未量到 · cacheRead 1,920 · cacheWrite 0 · output 10（思考 未量到） · 钱 没印/)
   assert.match(bare[1] as string, /cut-stream（这一趟没走完）/)
-  assert.match(bare[2] as string, /^合计 调用 2 · input 0（缺 2 条） · cacheRead 3840 · cacheWrite 0 · output 20 · 思考 0（缺 2 条） · 费用 没印：/)
+  assert.match(bare[2] as string, /^合计 调用 2 · input 0（缺 2 条） · cacheRead 3,840 · cacheWrite 0 · output 20 · 思考 0（缺 2 条） · 费用 没印：/)
   assert.match(linesOf(statusOf(rows), { cat: BUILTIN_CATALOG }).join('\n'), /费用 没印：读的时候没给峰谷档/, '`linesOf` 那一档也要说"少印"')
 
   // **给了档**：逐趟一笔、合计一笔。合计那个数走的是 `costOf`（一处算式）。

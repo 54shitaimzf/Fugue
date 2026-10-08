@@ -40,6 +40,7 @@ import type { Cause, Edge } from '../round/machine.ts'
 import { countsOf, rejectsIn, linesOfReadings } from './round.ts'
 import type { MetricReading } from './round.ts'
 import { LEDGER_HEAD, ledgerLines, ledgerOf } from './ledger.ts'
+import { humanNumber } from '../human.ts'
 import type { Ledger, LedgerInputs } from './ledger.ts'
 import { lineOf, metricsOf } from './metrics.ts'
 import type { MetricValue } from './metrics.ts'
@@ -152,7 +153,7 @@ export interface RoundTrail {
  * 跳步」，与「真的没有跳步」长得一模一样，而那正是这一条要拦下的东西。
  */
 export function skipsNote(skips: number): string {
-  return skips === 0 ? '' : ` · 跳步 ${skips}`
+  return skips === 0 ? '' : ` · 跳步 ${humanNumber(skips)}`
 }
 
 /** 验收的两半：过了几条断言 · 没过的几条。**"跑不起来"不进没过那一栏**（架构 § 8.12 末段）。 */
@@ -662,7 +663,7 @@ export async function rowsOf(read: () => AsyncIterable<StatusRow>): Promise<Stat
  * 一次调用那几个数的人读写法：**没量到的印「未量到」，不拿 0 顶**（与用量那一行同一条规矩）。
  */
 function callNums(u: { readonly inputTokens: number | null; readonly cacheReadTokens: number | null; readonly cacheWriteTokens: number | null; readonly outputTokens: number | null; readonly reasoningTokens: number | null }): string {
-  const at = (v: number | null): string => (typeof v === 'number' ? String(v) : '未量到')
+  const at = (v: number | null): string => (typeof v === 'number' ? humanNumber(v) : '未量到')
   return (
     `input ${at(u.inputTokens)} · cacheRead ${at(u.cacheReadTokens)}` +
     ` · cacheWrite ${at(u.cacheWriteTokens)} · output ${at(u.outputTokens)}（思考 ${at(u.reasoningTokens)}）`
@@ -709,9 +710,10 @@ export function callLinesOf(rows: readonly StatusRow[], opts: LinesOptions): rea
   }
   const s = statusOf(rows)
   const u = s.usage
-  const one = (n: string, t: UsageTotal): string => `${n} ${t.total}${t.missing > 0 ? `（缺 ${t.missing} 条）` : ''}`
+  const one = (n: string, t: UsageTotal): string =>
+    `${n} ${humanNumber(t.total)}${t.missing > 0 ? `（缺 ${humanNumber(t.missing)} 条）` : ''}`
   const total =
-    `合计 调用 ${u.calls} · ${one('input', u.inputTokens)} · ${one('cacheRead', u.cacheReadTokens)}` +
+    `合计 调用 ${humanNumber(u.calls)} · ${one('input', u.inputTokens)} · ${one('cacheRead', u.cacheReadTokens)}` +
     ` · ${one('cacheWrite', u.cacheWriteTokens)} · ${one('output', u.outputTokens)} · ${one('思考', u.reasoningTokens)}`
   if (u.calls === 0) {
     out.push(`${total}——这一份日志里一次调用都还没有`)
@@ -750,33 +752,39 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions): readonly string[
     const here = r.round === s.current ? ' · 最近一条落在这一轮' : ''
     // 跳步那一栏与 TUI 逐字同源（`skipsNote`）：**这两个数从前各写各的减法，两处都能印出负数**。
     // `hops` 不再单独印一句——每一跳印在哪几条边上，下面那几行边自己写着。
-    const odd = r.unrouted > 0 ? ` · 图外 ${r.unrouted} 条` : ''
-    out.push(`轮次 ${r.round} · 状态 ${r.state} · 转移 ${r.transitions} 条${skipsNote(r.skips)} · 打回 ${r.rejects} 次${odd}${here}`)
+    const odd = r.unrouted > 0 ? ` · 图外 ${humanNumber(r.unrouted)} 条` : ''
+    out.push(
+      `轮次 ${r.round} · 状态 ${r.state} · 转移 ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
+        ` · 打回 ${humanNumber(r.rejects)} 次${odd}${here}`,
+    )
     for (const e of r.edges) out.push(`  ${e}`)
   }
   for (const a of s.agents) {
-    const stop = a.stopped === null ? '没停' : `${a.stopSteps} 步 · ${a.stopped}`
+    const stop = a.stopped === null ? '没停' : `${humanNumber(a.stopSteps)} 步 · ${a.stopped}`
     out.push(
-      `格 ${a.agent} · 调 ${a.calls} 次 · ${a.steps} 步 · 工具调用 ${a.invocations} · 动作 ${a.actions}` +
-        ` · 内核拒 ${a.denies} · 边界挡 ${a.bounds} · 交接 ${a.handoffs} · 停：${stop} · 最近 ${a.last ?? '（空）'}`,
+      `格 ${a.agent} · 调 ${humanNumber(a.calls)} 次 · ${humanNumber(a.steps)} 步` +
+        ` · 工具调用 ${humanNumber(a.invocations)} · 动作 ${humanNumber(a.actions)}` +
+        ` · 内核拒 ${humanNumber(a.denies)} · 边界挡 ${humanNumber(a.bounds)}` +
+        ` · 交接 ${humanNumber(a.handoffs)} · 停：${stop} · 最近 ${a.last ?? '（空）'}`,
     )
   }
   const u = s.usage
   out.push(
-    `契约 ${s.contracts} · 折叠尝试 ${s.attempts} · 冲突 ${s.conflicts} · 验收 ${s.accepts.accepts} 次` +
-      `（过 ${s.accepts.pass} / 没过 ${s.accepts.fail}）`,
+    `契约 ${humanNumber(s.contracts)} · 折叠尝试 ${humanNumber(s.attempts)} · 冲突 ${humanNumber(s.conflicts)}` +
+      ` · 验收 ${humanNumber(s.accepts.accepts)} 次（过 ${humanNumber(s.accepts.pass)} / 没过 ${humanNumber(s.accepts.fail)}）`,
   )
   // **恒印这一行**（零也印）：少了它，"没量到"与"量到 0"就分不开——与用量那一行同一条规矩。
   // 两半分开写：**被挡**（内核 · 围栏 · 写入面）与**报了没挡**（树里那些集外改动）不是一件事。
   out.push(
-    `越界 被挡 ${s.refusals.total} 次（内核拒 ${s.refusals.kernel}` +
-      `${s.refusals.byRule.length === 0 ? '' : ` · ${s.refusals.byRule.map((r) => `${r.rule} ${r.count}`).join(' · ')}`}）` +
-      ` · 树上报了没挡的 ${s.outside.rows} 条` +
+    `越界 被挡 ${humanNumber(s.refusals.total)} 次（内核拒 ${humanNumber(s.refusals.kernel)}` +
+      `${s.refusals.byRule.length === 0 ? '' : ` · ${s.refusals.byRule.map((r) => `${r.rule} ${humanNumber(r.count)}`).join(' · ')}`}）` +
+      ` · 树上报了没挡的 ${humanNumber(s.outside.rows)} 条` +
       `${s.outside.paths.length === 0 ? '' : `（${s.outside.paths.join(' · ')}）`}`,
   )
-  const one = (n: string, t: UsageTotal): string => `${n} ${t.total}${t.missing > 0 ? `（缺 ${t.missing} 条）` : ''}`
+  const one = (n: string, t: UsageTotal): string =>
+    `${n} ${humanNumber(t.total)}${t.missing > 0 ? `（缺 ${humanNumber(t.missing)} 条）` : ''}`
   out.push(
-    `用量 调用 ${u.calls} · ${one('input', u.inputTokens)} · ${one('cacheRead', u.cacheReadTokens)}` +
+    `用量 调用 ${humanNumber(u.calls)} · ${one('input', u.inputTokens)} · ${one('cacheRead', u.cacheReadTokens)}` +
       ` · ${one('cacheWrite', u.cacheWriteTokens)} · ${one('output', u.outputTokens)}` +
       ` · ${one('思考', u.reasoningTokens)}`,
   )
@@ -791,7 +799,7 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions): readonly string[
   out.push(
     s.last === null
       ? '事件 0 条'
-      : `事件 ${s.events} 条 · 最近 ${s.last.t}（writer=${s.last.writer} seq=${s.last.seq}）`,
+      : `事件 ${humanNumber(s.events)} 条 · 最近 ${s.last.t}（writer=${s.last.writer} seq=${s.last.seq}）`,
   )
   return out
 }

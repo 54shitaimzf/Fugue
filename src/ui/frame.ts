@@ -42,6 +42,7 @@ import type { MetricReading } from '../probe/round.ts'
 import { skipsNote } from '../probe/status.ts'
 import type { StatusSnapshot } from '../probe/status.ts'
 import { clip, widthOf, wrap } from './glyph.ts'
+import { humanNumber } from '../human.ts'
 
 /** 两栏至少要这么宽才画得下（再窄就收成单栏）：左 24 · 右 20 · 框与中间那根竖线 3 列。 */
 export const MIN_TWO_COLUMN = 24 + 20 + 3
@@ -157,7 +158,7 @@ export interface FrameInput {
 
 /** 用量那四个数：**量到的和 + 没量到的条数**（与 `status --once` 同一个口径）。 */
 function usageText(t: { readonly total: number; readonly missing: number }): string {
-  return t.missing > 0 ? `${t.total}（缺 ${t.missing} 条）` : String(t.total)
+  return t.missing > 0 ? `${humanNumber(t.total)}（缺 ${humanNumber(t.missing)} 条）` : humanNumber(t.total)
 }
 
 /**
@@ -184,21 +185,29 @@ export function bodyOf(o: {
     const here = r.round === s.current ? ' · 最近一条落在这一轮' : ''
     // 跳步那一栏**不再自己做减法**（`hops - transitions` 在图外边那一档印出过 -1，在自环那一档
     // 把真的跳步抵成不印）；数与写法都从 `probe/status.ts` 那一处取，与命令行那一张脸同源。
-    left.push(`轮次 ${r.round} · 状态 ${r.state} · 转移 ${r.transitions} 条${skipsNote(r.skips)} · 打回 ${r.rejects} 次${here}`)
+    left.push(
+      `轮次 ${r.round} · 状态 ${r.state} · 转移 ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
+        ` · 打回 ${humanNumber(r.rejects)} 次${here}`,
+    )
     for (const e of r.edges) left.push(`  ${e}`)
     if (r.unrouted > 0) left.push(`  （图上走不通的 ${r.unrouted} 条：账与图对不上）`)
   }
   for (const a of s.agents) {
-    const stop = a.stopped === null ? '没停' : `${a.stopSteps ?? '?'} 步 · ${a.stopped}`
-    left.push(`格 ${a.agent} · 调 ${a.calls} 次 · ${a.steps} 步 · 工具调用 ${a.invocations} · 动作 ${a.actions} · 停：${stop}`)
+    const stop = a.stopped === null ? '没停' : `${a.stopSteps === undefined ? '?' : humanNumber(a.stopSteps)} 步 · ${a.stopped}`
+    left.push(
+      `格 ${a.agent} · 调 ${humanNumber(a.calls)} 次 · ${humanNumber(a.steps)} 步` +
+        ` · 工具调用 ${humanNumber(a.invocations)} · 动作 ${humanNumber(a.actions)} · 停：${stop}`,
+    )
   }
 
   const right: string[] = []
   right.push(
-    `契约 ${s.contracts} · 折叠尝试 ${s.attempts} · 冲突 ${s.conflicts} · 验收 ${s.accepts.accepts} 次（过 ${s.accepts.pass} / 没过 ${s.accepts.fail}）`,
+    `契约 ${humanNumber(s.contracts)} · 折叠尝试 ${humanNumber(s.attempts)} · 冲突 ${humanNumber(s.conflicts)}` +
+      ` · 验收 ${humanNumber(s.accepts.accepts)} 次（过 ${humanNumber(s.accepts.pass)} / 没过 ${humanNumber(s.accepts.fail)}）`,
   )
   right.push(
-    `用量 调用 ${s.usage.calls} · input ${usageText(s.usage.inputTokens)} · cacheRead ${usageText(s.usage.cacheReadTokens)}` +
+    `用量 调用 ${humanNumber(s.usage.calls)} · input ${usageText(s.usage.inputTokens)}` +
+      ` · cacheRead ${usageText(s.usage.cacheReadTokens)}` +
       ` · cacheWrite ${usageText(s.usage.cacheWriteTokens)} · output ${usageText(s.usage.outputTokens)}` +
       ` · 思考 ${usageText(s.usage.reasoningTokens)}`,
   )
@@ -211,7 +220,7 @@ export function bodyOf(o: {
     right.push(`${m.metric} ${m.value === null ? '算不出来' : m.value}（${m.numerator ?? '—'}/${m.denominator ?? '—'}）`)
   }
   if (o.report !== undefined && o.report.length > 0) {
-    right.push(`打回 ${o.report.map((r) => `${r.metric} ${r.count}`).join(' · ')}`)
+    right.push(`打回 ${o.report.map((r) => `${r.metric} ${humanNumber(r.count)}`).join(' · ')}`)
   }
   return { left, right }
 }
@@ -227,7 +236,7 @@ export function footerOf(s: StatusSnapshot, permanent?: readonly string[]): stri
   const last = permanent?.[permanent.length - 1]
   if (last !== undefined) return last
   if (s.last === null) return '事件 0 条（账上还没有一条）'
-  return `最近 ${s.last.t}（${s.last.writer} ${s.last.seq}）· 事件 ${s.events} 条`
+  return `最近 ${s.last.t}（${s.last.writer} ${s.last.seq}）· 事件 ${humanNumber(s.events)} 条`
 }
 
 /**

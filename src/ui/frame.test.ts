@@ -141,7 +141,7 @@ function snapshotOf(extra: readonly StatusRow[] = []): StatusSnapshot {
 const GOLDEN: readonly string[] = [
   "┌─ 处境 ───────────────────────────────┬─ 读数 ────────────────────────────────────────────────────┐",
   "│轮次 r1 · 状态 Rebuilding · 转移 5 条 │契约 2 · 折叠尝试 1 · 冲突 0 · 验收 1 次（过 3 / 没过 0）  │",
-  "│跳步 1 · 打回 1 次 ·                  │用量 调用 3 · input 3000 · cacheRead 4096 · cacheWrite 0 · │",
+  "│跳步 1 · 打回 1 次 ·                  │用量 调用 3 · input 3,000 · cacheRead 4,096 · cacheWrite 0 │",
   "│最近一条落在这一轮                    │output 300 · 思考 120                                      │",
   "│  Idle ──land──> Planning             │detour-rate 0（0/2）                                       │",
   "│  Planning ──contracts-issued──>      │prefix-hit-rate 1（3/3）                                   │",
