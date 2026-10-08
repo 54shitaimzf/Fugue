@@ -1,4 +1,4 @@
-// 0.4.3 第一幕 ① 附带的一块断言：`T6` 门口那三样输入（`ui/console.ts` 的 `gateSetupOf`）。
+// 第一幕 ① 附带的一块断言：`T6` 门口那三样输入（`ui/console.ts` 的 `gateSetupOf`）。
 //
 // **为什么单独立一条**：开工前发现的那一处缺陷——那一块原先内联在 `tuiCmd` 里，`getConfig` 没有
 // import，抛出来的 `ReferenceError` 被同一层的 `catch` 吞掉，`why` 于是恒非空，门口那一块（`T6`）

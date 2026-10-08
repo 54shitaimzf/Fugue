@@ -1,4 +1,4 @@
-// `fugue tui` 的接线（0.4.3 第一幕 ①：从 `cli/cmd/observe.ts` 搬出来）。
+// `fugue tui` 的接线（第一幕 ①：从 `cli/cmd/observe.ts` 搬出来）。
 // 出处：PLAN § 5.19 第五段 · 架构 § 9.8（可附着 TUI）· § 9.11（事件通道）。
 //
 // **为什么它单独一份**：界面读账只经事件通道（`serve/source.ts`），那条静态断言

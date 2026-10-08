@@ -24,7 +24,7 @@ import type { ConfigDoc } from '../config.ts'
 import { UsageError } from '../value/types.ts'
 export { UsageError }
 
-// 出口那一层（USAGE · 两列发射 · 失败与用法错）0.4.3 搬到 `cli/out.ts`：界面那一侧要它，
+// 出口那一层（USAGE · 两列发射 · 失败与用法错）本幕搬到 `cli/out.ts`：界面那一侧要它，
 // 但不必把这一份（它 import 了账本与视图那一串）拖进界面的 import 闭包。名字原样再导出。
 export { USAGE, emitJson, emitLine, fail, usageFail, emitFail } from './out.ts'
 

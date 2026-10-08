@@ -1,7 +1,7 @@
-// **界面读账只经事件通道**（0.4.3 第一幕 ①）：判据住在 `tools/check-ui-direct.ts`（一处），
+// **界面读账只经事件通道**（第一幕 ①）：判据住在 `tools/check-ui-direct.ts`（一处），
 // 这里跑它，并各配负对照——不然"扫过了"这句话与"一份都没扫"长得一样。
 //
-// 出处：路线图 § 5 的 0.4.3 行（「客户端化之后 TUI 零直连……那条 lint 式断言的覆盖面要含人说的话
+// 出处：路线图 § 5 的那一行（「客户端化之后 TUI 零直连……那条 lint 式断言的覆盖面要含人说的话
 // 那一条读源」）· 架构 § 9.7（观察不得影响状态）· § 9.11（事件通道）。
 //
 // 三样「真有东西」的对照，缺一条这一份就是空话：
@@ -70,7 +70,7 @@ test('③ 负对照 · 塞一条 `.fugue/session` 直读：当场红；点名进
   // **点名即放行**：`LEGACY_READERS` 是那条读源唯一合法的住处；0.5.0 把它收进 serve 的读口之后
   // 删掉这一行，判据自动回到"一处都不许"。
   assert.deepEqual(problemsIn(broken, entries, { legacyReaders: [here] }), [])
-  assert.deepEqual(LEGACY_READERS, [], '0.4.3 不新开这条直连，所以放行表今天是空的')
+  assert.deepEqual(LEGACY_READERS, [], '这一版不新开这条直连，所以放行表今天是空的')
 })
 
 test('④ 命令面：`node tools/check-ui-direct.ts` 退 0 并把读数印出来（跑的是同一份判据）', () => {

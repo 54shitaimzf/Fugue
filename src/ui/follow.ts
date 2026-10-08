@@ -42,7 +42,7 @@
 // **信号那一头是入参。** `Ctrl-C`（`AbortSignal`）由调用方给；`SIGWINCH` 那一档由调用方接
 // `redraw()`。这一份不注册任何信号、不碰 `process`——那样它才在 `node --test` 里跑得动。
 //
-// **读源是事件通道那一份**（0.4.3 客户端化）：`source` 就是 `serve/source.ts` 的 `LedgerSource`，
+// **读源是事件通道那一份**（客户端化）：`source` 就是 `serve/source.ts` 的 `LedgerSource`，
 // 一趟调用回一趟事。这一份因此**不认识账本**——不 import `log/log.ts`，也不 import
 // `probe/watch.ts`；那两条直连住在 serve 那一头。界面手上那些行只有这一个来路。
 import type { Phase } from '../model/price.ts'

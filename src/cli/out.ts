@@ -1,8 +1,8 @@
-// 命令行的**出口那一层**：用法表 · 两列发射 · 那两档失败。0.4.3 从 `cli/shared.ts` 搬出来。
+// 命令行的**出口那一层**：用法表 · 两列发射 · 那两档失败。本幕从 `cli/shared.ts` 搬出来。
 //
 // 为什么单独一份：**界面那一侧要 `emitLine` 与 `usageFail`，但不要 `cli/shared.ts` 那一串**
 // （`shared.ts` import 了 `log/log.ts`、`truth/truth.ts`、`view/` 那一族——开视图那一套）。
-// 0.4.3 那条「界面读账只经事件通道」的静态断言按 import 闭包走，字符串那一层与账本那一层
+// 本幕那条「界面读账只经事件通道」的静态断言按 import 闭包走，字符串那一层与账本那一层
 // 因此得分开住：这一份只 import 一个 `ui/keymap.ts`（用法表里要印缺省键位那一行）。
 //
 // `cli/shared.ts` 原样再导出这一份的五个出口，所以三十来处 `import { emitLine } from '../shared.ts'`

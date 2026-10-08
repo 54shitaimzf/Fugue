@@ -104,7 +104,7 @@ test('② 两段都从同一张表推：名字前缀筛 · 一个都匹配不上
     '--root', '--agent', '--json', '--help', '--materialize', '--no-clock',
   ])
   assert.deepEqual(names('/round go --r'), ['--root'], '手里那个词跟着筛')
-  // `--header` 也在这一格里（0.4.3 第一幕 ②）：开关那一段从 FLAGS_OF 推，表长了它就跟着长。
+  // `--header` 也在这一格里（第一幕 ②）：开关那一段从 FLAGS_OF 推，表长了它就跟着长。
   assert.deepEqual(names('/log '), ['--root', '--agent', '--json', '--help', '--header'])
   // 最长的那一条命令赢（`round go` 赢过 `round`）。
   assert.deepEqual(names('/round '), ['round new', 'round plan', 'round go', 'round run', 'round work'])
