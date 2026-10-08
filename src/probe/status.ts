@@ -41,6 +41,7 @@ import { countsOf, rejectsIn, linesOfReadings } from './round.ts'
 import type { MetricReading } from './round.ts'
 import { LEDGER_HEAD, ledgerLines, ledgerOf } from './ledger.ts'
 import { humanNumber } from '../human.ts'
+import { WORDS } from '../words.ts'
 import type { Ledger, LedgerInputs } from './ledger.ts'
 import { lineOf, metricsOf } from './metrics.ts'
 import type { MetricValue } from './metrics.ts'
@@ -754,24 +755,29 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions): readonly string[
     // `hops` 不再单独印一句——每一跳印在哪几条边上，下面那几行边自己写着。
     const odd = r.unrouted > 0 ? ` · 图外 ${humanNumber(r.unrouted)} 条` : ''
     out.push(
-      `轮次 ${r.round} · 状态 ${r.state} · 转移 ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
-        ` · 打回 ${humanNumber(r.rejects)} 次${odd}${here}`,
+      `${WORDS.round} ${r.round} · ${WORDS.state} ${r.state} · ${WORDS.transitions} ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
+        ` · ${WORDS.rejects} ${humanNumber(r.rejects)} 次${odd}${here}`,
     )
     for (const e of r.edges) out.push(`  ${e}`)
   }
   for (const a of s.agents) {
-    const stop = a.stopped === null ? '没停' : `${humanNumber(a.stopSteps)} 步 · ${a.stopped}`
+    // 词与面板那一面同源（`src/words.ts`）：零那一条是 `还在跑`，停下来的那一档是 `N 步就停（停因）`。
+    const stop =
+      a.stopped === null
+        ? WORDS.moving
+        : `${humanNumber(a.stopSteps)} ${WORDS.steps}${WORDS.halted}（${a.stopped}）`
     out.push(
-      `格 ${a.agent} · 调 ${humanNumber(a.calls)} 次 · ${humanNumber(a.steps)} 步` +
-        ` · 工具调用 ${humanNumber(a.invocations)} · 动作 ${humanNumber(a.actions)}` +
+      `${WORDS.agent} ${a.agent} · ${WORDS.calls} ${humanNumber(a.calls)} 次 · ${humanNumber(a.steps)} ${WORDS.steps}` +
+        ` · ${WORDS.invocations} ${humanNumber(a.invocations)} · ${WORDS.commands} ${humanNumber(a.actions)} 次` +
         ` · 内核拒 ${humanNumber(a.denies)} · 边界挡 ${humanNumber(a.bounds)}` +
-        ` · 交接 ${humanNumber(a.handoffs)} · 停：${stop} · 最近 ${a.last ?? '（空）'}`,
+        ` · 交接 ${humanNumber(a.handoffs)} · ${stop} · ${WORDS.last} ${a.last ?? '（空）'}`,
     )
   }
   const u = s.usage
   out.push(
-    `契约 ${humanNumber(s.contracts)} · 折叠尝试 ${humanNumber(s.attempts)} · 冲突 ${humanNumber(s.conflicts)}` +
-      ` · 验收 ${humanNumber(s.accepts.accepts)} 次（过 ${humanNumber(s.accepts.pass)} / 没过 ${humanNumber(s.accepts.fail)}）`,
+    `${WORDS.task} ${humanNumber(s.contracts)} · ${WORDS.merges} ${humanNumber(s.attempts)} 次 · ` +
+      `${WORDS.conflicts} ${humanNumber(s.conflicts)}` +
+      ` · ${WORDS.accepts} ${humanNumber(s.accepts.accepts)} 次（过 ${humanNumber(s.accepts.pass)} / 没过 ${humanNumber(s.accepts.fail)}）`,
   )
   // **恒印这一行**（零也印）：少了它，"没量到"与"量到 0"就分不开——与用量那一行同一条规矩。
   // 两半分开写：**被挡**（内核 · 围栏 · 写入面）与**报了没挡**（树里那些集外改动）不是一件事。
@@ -784,7 +790,7 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions): readonly string[
   const one = (n: string, t: UsageTotal): string =>
     `${n} ${humanNumber(t.total)}${t.missing > 0 ? `（缺 ${humanNumber(t.missing)} 条）` : ''}`
   out.push(
-    `用量 调用 ${humanNumber(u.calls)} · ${one('input', u.inputTokens)} · ${one('cacheRead', u.cacheReadTokens)}` +
+    `${WORDS.usage} ${WORDS.calls} ${humanNumber(u.calls)} · ${one('input', u.inputTokens)} · ${one('cacheRead', u.cacheReadTokens)}` +
       ` · ${one('cacheWrite', u.cacheWriteTokens)} · ${one('output', u.outputTokens)}` +
       ` · ${one('思考', u.reasoningTokens)}`,
   )
@@ -798,14 +804,14 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions): readonly string[
   }
   out.push(
     s.last === null
-      ? '事件 0 条'
-      : `事件 ${humanNumber(s.events)} 条 · 最近 ${s.last.t}（writer=${s.last.writer} seq=${s.last.seq}）`,
+      ? `${WORDS.events} 0 条`
+      : `${WORDS.events} ${humanNumber(s.events)} 条 · ${WORDS.last} ${s.last.t}（writer=${s.last.writer} seq=${s.last.seq}）`,
   )
   return out
 }
 
 /** 打回读数那一块的表头。**一处取值处**：`status` 与跑完那一档印的是同一句。 */
-export const REPORT_HEAD = '打回读数（从日志重算，不采集）：'
+export const REPORT_HEAD = '打回（从日志重算，不采集）：'
 
 /** 八元指标那一块的表头。同上——两处读法逐字相同，靠的就是这两个常数。 */
 export const METRICS_HEAD = '八元指标（从日志重算，不采集；分子与分母一起印）：'

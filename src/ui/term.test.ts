@@ -117,7 +117,7 @@ test('① 一帧的字节：逐字节等于原件，而且**一次绘制恰一�
     '补的那几行该是空白（不是内容）',
   )
   assert.equal(panel.length, 16, `那一块该是恒定 16 行（K），拿到 ${panel.length} 行`)
-  assert.equal(frame.lines.length, 7, `这一份小账画出来该是 7 行（右栏放宽到 59 列后，原先折的那行放得下了），实得 ${frame.lines.length} 行`)
+  assert.equal(frame.lines.length, 8, `这一份小账画出来该是 8 行（第二幕 ⑥ 改词之后右栏那一行长了两格，折行多一行），实得 ${frame.lines.length} 行`)
   assert.deepEqual(asked, { columns: 100, height: 16 }, '渲染拿到的尺寸不是终端量到的那一份')
   console.log(`① 读数：手写那一份 1 笔 write（2 永久行 + 3 行面板拼在里头，U3）· frameOf 那一份 ${panel.length} 行逐字相同 · 渲染拿到的尺寸 ${JSON.stringify(asked)}`)
 })

@@ -246,7 +246,7 @@ test('④ 同一串事件折两次 → 同一份快照', () => {
   // 人读那几行要把这几样印出来（`--once` 的正面就是它）。
   const text = linesOf(a, { cat: BUILTIN_CATALOG }).join('\n')
   assert.match(text, /状态 Rebuilding/)
-  assert.match(text, /停：1 步 · 收敛/)
+  assert.match(text, /1 步就停（收敛）/)
   assert.match(text, /cacheRead 1,920/)
 })
 

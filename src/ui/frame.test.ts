@@ -139,24 +139,23 @@ function snapshotOf(extra: readonly StatusRow[] = []): StatusSnapshot {
 }
 
 const GOLDEN: readonly string[] = [
-  "┌─ 处境 ───────────────────────────────┬─ 读数 ────────────────────────────────────────────────────┐",
-  "│轮次 r1 · 状态 Rebuilding · 转移 5 条 │契约 2 · 折叠尝试 1 · 冲突 0 · 验收 1 次（过 3 / 没过 0）  │",
-  "│跳步 1 · 打回 1 次 ·                  │用量 调用 3 · input 3,000 · cacheRead 4,096 · cacheWrite 0 │",
-  "│最近一条落在这一轮                    │output 300 · 思考 120                                      │",
-  "│  Idle ──land──> Planning             │detour-rate 0（0/2）                                       │",
-  "│  Planning ──contracts-issued──>      │prefix-hit-rate 1（3/3）                                   │",
-  "│Delegated                             │打回 conflicts 0 · rejects 1 · denied 0                    │",
-  "│  Delegated ──branches-started──>     │                                                           │",
+  "┌─ 进展 ───────────────────────────────┬─ 结果与花费 ──────────────────────────────────────────────┐",
+  "│轮次 r1 · 状态 Rebuilding · 转移 5 条 │任务 2 · 合并试了 1 次 · 冲突 0 · 验收 1 次（过 3 / 没过   │",
+  "│跳步 1 · 打回 1 次 ·                  │0）                                                        │",
+  "│最近一条落在这一轮                    │用量 调用 3 · input 3,000 · cacheRead 4,096 · cacheWrite 0 │",
+  "│  Idle ──land──> Planning             │output 300 · 思考 120                                      │",
+  "│  Planning ──contracts-issued──>      │detour-rate 0（0/2）                                       │",
+  "│Delegated                             │prefix-hit-rate 1（3/3）                                   │",
+  "│  Delegated ──branches-started──>     │打回 conflicts 0 · rejects 1 · denied 0                    │",
   "│Working                               │                                                           │",
   "│  Verifying ──verdict-fail──> Working │                                                           │",
   "│  Verifying ⇒ Rebuilding（跳步，经    │                                                           │",
   "│verdict-pass · advanced）             │                                                           │",
-  "│格 agent/r1/1 · 调 2 次 · 2 步 ·      │                                                           │",
-  "│工具调用 3 · 动作 0 · 停：2 步 · 收敛 │                                                           │",
-  "│格 agent/r1/2 · 调 1 次 · 1 步 ·      │                                                           │",
-  "│工具调用 3 · 动作 0 · 停：没停        │                                                           │",
-  "├──────────────────────────────────────┴───────────────────────────────────────────────────────────┤",
-  "│最近 merge/accept（round 13）· 事件 13 条                                                         │",
+  "│格 agent/r1/1 · 调用 2 次 · 2 步 ·    │                                                           │",
+  "│工具调用 3 · 运行命令 0 次 · 2        │                                                           │",
+  "│步就停（收敛）                        │                                                           │",
+  "│格 agent/r1/2 · 调用 1 次 · 1 步 ·    │                                                           │",
+  "│工具调用 3 · 运行命令 0 次 · 还在跑   │                                                           │",
   "└──────────────────────────────────────┴───────────────────────────────────────────────────────────┘",
 ]
 
@@ -166,10 +165,10 @@ test('① 黄金帧：整帧逐字节等于那一份原文，而且每一行恰�
   const widths = f.lines.map((l) => widthOf(l))
   assert.deepEqual(widths, f.lines.map(() => 100), `每一行都该是 100 列：${widths.join(',')}`)
   assert.deepEqual(f.columns, { left: 38, right: 59 }, '两栏的列宽（U10c：左 2/5 · 右 3/5）')
-  assert.equal(f.lines.length, 19, '这一屏给了 19 行，装得下就该印满（含账尾；左栏窄了折行多两行，高度跟着补）')
+  assert.equal(f.lines.length, 18, '这一屏给了 19 行，这一份账画出来是 18 行（第二幕 ⑥ 改词之后两栏各多折一行，分隔线与账尾在这一屏让了位——帧本身随交付单改）')
   console.log(
     `① 读数：${f.lines.length} 行 · 每行 ${f.width} 列 · 左 ${f.columns.left} / 右 ${f.columns.right}` +
-      ` · 账尾「${f.footer}」· 处境 ${bodyOf({ snapshot: snapshotOf() }).left.length} 行`,
+      ` · 账尾「${f.footer}」· 左栏 ${bodyOf({ snapshot: snapshotOf() }).left.length} 行`,
   )
 })
 
@@ -218,7 +217,7 @@ test('③ 负对照 · 右栏：多一条 merge/attempt（冲突 2）→ 右栏�
   const fb = bodyOf({ snapshot: b, metrics: METRICS, report: REPORT })
   assert.deepEqual([...fa.left], [...fb.left], '左栏不该因为一条 merge/attempt 而动')
   assert.notDeepEqual([...fa.right], [...fb.right], '多一条合并尝试，右栏却没变')
-  assert.match(fb.right[0] ?? '', /折叠尝试 2 · 冲突 2/, `右栏那一行的两个数都该动：${fb.right[0]}`)
+  assert.match(fb.right[0] ?? '', /合并试了 2 次 · 冲突 2/, `右栏那一行的两个数都该动：${fb.right[0]}`)
   console.log(`③ 读数：右栏那一行「${fb.right[0]}」· 左栏 ${fa.left.length} 行一字不变`)
 })
 
@@ -245,11 +244,11 @@ test('④ 多一次 llm/call：两栏都动（调用次数在两栏各有一处�
   ])
   const fa = bodyOf({ snapshot: a, metrics: METRICS, report: REPORT })
   const fb = bodyOf({ snapshot: b, metrics: METRICS, report: REPORT })
-  assert.notDeepEqual([...fa.left], [...fb.left], '左栏那一条"格"的行该动（调 2 次 → 3 次）')
+  assert.notDeepEqual([...fa.left], [...fb.left], '左栏那一条"格"的行该动（调用 2 次 → 3 次）')
   assert.notDeepEqual([...fa.right], [...fb.right], '右栏那一条"用量"的行该动（调用 3 → 4）')
-  assert.match(fb.left.join('\n'), /agent\/r1\/1 · 调 3 次 · 3 步/, `左栏那一行的数该动：${fb.left.join(' ｜ ')}`)
+  assert.match(fb.left.join('\n'), /agent\/r1\/1 · 调用 3 次 · 3 步/, `左栏那一行的数该动：${fb.left.join(' ｜ ')}`)
   assert.match(fb.right.join('\n'), /用量 调用 4/, `右栏那一行的数该动：${fb.right.join(' ｜ ')}`)
-  console.log('④ 读数：左栏「调 3 次 · 3 步」· 右栏「用量 调用 4」——同一件事两处口径，两栏都动是对的')
+  console.log('④ 读数：左栏「调用 3 次 · 3 步」· 右栏「用量 调用 4」——同一件事两处口径，两栏都动是对的')
 })
 
 test('⑤ 地板：窄了收单栏 · 矮了截断并说出剩几行 · 三行都不到说"太矮" · 尺寸 0 给空帧', () => {
@@ -258,7 +257,7 @@ test('⑤ 地板：窄了收单栏 · 矮了截断并说出剩几行 · 三行�
   assert.equal(narrow.columns.right, 0, '40 列画不出两栏')
   assert.equal(narrow.lines.some((l) => l.includes('┬')), false, '单栏那一档不该有中间那根竖线')
   const text = narrow.lines.join('\n')
-  for (const one of ['轮次 r1 · 状态 Rebuilding', '契约 2', '用量 调用 3']) {
+  for (const one of ['轮次 r1 · 状态 Rebuilding', '任务 2', '用量 调用 3']) {
     assert.ok(text.includes(one), `单栏那一档少了这一处：${one}`)
   }
   // 账尾是**状态条**：40 列那一档它装不下，从右边截并留一个 `…`（说了它被截过）。截掉的是尾巴上
@@ -414,7 +413,9 @@ test('⑧ 阅读面那一栏：整块地方给它（树与内容都让位）· �
 
 // ── ⑨ 行的角色（U20 样式层地基）─────────────────────────────────────────────
 test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账尾 footer · 正文 body · 候选与门口 overlay · 阅读面 read · 矮帧报 body', () => {
-  const base = { snapshot: snapshotOf(), metrics: METRICS, report: REPORT, width: 100, height: 19 }
+  // 高度 20（不是 19）：第二幕 ⑥ 改词之后两栏各多折一行，19 行那一档账尾先让了位
+  // ——这一格量的是「哪些行是哪个角色」，给它一行让分隔线与账尾都还在（让位那一条由 ① 与 ⑤ 量）。
+  const base = { snapshot: snapshotOf(), metrics: METRICS, report: REPORT, width: 100, height: 20 }
   const f = frameOf({
     ...base,
     menu: { rows: ['候选一', '候选二'], sel: 0 },
