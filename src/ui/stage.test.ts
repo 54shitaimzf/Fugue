@@ -18,6 +18,7 @@ import type { LineArgv, RunLauncher } from './run.ts'
 import { innerOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
 import { faceRowsOf, facesOf, firstFace, readStateOf } from './read.ts'
+import type { HintWhen } from './keymap.ts'
 
 /** 假的那一只手（`RunLauncher` 的四样全记下来：起了什么 · 停过没有 · argv 现推）。 */
 interface Ctl {
@@ -29,6 +30,8 @@ interface Ctl {
   running: boolean
   face: GateFace | null
   rows: readonly StatusRow[]
+  /** 提示行为哪一档问过（第三幕 ②）：`hint` 与 `keysOf` 两处都记，次序就是问的次序。 */
+  readonly whens: HintWhen[]
 }
 
 /**
@@ -60,6 +63,7 @@ function stageOf(
     running: o.running ?? false,
     face: o.face ?? null,
     rows: o.rows ?? [],
+    whens: [],
   }
   const go: RunLauncher = {
     argvOf: (line: string): LineArgv => ({ words: line.split(' '), argv: ['fugue', ...line.split(' ')], why: null }),
@@ -86,7 +90,14 @@ function stageOf(
     },
     columns: o.columns ?? ((): number => 80),
     termRows: () => o.termRows,
-    hint: () => o.hint ?? '',
+    hint: (when) => {
+      ctl.whens.push(when)
+      return o.hint ?? ''
+    },
+    keysOf: (when) => {
+      ctl.whens.push(when)
+      return `${when} 那一段`
+    },
     rows: () => ctl.rows,
     pendingFace: async () => ctl.face,
     run: () => go,
@@ -353,4 +364,42 @@ test('⑩ 门口开着时，那一块的末一行是"要按的那一行"：坐�
   await stage.refreshGate()
   assert.equal(stage.view().bottom, undefined, '门口没了那一块也没了')
   console.log(`⑩ 读数：门口 ${rows.length} 行 · 要按的那一行在第 ${String(at)} 个（末行）「${String(rows[at as number])}」`)
+})
+
+// ── ⑪ 提示行的处境分档与"同一份来源"（第三幕 ②）───────────────────────────────
+test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 > 都不看；阅读面那一句注记与提示行同源', async () => {
+  const contract = {
+    id: 'r1.implement.1',
+    agent: 'agent/r1/1',
+    kind: 'implement',
+    goal: '提示行按处境分档',
+    assertions: [],
+    ownedPaths: ['src/ui/keymap.ts'],
+    deliverables: [],
+    seed: [],
+  } as unknown as Contract
+  const { stage, ctl } = stageOf({
+    face: gateFaceOf({ round: 'r1', fingerprint: 'fp-h', same: [], contracts: [contract] }, {}),
+    rows: NAV_ROWS,
+  })
+  const asked = (): readonly string[] => [...ctl.whens]
+  // ① 都不开：不看处境（`any`）。
+  ctl.whens.length = 0
+  stage.view()
+  assert.deepEqual(asked(), ['any'], '门口与阅读面都没开 → 不看处境')
+  // ② 门口那一块开着：门口那一档。
+  await stage.refreshGate()
+  ctl.whens.length = 0
+  stage.view()
+  assert.deepEqual(asked(), ['gate'], '门口那一块开着 → 门口那一档')
+  // ③ 阅读面开着：阅读面那一档压过门口（门口那三个键它自己在屏幕上印着）。
+  stage.onAction({ action: 'read' })
+  ctl.whens.length = 0
+  stage.view()
+  assert.deepEqual(asked(), ['read'], '阅读面开着 → 阅读面那一档（压过门口）')
+  // ④ **同一份来源**：开的那一句注记里那一段是 `keysOf('read')` 给的，不是写死在 `stage.ts` 里的。
+  const note = ctl.notes.find((n) => n.startsWith('阅读面 ·')) ?? ''
+  assert.ok(note.includes('（read 那一段）'), `那一句注记该读同一份来源：${note}`)
+  assert.equal(note.includes('Tab 换一面'), false, '写死的那一句不该再留在 stage.ts 里')
+  console.log(`⑪ 读数：三档都问到了（any → gate → read）· 那一句注记「${note}」`)
 })

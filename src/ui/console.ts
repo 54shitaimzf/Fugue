@@ -22,7 +22,7 @@ import { pendingOf } from '../round/dispatch.ts'
 import { identFor } from '../identity.ts'
 import { openServeSource, rowsReaderOf } from '../serve/source.ts'
 import { emitLine, usageFail } from '../cli/out.ts'
-import { KEYMAP, hintLimitOf, hintLineOf, keymapOf, openKeys } from './keymap.ts'
+import { KEYMAP, hintKeysOf, hintLimitOf, hintLineOf, keymapOf, openKeys } from './keymap.ts'
 import type { KeySource, Keymap } from './keymap.ts'
 import { openTui, tuiModeOf } from './follow.ts'
 import type { Tui } from './follow.ts'
@@ -225,12 +225,16 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   const stage = openStage({
     note: (line) => ui.tui?.note(line),
     redraw: () => ui.tui?.redraw(),
-    // 框下面那一行（第二幕 ④）：stdin 不是终端时它就是那一句"收不到按键"——按屏幕宽度取前几条的
-    // 那一手在 `hintLimitOf`（整行 438 列会被终端折成五行）。
-    hint: () =>
+    // 框下面那一行（第二幕 ④ · 第三幕 ② 按处境分档）：stdin 不是终端时它就是那一句"收不到按键"
+    // ——按屏幕宽度取前几条的那一手在 `hintLimitOf`（整行 438 列会被终端折成五行）；哪一档由舞台
+    // 算（`hintWhenOf`：门口那一块开着先露 `y`/`n`，阅读面开着先露 `Tab`/`↑`/`↓`/`Esc`）。
+    hint: (when) =>
       keys?.raw === true
-        ? hintLineOf(km, hintLimitOf(term.columns))
+        ? hintLineOf(km, hintLimitOf(term.columns, km, when), when)
         : 'stdin 不是终端：这一档不收按键（输入行与弹层都在等按键，画出来是骗人）',
+    // 同一档下"按什么键干什么"的那一段（第三幕 ②）：写给终端历史的那一句注记（阅读面开的那一下）
+    // 读它。与提示行同一份来源；那一句只在阅读面真开起来时走得到，而阅读面只能由按键开。
+    keysOf: (when) => hintKeysOf(km, when),
     columns: () => term.columns,
     // 终端行数（分账面板高度那一档的输入；`rows` 那一只 dep 是「账上的行」，名字各归各）。
     termRows: () => term.rows,

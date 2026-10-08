@@ -87,6 +87,19 @@ export type UiAction =
 /** 哪一格把这个动作接上（`T2` 就是这一格）。 */
 export type Stage = 'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'T8' | 'T9'
 
+/**
+ * 提示行按"此刻屏幕上是什么"分的几档（第三幕 ②）：`any` = 不看处境，照表自己的次序印（也就是
+ * 第三幕 ② 之前那个样子，逐字节锁着——`--help` 那一份黄金帧里就有它）；另两档各自点名次序与措辞。
+ *
+ * **分档只换次序与措辞，不藏东西**：任何一档下印出来的那几条与 `any` 那一档是同一个集合
+ * （`keymap.test.ts` ⑦ 量这一条）——宽着的时候人看不出档，窄着的时候**先露出来的那几条**才是这一档
+ * 的判断。
+ */
+export type HintWhen = 'any' | 'gate' | 'read'
+
+/** 能换一句话的那两档（`any` 那一档没有"换一句"这回事：它就是表里那一句）。 */
+export type HintSayWhen = Exclude<HintWhen, 'any'>
+
 /** 表里的一行。 */
 export interface Binding {
   readonly action: UiAction
@@ -96,6 +109,12 @@ export interface Binding {
   readonly hint: string
   /** 帮助面板与菜单里的一句（人读的一句话：按下去到底干什么）。 */
   readonly note: string
+  /**
+   * **这个键在某几档处境下换一句话**（第三幕 ②）：只在"它在那一档里不是这个意思"的地方写。不写
+   * 就是 `hint` 那一句照用——这张表里绝大多数行没有这一栏，那是**对的**，不是缺的。措辞仍住在这张
+   * 表里（与 `hint` · `note` 同一处真源），分档只决定"先露谁"。
+   */
+  readonly says?: Readonly<Partial<Record<HintSayWhen, string>>>
   readonly by: Stage
 }
 
@@ -125,6 +144,9 @@ export const TABLE: readonly Binding[] = [
     keys: ['Esc'],
     hint: '取消',
     note: '取消链第一级：先关一层弹层，再打断、再丢排队草稿、再清空输入，都没有就什么都不做',
+    // 同一个 `Esc`，两处处在说的是两件事（第三幕 ②）：门口那一块开着是"收起门口"，阅读面开着是
+    // "收起"——两处各有自己的一级，措辞照各自那一级写。
+    says: { gate: '收起门口', read: '收起' },
     by: 'T5',
   },
   {
@@ -146,6 +168,7 @@ export const TABLE: readonly Binding[] = [
     keys: ['↑'],
     hint: '上一条',
     note: '输入历史往前翻；有面板开着的时候是往上选',
+    says: { read: '上一行' },
     by: 'T4',
   },
   {
@@ -153,6 +176,7 @@ export const TABLE: readonly Binding[] = [
     keys: ['↓'],
     hint: '下一条',
     note: '输入历史往后翻；翻到底回到手里原来那一行',
+    says: { read: '下一行' },
     by: 'T4',
   },
   {
@@ -314,6 +338,7 @@ export const TABLE: readonly Binding[] = [
     keys: ['Tab'],
     hint: '补全',
     note: '补全；没有可补的时候换视图（对话 · 进展 · 结果与花费，`Tab` 环形）',
+    says: { read: '换一面' },
     by: 'T4',
   },
   {
@@ -328,6 +353,7 @@ export const TABLE: readonly Binding[] = [
     keys: ['Ctrl-R'],
     hint: '阅读面',
     note: '读这一格：diff · 契约正文 · 事件流（`Tab` 换面 · `↑`/`↓` 翻 · `Esc` 收起；读的是账，不是第二份数据）',
+    says: { read: '收起' },
     by: 'T9',
   },
   {
@@ -348,6 +374,7 @@ export const TABLE: readonly Binding[] = [
     action: 'approve',
     keys: ['y'],
     hint: '放行',
+    says: { gate: '放行这一份' },
     note: '门口那一批：放行它（起一次 `fugue round go`）；**再按一次 `y` 或 Enter 才生效**——只在门口那一块开着、且输入行空着的时候是动作，别处它就是那个字',
     by: 'T6',
   },
@@ -355,6 +382,7 @@ export const TABLE: readonly Binding[] = [
     action: 'reject',
     keys: ['n'],
     hint: '拒',
+    says: { gate: '拒这一份' },
     note: '门口那一批：拒它——**一个字节都不落**，门照旧停着等人；再按一次 `n` 或 Enter 才生效（同上）',
     by: 'T6',
   },
@@ -366,6 +394,33 @@ export const TABLE: readonly Binding[] = [
     by: 'T2',
   },
 ]
+
+/**
+ * 每一档点名哪几条、按什么次序先露（第三幕 ②）：**只点名，措辞不在这里**——印出去的字仍住 `TABLE`
+ * 的 `hint` / `says` 里。点过名的排前面，**表里其余那些照旧缀在后面**：分档是"先露谁"，不是"藏谁"
+ * ——宽着的时候整行的集合与 `any` 那一档一样。
+ */
+export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
+  // 不看处境：**空 = 照表自己的次序**（这一档就是第三幕 ② 之前那个样子，逐字节锁着）。
+  any: [],
+  // 门口那一块开着：此刻要人按的是 `y` / `n`（放行那一份 · 拒那一份），再往下才是收起门口与翻批。
+  gate: ['approve', 'reject', 'cancel', 'pageUp', 'pageDown', 'help'],
+  // 阅读面开着：`Tab` 换一面 · `↑`/`↓` 翻行 · `Esc` 收起（这三样在别处都不是这个意思）。
+  read: ['complete', 'historyOlder', 'historyNewer', 'cancel', 'pageUp', 'pageDown', 'read', 'help'],
+}
+
+/**
+ * 这一刻是哪一档（第三幕 ②）：阅读面开着报 `read`，否则门口那一块开着报 `gate`，都没有报 `any`。
+ *
+ * **为什么阅读面压过门口**：门口那一块里**自己就印着**它那三个键（`放行一次(y) · 拒(n) ·
+ * 中止(Esc)`——第三幕 ① 那一行还单独染了等待黄），而阅读面那几样（`Tab` · `↑`/`↓` · `Esc`）在屏幕上
+ * 只有提示行这一处说得出。两样同时开着的时候，这一行让给"别处查不到的那一份"。
+ */
+export function hintWhenOf(o: { readonly gate: boolean; readonly read: boolean }): HintWhen {
+  if (o.read) return 'read'
+  if (o.gate) return 'gate'
+  return 'any'
+}
 
 /** `Ctrl-<方向键>` 那一档：终端报的不是控制码，是带修饰的那条 CSI（xterm 的 `ESC [ 1 ; 5 D`）。 */
 const MODIFIED: Readonly<Record<string, readonly string[]>> = {
@@ -767,20 +822,45 @@ export function decoderOf(km: Keymap = KEYMAP): Decoder {
   }
 }
 
-const entryOf = (b: Binding): string => `${keyLabelOf(b)} ${b.hint}`
+/** 那一条印成什么（第三幕 ②）：键串照旧，那一句话按处境挑（`says[所处那一档]` 没有就用 `hint`）。 */
+const entryOf = (b: Binding, when: HintWhen = 'any'): string =>
+  `${keyLabelOf(b)} ${(when === 'any' ? undefined : b.says?.[when]) ?? b.hint}`
+
+/**
+ * 某一档下该印的那几条：`WIRED` 先过一遍（许诺一个按下去没反应的键，比少印几条坏得多），再看
+ * `HINT_WHEN` 点了谁的名。
+ *
+ * `any` 那一档就是 `km.rows` 自己那个次序（第三幕 ② 之前的样子）；别的档把点名的那几条按点名的
+ * 次序提到前面，**其余照表序缀在后面**——次序只有这一处算，条数三档一样。
+ */
+export function hintPicksOf(km: Keymap = KEYMAP, when: HintWhen = 'any'): readonly Binding[] {
+  const wired = km.rows.filter((b) => WIRED.includes(b.by))
+  const want = HINT_WHEN[when]
+  if (want.length === 0) return wired
+  const byAction = new Map(wired.map((b) => [b.action as string, b]))
+  const named: Binding[] = []
+  for (const a of want) {
+    const b = byAction.get(a)
+    if (b !== undefined) named.push(b)
+  }
+  const used = new Set(named.map((b) => b.action))
+  return [...named, ...wired.filter((b) => !used.has(b.action))]
+}
 
 /**
  * 提示那一行。**由表推出来**，只印**已经落了地的**那些（`by` 在 `WIRED` 里）——许诺一个按下去没
  * 反应的键，比少印几条坏得多。`limit` 是给 `--help` 与面板抬头留的：只印头几条，剩下的写成
  * "还有 N 条"，而那个 N 也是从表里数出来的。
+ *
+ * `when`（第三幕 ②）是"此刻屏幕上是什么"；缺省 `any` 就是第三幕 ② 之前那一串（逐字节不变）。
  */
-export function hintLineOf(km: Keymap = KEYMAP, limit = 0): string {
-  const ready = km.rows.filter((b) => WIRED.includes(b.by))
+export function hintLineOf(km: Keymap = KEYMAP, limit = 0, when: HintWhen = 'any'): string {
+  const ready = hintPicksOf(km, when)
   if (ready.length === 0) return '按键：这一档还没有接上线的键'
   const shown = limit > 0 && ready.length > limit ? ready.slice(0, limit) : ready
   const more = ready.length - shown.length
   const tail = more > 0 ? ` · …（还有 ${more} 条，按 Ctrl-P 看全部）` : ''
-  return `按键 ${shown.map(entryOf).join(' · ')}${tail}`
+  return `按键 ${shown.map((b) => entryOf(b, when)).join(' · ')}${tail}`
 }
 
 /**
@@ -790,13 +870,29 @@ export function hintLineOf(km: Keymap = KEYMAP, limit = 0): string {
  * 为什么要它：表落到 28 条已经落地的动作之后，整行印出来是 438 列（实测）——终端会把它折成五行，
  * 那正是这一档最难看的样子。窄到一条加那一句都放不下时给 1（只印一条）。
  */
-export function hintLimitOf(columns: number, km: Keymap = KEYMAP): number {
-  const total = km.rows.filter((b) => WIRED.includes(b.by)).length
+export function hintLimitOf(columns: number, km: Keymap = KEYMAP, when: HintWhen = 'any'): number {
+  const total = hintPicksOf(km, when).length
   if (total === 0) return 0
   for (let n = 1; n < total; n += 1) {
-    if (widthOf(hintLineOf(km, n)) > columns) return Math.max(1, n - 1)
+    if (widthOf(hintLineOf(km, n, when)) > columns) return Math.max(1, n - 1)
   }
   return total
+}
+
+/** 写进终端历史的那一句注记里放几条（第三幕 ②）：常数收在这里，不在两处各写一个数。 */
+export const NOTE_KEYS = 4
+
+/**
+ * 同一档下"按什么键干什么"的那一段——**不带 `按键 ` 抬头，也不带"还有 N 条"那一句尾巴**。给写进
+ * 终端历史的一句注记用（阅读面开的那一下）。
+ *
+ * 它与提示行**同一份来源**（`hintPicksOf` + `entryOf`）：措辞在 `TABLE`，次序在 `HINT_WHEN`，
+ * 两处不会各说各的。**写死一句在调用处**就迟早与提示行说两样的话——这一条是这一份函数存在的理由。
+ */
+export function hintKeysOf(km: Keymap = KEYMAP, when: HintWhen = 'any', limit = NOTE_KEYS): string {
+  const ready = hintPicksOf(km, when)
+  const shown = limit > 0 && ready.length > limit ? ready.slice(0, limit) : ready
+  return shown.map((b) => entryOf(b, when)).join(' · ')
 }
 
 /**

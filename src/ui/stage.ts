@@ -9,8 +9,8 @@
 // 不开一个真终端就能驱动（`stage.test.ts` 五条接线断言）。`FLAGS_OF` 从 cli 那一层读
 // （`../cli/flags.ts`）：菜单候选与分发处读**同一个对象**——「哪些命令存在」仍只有一处真源（那张
 // 表自己不 import 任何东西，不成环）。
-import { PAGE_STEP, fallsToText, helpRowsOf } from './keymap.ts'
-import type { Decoded } from './keymap.ts'
+import { PAGE_STEP, fallsToText, helpRowsOf, hintWhenOf } from './keymap.ts'
+import type { Decoded, HintWhen } from './keymap.ts'
 import { ctrlCStepOf, escStepOf, quitStepOf, stillArmed } from './cancel.ts'
 import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmit, submitOf } from './input.ts'
 import type { Editor } from './input.ts'
@@ -42,10 +42,18 @@ export interface StageDeps {
   /** 写一行界面自己的话（面板上方，只写一次）——`tui.note`。 */
   readonly note: (line: string) => void
   /**
-   * 框下面那一行提示行（第二幕 ④）的原文——`ui/console.ts` 那一头给的（键表与 stdin 是不是终端都
-   * 只有那一头知道）。**每帧现问**：列宽变了它就跟着换（`hintLimitOf` 按列数取前几条）。
+   * 框下面那一行提示行（第二幕 ④ · 第三幕 ② 按处境分档）的原文——`ui/console.ts` 那一头给的
+   * （键表与 stdin 是不是终端都只有那一头知道）。**每帧现问**：列宽变了它就跟着换
+   * （`hintLimitOf` 按列数取前几条）；**哪一档**由舞台自己算（`hintWhenOf`：阅读面 > 门口 >
+   * 都不看）——"此刻屏幕上是什么"只有这一头知道。
    */
-  readonly hint: () => string
+  readonly hint: (when: HintWhen) => string
+  /**
+   * 同一档下"按什么键干什么"的那一段（第三幕 ②）：**不带 `按键 ` 抬头**——写给终端历史的那一句
+   * 注记（阅读面开的那一下）用它。与提示行**同一份来源**（`ui/keymap.ts` 的 `hintKeysOf`），两处
+   * 不会各说各的。
+   */
+  readonly keysOf: (when: HintWhen) => string
   /** 重画一帧（不重读）——`tui.redraw`。 */
   readonly redraw: () => void
   /** 这一刻的终端列数——`term.columns`。 */
@@ -323,14 +331,17 @@ export function openStage(deps: StageDeps): Stage {
    */
   const cols = (): number => innerOf(deps.columns())
   const view = (): ViewInput => {
-    // 提示行（第二幕 ④）**与输入行在不在无关**：stdin 不是终端时它就是那一句"这一档不收按键"
-    // ——画一个收不到按键的提示符比不画坏得多，而"按键收不到"这件事更得说出来。
-    const hintPart = { hint: deps.hint() }
+    // 门口那一块开着没有：提示行那一档与最下面那一栏都要它（先算一次，两处读同一个）。
+    const gateOn = gate !== null && !gateHidden
+    // 提示行（第二幕 ④ · 第三幕 ② 按处境分档）**与输入行在不在无关**：stdin 不是终端时它就是那一
+    // 句"这一档不收按键"——画一个收不到按键的提示符比不画坏得多，而"按键收不到"这件事更得说出来。
+    // **阅读面压过门口**（判据在 `hintWhenOf` 那一头）：门口那三个键它自己在屏幕上印着。
+    const when = hintWhenOf({ gate: gateOn, read: reading !== null })
+    const hintPart = { hint: deps.hint(when) }
     if (!showInput) return hintPart
     const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
     // 最下面那一栏：**门口那一块**（`T6`）与**排队那一行**（`T7`），都在面板那一栏的最下面（输入行
     // 还在它们下面）。两样都没有时一个字节都不占。
-    const gateOn = gate !== null && !gateHidden
     const queueOn = queue.items.length > 0
     const gateRows = gateOn ? gateRowsOf({ face: gate as GateFace, view: gateView, columns: cols() }) : []
     const bottomRows = [...gateRows, ...(queueOn ? [queueRowOf(queue)] : [])]
@@ -553,7 +564,9 @@ export function openStage(deps: StageDeps): Stage {
         refreshRead(true)
         const faces = facesOf(readState)
         reading = { face: firstFace(faces), top: 0 }
-        deps.note(`阅读面 · ${faces[reading.face]?.title ?? ''}（Tab 换一面 · ↑↓ 翻 · Esc 收起）`)
+        // 那一句注记里"按什么键干什么"那一段与提示行**同一份来源**（第三幕 ②）：写死在这里就迟早
+        // 与提示行说两样的话（`deps.keysOf('read')` = `hintKeysOf` 的阅读面那一档）。
+        deps.note(`阅读面 · ${faces[reading.face]?.title ?? ''}（${deps.keysOf('read')}）`)
       } else {
         reading = null
       }
