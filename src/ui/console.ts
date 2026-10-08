@@ -13,6 +13,10 @@ import { getConfig, readConfig } from '../config.ts'
 import { intervalOf, tailOf } from '../cli/flags.ts'
 import { DEFAULT_GLYPH_TIER, GLYPH_TIERS, setGlyphTier } from './glyph.ts'
 import type { GlyphTier } from './glyph.ts'
+import { DEFAULT_ICON_TIER, ICON_TIERS, setIconTier } from './icons.ts'
+import type { IconTier } from './icons.ts'
+import { graphicsOf, setGraphics } from './image.ts'
+import type { GraphicsTier } from './image.ts'
 import { actionCommandsOf, actionsTableOf } from '../round/actions.ts'
 import { pendingOf } from '../round/dispatch.ts'
 import { identFor } from '../identity.ts'
@@ -149,6 +153,25 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     // 配置坏了：按缺省档起（"配置读不出来"那一句由下面 `gateSetupOf` 那一处说）。
   }
   setGlyphTier(tier)
+  // **图标那一档**（第二幕 ⑨ 的前一半）：`ui.icons` 点名才开（`ascii` / `nerd`），缺省**关**——
+  // 字体在不在场终端不回这个话，只有人知道自己装的是哪一份字体。读不出配置照缺省起（同上）。
+  let iconTier: IconTier = DEFAULT_ICON_TIER
+  try {
+    const raw = getConfig(await readConfig(root), 'ui.icons')
+    if (typeof raw === 'string' && (ICON_TIERS as readonly string[]).includes(raw)) iconTier = raw as IconTier
+  } catch {
+    // 配置坏了：按缺省档起（"配置读不出来"那一句由 `gateSetupOf` 那一处说）。
+  }
+  setIconTier(iconTier)
+  // **图片那一档**（第二幕 ⑨ 的后一半）：`ui.images: off` 是全关；缺省**按环境变量探一遍**
+  // （认不出来的终端探到 `none`——那一档与"根本没有这一档"同形）。
+  let gfx: GraphicsTier = graphicsOf(process.env)
+  try {
+    if (getConfig(await readConfig(root), 'ui.images') === 'off') gfx = 'none'
+  } catch {
+    // 读不出来：按探测那一档起。
+  }
+  setGraphics(gfx)
   // 钱那一栏要一个档（与 `status --once` 同一个口径：读的时候按当时的钟算）。
   const phase = phaseOf(new Date())
   // 价目与模型目录按这一台算（P2d，与 `status --once` 同一份）。

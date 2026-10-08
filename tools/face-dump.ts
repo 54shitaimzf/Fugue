@@ -20,6 +20,8 @@ import { statusOf, usageByRoundOf } from '../src/probe/status.ts'
 import { frameOf, innerOf } from '../src/ui/frame.ts'
 import type { FrameInput } from '../src/ui/frame.ts'
 import { faceRowsOf, facesOf, readStateOf } from '../src/ui/read.ts'
+import { setIconTier } from '../src/ui/icons.ts'
+import { setGraphics } from '../src/ui/image.ts'
 import { permanentLinesOf } from '../src/ui/stream.ts'
 import { openTerm } from '../src/ui/term.ts'
 import type { TermOut } from '../src/ui/term.ts'
@@ -226,6 +228,12 @@ function corpus(width: number): readonly (readonly [string, FrameInput])[] {
   ]
 }
 
+/** 图片那一档那张样张的账：一条写成图的路径 · 一条写成源码的路径。 */
+const IMG_ROWS: readonly StatusRow[] = [
+  row({ t: 'view/write', agent: 'agent/r1/1' as never, path: 'docs/shot.png' as never, rev: 1 as never, blob: 'b1' as never, mode: 0o100644 }, 'agent/r1/1'),
+  row({ t: 'view/write', agent: 'agent/r1/1' as never, path: 'src/scroll.ts' as never, rev: 2 as never, blob: 'b2' as never, mode: 0o100644 }, 'agent/r1/1'),
+]
+
 /** 假终端：收下每一笔，`--full` 那两笔之外原样留着。 */
 function fakeOut(columns: number, rows: number): TermOut & { written: string[] } {
   const written: string[] = []
@@ -241,6 +249,49 @@ function main(): void {
     out.push(`=== ${name} · ${input.width}x${input.height} → ${f.lines.length} 行 ===`)
     for (const line of f.lines) out.push(line)
     out.push(`--- 行角色：${f.roles.join(' ')}`)
+    out.push('')
+  }
+  // 增强档那两张（第二幕 ⑨）：**缺省是关**，所以只能显式设一次再画——开与不开差在哪，看这两张。
+  const enhancement: readonly (readonly [string, () => readonly string[]])[] = [
+    [
+      '图标档开着（对话视图 · `ui.icons=ascii`——同义退化那一档）',
+      () => {
+        const was = setIconTier('ascii')
+        try {
+          return frameOf({ ...base(width, FRAME_ROWS), width, height: FRAME_ROWS }).lines
+        } finally {
+          setIconTier(was)
+        }
+      },
+    ],
+    [
+      '图标档开着（对话视图 · `ui.icons=nerd`）',
+      () => {
+        const was = setIconTier('nerd')
+        try {
+          return frameOf({ ...base(width, FRAME_ROWS), width, height: FRAME_ROWS }).lines
+        } finally {
+          setIconTier(was)
+        }
+      },
+    ],
+    [
+      '图片档开着（阅读面 diff 那一面 · `ui.images=auto` 探到 kitty）',
+      () => {
+        const was = setGraphics('kitty')
+        try {
+          const rows = [...faceRowsOf(facesOf(readStateOf(IMG_ROWS)), 'diff', innerOf(width))]
+          return frameOf({ ...base(width, FRAME_ROWS), read: { rows, top: 0 } }).lines
+        } finally {
+          setGraphics(was)
+        }
+      },
+    ],
+  ]
+  for (const [name, draw] of enhancement) {
+    const lines = draw()
+    out.push(`=== ${name} · ${width}x${FRAME_ROWS} → ${lines.length} 行 ===`)
+    for (const line of lines) out.push(line)
     out.push('')
   }
   // 字节流那一档：真终端那一块区域摆出来的**字节**（面板 K 行 + 一行输入行）。

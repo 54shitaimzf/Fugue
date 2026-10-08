@@ -26,6 +26,8 @@ import {
 import { agentFor } from '../../identity.ts'
 import { keymapOf } from '../../ui/keymap.ts'
 import { GLYPH_TIERS } from '../../ui/glyph.ts'
+import { ICON_TIERS } from '../../ui/icons.ts'
+import { IMAGE_SETTINGS } from '../../ui/image.ts'
 import { setOwnKey } from '../../own-key.ts'
 import { createRoots } from '../../roots/roots.ts'
 import { resolve } from 'node:path'
@@ -110,6 +112,25 @@ export async function config(
         if (typeof value !== 'string' || !(GLYPH_TIERS as readonly string[]).includes(value)) {
           return fail(
             `config set：ui.glyphs 取 ${GLYPH_TIERS.join(' / ')} —— 收到 ${JSON.stringify(value)}`,
+            json,
+          )
+        }
+      }
+      // 图标档与图片档（第二幕 ⑨）：与 `ui.glyphs` 同一条道理——写时拦住才不会把配置砖掉。
+      if (segs[0] === 'ui' && segs[1] === 'icons') {
+        if (segs.length !== 2) return fail(`config set：ui.icons 就是那一格，没有更深一层 —— ${key}`, json)
+        if (typeof value !== 'string' || !(ICON_TIERS as readonly string[]).includes(value)) {
+          return fail(
+            `config set：ui.icons 取 ${ICON_TIERS.join(' / ')} —— 收到 ${JSON.stringify(value)}`,
+            json,
+          )
+        }
+      }
+      if (segs[0] === 'ui' && segs[1] === 'images') {
+        if (segs.length !== 2) return fail(`config set：ui.images 就是那一格，没有更深一层 —— ${key}`, json)
+        if (typeof value !== 'string' || !(IMAGE_SETTINGS as readonly string[]).includes(value)) {
+          return fail(
+            `config set：ui.images 取 ${IMAGE_SETTINGS.join(' / ')} —— 收到 ${JSON.stringify(value)}`,
             json,
           )
         }

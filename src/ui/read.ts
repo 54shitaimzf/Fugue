@@ -42,6 +42,7 @@ import { clip, clustersOf } from './glyph.ts'
 import type { Cluster } from './glyph.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
 import { WORDS } from '../words.ts'
+import { graphics, imageRowsOf } from './image.ts'
 
 /**
  * 读面上那一格变更：**账上的 `view/*` 那五族说得出的那几栏**（没有字节——账上没有它）。
@@ -420,6 +421,16 @@ function deltaLineOf(d: DeltaFace, at_: string): string {
   }
 }
 
+/**
+ * 这一格变更牵到的那条路径里，**像图的那一条**（第二幕 ⑨ 的后一半）。只有"改完之后那里有一份
+ * 文件"的那两格算（`write` 与 `rename` 的目标）：删掉的那一格后面没有图可留位。
+ */
+function deltaImagePathOf(d: DeltaFace): string | null {
+  if (d.kind === 'write') return d.path
+  if (d.kind === 'rename') return d.to
+  return null
+}
+
 /** 一份契约那几行：**账上那一条说得出的那几栏**（正文原文一行，截到 `READ_BODY_COLS`）。 */
 function contractLinesOf(c: ContractFace): readonly string[] {
   const shown = c.paths.slice(0, 3).join(' · ')
@@ -453,7 +464,13 @@ function tallyLineOf(tally: Readonly<Record<string, number>>): string | null {
  */
 export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}): ReadFaces {
   const limit = opts.limit ?? READ_LIMIT
-  const diffLines = state.diff.map((d, i) => deltaLineOf(d, state.diffAt[i] as string))
+  // 图片那一档（第二幕 ⑨ 的后一半）：**文件名那一行照旧**，探到支持时在它后面加一块留白
+  // （口径在 `ui/image.ts`）。档是 `none` 时 `imageRowsOf` 给空表——一个字节都不多。
+  const diffLines = state.diff.flatMap((d, i) => {
+    const at = state.diffAt[i] as string
+    const path = deltaImagePathOf(d)
+    return [deltaLineOf(d, at), ...(path === null ? [] : imageRowsOf(path, graphics()))]
+  })
   const contractLines = state.contracts.flatMap((c) => [...contractLinesOf(c)])
   const tally = tallyLineOf(state.tally)
   const streamAll = tally === null ? [...state.stream] : [...state.stream, tally]

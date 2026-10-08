@@ -30,6 +30,8 @@ import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:f
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { GLYPH_TIERS } from './ui/glyph.ts'
+import { ICON_TIERS } from './ui/icons.ts'
+import { IMAGE_SETTINGS } from './ui/image.ts'
 import { setOwnKey } from './own-key.ts'
 
 /** 一份配置文档。值就是 JSON 的那几种，没有别的类型要照顾。 */
@@ -129,6 +131,20 @@ function assertUiShape(doc: ConfigDoc, file: string): void {
   if (glyphs !== undefined && (typeof glyphs !== 'string' || !GLYPH_TIERS.includes(glyphs as never))) {
     throw new ConfigError(
       `配置里的 ui.glyphs 取 ${GLYPH_TIERS.join(' / ')}：${file} —— 收到 ${JSON.stringify(glyphs)}`,
+    )
+  }
+  // 图标那一档（第二幕 ⑨）：三档之外的值在读这一面就拒（写那一面也拒，见 `cli/cmd/config.ts`）。
+  const icons = Object.hasOwn(ui, 'icons') ? ui.icons : undefined
+  if (icons !== undefined && (typeof icons !== 'string' || !ICON_TIERS.includes(icons as never))) {
+    throw new ConfigError(
+      `配置里的 ui.icons 取 ${ICON_TIERS.join(' / ')}：${file} —— 收到 ${JSON.stringify(icons)}`,
+    )
+  }
+  // 图片那一档（第二幕 ⑨）：只有"按探测"与"全关"两个值。
+  const images = Object.hasOwn(ui, 'images') ? ui.images : undefined
+  if (images !== undefined && (typeof images !== 'string' || !IMAGE_SETTINGS.includes(images as never))) {
+    throw new ConfigError(
+      `配置里的 ui.images 取 ${IMAGE_SETTINGS.join(' / ')}：${file} —— 收到 ${JSON.stringify(images)}`,
     )
   }
   const keys = Object.hasOwn(ui, 'keys') ? ui.keys : undefined

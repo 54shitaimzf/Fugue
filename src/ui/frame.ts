@@ -45,6 +45,8 @@ import type { MetricReading } from '../probe/round.ts'
 import { skipsNote } from '../probe/status.ts'
 import type { RoundUsage, StatusSnapshot } from '../probe/status.ts'
 import { clip, glyphs, widthOf, wrap } from './glyph.ts'
+import { iconOf } from './icons.ts'
+import type { IconName } from './icons.ts'
 import { MIN_FRAME_ROWS } from './layout.ts'
 import { humanNumber } from '../human.ts'
 import { WORDS } from '../words.ts'
@@ -324,7 +326,22 @@ export function bodyOf(o: {
 /** 对话视图那一栏的一行：轮次头 · 块间细线 · 一格 agent（第二幕 ⑦）。 */
 export interface ChatRow {
   readonly kind: 'head' | 'rule' | 'agent'
+  /**
+   * 这一行要哪一颗图标（第二幕 ⑨）。**由折这一栏的那一处点名**（`chatOf` 知道这一行是轮次头还是
+   * 停下来的格），而不是由图标那一档去猜行的内容。不点名（`rule` 那一行）就是没有图标。
+   */
+  readonly icon?: IconName | undefined
   readonly text: string
+}
+
+/**
+ * 图标那两列（第二幕 ⑨ 的前一半）：**档关着给空串**——一个字节都不占，于是与"根本没有这一档"
+ * 逐字节相同。开着是"一颗图标 + 一个空格"（两列，由 `widthOf` 量，不另记一个数）。
+ */
+function iconPrefixOf(icon: IconName | undefined): string {
+  if (icon === undefined) return ''
+  const glyph = iconOf(icon)
+  return glyph === '' ? '' : `${glyph} `
 }
 
 /**
@@ -352,7 +369,7 @@ export function chatOf(o: { readonly snapshot: StatusSnapshot }): readonly ChatR
       ? '还没开过轮次（账上一条 round/state 都没有）'
       : `${WORDS.round} ${r.round} · ${WORDS.state} ${r.state}${run}${rej}`
   const rows: ChatRow[] = [
-    { kind: 'head', text: head },
+    { kind: 'head', icon: 'round', text: head },
     { kind: 'rule', text: '' },
   ]
   for (const a of s.agents) {
@@ -362,6 +379,7 @@ export function chatOf(o: { readonly snapshot: StatusSnapshot }): readonly ChatR
         : `${a.stopSteps === undefined ? '?' : humanNumber(a.stopSteps)} ${WORDS.steps}${WORDS.halted}（${a.stopped}）`
     rows.push({
       kind: 'agent',
+      icon: a.stopped === null ? 'moving' : 'halted',
       text:
         `${WORDS.agent} ${a.agent} · ${WORDS.calls} ${humanNumber(a.calls)} 次 · ${humanNumber(a.steps)} ${WORDS.steps}` +
         ` · ${WORDS.invocations} ${humanNumber(a.invocations)} · ${stop}`,
@@ -524,7 +542,7 @@ export function frameOf(o: FrameInput): Frame {
       ? chatOf(o).map((x) =>
           x.kind === 'rule'
             ? { l: `${' '.repeat(air)}${glyphs().div.repeat(ruleW)}`, role: 'border' as const }
-            : { l: x.text, role: 'body' as const },
+            : { l: `${iconPrefixOf(x.icon)}${x.text}`, role: 'body' as const },
         )
       : (view === 'progress' ? body.left : body.right).map((l) => ({ l, role: 'body' as const }))
   const rows = bodyRows.flatMap((one) => wrap(one.l, inner).map((x) => ({ l: x, role: one.role })))
