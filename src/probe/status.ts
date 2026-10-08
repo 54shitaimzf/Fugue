@@ -287,6 +287,66 @@ function totalOf(list: readonly (number | null)[]): UsageTotal {
   return { total, missing }
 }
 
+/**
+ * **一轮的用量**（可读性三件 ② 的 sparkline 用它）：这一轮那几条 `llm/call` 的合计。
+ *
+ * **它不进快照**（`StatusSnapshot` 一个字段都不加）：那一份是值层——`status --json` 印的就是它，
+ * 加一栏就是改值层（那 73 帧当场红）。这一份是**渲染那一层要的读数**，与 `linesOf` 那几行同一个
+ * 来路（同一批行 · 同一把加法），只是它只在界面上印。
+ *
+ * **归轮的口径**：`llm/call` 自己不带轮次那一栏（事件里没有它），于是按**这条调用来的时候最近一条
+ * `round/state` 是哪一轮**归。`round === null` 那一桶是"一条 `round/state` 都还没来过时来的调用"
+ * ——不静默丢（少印要说）。**改主意的条件**：`llm/call` 将来带上 `round` 那一栏就改读它（那一栏
+ * 才是真的归属，这一处判据一换就够）。
+ */
+export interface RoundUsage {
+  /** 哪一轮；`null` = 到这条调用为止一条 `round/state` 都还没来过（归不到任何一轮）。 */
+  readonly round: RoundId | null
+  /** 这一轮里几条 `llm/call`（轮次那一条事件到过就在表里——一次调用都没有是 0）。 */
+  readonly calls: number
+  /** 这一轮四个 token 数的合计（思考含在 output 里，不另加——与总账同一把尺 · 同一个 `totalOf`）。 */
+  readonly tokens: UsageTotal
+}
+
+/**
+ * 按轮折用量（可读性三件 ②）：**一趟只看一遍行**，次序就是账上的次序（`null` 那一桶若有，排头一个）。
+ * 空账给空表。
+ *
+ * 一处真相：合计那一栏（`statusOf` 的 `usage`）与这一份读的是同一批 `llm/call`、同一把加法。于是
+ * **各轮相加 == 合计**这一条立得住（`status.test.ts` ⑭ 量它——两处加法分家当场红）。
+ */
+export function usageByRoundOf(rows: readonly StatusRow[]): readonly RoundUsage[] {
+  type Slot = { calls: number; cells: (number | null)[] }
+  const order: (RoundId | null)[] = []
+  const slots = new Map<RoundId | null, Slot>()
+  const slotOf = (r: RoundId | null): Slot => {
+    const hit = slots.get(r)
+    if (hit !== undefined) return hit
+    const made: Slot = { calls: 0, cells: [] }
+    slots.set(r, made)
+    order.push(r)
+    return made
+  }
+  let current: RoundId | null = null
+  for (const { e } of rows) {
+    if (e.t === 'round/state') {
+      current = e.round
+      // 轮次那一条到过就建格：这一轮一次调用都没有也要在表里（条形上留一个空格位——"这一轮用量是
+      // 零"与"这一轮不在这条账上"分得开）。
+      slotOf(current)
+      continue
+    }
+    if (e.t !== 'llm/call') continue
+    const slot = slotOf(current)
+    slot.calls++
+    slot.cells.push(e.usage.inputTokens, e.usage.cacheReadTokens, e.usage.cacheWriteTokens, e.usage.outputTokens)
+  }
+  return order.map((r) => {
+    const slot = slots.get(r) as Slot
+    return { round: r, calls: slot.calls, tokens: totalOf(slot.cells) }
+  })
+}
+
 /** 折一条轮次链要的那点东西。**它是折的过程里的临时物**，出口那一份不带它。 */
 interface RoundFold {
   state: RoundState

@@ -54,6 +54,7 @@ import {
   rowsOf,
   snapshot,
   statusOf,
+  usageByRoundOf,
 } from './status.ts'
 import { readingsOf } from './status.ts'
 import type { StatusRow } from './status.ts'
@@ -773,4 +774,78 @@ test('⑬ `status --ledger`：这一栏挂在同一个出口上，不给开关�
   )
   console.log(`⑬ 读数：台账 ${String(l?.calls.length)} 条调用（模型 1 · 工具 1）· 未量到 ${String(l?.msMissing)} 条`)
   console.log(`⑬ 文字面那一块（不含快照那几行）：\n${blocks.slice(blocks.indexOf(LEDGER_HEAD)).join('\n')}`)
+})
+
+test('⑭ 按轮折用量：各轮相加 == 合计（一处加法）· 开轮之前那些归到 `null` 那一桶 · 值层一个字段都没加', () => {
+  const ev = (input: number | null): LogEvent => ({
+    t: 'llm/call',
+    agent: 'agent/r1/1' as AgentId,
+    step: 's' as never,
+    model: 'deepseek-flash/anthropic' as never,
+    wire: 'anthropic-messages',
+    toolCount: 0,
+    invocations: 0,
+    status: null,
+    headers: null,
+    thinking: null,
+    usage: { inputTokens: input, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: null },
+    rawStop: 'end_turn',
+    stop: 'end-turn',
+  })
+  const rows: StatusRow[] = [
+    // 一条 `round/state` 都还没来过时来的调用：归到 `null` 那一桶，不静默丢。
+    row(ev(7)),
+    row({ t: 'round/state', round: 'r1' as never, from: 'Idle' as never, to: 'Working' as never }),
+    row(ev(100)),
+    row({ t: 'round/state', round: 'r2' as never, from: 'Idle' as never, to: 'Working' as never }),
+    row(ev(300)),
+    // 这一条没量到（`inputTokens` 是 `null`）：进 `missing`，不拿 0 顶。
+    row(ev(null)),
+  ]
+  const per = usageByRoundOf(rows)
+  assert.deepEqual(
+    per.map((u) => [u.round, u.calls, u.tokens.total, u.tokens.missing]),
+    [
+      [null, 1, 7, 0],
+      ['r1', 1, 100, 0],
+      ['r2', 2, 300, 1],
+    ],
+    `按轮折出来的：${JSON.stringify(per)}`,
+  )
+  const s = statusOf(rows)
+  const total = s.usage.inputTokens.total + s.usage.cacheReadTokens.total + s.usage.cacheWriteTokens.total + s.usage.outputTokens.total
+  const missing =
+    s.usage.inputTokens.missing + s.usage.cacheReadTokens.missing + s.usage.cacheWriteTokens.missing + s.usage.outputTokens.missing
+  assert.equal(
+    per.reduce((n, u) => n + u.tokens.total, 0),
+    total,
+    '各轮相加该等于合计那一栏（同一批 `llm/call` · 同一把加法——分家当场红）',
+  )
+  assert.equal(per.reduce((n, u) => n + u.tokens.missing, 0), missing, '没量到的项数也该对得上')
+  // **值层一个字段都没加**：快照的键就是那一批（这一份是新开的一个出口，不进快照）。
+  assert.deepEqual(Object.keys(s).sort(), [
+    'accepts',
+    'agents',
+    'attempts',
+    'conflicts',
+    'contracts',
+    'current',
+    'events',
+    'last',
+    'models',
+    'outside',
+    'refusals',
+    'rounds',
+    'usage',
+  ])
+  // 一轮里一次调用都没有也在表里（条形上留一个空格位：这一轮用量是零，与"这一轮不在这条账上"分得开）。
+  const empty = usageByRoundOf(chain('r1' as RoundId, [['Idle', 'Working']]))
+  assert.deepEqual(
+    empty.map((u) => [u.round, u.calls, u.tokens.total]),
+    [['r1', 0, 0]],
+  )
+  console.log(
+    `⑭ 读数：${per.length} 桶（${per.map((u) => `${u.round ?? '（还没开轮）'}=${u.calls} 次/${u.tokens.total}`).join(' · ')}）` +
+      ` · 各轮相加 ${total} == 合计 ${total} · 没量到 ${missing} 项 · 快照键 ${Object.keys(s).length} 个（一个字段都没加）`,
+  )
 })

@@ -31,11 +31,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
-import { linesOf, statusOf } from '../probe/status.ts'
+import { linesOf, statusOf, usageByRoundOf } from '../probe/status.ts'
 import { BUILTIN_CATALOG } from '../model/catalog.ts'
 import { bodyOf, footerOf, frameOf, innerOf, panelOf, windowOf } from './frame.ts'
 import { FRAME_ROWS } from './layout.ts'
-import { clip, widthOf, wrap } from './glyph.ts'
+import { clip, setGlyphTier, widthOf, wrap } from './glyph.ts'
 import { readWrap } from './read.ts'
 
 let seq = 0
@@ -502,4 +502,66 @@ test('⑩ 一把尺：`innerOf` 是框内宽的唯一出处 · 长行折开印�
     `⑩ 读数：130 列的正文在框内 ${innerOf(26)} 列里折成 ${readWrap(long, innerOf(26)).length} 行（旧版只印头 ${innerOf(26)} 列）` +
       ` · top 0/1/4/${narrow.length - 1} 屏上第一条都对得上`,
   )
+})
+
+test('⑬ 近几轮用量那条小条形（可读性三件 ②）：每轮一格 · 四档从字形档取 · 没有这一栏就同形', () => {
+  const ev = (input: number | null): LogEvent => ({
+    t: 'llm/call',
+    agent: 'agent/r1/1' as never,
+    step: 's' as never,
+    model: 'deepseek-flash/anthropic' as never,
+    wire: 'anthropic-messages',
+    toolCount: 0,
+    invocations: 0,
+    status: null,
+    headers: null,
+    thinking: null,
+    usage: { inputTokens: input, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: null },
+    rawStop: 'end_turn',
+    stop: 'end-turn',
+  })
+  const rows: StatusRow[] = [
+    row({ t: 'round/state', round: 'r1' as never, from: 'Idle' as never, to: 'Working' as never }),
+    row(ev(100), 'agent/r1/1'),
+    row({ t: 'round/state', round: 'r2' as never, from: 'Idle' as never, to: 'Working' as never }),
+    // 量到 0 的那一轮：条形上就是那一个空格位（列位照旧对齐）。
+    row(ev(0), 'agent/r2/1'),
+    row({ t: 'round/state', round: 'r3' as never, from: 'Idle' as never, to: 'Working' as never }),
+    row(ev(400), 'agent/r3/1'),
+  ]
+  const snap = statusOf(rows)
+  const per = usageByRoundOf(rows)
+  const at = { snapshot: snap, permanent: [], width: 100, height: FRAME_ROWS } as const
+  const line = bodyOf({ snapshot: snap, usageByRound: per }).right.find((l) => l.includes('轮用量'))
+  assert.equal(line, '近 3 轮用量 ░ █（最高 400）', `那一行该逐字是它：${String(line)}`)
+  const spent = frameOf({ ...at, view: 'spending', usageByRound: per }).lines.join('\n')
+  assert.ok(spent.includes('近 3 轮用量 ░ █（最高 400）'), `读数那一档上该看得见它：\n${spent}`)
+  // **退化档**：不给这一栏（或者给个空表）→ 逐字节与从前相同（"没有这一档"就是没有）。
+  assert.equal(
+    frameOf({ ...at, view: 'spending', usageByRound: [] }).lines.join('\n'),
+    frameOf({ ...at, view: 'spending' }).lines.join('\n'),
+    '空表与不给该逐字节同形',
+  )
+  assert.ok(!frameOf({ ...at, view: 'spending' }).lines.join('\n').includes('轮用量'), '不给就不印')
+  // 只给得到一轮：一个格子的趋势不算趋势。
+  assert.equal(
+    bodyOf({ snapshot: snap, usageByRound: usageByRoundOf(rowsOf()) }).right.some((l) => l.includes('轮用量')),
+    false,
+    '一轮不印',
+  )
+  // 另两档不印它（那一条是读数那一档的话）。
+  assert.ok(!frameOf({ ...at, view: 'progress', usageByRound: per }).lines.join('\n').includes('轮用量'), '进展那一档不印')
+  assert.ok(!frameOf({ ...at, usageByRound: per }).lines.join('\n').includes('轮用量'), '对话那一档不印')
+  // 四档从字形档取一处：`ascii` 那一档用 `.` 与 `#`。
+  const was = setGlyphTier('ascii')
+  try {
+    assert.equal(
+      bodyOf({ snapshot: snap, usageByRound: per }).right.find((l) => l.includes('轮用量')),
+      '近 3 轮用量 . #（最高 400）',
+      'ascii 档该用 ASCII 那几格（条形的四档也住字形档一处）',
+    )
+  } finally {
+    setGlyphTier(was)
+  }
+  console.log(`⑬ 读数：${String(line)} · ascii 档「近 3 轮用量 . #（最高 400）」· 没量到那一栏在括号里 · 不给这一栏逐字节同形`)
 })

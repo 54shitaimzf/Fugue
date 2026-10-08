@@ -47,8 +47,8 @@
 // `probe/watch.ts`；那两条直连住在 serve 那一头。界面手上那些行只有这一个来路。
 import type { Phase } from '../model/price.ts'
 import type { Catalog } from '../model/catalog.ts'
-import type { ReadingsOptions, StatusReadings, StatusRow } from '../probe/status.ts'
-import { readingsOf } from '../probe/status.ts'
+import type { ReadingsOptions, RoundUsage, StatusReadings, StatusRow } from '../probe/status.ts'
+import { readingsOf, usageByRoundOf } from '../probe/status.ts'
 import type { LedgerSource } from '../serve/source.ts'
 import type { FrameInput } from './frame.ts'
 import { frameOf } from './frame.ts'
@@ -218,6 +218,20 @@ export function openSession(o: SessionOptions = {}): TuiSession {
     snap = { rows, focus, readings: o.readings, value }
     return value
   }
+  /**
+   * 近几轮用量那一份（可读性三件 ② 的 sparkline）。**与 `readingsAt` 同一手**：折法是纯函数
+   * （`probe/status.ts` 的 `usageByRoundOf`），键是这一批行的引用——一批新到恰折一次。
+   *
+   * **只在结果与花费那一档视图里折**（`frameFullAt` 按视图传）：另两档不印那一条，白折一趟是
+   * O(账上那些行)。
+   */
+  let sparkSnap: { readonly rows: readonly StatusRow[]; readonly value: readonly RoundUsage[] } | null = null
+  const sparkAt = (): readonly RoundUsage[] => {
+    if (sparkSnap !== null && sparkSnap.rows === rows) return sparkSnap.value
+    const value = usageByRoundOf(rows)
+    sparkSnap = { rows, value }
+    return value
+  }
   const frameFullAt = (size: { readonly columns: number; readonly height: number }) => {
     const v = o.view?.()
     const input: FrameInput = {
@@ -233,6 +247,8 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(v?.bottom === undefined ? {} : { bottom: v.bottom }),
       // 视图与本帧读的是哪一格（第二幕 ⑦）：折法那一边按 `focus` 筛行，这一边按它写框名。
       ...(v?.view === undefined ? {} : { view: v.view }),
+      // 近几轮那条小条形只在读数那一档视图里有读者（可读性三件 ②）：按视图折，省掉白折的那一趟。
+      ...(v?.view === 'spending' ? { usageByRound: sparkAt() } : {}),
       ...(v?.focus === undefined ? {} : { focus: v.focus }),
       permanent: permanent(),
       width: size.columns,

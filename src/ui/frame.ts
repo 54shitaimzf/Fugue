@@ -43,7 +43,7 @@ import type { Phase } from '../model/price.ts'
 import type { Catalog } from '../model/catalog.ts'
 import type { MetricReading } from '../probe/round.ts'
 import { skipsNote } from '../probe/status.ts'
-import type { StatusSnapshot } from '../probe/status.ts'
+import type { RoundUsage, StatusSnapshot } from '../probe/status.ts'
 import { clip, glyphs, widthOf, wrap } from './glyph.ts'
 import { MIN_FRAME_ROWS } from './layout.ts'
 import { humanNumber } from '../human.ts'
@@ -163,6 +163,14 @@ export interface FrameInput {
    */
   readonly permanent?: readonly string[]
   /**
+   * 读源九（**可读性三件 ② 的 sparkline**）：近几轮用量的那一份（`probe/status.ts` 的
+   * `usageByRoundOf` 折出来的）。
+   *
+   * **它只在结果与花费那一档视图里印**（另两档不印那一条），所以调用方按视图给。不给就一个字节都
+   * 不占——那一条小条形是增强，不是地板（"没有这一栏 → 与无该档输出逐字节同形"）。
+   */
+  readonly usageByRound?: readonly RoundUsage[] | undefined
+  /**
    * 读源五（**临时那一层**）：面板的候选行（`ui/menu.ts` 算好的原文）与选中项落在第几条。
    *
    * 它排在内容那一栏的**最下面**（挨着账尾）——面板是临时的一层，永久行与读数都不为它让位到看不见；
@@ -203,11 +211,48 @@ function usageText(t: { readonly total: number; readonly missing: number }): str
 }
 
 /**
+ * 那条小条形最多印几轮（可读性三件 ② 的 sparkline）。**它是一个常量，可调**：八轮够看出"这一阵
+ * 是越花越多还是收住了"，再长一行里也读不出更多。改主意的条件＝人嫌短——改这一个数，那一行别处
+ * 一个字节都不动。
+ */
+export const SPARK_ROUNDS = 8
+
+/**
+ * 近几轮用量那条小条形（可读性三件 ② 的 sparkline）。**每轮一格**，四档从字形档取
+ * （空 · `░` · `▒` · `█`——`▓` 在 console-setup 那一档零命中，不用；决策材料 § 5.1）。
+ *
+ * 分级：零那一轮就是那一个空格位（"零就不印"在条形里是不印色块，**列位照旧对齐**——第几格是第几轮
+ * 这件事因此读得出来）；非零按**这一段里的峰值**分三级。量的是**每轮用量**（四个 token 数的合计），
+ * 不是钱：钱要价目与峰谷两样都得给，缺一样这一栏就不该印。**改主意的条件**＝有人要按钱量（那时把
+ * `costOf` 那一手接在这一处，仍是这一处判据）。
+ *
+ * 印不出来就不印（不是印一条空的）：一轮都没有 · 只有一轮（一个格子的趋势不算趋势）· 或者全是零。
+ * **没量到的那些项一起报**（"少印要说出来"）——条形是下界时那句话说在括号里。
+ */
+function sparkLineOf(usage: readonly RoundUsage[] | undefined): string | null {
+  const plots = (usage ?? []).filter((u) => u.round !== null)
+  if (plots.length < 2) return null
+  const shown = plots.slice(-SPARK_ROUNDS)
+  const max = shown.reduce((n, u) => Math.max(n, u.tokens.total), 0)
+  if (max <= 0) return null
+  const g: readonly [string, string, string, string] = glyphs().spark
+  const bar = shown
+    .map((u) => {
+      const level = u.tokens.total <= 0 ? 0 : 1 + Math.min(2, Math.floor((u.tokens.total / max) * 3))
+      return g[level] as string
+    })
+    .join('')
+  const miss = shown.reduce((n, u) => n + u.tokens.missing, 0)
+  return `近 ${shown.length} 轮${WORDS.usage} ${bar}（最高 ${humanNumber(max)}${miss > 0 ? ` · ${miss} 项没量到` : ''}）`
+}
+
+/**
  * 两档视图的内容。**只读快照，不算任何东西**——这一份里没有一处从事件重算的口径（那是
  * `probe/` 那两处的事，两处都在它们自己那一份文件里）。
  *
  * 次序两档都是"先粗后细"：`progress` 那一档先是轮次那一行（状态 · 转移条数 · 打回几次）再逐条边、
- * 再每一格；`spending` 那一档先是记账那几行（契约 · 验收 · 用量），再八元、再打回三数。
+ * 再每一格；`spending` 那一档先是记账那几行（契约 · 验收 · 用量 · **近几轮那条小条形**），再八元、
+ * 再打回三数。
  */
 export function bodyOf(o: {
   readonly snapshot: StatusSnapshot
@@ -215,6 +260,7 @@ export function bodyOf(o: {
   readonly report?: readonly MetricReading[]
   readonly phase?: Phase
   readonly cat?: Catalog
+  readonly usageByRound?: readonly RoundUsage[] | undefined
 }): FrameBody {
   const s = o.snapshot
 
@@ -258,6 +304,9 @@ export function bodyOf(o: {
       ` · cacheWrite ${usageText(s.usage.cacheWriteTokens)} · output ${usageText(s.usage.outputTokens)}` +
       ` · 思考 ${usageText(s.usage.reasoningTokens)}`,
   )
+  // 近几轮用量那条小条形（可读性三件 ②）：**排在用量那一行下面**——先给合计，再给"这一阵的走势"。
+  const spark = sparkLineOf(o.usageByRound)
+  if (spark !== null) right.push(spark)
   // 钱那一栏：与 `status --once` 同一处算法、同一句话（`src/model/price.ts` 的 `moneyText`）。
   if (o.phase !== undefined && o.cat !== undefined) {
     const match = matchModels(s.models, o.cat)

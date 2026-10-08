@@ -16,7 +16,7 @@
 // 这一份不另写一份排版。
 import type { LogEvent } from '../src/log/events.ts'
 import type { StatusRow } from '../src/probe/status.ts'
-import { statusOf } from '../src/probe/status.ts'
+import { statusOf, usageByRoundOf } from '../src/probe/status.ts'
 import { frameOf, innerOf } from '../src/ui/frame.ts'
 import type { FrameInput } from '../src/ui/frame.ts'
 import { faceRowsOf, facesOf, readStateOf } from '../src/ui/read.ts'
@@ -108,8 +108,45 @@ function rowsOf(): StatusRow[] {
   return out
 }
 
+/**
+ * 那条小条形那一张样张要的账（可读性三件 ②）：**四轮，用量 一小 · 零 · 一大 · 一中**——条形上三种
+ * 格子（`▒` · `█` · `░`）与那一个空格位于是同一张样张里都看得见。它建在 `ROWS` 之上（r1 那三条
+ * 调用照旧），再加三轮；次序就是账上的次序。
+ */
+function sparkRowsOf(): StatusRow[] {
+  const out = [...rowsOf()]
+  seq = out.length
+  const call = (agent: string, input: number): StatusRow =>
+    row(
+      {
+        t: 'llm/call',
+        agent: agent as never,
+        step: '1' as never,
+        model: 'deepseek-flash/anthropic' as never,
+        wire: 'anthropic-messages',
+        toolCount: 9,
+        invocations: 1,
+        status: null,
+        headers: null,
+        usage: { inputTokens: input, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: null },
+        rawStop: 'end_turn',
+        stop: 'end-turn',
+      },
+      agent,
+    )
+  // r2 一轮里一次调用都没有（条形上是那一个空格位）。
+  out.push(row({ t: 'round/state', round: 'r2' as never, from: 'Idle' as never, to: 'Working' as never }))
+  out.push(row({ t: 'round/state', round: 'r3' as never, from: 'Idle' as never, to: 'Working' as never }))
+  out.push(call('agent/r3/1', 20000))
+  out.push(row({ t: 'round/state', round: 'r4' as never, from: 'Idle' as never, to: 'Working' as never }))
+  out.push(call('agent/r4/1', 5000))
+  return out
+}
+
 const ROWS = rowsOf()
 const SNAPSHOT = statusOf(ROWS)
+/** 那条小条形那一张样张的那一份账（同上）。 */
+const SPARK_ROWS = sparkRowsOf()
 const PERMANENT = permanentLinesOf(ROWS)
 const METRICS = [
   { metric: 'detour-rate' as never, value: 0, numerator: 0, denominator: 2, how: '' },
@@ -144,6 +181,15 @@ function corpus(width: number): readonly (readonly [string, FrameInput])[] {
     ['对话视图（窄屏）', base(narrow, FRAME_ROWS)],
     ['进展视图（`Tab` 第一档）', { ...base(wide, FRAME_ROWS), view: 'progress' }],
     ['结果与花费视图（`Tab` 第二档）', { ...base(wide, FRAME_ROWS), view: 'spending' }],
+    [
+      '近几轮用量那条小条形（可读性三件 ② · 结果与花费那一档）',
+      {
+        ...base(wide, FRAME_ROWS),
+        snapshot: statusOf(SPARK_ROWS),
+        view: 'spending',
+        usageByRound: usageByRoundOf(SPARK_ROWS),
+      },
+    ],
     ['矮屏（高度 8）', base(wide, 8)],
     ['太矮（高度 4）', base(wide, 4)],
     [
