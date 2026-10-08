@@ -14,6 +14,8 @@
 //      插进旧账中间** → 前缀对不上 → 老实从头折，**不是**少折几条）
 //   ④ **工具输出折叠**：一次 `run/start` 等它的 `run/end` 折成一行 · 一串 `llm/call` 折成一行；
 //      折掉多少条在标题里说出来（折叠不是丢）；负对照：没等到 `run/end` 的那一条也印得出来
+//   ⑧ **详情面**（第二幕 ⑧）：主面收掉的那几样原始读数（图上走了几步 · 内核拒 · 边界挡 ·
+//      最近）——印的与 `statusOf` 折出来的**同一个数**；**不给快照就没有这一面**，`Tab` 也跳过它。
 //   ⑦ **折行与洁净**（0.2.8 U1）：`readWrap` 把一行折成物理行——**拼回来逐字节相等**（`glyph.wrap`
 //      折在词尾、还会吃空白与行首那个 `· `，正文一个字节都不能少，所以这一面自己折）· 切点整簇
 //      （一个 emoji 不许拆成两半）· 控制字节先转义（`[\x00-\x1f\x7f-\x9f]` → `\uXXXX`）再量宽
@@ -27,7 +29,8 @@ import { runCli } from '../../test/helpers/run-cli.ts'
 import { tmpDir } from '../../test/helpers/tmp.ts'
 import type { LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
-import { rowsOf } from '../probe/status.ts'
+import { rowsOf, statusOf } from '../probe/status.ts'
+import { WORDS } from '../words.ts'
 import type { StatusRow } from '../probe/status.ts'
 import type { AgentId, BlobId, RoundId, ViewRev, WriterId } from '../terms.ts'
 import { clip, clustersOf, widthOf, wrap } from './glyph.ts'
@@ -374,4 +377,36 @@ test('⑧ 折行改写（U1 补记）：长行照样逐字节往返 · 行数就
   // 4008 字符的 `view/write`、20 列，`faceRowsOf` 一次 >6 s）。所以这一格没有"回到旧版必红"的
   // 断言——读数记在提交信息里，口径写在 `readWrap` 的头注上（什么条件下改主意：那些读数回到秒级
   // 就说明有人把它写回逐段聚簇了）。
+})
+
+// ── ⑧ 详情面（第二幕 ⑧）：主面收掉的那几样原始读数 ──────────────────────────────
+test('⑧ 详情面：图上走了几步 · 内核拒 · 边界挡 · 最近——数与 `statusOf` 同一处算出来（不给快照就没有这一面）', () => {
+  seq = 0
+  const r1 = 'r1' as RoundId
+  const rows: readonly StatusRow[] = [
+    row({ t: 'round/state', round: r1, from: 'Idle' as never, to: 'Planning' as never }),
+    row({ t: 'round/state', round: r1, from: 'Planning' as never, to: 'Delegated' as never }),
+    row({ t: 'round/state', round: r1, from: 'Verifying' as never, to: 'Rebuilding' as never }),
+    row({ t: 'run/end', agent: A, step: '1' as never, exit: 1, ms: 5, denied: true }, A),
+    row({ t: 'bound/deny', agent: A, path: 'etc/passwd' as never, rule: 'scope' as never, space: 'virtual' as never }, A),
+  ]
+  const snap = statusOf(rows)
+  // 这一条量的是**同一个数**：详情面印的就是 `statusOf` 折出来的那几栏（不是另一处再算一遍）。
+  assert.equal(snap.agents[0]?.denies, 1, '一处 `run/end` 带 `denied` → denies 1')
+  assert.equal(snap.agents[0]?.bounds, 1, '一条 `bound/deny` → bounds 1')
+  assert.equal(snap.agents[0]?.last, 'bound/deny', '那一格最后一条事件就是它')
+  assert.equal(snap.rounds[0]?.hops, 4, '三条转移：1 ＋ 1 ＋ 2 ＝ 4 步（跳步那一条按最短路算）')
+  const faces = facesOf(readStateOf(rows, { snapshot: snap }))
+  assert.ok(faces.detail !== null, '给了快照就有详情面')
+  const text = (faces.detail?.lines ?? []).join('\n')
+  for (const want of ['图上走了 4 步', `${WORDS.denies} 1`, `${WORDS.bounds} 1`, `${WORDS.last} bound/deny`]) {
+    assert.ok(text.includes(want), `详情面上少了这一处「${want}」：\n${text}`)
+  }
+  // 不给快照：那一面是 `null`（"没有"与"有但是空的"分得开），而且 `Tab` 跳过它。
+  const bare = facesOf(readStateOf(rows))
+  assert.equal(bare.detail, null, '不给快照就没有详情面')
+  assert.equal(stepFace(bare, 'stream', 1), 'stream', '三面都没有时照旧停在 `stream`（详情面不在环里）')
+  assert.equal(stepFace(faces, 'stream', 1), 'detail', '给了快照：环里多了详情这一面')
+  assert.equal(stepFace(faces, 'detail', 1), 'stream', '详情之后绕回来')
+  console.log(`⑧ 读数：${(faces.detail?.title ?? '').split('（')[0]} · ${faces.detail?.lines.length ?? 0} 行 · 不给快照 → 那一面是 null`)
 })

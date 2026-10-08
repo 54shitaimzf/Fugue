@@ -31,6 +31,7 @@ import { innerOf } from './frame.ts'
 import { panelWantOf } from './layout.ts'
 import type { ViewInput } from './term.ts'
 import { FLAGS_OF } from '../cli/flags.ts'
+import { statusOf } from '../probe/status.ts'
 import type { StatusRow } from '../probe/status.ts'
 
 // 分账那几个数（`panelWantOf` · 份额 · 上下限）住 `ui/layout.ts` 那一份布局常量表（第二幕 ④ 收成
@@ -195,9 +196,15 @@ export function openStage(deps: StageDeps): Stage {
   /**
    * 折一次阅读面（`T9`）。**接着上一次那一份只折尾部**；切了格（`agent` 变了）或前缀被顶掉时
    * `readStateOf` 自己从头折——两种情形它都答得对，所以调用点不必先判是哪一种。
+   *
+   * **详情面那一栏（第二幕 ⑧）按需给快照**：它读的是 `probe/status.ts` 折出来的那一份（跳步 ·
+   * 内核拒 · 边界挡 · 最近那几样只在那一个地方算），而那一趟是 O(账上那些行)——与「只折尾部」
+   * 那条增量是两码事。所以**只在阅读面开着时折它**；关着那一档不给就等于没有详情面。
    */
-  function refreshRead(): void {
-    readState = readStateOf(deps.rows(), { agent: focusNow(), prev: readState })
+  function refreshRead(withDetail: boolean = reading !== null): void {
+    const rows = deps.rows()
+    const snapshot = withDetail ? statusOf(rows) : undefined
+    readState = readStateOf(rows, { agent: focusNow(), prev: readState, snapshot })
   }
 
   /** 起一次弹层：选中项从头一条起（候选变了以后 `settle` 会把它夹回来）。 */
@@ -534,7 +541,8 @@ export function openStage(deps: StageDeps): Stage {
     // 界面这一头没有第二份"这一格动过哪些路径"的清单。
     if (d.action === 'read') {
       if (reading === null) {
-        refreshRead()
+        // 开的那一下就要把详情面折出来（`reading` 还没置上，所以显式要）。
+        refreshRead(true)
         const faces = facesOf(readState)
         reading = { face: firstFace(faces), top: 0 }
         deps.note(`阅读面 · ${faces[reading.face]?.title ?? ''}（Tab 换一面 · ↑↓ 翻 · Esc 收起）`)

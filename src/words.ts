@@ -66,6 +66,8 @@ export const WORD_TABLE = {
   usage: { face: '用量', arch: 'usage' },
   events: { face: '事件', arch: 'events' },
   last: { face: '最近', arch: 'last' },
+  denies: { face: '内核拒', arch: 'denies（`run/end` 那条的 `denied`）' },
+  bounds: { face: '边界挡', arch: 'bounds（`bound/deny` 的条数）' },
 } as const satisfies Readonly<Record<string, Word>>
 
 /** 表里那些键（**从表推**，与 `ui/theme.ts` 的 `SLOTS` 同一手）。 */

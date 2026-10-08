@@ -10,6 +10,7 @@ import { test } from 'node:test'
 import type { StatusRow } from '../probe/status.ts'
 import { conclusionLineOf, gateFaceOf, lineOf } from './gate.ts'
 import type { Contract } from '../contract/types.ts'
+import { WORDS } from '../words.ts'
 import type { GateFace } from './gate.ts'
 import { openStage } from './stage.ts'
 import { panelWantOf } from './layout.ts'
@@ -302,4 +303,26 @@ test('⑧ 门口一开就推一条结论行：一批恰一条 · 同一批再算
   await stage.refreshGate()
   assert.equal(said().length, 2, '门口没了不再推')
   console.log(`⑧ 读数：结论行 ${said().length} 条（一批一条）· 第一条「${said()[0] ?? ''}」`)
+})
+
+// ── ⑨ 详情面在阅读面里（第二幕 ⑧）───────────────────────────────────────────────
+test('⑨ `Ctrl-R` 开出来的那几面里有详情面（快照只在阅读面开着时折）· 没有账就没有它', () => {
+  const rows: readonly StatusRow[] = [
+    { pos: { writer: 'round', seq: 1 }, e: { t: 'round/state' as never, round: 'r1' as never, from: 'Idle' as never, to: 'Planning' as never } },
+    { pos: { writer: 'agent/r1/1', seq: 1 }, e: { t: 'bound/deny' as never, agent: 'agent/r1/1' as never, path: 'etc/passwd' as never, rule: 'scope' as never, space: 'virtual' as never } },
+  ]
+  const { stage, ctl } = stageOf({ rows })
+  stage.onAction({ action: 'read' })
+  // 换一圈面：每一下 `Tab` 都报那一面的名字（`阅读面换一面 · <标题>`）。
+  for (let i = 0; i < 4; i += 1) stage.onAction({ action: 'complete' })
+  const titles = ctl.notes.filter((n) => n.startsWith('阅读面'))
+  const detail = titles.find((n) => n.includes('详情')) ?? ''
+  assert.ok(detail !== '', `换一圈该换到详情面：${JSON.stringify(titles)}`)
+  assert.ok(detail.includes(WORDS.denies) && detail.includes(WORDS.bounds), `详情面的标题写着那几样：${detail}`)
+  // **地板**：账上一行都没有时那一面不存在，`Tab` 也不会停在它上面。
+  const empty = stageOf({})
+  empty.stage.onAction({ action: 'read' })
+  for (let i = 0; i < 4; i += 1) empty.stage.onAction({ action: 'complete' })
+  assert.equal(empty.ctl.notes.some((n) => n.includes('详情')), false, '没有账就没有详情面')
+  console.log(`⑨ 读数：${titles.length} 条换面记 · 换到详情面「${detail}」`)
 })

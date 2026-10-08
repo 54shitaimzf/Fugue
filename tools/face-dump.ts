@@ -17,8 +17,9 @@
 import type { LogEvent } from '../src/log/events.ts'
 import type { StatusRow } from '../src/probe/status.ts'
 import { statusOf } from '../src/probe/status.ts'
-import { frameOf } from '../src/ui/frame.ts'
+import { frameOf, innerOf } from '../src/ui/frame.ts'
 import type { FrameInput } from '../src/ui/frame.ts'
+import { faceRowsOf, facesOf, readStateOf } from '../src/ui/read.ts'
 import { permanentLinesOf } from '../src/ui/stream.ts'
 import { openTerm } from '../src/ui/term.ts'
 import type { TermOut } from '../src/ui/term.ts'
@@ -90,6 +91,8 @@ function rowsOf(): StatusRow[] {
     }),
   )
   out.push(row({ t: 'merge/attempt', round: 'r1' as never, branches: [] as never, conflicts: 0 }))
+  // 一条越界：详情面那一张样张要看得见非零的「边界挡」（判决归 `read.test.ts` ⑧）。
+  out.push(row({ t: 'bound/deny', agent: 'agent/r1/1' as never, path: 'src/scroll.ts' as never, rule: 'scope' as never, space: 'virtual' as never }, 'agent/r1/1'))
   out.push(
     row({
       t: 'merge/accept',
@@ -155,6 +158,14 @@ function corpus(width: number): readonly (readonly [string, FrameInput])[] {
       {
         ...base(wide, FRAME_ROWS),
         read: { rows: ['阅读面 · 轮次 r1', '  第 1 行', '  第 2 行', '  第 3 行', '  第 4 行', '  第 5 行', '  第 6 行', '  第 7 行', '  第 8 行', '  第 9 行'], top: 0 },
+      },
+    ],
+    [
+      '详情面（阅读面第四面 · 第二幕 ⑧）',
+      {
+        ...base(wide, FRAME_ROWS),
+        // 那一面是 `facesOf` 排出来的（舞台递给 `frame.ts` 的就是这串行）——这里走同一条路。
+        read: { rows: [...faceRowsOf(facesOf(readStateOf(ROWS, { snapshot: statusOf(ROWS) })), 'detail', innerOf(wide))], top: 0 },
       },
     ],
     [

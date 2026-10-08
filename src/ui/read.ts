@@ -26,6 +26,12 @@
 //   · **少印要说出来**：一面最多印 `READ_LIMIT` 行，掐掉的那一截在头一行说清楚（逐条读法是
 //     `fugue log`——抄本，不渲染不筛选）。
 //
+// **四面**（第二幕 ⑧ 加了第四面）：diff · 契约正文 · 事件流 · **详情**。详情那一面是主面收掉的
+// 那几样原始读数（跳步那一格里的「图上走了几步」 · 内核拒 · 边界挡 · 最近）——**它一个数都不自己
+// 算**：进来的就是 `probe/status.ts` 的 `statusOf` 折出来的那一份快照，于是 `--json` 印的那几个
+// 字段与这里印的是同一个数（一处真相）。**不给快照就没有这一面**（`null`）：那一份快照一趟是
+// O(账上那些行)，与「只折尾部」那条增量是两码事，调用方按需给（阅读面开着才折）。
+//
 // **工具输出折叠**：一次 `run/start` 等它的 `run/end` 折成一行，一串连续的 `llm/call` 折成一行
 // （"调了 N 次"）。这两族是**一步一条**的高频流水（28 族里 24 条是这一类），逐条进阅读面就只剩坐标；
 // 折成一行之后"这一格跑了什么"才读得下去。折出来的行数在标题里说出来——**折叠不是丢**。
@@ -34,7 +40,8 @@ import { FAMILY_KIND } from './stream.ts'
 import { permanentLinesOf } from './stream.ts'
 import { clip, clustersOf } from './glyph.ts'
 import type { Cluster } from './glyph.ts'
-import type { StatusRow } from '../probe/status.ts'
+import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
+import { WORDS } from '../words.ts'
 
 /**
  * 读面上那一格变更：**账上的 `view/*` 那五族说得出的那几栏**（没有字节——账上没有它）。
@@ -164,6 +171,12 @@ export interface ReadState {
   readonly diffAt: readonly string[]
   readonly contracts: readonly ContractFace[]
   readonly stream: readonly string[]
+  /**
+   * **详情面那一栏**（第二幕 ⑧）：主面收掉的那几样原始读数，一行一轮 · 一行一格。
+   * **只有给了快照才有**（`ReadOptions.snapshot`）——那几样的定义与算法只在 `probe/status.ts`
+   * 一处，这一份不重算一遍。
+   */
+  readonly detail: readonly string[]
   /** 只记条数那一档（其余那几族）：一族一个数，不进 `stream`。 */
   readonly tally: Readonly<Record<string, number>>
   /** 折成永久行的条数（`ui/stream.ts` 那张表说了算）。 */
@@ -184,6 +197,7 @@ export const EMPTY_READ: ReadState = {
   diffAt: [],
   contracts: [],
   stream: [],
+  detail: [],
   tally: {},
   permanent: 0,
   tool: 0,
@@ -212,6 +226,11 @@ interface ReadOptions {
    * ③ 用它数"这一次折了几条"——"只折尾部"这句话就靠这颗钩子兑现。
    */
   readonly onRow?: ((row: StatusRow) => void) | undefined
+  /**
+   * 这一刻的账折出来的那一份快照（`probe/status.ts` 的 `statusOf`）——**详情面那一栏读它**。
+   * **不给就没有详情面**（`detail` 是空的 → 那一面是 `null`）。
+   */
+  readonly snapshot?: StatusSnapshot | undefined
 }
 
 /** 一行读面前缀：**账上的坐标**（与 `fugue log` 前两栏同一个写法）。 */
@@ -227,6 +246,29 @@ function callsLine(g: { readonly agent: string; readonly n: number; readonly mod
 /** 一次起进程那一行的头（`run/end` 到了就在它后面接尾巴）。 */
 function runHead(g: { readonly agent: string; readonly step: string; readonly action: string; readonly argv0: string }): string {
   return `格 ${g.agent} · 步 ${g.step} · 起了 ${g.argv0}（${g.action}）`
+}
+
+/**
+ * 详情面那几行（第二幕 ⑧）：**主面收掉的那几样原始读数**——跳步那一格里的「图上走了几步」（`hops`）·
+ * 内核拒（`denies`）· 边界挡（`bounds`）· 最近（`last`）。一行一轮次 · 一行一格。
+ *
+ * **它一个数都不自己算**：进来的就是 `probe/status.ts` 那一份快照。给了一格（`agent`）就只印
+ * 那一格（与另外那几面同一处筛选）。那四格的处置见交接单 § 五 ⑦ 与决策材料 § 四 4.3。
+ */
+function detailLinesOf(s: StatusSnapshot | undefined, agent: string | null): readonly string[] {
+  if (s === undefined) return []
+  const out: string[] = []
+  for (const r of s.rounds) {
+    out.push(`${WORDS.round} ${r.round} · ${WORDS.transitions} ${r.transitions} 条 · 图上走了 ${r.hops} 步`)
+  }
+  for (const a of s.agents) {
+    if (agent !== null && a.agent !== agent) continue
+    out.push(
+      `${WORDS.agent} ${a.agent} · ${WORDS.denies} ${a.denies} · ${WORDS.bounds} ${a.bounds}` +
+        ` · ${WORDS.last} ${a.last ?? '（空）'}`,
+    )
+  }
+  return out
 }
 
 /**
@@ -323,6 +365,7 @@ export function readStateOf(rows: readonly StatusRow[], opts: ReadOptions = {}):
     diffAt,
     contracts,
     stream,
+    detail: detailLinesOf(opts.snapshot, agent),
     tally,
     permanent,
     tool,
@@ -336,15 +379,17 @@ interface ReadFace {
   readonly lines: readonly string[]
 }
 
-/** 三面。**没有的那一面是 `null`**（不是空的一行——"没有"与"有但是空的"要分得开）。 */
+/** 四面。**没有的那一面是 `null`**（不是空的一行——"没有"与"有但是空的"要分得开）。 */
 interface ReadFaces {
   readonly diff: ReadFace | null
   readonly contract: ReadFace | null
   readonly stream: ReadFace
+  /** 详情面（第二幕 ⑧）：主面收掉的那几样原始读数。**没给快照就没有这一面**。 */
+  readonly detail: ReadFace | null
 }
 
-/** 三面的名字（按键在它们之间轮换）。 */
-export type ReadFaceName = 'diff' | 'contract' | 'stream'
+/** 四面的名字（按键在它们之间轮换）。 */
+export type ReadFaceName = 'diff' | 'contract' | 'stream' | 'detail'
 
 /** 一面的上限（行）。**它是一个常量，可调**：掐掉的那一截在头一行说清楚。 */
 export const READ_LIMIT = 200
@@ -401,7 +446,7 @@ function tallyLineOf(tally: Readonly<Record<string, number>>): string | null {
 }
 
 /**
- * 三面：**只排版，不再折**（进去的是 `readStateOf` 那一份）。`limit` 是每一面的行数上限。
+ * 四面：**只排版，不再折**（进去的是 `readStateOf` 那一份）。`limit` 是每一面的行数上限。
  *
  * 一面的标题里带着那一面自己的读数（几条变更 · 几份契约 · 折掉了多少），于是"折叠不是丢"这句话
  * 在屏幕上是看得见的。
@@ -430,15 +475,25 @@ export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}
         `（吃了 ${state.seen - state.permanent - state.counted} 条） · 只计数 ${state.counted} 条）`,
       lines: tail(streamAll, limit),
     },
+    detail:
+      state.detail.length === 0
+        ? null
+        : {
+            title:
+              `详情 · ${state.detail.length} 行（主面收掉的那几样原始读数：图上走了几步 · ` +
+              `${WORDS.denies} · ${WORDS.bounds} · ${WORDS.last}）`,
+            lines: tail(state.detail, limit),
+          },
   }
 }
 
 /**
- * 三面里的第几面：`Tab` 在它们之间轮换。**没有的那一面跳过去**（`diff` 一条变更都没有时按下
- * `Tab` 不该停在一张空纸上）；三面都没有（不可能：`stream` 总在）时给 `stream`。
+ * 四面里的第几面：`Tab` 在它们之间轮换。**没有的那一面跳过去**（`diff` 一条变更都没有时按下
+ * `Tab` 不该停在一张空纸上；没给快照时详情面也没有）；一面都没有（不可能：`stream` 总在）时
+ * 给 `stream`。
  */
 export function stepFace(faces: ReadFaces, name: ReadFaceName, delta: number): ReadFaceName {
-  const names = (['diff', 'contract', 'stream'] as const).filter((n) => faces[n] !== null)
+  const names = (['diff', 'contract', 'stream', 'detail'] as const).filter((n) => faces[n] !== null)
   const list = names.length === 0 ? (['stream'] as const) : names
   const at = list.indexOf(name)
   const next = at < 0 ? 0 : (((at + delta) % list.length) + list.length) % list.length
