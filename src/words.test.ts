@@ -89,9 +89,17 @@ test('① 词表：名单从表推 · 一个界面词只配一个概念（一事
 test('② 两个点名面照表印：新词在 · 旧词一个都不在', () => {
   const snap = statusOf(ROWS)
   const cat = readCatalog()
-  const frame = frameOf({ snapshot: snap, permanent: [], width: 100, height: 14 }).lines.join('\n')
+  // 三档视图各印自己那一批词（第二幕 ⑦）：记账与验收在读数视图，处境那一批在处境视图，对话视图
+  // 印的是轮次头与在飞那几格——**不拿对话视图去量读数那一批词**（那正是这一站把格分开的结果）。
+  const at = { snapshot: snap, permanent: [], width: 100, height: 14 } as const
+  const frameSpending = frameOf({ ...at, view: 'spending' }).lines.join('\n')
+  const frameProgress = frameOf({ ...at, view: 'progress' }).lines.join('\n')
+  const frameChat = frameOf(at).lines.join('\n')
   const cmd = linesOf(snap, { cat }).join('\n')
-  for (const [name, text] of [['面板（ui/frame.ts）', frame], ['命令行人面（probe/status.ts）', cmd]] as const) {
+  for (const [name, text] of [
+    ['面板 · 读数视图（ui/frame.ts）', frameSpending],
+    ['命令行人面（probe/status.ts）', cmd],
+  ] as const) {
     for (const w of RETIRED) {
       assert.ok(!text.includes(w), `${name} 上不该再出现「${w}」这两个字：\n${text}`)
     }
@@ -99,19 +107,28 @@ test('② 两个点名面照表印：新词在 · 旧词一个都不在', () => 
       assert.ok(text.includes(WORDS[k]), `${name} 上该印「${WORDS[k]}」`)
     }
   }
-  // 两栏的名字（面板那一面才有）：处境 → 进展 · 读数 → 结果与花费。
-  assert.ok(frame.includes(WORDS.progress), `面板左栏该叫「${WORDS.progress}」`)
-  assert.ok(frame.includes(WORDS.spending), `面板右栏该叫「${WORDS.spending}」`)
+  // 三档视图的框名从词表取（第二幕 ⑦ 之后没有「两栏」这回事了，名字挂在框名那一行）。
+  assert.ok(frameProgress.includes(WORDS.progress), `处境视图的框名该叫「${WORDS.progress}」`)
+  assert.ok(frameSpending.includes(WORDS.spending), `读数视图的框名该叫「${WORDS.spending}」`)
+  assert.ok(frameChat.includes(WORDS.chat), `对话视图的框名该叫「${WORDS.chat}」`)
+  // 对话视图也照表印：轮次头与在飞那几格在它上面，旧词一个都不许有。
+  for (const w of RETIRED) assert.ok(!frameChat.includes(w), `对话视图上不该出现「${w}」：\n${frameChat}`)
+  assert.ok(frameChat.includes(WORDS.agent) && frameChat.includes(WORDS.invocations), '对话视图该印在飞那一格')
   // 主面一律 `验收`，不许出现 `断言`（`--json` 的字段名 `assertions` 不在此列——它在 ④ 里）。
-  assert.ok(!frame.includes('断言') && !cmd.includes('断言'), '主面上不许出现「断言」')
+  assert.ok(!frameSpending.includes('断言') && !cmd.includes('断言'), '主面上不许出现「断言」')
   console.log(
-    `② 读数：面板那一帧 ${frame.split('\n').length} 行 · 命令行人面 ${cmd.split('\n').length} 行；` +
-      `两面上「${RETIRED.join('」「')}」各 0 处 · 「${WORDS.task}」「${WORDS.merges}」「${WORDS.accepts}」都在`,
+    `② 读数：读数视图 ${frameSpending.split('\n').length} 行 · 处境视图 ${frameProgress.split('\n').length} 行 · ` +
+      `对话视图 ${frameChat.split('\n').length} 行 · 命令行人面 ${cmd.split('\n').length} 行；` +
+      `三面上「${RETIRED.join('」「')}」各 0 处 · 「${WORDS.task}」「${WORDS.merges}」「${WORDS.accepts}」都在`,
   )
 })
 
-test('③ 两处源码去注释之后不再出现那几个词（这就是"两处中文字面量即红"）', () => {
-  for (const rel of ['./ui/frame.ts', './probe/status.ts'] as const) {
+test('③ 三处源码去注释之后不再出现那几个词（这就是"主面上中文字面量即红"）', () => {
+  // 四处＝主面那几层：面板（`ui/frame.ts`）· 命令行那一张人读脸（`probe/status.ts`）·
+  // **对话流那一栏**（`ui/stream.ts`，第二幕 ⑦ 收进来的）· **视图表**（`ui/views.ts`，
+  // 三档视图的名字）。进阶面（阅读面 · 命令面的 `round` 那几行）不在这条断言里，口径见
+  // 停点报告的疑点清单。
+  for (const rel of ['./ui/frame.ts', './probe/status.ts', './ui/stream.ts', './ui/views.ts'] as const) {
     const code = codeOf(readSrc(rel))
     for (const w of RETIRED) {
       assert.ok(!code.includes(w), `${rel} 的代码里还留着「${w}」——那一批词只许住 src/words.ts 一处`)
@@ -119,7 +136,7 @@ test('③ 两处源码去注释之后不再出现那几个词（这就是"两处
     // 反面：这一份确实读到了（不然上面那几条量的是空气）。
     assert.ok(code.includes('WORDS.'), `${rel} 该从词表取词（读到的是 ${code.length} 字节）`)
   }
-  console.log(`③ 读数：两份源码去注释后各 ${RETIRED.length} 个旧词 0 处命中 · 两份都从 WORDS 取词`)
+  console.log(`③ 读数：四份源码去注释后各 ${RETIRED.length} 个旧词 0 处命中 · 四份都从 WORDS 取词`)
 })
 
 test('④ 值层没被顺手翻：--json 那几个字段名照旧（换的只是人面那几个词）', () => {

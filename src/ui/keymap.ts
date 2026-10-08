@@ -313,7 +313,7 @@ export const TABLE: readonly Binding[] = [
     action: 'complete',
     keys: ['Tab'],
     hint: '补全',
-    note: '补全；没有可补的时候在各面板之间轮换',
+    note: '补全；没有可补的时候换视图（对话 · 进展 · 结果与花费，`Tab` 环形）',
     by: 'T4',
   },
   {

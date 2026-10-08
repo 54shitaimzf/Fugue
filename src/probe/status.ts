@@ -144,10 +144,11 @@ export interface RoundTrail {
  *
  * 0 就是没有跳步，一个字节都不印（与从前「没有跳步就不印」同形）。
  *
- * **对照那一支说 0 也该印**（远端那一支恒印「图上 N 步」，健康那趟也是一个数）——**这一条没采纳**：
- * 采纳它左栏长 4 个字符，`ui/term.test.ts` 的黄金帧从 7 行顶到 8 行（就是那一档折行的位置），而那条
- * 期望不是「事件加栏」带来的移动，本站不许自己动它。**改主意的条件**：人批一次显示层的期望移动
- * （同 ③ 那一次，出处要写在提交信息里）。
+ * **对照那一支说 0 也该印**（远端那一支恒印「图上 N 步」，健康那趟也是一个数）——**这一条不采纳**。
+ * 第二幕 ⑦ 按判据（注意力管理：「没有跳步」这件事不需要用户每次确认一次）把它定成**零就不印、
+ * 非零才报**，形状与今天同形——原来那句「改主意的条件＝人批一次显示层的期望移动」就此撤销：
+ * 本站已经批过一次显示层期望移动（§ 三 5 那四件），而这一条按判据选了不动。核对能力不看这一栏：
+ * `skips` 照旧在值层（`status --json` 与详情面读得到）。
  *
  * **负的不许被这道门吃掉**：判据要是退回到那个减法（`hops - transitions`），这一栏就得把那个
  * 负数**原样印出来**——读了它才知道判据坏了。原先那一处是 `skips > 0`，负的会静默变成「没有
@@ -752,7 +753,8 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions): readonly string[
   for (const r of s.rounds) {
     const here = r.round === s.current ? ' · 最近一条落在这一轮' : ''
     // 跳步那一栏与 TUI 逐字同源（`skipsNote`）：**这两个数从前各写各的减法，两处都能印出负数**。
-    // `hops` 不再单独印一句——每一跳印在哪几条边上，下面那几行边自己写着。
+    // `hops` 不再单独印一句（第二幕 ⑦ 的三分表把它列为「删」里的第一个，确认的正是这一条现状）
+    // ——每一跳印在哪几条边上，下面那几行边自己写着；字段照旧在快照里。
     const odd = r.unrouted > 0 ? ` · 图外 ${humanNumber(r.unrouted)} 条` : ''
     out.push(
       `${WORDS.round} ${r.round} · ${WORDS.state} ${r.state} · ${WORDS.transitions} ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
@@ -766,11 +768,15 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions): readonly string[
       a.stopped === null
         ? WORDS.moving
         : `${humanNumber(a.stopSteps)} ${WORDS.steps}${WORDS.halted}（${a.stopped}）`
+    // **第二幕 ⑦ 的三分表：删那四格里有三个在这里**——`denies` / `bounds` / `last` 从人读这一面
+    // 收掉（界面那一侧本来就没有读者：`grep -rn "\.denies\|\.bounds" src/ui/` 零命中）。值照旧在
+    // 快照里（`status --json` 那几栏一个字节不动），位置留给详情面。`交接` 与 `内核拒` 那两处
+    // **不是这三格**：前者没有别的写法，后者在下面「越界 被挡 N 次（内核拒 N …）」那一行里带着
+    // `byRule` 分组，信息量严格更大。
     out.push(
       `${WORDS.agent} ${a.agent} · ${WORDS.calls} ${humanNumber(a.calls)} 次 · ${humanNumber(a.steps)} ${WORDS.steps}` +
         ` · ${WORDS.invocations} ${humanNumber(a.invocations)} · ${WORDS.commands} ${humanNumber(a.actions)} 次` +
-        ` · 内核拒 ${humanNumber(a.denies)} · 边界挡 ${humanNumber(a.bounds)}` +
-        ` · 交接 ${humanNumber(a.handoffs)} · ${stop} · ${WORDS.last} ${a.last ?? '（空）'}`,
+        ` · 交接 ${humanNumber(a.handoffs)} · ${stop}`,
     )
   }
   const u = s.usage

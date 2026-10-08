@@ -120,18 +120,19 @@ test('① 门口开着且行空：按两次 y → 举手一次 · press 恰一�
   assert.ok(ctl.redraws > 0, '生效那一下重画了')
 })
 
-test('② Tab 补不动就在树里循环：主线 → agent → 主线（环形，不越界）', () => {
-  const { stage, ctl } = stageOf({ rows: NAV_ROWS })
+test('② Tab 补不动就换视图：对话 → 进展 → 结果与花费 → 对话（环形，不越界）', () => {
+  const { stage } = stageOf({ rows: NAV_ROWS })
   stage.onAdvance(NAV_ROWS)
-  // 空行按 Tab：没有词可补（`completeOf` 答不动）→ 轮到「在面板之间循环」那半句。
+  // 空行按 Tab：没有词可补（`completeOf` 答不动）→ 轮到「换视图」那半句（第二幕 ⑦：
+  // 三档视图环形轮换；切格改走 `Alt-1…9`，所以这一档不再写注记——换视图在屏上看得见）。
+  const viewOf = (): string | undefined => stage.view().view
+  assert.equal(viewOf(), 'chat', '缺省那一档是对话（`ui/views.ts` 的 `DEFAULT_VIEW`）')
   stage.onAction({ action: 'complete' })
+  assert.equal(viewOf(), 'progress', '第一下换到进展')
   stage.onAction({ action: 'complete' })
+  assert.equal(viewOf(), 'spending', '第二下换到结果与花费')
   stage.onAction({ action: 'complete' })
-  const swaps = ctl.notes.filter((n) => n.startsWith('切到 '))
-  assert.equal(swaps.length, 3, '三下 Tab 该切三次（补不动全走循环）')
-  assert.equal(swaps[0], '切到 agent/a1（2/2）', `第一下切到 agent（实得 ${swaps[0]}）`)
-  assert.equal(swaps[1], '切到 主线（round）（1/2）', `第二下循环回主线（实得 ${swaps[1]}）`)
-  assert.equal(swaps[2], '切到 agent/a1（2/2）', `第三下又切过去——是环形不是到头停（实得 ${swaps[2]}）`)
+  assert.equal(viewOf(), 'chat', '第三下绕回对话——是环形不是到头停')
 })
 
 test('③ Esc 七级的次序：门口最外，一层一层往里退（每一下只动最外那一级）', async () => {

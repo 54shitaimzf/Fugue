@@ -32,6 +32,7 @@
 // 从而证明这一栏真的在读那张表（`stream.test.ts` ②/③ 那两条负对照），所以它是一等入参。
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow } from '../probe/status.ts'
+import { WORDS } from '../words.ts'
 
 /** 联合里那一族（就是事件的 `t`）。**它是这一份的键**：一族一格，一个都不许漏。 */
 export type EventFamily = LogEvent['t']
@@ -131,14 +132,14 @@ function head(s: string, n: number): string {
 /**
  * 正文折成一行：空白（含换行）收成一个空格，再按**这一族**的 `BODY_LIMIT` 截。
  *
- * **为什么截**：一份契约的 JSON 与一封交接信都可以很长，而这一栏要的是"这一条事件是什么"，
+ * **为什么截**：一份任务的 JSON 与一封交接信都可以很长，而这一栏要的是"这一条事件是什么"，
  * 不是全文——全文的读法是 `fugue log`（抄本）与轮次那几条命令。
  */
 function excerpt(body: string, family: EventFamily): string {
   return head(body.replace(/\s+/g, ' ').trim(), BODY_LIMIT[family] ?? BODY_CHARS)
 }
 
-/** 写入面：**先条数，再前三条**（一份契约的路径可以几十条），多的那几条不挤进这一行。 */
+/** 写入面：**先条数，再前三条**（一份任务的路径可以几十条），多的那几条不挤进这一行。 */
 function surfaceOf(paths: readonly string[]): string {
   if (paths.length === 0) return '写入面 0 条'
   const shown = paths.slice(0, 3).join(' · ')
@@ -158,22 +159,22 @@ function lineOf(row: StatusRow): string {
   const e = row.e
   switch (e.t) {
     case 'round/state':
-      return `${at(row)}轮次 ${e.round} · ${e.from} → ${e.to}`
+      return `${at(row)}${WORDS.round} ${e.round} · ${e.from} → ${e.to}`
     case 'round/intent':
-      return `${at(row)}轮次 ${e.round} · 意图「${excerpt(e.body, 'round/intent')}」· 底 ${head(e.base, 8)}`
+      return `${at(row)}${WORDS.round} ${e.round} · 意图「${excerpt(e.body, 'round/intent')}」· 底 ${head(e.base, 8)}`
     case 'contract/issue':
-      return `${at(row)}轮次 ${e.round} · 契约 ${e.contract} → ${e.owner} · ${surfaceOf(e.paths)}`
+      return `${at(row)}${WORDS.round} ${e.round} · ${WORDS.task} ${e.contract} → ${e.owner} · ${surfaceOf(e.paths)}`
     case 'round/approve':
-      return `${at(row)}轮次 ${e.round} · 人放行 ${e.contracts.length} 份契约 · 批号 ${head(e.fingerprint, 8)}`
+      return `${at(row)}${WORDS.round} ${e.round} · 人放行 ${e.contracts.length} 份${WORDS.task} · 批号 ${head(e.fingerprint, 8)}`
     case 'agent/stop':
       return (
-        `${at(row)}格 ${e.agent} · ${e.steps} 步 · 停：${e.stopped}` +
+        `${at(row)}${WORDS.agent} ${e.agent} · ${e.steps} ${WORDS.steps}${WORDS.halted}（${e.stopped}）` +
         (e.handoffs > 0 ? ` · 交过 ${e.handoffs} 次接` : '')
       )
     case 'agent/handoff':
-      return `${at(row)}格 ${e.agent} → ${e.successor} · 契约 ${e.contract} · 交的是「${excerpt(e.body, 'agent/handoff')}」`
+      return `${at(row)}${WORDS.agent} ${e.agent} → ${e.successor} · ${WORDS.task} ${e.contract} · 交的是「${excerpt(e.body, 'agent/handoff')}」`
     case 'merge/attempt':
-      return `${at(row)}轮次 ${e.round} · 合并尝试 ${e.branches.length} 条分支 · 冲突 ${e.conflicts}`
+      return `${at(row)}${WORDS.round} ${e.round} · 合并尝试 ${e.branches.length} 条分支 · ${WORDS.conflicts} ${e.conflicts}`
     case 'merge/accept': {
       const pass = e.assertions.filter((a) => a.verdict === 'pass').length
       const fail = e.assertions.filter((a) => a.verdict === 'fail').length
@@ -181,14 +182,14 @@ function lineOf(row: StatusRow): string {
       // 三档与 `probe/status.ts` 同一处口径：**"跑不起来"既不进过也不进没过**（架构 § 8.12 末段：
       // 仪器故障不算活干错了）。它不为 0 时说出来，为 0 时不占这一行的宽度。
       return (
-        `${at(row)}轮次 ${e.round} · 合并接受 ${head(e.commit, 8)} · 断言 ${e.assertions.length} 条` +
+        `${at(row)}${WORDS.round} ${e.round} · 合并接受 ${head(e.commit, 8)} · ${WORDS.accepts} ${e.assertions.length} 条` +
         `（过 ${pass} / 没过 ${fail}${broken > 0 ? ` / 跑不起来 ${broken}` : ''}）`
       )
     }
     case 'bound/deny':
-      return `${at(row)}格 ${e.agent} · 边界拦下 ${e.path}（${e.space === 'virtual' ? '视图' : '物化树'}）· 规则 ${e.rule}`
+      return `${at(row)}${WORDS.agent} ${e.agent} · 边界拦下 ${e.path}（${e.space === 'virtual' ? '视图' : '物化树'}）· 规则 ${e.rule}`
     case 'signal':
-      return `${at(row)}格 ${e.agent} · 信号 ${e.kind}（${e.id}）`
+      return `${at(row)}${WORDS.agent} ${e.agent} · 信号 ${e.kind}（${e.id}）`
     default:
       throw new Error(`这一族没有分到永久行：${(e as { readonly t: string }).t}`)
   }

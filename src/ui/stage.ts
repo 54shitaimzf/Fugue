@@ -19,8 +19,9 @@ import type { MenuRow, MenuSource } from './menu.ts'
 import { GATE_KEEP, GATE_VIEW, gateRowsOf, lineOf, pressGate, stepAt } from './gate.ts'
 import type { GateFace, GateOption, GateView } from './gate.ts'
 import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from './queue.ts'
-import { altAt, clampNav, navNodesOf, navRowsOf, stepNav, writerAt } from './nav.ts'
+import { altAt, clampNav, navNodesOf, navRowsOf, writerAt } from './nav.ts'
 import type { NavNode } from './nav.ts'
+import { stepView, viewAt } from './views.ts'
 import { EMPTY_READ, faceRowsOf, facesOf, firstFace, readStateOf, stepFace, stepTop } from './read.ts'
 import type { ReadFaceName, ReadState } from './read.ts'
 import type { QueueState } from './queue.ts'
@@ -144,6 +145,11 @@ export function openStage(deps: StageDeps): Stage {
    */
   let navNodes: readonly NavNode[] = []
   let navAt = 0
+  /**
+   * 看第几档视图（第二幕 ⑦）：对话（缺省）· 处境 · 读数，`Tab` 轮换。**纯视图状态**——
+   * 不落账、不进日志、进程一退就没了（与 `navAt` 同一档；PLAN § 5.19 一 · 3）。
+   */
+  let viewIndex = 0
   /**
    * 阅读面（`T9`）：**折到哪儿了** + 现在看第几面 + 看到第几行起。
    *
@@ -345,6 +351,7 @@ export function openStage(deps: StageDeps): Stage {
       ...bottomPart,
       ...readPart,
       focus: writerAt(navNodes, navAt),
+      view: viewAt(viewIndex),
       input: { rows: frame.rows, caret: frame.caret },
     }
   }
@@ -639,8 +646,8 @@ export function openStage(deps: StageDeps): Stage {
       settle()
       return
     }
-    // ⑦ `Tab`：补全（候选从行推：命令那一档补命令名，别处补手里那个词）。补不动就什么都不做
-    // ——在各面板之间轮换是 `T8` 的事。
+    // ⑦ `Tab`：补全（候选从行推：命令那一档补命令名，别处补手里那个词）。**补不动就换视图**
+    // （第二幕 ⑦：对话 → 处境 → 读数，环形；切格走 `Alt-1…9`）。
     if (d.action === 'complete') {
       const source: MenuSource = panel?.source ?? (ed.draft.text.startsWith('/') ? 'cmd' : 'keys')
       const next = completeOf({ rows: rowsOf(source), line: ed.draft.text, source })
@@ -649,14 +656,11 @@ export function openStage(deps: StageDeps): Stage {
         settle()
         return
       }
-      // **补不动就轮到"在面板之间循环"**（§ 5.19 二那张表 `Tab` 那一行的后半句）：树上的节点换一个
-      // （主线 → 各 agent → 主线）。两处不让：弹层开着时 `↑`/`↓` 是选项那一档，这一下不抢它。
-      if (panel === null && navNodes.length > 1) {
-        navAt = stepNav(navNodes.length, navAt, 1)
-        // 换了一格：阅读面跟着换成那一格的（`readStateOf` 按 `agent` 判 `prev` 还能不能用）。
-        refreshRead()
-        deps.note(`切到 ${navNodes[navAt]?.label ?? ''}（${navAt + 1}/${navNodes.length}）`)
-      }
+      // **补不动就换视图**（第二幕 ⑦；形状从 `nav.ts` 取——`stepView` 就是 `stepNav` 那一手）。
+      // 不写注记：换视图在屏上看得见（框名从「对话」变成「进展」/「结果与花费」），而终端历史是
+      // 给人翻的流水——为一次纯视觉的切换往里头写一行，是把历史当日志用（交互律一「安静即稳态」）。
+      // 一处不让：弹层开着时 `↑`/`↓` 是选项那一档，这一下不抢它（`panel === null` 那个条件）。
+      if (panel === null) viewIndex = stepView(viewIndex, 1)
       settle()
       return
     }

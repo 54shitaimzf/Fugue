@@ -203,9 +203,9 @@ function mix(): StatusRow[] {
 const MIX_GOLDEN: readonly string[] = [
   'round 1 · 轮次 r1 · 意图「给记账库加一条按天汇总 第二条约束：别越界写」· 底 01234567…',
   'round 2 · 轮次 r1 · Idle → Planning',
-  'agent/r1/1 3 · 格 agent/r1/1 · 3 步 · 停：收敛 · 交过 2 次接',
+  'agent/r1/1 3 · 格 agent/r1/1 · 3 步就停（收敛） · 交过 2 次接',
   'round 3 · 轮次 r1 · 合并尝试 2 条分支 · 冲突 1',
-  'round 4 · 轮次 r1 · 合并接受 abcdef01… · 断言 3 条（过 2 / 没过 0 / 跑不起来 1）',
+  'round 4 · 轮次 r1 · 合并接受 abcdef01… · 验收 3 条（过 2 / 没过 0 / 跑不起来 1）',
 ]
 
 test('① 表与联合逐字对得上：30 族一个不多一个不少', () => {

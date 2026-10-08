@@ -8,6 +8,9 @@
 // 把帧与它下面那块区域的**字节流**原样印出来。**它一个断言都不下**——判决归 `src/ui/*.test.ts`
 // 那几处，这一份只给人看。
 //
+// 高度取**真终端上框的那 10 行**（`ui/layout.ts` 的 `FRAME_ROWS`，一处真源）：第二幕 ⑦ 起框自己
+// 就填满这一屏，给一个更大的高度画出来的只是「内容几行 + 其余全空」，不是人真正看见的那一眼。
+//
 // 输入是**这一份自己的**（不 import 任何 `.test.ts`）：样张要能独立于断言长出来，两边同时漂
 // 才说明不了问题。折法与渲染一律走产品那几处（`probe/status.ts` · `ui/frame.ts` · `ui/term.ts`），
 // 这一份不另写一份排版。
@@ -19,6 +22,7 @@ import type { FrameInput } from '../src/ui/frame.ts'
 import { permanentLinesOf } from '../src/ui/stream.ts'
 import { openTerm } from '../src/ui/term.ts'
 import type { TermOut } from '../src/ui/term.ts'
+import { FRAME_ROWS } from '../src/ui/layout.ts'
 
 let seq = 0
 const row = (e: LogEvent, w = 'round'): StatusRow => ({ pos: { writer: w, seq: (seq += 1) }, e })
@@ -123,34 +127,41 @@ const base = (width: number, height: number): FrameInput => ({
   height,
 })
 
-/** 几张样张：主面 · 窄屏 · 矮屏 · 太矮 · 候选那一层 · 阅读面 · 门口那一块 + 树。 */
+/**
+ * 几张样张（第二幕 ⑦ 之后是三档视图各一张，加窄屏 · 矮屏 · 太矮 · 候选那一层 · 阅读面 ·
+ * 门口那一块 + 树）。**三档各印一张**是这一份的主要用处：交付要求里的「主面样张改词前后
+ * 并排」看的就是对话视图那一张，另两档是 `Tab` 轮换出去的视图。
+ */
 function corpus(width: number): readonly (readonly [string, FrameInput])[] {
   const wide = width
   const narrow = Math.max(20, Math.min(40, width))
   return [
-    ['主面（两栏 · 满高）', base(wide, 19)],
-    ['主面（80 列）', base(80, 19)],
-    ['窄屏（单栏）', base(narrow, 19)],
+    ['主面 · 对话视图（缺省那一档）', base(wide, FRAME_ROWS)],
+    ['对话视图（80 列）', base(80, FRAME_ROWS)],
+    ['对话视图（窄屏）', base(narrow, FRAME_ROWS)],
+    ['进展视图（`Tab` 第一档）', { ...base(wide, FRAME_ROWS), view: 'progress' }],
+    ['结果与花费视图（`Tab` 第二档）', { ...base(wide, FRAME_ROWS), view: 'spending' }],
     ['矮屏（高度 8）', base(wide, 8)],
     ['太矮（高度 4）', base(wide, 4)],
     [
       '候选那一层（/ 菜单开着）',
       {
-        ...base(wide, 19),
+        ...base(wide, FRAME_ROWS),
         menu: { rows: ['/status 一次快照', '/watch 跟着看', '/tui 第二档渲染', '/log 抄本', '/read 读一份', '/diff 看差异', '/commit 提交'], sel: 2 },
       },
     ],
     [
       '阅读面（T9）',
       {
-        ...base(wide, 19),
+        ...base(wide, FRAME_ROWS),
         read: { rows: ['阅读面 · 轮次 r1', '  第 1 行', '  第 2 行', '  第 3 行', '  第 4 行', '  第 5 行', '  第 6 行', '  第 7 行', '  第 8 行', '  第 9 行'], top: 0 },
       },
     ],
     [
-      '门口那一块 + 树',
+      '门口那一块 + 树（在进展视图里——对话视图那一档不印树）',
       {
-        ...base(wide, 19),
+        ...base(wide, FRAME_ROWS),
+        view: 'progress',
         nav: { rows: ['▸ 主线', '  agent/r1/1', '  agent/r1/2'], sel: 0 },
         bottom: { rows: ['门口停着：2 份契约等你点头', '  r1.implement.1 → agent/r1/1', '  r1.implement.2 → agent/r1/2', 'y 放行 · n 拒 · Esc 中止'], keep: 2 },
       },

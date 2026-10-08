@@ -85,6 +85,7 @@ import { MIN_HEIGHT, panelOf } from './frame.ts'
 import type { LineRole } from './frame.ts'
 import { widthOf } from './glyph.ts'
 import { FRAME_ROWS, GAP_ROWS, HINT_ROWS, REGION_ROWS } from './layout.ts'
+import type { ViewKey } from './views.ts'
 
 /**
  * 底部那块**重画区**的期望行数（PLAN § 5.19：K 取 12）——**框 10 ＋ 空一行 ＋ 提示行**（第二幕 ④；
@@ -228,7 +229,8 @@ export interface ViewInput {
   readonly bottom?: BottomInput | undefined
   /**
    * 树那几个节点（`T8`）：**排在内容那一栏的最上面**（导航：主线为根 · agent 缩进一级）。`sel` 是选中
-   * 哪一个（`frame.ts` 那一层按它把选中的那个留在窗里）。
+   * 哪一个（`frame.ts` 那一层按它把选中的那个留在窗里）。**对话视图那一档不印它**（第二幕 ⑦：
+   * 决策材料的线框稿里没有树，切格走 `Alt-1…9`），所以它只在 `progress` / `spending` 两档里出现。
    */
   readonly nav?: NavInput | undefined
   /**
@@ -238,6 +240,11 @@ export interface ViewInput {
    * <x>` 读的是同一批行（`T8` 那句断言查的就是它）。
    */
   readonly focus?: string | null | undefined
+  /**
+   * 看哪一档视图（第二幕 ⑦）：对话（缺省）· 处境 · 读数。与 `FrameInput.view` 同一样东西，
+   * 这一层只带话（谁开的面板由舞台那一边说了算）。
+   */
+  readonly view?: ViewKey | undefined
   /**
    * 阅读面那一栏（`T9`）：**排在内容那一栏的最下面**（`ui/read.ts` 算好的那几行 · `top` 是看到第几
    * 行起）。它不给时一个字节都不占。
