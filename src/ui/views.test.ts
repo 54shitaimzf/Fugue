@@ -82,7 +82,9 @@ test('③ 三分表：12 / 11 / 4，而且"删"那四格值层照旧在、人读
     // **格那一行**里那三个格子一个都不许再印（`越界 被挡 N 次（内核拒 N）` 那一行不是这三格：
     // 它带 `byRule` 分组，信息量严格更大，留着）。
     // 找格那一行：框线还在行首，所以按「格 <writer>」这一段找，不按行首找。
-    const cell = text.split('\n').find((l) => l.includes(`${WORDS.agent} agent/`) && l.includes(WORDS.calls))
+    // **不拿 `${WORDS.calls}` 一起当线索**：对话面把计数挪到缩进的那一行去了（收口后按人令），
+    // 命令行那一面照旧。按「格 <writer>」这一段找，两张脸都找得到。
+    const cell = text.split('\n').find((l) => l.includes(`${WORDS.agent} agent/`))
     assert.ok(cell !== undefined, `${name} 上该找得到格那一行：\n${text}`)
     assert.ok(!(cell as string).includes('内核拒'), `${name} 的格那一行不该再印「内核拒」：${cell as string}`)
     assert.ok(!(cell as string).includes('边界挡'), `${name} 的格那一行不该再印「边界挡」：${cell as string}`)

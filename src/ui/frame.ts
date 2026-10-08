@@ -49,7 +49,7 @@ import { iconOf } from './icons.ts'
 import type { IconName } from './icons.ts'
 import { MIN_FRAME_ROWS } from './layout.ts'
 import { humanNumber } from '../human.ts'
-import { WORDS } from '../words.ts'
+import { WORDS, stateFaceOf } from '../words.ts'
 import { DEFAULT_VIEW, viewNameOf } from './views.ts'
 import type { ViewKey } from './views.ts'
 
@@ -276,10 +276,15 @@ export function bodyOf(o: {
     // 跳步那一栏**不再自己做减法**（`hops - transitions` 在图外边那一档印出过 -1，在自环那一档
     // 把真的跳步抵成不印）；数与写法都从 `probe/status.ts` 那一处取，与命令行那一张脸同源。
     left.push(
-      `${WORDS.round} ${r.round} · ${WORDS.state} ${r.state} · ${WORDS.transitions} ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
+      `${WORDS.round} ${r.round} · ${stateFaceOf(r.state)} · ${WORDS.transitions} ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
         ` · ${WORDS.rejects} ${humanNumber(r.rejects)} 次${here}`,
     )
-    for (const e of r.edges) left.push(`  ${e}`)
+    // **那几条原始转移不上主面**（收口后按人令）：它们是值层原文（`r.edges` 逐条进 `--json`），
+    // 印出来是 `Idle ──land──> Planning` 这种内部名字——机器名上屏，人读不懂也不缺。条数与跳步数
+    // 在轮次那一行；逐条原文的读法在阅读面的事件流与 `fugue log`。同一条口径：**主面只留人话，
+    // 原文去阅读面**。改主意的条件：若实测发现"跳步那一条到底走了哪几步"在主面上要得紧，
+    // 就把 `probe/status.ts` 的每一步改成**结构化的**（`from` / `to` / `on` 三栏，与 `round new
+    // --json` 的 `trail` 同形），再由每一面各印各的人话——那是加值层的一栏，要人批。
     if (r.unrouted > 0) left.push(`  （图上走不通的 ${r.unrouted} 条：账与图对不上）`)
   }
   for (const a of s.agents) {
@@ -289,9 +294,19 @@ export function bodyOf(o: {
       a.stopped === null
         ? WORDS.moving
         : `${a.stopSteps === undefined ? '?' : humanNumber(a.stopSteps)} ${WORDS.steps}${WORDS.halted}（${a.stopped}）`
+    // **一行一件事**（收口后按人令）：头一行只说"这是哪一格 · 它还在跑还是停了"，计数挪到缩进的那一行
+    // ——与对话面同一个形状（`chatOf` 那两行）。**零值不上屏**：一条命令都没起过的格不印
+    // 「运行命令 0 次」，与跳步 · 内核拒 · 边界挡同一条口径（零那一条不占宽度）。
+    left.push(`${WORDS.agent} ${a.agent} · ${stop}`)
     left.push(
-      `${WORDS.agent} ${a.agent} · ${WORDS.calls} ${humanNumber(a.calls)} 次 · ${humanNumber(a.steps)} ${WORDS.steps}` +
-        ` · ${WORDS.invocations} ${humanNumber(a.invocations)} · ${WORDS.commands} ${humanNumber(a.actions)} 次 · ${stop}`,
+      `  ${[
+        `${WORDS.calls} ${humanNumber(a.calls)} 次`,
+        `走了 ${humanNumber(a.steps)} ${WORDS.steps}`,
+        `${WORDS.invocations} ${humanNumber(a.invocations)}`,
+        a.actions > 0 ? `${WORDS.commands} ${humanNumber(a.actions)} 次` : '',
+      ]
+        .filter((one) => one !== '')
+        .join(' · ')}`,
     )
   }
 
@@ -324,9 +339,15 @@ export function bodyOf(o: {
   return { left, right }
 }
 
-/** 对话视图那一栏的一行：轮次头 · 块间细线 · 一格 agent（第二幕 ⑦）。 */
+/**
+ * 对话视图那一栏的一行：轮次头 · 块间细线 · 一格 agent · 那一格的读数（`aside`，缩进一行）。
+ *
+ * `aside` 是收口后按人令加的：格那一行从前五样挤在一起（这是谁 · 调用几次 · 几步 · 工具调用几次 ·
+ * 停没停），用小圆点串到底——读的人得先自己把那一行拆开。现在第一行只说"这是谁 · 它还在跑还是停了"，
+ * 计数那几样缩进着跟在下面。
+ */
 export interface ChatRow {
-  readonly kind: 'head' | 'rule' | 'agent'
+  readonly kind: 'head' | 'rule' | 'agent' | 'aside'
   /**
    * 这一行要哪一颗图标（第二幕 ⑨）。**由折这一栏的那一处点名**（`chatOf` 知道这一行是轮次头还是
    * 停下来的格），而不是由图标那一档去猜行的内容。不点名（`rule` 那一行）就是没有图标。
@@ -368,7 +389,7 @@ export function chatOf(o: { readonly snapshot: StatusSnapshot }): readonly ChatR
   const head =
     r === undefined
       ? '还没开过轮次（账上一条 round/state 都没有）'
-      : `${WORDS.round} ${r.round} · ${WORDS.state} ${r.state}${run}${rej}`
+      : `${WORDS.round} ${r.round} · ${stateFaceOf(r.state)}${run}${rej}`
   const rows: ChatRow[] = [
     { kind: 'head', icon: 'round', text: head },
     { kind: 'rule', text: '' },
@@ -378,12 +399,13 @@ export function chatOf(o: { readonly snapshot: StatusSnapshot }): readonly ChatR
       a.stopped === null
         ? WORDS.moving
         : `${a.stopSteps === undefined ? '?' : humanNumber(a.stopSteps)} ${WORDS.steps}${WORDS.halted}（${a.stopped}）`
+    // **一行只放一件事**：第一行"这是谁 · 还在跑还是停了"，第二行缩进着放计数那几样。
+    rows.push({ kind: 'agent', icon: a.stopped === null ? 'moving' : 'halted', text: `${WORDS.agent} ${a.agent} · ${stop}` })
     rows.push({
-      kind: 'agent',
-      icon: a.stopped === null ? 'moving' : 'halted',
+      kind: 'aside',
       text:
-        `${WORDS.agent} ${a.agent} · ${WORDS.calls} ${humanNumber(a.calls)} 次 · ${humanNumber(a.steps)} ${WORDS.steps}` +
-        ` · ${WORDS.invocations} ${humanNumber(a.invocations)} · ${stop}`,
+        `${WORDS.calls} ${humanNumber(a.calls)} 次 · 走了 ${humanNumber(a.steps)} ${WORDS.steps}` +
+        ` · ${WORDS.invocations} ${humanNumber(a.invocations)}`,
     })
   }
   return rows
@@ -520,12 +542,12 @@ export function frameOf(o: FrameInput): Frame {
   if (width <= 0 || height <= 0) return empty
   if (width < MIN_WIDTH) {
     // 极窄帧：画不出框就说出来。不加这一道，出来的是一整幅 `││`（框内 0 列）——那是静默的空帧。
-    const why = `（这一屏太窄：要 ${MIN_WIDTH} 列以上才画得出框，拿到的是 ${width} 列）`
+    const why = `（这一屏太窄：要 ${MIN_WIDTH} 列以上才画得出框）`
     return { ...empty, lines: [cell(why, width)], roles: ['body'] }
   }
   if (height < MIN_HEIGHT) {
     // 画不出框就说出来，不静默给一个空帧（读面那一条：少印要说）。
-    const why = `（这一屏太矮：要 ${MIN_HEIGHT} 行以上才画得出框与账尾，拿到的是 ${height} 行）`
+    const why = `（这一屏太矮：要 ${MIN_HEIGHT} 行以上才画得出框与账尾）`
     return { ...empty, lines: [cell(why, width)], roles: ['body'] }
   }
 
@@ -551,7 +573,9 @@ export function frameOf(o: FrameInput): Frame {
       ? chatOf(o).map((x) =>
           x.kind === 'rule'
             ? { l: `${' '.repeat(air)}${glyphs().div.repeat(ruleW)}`, role: 'border' as const }
-            : { l: `${iconPrefixOf(x.icon)}${x.text}`, role: 'body' as const },
+            : x.kind === 'aside'
+              ? { l: `  ${x.text}`, role: 'body' as const }
+              : { l: `${iconPrefixOf(x.icon)}${x.text}`, role: 'body' as const },
         )
       : (view === 'progress' ? body.left : body.right).map((l) => ({ l, role: 'body' as const }))
   const rows = bodyRows.flatMap((one) => wrap(one.l, inner).map((x) => ({ l: x, role: one.role })))
@@ -584,7 +608,7 @@ export function frameOf(o: FrameInput): Frame {
       for (let i = w.from; i < w.from + w.count; i += 1) {
         menuBody.push(`${i === at ? g.sel : ' '} ${menuAll[i] as string}`)
       }
-      if (w.summary) menuBody.push(`${g.mark} 还有 ${w.above + w.below} 条（${g.up}${g.down} 翻，选中第 ${at + 1} 条）`)
+      if (w.summary) menuBody.push(`${g.mark} 还有 ${w.above + w.below} 条`)
     }
   }
   // 阅读面那一栏（`T9`）**开着的时候整块地方给它**：树与内容那一栏都不印——那一刻人要看的就是
@@ -602,7 +626,7 @@ export function frameOf(o: FrameInput): Frame {
     // 被提示换了——这一行数的是"屏上没看见几行"，不是"游标之后还剩几行"。
     if (below > 0) {
       const g = glyphs()
-      readBody[readBody.length - 1] = `${g.mark} 下面还有 ${below + 1} 行（${g.up}${g.down} 翻 · Esc 收起）`
+      readBody[readBody.length - 1] = `${g.mark} 下面还有 ${below + 1} 行`
     }
   }
   budget -= readBody.length
@@ -618,7 +642,7 @@ export function frameOf(o: FrameInput): Frame {
   const navBody: string[] = []
   if (navWin !== null) {
     for (let i = navWin.from; i < navWin.from + navWin.count; i += 1) navBody.push(navAll[i] as string)
-    if (navWin.summary) navBody.push(`  ${glyphs().mark} 还有 ${navWin.above + navWin.below} 个节点（Alt-1…9 直选）`)
+    if (navWin.summary) navBody.push(`  ${glyphs().mark} 还有 ${navWin.above + navWin.below} 个节点`)
   }
   budget -= navBody.length
 
@@ -644,7 +668,7 @@ export function frameOf(o: FrameInput): Frame {
     ...navBody.map((l) => ({ l, role: 'body' as const })),
     ...content.map((x) => ({ l: x.l, role: x.role })),
   ]
-  if (dropped > 0) shown.push({ l: `${glyphs().mark} 还有 ${dropped} 行没印（这一屏 ${height} 行）`, role: 'body' })
+  if (dropped > 0) shown.push({ l: `${glyphs().mark} 还有 ${dropped} 行没印`, role: 'body' })
   for (const one of readBody) shown.push({ l: one, role: 'read' })
   // **框恒填满这一屏**（第二幕 ⑦ 收尾）：`ui/layout.ts` 那本行账里「内容 6 行」是个**定数**
   // （框恒 10 行），而这一份从前只是"内容够长时看起来填满了"——账还小的时候（一两格 agent）

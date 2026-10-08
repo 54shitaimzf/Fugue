@@ -237,7 +237,7 @@ export function gateQueueRowOf(face: GateFace, at: number): string {
   if (n === 0) return `门口这一批一份${WORDS.task}都没有（门不会停在这样一批上——报出来）`
   const i = clampAt(n, at)
   const c = face.cards[i] as GateCard
-  return `还有 ${n} 份等你点头 · 第 ${i + 1}/${n} 份 · ${c.id} · ${c.agent} · ${c.kind}（↑↓ 翻）`
+  return `还有 ${n} 份等你点头 · 第 ${i + 1}/${n} 份 · ${c.id} · ${c.agent} · ${c.kind}`
 }
 
 /** 选项行：**三档**；举过手就把那一句"再按一次"说出来（二段确认要对人可见）。 */

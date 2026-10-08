@@ -849,8 +849,11 @@ export function hintPicksOf(km: Keymap = KEYMAP, when: HintWhen = 'any'): readon
 
 /**
  * 提示那一行。**由表推出来**，只印**已经落了地的**那些（`by` 在 `WIRED` 里）——许诺一个按下去没
- * 反应的键，比少印几条坏得多。`limit` 是给 `--help` 与面板抬头留的：只印头几条，剩下的写成
- * "还有 N 条"，而那个 N 也是从表里数出来的。
+ * 反应的键，比少印几条坏得多。`limit` 是按屏幕宽度取前几条：**装不下的那几条不印**。
+ *
+ * 从前这里缀一句"· …（还有 N 条，按 Ctrl-P 看全部）"——那是把"这个界面一共多少个键、去哪儿看
+ * 全部"端到人面前，而人要的是"此刻按哪个"。收口后按人令去掉；`--help` 那一行读的是同一个函数，
+ * 于是它也少了一句（`help.json` 那一帧跟着重录，见停点报告）。
  *
  * `when`（第三幕 ②）是"此刻屏幕上是什么"；缺省 `any` 就是第三幕 ② 之前那一串（逐字节不变）。
  */
@@ -858,17 +861,15 @@ export function hintLineOf(km: Keymap = KEYMAP, limit = 0, when: HintWhen = 'any
   const ready = hintPicksOf(km, when)
   if (ready.length === 0) return '按键：这一档还没有接上线的键'
   const shown = limit > 0 && ready.length > limit ? ready.slice(0, limit) : ready
-  const more = ready.length - shown.length
-  const tail = more > 0 ? ` · …（还有 ${more} 条，按 Ctrl-P 看全部）` : ''
-  return `按键 ${shown.map((b) => entryOf(b, when)).join(' · ')}${tail}`
+  return `按键 ${shown.map((b) => entryOf(b, when)).join(' · ')}`
 }
 
 /**
  * 那一行里最多放得下几条：**宽度是入参**（提示行是给屏幕看的，不是给文件看的）。一条一条地量，
- * 量的是**整行**（"还有 N 条"那一句本身也占列）。
+ * 量的是**整行**。
  *
  * 为什么要它：表落到 28 条已经落地的动作之后，整行印出来是 438 列（实测）——终端会把它折成五行，
- * 那正是这一档最难看的样子。窄到一条加那一句都放不下时给 1（只印一条）。
+ * 那正是这一档最难看的样子。窄到一条都放不下时给 1（只印一条）。
  */
 export function hintLimitOf(columns: number, km: Keymap = KEYMAP, when: HintWhen = 'any'): number {
   const total = hintPicksOf(km, when).length

@@ -246,7 +246,11 @@ test('④ 同一串事件折两次 → 同一份快照', () => {
   assert.equal(a.agents[0]?.stopSteps, 1)
   // 人读那几行要把这几样印出来（`--once` 的正面就是它）。
   const text = linesOf(a, { cat: BUILTIN_CATALOG }).join('\n')
-  assert.match(text, /状态 Rebuilding/)
+  // 状态那一个值印的是人话（`Rebuilding` → `重建`），**裸值那一面一个字不动**（`--json` 照旧）。
+  // 只量**轮次头那一行**：下面那几行边名里带着 `Rebuilding`（那是图上那一步的名字，不是这一栏）。
+  const head = text.split('\n')[0] as string
+  assert.match(head, /轮次 r1 · 重建/)
+  assert.doesNotMatch(head, /Rebuilding/, `轮次头不许再印英文状态名：${head}`)
   assert.match(text, /1 步就停（收敛）/)
   assert.match(text, /cacheRead 1,920/)
 })

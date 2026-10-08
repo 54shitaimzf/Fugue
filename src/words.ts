@@ -85,3 +85,29 @@ export const WORDS: Readonly<Record<WordKey, string>> = Object.fromEntries(
 export function archNameOf(k: WordKey): string {
   return WORD_TABLE[k].arch
 }
+
+/**
+ * **状态那一栏印出去的名字**：`RoundState`（架构 § 8.13）那十个取值 → 主面上的词。
+ *
+ * 为什么单独一张：`WORDS.state` 是"这一栏叫什么"（`状态`），这一张是"这一栏里的那个值，人话怎么
+ * 说"。`--json` 那一面照旧吐 `"state":"Rebuilding"`——**裸值一个字不动**，换的只是渲染。
+ *
+ * 表里没有的取值**照原样印**（新状态落地时先让人看见英文，好过印一个猜出来的词）。
+ */
+export const STATE_FACE: Readonly<Record<string, string>> = {
+  Idle: '待命',
+  Planning: '规划',
+  Delegated: '派活',
+  Working: '干活',
+  Collecting: '收拢',
+  Merging: '合并',
+  Verifying: '验收',
+  Committed: '已定格',
+  Rebuilding: '重建',
+  Aborted: '中止',
+}
+
+/** 状态那一个值人话怎么说（表里没有就照原样——不猜）。 */
+export function stateFaceOf(state: string): string {
+  return STATE_FACE[state] ?? state
+}

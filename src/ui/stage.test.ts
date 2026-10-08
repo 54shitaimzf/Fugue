@@ -329,7 +329,15 @@ test('⑨ `Ctrl-R` 开出来的那几面里有详情面（快照只在阅读面�
   const titles = ctl.notes.filter((n) => n.startsWith('阅读面'))
   const detail = titles.find((n) => n.includes('详情')) ?? ''
   assert.ok(detail !== '', `换一圈该换到详情面：${JSON.stringify(titles)}`)
-  assert.ok(detail.includes(WORDS.denies) && detail.includes(WORDS.bounds), `详情面的标题写着那几样：${detail}`)
+  // **那几样原始读数在行上**：标题只报"这是哪一面"（标题里那本账收口后按人令去掉了）。
+  // 收起重开一次再走一步，让当前这一面正好是详情面，然后看它印出来的行。
+  stage.onAction({ action: 'read' })
+  stage.onAction({ action: 'read' })
+  stage.onAction({ action: 'complete' })
+  const shown = [...(stage.view().read?.rows ?? [])].join('\n')
+  assert.ok(shown.includes(WORDS.bounds) && shown.includes(WORDS.last), `详情面的行里该写着那几样：${shown}`)
+  // **零值不上屏**（收口后按人令）：这一格的内核拒是 0，那一栏一个字都不印。
+  assert.ok(!shown.includes(WORDS.denies), `零值那一栏不上屏（这一格的内核拒是 0）：${shown}`)
   // **地板**：账上一行都没有时那一面不存在，`Tab` 也不会停在它上面。
   const empty = stageOf({})
   empty.stage.onAction({ action: 'read' })

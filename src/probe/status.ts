@@ -41,7 +41,7 @@ import { countsOf, rejectsIn, linesOfReadings } from './round.ts'
 import type { MetricReading } from './round.ts'
 import { LEDGER_HEAD, ledgerLines, ledgerOf } from './ledger.ts'
 import { humanNumber } from '../human.ts'
-import { WORDS } from '../words.ts'
+import { WORDS, stateFaceOf } from '../words.ts'
 import type { Ledger, LedgerInputs } from './ledger.ts'
 import { lineOf, metricsOf } from './metrics.ts'
 import type { MetricValue } from './metrics.ts'
@@ -817,7 +817,7 @@ export function linesOf(s: StatusSnapshot, opts: LinesOptions): readonly string[
     // ——每一跳印在哪几条边上，下面那几行边自己写着；字段照旧在快照里。
     const odd = r.unrouted > 0 ? ` · 图外 ${humanNumber(r.unrouted)} 条` : ''
     out.push(
-      `${WORDS.round} ${r.round} · ${WORDS.state} ${r.state} · ${WORDS.transitions} ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
+      `${WORDS.round} ${r.round} · ${stateFaceOf(r.state)} · ${WORDS.transitions} ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
         ` · ${WORDS.rejects} ${humanNumber(r.rejects)} 次${odd}${here}`,
     )
     for (const e of r.edges) out.push(`  ${e}`)

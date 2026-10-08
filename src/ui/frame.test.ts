@@ -143,12 +143,12 @@ function snapshotOf(extra: readonly StatusRow[] = []): StatusSnapshot {
 
 const GOLDEN: readonly string[] = [
   "┌─ 对话 ───────────────────────────────────────────────────────────────────────────────────────────┐",
-  "│轮次 r1 · 状态 Rebuilding · 还在跑 1 格 · 打回 1 次                                               │",
+  "│轮次 r1 · 重建 · 还在跑 1 格 · 打回 1 次                                                          │",
   "│ ──────────────────────────────────────────────────────────────────────────────────────────────── │",
-  "│格 agent/r1/1 · 调用 2 次 · 2 步 · 工具调用 3 · 2 步就停（收敛）                                  │",
-  "│格 agent/r1/2 · 调用 1 次 · 1 步 · 工具调用 3 · 还在跑                                            │",
-  "│                                                                                                  │",
-  "│                                                                                                  │",
+  "│格 agent/r1/1 · 2 步就停（收敛）                                                                  │",
+  "│  调用 2 次 · 走了 2 步 · 工具调用 3                                                              │",
+  "│格 agent/r1/2 · 还在跑                                                                            │",
+  "│  调用 1 次 · 走了 1 步 · 工具调用 3                                                              │",
   "├──────────────────────────────────────────────────────────────────────────────────────────────────┤",
   "│最近 merge/accept（round 13）· 事件 13 条                                                         │",
   "└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
@@ -201,7 +201,9 @@ test('② 负对照 · 进展那一档：多一条 round/state → 它变，结�
   const fb = bodyOf({ snapshot: b, metrics: METRICS, report: REPORT })
   assert.notDeepEqual([...fa.left], [...fb.left], '多一条边，进展那一档却没变')
   assert.deepEqual([...fa.right], [...fb.right], '结果与花费那一档不该因为一条 round/state 而动')
-  assert.equal(fb.left.length, fa.left.length + 1, '多一条边，进展那一档正好多一行')
+  // **不再"正好多一行"**（收口后按人令）：那几条原始转移不上主面了——多一条边动的是轮次那一行的
+  // 条数。这一条量的还是"进展那一档真的读了它"，只是读的是数，不是那一行原文。
+  assert.match(fb.left[0] ?? '', /转移 6 条/, `多一条边，轮次那一行的条数该动：${fb.left[0]}`)
   // 账尾是**全账**的读数：它会动。这一条写出来，免得下一个人把它当成"右栏变了"。
   assert.notEqual(footerOf(a), footerOf(b), '账尾该动（最近一条与条数都变了）')
   console.log(`② 读数：进展那一档 ${fa.left.length} → ${fb.left.length} 行 · 结果与花费那一档 ${fa.right.length} 行一字不变 · 账尾「${footerOf(a)}」→「${footerOf(b)}」`)
@@ -243,7 +245,9 @@ test('④ 多一次 llm/call：两档都动（调用次数在两边各有一处�
   const fb = bodyOf({ snapshot: b, metrics: METRICS, report: REPORT })
   assert.notDeepEqual([...fa.left], [...fb.left], '左栏那一条"格"的行该动（调用 2 次 → 3 次）')
   assert.notDeepEqual([...fa.right], [...fb.right], '右栏那一条"用量"的行该动（调用 3 → 4）')
-  assert.match(fb.left.join('\n'), /agent\/r1\/1 · 调用 3 次 · 3 步/, `左栏那一行的数该动：${fb.left.join(' ｜ ')}`)
+  // 格那一行拆成两行之后（收口后按人令：头一行只说哪一格 · 停在没停，计数在缩进那一行）：
+  // **拿缩进那一行当锚**，头一行里已经没有数了。
+  assert.match(fb.left.join('\n'), /agent\/r1\/1 · 2 步就停（收敛）\n  调用 3 次 · 走了 3 步/, `左栏那一行的数该动：${fb.left.join(' ｜ ')}`)
   assert.match(fb.right.join('\n'), /用量 调用 4/, `右栏那一行的数该动：${fb.right.join(' ｜ ')}`)
   console.log('④ 读数：进展那一档「调用 3 次 · 3 步」· 结果与花费那一档「用量 调用 4」——同一件事两处口径，两档都动是对的')
 })
@@ -256,7 +260,7 @@ test('⑤ 地板：窄屏照画（没有第二栏这回事了）· 矮了截断�
   assert.equal(narrow.columns.left, innerOf(40), '内容那一栏就是框内宽')
   assert.equal(narrow.lines.some((l) => l.includes('┬')), false, '不该有中间那根竖线')
   const text = narrow.lines.join('\n')
-  for (const one of ['轮次 r1 · 状态 Rebuilding', '格 agent/r1/1', '还在跑']) {
+  for (const one of ['轮次 r1 · 重建', '格 agent/r1/1', '还在跑']) {
     assert.ok(text.includes(one), `对话视图窄屏那一档少了这一处：${one}`)
   }
   // 另两档在窄屏上也画得出来（折得更勤，一格不丢）——这一条量的是「窄了不丢档」。
@@ -439,7 +443,7 @@ test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账
   assert.ok(menuAt >= 0 && f.roles[menuAt] === 'overlay', '候选那一层报 overlay')
   const gateAt = f.lines.findIndex((l) => l.includes('门口那一块'))
   assert.ok(gateAt >= 0 && f.roles[gateAt] === 'overlay', '门口那一块报 overlay')
-  const bodyAt = f.lines.findIndex((l) => l.includes('轮次 r1 · 状态'))
+  const bodyAt = f.lines.findIndex((l) => l.includes('轮次 r1 · 重建'))
   assert.ok(bodyAt >= 0 && f.roles[bodyAt] === 'body', '读数那一行报 body')
 
   // 阅读面开着：框名那一行报 `readHeading`（U3），正文那些行报 `read`。

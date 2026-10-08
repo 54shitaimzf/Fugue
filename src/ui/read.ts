@@ -264,9 +264,15 @@ function detailLinesOf(s: StatusSnapshot | undefined, agent: string | null): rea
   }
   for (const a of s.agents) {
     if (agent !== null && a.agent !== agent) continue
+    // **零值不上屏**（收口后按人令改）：没事发生的那两栏不占地方，也不留一串"0 · 0"。
+    const refused = [
+      a.denies > 0 ? `${WORDS.denies} ${a.denies}` : '',
+      a.bounds > 0 ? `${WORDS.bounds} ${a.bounds}` : '',
+    ]
+      .filter((one) => one !== '')
+      .join(' · ')
     out.push(
-      `${WORDS.agent} ${a.agent} · ${WORDS.denies} ${a.denies} · ${WORDS.bounds} ${a.bounds}` +
-        ` · ${WORDS.last} ${a.last ?? '（空）'}`,
+      `${WORDS.agent} ${a.agent}${refused === '' ? '' : ` · ${refused}`} · ${WORDS.last} ${a.last ?? '（空）'}`,
     )
   }
   return out
@@ -402,7 +408,7 @@ const READ_BODY_COLS = 160
 function tail(lines: readonly string[], limit: number): readonly string[] {
   if (lines.length <= limit) return lines
   const cut = lines.length - limit + 1
-  return [`… 前面还有 ${cut} 行（这一面最多印 ${limit} 行；逐条读法是 \`fugue log\`）`, ...lines.slice(cut)]
+  return [`… 前面还有 ${cut} 行`, ...lines.slice(cut)]
 }
 
 /** 一格变更那一行：坐标 + 那一格。 */
@@ -453,14 +459,15 @@ function tallyLineOf(tally: Readonly<Record<string, number>>): string | null {
     .slice(0, 6)
     .join(' · ')
   const more = names.length > 6 ? ' · …' : ''
-  return `其余事件 ${total} 条（${shown}${more}；逐条读法是 \`fugue log\`）`
+  return `其余事件 ${total} 条（${shown}${more}）`
 }
 
 /**
  * 四面：**只排版，不再折**（进去的是 `readStateOf` 那一份）。`limit` 是每一面的行数上限。
  *
- * 一面的标题里带着那一面自己的读数（几条变更 · 几份契约 · 折掉了多少），于是"折叠不是丢"这句话
- * 在屏幕上是看得见的。
+ * 一面的标题只说"这是哪一面"。从前它带着那一面自己的读数（几条变更 · 折掉了多少 · 只计数多少），
+ * 那是把折叠那一本账端给人看；收口后按人令去掉——"折叠不是丢"靠行本身与那句"其余事件 N 条"
+ * 说得清。
  */
 export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}): ReadFaces {
   const limit = opts.limit ?? READ_LIMIT
@@ -479,26 +486,22 @@ export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}
       state.diff.length === 0
         ? null
         : {
-            title: `diff · ${state.diff.length} 条变更（账上的 \`view/*\` 那五族；\`add\` 与 \`modify\` 在读面上是同一格「写」）`,
+            title: `diff · ${state.diff.length} 条变更`,
             lines: tail(diffLines, limit),
           },
     contract:
       state.contracts.length === 0
         ? null
-        : { title: `契约正文 · ${state.contracts.length} 份（到达序）`, lines: tail(contractLines, limit) },
+        : { title: `契约正文 · ${state.contracts.length} 份`, lines: tail(contractLines, limit) },
     stream: {
-      title:
-        `事件流 · ${state.seen} 条（永久行 ${state.permanent} · 工具输出折成 ${state.tool} 行` +
-        `（吃了 ${state.seen - state.permanent - state.counted} 条） · 只计数 ${state.counted} 条）`,
+      title: '事件流',
       lines: tail(streamAll, limit),
     },
     detail:
       state.detail.length === 0
         ? null
         : {
-            title:
-              `详情 · ${state.detail.length} 行（主面收掉的那几样原始读数：图上走了几步 · ` +
-              `${WORDS.denies} · ${WORDS.bounds} · ${WORDS.last}）`,
+            title: '详情',
             lines: tail(state.detail, limit),
           },
   }
