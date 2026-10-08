@@ -132,13 +132,14 @@ export interface Frame {
 }
 
 /**
- * 行的角色（U20；U3 加了 `readHeading`）：`border` 框线 · `body` 正文（树与读数）· `footer` 账尾 ·
- * `overlay` 临时那一层（候选 · 门口那一块 · 排队）· `read` 阅读面正文 · `readHeading` 阅读面开着时
- * **那个框的名字**。**只在地基这一层声明**——值是给终端那一层的 `theme` 查的键，排版本身不知道
+ * 行的角色（U20；U3 加了 `readHeading`；第三幕 ① 加了 `waiting`）：`border` 框线 · `body` 正文
+ * （树与读数）· `footer` 账尾 · `overlay` 临时那一层（候选 · 门口那一块的预览与排队行）·
+ * `waiting` **门口那一块里要人此刻按的那一行**（宪法 ② 点名的「门口选项行走等待黄」——它是"在等你"
+ * 那一件事，不是又一个弹层）· `read` 阅读面正文 · `readHeading` 阅读面开着时**那个框的名字**。**只在地基这一层声明**——值是给终端那一层的 `theme` 查的键，排版本身不知道
  * 任何样式。（**永久行与输入行不在这张表里**：U20 那条形状不动——永久行进终端历史要保持干净
  * 流水，输入行是光标算术那一行。）
  */
-export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'read' | 'readHeading' | 'hint'
+export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'waiting' | 'read' | 'readHeading' | 'hint'
 
 export interface FrameInput {
   /** 读源一：那一刻的处境（`status --once` 印的那一份）。 */
@@ -453,6 +454,14 @@ export interface MenuInput {
 export interface BottomInput {
   readonly rows: readonly string[]
   readonly keep: number
+  /**
+   * 这几行里**要人此刻按的那一行**在第几个（`ui/gate.ts` 的选项行：`放行一次(y) · 拒(n) ·
+   * 中止(Esc)` 那一行，以及它举起手之后的两种写法）。
+   *
+   * 它走「等待」那一格（宪法 ②：门口选项行走等待黄），其余各行走候选/弹层那一格。不给（或越界）
+   * 时整块都还是弹层那一格——**与从前逐字节相同**（这一栏是加出来的，不是换掉）。
+   */
+  readonly waitingAt?: number | undefined
 }
 
 /** 树那几个节点（`ui/nav.ts` 算好的原文）与选中项落在第几个（`T8`）。 */
@@ -649,7 +658,14 @@ export function frameOf(o: FrameInput): Frame {
   const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length
   for (let i = fixed; i < height; i += 1) shown.push({ l: '', role: 'body' })
   for (const one of menuBody) shown.push({ l: one, role: 'overlay' })
-  for (const one of gateBody) shown.push({ l: one, role: 'overlay' })
+  // 门口那一块（第三幕 ①）：**要人此刻按的那一行**（选项行）走「等待」那一格，其余各行走弹层那一格。
+  // 位置按"**离末行几个**"算：上面那几段让位是从**头**开始切的（末 `keep` 行一定还在），所以选项行
+  // 与末行的距离在切前切后是同一个。
+  const waitFromEnd =
+    o.bottom === undefined || o.bottom.waitingAt === undefined ? -1 : gateAll.length - 1 - o.bottom.waitingAt
+  for (const [i, one] of gateBody.entries()) {
+    shown.push({ l: one, role: gateBody.length - 1 - i === waitFromEnd ? 'waiting' : 'overlay' })
+  }
 
   const lines: string[] = []
   const roles: LineRole[] = []

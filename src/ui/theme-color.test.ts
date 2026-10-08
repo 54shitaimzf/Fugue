@@ -106,7 +106,13 @@ test('② 八格从 SLOT_MEANING 推：色表逐格对齐 · 角色都落在格�
 test('③ 黑白地板逐字节不变：认不得 256 色那一档与 0.2.8 那一份逐字节相同', () => {
   assert.deepEqual(themeOf({ term: 'xterm' }), DEFAULT_THEME, '认不得 256 → 属性档那一份，逐字节相同')
   assert.deepEqual(themeOf(), DEFAULT_THEME, '什么都不给 → 属性档（theme.test.ts ② 那条口径不动）')
-  assert.deepEqual(DEFAULT_THEME, { border: '\x1b[2m', footer: '\x1b[1m', overlay: '\x1b[1m', readHeading: '\x1b[1m' })
+  assert.deepEqual(DEFAULT_THEME, {
+    border: '\x1b[2m',
+    footer: '\x1b[1m',
+    overlay: '\x1b[1m',
+    waiting: '\x1b[1m',
+    readHeading: '\x1b[1m',
+  })
   // **这一条要有对手**：第 2 级必须与它不同，不然"逐字节相同"量的是空气。
   const two = themeOf({ term: 'xterm-256color' })
   assert.notDeepEqual(two, DEFAULT_THEME, '第 2 级与第 1 级不同——不然上面那几条量不到东西')

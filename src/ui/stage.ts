@@ -332,14 +332,22 @@ export function openStage(deps: StageDeps): Stage {
     // 还在它们下面）。两样都没有时一个字节都不占。
     const gateOn = gate !== null && !gateHidden
     const queueOn = queue.items.length > 0
-    const bottomRows = [
-      ...(gateOn ? gateRowsOf({ face: gate as GateFace, view: gateView, columns: cols() }) : []),
-      ...(queueOn ? [queueRowOf(queue)] : []),
-    ]
+    const gateRows = gateOn ? gateRowsOf({ face: gate as GateFace, view: gateView, columns: cols() }) : []
+    const bottomRows = [...gateRows, ...(queueOn ? [queueRowOf(queue)] : [])]
+    // **门口那一块的末一行就是选项行**（`ui/gate.ts` 的 `gateRowsOf` 把次序定死：预览… · 排队行 ·
+    // 选项行）——它是"要人此刻按的那一行"，走等待那一格（第三幕 ①）。排队那一行的位置因此不影响
+    // 它：坐标是按门口那一块自己数出来的。
+    const waitingAt = gateRows.length === 0 ? undefined : gateRows.length - 1
     const bottomPart =
       bottomRows.length === 0
         ? {}
-        : { bottom: { rows: bottomRows, keep: (gateOn ? GATE_KEEP : 0) + (queueOn ? 1 : 0) } }
+        : {
+            bottom: {
+              rows: bottomRows,
+              keep: (gateOn ? GATE_KEEP : 0) + (queueOn ? 1 : 0),
+              ...(waitingAt === undefined ? {} : { waitingAt }),
+            },
+          }
     // 树那一栏（`T8`，排在最上面）与"切到哪一格"（`focus`：`null` = 整份账）。
     const navRows = navRowsOf(navNodes, navAt, cols())
     const navPart = navRows.length === 0 ? {} : { nav: { rows: navRows, sel: navAt } }

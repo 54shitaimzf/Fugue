@@ -326,3 +326,31 @@ test('⑨ `Ctrl-R` 开出来的那几面里有详情面（快照只在阅读面�
   assert.equal(empty.ctl.notes.some((n) => n.includes('详情')), false, '没有账就没有详情面')
   console.log(`⑨ 读数：${titles.length} 条换面记 · 换到详情面「${detail}」`)
 })
+
+// ── ⑩ 门口那一块里"要按的那一行"的坐标（第三幕 ①）────────────────────────────────
+test('⑩ 门口开着时，那一块的末一行是"要按的那一行"：坐标递给面板，门口收起来就整块不在了', async () => {
+  const contract = {
+    id: 'r1.implement.1',
+    agent: 'agent/r1/1',
+    kind: 'implement',
+    goal: '把门口那一行染黄',
+    assertions: [],
+    ownedPaths: ['src/ui/gate.ts'],
+    deliverables: [],
+    seed: [],
+  } as unknown as Contract
+  const { stage, ctl } = stageOf({ face: gateFaceOf({ round: 'r1', fingerprint: 'fp-w', same: [], contracts: [contract] }, {}) })
+  await stage.refreshGate()
+  const bottom = stage.view().bottom
+  assert.ok(bottom !== undefined, '门口开着就该有那一块')
+  const rows = bottom?.rows ?? []
+  const at = bottom?.waitingAt
+  assert.equal(at, rows.length - 1, '末一行就是选项行（这一档还没有排队那一条）')
+  assert.ok((rows[at as number] ?? '').startsWith('放行一次(y)'), `那一行该是选项行：${String(rows[at as number])}`)
+  assert.equal((rows[0] as string).includes('放行一次'), false, '第一行不是它（预览排在前面）')
+  // 门口收起来：那一块整块不在了——坐标也就不给（不给就与从前同形）。
+  ctl.face = null
+  await stage.refreshGate()
+  assert.equal(stage.view().bottom, undefined, '门口没了那一块也没了')
+  console.log(`⑩ 读数：门口 ${rows.length} 行 · 要按的那一行在第 ${String(at)} 个（末行）「${String(rows[at as number])}」`)
+})

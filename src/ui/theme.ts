@@ -61,15 +61,18 @@ export type ColorTier = 0 | 1 | 2
  *   · `body` 与 `read` 都落在「正文」——阅读面的正文就是正文，不是另一种东西；
  *   · 账尾（`footer`）与提示行（`hint`）落在「弱化」——前者是一句脚注式的读数（"这份账到哪儿了"），
  *     后者是一句按键提示（第二幕 ④ 从终端历史搬进重画区、常驻框下面那一行），两样本来就该退后；
- *   · 「成功 · 拒绝/错误 · 等待/运行中 · 命中行」四格今天**还没有行角色**用（面板上还没有
- *     "一行就是一条验收结论"那样的行）——它们在表里，等 ⑥⑦⑧ 那几格长出消费者来。八格是宪法
- *     定死的，不是按今天有多少消费者倒推的。
+ *   · 「等待/运行中」那一格（`waiting`）第三幕 ① 起有了读者：**门口那一块里要人此刻按的那一行**
+ *     （宪法 ② 点名的「门口选项行走等待黄」——它是"在等你"，不是又一个弹层）；
+ *   · 「成功 · 拒绝/错误 · 命中行」三格今天**还没有行角色**用（一行就是一条验收结论那样的行 · 一行
+ *     里只有半截是"命中的"——后者要行内分段才落得下）。它们在表里。八格是宪法定死的，不是按今天
+ *     有多少消费者倒推的。
  */
 export const ROLE_SLOT: Readonly<Record<LineRole, Slot>> = {
   border: 'dim',
   body: 'body',
   footer: 'dim',
   overlay: 'overlay',
+  waiting: 'waiting',
   read: 'body',
   readHeading: 'readHeading',
   hint: 'dim',
@@ -107,6 +110,9 @@ export const DEFAULT_THEME: Readonly<Partial<Record<LineRole, string>>> = {
   border: '\x1b[2m',
   footer: '\x1b[1m',
   overlay: '\x1b[1m',
+  // 第 1 级里它**与弹层同一条属性**：那一行从前报的就是 `overlay`，换成等待那一格之后**字节不变**
+  // （地板逐字节锁着那条不动）。黄只在第 2 级上出现（`SLOT_256.waiting`）。
+  waiting: '\x1b[1m',
   readHeading: '\x1b[1m',
 }
 

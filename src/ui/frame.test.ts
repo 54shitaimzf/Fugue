@@ -37,6 +37,7 @@ import { bodyOf, footerOf, frameOf, innerOf, panelOf, windowOf } from './frame.t
 import { FRAME_ROWS } from './layout.ts'
 import { clip, setGlyphTier, widthOf, wrap } from './glyph.ts'
 import { readWrap } from './read.ts'
+import { SLOT_256, ROLE_SLOT, theme256 } from './theme.ts'
 
 let seq = 0
 /** 一条事件（`round` 那一份上）。**seq 每次从 0 起**：两次折用的序号于是对得上。 */
@@ -564,4 +565,36 @@ test('⑬ 近几轮用量那条小条形（可读性三件 ②）：每轮一格
     setGlyphTier(was)
   }
   console.log(`⑬ 读数：${String(line)} · ascii 档「近 3 轮用量 . #（最高 400）」· 没量到那一栏在括号里 · 不给这一栏逐字节同形`)
+})
+
+test('⑭ 门口要按的那一行（第三幕 ①）：给了坐标就报 waiting，不给就与从前逐字节相同', () => {
+  const base = { snapshot: snapshotOf(), width: 100, height: 14 } as const
+  const rows = ['写路径：src/ui/frame.ts', '还有 1 份等你点头 · 第 1/1 份（↑↓ 翻）', '放行一次(y) · 拒(n) · 中止(Esc)']
+  const after = frameOf({ ...base, bottom: { rows, keep: 2, waitingAt: 2 } })
+  const at = (f: { readonly lines: readonly string[] }, s: string): number => f.lines.findIndex((l) => l.includes(s))
+  assert.equal(after.roles[at(after, '写路径')], 'overlay', '预览走弹层那一格')
+  assert.equal(after.roles[at(after, '等你点头')], 'overlay', '排队行也还走弹层那一格')
+  assert.equal(after.roles[at(after, '放行一次(y)')], 'waiting', '要人此刻按的那一行走等待那一格（宪法 ②）')
+  // **退化档**：不给坐标（或坐标越界）→ 文字与从前逐字节相同，角色整块还是弹层那一格。
+  const before = frameOf({ ...base, bottom: { rows, keep: 2 } })
+  assert.deepEqual([...before.lines], [...after.lines], '文字一个字节都不该差（这一栏是加出来的）')
+  assert.deepEqual(
+    [...before.roles],
+    [...after.roles.map((r) => (r === 'waiting' ? 'overlay' : r))],
+    '角色只差那一格',
+  )
+  const out = frameOf({ ...base, bottom: { rows, keep: 2, waitingAt: 9 } })
+  assert.deepEqual([...out.roles], [...before.roles], '坐标越界 = 没给（不报错、也不猜）')
+  // **让位是从头切的**：矮屏上预览被切掉，末 `keep` 行还在，那一行仍报 waiting（坐标按"离末行几个"算）。
+  const short = frameOf({ ...base, height: 5, bottom: { rows, keep: 2, waitingAt: 2 } })
+  assert.equal(short.roles[at(short, '放行一次(y)')], 'waiting', '矮屏上那一行仍是等待那一格')
+  assert.equal(short.roles[at(short, '写路径')], undefined, '预览那一行该先让位（它不在了）')
+  // 那一格在第 2 级上真的是等待黄，而且是从表推的（不手抄一个 SGR）。
+  assert.equal(ROLE_SLOT.waiting, 'waiting', '`waiting` 角色落在等待那一格')
+  assert.equal(theme256().waiting, SLOT_256.waiting, '第 2 级那一份从 `SLOT_256` 推')
+  assert.equal(SLOT_256.waiting, '\x1b[38;5;214m', '等待黄是 214（第三幕 ① 的取值依据在 `theme.ts`）')
+  console.log(
+    `⑭ 读数：门口 ${rows.length} 行里末一行报 waiting（第 2 级 ${JSON.stringify(SLOT_256.waiting)}）· ` +
+      '不给坐标与给越界坐标都与从前逐字节相同 · 矮屏上让位的是预览',
+  )
 })
