@@ -6,6 +6,13 @@
 // （`serve/source.ts`）。两条理由：界面那一侧从此不 import 账本的直连模块（`log/log.ts` ·
 // `probe/watch.ts`），而这一份剩下的三条命令是**命令行自己的读**——它们开账本口是对的。
 // 那一条静态断言（`tools/check-ui-direct.ts`）因此有一个干净的根：`ui/console.ts`。
+//
+// **这一份今天是被遮住的老路**（0.4.3 施工时实测发现，记进疑点清单）：`log` · `status` ·
+// `watch` 三条都已在值层登记（`value/registry.ts` 的 `VALUE_LAYER`），`cli/fugue.ts` 在值层
+// 那一支就返回了，所以这个模块的三个出口**一条都走不到**——它们是"没迁的命令走老路"那个形状
+// 留下来的那一份。**改这里不会有任何效果**（0.4.3 的 `--header` 第一版就打在这儿，跑出来一个
+// 字节没变才发现）。处置：0.5.0 收口时随 session 读口一并收掉；在那之前要看两股输出就改
+// `value/observe.ts`。
 import type { LogEvent } from '../../log/events.ts'
 import { openLog } from '../../log/log.ts'
 import type { LogPos } from '../../terms.ts'

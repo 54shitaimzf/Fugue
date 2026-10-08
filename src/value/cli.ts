@@ -7,7 +7,7 @@
 // 它一个信号、一个 `onBatch`；`--json` 那一面照旧一趟一批（NDJSON 一行一个，与从前逐字节相同）。
 import { failureOf, invoke } from './invoke.ts'
 import { VALUE_LAYER } from './registry.ts'
-import { eventLine, watchValue } from './observe.ts'
+import { EMIT_HEADER, eventLine, headerWanted, watchValue } from './observe.ts'
 import { writeValue } from './shell.ts'
 import type { ValueRunner } from './registry.ts'
 import type { ValueArgs, ValueResult } from './types.ts'
@@ -50,6 +50,10 @@ export async function valueResultOf(key: string, a: ValueArgs): Promise<ValueRes
  */
 export async function watchAndWrite(a: ValueArgs, json: boolean): Promise<number> {
   const follow = a.flags.has('follow')
+  // 实时那一档（跟随 + 人读）的行是随读随印的，收尾那一份人读面因此是空的——列头只能在这儿
+  // 先印掉，才能保证它落在**第一行**上。
+  const streaming = follow && !json
+  if (streaming && headerWanted(a)) process.stdout.write(`${EMIT_HEADER}\n`)
   const ac = new AbortController()
   const onSig = (): void => ac.abort()
   if (follow) process.on('SIGINT', onSig)
