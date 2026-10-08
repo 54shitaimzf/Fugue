@@ -1,4 +1,4 @@
-// TUI 的量尺：**一个串占几列 · 在哪断开**。这一份是从 `ui/frame.ts` 拆出来的——那里原先的
+// TUI 的量尺：**一个串占几列 · 在哪断开**，外加**字形档**（哪几个字形许印）。这一份是从 `ui/frame.ts` 拆出来的——那里原先的
 // 注释写过触发条件：「长到几十行就该单独一份文件（`ui/glyph.ts`）」，现在长到了。
 //
 // 一把尺，处处共用：`frame.ts` 折行与补宽 · `term.ts` 输入行光标回退 · `input.ts` 簇级编辑 ·
@@ -14,6 +14,135 @@
 //     终端上真会出现的那几段。表外的组合符号会被当成独立的字——多占一列。**什么条件下改主意**：
 //     真遇到表外的（那种字真落进输入行，而不只是印出来），就换 `Intl.Segmenter`，或者把这张表
 //     按需要长出来。
+
+/**
+ * **字形档三档**（宪法 0.4.3 行 ⑥ · 施工单 § 五 ⑤）。地板 = 内核内建 ∩ console-setup 那一撮
+ * （单双线框 22 个 · `░▒█` · `←↑↓→` · `▶` · `•` · ASCII；进出名单与读数在
+ * `docs/0.4.3-survey-decisions.md` § 5.4）。
+ *
+ *   · `ascii`：**只印 ASCII**——最恶劣的字体那一档（`mark` 三列 `...`，框用 `+ - |`）；
+ *   · `box`（**缺省**）：交集里那一撮。**成员表是闭的**：这一档印出去的每一个非 ASCII 字形
+ *     都在下面 `GLYPHS.box` 里有名字——`glyph-tier.test.ts` ② 拿真画出来的帧量这一条；
+ *   · `rich`：交集之外那些（`▸` `┈` `●` `⇒` …），**只由配置开关点名**（`ui.glyphs`）。
+ *
+ * **管得着的那一层**：字形档管的是**渲染那一层**的结构字形（框线 · 标记 · 箭头 · 条形）——
+ * 面板里那些字。**值层的读数原文不在其中**：状态图那几行（`⇒` `×` 那些）是 `StatusSnapshot.edges`
+ * 的原文，它进 `--json`，换字形就是改值层（宪法：账上的原话与 `--json` 字段名一个字不动）。
+ */
+export const GLYPH_TIERS = ['ascii', 'box', 'rich'] as const
+
+/** 三档里的哪一档。 */
+export type GlyphTier = (typeof GLYPH_TIERS)[number]
+
+/** 缺省那一档（交集）。 */
+export const DEFAULT_GLYPH_TIER: GlyphTier = 'box'
+
+/**
+ * 一档里那几格字形。**键是"这一格是什么意思"，值是那一个字形**——名字一处，三档各一个值，
+ * 于是"同一格在三档里换了个样子"是看得见的一件事。
+ */
+export interface GlyphSet {
+  /** 框线：横 · 竖 · 四角 · 上中 · 下中 · 左中 · 右中。 */
+  readonly h: string
+  readonly v: string
+  readonly tl: string
+  readonly tj: string
+  readonly tr: string
+  readonly bl: string
+  readonly bj: string
+  readonly br: string
+  readonly ml: string
+  readonly mj: string
+  readonly mr: string
+  /** 截断与折叠标记（④「全站一个口径」）。**它的列宽也住在这里**（`markWidthOf`）。 */
+  readonly mark: string
+  /** 选中那一行前面那一个。 */
+  readonly sel: string
+  /** 翻页提示里那两个。 */
+  readonly up: string
+  readonly down: string
+  /** 小条形那四格：空 · 低 · 中 · 高（`░▒█` 三档 + 一个空格位）。 */
+  readonly spark: readonly [string, string, string, string]
+}
+
+/**
+ * 三档那一张表。`box` 那一列**每一个成员都在交集里**（ASCII 与那 22 个框线 · `░▒█` · `↑↓` ·
+ * `▶`）；`mark` 是宪法 ⑥ 点名的一处例外（它写的就是「`box` 档 `…` 一列」）——`…` 按 § 5.4 那份
+ * 名单落在"console-setup 才有"那一栏，这一处按宪法走，理由与改主意的条件记在停点报告里。
+ */
+export const GLYPHS: Readonly<Record<GlyphTier, GlyphSet>> = {
+  ascii: {
+    h: '-', v: '|',
+    tl: '+', tj: '+', tr: '+',
+    bl: '+', bj: '+', br: '+',
+    ml: '+', mj: '+', mr: '+',
+    mark: '...',
+    sel: '>',
+    up: '^', down: 'v',
+    spark: [' ', '.', '+', '#'],
+  },
+  box: {
+    h: '─', v: '│',
+    tl: '┌', tj: '┬', tr: '┐',
+    bl: '└', bj: '┴', br: '┘',
+    ml: '├', mj: '┴', mr: '┤',
+    mark: '…',
+    sel: '▶',
+    up: '↑', down: '↓',
+    spark: [' ', '░', '▒', '█'],
+  },
+  rich: {
+    h: '─', v: '│',
+    tl: '┌', tj: '┬', tr: '┐',
+    bl: '└', bj: '┴', br: '┘',
+    ml: '├', mj: '┴', mr: '┤',
+    mark: '…',
+    sel: '▸',
+    up: '↑', down: '↓',
+    spark: [' ', '░', '▒', '█'],
+  },
+}
+
+/** 某一档那一份字形。 */
+export function glyphsOf(tier: GlyphTier): GlyphSet {
+  return GLYPHS[tier]
+}
+
+/**
+ * 截断与折叠标记占几列（`ascii` 档 `...` 三列 · `box` 档 `…` 一列）。**从档里那一个字符串量**，
+ * 不另记一个数——数与字形是同一件事的两面，分开写就会走岔。
+ */
+export function markWidthOf(tier: GlyphTier): number {
+  return widthOf(GLYPHS[tier].mark)
+}
+
+/**
+ * **当前这一档**。它是一份**进程级的显示设置**，不是每帧的数据：这一次运行里档不会变，而
+ * `clip` 这类函数在一帧里要被叫上百次——把它当参数一路递下去要穿过八个模块（列宽 · 折行 ·
+ * 截断三处都得知道），换来的只是"同一个值换个传递方式"。
+ *
+ * **纯度那条性质照旧**：同一个串 + 同一档，调两次逐字节相同（`setGlyphTier` 只该被两处调——
+ * 产品路径一次：`ui/console.ts` 按开关与配置定档；断言里各档各设一次、用完还原）。
+ * 缺省 `box`：**没有设过就是缺省那一档**，与"根本没有这一档"这件事无关（那是 `ascii`。
+ */
+let CURRENT: GlyphTier = DEFAULT_GLYPH_TIER
+
+/** 定档，把上一档还回去（断言里拿它还原；产品路径只调一次）。 */
+export function setGlyphTier(tier: GlyphTier): GlyphTier {
+  const was = CURRENT
+  CURRENT = tier
+  return was
+}
+
+/** 当前那一档。 */
+export function glyphTier(): GlyphTier {
+  return CURRENT
+}
+
+/** 当前那一档的字形。 */
+export function glyphs(): GlyphSet {
+  return GLYPHS[CURRENT]
+}
 
 /** 一个**簇**：人眼算一个字的那些 code unit（基字符 + 跟在它身上的组合符号 · 变体选择符 · ZWJ 那几段）。 */
 export interface Cluster {
@@ -171,18 +300,25 @@ export function cutAt(s: string, w: number): number {
   return n
 }
 
-/** 按列宽截断：切在**簇**边界上，末尾留下一个 `…`（它也占一列）。 */
+/**
+ * 按列宽截断：切在**簇**边界上，末尾留下当前字形档的截断标记（`ascii` 档 `...` 三列 ·
+ * `box` 档 `…` 一列）。**标记与它的列宽都从那一档取**（`glyphs().mark` 与 `widthOf`），
+ * 所以换档只换那几格字，行的列宽与折行点一个不变。
+ */
 export function clip(s: string, w: number): string {
   if (w <= 0) return ''
   if (widthOf(s) <= w) return s
+  const mark = glyphs().mark
+  const mw = widthOf(mark)
+  if (w <= mw) return mark
   let out = ''
   let used = 0
   for (const c of clustersOf(s)) {
-    if (used + c.width > w - 1) break
+    if (used + c.width > w - mw) break
     out += c.text
     used += c.width
   }
-  return `${out}…`
+  return `${out}${mark}`
 }
 
 /**

@@ -29,6 +29,7 @@
 import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { GLYPH_TIERS } from './ui/glyph.ts'
 import { setOwnKey } from './own-key.ts'
 
 /** 一份配置文档。值就是 JSON 的那几种，没有别的类型要照顾。 */
@@ -124,6 +125,12 @@ function assertUiShape(doc: ConfigDoc, file: string): void {
   const ui = Object.hasOwn(doc, 'ui') ? doc.ui : undefined
   if (ui === undefined) return
   if (!isPlainObject(ui)) throw new ConfigError(`配置里的 ui 要是一个对象：${file}`)
+  const glyphs = Object.hasOwn(ui, 'glyphs') ? ui.glyphs : undefined
+  if (glyphs !== undefined && (typeof glyphs !== 'string' || !GLYPH_TIERS.includes(glyphs as never))) {
+    throw new ConfigError(
+      `配置里的 ui.glyphs 取 ${GLYPH_TIERS.join(' / ')}：${file} —— 收到 ${JSON.stringify(glyphs)}`,
+    )
+  }
   const keys = Object.hasOwn(ui, 'keys') ? ui.keys : undefined
   if (keys === undefined) return
   if (!isPlainObject(keys)) {

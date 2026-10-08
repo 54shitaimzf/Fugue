@@ -11,6 +11,8 @@ import { phaseOf } from '../model/price.ts'
 import { readCatalog } from '../model/catalog.ts'
 import { getConfig, readConfig } from '../config.ts'
 import { intervalOf, tailOf } from '../cli/flags.ts'
+import { DEFAULT_GLYPH_TIER, GLYPH_TIERS, setGlyphTier } from './glyph.ts'
+import type { GlyphTier } from './glyph.ts'
 import { actionCommandsOf, actionsTableOf } from '../round/actions.ts'
 import { pendingOf } from '../round/dispatch.ts'
 import { identFor } from '../identity.ts'
@@ -137,6 +139,16 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // `--tail N`（U15）：首趟只写尾部 N 条（判据在 `tailOf` 那一道门里）。
   const tail = tailOf(flags)
   if (typeof tail === 'string') return usageFail(tail, json)
+  // **字形档定一次**（第二幕 ⑤）：`ui.glyphs` 点名才换，缺省 `box`（交集那一档）。
+  // 读不出配置不是退出的理由——按缺省档起，与门口那一块同一条口径。
+  let tier: GlyphTier = DEFAULT_GLYPH_TIER
+  try {
+    const raw = getConfig(await readConfig(root), 'ui.glyphs')
+    if (typeof raw === 'string' && (GLYPH_TIERS as readonly string[]).includes(raw)) tier = raw as GlyphTier
+  } catch {
+    // 配置坏了：按缺省档起（"配置读不出来"那一句由下面 `gateSetupOf` 那一处说）。
+  }
+  setGlyphTier(tier)
   // 钱那一栏要一个档（与 `status --once` 同一个口径：读的时候按当时的钟算）。
   const phase = phaseOf(new Date())
   // 价目与模型目录按这一台算（P2d，与 `status --once` 同一份）。

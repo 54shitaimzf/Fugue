@@ -30,20 +30,43 @@ function fixture(): string {
   return root
 }
 
-/** 起一条 `watch --follow`，`ms` 毫秒之后**按一下 Ctrl-C**（SIGINT），收回两股输出与退出码。 */
-function follow(root: string, ms: number, ...args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+/**
+ * 起一条 `watch --follow`，**等它真印出 `want` 行之后**再按一下 Ctrl-C（SIGINT），收回两股输出
+ * 与退出码。
+ *
+ * 为什么不等一个固定的毫秒数：`SIGINT` 的处理器是在进程起来之后才挂上的，而全量那一趟机器忙，
+ * 固定睡 400ms 会赶在它挂上之前杀到——那时进程是被信号直接带走的（退出码 `null`），不是"人喊停"
+ * 那一档。等输出到齐再按，量到的才是收尾那条路。兜底 2500ms 防夹具本身出问题。
+ */
+function follow(
+  root: string,
+  want: number,
+  ...args: string[]
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const p = spawn(process.execPath, [CLI, '--root', root, 'watch', '--follow', '--interval', '50', ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let out = ''
     let err = ''
+    let sent = false
+    const send = (): void => {
+      if (sent) return
+      sent = true
+      p.kill('SIGINT')
+    }
+    const fallback = setTimeout(send, 2500)
     p.stdout.setEncoding('utf8')
     p.stderr.setEncoding('utf8')
-    p.stdout.on('data', (d: string) => { out += d })
+    p.stdout.on('data', (d: string) => {
+      out += d
+      if (out.split('\n').filter((l) => l !== '').length >= want) setTimeout(send, 50)
+    })
     p.stderr.on('data', (d: string) => { err += d })
-    setTimeout(() => p.kill('SIGINT'), ms)
-    p.on('close', (code) => resolve({ code, stdout: out, stderr: err }))
+    p.on('close', (code) => {
+      clearTimeout(fallback)
+      resolve({ code, stdout: out, stderr: err })
+    })
   })
 }
 
@@ -56,7 +79,7 @@ test('① 按一下 Ctrl-C 收尾：每一行恰好一次（修之前每一行�
   const once = rowsOf(one.stdout)
   assert.equal(once.length, 2, `现场该有 2 条事件：拿到 ${once.length}`)
 
-  const got = await follow(root, 400)
+  const got = await follow(root, 2)
   assert.equal(got.code, 0, `Ctrl-C 是"人喊停"，退出码 0：${got.code}\n${got.stderr}`)
   const lines = rowsOf(got.stdout)
   assert.deepEqual(lines, once, '跟随那一档印的那些行，与不跟随时读到的逐行相同（且各一次）')

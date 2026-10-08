@@ -40,20 +40,40 @@ function fixture(): string {
   return root
 }
 
-/** 起一条 `watch --follow`，`ms` 毫秒之后按一下 Ctrl-C，收回 stdout。 */
-function follow(root: string, ms: number, ...args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+/**
+ * 起一条 `watch --follow`，**等它真印出 `want` 行之后**再按 Ctrl-C，收回 stdout。
+ * 等输出到齐的理由与 `value/watch-face.test.ts` 那一处同：`SIGINT` 的处理器是进程起来之后才挂的，
+ * 固定睡一会儿会赶在它挂上之前杀到（全量那一趟机器忙）。
+ */
+function follow(
+  root: string,
+  want: number,
+  ...args: string[]
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const p = spawn(process.execPath, [CLI, '--root', root, 'watch', '--follow', '--interval', '50', ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let out = ''
     let err = ''
+    let sent = false
+    const send = (): void => {
+      if (sent) return
+      sent = true
+      p.kill('SIGINT')
+    }
+    const fallback = setTimeout(send, 2500)
     p.stdout.setEncoding('utf8')
     p.stderr.setEncoding('utf8')
-    p.stdout.on('data', (d: string) => { out += d })
+    p.stdout.on('data', (d: string) => {
+      out += d
+      if (out.split('\n').filter((l) => l !== '').length >= want) setTimeout(send, 50)
+    })
     p.stderr.on('data', (d: string) => { err += d })
-    setTimeout(() => p.kill('SIGINT'), ms)
-    p.on('close', (code) => resolve({ code, stdout: out, stderr: err }))
+    p.on('close', (code) => {
+      clearTimeout(fallback)
+      resolve({ code, stdout: out, stderr: err })
+    })
   })
 }
 
@@ -92,7 +112,7 @@ test('② 缺省关：`log` 与 `watch` 不给 `--header` 时，输出与从前�
 
 test('③ 跟随那一档也认：列头落在第一行，后面每一条事件跟着出现', async () => {
   const root = fixture()
-  const got = await follow(root, 400, '--header')
+  const got = await follow(root, 3, '--header')
   assert.equal(got.code, 0, `Ctrl-C 退出码 0：${got.code}\n${got.stderr}`)
   const lines = rowsOf(got.stdout)
   assertShape(lines, 'watch --follow')

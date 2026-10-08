@@ -41,7 +41,7 @@ import type { Catalog } from '../model/catalog.ts'
 import type { MetricReading } from '../probe/round.ts'
 import { skipsNote } from '../probe/status.ts'
 import type { StatusSnapshot } from '../probe/status.ts'
-import { clip, widthOf, wrap } from './glyph.ts'
+import { clip, glyphs, widthOf, wrap } from './glyph.ts'
 import { humanNumber } from '../human.ts'
 
 /** 两栏至少要这么宽才画得下（再窄就收成单栏）：左 24 · 右 20 · 框与中间那根竖线 3 列。 */
@@ -261,10 +261,11 @@ function cell(s: string, w: number): string {
   return cut + ' '.repeat(Math.max(0, w - widthOf(cut)))
 }
 
-/** 一段框线：左边一个空格与标签，右边拿 `─` 补满（位置不够就只剩 `─`）。 */
+/** 一段框线：左边一个空格与标签，右边拿横线补满（位置不够就只剩横线）。字形从档取。 */
 function bar(w: number, label?: string): string {
-  if (label === undefined || widthOf(label) + 3 > w) return '─'.repeat(Math.max(0, w))
-  return `─ ${label} ` + '─'.repeat(w - widthOf(label) - 3)
+  const h = glyphs().h
+  if (label === undefined || widthOf(label) + 3 > w) return h.repeat(Math.max(0, w))
+  return `${h} ${label} ` + h.repeat(w - widthOf(label) - 3)
 }
 
 /** 候选那一层那几行（`ui/menu.ts` 算好的原文）与选中项落在第几条（`T4`）。 */
@@ -399,10 +400,11 @@ export function frameOf(o: FrameInput): Frame {
     else {
       const w = win as MenuWindow
       const at = Math.max(0, Math.min(menuAll.length - 1, o.menu?.sel ?? 0))
+      const g = glyphs()
       for (let i = w.from; i < w.from + w.count; i += 1) {
-        menuBody.push(`${i === at ? '▸' : ' '} ${menuAll[i] as string}`)
+        menuBody.push(`${i === at ? g.sel : ' '} ${menuAll[i] as string}`)
       }
-      if (w.summary) menuBody.push(`… 还有 ${w.above + w.below} 条（↑↓ 翻，选中第 ${at + 1} 条）`)
+      if (w.summary) menuBody.push(`${g.mark} 还有 ${w.above + w.below} 条（${g.up}${g.down} 翻，选中第 ${at + 1} 条）`)
     }
   }
   // 阅读面那一栏（`T9`）**开着的时候整块地方给它**：树与内容那一栏都不印——那一刻人要看的就是
@@ -418,7 +420,10 @@ export function frameOf(o: FrameInput): Frame {
     const below = readAll.length - (top + count)
     // **被这一句提示顶掉的那一行也算遗漏**（交接单判决 7）：末行本来要印第 `top + count` 行，它现在
     // 被提示换了——这一行数的是"屏上没看见几行"，不是"游标之后还剩几行"。
-    if (below > 0) readBody[readBody.length - 1] = `… 下面还有 ${below + 1} 行（↑↓ 翻 · Esc 收起）`
+    if (below > 0) {
+      const g = glyphs()
+      readBody[readBody.length - 1] = `${g.mark} 下面还有 ${below + 1} 行（${g.up}${g.down} 翻 · Esc 收起）`
+    }
   }
   budget -= readBody.length
 
@@ -431,7 +436,7 @@ export function frameOf(o: FrameInput): Frame {
   const navBody: string[] = []
   if (navWin !== null) {
     for (let i = navWin.from; i < navWin.from + navWin.count; i += 1) navBody.push(navAll[i] as string)
-    if (navWin.summary) navBody.push(`  … 还有 ${navWin.above + navWin.below} 个节点（Tab 循环 · Alt-1…9 直选）`)
+    if (navWin.summary) navBody.push(`  ${glyphs().mark} 还有 ${navWin.above + navWin.below} 个节点（Tab 循环 · Alt-1…9 直选）`)
   }
   budget -= navBody.length
 
@@ -456,7 +461,7 @@ export function frameOf(o: FrameInput): Frame {
     ...navBody.map((l) => ({ l, r: '', full: true, role: 'body' as const })),
     ...content.map((x) => ({ ...x, role: 'body' as const })),
   ]
-  if (dropped > 0) shown.push({ l: `… 还有 ${dropped} 行没印（这一屏 ${height} 行）`, r: '', role: 'body' })
+  if (dropped > 0) shown.push({ l: `${glyphs().mark} 还有 ${dropped} 行没印（这一屏 ${height} 行）`, r: '', role: 'body' })
   for (const one of readBody) shown.push({ l: one, r: '', full: true, role: 'read' as const })
   for (const one of menuBody) shown.push({ l: one, r: '', full: true, role: 'overlay' as const })
   for (const one of gateBody) shown.push({ l: one, r: '', full: true, role: 'overlay' as const })
@@ -465,25 +470,26 @@ export function frameOf(o: FrameInput): Frame {
   const roles: LineRole[] = []
   // 框名（U3）：阅读面开着时那个框叫「阅读面」，它那一行报 `readHeading`（主题里是加粗）——整块
   // 地方给的是它，框就得说它。两栏那一档照旧是「处境 / 读数」。
-  lines.push(`┌${bar(left, readingOn ? '阅读面' : '处境')}${two ? `┬${bar(right, '读数')}` : ''}┐`)
+  const g = glyphs()
+  lines.push(`${g.tl}${bar(left, readingOn ? '阅读面' : '处境')}${two ? `${g.tj}${bar(right, '读数')}` : ''}${g.tr}`)
   roles.push(readingOn ? 'readHeading' : 'border')
   for (const one of shown) {
     // 候选那一层**横贯整栏**（它是临时的一层，不参与左右两栏的分工）。
     if (one.full === true) {
-      lines.push(`│${cell(one.l, inner)}│`)
+      lines.push(`${g.v}${cell(one.l, inner)}${g.v}`)
       roles.push(one.role)
       continue
     }
-    lines.push(`│${cell(one.l, left)}${two ? `│${cell(one.r, right)}` : ''}│`)
+    lines.push(`${g.v}${cell(one.l, left)}${two ? `${g.v}${cell(one.r, right)}` : ''}${g.v}`)
     roles.push(one.role)
   }
   if (withFooter) {
-    lines.push(`├${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┤`)
+    lines.push(`${g.ml}${g.h.repeat(left)}${two ? `${g.mj}${g.h.repeat(right)}` : ''}${g.mr}`)
     roles.push('border')
-    lines.push(`│${cell(footer, inner)}│`)
+    lines.push(`${g.v}${cell(footer, inner)}${g.v}`)
     roles.push('footer')
   }
-  lines.push(`└${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┘`)
+  lines.push(`${g.bl}${g.h.repeat(left)}${two ? `${g.bj}${g.h.repeat(right)}` : ''}${g.br}`)
   roles.push('border')
   return { width, height, columns: { left, right }, footer, lines, roles }
 }
