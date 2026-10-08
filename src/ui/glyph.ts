@@ -54,6 +54,14 @@ export interface GlyphSet {
   readonly ml: string
   readonly mj: string
   readonly mr: string
+  /**
+   * 细线那一横（框内那一栏与账尾之间那条分隔线）。**与框线那一横分两格**：第二幕 ④ 要的是
+   * "分隔线细一档"——`box` 那一档的交集里没有比 `─` 更细的一横（交集只有那 22 个单双线框与
+   * ASCII），所以那一档它与 `h` 同一条（偏差记在停点报告里）；`rich` 那一档取 `┈`（U+2508，
+   * console-setup 才有、交集之外）。**什么条件下改主意**：交集名单里出现更细的一横，`box.div`
+   * 就跟着换。
+   */
+  readonly div: string
   /** 截断与折叠标记（④「全站一个口径」）。**它的列宽也住在这里**（`markWidthOf`）。 */
   readonly mark: string
   /** 选中那一行前面那一个。 */
@@ -76,6 +84,7 @@ export const GLYPHS: Readonly<Record<GlyphTier, GlyphSet>> = {
     tl: '+', tj: '+', tr: '+',
     bl: '+', bj: '+', br: '+',
     ml: '+', mj: '+', mr: '+',
+    div: '-',
     mark: '...',
     sel: '>',
     up: '^', down: 'v',
@@ -86,6 +95,7 @@ export const GLYPHS: Readonly<Record<GlyphTier, GlyphSet>> = {
     tl: '┌', tj: '┬', tr: '┐',
     bl: '└', bj: '┴', br: '┘',
     ml: '├', mj: '┴', mr: '┤',
+    div: '─',
     mark: '…',
     sel: '▶',
     up: '↑', down: '↓',
@@ -96,6 +106,7 @@ export const GLYPHS: Readonly<Record<GlyphTier, GlyphSet>> = {
     tl: '┌', tj: '┬', tr: '┐',
     bl: '└', bj: '┴', br: '┘',
     ml: '├', mj: '┴', mr: '┤',
+    div: '┈',
     mark: '…',
     sel: '▸',
     up: '↑', down: '↓',

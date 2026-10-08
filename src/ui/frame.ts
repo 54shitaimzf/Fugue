@@ -42,13 +42,17 @@ import type { MetricReading } from '../probe/round.ts'
 import { skipsNote } from '../probe/status.ts'
 import type { StatusSnapshot } from '../probe/status.ts'
 import { clip, glyphs, widthOf, wrap } from './glyph.ts'
+import { MIN_FRAME_ROWS } from './layout.ts'
 import { humanNumber } from '../human.ts'
 
 /** 两栏至少要这么宽才画得下（再窄就收成单栏）：左 24 · 右 20 · 框与中间那根竖线 3 列。 */
 export const MIN_TWO_COLUMN = 24 + 20 + 3
 
-/** 画得出框 + 账尾至少要几行：上下两条边 · 一行内容 · 一条分隔 · 一行账尾。 */
-export const MIN_HEIGHT = 5
+/**
+ * 画得出框 + 账尾至少要几行：上下两条边 · 一行内容 · 一条分隔 · 一行账尾。**值住在 `ui/layout.ts`
+ * 那一份布局常量表里**（第二幕 ④ 把这一带的数收成一处），这一行只是把那个名字露给这一份的读者。
+ */
+export const MIN_HEIGHT = MIN_FRAME_ROWS
 
 /**
  * 画得出框至少要几列：左右两根竖线 + 框内一列。**出处是代码，不是直觉**：`ui/term.ts` 的列宽探测是
@@ -107,7 +111,7 @@ export interface Frame {
  * 任何样式。（**永久行与输入行不在这张表里**：U20 那条形状不动——永久行进终端历史要保持干净
  * 流水，输入行是光标算术那一行。）
  */
-export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'read' | 'readHeading'
+export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'read' | 'readHeading' | 'hint'
 
 export interface FrameInput {
   /** 读源一：那一刻的处境（`status --once` 印的那一份）。 */
@@ -484,7 +488,9 @@ export function frameOf(o: FrameInput): Frame {
     roles.push(one.role)
   }
   if (withFooter) {
-    lines.push(`${g.ml}${g.h.repeat(left)}${two ? `${g.mj}${g.h.repeat(right)}` : ''}${g.mr}`)
+    // **细线那一行**：横线从字形档的 `div` 取（与框线那一横分成两格）——`box` 那一档交集里没有
+    // 比 `─` 更细的一横，所以它与框同一条；`rich` 那一档是 `┈`。
+    lines.push(`${g.ml}${g.div.repeat(left)}${two ? `${g.mj}${g.div.repeat(right)}` : ''}${g.mr}`)
     roles.push('border')
     lines.push(`${g.v}${cell(footer, inner)}${g.v}`)
     roles.push('footer')

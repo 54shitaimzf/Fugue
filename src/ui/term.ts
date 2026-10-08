@@ -20,6 +20,11 @@
 // 收走这一块也从"删 K 行"变成"删这一块一共几行"（`regionRows`）。两条都只在有输入行时与从前不同
 // ——`term.test.ts` 拿"没有输入行时逐字节不变"钉住这件事。
 //
+// **提示行与框下那一个空行是第二幕 ④ 加进来的**：它们在框下面、输入行上面，**算在 K 里**
+// （`ui/layout.ts`：框 10 ＋ 空 1 ＋ 提示 1 = K 12）。从前提示行是启动时写进终端历史的一行**永久
+// 行**——进了历史就追不回来（宽度变了它还是旧的那一串），现在每帧重画、位置固定。**装不下时先丢
+// 的是它**（框那一格一行不让）：判据是「框 ＋ 那两行还放不放得进终端」，放不进就只画框。
+//
 // **输入行不长出去**：调用方给的每一行宽度 ≤ `columns` − 1（`ui/input.ts` 的 `inputFrameOf` 就是按
 // "量到的列宽减一"折的），所以一行输入行就是一个物理行，`\x1b[KA` 那条算术不会被终端的自动换行
 // 打乱。光标那一下是在写完那一行之后**往左退**到光标列（显示宽度算，不是 code unit）。
@@ -79,9 +84,15 @@ import type { BottomInput, MenuInput, NavInput, ReadInput } from './frame.ts'
 import { MIN_HEIGHT, panelOf } from './frame.ts'
 import type { LineRole } from './frame.ts'
 import { widthOf } from './glyph.ts'
+import { FRAME_ROWS, GAP_ROWS, HINT_ROWS, REGION_ROWS } from './layout.ts'
 
-/** 底部那块区域的**缺省**期望行数（PLAN § 5.19：K 取 12；画出框的下限是 5，12 够放处境那几行）。实际画的高度是它夹进终端行数的那一个（U6）。 */
-export const K = 12
+/**
+ * 底部那块**重画区**的期望行数（PLAN § 5.19：K 取 12）——**框 10 ＋ 空一行 ＋ 提示行**（第二幕 ④；
+ * 那一本行账住 `ui/layout.ts` 一处，这一行只是把那个名字露给这一份的读者与测试）。它是**整块地方**
+ * 的账，不是喂给 `frameOf` 的那个高度（那个是 `FRAME_ROWS`）。实际画的高度是它们各自夹进终端行数的
+ * 那一个（U6）。
+ */
+export const K = REGION_ROWS
 
 /** 量不到列宽时兜的列数（PLAN § 5.19：`columns === undefined` 兜 80）。 */
 export const FALLBACK_COLUMNS = 80
@@ -198,6 +209,12 @@ export interface Panel {
    * 有没有样式由 `theme` 说了算，不给 `roles` 就当全是 `body`。
    */
   readonly roles?: readonly LineRole[] | undefined
+  /**
+   * 框下面那一行提示行（第二幕 ④）：**框下先空一行、再印它**——那两行都在重画区里（都算在 `K`
+   * 里），于是它每帧重画、位置固定（不再是一行写进终端历史就追不回来的注记）。不给（或空串）时
+   * 那两行都没有，与从前逐字节相同。**装不下时先让位的是它**（框那一格一行不让）。
+   */
+  readonly hint?: string | undefined
   readonly input?: PanelInput | undefined
 }
 
@@ -226,6 +243,11 @@ export interface ViewInput {
    * 行起）。它不给时一个字节都不占。
    */
   readonly read?: ReadInput | undefined
+  /**
+   * 框下面那一行提示行（第二幕 ④）：与 `Panel.hint` 同一样东西——`ui/follow.ts` 那一层把舞台折出来
+   * 的这一份带话到终端那一层（它自己不算这一行）。
+   */
+  readonly hint?: string | undefined
   readonly input?: PanelInput | undefined
 }
 
@@ -239,7 +261,7 @@ export interface TermOptions {
   readonly out: TermOut
   /** 这一台终端叫什么（`process.env.TERM`）。缺省读环境。 */
   readonly term?: string | undefined
-  /** 期望高度（缺省 `K`）。实际画的高度是它夹进终端行数的那一个（U6）。 */
+  /** **框**那一块的期望高度（缺省 `FRAME_ROWS`）。实际画的高度是它夹进终端行数的那一个（U6）。 */
   readonly height?: number
   /**
    * 量行数那一处（缺省读 `out.rows`，与 `columnsOf` 同形）：真终端上就是它，resize 那一档要一个
@@ -248,7 +270,7 @@ export interface TermOptions {
   readonly rowsOf?: () => number | undefined
   /**
    * 期望高度那一问（**每帧现问**，U6）：弹层（菜单 · 阅读面）开着时调用方给更大的数，关了回到
-   * 缺省。缺省就是 `height ?? K`。给的这个数仍要夹进终端行数——想要多大是调用方的事，画得下
+   * 缺省。缺省就是 `height ?? FRAME_ROWS`。给的这个数仍要夹进终端行数——想要多大是调用方的事，画得下
    * 多大是这一层的事。
    */
   readonly heightOf?: () => number
@@ -298,7 +320,7 @@ export interface Term {
  */
 export function openTerm(o: TermOptions): Term {
   const out = o.out
-  const height = o.height ?? K
+  const height = o.height ?? FRAME_ROWS
   const wantOf = o.heightOf ?? ((): number => height)
   const measure = o.columnsOf ?? ((): number | undefined => out.columns)
   const measureRows = o.rowsOf ?? ((): number | undefined => out.rows)
@@ -318,10 +340,10 @@ export function openTerm(o: TermOptions): Term {
   let drawnRows: number | undefined = undefined
   /** 上一次画完时光标停在区域第几行（0 = 面板顶）——下一次"上移多少"靠它。 */
   let cursorRow = height
-  /** 上一次画出去的区域一共几行（面板 + 输入那几行）——`close()` 收走这一块靠它。 */
+  /** 上一次画出去的区域一共几行（框 ＋ 框下面那几行：空一行 · 提示行 · 输入行）——`close()` 靠它。 */
   let regionRows = height
   /**
-   * 上一帧的**区域行**（面板 + 输入行，U8）：行级 diff 的比对底稿。首帧之前 · 矮帧 · 收尾之后是
+   * 上一帧的**区域行**（框 ＋ 框下面那几行，U8）：行级 diff 的比对底稿。首帧之前 · 矮帧 · 收尾之后是
    * `null`——那些场合没有可比的上一帧，走全量。
    */
   let lastRegion: readonly string[] | null = null
@@ -378,7 +400,23 @@ export function openTerm(o: TermOptions): Term {
       })
       const input = spec.input
       const body = input === undefined ? [] : input.rows
-      const region = [...rows, ...body]
+      /** 光标最后停在输入行上（那几行的末行）——不是的话光标停在整块下面一行。 */
+      const lastIsInput = input !== undefined && body.length > 0
+      // **框下面那两行**（第二幕 ④）：空一行 ＋ 提示行。提示行是这一块里**让位第一条**——终端装不下
+      // 整块时先丢它（`框 ＋ 空 ＋ 提示 > 画得下的行数`），框那一格一行不让（交接单 § 五 ④：矮屏先
+      // 让提示行，不让在飞的格）。它按自己那一格上色（`LineRole` 的 `hint`，落在弱化那一格），与
+      // 面板那几行同一处包裹（先补宽再包，SGR 零宽）。
+      const room = rowsKnown ? (rowsSeen as number) - 1 : Number.POSITIVE_INFINITY
+      const wantHint = typeof spec.hint === 'string' && spec.hint !== '' && h + GAP_ROWS + HINT_ROWS <= room
+      const hintText = wantHint ? (panelOf([spec.hint as string], 1, columns)[0] as string) : null
+      const hintSgr = o.theme?.hint
+      const pad =
+        hintText === null
+          ? []
+          : [' '.repeat(columns), hintSgr === undefined ? hintText : `${hintSgr}${hintText}${STYLE_OFF}`]
+      /** 框下面那几行：空一行 ＋ 提示行 ＋ 输入行。光标停在它的末行（没有输入行时停在它下面一行）。 */
+      const tail = [...pad, ...body]
+      const region = [...rows, ...tail]
       // 上移只在"上一次画过、而且宽度和高度都没变过"时做——宽度变过不猜重排；高度变过那一块
       // 的大小变了，上移回去也对不上新面板顶。
       const steady = drawn && columns === drawnColumns && h === drawnHeight
@@ -397,20 +435,22 @@ export function openTerm(o: TermOptions): Term {
           const last = i === region.length - 1
           if (one === lastRegion![i]) {
             // 掠过：回到行首、下移一行。最后一行输入行不掠到下一行——光标要停回它上面。
-            buf.push(last && input !== undefined ? '\r' : '\r\x1b[1B')
+            buf.push(last && lastIsInput ? '\r' : '\r\x1b[1B')
           } else {
-            buf.push(`\r${CLEAR_LINE}${one}${last && input !== undefined ? '' : '\n'}`)
+            buf.push(`\r${CLEAR_LINE}${one}${last && lastIsInput ? '' : '\n'}`)
           }
         }
         // 末尾光标恒回 caret：掠过那条路走完光标还停在最后一行输入行的行首，补那一下退列（重写
         // 那条路在写的时候已经退过）。无输入行的帧光标停在区域下一行行首（与全量那一版相同）。
-        if (input !== undefined && body.length > 0) {
+        if (lastIsInput) {
           const one = body[body.length - 1] as string
-          const back = widthOf(one) - input.caret.col
+          const back = widthOf(one) - (input as PanelInput).caret.col
           if (back > 0) buf.push(leftOf(back))
         }
       } else {
-        for (const row of rows) buf.push(`\r${CLEAR_LINE}${row}\n`)
+        // 框那几行与框下面那两行（空一行 · 提示行）**一行一条物理行**：每行以 `\r` 起头、末尾 `\n`
+        // 往下走；输入行那一块写在最后（末行不带换行——光标停在它上面）。
+        for (const row of [...rows, ...pad]) buf.push(`\r${CLEAR_LINE}${row}\n`)
         for (let i = 0; i < body.length; i += 1) {
           const one = body[i] as string
           // 最后一行**不带换行**：光标停在它上面（这是这一块区域唯一有光标的地方），退到该在的那一列。
@@ -426,21 +466,22 @@ export function openTerm(o: TermOptions): Term {
         // 逐条「下移一行、清行」，末了上移回光标该在的那一行：帧结束的光标位置与没有残行的帧
         // 一模一样（下一帧的上移与收尾的删行都不用知道这一帧擦过几行）。
         if (stale > 0) {
-          if (input !== undefined && body.length > 0) {
+          if (lastIsInput) {
             for (let j = 0; j < stale; j += 1) buf.push(`\n\r${CLEAR_LINE}`)
             buf.push(upOf(stale))
-            const back = widthOf(body[body.length - 1] as string) - input.caret.col
+            const back = widthOf(body[body.length - 1] as string) - (input as PanelInput).caret.col
             if (back > 0) buf.push(leftOf(back))
           } else {
-            // 无输入行：面板末行的 `\n` 已把光标放到待擦的第一行上，不用先下移。
+            // 没有输入行：那一块末行（有提示行时是提示行，没有时是框的末行）的 `\n` 已把光标放到待擦
+            // 的第一行上，不用先下移。
             for (let j = 0; j < stale; j += 1) buf.push(`\r${CLEAR_LINE}${j < stale - 1 ? '\n' : ''}`)
             buf.push(upOf(stale - 1))
           }
         }
       }
       if (buf.length > 0) out.write(buf.join(''))
-      cursorRow = body.length === 0 ? h : h + body.length - 1
-      regionRows = h + body.length
+      cursorRow = lastIsInput ? h + tail.length - 1 : h + tail.length
+      regionRows = h + tail.length
       drawn = true
       drawnColumns = columns
       drawnHeight = h

@@ -264,7 +264,13 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       const v = o.view?.()
       const f = frameFullAt(size)
       // `roles` 与 `rows` 平行（U20）：终端那一层按它查主题；排版在 `ui/frame.ts`，这里只是带话。
-      return { rows: f.lines, roles: f.roles, ...(v?.input === undefined ? {} : { input: v.input }) }
+      // 框下面那几行（第二幕 ④）：提示行 ＋ 输入行——两样都在框外面，终端那一层按"框画几行、下面还几行"摆。
+      return {
+        rows: f.lines,
+        roles: f.roles,
+        ...(v?.hint === undefined ? {} : { hint: v.hint }),
+        ...(v?.input === undefined ? {} : { input: v.input }),
+      }
     },
   }
 }

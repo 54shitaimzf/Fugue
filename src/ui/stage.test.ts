@@ -10,7 +10,8 @@ import { test } from 'node:test'
 import type { StatusRow } from '../probe/status.ts'
 import { gateFaceOf, lineOf } from './gate.ts'
 import type { GateFace } from './gate.ts'
-import { openStage, panelWantOf } from './stage.ts'
+import { openStage } from './stage.ts'
+import { panelWantOf } from './layout.ts'
 import type { LineArgv, RunLauncher } from './run.ts'
 import { innerOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
@@ -38,6 +39,8 @@ function stageOf(
     rows?: readonly StatusRow[]
     running?: boolean
     termRows?: number
+    /** 框下面那一行提示行的原文（第二幕 ④）。缺省空串——不给就与从前逐字节相同。 */
+    hint?: string
     /** 这一刻的终端列数（U2 的一把尺那一格要它随测试改）。缺省 80，与从前逐字节相同。 */
     columns?: () => number
   } = {},
@@ -81,6 +84,7 @@ function stageOf(
     },
     columns: o.columns ?? ((): number => 80),
     termRows: () => o.termRows,
+    hint: () => o.hint ?? '',
     rows: () => ctl.rows,
     pendingFace: async () => ctl.face,
     run: () => go,
@@ -202,8 +206,8 @@ test('⑥ 面板高度按终端行数分账：输入那块不得与显示区等�
   // 3/5（上限 24 · 下限是缺省档 + 4）· 量不到行数不分账。
   assert.deepEqual(
     [24, 30, 40, 16].map((r) => panelWantOf(r, false)),
-    [9, 11, 12, 8],
-    '缺省档：24 行终端 9 行（+输入行 = 10，显示区 14——显示占大头）· 40 行及以上回到 K',
+    [9, 10, 10, 8],
+    '缺省档：24 行终端 9 行框 · 40 行及以上回到框的 10 行（第二幕 ④：分账收的是框，提示行加在框下面）',
   )
   assert.deepEqual(
     [24, 30, 40, 16].map((r) => panelWantOf(r, true)),
@@ -212,8 +216,8 @@ test('⑥ 面板高度按终端行数分账：输入那块不得与显示区等�
   )
   assert.deepEqual(
     [panelWantOf(undefined, false), panelWantOf(undefined, true)],
-    [12, 24],
-    '量不到行数：不分账，回 K / OVERLAY_WANT（与「量不到就不夹」同一条）',
+    [10, 24],
+    '量不到行数：不分账，回框的 10 行 / OVERLAY_WANT（与「量不到就不夹」同一条）',
   )
   // 接线：24 行的终端上想要 9 行；开一层弹层（Ctrl-P 候选）长到 13；Esc 收掉回到 9。
   const { stage } = stageOf({ termRows: 24 })

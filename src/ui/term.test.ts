@@ -35,6 +35,7 @@ import type { LineRole } from './frame.ts'
 import { widthOf } from './glyph.ts'
 import { permanentLinesOf } from './stream.ts'
 import { ALT_OFF, ALT_ON, CLEAR_LINE, FALLBACK_COLUMNS, K, STYLE_OFF, ansiOf, deleteLinesOf, degradeNote, leftOf, openTerm, upOf } from './term.ts'
+import { FRAME_ROWS, GAP_ROWS, HINT_ROWS } from './layout.ts'
 import type { Term, TermOut } from './term.ts'
 import { DEFAULT_THEME } from './theme.ts'
 
@@ -252,7 +253,7 @@ test('⑦ 降级说一声（U10a）：只有「真终端 + 认不出的 $TERM」
 test('⑧ 输入行：逐字写出去 · 光标退到该在的那一列 · 上移按"上次停在哪一行" · 收尾删的是一整块', () => {
   const panel = frameOf({ snapshot: SNAPSHOT, permanent: PERMANENT, width: 20, height: K }).lines
   const out = fakeOut({ columns: 20 })
-  const t = openTerm({ out, term: 'xterm-256color' })
+  const t = openTerm({ out, term: 'xterm-256color', height: K })
   // 负对照（U8 之后缩到**首帧**：重画帧走行级 diff 不再全量，「与从前逐字节相同」只对首帧成立）。
   t.draw(PERMANENT, () => panel)
   assert.equal(out.written.length, 1, '首帧也是一笔（U3）')
@@ -264,7 +265,7 @@ test('⑧ 输入行：逐字写出去 · 光标退到该在的那一列 · 上�
   t.draw([], () => panel)
   // 有输入行：面板那 K 行之后接着写输入行那两行，**最后一行不带换行**，再往左退到光标列。
   const out2 = fakeOut({ columns: 20 })
-  const t2 = openTerm({ out: out2, term: 'xterm-256color' })
+  const t2 = openTerm({ out: out2, term: 'xterm-256color', height: K })
   t2.draw([], () => ({ rows: panel, input: { rows: ['» /log', '  --root'], caret: { row: 1, col: 2 } } }))
   assert.ok(
     streamOf(out2).endsWith(
@@ -288,7 +289,7 @@ test('⑧ 输入行：逐字写出去 · 光标退到该在的那一列 · 上�
   assert.equal(streamOf(out2).slice(before2), upOf(K + 2 - 1) + deleteLinesOf(K + 2), '收尾删的是整块（面板 + 输入行）')
   // 没有输入行的收尾：上移 K + 删 K（与从前一样）。
   const out3 = fakeOut({ columns: 20 })
-  const t3 = openTerm({ out: out3, term: 'xterm-256color' })
+  const t3 = openTerm({ out: out3, term: 'xterm-256color', height: K })
   t3.draw([], () => panel)
   t3.close()
   assert.ok(streamOf(out3).endsWith(upOf(K) + deleteLinesOf(K)), '没有输入行时收尾与从前一样')
@@ -299,12 +300,12 @@ test('⑧ 输入行：逐字写出去 · 光标退到该在的那一列 · 上�
 })
 
 // ── ⑩ 行数也量（U6）：期望夹进行数 · 矮到画不出框只印永久行 · 行数够了自动回来 ───────
-test('⑩ 行数也量（U6）：rows=8 期望 12 → 夹到 7 行；rows=3 → 只印永久行零 ANSI；回来另起一块', () => {
+test('⑩ 行数也量（U6）：rows=8 期望框 10 → 夹到 7 行；rows=3 → 只印永久行零 ANSI；回来另起一块', () => {
   const f = fakeOut({ columns: 80 })
   f.rows = 8
   const t = openTerm({ out: f, term: 'xterm-256color' })
   t.draw([], () => ['a'])
-  assert.equal(writtenRows(f).length, 7, `rows=8 期望 12 该夹到 7 行（留一行），拿到 ${writtenRows(f).length}`)
+  assert.equal(writtenRows(f).length, 7, `rows=8 期望框 ${FRAME_ROWS} 该夹到 7 行（留一行），拿到 ${writtenRows(f).length}`)
   assert.equal(t.rows, 8, 'rows 那只口报上一次量到的行数（舞台分账高度读它）')
   // 矮到画不出框：rows=3 → 夹到 2，比 MIN_HEIGHT 还小 → 只印永久行，一个 ANSI 都不写
   // （矮那一帧屏幕顶紧挨着历史，`CLEAR_LINE` 会把历史吃掉一行）。
@@ -318,7 +319,7 @@ test('⑩ 行数也量（U6）：rows=8 期望 12 → 夹到 7 行；rows=3 → 
   f.written.length = 0
   f.rows = 24
   t.draw([], () => ['b'])
-  assert.equal(writtenRows(f).length, 12, `rows=24 期望 12 → 12 行，拿到 ${writtenRows(f).length}`)
+  assert.equal(writtenRows(f).length, FRAME_ROWS, `rows=24 期望框 ${FRAME_ROWS} → ${FRAME_ROWS} 行，拿到 ${writtenRows(f).length}`)
   assert.equal(t.rows, 24, '行数变了之后那一帧报的是新的数')
   assert.ok(f.written[0]?.startsWith(`\r${CLEAR_LINE}`) === true, '矮那一帧之后回来该另起一块（第一笔是回车+清行，不是上移）')
   // 期望每一帧现问：`heightOf` 给多大（装得下时）就画多高。
@@ -331,7 +332,7 @@ test('⑩ 行数也量（U6）：rows=8 期望 12 → 夹到 7 行；rows=3 → 
   const h = fakeOut({ columns: 80 })
   const t3 = openTerm({ out: h, term: 'xterm-256color' })
   t3.draw([], () => ['d'])
-  assert.equal(writtenRows(h).length, 12, '量不到行数该按期望画（K=12）')
+  assert.equal(writtenRows(h).length, FRAME_ROWS, `量不到行数该按期望画（框 ${FRAME_ROWS} 行——K=12 是整块，见 ⑭）`)
   assert.equal(t3.rows, undefined, '量不到行数那只口就是 undefined（不分账）')
   // 行数变过（宽度没变）之后 close：不删面板——量不到那一块落在哪。
   g.written.length = 0
@@ -340,7 +341,60 @@ test('⑩ 行数也量（U6）：rows=8 期望 12 → 夹到 7 行；rows=3 → 
   assert.deepEqual([...g.written], [], '行数变过 close 不该删面板')
   console.log(
     `⑩ 读数：rows=8 → 7 行 · rows=3 → 只印永久行（0 个 ANSI）· 回到 24 另起一块 12 行 · ` +
-      `heightOf=24（rows=40）→ 24 行 · 量不到行数 → 12 行（与从前相同）· 行数变过 close 0 字节`,
+      `heightOf=24（rows=40）→ 24 行 · 量不到行数 → ${FRAME_ROWS} 行（框的缺省；从前是 12＝整块）· 行数变过 close 0 字节`,
+  )
+})
+
+// ── ⑭ 提示行进重画区（第二幕 ④ 的开工批件）：框下空一行 · 那一行在框外面 · 矮屏先让提示行 ─────
+test('⑭ 提示行进重画区：框下空一行 · 每帧重画 · 装不下第一个让位 · 按弱化那一格印', () => {
+  // 开工批件（交接单 § 五 ④）：提示行从终端历史搬进重画区——每帧重画 · 位置固定 · 装不下第一个
+  // 让位。这里量的是**字节**：整块几行、空一行落在哪、提示行落在哪、让位时丢的是谁。
+  const f = fakeOut({ columns: 20, rows: 40 })
+  const t = openTerm({ out: f, term: 'xterm-256color' })
+  t.draw([], () => ({ rows: ['框里那一行'], hint: '按 g 放行' }))
+  const rows = writtenRows(f)
+  assert.equal(
+    rows.length,
+    FRAME_ROWS + GAP_ROWS + HINT_ROWS,
+    `整块该是框 ${FRAME_ROWS} ＋ 空 ${GAP_ROWS} ＋ 提示 ${HINT_ROWS} ＝ ${K} 行，拿到 ${rows.length}`,
+  )
+  assert.equal(rows[FRAME_ROWS], ' '.repeat(20), '框下面第一行是**空**的（框下留白）')
+  assert.ok(
+    rows[FRAME_ROWS + 1]?.startsWith('按 g 放行'),
+    `提示行在框下面第二行，实得 ${JSON.stringify(rows[FRAME_ROWS + 1])}`,
+  )
+  // 每帧重画：改一个字，重画那一帧里提示行跟着变（它不是写进历史就追不回来的一行永久行）。
+  f.written.length = 0
+  t.draw([], () => ({ rows: ['框里那一行'], hint: '按 y 放行' }))
+  assert.ok(streamOf(f).includes('按 y 放行'), '提示行每帧重画（换一个它就是新的那一串）')
+  assert.ok(!streamOf(f).includes('按 g 放行'), '旧的提示行不再出现')
+  // 装不下：rows=11 → 画得下的行数 10，框自己就要 10 行 → 让位的是提示行，框那一行还在。
+  const g = fakeOut({ columns: 20, rows: 11 })
+  const t2 = openTerm({ out: g, term: 'xterm-256color' })
+  t2.draw([], () => ({ rows: ['在飞那一格'], hint: '按 g 放行' }))
+  const rows2 = writtenRows(g)
+  assert.equal(rows2.length, FRAME_ROWS, `装不下时先丢提示行（框 ${FRAME_ROWS} 行），拿到 ${rows2.length}`)
+  assert.ok(rows2[0]?.startsWith('在飞那一格'), '丢的是提示行，不是在飞那一格（交接单 § 五 ④）')
+  assert.ok(!streamOf(g).includes('按 g 放行'), '让位那一帧一个字节的提示都不印')
+  // 按弱化那一格印：主题给了 hint 就包在那一行外面，别的行不包（角色 → 颜色只住 theme.ts）。
+  const h2 = fakeOut({ columns: 20, rows: 40 })
+  const t3 = openTerm({ out: h2, term: 'xterm-256color', theme: { hint: '\x1b[2m' } })
+  t3.draw([], () => ({ rows: ['框里那一行'], hint: '按 g 放行' }))
+  const line = streamOf(h2).split('\n')[FRAME_ROWS + 1] ?? ''
+  assert.ok(line.startsWith(`\r${CLEAR_LINE}\x1b[2m`), `提示行按 hint 那一格包一层，实得 ${JSON.stringify(line)}`)
+  assert.ok(line.endsWith(STYLE_OFF), '包完要归位（行与行之间不互相记账）')
+  // 不给提示行的那一档：与从前逐字节相同（框下面没有那两行）。
+  const h3 = fakeOut({ columns: 20 })
+  const t4 = openTerm({ out: h3, term: 'xterm-256color' })
+  t4.draw([], () => ({ rows: ['框里那一行'] }))
+  assert.equal(
+    writtenRows(h3).length,
+    FRAME_ROWS,
+    '不给 hint 就那两行都不占（框 ' + FRAME_ROWS + ' 行，不是整块的 ' + K + ' 行）',
+  )
+  console.log(
+    `⑭ 读数：rows=40 → ${rows.length} 行（框 ${FRAME_ROWS} ＋ 空 ${GAP_ROWS} ＋ 提示 ${HINT_ROWS}）· ` +
+      `rows=11 → ${rows2.length} 行（提示行让位，框一行不让）· 不给提示行 → 框 10 行（那两行都不占）`,
   )
 })
 

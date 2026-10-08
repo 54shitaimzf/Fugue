@@ -108,6 +108,13 @@ test('① 三档那张表：名字逐条 · 每档一份完整字形 · 标记�
     (c) => c !== '' && ![...c].every((ch) => ch.charCodeAt(0) < 0x80 || INTERSECTION.has(ch)),
   )
   assert.deepEqual(strays, ['…'], `box 档除了宪法点名的 mark，其余都该在交集里：${strays.join('')}`)
+  // **细线那一横**（第二幕 ④）：分隔线从 `div` 取——`box` 那一档仍要在交集里（与上面那条闭包同一
+  // 条：把 `box.div` 换成 `┈`，上面那句 `strays` 当场多一个），`rich` 那一档才是更细的那一横。
+  assert.deepEqual(
+    GLYPH_TIERS.map((t) => GLYPHS[t].div),
+    ['-', '─', '┈'],
+    '细线那一横：ascii `-` · box `─`（交集里没有更细的一横）· rich `┈`',
+  )
   console.log(
     `① 读数：三档 ${GLYPH_TIERS.join(' · ')}；mark 列宽 ascii=${markWidthOf('ascii')} box=${markWidthOf('box')}；` +
       `box 档字形「${membersOf(GLYPHS.box).join('')}」（交集之外只有 mark 那一处）`,

@@ -9,7 +9,7 @@
 // 不开一个真终端就能驱动（`stage.test.ts` 五条接线断言）。`FLAGS_OF` 从 cli 那一层读
 // （`../cli/flags.ts`）：菜单候选与分发处读**同一个对象**——「哪些命令存在」仍只有一处真源（那张
 // 表自己不 import 任何东西，不成环）。
-import { PAGE_STEP, fallsToText, helpRowsOf, hintLineOf } from './keymap.ts'
+import { PAGE_STEP, fallsToText, helpRowsOf } from './keymap.ts'
 import type { Decoded } from './keymap.ts'
 import { ctrlCStepOf, escStepOf, quitStepOf, stillArmed } from './cancel.ts'
 import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmit, submitOf } from './input.ts'
@@ -27,55 +27,30 @@ import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
 import type { LineMode, RunLauncher, RunOutcome } from './run.ts'
 import { innerOf } from './frame.ts'
-import { K } from './term.ts'
+import { panelWantOf } from './layout.ts'
 import type { ViewInput } from './term.ts'
 import { FLAGS_OF } from '../cli/flags.ts'
 import type { StatusRow } from '../probe/status.ts'
 
-/**
- * 弹层（菜单 · 阅读面）开着时的期望高度上限（U6）：候选与正文要装得下几行。它仍要夹进终端行数
- * （`ui/term.ts` 那一层量得到行数就夹）——想要多大是这一头的事，画得下多大是那一头的事。
- */
-const OVERLAY_WANT = 24
-
-/**
- * 面板高度怎么按终端行数**分账**（2026-09-29 用户拍的口径：**输入那块不得与显示区等高**——固定
- * 12 行在常见的 24 行终端上占了半屏，底下那块与上面留给输出的地方一边高，不符合直觉）：
- *
- *   · 缺省那档至多占终端（行数 − 1）的 **2/5**：24 行终端 → 9 行（面板 9 + 输入行 1 = 10，上面
- *     显示区 14——显示占大头）；40 行及以上回到 `K` 那个上限（12）；
- *   · 弹层开着那档至多占 **3/5**（上限 `OVERLAY_WANT`），下限是缺省那档 + 4——弹层要的是更大，
- *     不是更小；
- *   · 再矮不矮过 `PANEL_MIN`（框与账尾 4 行 + 内容 4 行）——终端真的很小时输入那块占大头是免不了
- *     的事，如实如此；
- *   · 量不到行数（`undefined`）就不分账，回 `K` / `OVERLAY_WANT`——与 `ui/term.ts`「量不到就
- *     不夹」同一条。
- *
- * 出来的数仍是**期望**：夹进终端行数（`clamp(期望, 1, 行数 − 1)`）归 `ui/term.ts` 那一层。
- */
-export const PANEL_SHARE = 2 / 5
-export const OVERLAY_SHARE = 3 / 5
-export const PANEL_MIN = 8
-
-/** 分账那一档的期望高度。纯函数：`stage.test.ts` ⑥ 拿几档典型终端的读数钉着它。 */
-export function panelWantOf(rows: number | undefined, overlay: boolean): number {
-  if (rows === undefined) return overlay ? OVERLAY_WANT : K
-  const base = Math.min(K, Math.max(PANEL_MIN, Math.floor((rows - 1) * PANEL_SHARE)))
-  if (!overlay) return base
-  return Math.max(base + 4, Math.min(OVERLAY_WANT, Math.floor((rows - 1) * OVERLAY_SHARE)))
-}
+// 分账那几个数（`panelWantOf` · 份额 · 上下限）住 `ui/layout.ts` 那一份布局常量表（第二幕 ④ 收成
+// 一处）：这一份只管把它们接上 `deps.termRows`（`heightWant`），算式一个字都不留在这里。
 
 /** 舞台要的外面那几样：全是「问一句」的函数（晚绑定——句柄建起来之前舞台先立着）。 */
 export interface StageDeps {
   /** 写一行界面自己的话（面板上方，只写一次）——`tui.note`。 */
   readonly note: (line: string) => void
+  /**
+   * 框下面那一行提示行（第二幕 ④）的原文——`ui/console.ts` 那一头给的（键表与 stdin 是不是终端都
+   * 只有那一头知道）。**每帧现问**：列宽变了它就跟着换（`hintLimitOf` 按列数取前几条）。
+   */
+  readonly hint: () => string
   /** 重画一帧（不重读）——`tui.redraw`。 */
   readonly redraw: () => void
   /** 这一刻的终端列数——`term.columns`。 */
   readonly columns: () => number
   /**
    * 这一刻的终端行数——`term.rows`（量不到是 `undefined`）。面板高度按它分账（`panelWantOf`：
-   * 输入那块不得与显示区等高，2026-09-29 的口径）；量不到就回 `K` / `OVERLAY_WANT`。
+   * 输入那块不得与显示区等高，2026-09-29 的口径）；量不到就回框的 10 行 / `OVERLAY_WANT`。
    */
   readonly termRows: () => number | undefined
   /** 这一刻账上的行——`tui.session.rows`（导航树与阅读面都从它推，不另开读法）。 */
@@ -106,7 +81,7 @@ export interface Stage {
   onRunDone(r: RunOutcome): void
   /**
    * 这一刻期望的面板高度（`openTerm` 的 `heightOf`）：按终端行数分账（`panelWantOf`——缺省至多
-   * 2/5 · 弹层开着至多 3/5；量不到行数回 `K` / `OVERLAY_WANT`）。画得下多少仍归终端层夹。
+   * 2/5 · 弹层开着至多 3/5；量不到行数回框的 10 行 / `OVERLAY_WANT`）。画得下多少仍归终端层夹。
    */
   heightWant(): number
   /** stdin 是不是终端（`openKeys` 之后才知道——`view` 里输入行画不画看它）。 */
@@ -332,7 +307,10 @@ export function openStage(deps: StageDeps): Stage {
    */
   const cols = (): number => innerOf(deps.columns())
   const view = (): ViewInput => {
-    if (!showInput) return {}
+    // 提示行（第二幕 ④）**与输入行在不在无关**：stdin 不是终端时它就是那一句"这一档不收按键"
+    // ——画一个收不到按键的提示符比不画坏得多，而"按键收不到"这件事更得说出来。
+    const hintPart = { hint: deps.hint() }
+    if (!showInput) return hintPart
     const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
     // 最下面那一栏：**门口那一块**（`T6`）与**排队那一行**（`T7`），都在面板那一栏的最下面（输入行
     // 还在它们下面）。两样都没有时一个字节都不占。
@@ -361,6 +339,7 @@ export function openStage(deps: StageDeps): Stage {
             return rows.length === 0 ? {} : { read: { rows, top } }
           })()
     return {
+      ...hintPart,
       ...navPart,
       ...(panel === null ? {} : { menu: { rows: rowsTextOf(rowsOf(panel.source)), sel: panel.sel } }),
       ...bottomPart,
@@ -424,9 +403,12 @@ export function openStage(deps: StageDeps): Stage {
       settle()
       return
     }
-    // ② `?`：把按键那一行重印一遍（写在面板上方，只写一次）。
+    // ② `?`：开按键那一张面板（与 `Ctrl-P` 同一个入口）。**"把提示行重印一遍"那一条撤了**——
+    // 第二幕 ④ 把提示行搬进了重画区（常驻在框下面那一行），它已经在屏幕上；`?` 要看的是**全部**
+    // 那一张表，不是屏幕上那几条。
     if (d.action === 'help') {
-      deps.note(hintLineOf())
+      openPanel('keys')
+      settle()
       return
     }
     // ③ **取消与退出那一组**（`ui/cancel.ts` 那两条链 + 退出那一条——判据全在那一份里，这一份

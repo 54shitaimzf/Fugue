@@ -194,9 +194,20 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // `view` / `onAdvance`——所以舞台先立着，句柄经 `ui` 那个盒子递（`?.` 一路，没建起来就是
   // 「还没有那回事」）。
   const ui: { tui: Tui | null; go: RunLauncher | null } = { tui: null, go: null }
+  // 按键那一档的两样**在这一层先立着**（第二幕 ④：提示行每帧从它们现问——它不再是一行写进终端
+  // 历史就追不回来的注记）。两个盒子在下面那个 `if (mode === 'panel')` 里填：`keys` 是 raw mode
+  // 那一头（不在了就是"stdin 不是终端"），`km` 是配置造出来的键表（缺省就是缺省表）。
+  let keys: KeySource | null = null
+  let km: Keymap = KEYMAP
   const stage = openStage({
     note: (line) => ui.tui?.note(line),
     redraw: () => ui.tui?.redraw(),
+    // 框下面那一行（第二幕 ④）：stdin 不是终端时它就是那一句"收不到按键"——按屏幕宽度取前几条的
+    // 那一手在 `hintLimitOf`（整行 438 列会被终端折成五行）。
+    hint: () =>
+      keys?.raw === true
+        ? hintLineOf(km, hintLimitOf(term.columns))
+        : 'stdin 不是终端：这一档不收按键（输入行与弹层都在等按键，画出来是骗人）',
     columns: () => term.columns,
     // 终端行数（分账面板高度那一档的输入；`rows` 那一只 dep 是「账上的行」，名字各归各）。
     termRows: () => term.rows,
@@ -234,7 +245,6 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // 第一帧进 alt screen，按键那一档还进了 raw mode），而这两条之前收到的 `SIGTERM` 会走缺省的杀
   // 进程路径——那台终端被留在另一块屏上，得人 `reset`。`ui/exit-hooks.ts` 管这三条（`SIGTERM` ·
   // `SIGHUP` · `exit`）；这个顺序由 `ui/exit-hooks.test.ts` ② 拿这一份的源码位置钉着。
-  let keys: KeySource | null = null
   const hooks =
     mode === 'panel'
       ? openExitHooks(process, {
@@ -280,11 +290,10 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     // 按键表（清障批 ⑧ 接线）：覆盖从 `ui.keys` 读，配错的那一格照缺省走、当场印出为什么。
     // 配置文件读不动（坏 JSON · 坏形状）也不静默：stderr 说一声，按缺省表起——TUI 是看的东西，
     // 不因为配置坏了就拒绝开。形状在读那一面已经核过，这里拿到的一定是「动作 → 键串」。
-    let km: Keymap = KEYMAP
     try {
       const doc = await readConfig(root)
-      const keys = (doc.ui as { keys?: Record<string, string> } | undefined)?.keys
-      km = keymapOf(keys ?? {})
+      const raw = (doc.ui as { keys?: Record<string, string> } | undefined)?.keys
+      km = keymapOf(raw ?? {})
     } catch (err) {
       process.stderr.write(`配置读不出来，按键按缺省表走：${(err as Error).message}
 `)
@@ -295,13 +304,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     // 印一行"按 g 放行"而按下去没反应，是这一档最坏的一种体验。
     stage.setRaw(keys.raw)
     for (const p of km.problems) tui.note(`键位 ${p.action} 配不了（${JSON.stringify(p.key)}）：${p.why}`)
-    // 按键那一行**按屏幕宽度取前几条**（28 条接线的动作整行印出来 438 列，终端会折成五行）；
-    // 剩下的那一句说清还有几条、去哪儿看全部（`Ctrl-P` 那一屏）。
-    tui.note(
-      keys.raw
-        ? hintLineOf(km, hintLimitOf(term.columns))
-        : 'stdin 不是终端：这一档不收按键（输入行与弹层都在等按键，画出来是骗人）',
-    )
+    // **提示行从前在这里写了第一遍**（`tui.note` 一行永久行）。第二幕 ④ 之后它常驻框下面那一行
+    // （`ui/stage.ts` 的 `view()` 每帧现问一次 `deps.hint`），这一处**一个字都不写**——写下去那一行
+    // 就留在终端历史里，而它的内容是跟着列宽变的。
   }
   // **每一条退出路径都要把终端还原回去**（计划 § 5.19 里 DECSTBM 那笔账在 raw mode 上是同一笔：
   // 漏一条，那台终端就得人 `reset`）。四路：正常退 · `Ctrl-C`（raw mode 下走按键那一头）·
