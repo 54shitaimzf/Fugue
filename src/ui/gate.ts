@@ -63,7 +63,7 @@ export interface GateFace {
 
 /**
  * 一批 → 界面那一份（一份契约一张卡）。`commands` 是**绑好的动作跑什么**（名字 → argv 拼起来，
- * `cli/cmd/round.ts` 的 `actionCommandsOf` 一处读）。**认不出来就说出来**：不猜、不补（§ 5.10 的
+ * `round/actions.ts` 的 `actionCommandsOf` 一处读）。**认不出来就说出来**：不猜、不补（§ 5.10 的
  * `C1` ⑦ 同一条——那一条说的是模型给的动作名，这一条说的是配置里有没有它）。
  */
 export function gateFaceOf(batch: GateBatch, commands: Readonly<Record<string, string>> = {}): GateFace {

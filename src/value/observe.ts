@@ -20,8 +20,9 @@ import type { StatusReadings, StatusRow } from '../probe/status.ts'
 import { cursorsOf, follow, readNew, tokenOf } from '../probe/watch.ts'
 import type { Cursors } from '../probe/watch.ts'
 import { readConfig } from '../config.ts'
+import { intervalOf as intervalFlagOf } from '../cli/flags.ts'
 import { PHRASES } from '../phrases.ts'
-import { actionCommandsOf } from '../cli/cmd/round.ts'
+import { actionCommandsOf } from '../round/actions.ts'
 import { CommandError, UsageError, ok } from './types.ts'
 import type { ValueArgs, ValueResult } from './types.ts'
 
@@ -173,17 +174,6 @@ export async function statusValue(a: ValueArgs): Promise<ValueResult> {
   }
 }
 
-/** `--interval <毫秒>`：跟随那一趟睡多久（判据与 `observe.ts` 那一道门同一份）。 */
-function intervalOf(a: ValueArgs): number {
-  const raw = a.flags.get('interval')
-  if (raw === undefined) return 200
-  if (typeof raw !== 'string') throw new UsageError('--interval 要一个数：--interval 200')
-  const n = Number(raw)
-  if (!Number.isInteger(n) || n < 1) {
-    throw new UsageError(`--interval 要一个正整数（毫秒），拿到 ${JSON.stringify(raw)}`)
-  }
-  return n
-}
 
 /**
  * `--resume <游标串>`：接着读的入口（架构 § 9.11 的事件通道——游标是每个 writer 一个，语义是
@@ -259,7 +249,8 @@ export async function watchValue(
     readonly tail?: RowTail
   } = {},
 ): Promise<{ result: ValueResult; value: WatchValue }> {
-  const intervalMs = intervalOf(a)
+  const intervalMs = intervalFlagOf(a.flags)
+  if (typeof intervalMs === 'string') throw new UsageError(intervalMs)
   const from = resumeFrom(a)
   const only = a.flags.get('agent')
   const tail = hooks.tail

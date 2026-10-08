@@ -5,7 +5,7 @@
 //   ① 配一个认不出的键名 / 一个表里没有的动作 → `config set` 拒绝（退出码非 0，报出原因）
 //   ② 手改文件塞一个认不出的键名 → `keymapOf` 报一条 problem，那一格照缺省（rows 与 KEYMAP 同格相等）
 //   ③ `ui.keys` 形状坏 → `readConfig` 整份拒绝（ConfigError），不是静默空表
-//   ⑥ 接线在场：observe.ts 把配置造出的那一份递给 openKeys 与提示行——删掉那一档必红
+//   ⑥ 接线在场：`ui/console.ts` 把配置造出的那一份递给 openKeys 与提示行——删掉那一档必红
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -89,8 +89,8 @@ test('⑤ 形状坏了整份拒载：ui.keys 不是对象 · 值不是键串，�
   })
 })
 
-test('⑥ 接线在场：observe.ts 把配置造出的那一份递给 openKeys 与提示行（负对照：删掉必红）', () => {
-  const src = readFileSync(new URL('./cmd/observe.ts', import.meta.url), 'utf8')
+test('⑥ 接线在场：`ui/console.ts` 把配置造出的那一份递给 openKeys 与提示行（负对照：删掉必红）', () => {
+  const src = readFileSync(new URL('../ui/console.ts', import.meta.url), 'utf8')
   assert.ok(src.includes('onAction: stage.onAction, km }'), 'openKeys 收到的是配置造出的那一份')
   assert.ok(src.includes('hintLineOf(km,'), '提示行读同一份')
 })

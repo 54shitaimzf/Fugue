@@ -6,7 +6,8 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, 
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { BindingError, actionNames, readBinding } from '../../boundary/binding.ts'
+import { BindingError, readBinding } from '../../boundary/binding.ts'
+import { actionsTableOf } from '../../round/actions.ts'
 import { ConfigError, getConfig, readConfig } from '../../config.ts'
 import type { ConfigDoc } from '../../config.ts'
 import { identFor } from '../../identity.ts'
@@ -1575,34 +1576,6 @@ function writeSetLine(c: {
   if (c.kind === 'implement') return (c.ownedPaths ?? []).join(' · ')
   if (c.kind === 'resolve') return (c.conflictPaths ?? []).join(' · ')
   return (c.evidenceRequired ?? []).map((e) => e.artifact).join(' · ')
-}
-
-/**
- * 绑好的动作表：名字 → 它声明的产出（`actions.<名字>` 那一条）。
- *
- * **持轮者给的断言只能从这里选**（PLAN § 5.10 的 C1 ⑦：架构 § 8.12 那张表里
- * `assertions` 的候选就是工作区配置）。读它的是 `readBinding` 一处，所以“这个名字合不合形状”
- * 的判据只有一份——报出来的话就是那一份说的（不猜、不补、不替它挑）。
- */
-export function actionsTableOf(doc: ConfigDoc): Readonly<Record<string, readonly RelPath[]>> {
-  const out: Record<string, readonly RelPath[]> = {}
-  for (const name of actionNames(doc)) out[name] = readBinding(doc, name).outputs as readonly RelPath[]
-  return out
-}
-
-/**
- * 绑好的动作**跑什么**：名字 → `argv` 拼起来。**与 `actionsTableOf` 同一个来源**（`readBinding`
- * 一处读）。P3b2 起它的消费方只剩**门停给人看的那张表**（`observe.ts`）——模型那一侧的清单
- * 住在 A 区系统状态的 `actions` 栏（名字 + argv，同一份来源），不再由提示词内联。
- *
- * 那张表为什么留着：`assertions.action` 只能从这几个里挑，而"只给名字"那一版真档烧掉过一整趟的
- * 预算——那一趟为了弄清哪个动作核哪一处，去找工作区的配置（它猜 `*.json` / `*.yaml` /
- * `*.toml`，而那一份叫 `.fugue/config`），8 步里四步花在找它上，一次都没伸手写草案。
- */
-export function actionCommandsOf(doc: ConfigDoc): Readonly<Record<string, string>> {
-  const out: Record<string, string> = {}
-  for (const name of actionNames(doc)) out[name] = readBinding(doc, name).argv.join(' ')
-  return out
 }
 
 /**

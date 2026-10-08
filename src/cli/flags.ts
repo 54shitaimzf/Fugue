@@ -77,3 +77,34 @@ export const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
   'round run': { flags: ['root', 'agent', 'json', 'help', 'split', 'fail', 'deny', 'retry', 'materialize', 'report', 'metrics', 'live', 'wire-in', 'max-steps', 'credential', 'dump-wire', 'no-handoff', 'strict-merge-gate', 'poke', 'poke-exact', 'model', 'no-clock'], note: PHRASES.noClockNote },
   'round work': { flags: ['root', 'agent', 'json', 'help', 'live', 'wire-in', 'retry', 'report', 'metrics', 'max-steps', 'credential', 'dump-wire', 'model', 'no-clock'], note: PHRASES.noClockNote },
 }
+
+
+/**
+ * `--interval <毫秒>`：跟随那一趟睡多久。给一个数，或者给一句用法错的话。
+ *
+ * **一处读法**：`watch`（`cli/cmd/observe.ts`）与 `tui`（`ui/console.ts`）说的是同一件事，值层
+ * 那一份（`value/observe.ts`）也读它——三处各写一遍的话，"多少算合法"这件事就漂了。
+ */
+export function intervalOf(flags: Map<string, string | true>): number | string {
+  const raw = flags.get('interval')
+  if (raw === undefined) return 200
+  if (typeof raw !== 'string') return '--interval 要一个数：--interval 200'
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 1) return `--interval 要一个正整数（毫秒），拿到 ${JSON.stringify(raw)}`
+  return n
+}
+
+/**
+ * `--tail N`（U15）：**首趟**永久行只写尾部 N 条——旧账几百行时不用翻半天才到活的那些；之后的
+ * 新行照常增量。不给 = 全印（与从前逐字节相同）。要一个正整数，别的都是用法错（退出码 2，
+ * 与 `--interval` 同一道门）。跳过的前几条**不折了也不印**：旧账想全看有 `fugue log` /
+ * `fugue watch`，这一档是"接着看"的入口。
+ */
+export function tailOf(flags: Map<string, string | true>): number | undefined | string {
+  const raw = flags.get('tail')
+  if (raw === undefined) return undefined
+  if (typeof raw !== 'string') return '--tail 要一个数：--tail 40'
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 1) return `--tail 要一个正整数（条数），拿到 ${JSON.stringify(raw)}`
+  return n
+}

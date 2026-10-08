@@ -30,7 +30,9 @@ import { test, mock } from 'node:test'
 import type { Log, LogEvent } from '../log/events.ts'
 import type { ReadingsOptions, StatusReadings, StatusRow } from '../probe/status.ts'
 import { readingsOf } from '../probe/status.ts'
-import { readNew } from '../probe/watch.ts'
+import { cursorsOf, tokenOf } from '../probe/watch.ts'
+import { PROTOCOL_VERSION } from '../protocol.ts'
+import type { LedgerSource, SourcePass } from '../serve/source.ts'
 import type { Frame } from './frame.ts'
 import { frameOf, panelOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
@@ -126,6 +128,9 @@ function mergedOf(rows: readonly StatusRow[]): StatusRow[] {
 }
 
 interface Scripted {
+  /** **界面真正拿到的那一份**：事件通道（一趟调用回一趟事）。 */
+  readonly source: LedgerSource
+  /** 底下的那一本假账：负对照要按 `readMerged` 的语义自己写一个跟随器。 */
   readonly log: Pick<Log, 'readMerged'>
   /** 到这一刻为止放出来的那些行（按片放，片内按合并序）。 */
   readonly released: () => readonly StatusRow[]
@@ -142,16 +147,34 @@ function scripted(
 ): Scripted {
   const out: StatusRow[] = []
   let calls = 0
+  /** 第 n 趟放第 n 片，片放出来之后就一直在（与 `readMerged` 同一条读法）。 */
+  const readAt = (fromSeq: number): StatusRow[] => {
+    calls += 1
+    const ch = chapters[calls - 1]
+    if (ch !== undefined) out.push(...ch)
+    o.onRead?.(calls)
+    return mergedOf(out).filter((r) => r.pos.seq > fromSeq)
+  }
   const log = {
     async *readMerged(fromSeq = 0): AsyncGenerator<{ pos: StatusRow['pos']; e: LogEvent }> {
-      calls += 1
-      const ch = chapters[calls - 1]
-      if (ch !== undefined) out.push(...ch)
-      o.onRead?.(calls)
-      for (const r of mergedOf(out)) if (r.pos.seq > fromSeq) yield { pos: r.pos as never, e: r.e }
+      for (const r of readAt(fromSeq)) yield { pos: r.pos as never, e: r.e }
     },
   }
-  return { log: log as Pick<Log, 'readMerged'>, released: () => out, calls: () => calls }
+  // **事件通道那一份**：界面读账只经它。一趟调用回一趟事，游标串沿用 `--resume` 那一形
+  // （每 writer 一个 · 排他下界）——与 `serve/source.ts` 的 `pass()` 同一个形状。
+  const source: LedgerSource = {
+    hello: { protocol: PROTOCOL_VERSION, product: '', methods: [] },
+    async pass(resume: string): Promise<SourcePass> {
+      const parsed = cursorsOf(resume)
+      const from: Readonly<Record<string, number>> = typeof parsed === 'string' ? {} : parsed
+      const rows = readAt(0).filter((r) => r.pos.seq > (from[r.pos.writer] ?? 0))
+      const next: Record<string, number> = { ...from }
+      for (const r of rows) if (r.pos.seq > (next[r.pos.writer] ?? 0)) next[r.pos.writer] = r.pos.seq
+      return { rows, resume: tokenOf(next) }
+    },
+    async close(): Promise<void> {},
+  }
+  return { source, log: log as Pick<Log, 'readMerged'>, released: () => out, calls: () => calls }
 }
 
 /** 摆的那一头：记下每一次 `draw` 摆了什么（`panelOf` 那一步是真的，所以记的就是屏幕上那几行）。 */
@@ -216,7 +239,7 @@ async function runFollow(o: {
   })
   const lines: string[] = []
   const tui = openTui({
-    log: s.log,
+    source: s.source,
     term: rec.term,
     emit: (line) => lines.push(line),
     mode: o.mode ?? 'panel',
@@ -230,7 +253,7 @@ async function runFollow(o: {
 /** 一次性那一档：同一批事件，另一本账**从一开始就全都有**，读齐、折一帧。 */
 async function oneShot(chapters: readonly (readonly StatusRow[])[]): Promise<{ rows: StatusRow[]; frame: Frame }> {
   const whole = scripted([chapters.flat()])
-  const all = await readNew(whole.log, {})
+  const all = await whole.source.pass('')
   const frame = frameOf({
     ...readingsOf(all.rows),
     permanent: permanentLinesOf(all.rows),
@@ -553,7 +576,7 @@ test('⑩ 帧快照记忆（U16）：同批连问（含 note()×3）不新增 fo
     },
   })
   const tui = openTui({
-    log: s.log,
+    source: s.source,
     term: rec.term,
     emit: () => {},
     mode: 'panel',
