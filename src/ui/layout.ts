@@ -108,3 +108,9 @@ export function panelWantOf(rows: number | undefined, overlay: boolean): number 
 export function regionRowsOf(frameRows: number): number {
   return frameRows + GAP_ROWS + HINT_ROWS
 }
+
+/** 正文与竖框之间的留白；极窄终端保留至少一列内容。 */
+export const AIR_COLUMNS = 1
+export function airOf(width: number): number {
+  return width >= 2 + 2 * AIR_COLUMNS + 1 ? AIR_COLUMNS : 0
+}

@@ -143,17 +143,16 @@ function snapshotOf(extra: readonly StatusRow[] = []): StatusSnapshot {
 
 const GOLDEN: readonly string[] = [
   "┌─ 对话 ───────────────────────────────────────────────────────────────────────────────────────────┐",
-  "│轮次 r1 · 重建 · 还在跑 1 格 · 打回 1 次                                                          │",
+  "│ 轮次 r1 · 重建 · 还在跑 1 格 · 打回 1 次                                                         │",
   "│ ──────────────────────────────────────────────────────────────────────────────────────────────── │",
-  "│格 agent/r1/1 · 2 步就停（收敛）                                                                  │",
-  "│  调用 2 次 · 走了 2 步 · 工具调用 3                                                              │",
-  "│格 agent/r1/2 · 还在跑                                                                            │",
-  "│  调用 1 次 · 走了 1 步 · 工具调用 3                                                              │",
+  "│ 格 agent/r1/1 · 2 步就停（收敛）                                                                 │",
+  "│   调用 2 次 · 走了 2 步 · 工具调用 3                                                             │",
+  "│ 格 agent/r1/2 · 还在跑                                                                           │",
+  "│   调用 1 次 · 走了 1 步 · 工具调用 3                                                             │",
   "├──────────────────────────────────────────────────────────────────────────────────────────────────┤",
-  "│最近 merge/accept（round 13）· 事件 13 条                                                         │",
+  "│ 最近 merge/accept（round 13）· 事件 13 条                                                        │",
   "└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
 ]
-
 test('① 黄金帧：整帧逐字节等于那一份原文，而且每一行恰好 width 列', () => {
   // 高度取**真终端上框的那 10 行**（`ui/layout.ts` 的 `FRAME_ROWS`，一处真源）：第二幕 ⑦ 起框
   // 自己就填满这一屏，所以这一份黄金帧就是主面在 100 列 × 10 行上的那一眼。
@@ -161,7 +160,7 @@ test('① 黄金帧：整帧逐字节等于那一份原文，而且每一行恰�
   assert.deepEqual([...f.lines], [...GOLDEN], '帧与黄金那一份不逐字节相同')
   const widths = f.lines.map((l) => widthOf(l))
   assert.deepEqual(widths, f.lines.map(() => 100), `每一行都该是 100 列：${widths.join(',')}`)
-  assert.deepEqual(f.columns, { left: 98, right: 0 }, '一栏占满框内（第二幕 ⑦ 之后没有第二栏）')
+  assert.deepEqual(f.columns, { left: 96, right: 0 }, '一栏占满框内（第二幕 ⑦ 之后没有第二栏）')
   assert.equal(f.lines.length, FRAME_ROWS, '框恒填满这一屏（上边 1 + 内容 6 + 分隔 1 + 账尾 1 + 下边 1）：内容那 6 行里够不着的拿空行补足')
   console.log(
     `① 读数：${f.lines.length} 行 · 每行 ${f.width} 列 · 内容那一栏 ${f.columns.left} 列（右 ${f.columns.right}）` +
@@ -382,7 +381,7 @@ test('⑧ 阅读面那一栏：整块地方给它（树与内容都让位）· �
 
   // 从第 0 行起：标题在头一行，**处境与读数那两栏让位**（整块地方给正文）。
   const all = frameOf({ ...base, read: { rows, top: 0 } })
-  const shown = all.lines.filter((l) => l.includes('│标题 · 三面之一'))
+  const shown = all.lines.filter((l) => l.includes('│ 标题 · 三面之一'))
   assert.equal(shown.length, 1, '标题在（阅读面那一栏是横贯整栏的）')
   assert.ok(all.lines.some((l) => l.includes('第一行')), '第二行也在')
   assert.ok(!all.lines.some((l) => l.includes('轮次 r1 · 状态')), '内容那一栏不印了（地方整块给正文）')
@@ -491,7 +490,7 @@ test('⑩ 一把尺：`innerOf` 是框内宽的唯一出处 · 长行折开印�
   assert.equal(narrow.join(''), wide.join(''), '两档拼回来是同一份字节——折的只是行')
 
   const f = frameOf({ ...base, width: 26, read: { rows: narrow, top: 0 } })
-  const shown = f.lines.filter((l) => l.startsWith('│')).map((l) => l.slice(1, -1).trimEnd())
+  const shown = f.lines.filter((l) => l.startsWith('│')).map((l) => l.slice(2, -2).trimEnd())
   assert.ok(shown.join('').includes(long), `整条正文都在屏上（一个字节都没被截）：${JSON.stringify(shown)}`)
   // **负对照**：旧版那一串（未折行的原文）在同一个框里被截掉尾巴——上面那一条正是为它写的。
   assert.notEqual(clip(long, innerOf(26)), long, '旧版走 `cell` → `clip`：尾巴没了')
@@ -500,7 +499,7 @@ test('⑩ 一把尺：`innerOf` 是框内宽的唯一出处 · 长行折开印�
   // **翻到第几行**：`top` 数的是同一串物理行——屏上第一条正文就是 `rows[top]`。
   for (const top of [0, 1, 4, narrow.length - 1]) {
     const g = frameOf({ ...base, width: 26, read: { rows: narrow, top } })
-    const body = g.lines.filter((l) => l.startsWith('│')).map((l) => l.slice(1, -1).trimEnd())
+    const body = g.lines.filter((l) => l.startsWith('│')).map((l) => l.slice(2, -2).trimEnd())
     assert.equal(body[0], narrow[top], `翻到第 ${top} 行：屏上第一条就是它`)
   }
   console.log(
@@ -601,4 +600,19 @@ test('⑭ 门口要按的那一行（第三幕 ①）：给了坐标就报 waiti
     `⑭ 读数：门口 ${rows.length} 行里末一行报 waiting（第 2 级 ${JSON.stringify(SLOT_256.waiting)}）· ` +
       '不给坐标与给越界坐标都与从前逐字节相同 · 矮屏上让位的是预览',
   )
+})
+
+
+test('正文统一留白、长内容不挤走账尾；极窄档保留完整几何', () => {
+  for (const width of [3, 4, 5, 20, 40, 100]) {
+    const f = frameOf({ snapshot: snapshotOf(), width, height: FRAME_ROWS, view: 'spending' })
+    assert.equal(f.lines.length, FRAME_ROWS)
+    assert.equal(f.roles.filter((r) => r === 'footer').length, 1)
+    for (const line of f.lines) assert.equal(widthOf(line), width)
+    if (width >= 5) {
+      for (const [i, line] of f.lines.entries()) {
+        if (f.roles[i] !== 'border') assert.ok(line.startsWith('│ ') && line.endsWith(' │'))
+      }
+    }
+  }
 })

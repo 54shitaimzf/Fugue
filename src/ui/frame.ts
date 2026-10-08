@@ -47,23 +47,13 @@ import type { RoundUsage, StatusSnapshot } from '../probe/status.ts'
 import { clip, glyphs, widthOf, wrap } from './glyph.ts'
 import { iconOf } from './icons.ts'
 import type { IconName } from './icons.ts'
-import { MIN_FRAME_ROWS } from './layout.ts'
+import { airOf, MIN_FRAME_ROWS } from './layout.ts'
 import { humanNumber } from '../human.ts'
 import { WORDS, stateFaceOf } from '../words.ts'
 import { DEFAULT_VIEW, viewNameOf } from './views.ts'
 import type { ViewKey } from './views.ts'
 
-/**
- * 块与块之间那条细线**左右各留的空列**（第二幕 ⑦ 的「空气列」）：细线不碰竖线（决策材料
- * 问三那句「收在空气列里，不碰竖线」）。
- *
- * **只有对话视图里那条块间细线走空气列**，正文那几行不留：决策材料的线框实测里长内容行本就
- * 顶到框线，文档没有「正文两侧留白」这条口径；给正文留白要在这一份的每一处行装配上动宽度算术
- * （树 · 候选 · 门口 · 阅读面 · 账尾五处），收益只有两列观感——按判据（注意力管理）不值。
- * 改主意的条件：有人嫌正文贴框线，就把这一列加进 `ui/layout.ts` 的常量表，并在那五处各留一列
- * （一次显示层期望移动，随提交写明）。
- */
-export const AIR_COLUMNS = 1
+export { AIR_COLUMNS } from './layout.ts'
 
 /**
  * 画得出框 + 账尾至少要几行：上下两条边 · 一行内容 · 一条分隔 · 一行账尾。**值住在 `ui/layout.ts`
@@ -93,7 +83,7 @@ export const MIN_WIDTH = 3
  * 的极窄提示兜住，见 `MIN_WIDTH`）。
  */
 export function innerOf(width: number): number {
-  return Math.max(0, width - 2)
+  return Math.max(0, width - 2 - 2 * airOf(width))
 }
 
 /**
@@ -561,10 +551,9 @@ export function frameOf(o: FrameInput): Frame {
    */
   const view: ViewKey = o.view ?? DEFAULT_VIEW
   const inner = innerOf(width)
-  // 空气列（第二幕 ⑦）：只有对话视图那条**块间细线**左右各留一列——`┈` 不碰竖线
-  // （决策材料问三那句「收在空气列里，不碰竖线」）。框窄到留不下时就一列都不留。
-  const air = inner >= 2 * AIR_COLUMNS + 1 ? AIR_COLUMNS : 0
-  const ruleW = Math.max(0, inner - air * 2)
+  const edge = width - 2
+  const inset = ' '.repeat(airOf(width))
+
 
   // 内容那一栏那几行：**哪一档视图说什么话**。对话视图是 `chatOf` 折出来的那几行
   // （轮次头 · 细线 · 在飞那几格）；另两档是 `bodyOf` 的那一半，行文一字不变，只是各拿满宽。
@@ -572,7 +561,7 @@ export function frameOf(o: FrameInput): Frame {
     view === 'chat'
       ? chatOf(o).map((x) =>
           x.kind === 'rule'
-            ? { l: `${' '.repeat(air)}${glyphs().div.repeat(ruleW)}`, role: 'border' as const }
+            ? { l: `${''}${glyphs().div.repeat(inner)}`, role: 'border' as const }
             : x.kind === 'aside'
               ? { l: `  ${x.text}`, role: 'body' as const }
               : { l: `${iconPrefixOf(x.icon)}${x.text}`, role: 'body' as const },
@@ -582,16 +571,9 @@ export function frameOf(o: FrameInput): Frame {
 
   // 账尾那条状态条：**一行**，超出就从右边截（`clip` 留 `…`，说了它被截过）。
   const footer = clip(footerOf(o.snapshot, o.permanent), inner)
-  // 框占上下两行，账尾占分隔 + 一行；装不下就先让账尾让位。**阅读面开着时内容那一栏一个字节都
-  // 不印**（`content` 是空的），所以让它参与"装不装得下"的只有框与账尾自己——不留那条看不见的
-  // 依赖（阅读面能印几行，取决于被它盖住的那一栏折成几行）。
-  const used = readingOn ? 0 : rows.length
-  let withFooter = used + 4 <= height
+  // 上下框两行、分隔与账尾两行；六行正文的预算不随信息量漂移。
+  const withFooter = (o.bottom?.keep ?? 0) + 1 <= height - 4
   let budget = height - 2 - (withFooter ? 2 : 0)
-  if (budget < 1) {
-    withFooter = false
-    budget = height - 2
-  }
 
   // 候选那一层（`/` 菜单 · `Ctrl-P` 面板）**从内容那一栏的最下面切一块**（最多一半）：面板开开关关，
   // 上面那几行读数一个字节都不动；它自己装不下时把选中的那一条留在窗里，并把还剩几条说出来。
@@ -699,22 +681,22 @@ export function frameOf(o: FrameInput): Frame {
   const g = glyphs()
   const focus = o.focus === undefined || o.focus === null ? '' : ` · ${o.focus}`
   const head = readingOn ? '阅读面' : `${viewNameOf(view)}${focus}`
-  lines.push(`${g.tl}${bar(inner, head)}${g.tr}`)
+  lines.push(`${g.tl}${bar(edge, head)}${g.tr}`)
   roles.push(readingOn ? 'readHeading' : 'border')
   for (const one of shown) {
-    lines.push(`${g.v}${cell(one.l, inner)}${g.v}`)
+    lines.push(`${g.v}${inset}${cell(one.l, inner)}${inset}${g.v}`)
     roles.push(one.role)
   }
   if (withFooter) {
     // **账尾的分隔那一行**：横线从字形档的 `div` 取（与框线那一横分成两格）——`box` 那一档交集里
     // 没有比 `─` 更细的一横，所以它与框同一条；`rich` 那一档是 `┈`。它**铺满框内**（块与块之间那条
     // 细线是另一件事：那条在对话视图的内容里，走空气列，见 `AIR_COLUMNS`）。
-    lines.push(`${g.ml}${g.div.repeat(inner)}${g.mr}`)
+    lines.push(`${g.ml}${g.div.repeat(edge)}${g.mr}`)
     roles.push('border')
-    lines.push(`${g.v}${cell(footer, inner)}${g.v}`)
+    lines.push(`${g.v}${inset}${cell(footer, inner)}${inset}${g.v}`)
     roles.push('footer')
   }
-  lines.push(`${g.bl}${g.h.repeat(inner)}${g.br}`)
+  lines.push(`${g.bl}${g.h.repeat(edge)}${g.br}`)
   roles.push('border')
   return { width, height, columns: { left: inner, right: 0 }, footer, lines, roles }
 }
