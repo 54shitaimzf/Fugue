@@ -336,7 +336,7 @@ export const TABLE: readonly Binding[] = [
   {
     action: 'complete',
     keys: ['Tab'],
-    hint: '补全',
+    hint: '补全/视图',
     note: '补全；没有可补的时候换视图（对话 · 进展 · 结果与花费，`Tab` 环形）',
     says: { read: '换一面' },
     by: 'T4',
@@ -402,7 +402,7 @@ export const TABLE: readonly Binding[] = [
  */
 export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
   // 不看处境：**空 = 照表自己的次序**（这一档就是第三幕 ② 之前那个样子，逐字节锁着）。
-  any: [],
+  any: ['submit', 'menu', 'complete', 'read', 'interrupt', 'quit', 'panel'],
   // 门口那一块开着：此刻要人按的是 `y` / `n`（放行那一份 · 拒那一份），再往下才是收起门口与翻批。
   gate: ['approve', 'reject', 'cancel', 'pageUp', 'pageDown', 'help'],
   // 阅读面开着：`Tab` 换一面 · `↑`/`↓` 翻行 · `Esc` 收起（这三样在别处都不是这个意思）。
@@ -830,7 +830,7 @@ const entryOf = (b: Binding, when: HintWhen = 'any'): string =>
  * 某一档下该印的那几条：`WIRED` 先过一遍（许诺一个按下去没反应的键，比少印几条坏得多），再看
  * `HINT_WHEN` 点了谁的名。
  *
- * `any` 那一档就是 `km.rows` 自己那个次序（第三幕 ② 之前的样子）；别的档把点名的那几条按点名的
+ * `any` 那一档优先发送、命令、视图与阅读（第三幕 ② 之前的样子）；别的档把点名的那几条按点名的
  * 次序提到前面，**其余照表序缀在后面**——次序只有这一处算，条数三档一样。
  */
 export function hintPicksOf(km: Keymap = KEYMAP, when: HintWhen = 'any'): readonly Binding[] {
@@ -855,7 +855,7 @@ export function hintPicksOf(km: Keymap = KEYMAP, when: HintWhen = 'any'): readon
  * 全部"端到人面前，而人要的是"此刻按哪个"。收口后按人令去掉；`--help` 那一行读的是同一个函数，
  * 于是它也少了一句（`help.json` 那一帧跟着重录，见停点报告）。
  *
- * `when`（第三幕 ②）是"此刻屏幕上是什么"；缺省 `any` 就是第三幕 ② 之前那一串（逐字节不变）。
+ * `when`（第三幕 ②）是"此刻屏幕上是什么"；缺省 `any` 优先显示聊天与按需查看的入口。
  */
 export function hintLineOf(km: Keymap = KEYMAP, limit = 0, when: HintWhen = 'any'): string {
   const ready = hintPicksOf(km, when)

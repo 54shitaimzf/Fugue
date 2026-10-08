@@ -610,7 +610,7 @@ export function frameOf(o: FrameInput): Frame {
   // 树与读数是正文 · 阅读面正文是 `read` · 候选与门口那一块是临时的 `overlay`。
   // 内容那一栏与临时那几层都**横贯整栏**（第二幕 ⑦ 之后没有第二栏了）：每行一个角色。
   const shown: { readonly l: string; readonly role: LineRole }[] = [
-    ...navBody.map((l) => ({ l, role: 'body' as const })),
+    ...navBody.map((l) => ({ l, role: l === navAll[o.nav?.sel ?? 0] ? 'hit' as const : 'body' as const })),
     ...content.map((x) => ({ l: x.l, role: x.role })),
   ]
   if (dropped > 0) shown.push({ l: `${glyphs().mark} 还有 ${dropped} 行没印`, role: 'body' })

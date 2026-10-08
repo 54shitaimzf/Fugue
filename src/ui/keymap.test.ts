@@ -484,7 +484,8 @@ test('⑧ 分档只换次序与措辞，不藏东西：不看处境那一档逐�
   const picksOf = (when: HintWhen): readonly Binding[] => hintPicksOf(KEYMAP, when)
   const wired = KEYMAP.rows.filter((b) => WIRED.includes(b.by))
   // **地板**：`any` 那一档就是表自己的次序（第三幕 ② 之前那一串），而且"不给处境"= 给 `any`。
-  assert.deepEqual([...picksOf('any')], [...wired], '不看处境那一档 = 表序')
+  assert.deepEqual(picksOf('any').map((b) => b.action).sort(), wired.map((b) => b.action).sort(), '默认提示重排但不丢绑定')
+  assert.deepEqual(picksOf('any').slice(0, 4).map((b) => b.action), ['submit', 'menu', 'complete', 'read'])
   assert.equal(hintLineOf(KEYMAP), hintLineOf(KEYMAP, 0, 'any'), '不给处境 = 不看处境（同一个答案）')
   assert.equal(hintLimitOf(60), hintLimitOf(60, KEYMAP, 'any'), '取几条也一样')
   assert.ok(hintLineOf(KEYMAP, 3).includes('Enter 提交'), `不看处境那一档照旧从头印：${hintLineOf(KEYMAP, 3)}`)
