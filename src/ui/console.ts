@@ -200,7 +200,14 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   const term = openTerm({
     out: process.stdout,
     full: flags.has('full'),
-    theme: themeOf({ noStyle: flags.has('no-style'), noColor: process.env.NO_COLOR }),
+    // 色档按这一台终端自报的来（四级表住在 `ui/theme.ts`）：`COLORTERM`/`TERM` 认得 256 色才上，
+    // 认不得退属性档（不半上色）。真彩那一档不开。
+    theme: themeOf({
+      noStyle: flags.has('no-style'),
+      noColor: process.env.NO_COLOR,
+      term: process.env.TERM,
+      colorTerm: process.env.COLORTERM,
+    }),
     heightOf: stage.heightWant,
   })
   // 四条地板收成**一张表**（`ui/follow.ts` 的 `tuiModeOf`）：真终端 → 面板；`--once` / 不是 TTY /
