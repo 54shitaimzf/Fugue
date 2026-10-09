@@ -42,7 +42,7 @@ import { clip, clustersOf } from './glyph.ts'
 import type { Cluster } from './glyph.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
 import { WORDS } from '../words.ts'
-import { graphics, imageRowsOf } from './image.ts'
+import type { ImageRequest } from '../serve/image-source.ts'
 
 /**
  * 读面上那一格变更：**账上的 `view/*` 那五族说得出的那几栏**（没有字节——账上没有它）。
@@ -51,7 +51,7 @@ import { graphics, imageRowsOf } from './image.ts'
  * 而账上只有"在 rev N 上写了这条路径"这一个事实。
  */
 type DeltaFace =
-  | { readonly kind: 'write'; readonly path: string }
+  | { readonly kind: 'write'; readonly path: string; readonly image?: ImageRequest }
   | { readonly kind: 'delete'; readonly path: string }
   | { readonly kind: 'rename'; readonly from: string; readonly to: string }
   | { readonly kind: 'chmod'; readonly path: string; readonly mode: number }
@@ -77,7 +77,7 @@ function deltaFaceOf(row: StatusRow): DeltaFace | null {
   const e = row.e
   switch (e.t) {
     case 'view/write':
-      return { kind: 'write', path: e.path }
+      return { kind: 'write', path: e.path, ...(e.path.toLowerCase().endsWith('.png') ? { image: { agent: e.agent, path: e.path, blob: e.blob } } : {}) }
     case 'view/remove':
       return { kind: 'delete', path: e.path }
     case 'view/rename':
@@ -428,16 +428,6 @@ function deltaLineOf(d: DeltaFace, at_: string): string {
   }
 }
 
-/**
- * 这一格变更牵到的那条路径里，**像图的那一条**（第二幕 ⑨ 的后一半）。只有"改完之后那里有一份
- * 文件"的那两格算（`write` 与 `rename` 的目标）：删掉的那一格后面没有图可留位。
- */
-function deltaImagePathOf(d: DeltaFace): string | null {
-  if (d.kind === 'write') return d.path
-  if (d.kind === 'rename') return d.to
-  return null
-}
-
 /** 一份契约那几行：**账上那一条说得出的那几栏**（正文原文一行，截到 `READ_BODY_COLS`）。 */
 function contractLinesOf(c: ContractFace): readonly string[] {
   const shown = c.paths.slice(0, 3).join(' · ')
@@ -472,13 +462,7 @@ function tallyLineOf(tally: Readonly<Record<string, number>>): string | null {
  */
 export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}): ReadFaces {
   const limit = opts.limit ?? READ_LIMIT
-  // 图片那一档（第二幕 ⑨ 的后一半）：**文件名那一行照旧**，探到支持时在它后面加一块留白
-  // （口径在 `ui/image.ts`）。档是 `none` 时 `imageRowsOf` 给空表——一个字节都不多。
-  const diffLines = state.diff.flatMap((d, i) => {
-    const at = state.diffAt[i] as string
-    const path = deltaImagePathOf(d)
-    return [deltaLineOf(d, at), ...(path === null ? [] : imageRowsOf(path, graphics()))]
-  })
+  const diffLines = state.diff.map((d, i) => deltaLineOf(d, state.diffAt[i] as string))
   const contractLines = state.contracts.flatMap((c) => [...contractLinesOf(c)])
   const tally = tallyLineOf(state.tally)
   const streamAll = tally === null ? [...state.stream] : [...state.stream, tally]
@@ -600,4 +584,20 @@ export function readWrap(s: string, cols: number): readonly string[] {
 export function faceRowsOf(faces: ReadFaces, name: ReadFaceName, cols: number): readonly string[] {
   const one = faces[name]
   return one === null ? [] : [one.title, ...one.lines].flatMap((l) => [...readWrap(l, cols)])
+}
+
+
+/** 当前窗口里能完整看见文件行、且还放得下两行预览的第一份 PNG。只用已折状态，不读文件。 */
+export function readImageAt(state: ReadState, cols: number, top: number, budget: number): { request: ImageRequest; after: number } | null {
+  const face = facesOf(state).diff
+  if (face === null || budget < 3) return null
+  const cut = state.diff.length > READ_LIMIT ? state.diff.length - READ_LIMIT + 1 : 0
+  let line = readWrap(face.title, cols).length
+  if (cut > 0) line += readWrap(`… 前面还有 ${cut} 行`, cols).length
+  for (let i = cut; i < state.diff.length; i += 1) {
+    const d = state.diff[i]!, start = line
+    line += readWrap(deltaLineOf(d, state.diffAt[i] as string), cols).length
+    if (d.kind === 'write' && d.image && start >= top && line - top <= budget - 2 - (i < state.diff.length - 1 ? 1 : 0)) return { request: d.image, after: line }
+  }
+  return null
 }

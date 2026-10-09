@@ -21,6 +21,7 @@ import { actionCommandsOf, actionsTableOf } from '../round/actions.ts'
 import { pendingOf } from '../round/dispatch.ts'
 import { identFor } from '../identity.ts'
 import { openServeSource, rowsReaderOf } from '../serve/source.ts'
+import { openImageSource } from '../serve/image-source.ts'
 import { emitLine, usageFail } from '../cli/out.ts'
 import { KEYMAP, hintKeysOf, hintLimitOf, hintLineOf, keymapOf, openKeys } from './keymap.ts'
 import type { KeySource, Keymap } from './keymap.ts'
@@ -201,6 +202,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // **读源是事件通道那一份**（`serve/source.ts`）：界面这一侧不开账本口、也不顺着账本口扫
   // ——`log/log.ts` 与 `probe/watch.ts` 那两条直连住在 serve 那一头（架构 § 9.11）。
   const source = await openServeSource({ root })
+  let imageSource: ReturnType<typeof openImageSource> | null = null
   // ── `T6` 的三样输入（与 `round go` 那一趟逐样对上）─────────────────────────────────────
   // 整块住在下面的 `gateSetupOf` 里（轮次号 · 绑好的动作表 · 每条动作的命令行），身份分配
   // 器是同一个（`identFor`——门只认契约集合，而集合里带着身份，两边换一个就发错一批而且不
@@ -245,6 +247,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   let keys: KeySource | null = null
   let km: Keymap = KEYMAP
   const stage = openStage({
+    graphics: () => imageSource === null ? 'none' : 'kitty',
+    readImage: (request, signal) => imageSource?.read(request, signal) ?? Promise.resolve(null),
     note: (line) => ui.tui?.note(line),
     redraw: () => ui.tui?.redraw(),
     // 框下面那一行（第二幕 ④ · 第三幕 ② 按处境分档）：stdin 不是终端时它就是那一句"收不到按键"
@@ -257,9 +261,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     // 同一档下"按什么键干什么"的那一段（第三幕 ②）：写给终端历史的那一句注记（阅读面开的那一下）
     // 读它。与提示行同一份来源；那一句只在阅读面真开起来时走得到，而阅读面只能由按键开。
     keysOf: (when) => hintKeysOf(km, when),
-    columns: () => term.columns,
+    columns: () => process.stdout.columns ?? term.columns,
     // 终端行数（分账面板高度那一档的输入；`rows` 那一只 dep 是「账上的行」，名字各归各）。
-    termRows: () => term.rows,
+    termRows: () => process.stdout.rows ?? term.rows,
     rows: () => ui.tui?.session.rows ?? [],
     pendingFace,
     run: () => ui.go,
@@ -272,6 +276,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   const term = openTerm({
     out: process.stdout,
     full: flags.has('full'),
+    graphics: tiers.graphics,
     // 色档按这一台终端自报的来（四级表住在 `ui/theme.ts`）：`COLORTERM`/`TERM` 认得 256 色才上，
     // 认不得退属性档（不半上色）。真彩那一档不开。
     theme: themeOf({
@@ -285,6 +290,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // 四条地板收成**一张表**（`ui/follow.ts` 的 `tuiModeOf`）：真终端 → 面板；`--once` / 不是 TTY /
   // `$TERM` 认不出来 → 只印永久行那一档（面板一次都不画，一个字节的 ANSI 都不写）。
   const mode = tuiModeOf({ ansi: term.ansi, once: flags.has('once'), follow: flags.has('follow') })
+  if (mode === 'panel' && tiers.graphics === 'kitty' && process.stdin.isTTY === true) imageSource = openImageSource({ root })
   // **降级说一声**（U10a）：真终端而 `$TERM` 认不出来——面板那一档整个没了，人得知道
   // 为什么。`--once` 不说：那一档本来就不画面板，没有"退"这回事（判据在 `degradeNote`，
   // 与 `ansiOf` 同一张表）。
@@ -300,6 +306,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
           onSignal: () => ac.abort(),
           onExit: () => {
             keys?.close()
+            stage.close()
             term.close()
           },
         })
@@ -322,10 +329,10 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     signal: ac.signal,
   })
   ui.tui = tui
-  // resize：**只重画**，不重读（宽度变了账没变）；新的那一块落在哪由 `ui/term.ts` 那一档决定。
+  // resize：**只重画**，账不重读（宽度变了账没变）；新的那一块落在哪由 `ui/term.ts` 那一档决定。
   // `SIGWINCH` 走**尾沿**（U7）：拖拽窗口时终端连发一串，逐发重画就是"块叠块"——`resize()` 里
   // 安静 `RESIZE_WAIT_MS` 之后只补一次。
-  const onWin = (): void => tui.resize()
+  const onWin = (): void => { stage.onResize(); tui.resize() }
   if (mode === 'panel') process.on('SIGWINCH', onWin)
 
   // ── `UI4` · 门那儿按一下（只在"面板"那一档）──────────────────────────────────────────
@@ -373,7 +380,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     }
     // **raw mode 先还原、面板再收走**：两条都幂等，正常退那一路与 `exit` 那一钩都走到这里。
     keys?.close()
+    stage.close()
     term.close()
+    await imageSource?.close()
     await source.close()
   }
 }

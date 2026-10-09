@@ -1,17 +1,9 @@
-// 第二幕 ⑨ 后一半的断言：图片档（探测 + 文件名那一行 + 留白）。
-//
-//   ① **探测那张表**：认得的信号 → `kitty` / `sixel`；认不出来 → `none`（认不出来就是没有）；
-//   ② **像不像图**：后缀那张闭表（大小写不认 · 双层后缀不算）；
-//   ③ **留白**：档是 `none` 给空表 · 探到才给（头一行 + 三行空的，头一行里点出文件名）；
-//   ④ **退化档 + 接线**：阅读面 diff 那一面上，档是 `none` 时逐字节与从前相同，探到之后只多出那一块。
-//
-// 负对照（成对）：把 `imageRowsOf` 里"档是 none 就给空表"那道门摘掉 → ④ 当场红，连带
-// `read.test.ts` 里那一面那几条也红（缺省那一档的字节流不许变）。
+// 图片能力与纯文字地板。实际像素加载、放置与收起由 preview.test.ts 验。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { DEFAULT_GRAPHICS_TIER, IMAGE_EXTENSIONS, IMAGE_RESERVE_ROWS, graphics, graphicsOf, imageRowsOf, isImagePath, setGraphics } from './image.ts'
+import { DEFAULT_GRAPHICS_TIER, IMAGE_EXTENSIONS, graphics, graphicsOf, isImagePath, setGraphics } from './image.ts'
 import { facesOf, readStateOf } from './read.ts'
 import type { StatusRow } from '../probe/status.ts'
 import { tmpDir } from '../../test/helpers/tmp.ts'
@@ -42,15 +34,12 @@ test('② 像不像图：后缀那张闭表（大小写不认 · 双层后缀不
   console.log(`② 读数：认得的后缀 ${IMAGE_EXTENSIONS.join(' ')}（7 条）· 认不出的 5 条全过`)
 })
 
-test('③ 留白：档是 none 给空表，探到才给（头一行 + 三行空的）', () => {
-  assert.deepEqual([...imageRowsOf('a.png', 'none')], [], '档关着一个字节都不给')
-  assert.deepEqual([...imageRowsOf('a.ts', 'kitty')], [], '不是图就不给（这一档不认识它）')
-  const rows = imageRowsOf('docs/shot.png', 'kitty')
-  assert.equal(rows.length, IMAGE_RESERVE_ROWS + 1, '头一行 + 留白那几行')
-  assert.ok(rows[0]?.includes('shot.png') === true, `头一行该点出文件名：${String(rows[0])}`)
-  assert.equal(rows[0], '  shot.png', '正文只显示文件名')
-  assert.deepEqual([...rows.slice(1)], Array.from({ length: IMAGE_RESERVE_ROWS }, () => '  '), '底下那几行是空的')
-  console.log(`③ 读数：none→0 行 · 不是图→0 行 · kitty+docs/shot.png→${rows.length} 行（「${String(rows[0]).trim()}」+ ${IMAGE_RESERVE_ROWS} 行留白）`)
+test('③ 能力地板：控制台与复用器优先于继承的 Kitty 变量', () => {
+  for (const env of [{ TERM: 'linux', KITTY_WINDOW_ID: '1' }, { TERM: 'screen.xterm', KITTY_WINDOW_ID: '1' },
+    { TERM: 'tmux-256color', KITTY_WINDOW_ID: '1' }, { TERM: 'xterm-kitty', TMUX: 'socket' }, { TERM: 'xterm-kitty', STY: 'screen' }]) {
+    assert.equal(graphicsOf(env), 'none')
+  }
+  console.log('③ 控制台/复用器继承 Kitty 信号：5 组均 none')
 })
 
 test('④ 退化档 + 接线：档是 none 时阅读面 diff 那一面逐字节与从前相同', () => {
@@ -66,15 +55,11 @@ test('④ 退化档 + 接线：档是 none 时阅读面 diff 那一面逐字节�
     assert.equal(graphics(), 'none')
     setGraphics('kitty')
     const on = facesOf(readStateOf(ROWS)).diff?.lines ?? []
-    assert.equal(on.length, off.length + IMAGE_RESERVE_ROWS + 1, '探到支持时只多出那一块留白')
-    assert.equal(on[0], off[0], '文件名那一行照旧（一个字节都没动）')
-    assert.ok(on[1]?.includes('shot.png') === true, `留白头一行点的是那份图：${String(on[1])}`)
-    assert.deepEqual([...on.slice(2, 2 + IMAGE_RESERVE_ROWS)], Array.from({ length: IMAGE_RESERVE_ROWS }, () => '  '))
-    assert.equal(on[2 + IMAGE_RESERVE_ROWS], off[1], '不是图的那一条一个字节都没动')
+    assert.deepEqual(on, off, '只有能力没有像素时，纯文字读面逐字节相同；真实预览由 preview.test 按可见请求验')
   } finally {
     setGraphics(was)
   }
-  console.log(`④ 读数：none→2 行（逐字节与从前相同）· kitty→${2 + IMAGE_RESERVE_ROWS + 1} 行（多出 1 行说明 + ${IMAGE_RESERVE_ROWS} 行留白）`)
+  console.log('④ none/kitty 无像素时均2行，文字逐字节相同；不再预先留空位')
 })
 
 test('⑤ 全关那一格开关认得它：`ui.images off` 通 · 别的值拒（人不必替终端点 sixel）', () => {
@@ -97,14 +82,11 @@ test('⑤ 全关那一格开关认得它：`ui.images off` 通 · 别的值拒�
 })
 
 
-test('没有显式开启图片时，协议能力不会开启留白', async () => {
+test('没有显式开启图片时，协议能力不会开启图片', async () => {
   const { graphicsFor } = await import('./image.ts')
   const env = { TERM: 'xterm-kitty', KITTY_WINDOW_ID: '1' }
   assert.equal(graphicsFor(undefined, env), 'none')
   assert.equal(graphicsFor('off', env), 'none')
   assert.equal(graphicsFor('auto', env), 'kitty')
-  assert.deepEqual(imageRowsOf('screens/main.png', graphicsFor('off', env)), [])
-  const rows = imageRowsOf('screens/main.png', graphicsFor('auto', env))
-  assert.equal(rows[0], '  main.png')
-  assert.ok(rows.slice(1).every((s) => s.trim() === ''))
+  assert.equal(graphicsFor('bad', env), 'none')
 })

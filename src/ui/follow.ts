@@ -300,6 +300,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       return {
         rows: f.lines,
         roles: f.roles,
+        ...(f.image === undefined ? {} : { image: f.image }),
         ...(v?.hint === undefined ? {} : { hint: v.hint }),
         ...(v?.input === undefined ? {} : { input: v.input }),
       }

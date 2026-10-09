@@ -1,3 +1,5 @@
+import type { PixelImage } from './image-codec.ts'
+import type { PanelImage } from './image-layer.ts'
 // TUI 的第一格：**同一读面的第二档渲染**。
 //
 // 出处：架构 § 9.6 那张观察表（`status` / `watch` 的落地栏）· 架构 § 8.13（`round/state` 那条链
@@ -102,6 +104,7 @@ export interface FrameBody {
 
 /** 一帧的三层。**帧自己说得出它的几何**（谁要把一帧拆开，就按 `columns` 拆）。 */
 export interface Frame {
+  readonly image?: PanelImage | undefined
   readonly width: number
   readonly height: number
   /**
@@ -456,7 +459,14 @@ export interface NavInput {
  * 它是**一栏整幅**的（不像候选那一层带 `▸` 选中标记）：人在这里是"读"，不是在"选"。装不下时
  * 只印得下多少印多少，末行说还剩几行——**少印要说出来**（`frame.ts` 那一条纪律）。
  */
+export interface ReadPreview {
+  readonly after: number
+  readonly state: 'loading' | 'unavailable' | 'ready'
+  readonly image?: PixelImage | undefined
+}
+
 export interface ReadInput {
+  readonly preview?: ReadPreview | undefined
   readonly rows: readonly string[]
   readonly top: number
 }
@@ -566,18 +576,31 @@ export function frameOf(o: FrameInput): Frame {
   // 每一条变更都带着账上的坐标（`<writer> <seq> · `），所以"读的是哪一格"在这一栏里仍然看得见。
   const readAll = o.read?.rows ?? []
   const readBody: string[] = []
+  let panelImage: PanelImage | undefined
   if (readingOn) {
-    // 从 `top` 那一行起印；装不下时**末行换成"下面还有几行"**（不截中间那一截）。
     const top = Math.max(0, Math.min(o.read?.top ?? 0, Math.max(0, readAll.length - 1)))
-    const count = Math.min(readAll.length - top, Math.max(1, budget))
-    for (let i = top; i < top + count; i += 1) readBody.push(readAll[i] as string)
-    const below = readAll.length - (top + count)
-    // **被这一句提示顶掉的那一行也算遗漏**（交接单判决 7）：末行本来要印第 `top + count` 行，它现在
-    // 被提示换了——这一行数的是"屏上没看见几行"，不是"游标之后还剩几行"。
-    if (below > 0) {
-      const g = glyphs()
-      readBody[readBody.length - 1] = `${g.mark} 下面还有 ${below + 1} 行`
+    const preview = o.menu === undefined && o.bottom === undefined ? o.read?.preview : undefined
+    let next = top, inserted = false
+    const addPreview = (): void => {
+      if (inserted || preview === undefined || next !== preview.after || preview.after <= top) return
+      inserted = true
+      const room = budget - readBody.length - (next < readAll.length ? 1 : 0)
+      if (preview.state === 'ready' && preview.image !== undefined && room >= 2) {
+        const imageRows = Math.min(6, room)
+        panelImage = { image: preview.image, row: 1 + readBody.length, column: 1 + airOf(width), columns: inner, rows: imageRows }
+        readBody.push(...Array(imageRows).fill(''))
+      } else if (room > 0) {
+        const message = preview.state === 'loading' ? WORDS.imageLoading : preview.state === 'unavailable' ? WORDS.imageUnavailable : WORDS.imageShort
+        readBody.push(...wrap(message, inner).slice(0, room))
+      }
     }
+    while (next < readAll.length && readBody.length < Math.max(1, budget)) {
+      addPreview()
+      if (readBody.length < Math.max(1, budget)) readBody.push(readAll[next++] as string)
+    }
+    addPreview()
+    const below = readAll.length - next
+    if (below > 0) readBody[readBody.length - 1] = `${glyphs().mark} 下面还有 ${below + 1} 行`
   }
   budget -= readBody.length
 
@@ -668,5 +691,5 @@ export function frameOf(o: FrameInput): Frame {
   }
   lines.push(`${g.bl}${g.h.repeat(edge)}${g.br}`)
   roles.push('border')
-  return { width, height, columns: { left: inner, right: 0 }, footer, lines, roles }
+  return { width, height, columns: { left: inner, right: 0 }, footer, lines, roles, ...(panelImage === undefined ? {} : { image: panelImage }) }
 }

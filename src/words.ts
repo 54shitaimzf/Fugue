@@ -51,6 +51,9 @@ export interface Word {
  * `WORD_KEYS`），不另抄一遍——与 `ui/theme.ts` 的 `SLOT_MEANING` → `SLOTS` 同一手。
  */
 export const WORD_TABLE = {
+  imageLoading: { face: '正在读取预览', arch: 'UI 图片带外请求尚未结算' },
+  imageUnavailable: { face: '预览不可用，保留文件路径', arch: 'UI 图片读取或解码退化' },
+  imageShort: { face: '屏幕较矮，预览暂收起', arch: 'UI 图片图位不足两行' },
   chat: { face: '对话', arch: '对话主面（第二幕 ⑦ 的缺省视图；架构 § 9.8 说的「可附着 TUI」那一张脸）' },
   progress: { face: '进展', arch: '处境（第二幕 ⑦ 之后是 `Tab` 轮换出去的那一档视图）' },
   spending: { face: '结果与花费', arch: '读数（同上，另一档视图）' },

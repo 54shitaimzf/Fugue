@@ -22,12 +22,16 @@ import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from './queue
 import { altAt, clampNav, navNodesOf, navRowsOf, writerAt } from './nav.ts'
 import type { NavNode } from './nav.ts'
 import { stepView, viewAt } from './views.ts'
-import { EMPTY_READ, faceRowsOf, facesOf, firstFace, readStateOf, stepFace, stepTop } from './read.ts'
+import { EMPTY_READ, faceRowsOf, facesOf, firstFace, readStateOf, readImageAt, stepFace, stepTop } from './read.ts'
 import type { ReadFaceName, ReadState } from './read.ts'
 import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
 import type { LineMode, RunLauncher, RunOutcome } from './run.ts'
 import { innerOf } from './frame.ts'
+import type { ReadPreview } from './frame.ts'
+import type { ImageRequest } from '../serve/image-source.ts'
+import type { PixelImage } from './image-codec.ts'
+import type { GraphicsTier } from './image.ts'
 import { panelWantOf } from './layout.ts'
 import type { ViewInput } from './term.ts'
 import { FLAGS_OF } from '../cli/flags.ts'
@@ -39,6 +43,8 @@ import type { StatusRow } from '../probe/status.ts'
 
 /** 舞台要的外面那几样：全是「问一句」的函数（晚绑定——句柄建起来之前舞台先立着）。 */
 export interface StageDeps {
+  readonly graphics?: (() => GraphicsTier) | undefined
+  readonly readImage?: ((request: ImageRequest, signal: AbortSignal) => Promise<PixelImage | null>) | undefined
   /** 写一行界面自己的话（面板上方，只写一次）——`tui.note`。 */
   readonly note: (line: string) => void
   /**
@@ -77,6 +83,10 @@ export interface StageDeps {
 
 /** 舞台的公面：`observe.ts` 那一头递进 openKeys / openTui / openTerm / openRun 的那几个口。 */
 export interface Stage {
+  /** 收起界面自己的预览请求；不写账。 */
+  close(): void
+  /** 尺寸变化时取消放不下的预览；账不重读。 */
+  onResize(): void
   /** 按键分派（⓪–⑩，原 `openKeys` 的 `onAction` 那一段整搬）。 */
   onAction(d: Decoded): void
   /** 折一帧的「界面自己那几样」（原 `view` 闭包——`openTui` 每折一帧现问）。 */
@@ -197,6 +207,7 @@ export function openStage(deps: StageDeps): Stage {
     // **结论行进永久行**（第二幕 ⑧）：门口一开就说清这一批「打算开几件事 · 覆盖哪些 · 按什么验收」。
     // **一批只说一次**——上面那道 `key` 已经挡住重复（同一批再算几遍都不说）；换了一批才再说一条。
     if (next !== null) deps.note(conclusionLineOf(next.conclusion))
+    syncImage()
     deps.redraw()
   }
   /** 这一刻树上选的是哪一格（`null` = 整份账）。阅读面读的就是它。 */
@@ -213,6 +224,30 @@ export function openStage(deps: StageDeps): Stage {
     const rows = deps.rows()
     const snapshot = withDetail ? statusOf(rows) : undefined
     readState = readStateOf(rows, { agent: focusNow(), prev: readState, snapshot })
+  }
+
+  const heightWant = (): number => panelWantOf(deps.termRows(), panel !== null || reading !== null || (showInput && gate !== null && !gateHidden))
+  let previewJob: { key: string; controller: AbortController; state: ReadPreview['state']; image?: PixelImage } | null = null
+  let closed = false
+  const imageKey = (r: ImageRequest): string => JSON.stringify([r.agent, r.path, r.blob])
+  const imageAt = () => reading?.face === 'diff' ? readImageAt(readState, cols(), reading.top, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1) - 4) : null
+  const syncImage = (): void => {
+    const at = !closed && showInput && deps.graphics?.() === 'kitty' && panel === null && queue.items.length === 0 && !(gate !== null && !gateHidden) ? imageAt() : null
+    const key = at === null ? null : imageKey(at.request)
+    if (key !== null && key === previewJob?.key) return
+    previewJob?.controller.abort()
+    previewJob = null
+    if (at === null || deps.readImage === undefined) return
+    const controller = new AbortController()
+    previewJob = { key: key!, controller, state: 'loading' }
+    void deps.readImage(at.request, controller.signal).then(image => {
+      if (closed || controller.signal.aborted || previewJob?.controller !== controller) return
+      previewJob = { key: key!, controller, state: image === null ? 'unavailable' : 'ready', ...(image === null ? {} : { image }) }
+      deps.redraw()
+    }, () => {
+      if (closed || controller.signal.aborted || previewJob?.controller !== controller) return
+      previewJob = { key: key!, controller, state: 'unavailable' }; deps.redraw()
+    })
   }
 
   /** 起一次弹层：选中项从头一条起（候选变了以后 `settle` 会把它夹回来）。 */
@@ -232,6 +267,7 @@ export function openStage(deps: StageDeps): Stage {
           ? null
           : { ...panel, sel: clampSel(rowsOf(panel.source).length, panel.sel) }
     }
+    syncImage()
     deps.redraw()
   }
   /**
@@ -363,11 +399,15 @@ export function openStage(deps: StageDeps): Stage {
     const readPart =
       reading === null
         ? {}
-        : ((): { read: { rows: readonly string[]; top: number } } => {
+        : (() => {
             const faces = facesOf(readState)
             const rows = faceRowsOf(faces, reading.face ?? firstFace(faces), cols())
             const top = Math.max(0, Math.min(reading.top, Math.max(0, rows.length - 1)))
-            return rows.length === 0 ? {} : { read: { rows, top } }
+            const at = imageAt()
+            const preview = at === null || previewJob?.key !== imageKey(at.request)
+              ? undefined
+              : { after: at.after, state: previewJob.state, ...(previewJob.image === undefined ? {} : { image: previewJob.image }) }
+            return rows.length === 0 ? {} : { read: { rows, top, ...(preview === undefined ? {} : { preview }) } }
           })()
     return {
       ...hintPart,
@@ -393,6 +433,7 @@ export function openStage(deps: StageDeps): Stage {
     // 阅读面（`T9`）：**接着上一次那一份只折尾部**（新来的那几条）——这一趟是每条行都要走的，
     // 从头折整份账就等于把跟随这一档拖垮（`readStateOf` 那一头的前缀判据管着"接得上"）。
     refreshRead()
+    syncImage()
     // 门口那一批（`T6`）：只在 `round/*` 与 `holder/*` 那两族上重算（一趟读全量日志是 O(行数)，
     // 拿它去乘 `llm/call` 那些高频行就等于把跟随这一档拖垮）。
     if (rows.some((r) => r.e.t.startsWith('round/') || r.e.t.startsWith('holder/'))) void refreshGate()
@@ -735,9 +776,16 @@ export function openStage(deps: StageDeps): Stage {
     refreshGate,
     startNext,
     onRunDone,
-    heightWant: (): number => panelWantOf(deps.termRows(), panel !== null || reading !== null || (showInput && gate !== null && !gateHidden)),
+    heightWant,
+    onResize: syncImage,
+    close(): void {
+      closed = true
+      previewJob?.controller.abort()
+      previewJob = null
+    },
     setRaw(raw: boolean): void {
       showInput = raw
+      syncImage()
     },
   }
 }
