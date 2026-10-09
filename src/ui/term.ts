@@ -62,8 +62,9 @@
 // 一张一块画画看的账：上移的基数是「上一次画完光标离区域顶几行」（`cursorRow`），
 //
 //   · 高度没变 → 上移 `cursorRow` 行（与从前逐字节相同，新块顶落在旧块顶）；
-//   · 高度**变高** → 上移 `cursorRow ＋ 这一块比上一块多出来的行数`：末行落在旧块末行上，
-//     从下往上长——一帧之内写的行数不超过屏幕，屏幕就不滚动，旧块被新块整个盖住；
+//   · 普通屏高度变高 → 只使用自己写出的空行向上扩展；它们不足时保持旧顶边向下长，
+//     必要的滚动把永久行送进真正的终端历史，保住内容。新永久行让上方空行的所有权失效；
+//     full 的自有屏仍按原底边扩展。
 //   · 高度**变矮** → 仍上移 `cursorRow` 行（顶边不动），多出来的那几行在下面擦成空行
 //     （与输入行变少那一条同路）。
 //
@@ -402,7 +403,10 @@ export function openTerm(o: TermOptions): Term {
   /** 上一次画完时光标停在区域第几行（0 = 面板顶）——下一次"上移多少"靠它。 */
   let cursorRow = height
   let cursorColumn = 0
-  /** 上一次画出去的区域一共几行（框 ＋ 框下面那几行：空一行 · 提示行 · 输入行）——`close()` 靠它。 */
+  // Only blank rows that this dynamic normal panel emitted are safe to grow into.
+  // New permanent rows or changed host geometry invalidate that ownership.
+  let ownedAbove = 0
+  /** 上一次区域共几行（框、留白、提示、输入行）；close 靠它。 */
   let regionRows = height
   /**
    * 上一帧的**区域行**（框 ＋ 框下面那几行，U8）：行级 diff 的比对底稿。首帧之前 · 矮帧 · 收尾之后是
@@ -463,6 +467,7 @@ export function openTerm(o: TermOptions): Term {
         if (reset !== '' || removedImage !== '' || plain !== '') out.write(reset + removedImage + plain)
         drawn = false
         lastRegion = null
+        ownedAbove = 0
         return
       }
       const buf: string[] = reset === '' ? [] : [reset]
@@ -528,17 +533,32 @@ export function openTerm(o: TermOptions): Term {
       // （旧块整体留给终端重排，新宽度另起一块）；变宽可以覆盖旧块。没画过也没有可擦的上一帧。
       const stale =
         drawn && !widthShrank && lastRegion !== null ? Math.max(0, lastRegion.length - region.length) : 0
-      // **新块摆到哪儿**（这一份里唯一一处几何）：变高那一边锚在**底边**（上移的多几行，末行落在旧块
-      // 末行上——从下往上长，一帧之内的写入不顶到底行，屏幕不滚动）；屏幕增高时保留旧顶边，避免吞掉刚露出的历史；变矮那一边锚在**顶边**（上移
-      // `cursorRow` 行，与从前相同），多出来那几行由下面的 `stale` 擦成空行。宽度变窄与首帧都不上移
-      // （新块从光标处另起）。
+      // **新块摆到哪儿**：full 的自有屏锚在底边；普通屏只向自己写过的空行扩展，余量向下让位。
+      // 屏幕增高保留旧顶边；面板变矮也保持顶边，多余尾行交给 stale 清空。
+      // 变窄与首帧从光标处另起，原上方空行的坐标也随宿主几何变化作废。
       const screenGrew = rowsKnown && typeof drawnRows === 'number' && (rowsSeen as number) > drawnRows
-      const back = !drawn || widthShrank ? 0 : !screenGrew && region.length > regionRows ? cursorRow + (region.length - regionRows) : cursorRow
+      if (!drawn || widthShrank || rowsSeen !== drawnRows) ownedAbove = 0
+      const growth = Math.max(0, region.length - regionRows)
+      const ownGrowth = drawn && !widthShrank && !screenGrew ? Math.min(ownedAbove, growth) : 0
+      const back = !drawn || widthShrank ? 0 : wantAlt
+        ? !screenGrew && growth > 0 ? cursorRow + growth : cursorRow
+        : cursorRow + ownGrowth
+      ownedAbove -= ownGrowth
       if (back > 0) buf.push(upOf(back))
       const historyBudget = rowsKnown ? Math.max(0, (rowsSeen as number) - region.length) : REGION_ROWS
       const permanentRows = ownedResize ? altHistory.slice(Math.max(0, altHistory.length - historyBudget))
         : permanent.flatMap(line => historyRows(line, columns))
       for (const row of permanentRows) buf.push(`\r${CLEAR_LINE}${row}\n`)
+      // A first empty changing-height normal panel books blank space once.
+      // An initial frame with facts keeps their current placement instead.
+      // Its initial allocation may scroll facts into genuine terminal history;
+      // subsequent expansion uses only those blank rows. Without ownership,
+      // grow downward and let the terminal scroll rather than erase history.
+      const reserve = !drawn && !wantAlt && o.heightOf !== undefined && rowsKnown && permanentRows.length === 0
+        ? Math.max(0, (rowsSeen as number) - 1 - finalCursor) : 0
+      for (let i = 0; i < reserve; i += 1) buf.push(`\r${' '.repeat(columns)}\n`)
+      if (!drawn) ownedAbove = reserve
+      else if (permanentRows.length > 0) ownedAbove = 0
       if (diffable) {
         for (let i = 0; i < region.length; i += 1) {
           const one = region[i] as string
@@ -618,6 +638,7 @@ export function openTerm(o: TermOptions): Term {
       const leave = alt
       alt = false
       altHistory = []
+      ownedAbove = 0
       const removedImage = images.clear()
       const buf: string[] = [leave && fullSixel && o.alternateScreenOf?.() !== true ? '' : removedImage]
       // 旧区域每行都在当时的列宽内，且显式换行：变宽/增高不会拆它，可按原行数收回。

@@ -38,12 +38,12 @@ test('actual Term writes Sixel with verified geometry; unchanged and unrelated r
 })
 test('repaint, permanent notes, input shrink and hide clear the old anchored picture before repainting',()=>{
  let height=8;const r=rig({heightOf:()=>height});r.draw({...panel,input:{rows:['earlier','> abc'],caret:{row:1,col:3}}})
- assert.deepEqual(replay(r.writes.join('')).caret,[3,9]);height=5
+ assert.deepEqual(replay(r.writes.join('')).caret,[3,23]);height=5
  const repaint=r.draw({...panel,rows:['picture.png','repaint','','','status']});assert.equal(tx(repaint),1)
- assert.ok(repaint.indexOf('[12X')<repaint.indexOf(CLEAR_LINE));assert.deepEqual(replay(r.writes.join('')).caret,[3,5])
- assert.deepEqual(replay(r.writes.join('')).bitmaps,[[2,1,12,3]])
+ assert.ok(repaint.indexOf('[12X')<repaint.indexOf(CLEAR_LINE));assert.deepEqual(replay(r.writes.join('')).caret,[3,19])
+ assert.deepEqual(replay(r.writes.join('')).bitmaps,[[2,15,12,3]])
  const moved=r.draw(panel,['KEEP HISTORY']);assert.equal(tx(moved),1);const result=replay(r.writes.join(''))
- assert.deepEqual(result.caret,[3,6]);assert.deepEqual(result.bitmaps,[[2,2,12,3]]);assert.ok(result.notes.includes('KEEP HISTORY'))
+ assert.deepEqual(result.caret,[3,20]);assert.deepEqual(result.bitmaps,[[2,16,12,3]]);assert.ok(result.notes.includes('KEEP HISTORY'))
  const {image:ignored,...text}=panel;assert.equal(tx(r.draw(text)),0);assert.deepEqual(replay(r.writes.join('')).bitmaps,[])
  r.term.close();assert.deepEqual(replay(r.writes.join('')).bitmaps,[]);assert.ok(replay(r.writes.join('')).notes.includes('KEEP HISTORY'))
 })
