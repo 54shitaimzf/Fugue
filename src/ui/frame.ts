@@ -434,13 +434,14 @@ export interface BottomInput {
   readonly rows: readonly string[]
   readonly keep: number
   /**
-   * 这几行里**要人此刻按的那一行**在第几个（`ui/gate.ts` 的选项行：`放行一次(y) · 拒(n) ·
-   * 中止(Esc)` 那一行，以及它举起手之后的两种写法）。
+   * 这几行里要人此刻按的选项从第几个开始（`ui/gate.ts` 排版后给出的坐标）。
    *
    * 它走「等待」那一格（宪法 ②：门口选项行走等待黄），其余各行走候选/弹层那一格。不给（或越界）
    * 时整块都还是弹层那一格——**与从前逐字节相同**（这一栏是加出来的，不是换掉）。
    */
   readonly waitingAt?: number | undefined
+  /** 选项折成的行数；不给时仍只标一行。 */
+  readonly waitingCount?: number | undefined
 }
 
 /** 树那几个节点（`ui/nav.ts` 算好的原文）与选中项落在第几个（`T8`）。 */
@@ -634,13 +635,12 @@ export function frameOf(o: FrameInput): Frame {
   const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length
   for (let i = fixed; i < height; i += 1) shown.push({ l: '', role: 'body' })
   for (const one of menuBody) shown.push({ l: one, role: 'overlay' })
-  // 门口那一块（第三幕 ①）：**要人此刻按的那一行**（选项行）走「等待」那一格，其余各行走弹层那一格。
-  // 位置按"**离末行几个**"算：上面那几段让位是从**头**开始切的（末 `keep` 行一定还在），所以选项行
-  // 与末行的距离在切前切后是同一个。
-  const waitFromEnd =
-    o.bottom === undefined || o.bottom.waitingAt === undefined ? -1 : gateAll.length - 1 - o.bottom.waitingAt
+  // 按切掉的头部行数还原坐标：选项折成几行，就给几行同一种等待反馈。
+  const waitAt = o.bottom?.waitingAt ?? -1
+  const waitEnd = waitAt + (o.bottom?.waitingCount ?? 1)
   for (const [i, one] of gateBody.entries()) {
-    shown.push({ l: one, role: gateBody.length - 1 - i === waitFromEnd ? 'waiting' : 'overlay' })
+    const originalAt = gateAll.length - gateBody.length + i
+    shown.push({ l: one, role: waitAt >= 0 && originalAt >= waitAt && originalAt < waitEnd ? 'waiting' : 'overlay' })
   }
 
   const lines: string[] = []

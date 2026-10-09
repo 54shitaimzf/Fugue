@@ -124,7 +124,8 @@ test('① 门口开着且行空：按两次 y → 举手一次 · press 恰一�
   // 第一下：举手（二段确认的第一段——只说话，不起进程）。
   stage.onAction({ action: 'approve', key: 'y' })
   assert.equal(ctl.presses.length, 0, '第一下只是举手，一个进程都不起')
-  assert.ok(ctl.notes.some((n) => n.includes('举了手')), '举手要看得见（note 一句）')
+  assert.ok(stage.view().bottom?.rows.some(n => n.includes('再按 y / Enter 放行整批')), '举手反馈在确认行看得见')
+  assert.equal(ctl.notes.some(n => n.includes('举了手')), false, '临时反馈不污染历史')
   // 第二下：生效——起的就是 `lineOf('approve')` 那一条（与 `g` 键同一条命令）。
   stage.onAction({ action: 'approve', key: 'y' })
   assert.equal(ctl.presses.length, 1, '两次按下恰一次生效')
@@ -365,8 +366,8 @@ test('⑩ 门口开着时，那一块的末一行是"要按的那一行"：坐�
   const rows = bottom?.rows ?? []
   const at = bottom?.waitingAt
   assert.equal(at, rows.length - 1, '末一行就是选项行（这一档还没有排队那一条）')
-  assert.ok((rows[at as number] ?? '').startsWith('放行一次(y)'), `那一行该是选项行：${String(rows[at as number])}`)
-  assert.equal((rows[0] as string).includes('放行一次'), false, '第一行不是它（预览排在前面）')
+  assert.ok((rows[at as number] ?? '').startsWith('y 放行整批'), `那一行该是选项行：${String(rows[at as number])}`)
+  assert.equal((rows[0] as string).includes('y 放行整批'), false, '第一行不是它（预览排在前面）')
   // 门口收起来：那一块整块不在了——坐标也就不给（不给就与从前同形）。
   ctl.face = null
   await stage.refreshGate()

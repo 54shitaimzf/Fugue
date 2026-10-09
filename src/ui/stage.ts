@@ -16,7 +16,7 @@ import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmi
 import type { Editor } from './input.ts'
 import { acceptOf, candidatesOf, clampSel, completeOf, moveSel, pathsOf, queryOf, rowsTextOf, specsOf } from './menu.ts'
 import type { MenuRow, MenuSource } from './menu.ts'
-import { GATE_KEEP, GATE_VIEW, conclusionLineOf, gateRowsOf, lineOf, pressGate, stepAt } from './gate.ts'
+import { GATE_VIEW, conclusionLineOf, gateLayoutOf, lineOf, pressGate, stepAt } from './gate.ts'
 import type { GateFace, GateOption, GateView } from './gate.ts'
 import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from './queue.ts'
 import { altAt, clampNav, navNodesOf, navRowsOf, writerAt } from './nav.ts'
@@ -343,20 +343,16 @@ export function openStage(deps: StageDeps): Stage {
     // 最下面那一栏：**门口那一块**（`T6`）与**排队那一行**（`T7`），都在面板那一栏的最下面（输入行
     // 还在它们下面）。两样都没有时一个字节都不占。
     const queueOn = queue.items.length > 0
-    const gateRows = gateOn ? gateRowsOf({ face: gate as GateFace, view: gateView, columns: cols() }) : []
-    const bottomRows = [...gateRows, ...(queueOn ? [queueRowOf(queue)] : [])]
-    // **门口那一块的末一行就是选项行**（`ui/gate.ts` 的 `gateRowsOf` 把次序定死：预览… · 排队行 ·
-    // 选项行）——它是"要人此刻按的那一行"，走等待那一格（第三幕 ①）。排队那一行的位置因此不影响
-    // 它：坐标是按门口那一块自己数出来的。
-    const waitingAt = gateRows.length === 0 ? undefined : gateRows.length - 1
+    const gatePart = gateOn ? gateLayoutOf({ face: gate as GateFace, view: gateView, columns: cols() }) : null
+    const bottomRows = [...(gatePart?.rows ?? []), ...(queueOn ? [queueRowOf(queue)] : [])]
     const bottomPart =
       bottomRows.length === 0
         ? {}
         : {
             bottom: {
               rows: bottomRows,
-              keep: (gateOn ? GATE_KEEP : 0) + (queueOn ? 1 : 0),
-              ...(waitingAt === undefined ? {} : { waitingAt }),
+              keep: (gatePart?.keep ?? 0) + (queueOn ? 1 : 0),
+              ...(gatePart === null ? {} : { waitingAt: gatePart.waitingAt, waitingCount: gatePart.waitingCount }),
             },
           }
     // 树那一栏（`T8`，排在最上面）与"切到哪一格"（`focus`：`null` = 整份账）。
@@ -412,11 +408,7 @@ export function openStage(deps: StageDeps): Stage {
         const press = pressGate(gateView, option)
         gateView = press.view
         if (press.t === 'arm') {
-          const label = option === 'approve' ? '放行' : '拒'
-          deps.note(
-            `举了手：再按一次 \`${option === 'approve' ? 'y' : 'n'}\`（或 Enter）就${label}这一批` +
-              `（${gate.cards.length} 份 · 批号 ${gate.fingerprint}）`,
-          )
+          // 举手只更新选项行；临时反馈不追加到永久历史，也不暴露内部批号。
           settle()
           return
         }
@@ -470,7 +462,7 @@ export function openStage(deps: StageDeps): Stage {
         if (step === 'gate') {
           gateView = { ...gateView, armed: null }
           gateHidden = true
-          deps.note('收起了门口那一块（账再动一次它自己回来；要放行还得按 y）')
+          deps.note('收起了门口那一块；这批任务仍在等你确认')
           settle()
           return
         }
@@ -743,7 +735,7 @@ export function openStage(deps: StageDeps): Stage {
     refreshGate,
     startNext,
     onRunDone,
-    heightWant: (): number => panelWantOf(deps.termRows(), panel !== null || reading !== null),
+    heightWant: (): number => panelWantOf(deps.termRows(), panel !== null || reading !== null || (showInput && gate !== null && !gateHidden)),
     setRaw(raw: boolean): void {
       showInput = raw
     },

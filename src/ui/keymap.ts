@@ -374,7 +374,7 @@ export const TABLE: readonly Binding[] = [
     action: 'approve',
     keys: ['y'],
     hint: '放行',
-    says: { gate: '放行这一份' },
+    says: { gate: '放行整批' },
     note: '门口那一批：放行它（起一次 `fugue round go`）；**再按一次 `y` 或 Enter 才生效**——只在门口那一块开着、且输入行空着的时候是动作，别处它就是那个字',
     by: 'T6',
   },
@@ -382,7 +382,7 @@ export const TABLE: readonly Binding[] = [
     action: 'reject',
     keys: ['n'],
     hint: '拒',
-    says: { gate: '拒这一份' },
+    says: { gate: '拒绝整批' },
     note: '门口那一批：拒它——**一个字节都不落**，门照旧停着等人；再按一次 `n` 或 Enter 才生效（同上）',
     by: 'T6',
   },
@@ -404,7 +404,7 @@ export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
   // 不看处境：先露这七条（提交 · 菜单 · 补全 · 阅读 · 打断 · 退出 · 键表面板——次序与 `TABLE` 一致），
   // 表里其余那些照旧缀在后面。**这一档就是 `fugue tui` 起来时那一行**（缺省档），逐字节锁着。
   any: ['submit', 'menu', 'complete', 'read', 'interrupt', 'quit', 'panel'],
-  // 门口那一块开着：此刻要人按的是 `y` / `n`（放行那一份 · 拒那一份），再往下才是收起门口与翻批。
+  // 门口那一块开着：此刻要人按的是 `y` / `n`（放行整批 · 拒绝整批），再往下才是收起门口与翻批。
   gate: ['approve', 'reject', 'cancel', 'pageUp', 'pageDown', 'help'],
   // 阅读面开着：`Tab` 换一面 · `↑`/`↓` 翻行 · `Esc` 收起（这三样在别处都不是这个意思）。
   read: ['complete', 'historyOlder', 'historyNewer', 'cancel', 'pageUp', 'pageDown', 'read', 'help'],
@@ -413,8 +413,7 @@ export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
 /**
  * 这一刻是哪一档（第三幕 ②）：阅读面开着报 `read`，否则门口那一块开着报 `gate`，都没有报 `any`。
  *
- * **为什么阅读面压过门口**：门口那一块里**自己就印着**它那三个键（`放行一次(y) · 拒(n) ·
- * 中止(Esc)`——第三幕 ① 那一行还单独染了等待黄），而阅读面那几样（`Tab` · `↑`/`↓` · `Esc`）在屏幕上
+ * **为什么阅读面压过门口**：门口那一块里**自己就印着**它那三个键（`y 放行整批 · n 拒绝 · Esc 收起`——第三幕 ① 那一行还单独染了等待黄），而阅读面那几样（`Tab` · `↑`/`↓` · `Esc`）在屏幕上
  * 只有提示行这一处说得出。两样同时开着的时候，这一行让给"别处查不到的那一份"。
  */
 export function hintWhenOf(o: { readonly gate: boolean; readonly read: boolean }): HintWhen {

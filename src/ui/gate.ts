@@ -24,6 +24,7 @@
 // **diff 不在这儿**（§ 5.19 五说"写路径给 diff"）：diff 要开真源读基线，那是 `T9` 阅读面那一格
 // （"面板与 `fugue diff --json` 读同一份数据"）。这一格给的是**写入面与交付物**，逐字来自契约。
 import type { Contract } from '../contract/types.ts'
+import type { BottomInput } from './frame.ts'
 import { WORDS } from '../words.ts'
 import { GO_LINE } from './run.ts'
 import { wrap } from './glyph.ts'
@@ -178,7 +179,7 @@ export interface GateView {
 
 export const GATE_VIEW: GateView = { at: 0, armed: null }
 
-/** 末两行留住：**队列行**（还有几份 · 第几份）与**选项行**（三档 / 举手那一句）。 */
+/** 不折行时的最少保留行数；窄屏的实际行数由 `gateLayoutOf` 计算。 */
 export const GATE_KEEP = 2
 
 /** 第几份那个下标夹回范围里（候选变了 · 批次短了都走它）。 */
@@ -241,21 +242,30 @@ export function gateQueueRowOf(face: GateFace, at: number): string {
 
 /** 选项行：**三档**；举过手就把那一句"再按一次"说出来（二段确认要对人可见）。 */
 export function optionRowOf(view: GateView): string {
-  if (view.armed === 'approve') return '再按一次 y（或 Enter）就放行这一批 · 别的键换一档 · Esc 中止'
-  if (view.armed === 'reject') return '再按一次 n（或 Enter）就拒这一批 · 别的键换一档 · Esc 中止'
-  return '放行一次(y) · 拒(n) · 中止(Esc)'
+  if (view.armed === 'approve') return '再按 y / Enter 放行整批 · Esc 收起'
+  if (view.armed === 'reject') return '再按 n / Enter 拒绝整批 · Esc 收起'
+  return 'y 放行整批 · n 拒绝 · Esc 收起'
 }
 
 /**
- * 门口那一块的那几行（**末两行是队列行与选项行**，见 `GATE_KEEP`）。`columns` 是入参：超宽的那几行
- * 在这一份里折——`frame.ts` 那一层对"横贯整栏"的行只截不折，而这里的一句话被截掉尾巴就没用了。
- *
- * **次序是从下往上定的**：末两行是人要按的那两样（队列行 · 选项行），预览排在它们上面——装不下的
- * 时候先让位的是预览（`frame.ts` 那一头按 `GATE_KEEP` 留行）。
+ * 确认内容按实际宽度折行。队列与选项折出的所有行优先保留，选项的等待色覆盖整句；
+ * 先让位的是卡片前面的补充资料，命令与写入路径仍靠近确认行。
  */
-export function gateRowsOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number }): readonly string[] {
+export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number }): BottomInput {
+  const fold = (one: string): readonly string[] => o.columns > 0 ? wrap(one.trimStart(), o.columns) : [one]
   const card = cardAt(o.face, o.view.at)
-  const head =
-    card === null ? [] : previewLinesOf(card).flatMap((one) => (o.columns > 0 ? [...wrap(one, o.columns)] : [one]))
-  return [...head, gateQueueRowOf(o.face, o.view.at), optionRowOf(o.view)]
+  const head = card === null ? [] : previewLinesOf(card).flatMap(fold)
+  const queue = fold(gateQueueRowOf(o.face, o.view.at))
+  const options = fold(optionRowOf(o.view))
+  return {
+    rows: [...head, ...queue, ...options],
+    keep: queue.length + options.length,
+    waitingAt: head.length + queue.length,
+    waitingCount: options.length,
+  }
+}
+
+/** 只要原文的调用方沿用这个入口；坐标与保留行数由同一次排版取得。 */
+export function gateRowsOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number }): readonly string[] {
+  return gateLayoutOf(o).rows
 }
