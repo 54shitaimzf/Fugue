@@ -389,7 +389,7 @@ export function openStage(deps: StageDeps): Stage {
             bottom: {
               rows: bottomRows,
               keep: (gatePart?.keep ?? 0) + (queueOn ? 1 : 0),
-              ...(gatePart === null ? {} : { waitingAt: gatePart.waitingAt, waitingCount: gatePart.waitingCount }),
+              ...(gatePart === null ? {} : { waitingAt: gatePart.waitingAt, waitingCount: gatePart.waitingCount, headingAt: gatePart.headingAt, headingCount: gatePart.headingCount }),
             },
           }
     // 树那一栏（`T8`，排在最上面）与"切到哪一格"（`focus`：`null` = 整份账）。

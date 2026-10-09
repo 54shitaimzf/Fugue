@@ -102,6 +102,7 @@ test('③ 黑白地板逐字节不变：能力未声明时既有角色字节不�
     border: '\x1b[2m',
     footer: '\x1b[1m',
     overlay: '\x1b[1m',
+    overlayBody: '\x1b[1m',
     waiting: '\x1b[1m',
     readHeading: '\x1b[1m',
     ok: '\x1b[1m',

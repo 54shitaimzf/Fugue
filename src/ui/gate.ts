@@ -262,6 +262,8 @@ export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateVi
     keep: queue.length + options.length,
     waitingAt: head.length + queue.length,
     waitingCount: options.length,
+    headingAt: head.length,
+    headingCount: queue.length,
   }
 }
 

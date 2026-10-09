@@ -168,7 +168,7 @@ export const TABLE: readonly Binding[] = [
     keys: ['↑'],
     hint: '上一条',
     note: '输入历史往前翻；有面板开着的时候是往上选',
-    says: { read: '上一行' },
+    says: { read: '上一行', gate: '上一项' },
     by: 'T4',
   },
   {
@@ -176,7 +176,7 @@ export const TABLE: readonly Binding[] = [
     keys: ['↓'],
     hint: '下一条',
     note: '输入历史往后翻；翻到底回到手里原来那一行',
-    says: { read: '下一行' },
+    says: { read: '下一行', gate: '下一项' },
     by: 'T4',
   },
   {
@@ -405,10 +405,10 @@ export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
   // 不看处境：先露这七条（提交 · 菜单 · 补全 · 阅读 · 打断 · 退出 · 键表面板——次序与 `TABLE` 一致），
   // 表里其余那些照旧缀在后面。**这一档就是 `fugue tui` 起来时那一行**（缺省档），逐字节锁着。
   any: ['submit', 'menu', 'complete', 'read', 'interrupt', 'quit', 'panel'],
-  // 门口那一块开着：此刻要人按的是 `y` / `n`（放行整批 · 拒绝整批），再往下才是收起门口与翻批。
+  // 门口卡片已印放行/拒绝/收起，提示行先露如何翻看各项任务；键位仍从同一张表取。
   // 收起的批次仍等人：先露重新查看的入口，配置改键也随同一张表。
   pending: ['go', 'read', 'help'],
-  gate: ['approve', 'reject', 'cancel', 'pageUp', 'pageDown', 'help'],
+  gate: ['historyOlder', 'historyNewer', 'pageUp', 'pageDown', 'help', 'approve', 'reject', 'cancel'],
   // 阅读面开着：`Tab` 换一面 · `↑`/`↓` 翻行 · `Esc` 收起（这三样在别处都不是这个意思）。
   read: ['complete', 'historyOlder', 'historyNewer', 'cancel', 'pageUp', 'pageDown', 'read', 'help'],
 }

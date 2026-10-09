@@ -47,6 +47,7 @@ export const ROLE_SLOT: Readonly<Record<LineRole, Slot>> = {
   body: 'body',
   footer: 'dim',
   overlay: 'overlay',
+  overlayBody: 'body',
   waiting: 'waiting',
   read: 'body',
   readHeading: 'readHeading',
@@ -103,6 +104,8 @@ export const DEFAULT_THEME: Readonly<Partial<Record<LineRole, string>>> = {
   border: '\x1b[2m',
   footer: '\x1b[1m',
   overlay: '\x1b[1m',
+  // 新正文角色在未知色档延续原弹层属性；已知彩色档使用默认正文色。
+  overlayBody: '\x1b[1m',
   // 第 1 级里它**与弹层同一条属性**：那一行从前报的就是 `overlay`，换成等待那一格之后**字节不变**
   // （地板逐字节锁着那条不动）。彩色档使用各自的等待色（`SLOT_16` / `SLOT_256`）。
   waiting: '\x1b[1m',

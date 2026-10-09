@@ -510,10 +510,10 @@ test('⑧ 分档只换次序与措辞，不藏东西：不看处境那一档逐�
       assert.ok(WIRED.includes(b.by), `点名的这个动作还没接线（提示行印它就是许诺）：${a}`)
     }
   }
-  // 门口那一档：此刻要按的那两个键在最前面，措辞来自表里的 `says`（不在这一份里手抄）。
+  // 门口行动在卡内，提示先露上一项/下一项与翻页；措辞仍来自 says。
   const gate = hintLineOf(KEYMAP, 3, 'gate')
   assert.ok(
-    gate.startsWith('按键 y 放行整批 · n 拒绝整批 · Esc 收起门口'),
+    gate.startsWith('按键 ↑ 上一项 · ↓ 下一项 · PgUp 上翻半屏'),
     `门口那一档先露这三条：${gate}`,
   )
   // 阅读面那一档：`Tab` / `↑` / `↓` / `Esc` 在那一档里说的是另一件事。

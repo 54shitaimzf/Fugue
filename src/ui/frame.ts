@@ -134,7 +134,7 @@ export interface Frame {
  * 任何样式。（**永久行与输入行不在这张表里**：U20 那条形状不动——永久行进终端历史要保持干净
  * 流水，输入行是光标算术那一行。）
  */
-export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'waiting' | 'read' | 'readHeading' | 'hint' | 'ok' | 'refuse' | 'hit'
+export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'overlayBody' | 'waiting' | 'read' | 'readHeading' | 'hint' | 'ok' | 'refuse' | 'hit'
 
 export interface ConversationRow {
   readonly text: string
@@ -457,6 +457,9 @@ export interface BottomInput {
   readonly waitingAt?: number | undefined
   /** 选项折成的行数；不给时仍只标一行。 */
   readonly waitingCount?: number | undefined
+  /** 批次标题的物理行范围；缺失/坏范围时保留原有整块弹层样式。 */
+  readonly headingAt?: number | undefined
+  readonly headingCount?: number | undefined
 }
 
 /** 树那几个节点（`ui/nav.ts` 算好的原文）与选中项落在第几个（`T8`）。 */
@@ -673,9 +676,12 @@ export function frameOf(o: FrameInput): Frame {
   // 按切掉的头部行数还原坐标：选项折成几行，就给几行同一种等待反馈。
   const waitAt = o.bottom?.waitingAt ?? -1
   const waitEnd = waitAt + (o.bottom?.waitingCount ?? 1)
+  const headingAt = o.bottom?.headingAt ?? -1, headingCount = o.bottom?.headingCount ?? 0
+  const headingOn = Number.isInteger(headingAt) && Number.isInteger(headingCount) && headingAt >= 0 && headingCount > 0 && headingAt + headingCount <= gateAll.length
   for (const [i, one] of gateBody.entries()) {
     const originalAt = gateAll.length - gateBody.length + i
-    shown.push({ l: one, role: waitAt >= 0 && originalAt >= waitAt && originalAt < waitEnd ? 'waiting' : 'overlay' })
+    shown.push({ l: one, role: waitAt >= 0 && originalAt >= waitAt && originalAt < waitEnd ? 'waiting'
+      : !headingOn || (originalAt >= headingAt && originalAt < headingAt + headingCount) ? 'overlay' : 'overlayBody' })
   }
 
   const lines: string[] = []
