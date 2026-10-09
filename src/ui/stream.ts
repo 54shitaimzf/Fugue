@@ -35,6 +35,7 @@ import type { StatusRow } from '../probe/status.ts'
 import { WORDS, stateFaceOf } from '../words.ts'
 import { glyphs } from './glyph.ts'
 import type { ConversationRow } from './frame.ts'
+import { roundNoticeOf } from './lifecycle.ts'
 
 /** 联合里那一族（就是事件的 `t`）。**它是这一份的键**：一族一格，一个都不许漏。 */
 export type EventFamily = LogEvent['t']
@@ -165,8 +166,11 @@ function intentText(body: string): string {
 function lineOf(row: StatusRow): ConversationRow {
   const e = row.e
   switch (e.t) {
-    case 'round/state':
+    case 'round/state': {
+      const notice = roundNoticeOf(e.from, e.to)
+      if (notice !== null) return { text: notice.text, role: notice.role }
       return { text: `进展：${stateFaceOf(e.to)}`, role: e.to === 'Aborted' ? 'refuse' : e.to === 'Committed' ? 'ok' : 'body' }
+    }
     case 'round/intent':
       return { text: `${WORDS.task}：「${excerpt(intentText(e.body), 'round/intent')}」`, role: 'body' }
     case 'contract/issue':

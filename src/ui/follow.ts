@@ -51,6 +51,7 @@ import type { ReadingsOptions, RoundUsage, StatusReadings, StatusRow } from '../
 import { readingsOf, usageByRoundOf } from '../probe/status.ts'
 import type { LedgerSource } from '../serve/source.ts'
 import type { ConversationRow, FrameInput } from './frame.ts'
+import type { RoundTransition } from './lifecycle.ts'
 import { frameOf } from './frame.ts'
 import type { FamilyTable } from './stream.ts'
 import { conversationOf, permanentLinesOf } from './stream.ts'
@@ -198,11 +199,13 @@ export function openSession(o: SessionOptions = {}): TuiSession {
   let folded: readonly string[] = []
   let foldedAt = 0
   let conversation: readonly ConversationRow[] = []
+  let transition: RoundTransition | undefined
   const permanent = (): readonly string[] => {
     if (foldedAt === rows.length) return folded
     const fresh = rows.slice(foldedAt)
     folded = [...folded, ...permanentLinesOf(fresh, o.table)]
     conversation = [...conversation, ...conversationOf(fresh, o.table)].slice(-CONVERSATION_KEEP)
+    for (const r of fresh) if (r.e.t === 'round/state') transition = { round: r.e.round, from: r.e.from, to: r.e.to }
     foldedAt = rows.length
     return folded
   }
@@ -264,6 +267,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(v?.focus === undefined ? {} : { focus: v.focus }),
       permanent: permanent(),
       conversation,
+      ...(transition === undefined ? {} : { transition }),
       width: size.columns,
       height: size.height,
     }

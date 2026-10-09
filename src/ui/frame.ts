@@ -51,7 +51,9 @@ import { iconOf } from './icons.ts'
 import type { IconName } from './icons.ts'
 import { airOf, MIN_FRAME_ROWS } from './layout.ts'
 import { humanNumber } from '../human.ts'
-import { WORDS, stateFaceOf } from '../words.ts'
+import { WORDS } from '../words.ts'
+import { roundLabelOf, roundNoticeOf } from './lifecycle.ts'
+import type { RoundTransition } from './lifecycle.ts'
 import { DEFAULT_VIEW, viewNameOf } from './views.ts'
 import type { ViewKey } from './views.ts'
 
@@ -140,6 +142,8 @@ export interface ConversationRow {
 }
 
 export interface FrameInput {
+  /** UI 从事件通道保留的最后一条状态转移；不加进机器快照。 */
+  readonly transition?: RoundTransition | undefined
   readonly conversation?: readonly ConversationRow[]
   /** 读源一：那一刻的处境（`status --once` 印的那一份）。 */
   readonly snapshot: StatusSnapshot
@@ -275,7 +279,7 @@ export function bodyOf(o: {
     // 跳步那一栏**不再自己做减法**（`hops - transitions` 在图外边那一档印出过 -1，在自环那一档
     // 把真的跳步抵成不印）；数与写法都从 `probe/status.ts` 那一处取，与命令行那一张脸同源。
     left.push(
-      `${WORDS.round} ${r.round} · ${stateFaceOf(r.state)} · ${WORDS.transitions} ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
+      `${WORDS.round} ${r.round} · ${roundLabelOf(r.state)} · ${WORDS.transitions} ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
         ` · ${WORDS.rejects} ${humanNumber(r.rejects)} 次${here}`,
     )
     // **那几条原始转移不上主面**：它们是值层原文（`r.edges` 逐条进 `--json`），
@@ -291,7 +295,7 @@ export function bodyOf(o: {
     // 停下来的那一档是 `N 步就停（停因）`——停因是账上的原话（`agent/stop` 的 `stopped`），一个字不动。
     const stop =
       a.stopped === null
-        ? WORDS.moving
+        ? WORDS.noStopRecord
         : `${a.stopSteps === undefined ? '?' : humanNumber(a.stopSteps)} ${WORDS.steps}${WORDS.halted}（${a.stopped}）`
     // **一行一件事**：头一行只说"这是哪一格 · 它还在跑还是停了"，计数挪到缩进的那一行
     // ——与对话面同一个形状（`chatOf` 那两行）。**零值不上屏**：一条命令都没起过的格不印
@@ -363,19 +367,29 @@ function iconPrefixOf(icon: IconName | undefined): string {
 }
 
 /** 最近汇报占据主面；状态与计数分别进入账尾和视图。 */
-export function chatOf(o: { readonly snapshot: StatusSnapshot; readonly conversation?: readonly ConversationRow[] }): readonly ChatRow[] {
+export function chatOf(o: { readonly snapshot: StatusSnapshot; readonly conversation?: readonly ConversationRow[]; readonly transition?: RoundTransition }): readonly ChatRow[] {
+  const s = o.snapshot
+  const trail = s.rounds.find((r) => r.round === s.current)
+  const state = trail?.state
+  const notice = state === undefined ? null : roundNoticeOf(o.transition?.round === s.current && o.transition?.to === state ? o.transition.from : undefined, state)
+  // 写回与失败的事实优先于旧目标/交接；历史与阅读面仍保留完整来源。
+  if (notice !== null) return [
+    { kind: 'head', icon: 'round', text: notice.text, role: notice.role },
+    ...(state === 'Rebuilding' ? [{ kind: 'aside' as const, text: WORDS.nextTaskGuide, role: 'hint' as const }]
+      : notice.text === WORDS.verifyNotWritten ? [{ kind: 'aside' as const, text: WORDS.verifyFailedGuide, role: 'hint' as const }] : []),
+  ]
+  if (state === 'Aborted') return [{ kind: 'head', text: WORDS.abortGuide, role: 'refuse' }]
   if ((o.conversation?.length ?? 0) > 0) {
     return (o.conversation as readonly ConversationRow[]).map((r) => ({ kind: 'head', text: r.text, role: r.role }))
   }
-  const s = o.snapshot
-  const state = s.rounds.find((r) => r.round === s.current)?.state
-  if (state === 'Planning') return [{ kind: 'head', text: '计划已准备，等待你确认。', role: 'waiting' }]
-  if (state === 'Committed') return [{ kind: 'head', text: '任务已完成，可以继续对话。', role: 'ok' }]
-  if (state === 'Aborted') return [{ kind: 'head', text: '任务已中止，进展视图可查看原因。', role: 'refuse' }]
-  if (state !== undefined || s.agents.some((a) => a.stopped === null)) return [{ kind: 'head', icon: 'round', text: '正在处理你的任务。' }]
+  if (state === 'Planning') return [{ kind: 'head', text: WORDS.planPreparing, role: 'body' }]
+  if (state !== undefined && state !== 'Idle') return [{ kind: 'head', icon: 'round', text: '正在处理你的任务。' }]
+  if (s.agents.length > 0) return [{ kind: 'head', text: WORDS.recordLoaded }]
   return [
     { kind: 'head', icon: 'round', text: '说说你想做什么。' },
-    { kind: 'aside', text: '输入问题开始对话；/ 查看命令。', role: 'hint' },
+    { kind: 'aside', text: WORDS.onboardingReview, role: 'hint' },
+    { kind: 'aside', text: WORDS.onboardingWriteback, role: 'hint' },
+    { kind: 'aside', text: '输入任务并发送；/ 查看命令。', role: 'hint' },
   ]
 }
 
@@ -384,11 +398,9 @@ export function chatOf(o: { readonly snapshot: StatusSnapshot; readonly conversa
  *
  * **永久行不是它的入参**（原先挂着一个没人读的可选参数）：账尾一个字都不从那一列取。
  */
-export function footerOf(s: StatusSnapshot): string {
-  const state = s.rounds.find((r) => r.round === s.current)?.state
-  const running = s.agents.filter((a) => a.agent !== 'round' && a.stopped === null).length
-  return (state === undefined ? '等待输入' : stateFaceOf(state)) +
-    (running > 0 ? ` · ${humanNumber(running)} 项任务在运行` : '')
+export function footerOf(s: StatusSnapshot, transition?: RoundTransition): string {
+  const trail = s.rounds.find((r) => r.round === s.current)
+  return trail === undefined ? '等待输入' : roundLabelOf(trail.state, transition?.round === s.current && transition?.to === trail.state ? transition.from : undefined)
 }
 
 /**
@@ -548,7 +560,7 @@ export function frameOf(o: FrameInput): Frame {
   const rows = bodyRows.flatMap((one) => wrap(one.l, inner).map((x) => ({ l: x, role: one.role })))
 
   // 账尾那条状态条：**一行**，超出就从右边截（`clip` 留 `…`，说了它被截过）。
-  const footer = clip(footerOf(o.snapshot), inner)
+  const footer = clip(footerOf(o.snapshot, o.transition), inner)
   // 上下框两行、分隔与账尾两行；六行正文的预算不随信息量漂移。
   const withFooter = (o.bottom?.keep ?? 0) + 1 <= height - 4
   let budget = height - 2 - (withFooter ? 2 : 0)

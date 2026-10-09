@@ -143,14 +143,14 @@ function snapshotOf(extra: readonly StatusRow[] = []): StatusSnapshot {
 
 const GOLDEN: readonly string[] = [
   "┌─ 对话 ───────────────────────────────────────────────────────────────────────────────────────────┐",
-  "│ 正在处理你的任务。                                                                               │",
-  "│                                                                                                  │",
+  "│ 验收通过，结果已写回工作区。                                                                     │",
+  "│   可以继续描述任务，或查看记录。                                                                 │",
   "│                                                                                                  │",
   "│                                                                                                  │",
   "│                                                                                                  │",
   "│                                                                                                  │",
   "├──────────────────────────────────────────────────────────────────────────────────────────────────┤",
-  "│ 修改中 · 1 项任务在运行                                                                          │",
+  "│ 结果已写回                                                                                       │",
   "└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
 ]
 test('① 黄金帧：整帧逐字节等于那一份原文，而且每一行恰好 width 列', () => {
@@ -259,20 +259,20 @@ test('⑤ 地板：窄屏照画（没有第二栏这回事了）· 矮了截断�
   assert.equal(narrow.columns.left, innerOf(40), '内容那一栏就是框内宽')
   assert.equal(narrow.lines.some((l) => l.includes('┬')), false, '不该有中间那根竖线')
   const text = narrow.lines.join('\n')
-  for (const one of ['正在处理你的任务。', '修改中', '1 项任务在运行']) {
+  for (const one of ['验收通过，结果已写回工作区。', '结果已写回']) {
     assert.ok(text.includes(one), `对话视图窄屏那一档少了这一处：${one}`)
   }
   // 另两档在窄屏上也画得出来（折得更勤，一格不丢）——这一条量的是「窄了不丢档」。
   const spend = frameOf({ snapshot, metrics: METRICS, report: REPORT, width: 40, height: 40, view: 'spending' }).lines.join('\n')
   assert.ok(spend.includes('任务 2') && spend.includes('用量 调用 3'), `结果与花费视图窄屏上该有记账与用量：\n${spend}`)
-  // 账尾是**状态条**：40 列那一档它装不下，从右边截并留一个 `…`（说了它被截过）。截掉的是尾巴上
-  // 那半截（`…· 事件 13 条`），留下的是"账在动"那个信号——次序就是为这个排的。
-  assert.ok(text.includes('修改中'), '单栏那一档也该有账尾')
+  // 窄屏先显示写回事实，不由没有结束记录的 agent 推测进程仍在运行。
+  assert.ok(text.includes('结果已写回'), '窄屏上的写回事实可见')
+  assert.ok(!text.includes('项任务在运行'), '没有进程在场证据就不报运行数')
   assert.ok(!text.includes('agent/r1/'), '主面不显示内部任务编号')
 
   // 矮：压到 5 行（`MIN_HEIGHT`，画得出框的下限）——对话视图的内容自己就 4 行，给 8 行装得下、
   // 不会被截，所以这一档要真压到装不下才量得到那句「还有几行没印」。
-  const short = frameOf({ snapshot, metrics: METRICS, report: REPORT, width: 100, height: 5, conversation: [{ text: '第一段汇报', role: 'body' }, { text: '第二段汇报', role: 'body' }] })
+  const short = frameOf({ snapshot: snapshotOf([row({ t: 'round/state', round: 'r1', from: 'Rebuilding', to: 'Working' })]), metrics: METRICS, report: REPORT, width: 100, height: 5, conversation: [{ text: '第一段汇报', role: 'body' }, { text: '第二段汇报', role: 'body' }] })
   assert.ok(short.lines.length <= 5, `这一屏只给 5 行，印出来 ${short.lines.length} 行`)
   const cut = short.lines.find((l) => l.includes('还有'))
   assert.ok(cut !== undefined, `截断了却没说出还剩几行：${short.lines.join('\n')}`)
@@ -318,7 +318,7 @@ test('⑤ 地板：窄屏照画（没有第二栏这回事了）· 矮了截断�
 test('⑦ 账尾只显示运行状态；永久历史不重复打印到状态栏', () => {
   const snapshot = snapshotOf()
   const permanent = ['round 1 · 轮次 r1 · Idle → Planning', 'round 5 · 轮次 r1 · 合并接受 abcdef01… · 验收 3 条（过 3 / 没过 0）']
-  assert.equal(footerOf(snapshot), '修改中 · 1 项任务在运行')
+  assert.equal(footerOf(snapshot), '结果已写回')
   const withRow = frameOf({ snapshot, permanent, width: 100, height: 16 })
   assert.equal(withRow.footer, footerOf(snapshot), '整帧状态栏不重复历史')
   // **不重复历史这一条直接量**：账尾那一行里一条永久行都不出现（`footerOf` 从前挂着一个没人读的
@@ -426,7 +426,7 @@ test('⑧ 阅读面那一栏：整块地方给它（树与内容都让位）· �
 test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账尾 footer · 正文 body · 候选与门口 overlay · 阅读面 read · 矮帧报 body', () => {
   // 高度 20：这一格量的是「哪些行是哪个角色」，给它几行让块间细线 · 分隔线与账尾都还在
   // （让位那一条由 ① 与 ⑤ 量）。
-  const base = { snapshot: snapshotOf(), metrics: METRICS, report: REPORT, width: 100, height: 20 }
+  const base = { snapshot: snapshotOf([row({ t: 'round/state', round: 'r1', from: 'Rebuilding', to: 'Working' })]), metrics: METRICS, report: REPORT, width: 100, height: 20 }
   const f = frameOf({
     ...base,
     menu: { rows: ['候选一', '候选二'], sel: 0 },
@@ -624,7 +624,7 @@ test('正文统一留白、长内容不挤走账尾；极窄档保留完整几�
 
 
 test('对话只显示最近汇报；内部编号与调用计数留在进展视图', () => {
-  const snapshot = snapshotOf()
+  const snapshot = snapshotOf([row({ t: 'round/state', round: 'r1', from: 'Rebuilding', to: 'Working' })])
   const conversation = [
     { text: '任务：「改善终端阅读体验」', role: 'body' as const },
     { text: '验收通过：3 项。', role: 'ok' as const },

@@ -51,6 +51,20 @@ export interface Word {
  * `WORD_KEYS`），不另抄一遍——与 `ui/theme.ts` 的 `SLOT_MEANING` → `SLOTS` 同一手。
  */
 export const WORD_TABLE = {
+  onboardingReview: { face: '先查看计划，再确认执行。', arch: 'UI 初次打开说明门由人开' },
+  onboardingWriteback: { face: '验收通过后写回工作区。', arch: 'UI 初次打开说明 commitThenAdvance 的通过闸' },
+  resultWritten: { face: '验收通过，结果已写回工作区。', arch: 'UI Rebuilding：executeRound 在 advance 后记录的事实' },
+  writebackDone: { face: '结果已写回', arch: 'UI 写回完成的状态条短句' },
+  writebackPending: { face: '验收通过，待写回工作区。', arch: 'UI Committed：通过尚不证明 advanced' },
+  writebackPendingLabel: { face: '验收通过，待写回', arch: 'UI 尚待写回的状态条短句' },
+  verifyFailedGuide: { face: '查看进展与记录，了解失败原因。', arch: 'UI 验收失败的下一步阅读提示' },
+  verifyNotWritten: { face: '验收未通过，本次结果未写回工作区。', arch: 'UI Verifying→Working/Aborted：失败闸不 advance' },
+  verifyFailedLabel: { face: '验收未通过', arch: 'UI 失败验收的状态条短句' },
+  planPreparing: { face: '正在准备计划。', arch: 'UI Planning：还不能由状态推定 holder 已有完整草案' },
+  recordLoaded: { face: '现有记录已载入。', arch: 'UI 有记录而没有轮次状态，不推断任务正在执行' },
+  noStopRecord: { face: '未记录结束', arch: 'UI agent stopped=null，不推断实际进程存活' },
+  nextTaskGuide: { face: '可以继续描述任务，或查看记录。', arch: 'UI 写回后的下一步提示' },
+  abortGuide: { face: '任务已中止，请查看进展与记录。', arch: 'UI 一般中止不保证工作区从未变化' },
   imageLoading: { face: '正在读取预览', arch: 'UI 图片带外请求尚未结算' },
   imageUnavailable: { face: '预览不可用，保留文件路径', arch: 'UI 图片读取或解码退化' },
   imageShort: { face: '屏幕较矮，预览暂收起', arch: 'UI 图片图位不足两行' },
