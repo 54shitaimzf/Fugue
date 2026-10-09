@@ -292,6 +292,8 @@ export interface TermOptions {
   readonly sixelCells?: (() => SixelCells | null) | undefined
   /** full Sixel 必须实测正在 alternate screen；未知/拒绝切屏时完全走旧文字档。 */
   readonly alternateScreenOf?: (() => boolean) | undefined
+  /** ALT_ON 已发出且本帧几何已记好；在 raw 输入接好后查询实际屏幕报告。 */
+  readonly onAlternateScreen?: (() => void) | undefined
   readonly out: TermOut
   /** 这一台终端叫什么（`process.env.TERM`）。缺省读环境。 */
   readonly term?: string | undefined
@@ -462,11 +464,13 @@ export function openTerm(o: TermOptions): Term {
         return
       }
       const buf: string[] = reset === '' ? [] : [reset]
+      let entered = false
       // 整屏那一档：**第一次画的时候进 alt screen**（不是 `openTerm` 的时候——`--once` / 不是 TTY
       // 那两档一次都不画，也就不该把永久行从真历史里挪走）。写在永久行前面：那一块屏是空的。
       if (wantAlt && !alt) {
         buf.push(ALT_ON)
         alt = true
+        entered = true
       }
       // 面板先算好：**尺寸是刚刚量到的那一个**（渲染与摆是同一把尺，所以 1 逻辑行 = 1 物理行）。
       const asked = render({ columns, height: h })
@@ -594,6 +598,7 @@ export function openTerm(o: TermOptions): Term {
       drawnHeight = h
       drawnRows = rowsSeen
       lastRegion = region
+      if (entered) o.onAlternateScreen?.()
     },
     close(): void {
       // alt screen 那一笔先记下来、就地归位（**只写一次**）：`finally` 与 `exit` 那一钩都会调到这一

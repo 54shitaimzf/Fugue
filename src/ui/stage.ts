@@ -232,7 +232,8 @@ export function openStage(deps: StageDeps): Stage {
   const imageKey = (r: ImageRequest): string => JSON.stringify([r.agent, r.path, r.blob])
   const imageAt = () => reading?.face === 'diff' ? readImageAt(readState, cols(), reading.top, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1) - 4) : null
   const syncImage = (): void => {
-    const at = !closed && showInput && deps.graphics?.() === 'kitty' && panel === null && queue.items.length === 0 && !(gate !== null && !gateHidden) ? imageAt() : null
+    const graphics = deps.graphics?.()
+    const at = !closed && showInput && (graphics === 'kitty' || graphics === 'sixel') && panel === null && queue.items.length === 0 && !(gate !== null && !gateHidden) ? imageAt() : null
     const key = at === null ? null : imageKey(at.request)
     if (key !== null && key === previewJob?.key) return
     previewJob?.controller.abort()

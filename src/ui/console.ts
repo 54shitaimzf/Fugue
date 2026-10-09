@@ -30,7 +30,7 @@ import type { Tui } from './follow.ts'
 import { openExitHooks } from './exit-hooks.ts'
 import { degradeNote, openTerm } from './term.ts'
 import { themeOf } from './theme.ts'
-import { openCellProbe } from './cell-probe.ts'
+import { openCellProbe, openAlternateProbe } from './cell-probe.ts'
 import { openStage } from './stage.ts'
 import { gateFaceOf } from './gate.ts'
 import type { GateFace } from './gate.ts'
@@ -205,6 +205,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   const source = await openServeSource({ root })
   let imageSource: ReturnType<typeof openImageSource> | null = null
   let cellProbe: ReturnType<typeof openCellProbe> | null = null
+  let alternateProbe: ReturnType<typeof openAlternateProbe> | null = null
   // ── `T6` 的三样输入（与 `round go` 那一趟逐样对上）─────────────────────────────────────
   // 整块住在下面的 `gateSetupOf` 里（轮次号 · 绑好的动作表 · 每条动作的命令行），身份分配
   // 器是同一个（`identFor`——门只认契约集合，而集合里带着身份，两边换一个就发错一批而且不
@@ -249,7 +250,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   let keys: KeySource | null = null
   let km: Keymap = KEYMAP
   const stage = openStage({
-    graphics: () => imageSource === null ? 'none' : 'kitty',
+    graphics: () => imageSource === null ? 'none' : tiers.graphics === 'sixel'
+      ? cellProbe?.cell != null && alternateProbe?.owned === true ? 'sixel' : 'none'
+      : tiers.graphics,
     readImage: (request, signal) => imageSource?.read(request, signal) ?? Promise.resolve(null),
     note: (line) => ui.tui?.note(line),
     redraw: () => ui.tui?.redraw(),
@@ -279,6 +282,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     out: process.stdout,
     full: flags.has('full'),
     graphics: tiers.graphics,
+    sixelCells: () => cellProbe?.cell ?? null,
+    alternateScreenOf: () => alternateProbe?.owned ?? false,
+    onAlternateScreen: () => alternateProbe?.start(),
     // 色档按这一台终端自报的来（四级表住在 `ui/theme.ts`）：`COLORTERM`/`TERM` 认得 256 色才上，
     // 认不得退属性档（不半上色）。真彩那一档不开。
     theme: themeOf({
@@ -292,7 +298,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // 四条地板收成**一张表**（`ui/follow.ts` 的 `tuiModeOf`）：真终端 → 面板；`--once` / 不是 TTY /
   // `$TERM` 认不出来 → 只印永久行那一档（面板一次都不画，一个字节的 ANSI 都不写）。
   const mode = tuiModeOf({ ansi: term.ansi, once: flags.has('once'), follow: flags.has('follow') })
-  if (mode === 'panel' && tiers.graphics === 'kitty' && process.stdin.isTTY === true) imageSource = openImageSource({ root })
+  // Sixel 的普通缓冲区 resize 所有权尚未解决，只在显式 full 内启用原始 PNG 读源。
+  if (mode === 'panel' && process.stdin.isTTY === true &&
+    (tiers.graphics === 'kitty' || (tiers.graphics === 'sixel' && flags.has('full')))) imageSource = openImageSource({ root })
   // **降级说一声**（U10a）：真终端而 `$TERM` 认不出来——面板那一档整个没了，人得知道
   // 为什么。`--once` 不说：那一档本来就不画面板，没有"退"这回事（判据在 `degradeNote`，
   // 与 `ansiOf` 同一张表）。
@@ -311,6 +319,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
             cellProbe?.close()
             stage.close()
             term.close()
+            alternateProbe?.close()
           },
         })
       : null
@@ -357,14 +366,18 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       process.stderr.write(`配置读不出来，按键按缺省表走：${(err as Error).message}
 `)
     }
-    keys = openKeys({ input: process.stdin, out: process.stdout, onControl: (sequence) => cellProbe?.receive(sequence),
+    keys = openKeys({ input: process.stdin, out: process.stdout, onControl: (sequence) => { cellProbe?.receive(sequence); alternateProbe?.receive(sequence) },
       onAction: stage.onAction, km })
     // 只在 auto 探到 Sixel 且确实收 raw 输入时问宿主；没有回执保留文字。
-    // 像素尺寸尚未接入图层，本格只落实能力门与回执生命周期。
+    // full 所有权只在进入屏时查询；resize 不切屏，刷新六份图形能力时仍能安全重建自有屏。
     if (keys.raw && tiers.graphics === 'sixel') {
+      if (flags.has('full')) alternateProbe = openAlternateProbe({ write: (bytes) => process.stdout.write(bytes),
+        changed: () => { stage.onResize(); tui.redraw() } })
       cellProbe = openCellProbe({ write: (bytes) => process.stdout.write(bytes),
         changed: () => { stage.onResize(); tui.redraw() } })
       cellProbe.start()
+      // 首帧可能先于 raw 输入接好；此处查询补上那一次，后续 ALT_ON 由回调触发。
+      alternateProbe?.start()
     }
     // 第一件事：把按键那一行印出来（写在面板上方；翻上去了按 `?` 再印一次）。
     // **stdin 不是终端就不印它**（`stdout` 是终端而 `stdin` 不是：面板照画，可按键收不到）——
@@ -394,6 +407,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     cellProbe?.close()
     stage.close()
     term.close()
+    alternateProbe?.close()
     await imageSource?.close()
     await source.close()
   }
