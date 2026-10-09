@@ -48,6 +48,10 @@
 // screen 就没有终端历史可翻——永久行落在那一块里，与人一起消失。**所以缺省关**（PLAN § 5.19 第二版
 // 一 · 取舍第一条：同类里三家把它做成可选或缺省关）。
 //
+// **full Sixel 的 resize**：调用方实测正在 alternate screen 后才出图。终端尺寸变化时只重建
+// 这块自有屏，按新宽度重放最近一屏永久行；未知或拒绝切屏时与旧 full 文字档逐字节相同。
+// 普通缓冲区仍要求固定几何；终端后台普通缓冲区的 resize 行为不由此层控制。
+//
 // **行数也量（U6）：期望高度夹进终端行数。** `K` 是**期望**，不是死的：实际画的高度是
 // `clamp(期望, 1, 行数 − 1)`——终端矮了面板跟着矮，不再顶穿屏幕顶（那正是刷屏五根因的第一条：
 // 区域比终端高时上移被屏幕顶钳住，每帧滚一屏）。期望是**每帧现问**的（`heightOf`）：弹层（菜单 ·
@@ -284,8 +288,10 @@ export type RenderPanel = (size: {
 export interface TermOptions {
   /** 缺省关；Sixel 另需已核对的能力与固定几何。 */
   readonly graphics?: GraphicsTier | undefined
-  /** 仅由保证固定几何的调用方提供；产品接线须先解决 resize 所有权。 */
+  /** 普通缓冲区要求固定几何；full 中终端层收回自有平面并重建。 */
   readonly sixelCells?: (() => SixelCells | null) | undefined
+  /** full Sixel 必须实测正在 alternate screen；未知/拒绝切屏时完全走旧文字档。 */
+  readonly alternateScreenOf?: (() => boolean) | undefined
   readonly out: TermOut
   /** 这一台终端叫什么（`process.env.TERM`）。缺省读环境。 */
   readonly term?: string | undefined
@@ -372,7 +378,13 @@ export function openTerm(o: TermOptions): Term {
   const ansi = out.isTTY === true && ansiOf(o.term ?? process.env.TERM)
   /** 这一档要不要整屏（`--full` 且写得出 ANSI）：两样缺一样，那一个字节都不写。 */
   const wantAlt = ansi && o.full === true
-  const images = openImageLayer(ansi ? o.graphics : 'none', o.sixelCells)
+  const verifiedCells = o.sixelCells === undefined ? undefined : () =>
+    wantAlt && o.alternateScreenOf?.() !== true ? null : o.sixelCells!()
+  const images = openImageLayer(ansi ? o.graphics : 'none', verifiedCells)
+  const fullSixel = wantAlt && o.graphics === 'sixel' && o.sixelCells !== undefined
+  // Keep only a viewport of our own permanent physical rows. Normal history is
+  // outside this plane; alternate screens already have no terminal scrollback.
+  let altHistory: string[] = [],historyColumns = FALLBACK_COLUMNS
   /** 此刻在不在 alt screen 里。**只由 `draw` 置真、由 `close` 置假**——两处都不猜。 */
   let alt = false
   let columns = FALLBACK_COLUMNS
@@ -415,20 +427,41 @@ export function openTerm(o: TermOptions): Term {
       seenRows = rowsKnown ? (rowsSeen as number) : undefined
       const cap = rowsKnown ? (rowsSeen as number) - 1 : Number.POSITIVE_INFINITY
       const h = Math.max(1, Math.min(wantOf(), cap))
+      const short = rowsKnown && (rowsSeen as number) - 1 < MIN_HEIGHT
+      if (fullSixel && (alt || !short)) {
+        if (historyColumns !== columns) altHistory = altHistory.flatMap(row => historyRows(row, columns))
+        historyColumns = columns
+        const limit = rowsKnown ? rowsSeen as number : REGION_ROWS
+        const incoming = permanent.flatMap(row => historyRows(row, columns))
+        altHistory = [...altHistory, ...incoming].slice(-Math.max(1, limit))
+      }
+      // After a real terminal resize, old relative image coordinates are invalid.
+      // Only the alternate plane is ours: discard stale moves and reset that plane.
+      // A host can switch back itself: stale alternate-plane erases must never reach normal history.
+      if (fullSixel && alt && o.alternateScreenOf?.() !== true) images.clear()
+      const ownedResize = fullSixel && alt && o.alternateScreenOf?.() === true &&
+        (columns !== drawnColumns || rowsSeen !== drawnRows)
+      const reset = ownedResize ? '\x1b[2J\x1b[H' : ''
+      if (ownedResize) {
+        images.clear()
+        drawn = false;lastRegion = null;drawnColumns = columns;drawnRows = rowsSeen
+      }
       // 矮档：量得到行数、而按行数画面板连框都放不下（面板最少 `MIN_HEIGHT` 行）→ 只印永久行。
       // 判据是**终端**矮，不是夹出来的那个数小——调用方硬要一个 3 行的机械档（测试里那一类）照样画。
-      if (!ansi || (rowsKnown && (rowsSeen as number) - 1 < MIN_HEIGHT)) {
+      if (!ansi || short) {
         // 只印永久行：不是 TTY / `$TERM` 认不出那一档是常态；矮终端那一帧（U6）是**临时的地板**——
         // 行数够了的下一帧自动回到面板那一档。文字不写 ANSI；已有 Kitty 图片只按号收回，不移动光标。矮帧屏幕顶
         // 紧挨着历史，`CLEAR_LINE` 会把历史吃掉一行。矮帧过后那一块漂到哪儿量不到：上一帧行作废。
         const removedImage = images.clear()
-        const plain = permanent.map((line) => `${line}\n`).join('')
-        if (removedImage !== '' || plain !== '') out.write(removedImage + plain)
+        const budget = Math.max(0, (rowsSeen as number) - 1)
+        const lines = ownedResize ? altHistory.slice(Math.max(0, altHistory.length - budget)) : permanent
+        const plain = lines.map((line) => `${ownedResize ? '\r' : ''}${line}\n`).join('')
+        if (reset !== '' || removedImage !== '' || plain !== '') out.write(reset + removedImage + plain)
         drawn = false
         lastRegion = null
         return
       }
-      const buf: string[] = []
+      const buf: string[] = reset === '' ? [] : [reset]
       // 整屏那一档：**第一次画的时候进 alt screen**（不是 `openTerm` 的时候——`--once` / 不是 TTY
       // 那两档一次都不画，也就不该把永久行从真历史里挪走）。写在永久行前面：那一块屏是空的。
       if (wantAlt && !alt) {
@@ -491,9 +524,10 @@ export function openTerm(o: TermOptions): Term {
       const screenGrew = rowsKnown && typeof drawnRows === 'number' && (rowsSeen as number) > drawnRows
       const back = !drawn || widthShrank ? 0 : !screenGrew && region.length > regionRows ? cursorRow + (region.length - regionRows) : cursorRow
       if (back > 0) buf.push(upOf(back))
-      for (const line of permanent) {
-        for (const row of historyRows(line, columns)) buf.push(`\r${CLEAR_LINE}${row}\n`)
-      }
+      const historyBudget = rowsKnown ? Math.max(0, (rowsSeen as number) - region.length) : REGION_ROWS
+      const permanentRows = ownedResize ? altHistory.slice(Math.max(0, altHistory.length - historyBudget))
+        : permanent.flatMap(line => historyRows(line, columns))
+      for (const row of permanentRows) buf.push(`\r${CLEAR_LINE}${row}\n`)
       if (diffable) {
         for (let i = 0; i < region.length; i += 1) {
           const one = region[i] as string
@@ -566,7 +600,9 @@ export function openTerm(o: TermOptions): Term {
       // 处，崩那一档走的就是后一条——第二次进来时 `alt` 已经是假，一个字节都不再写。
       const leave = alt
       alt = false
-      const buf: string[] = [images.clear()]
+      altHistory = []
+      const removedImage = images.clear()
+      const buf: string[] = [leave && fullSixel && o.alternateScreenOf?.() !== true ? '' : removedImage]
       // 旧区域每行都在当时的列宽内，且显式换行：变宽/增高不会拆它，可按原行数收回。
       // 变窄/变矮可能已把一部分旧区域送进 scrollback 或截去，不能多删几行猜位置。
       if (ansi && drawn) {
