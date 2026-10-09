@@ -379,7 +379,7 @@ export function openStage(deps: StageDeps): Stage {
     // 提示行（第二幕 ④ · 第三幕 ② 按处境分档）**与输入行在不在无关**：stdin 不是终端时它就是那一
     // 句"这一档不收按键"——画一个收不到按键的提示符比不画坏得多，而"按键收不到"这件事更得说出来。
     // **阅读面压过门口**（判据在 `hintWhenOf` 那一头）：门口那三个键它自己在屏幕上印着。
-    const when = panel !== null && (planTop !== null || reading !== null) ? 'menu' : planTop !== null ? 'plan' : hintWhenOf({ gate: gateOn, read: reading !== null, pending: gate !== null && gateHidden })
+    const when = panel !== null && (panel.source === 'keys' || planTop !== null || reading !== null) ? 'menu' : planTop !== null ? 'plan' : hintWhenOf({ gate: gateOn, read: reading !== null, pending: gate !== null && gateHidden })
     const hintPart = { hint: deps.hint(when) }
     if (!showInput) return hintPart
     const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
@@ -419,7 +419,13 @@ export function openStage(deps: StageDeps): Stage {
     return {
       ...hintPart,
       ...navPart,
-      ...(panel === null ? {} : { menu: { rows: rowsTextOf(rowsOf(panel.source)), sel: panel.sel } }),
+      ...(() => {
+        if (panel === null) return {}
+        const rows = rowsOf(panel.source), picked = rows[clampSel(rows.length, panel.sel)]
+        return { menu: { rows: rowsTextOf(rows), sel: panel.sel,
+          ...(panel.source === 'keys' && picked !== undefined
+            ? { detail: readWrap(picked.name.replace(/ {2,}/g, ' '), cols()) } : {}) } }
+      })(),
       ...bottomPart,
       ...readPart,
       focus: writerAt(navNodes, navAt),

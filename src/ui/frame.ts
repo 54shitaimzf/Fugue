@@ -436,6 +436,8 @@ function bar(w: number, label?: string): string {
 
 /** 候选那一层那几行（`ui/menu.ts` 算好的原文）与选中项落在第几条（`T4`）。 */
 export interface MenuInput {
+  /** 当前按键的完整物理说明；缺失、坏形状或放不下时回原列表。 */
+  readonly detail?: readonly string[] | undefined
   readonly rows: readonly string[]
   readonly sel: number
 }
@@ -550,6 +552,10 @@ export function frameOf(o: FrameInput): Frame {
   const inner = innerOf(width)
   const edge = width - 2
   const inset = ' '.repeat(airOf(width))
+  const detail = o.menu?.detail
+  const helpOn = Array.isArray(detail) && detail.length > 0 && detail.length <= height - 4
+    && (o.menu?.rows.length ?? 0) > 0
+    && detail.every(row => typeof row === 'string' && row !== '' && widthOf(row) <= inner)
 
 
   // 内容那一栏那几行：**哪一档视图说什么话**。对话视图是 `chatOf` 折出来的那几行
@@ -567,9 +573,9 @@ export function frameOf(o: FrameInput): Frame {
   const rows = bodyRows.flatMap((one) => wrap(one.l, inner).map((x) => ({ l: x, role: one.role })))
 
   // 账尾那条状态条：**一行**，超出就从右边截（`clip` 留 `…`，说了它被截过）。
-  const footer = clip(footerOf(o.snapshot, o.transition), inner)
+  const footer = clip(helpOn ? `${Math.max(0, Math.min((o.menu?.rows.length ?? 1) - 1, o.menu?.sel ?? 0)) + 1}/${o.menu!.rows.length} · 筛选` : footerOf(o.snapshot, o.transition), inner)
   // 上下框两行、分隔与账尾两行；六行正文的预算不随信息量漂移。
-  const withFooter = (o.bottom?.keep ?? 0) + 1 <= height - 4
+  const withFooter = (helpOn ? 0 : (o.bottom?.keep ?? 0)) + 1 <= height - 4
   let budget = height - 2 - (withFooter ? 2 : 0)
 
   // 候选那一层（`/` 菜单 · `Ctrl-P` 面板）**从内容那一栏的最下面切一块**（最多一半）：面板开开关关，
@@ -578,7 +584,19 @@ export function frameOf(o: FrameInput): Frame {
   const menuCap = menuAll === null ? 0 : Math.max(1, Math.min(Math.floor(budget / 2), Math.max(1, menuAll.length)))
   const win = menuAll === null || menuAll.length === 0 ? null : windowOf(menuAll.length, o.menu?.sel ?? 0, menuCap)
   const menuBody: string[] = []
-  if (menuAll !== null) {
+  if (helpOn) {
+    menuBody.push(...detail!)
+    const nearbyCap = inner >= 32 ? Math.max(0, budget - detail!.length - 1) : 0
+    if (nearbyCap > 0 && menuAll!.length > 1) {
+      const at = Math.max(0, Math.min(menuAll!.length - 1, o.menu?.sel ?? 0))
+      const nearby = windowOf(menuAll!.length, at, Math.min(menuAll!.length, nearbyCap + 1))
+      menuBody.push('')
+      for (let i = nearby.from; i < nearby.from + nearby.count; i += 1) {
+        if (i !== at) menuBody.push(`  ${menuAll![i]}`)
+      }
+    }
+  }
+  else if (menuAll !== null) {
     if (menuAll.length === 0) menuBody.push('（没有匹配的）')
     else {
       const w = win as MenuWindow
@@ -596,7 +614,7 @@ export function frameOf(o: FrameInput): Frame {
   const readAll = o.read?.rows ?? []
   const readBody: string[] = []
   let panelImage: PanelImage | undefined
-  if (readingOn) {
+  if (readingOn && !helpOn) {
     const top = Math.max(0, Math.min(o.read?.top ?? 0, Math.max(0, readAll.length - 1)))
     const preview = o.menu === undefined && o.bottom === undefined ? o.read?.preview : undefined
     let next = top, inserted = false
@@ -629,7 +647,7 @@ export function frameOf(o: FrameInput): Frame {
   // 下面这几步与从前逐字节相同）。**阅读面开着就不印它**（地方让给正文）。
   // 树那一栏（`T8`）**不进对话视图**：决策材料的线框稿里没有它，而对话视图那 6 行按 ④ 的行账
   // 分给了轮次头 · 细线 · 在飞那几格；切格走 `Alt-1…9`，读的是哪一格由框名说（见下）。
-  const navAll = readingOn || view === 'chat' ? [] : (o.nav?.rows ?? [])
+  const navAll = readingOn || helpOn || view === 'chat' ? [] : (o.nav?.rows ?? [])
   const navCap = navAll.length === 0 ? 0 : Math.max(1, Math.min(4, budget - 2))
   const navWin = navAll.length === 0 ? null : windowOf(navAll.length, o.nav?.sel ?? 0, navCap)
   // **命中按坐标定，不按字面定**（原先拿印出去的那一串跟选中的那一行比字）：两格名字一样时
@@ -645,10 +663,10 @@ export function frameOf(o: FrameInput): Frame {
   // 最下面那一栏（`T6` 的门口那一块 · `T7` 的排队行）先占住它那几行，再轮到候选，最后才是内容那一
   // 栏（装不下时**从后往前让位**，而那一栏自己先让位的是**预览**——头几行；末 `keep` 行留住：那是
   // 人要按 · 要看的东西）。一栏都没有（`bottom` 不给）时下面这几步与从前逐字节相同。
-  const gateAll = o.bottom?.rows ?? []
+  const gateAll = helpOn ? [] : (o.bottom?.rows ?? [])
   const keep = Math.max(0, Math.min(o.bottom?.keep ?? 0, gateAll.length))
   // 没有正文就把那一行预算也交给当前操作；实际汇报仍保留至少一行。
-  const bodyFloor = readingOn || rows.length === 0 ? 0 : 1
+  const bodyFloor = readingOn || helpOn || rows.length === 0 ? 0 : 1
   let gateBody = [...gateAll]
   while (gateBody.length > keep && budget - bodyFloor - gateBody.length < 0) gateBody = gateBody.slice(1)
   while (menuBody.length > 0 && budget - bodyFloor - gateBody.length - menuBody.length < 0) menuBody.pop()
@@ -663,8 +681,8 @@ export function frameOf(o: FrameInput): Frame {
   }
   const bodyBudget = Math.max(bodyFloor, budget - menuBody.length - gateBody.length - gateNotice.length)
   // 阅读面开着：内容那一栏一个字节都不印（地方整块给了正文，见上面那一段）。
-  const content = readingOn ? [] : rows.length <= bodyBudget ? rows : rows.slice(0, Math.max(0, bodyBudget - 1))
-  const dropped = readingOn ? 0 : rows.length - content.length
+  const content = readingOn || helpOn ? [] : rows.length <= bodyBudget ? rows : rows.slice(0, Math.max(0, bodyBudget - 1))
+  const dropped = readingOn || helpOn ? 0 : rows.length - content.length
   // 树那一栏在最上面，然后才是内容那一栏（它的每一行都是横贯整栏的）。行带着**角色**（U20）：
   // 树与读数是正文 · 阅读面正文是 `read` · 候选与门口那一块是临时的 `overlay`。
   // 内容那一栏与临时那几层都**横贯整栏**（第二幕 ⑦ 之后没有第二栏了）：每行一个角色。
@@ -683,6 +701,11 @@ export function frameOf(o: FrameInput): Frame {
   //
   // 改主意的条件：有人嫌账小的时候框里空——去掉这一段，框就回到"内容多高就多高"
   // （框底随账动，逐行 diff 会多写几行）。
+  // 当前按键从正文顶部展开；列表缺省的底部摆法逐字节保留。
+  if (helpOn) {
+    menuBody.forEach((l, i) => shown.push({ l, role: i === 0 ? 'overlay' : 'overlayBody' }))
+    menuBody.length = 0
+  }
   const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length + gateNotice.length
   for (let i = fixed; i < height; i += 1) shown.push({ l: '', role: 'body' })
   for (const one of menuBody) shown.push({ l: one, role: 'overlay' })
@@ -705,9 +728,9 @@ export function frameOf(o: FrameInput): Frame {
   // 那一格：对话视图不印树，框名是「读的是哪一格」这件事唯一的落点。
   const g = glyphs()
   const focus = o.focus === undefined || o.focus === null ? '' : ` · ${o.focus}`
-  const head = readingOn ? '阅读面' : `${viewNameOf(view)}${view === 'chat' ? '' : focus}`
+  const head = helpOn ? '按键帮助' : readingOn ? '阅读面' : `${viewNameOf(view)}${view === 'chat' ? '' : focus}`
   lines.push(`${g.tl}${bar(edge, head)}${g.tr}`)
-  roles.push(readingOn ? 'readHeading' : 'border')
+  roles.push(helpOn || readingOn ? 'readHeading' : 'border')
   for (const one of shown) {
     lines.push(`${g.v}${inset}${cell(one.l, inner)}${inset}${g.v}`)
     roles.push(one.role)
