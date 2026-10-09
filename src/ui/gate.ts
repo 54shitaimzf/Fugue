@@ -28,7 +28,7 @@ import type { BottomInput } from './frame.ts'
 import { WORDS } from '../words.ts'
 import { GO_LINE } from './run.ts'
 import { wrap } from './glyph.ts'
-import { KEYMAP, keyLabelOf } from './keymap.ts'
+import { KEYMAP } from './keymap.ts'
 import type { Keymap } from './keymap.ts'
 
 /** 门口那一档的动作。**三个**（`a` / `p` / 升权档见头注）。 */
@@ -244,7 +244,8 @@ export function gateQueueRowOf(face: GateFace, at: number): string {
 
 /** 选项行：**三档**；举过手就把那一句"再按一次"说出来（二段确认要对人可见）。 */
 export function optionRowOf(view: GateView, keymap: Keymap = KEYMAP): string {
-  const key = (action: GateOption | 'submit' | 'cancel'): string => keyLabelOf(keymap.rows.find(b => b.action === action)!)
+  // 此处每个动作只列第一个配置键，给批次范围与选择留地方；帮助仍列全部别名，解码不变。
+  const key = (action: GateOption | 'submit' | 'cancel'): string => keymap.rows.find(b => b.action === action)!.keys[0]!
   if (view.armed === 'approve') return `再按 ${key('approve')} / ${key('submit')} 执行整批 · ${key('cancel')} 收起`
   if (view.armed === 'reject') return `再按 ${key('reject')} / ${key('submit')} 暂不执行 · ${key('cancel')} 收起`
   return `${key('approve')} 执行整批 · ${key('reject')} 暂不执行 · ${key('cancel')} 收起`
