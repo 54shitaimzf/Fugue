@@ -12,13 +12,15 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { WORD_KEYS, WORDS, WORD_TABLE, archNameOf } from './words.ts'
+import { STATE_FACE, WORD_KEYS, WORDS, WORD_TABLE, archNameOf, stateFaceOf } from './words.ts'
 import type { WordKey } from './words.ts'
 import { statusOf } from './probe/status.ts'
 import { linesOf } from './probe/status.ts'
 import type { StatusRow } from './probe/status.ts'
 import { readCatalog } from './model/catalog.ts'
 import { frameOf } from './ui/frame.ts'
+import { STATES } from './round/machine.ts'
+import type { RoundState } from './terms.ts'
 
 /** 一份最小的账：一条轮次链 + 一格 agent（面板与 `status` 两面都印得出来）。 */
 const ROWS: readonly StatusRow[] = [
@@ -124,12 +126,20 @@ test('② 两个点名面照表印：新词在 · 旧词一个都不在', () => 
   )
 })
 
-test('③ 三处源码去注释之后不再出现那几个词（这就是"主面上中文字面量即红"）', () => {
-  // 五处＝主面那几层：面板（`ui/frame.ts`）· 命令行那一张人读脸（`probe/status.ts`）·
+test('③ 六处源码去注释之后不再出现那几个词（这就是"主面上中文字面量即红"）', () => {
+  // 六处＝用词表的词那几面：面板（`ui/frame.ts`）· 命令行那一张人读脸（`probe/status.ts`）·
   // **对话流那一栏**（`ui/stream.ts`，第二幕 ⑦ 收进来的）· **视图表**（`ui/views.ts`，
-  // 三档视图的名字）· **门口那一批**（`ui/gate.ts`，第二幕 ⑧ 的结论行与那几张卡的标签）。
-  // 进阶面（阅读面 · 命令面的 `round` 那几行）不在这条断言里，口径见停点报告的疑点清单。
-  for (const rel of ['./ui/frame.ts', './probe/status.ts', './ui/stream.ts', './ui/views.ts', './ui/gate.ts'] as const) {
+  // 三档视图的名字）· **门口那一批**（`ui/gate.ts`，第二幕 ⑧ 的结论行与那几张卡的标签）·
+  // **`round` 那几条人面**（`cli/cmd/round.ts`，这一封炉收进来的）。
+  // 阅读面与诊断消息不在这条断言里，口径写在 `words.ts` 头注那一段（各带什么条件下改主意）。
+  for (const rel of [
+    './ui/frame.ts',
+    './probe/status.ts',
+    './ui/stream.ts',
+    './ui/views.ts',
+    './ui/gate.ts',
+    './cli/cmd/round.ts',
+  ] as const) {
     const code = codeOf(readSrc(rel))
     for (const w of RETIRED) {
       assert.ok(!code.includes(w), `${rel} 的代码里还留着「${w}」——那一批词只许住 src/words.ts 一处`)
@@ -137,7 +147,7 @@ test('③ 三处源码去注释之后不再出现那几个词（这就是"主面
     // 反面：这一份确实读到了（不然上面那几条量的是空气）。
     assert.ok(code.includes('WORDS.'), `${rel} 该从词表取词（读到的是 ${code.length} 字节）`)
   }
-  console.log(`③ 读数：五份源码去注释后各 ${RETIRED.length} 个旧词 0 处命中 · 五份都从 WORDS 取词`)
+  console.log(`③ 读数：六份源码去注释后各 ${RETIRED.length} 个旧词 0 处命中 · 六份都从 WORDS 取词`)
 })
 
 test('④ 值层没被顺手翻：--json 那几个字段名照旧（换的只是人面那几个词）', () => {
@@ -152,4 +162,39 @@ test('④ 值层没被顺手翻：--json 那几个字段名照旧（换的只是
     `④ 读数：contracts=${s.contracts} · attempts=${s.attempts} · accepts.accepts=${s.accepts.accepts} · ` +
       `usage.calls=${s.usage.calls} · agents=${s.agents.length} 格（字段名一个没动）`,
   )
+})
+
+test('⑤ 状态那一栏印的是词表里那个词：名单从 STATES 推 · 十个取值各一个中文词 · 三档视图里没有裸英文状态名', () => {
+  // 名单**从状态机那一份推**（`round/machine.ts` 的 `STATES`，架构 § 8.13 那十个取值）——不在这一份
+  // 另抄一遍：新状态落地时，`STATE_FACE` 少一格这一条就红（`stateFaceOf` 会照原样印英文）。
+  assert.deepEqual(
+    [...Object.keys(STATE_FACE)].sort(),
+    [...STATES].sort(),
+    `STATE_FACE 的名单该是 STATES 那十个取值，拿到 ${Object.keys(STATE_FACE).join(' · ')}`,
+  )
+  const at = (state: RoundState) => ({
+    snapshot: statusOf([
+      { pos: { writer: 'round', seq: 1 }, e: { t: 'round/state', round: 'r1' as never, from: 'Idle' as never, to: state as never } },
+    ]),
+    permanent: [],
+    width: 100,
+    height: 14,
+  })
+  const seen: string[] = []
+  for (const state of STATES) {
+    const face = stateFaceOf(state)
+    assert.equal(face, STATE_FACE[state], `${state} 那一格从表取词`)
+    assert.doesNotMatch(face, /[A-Za-z]/, `${state} 的词该是中文（拿到 ${face}）`)
+    for (const view of ['chat', 'progress', 'spending'] as const) {
+      const text = frameOf({ ...at(state), view }).lines.join('\n')
+      assert.ok(!text.includes(state), `${state} 那一档的 ${view} 视图里印出了裸英文状态名：\n${text}`)
+      if (text.includes(face)) seen.push(`${state}→${face}`)
+    }
+    // 三档视图里至少有一处把这一格印出来（状态那一栏在轮次头那一行，它不一定三档都在）。
+    assert.ok(
+      seen.some((one) => one.startsWith(`${state}→`)),
+      `${state} 那一格在三档视图里一处都没印出来——那这一条量的是空气`,
+    )
+  }
+  console.log(`⑤ 读数：${STATES.length} 个取值各一个中文词 · 三档视图里裸英文状态名 0 处 · 印出来过 ${seen.length} 处`)
 })
