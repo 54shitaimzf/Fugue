@@ -462,6 +462,8 @@ export interface BottomInput {
   /** 批次标题的物理行范围；缺失/坏范围时保留原有整块弹层样式。 */
   readonly headingAt?: number | undefined
   readonly headingCount?: number | undefined
+  /** 预览裁切时的一行提示；不给时沿用旧布局，确认末尾仍优先。 */
+  readonly overflow?: string | undefined
 }
 
 /** 树那几个节点（`ui/nav.ts` 算好的原文）与选中项落在第几个（`T8`）。 */
@@ -611,9 +613,10 @@ export function frameOf(o: FrameInput): Frame {
         readBody.push(...wrap(message, inner).slice(0, room))
       }
     }
-    while (next < readAll.length && readBody.length < Math.max(1, budget)) {
+    const readBudget = Math.max(1, budget - menuBody.length)
+    while (next < readAll.length && readBody.length < readBudget) {
       addPreview()
-      if (readBody.length < Math.max(1, budget)) readBody.push(readAll[next++] as string)
+      if (readBody.length < readBudget) readBody.push(readAll[next++] as string)
     }
     addPreview()
     const below = readAll.length - next
@@ -652,7 +655,13 @@ export function frameOf(o: FrameInput): Frame {
   while (gateBody.length > keep && budget - bodyFloor - gateBody.length - menuBody.length < 0) gateBody = gateBody.slice(1)
   while (menuBody.length > 0 && budget - gateBody.length < bodyFloor) menuBody.pop()
   while (gateBody.length > 0 && budget - gateBody.length < bodyFloor) gateBody = gateBody.slice(1)
-  const bodyBudget = Math.max(bodyFloor, budget - menuBody.length - gateBody.length)
+  const gateNotice: string[] = []
+  const gateRoom = Math.max(0, budget - bodyFloor - menuBody.length)
+  if (gateAll.length > gateBody.length && typeof o.bottom?.overflow === 'string' && o.bottom.overflow !== '' && gateRoom > keep) {
+    while (gateBody.length >= gateRoom && gateBody.length > keep) gateBody = gateBody.slice(1)
+    gateNotice.push(clip(o.bottom.overflow, inner))
+  }
+  const bodyBudget = Math.max(bodyFloor, budget - menuBody.length - gateBody.length - gateNotice.length)
   // 阅读面开着：内容那一栏一个字节都不印（地方整块给了正文，见上面那一段）。
   const content = readingOn ? [] : rows.length <= bodyBudget ? rows : rows.slice(0, Math.max(0, bodyBudget - 1))
   const dropped = readingOn ? 0 : rows.length - content.length
@@ -674,9 +683,10 @@ export function frameOf(o: FrameInput): Frame {
   //
   // 改主意的条件：有人嫌账小的时候框里空——去掉这一段，框就回到"内容多高就多高"
   // （框底随账动，逐行 diff 会多写几行）。
-  const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length
+  const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length + gateNotice.length
   for (let i = fixed; i < height; i += 1) shown.push({ l: '', role: 'body' })
   for (const one of menuBody) shown.push({ l: one, role: 'overlay' })
+  for (const one of gateNotice) shown.push({ l: one, role: 'overlayBody' })
   // 按切掉的头部行数还原坐标：选项折成几行，就给几行同一种等待反馈。
   const waitAt = o.bottom?.waitingAt ?? -1
   const waitEnd = waitAt + (o.bottom?.waitingCount ?? 1)

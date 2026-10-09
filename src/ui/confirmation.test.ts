@@ -32,7 +32,7 @@ test('确认选项在窄屏中折行，整批范围与收起含义可见', () =>
     assert.ok(text.includes('Esc 收起'), text)
     assert.ok(!text.includes('中止'), 'Esc 只收起界面，不能声称中止任务')
   }
-  assert.match(hintLineOf(KEYMAP, 2, 'gate'), /↑ 上一项 · ↓ 下一项/)
+  assert.match(hintLineOf(KEYMAP, 3, 'gate'), /↑ 上一项 · ↓ 下一项/)
   assert.ok(gateRowsOf({ face, view: { at: 0, armed: null }, columns: 76 }).join(' ').includes('y 放行整批 · n 拒绝 · Esc 收起'), '行动提示仍在卡片中，提示行露导航')
 })
 

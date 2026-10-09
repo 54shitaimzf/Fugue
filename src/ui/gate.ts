@@ -264,6 +264,7 @@ export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateVi
     waitingCount: options.length,
     headingAt: head.length,
     headingCount: queue.length,
+    overflow: '计划有省略',
   }
 }
 

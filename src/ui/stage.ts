@@ -16,13 +16,13 @@ import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmi
 import type { Editor } from './input.ts'
 import { acceptOf, candidatesOf, clampSel, completeOf, moveSel, pathsOf, queryOf, rowsTextOf, specsOf } from './menu.ts'
 import type { MenuRow, MenuSource } from './menu.ts'
-import { GATE_VIEW, conclusionLineOf, gateLayoutOf, lineOf, pressGate, stepAt } from './gate.ts'
+import { GATE_VIEW, cardAt, previewLinesOf, conclusionLineOf, gateLayoutOf, lineOf, pressGate, stepAt } from './gate.ts'
 import type { GateFace, GateOption, GateView } from './gate.ts'
 import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from './queue.ts'
 import { altAt, clampNav, navNodesOf, navRowsOf, writerAt } from './nav.ts'
 import type { NavNode } from './nav.ts'
 import { stepView, viewAt } from './views.ts'
-import { EMPTY_READ, faceRowsOf, facesOf, firstFace, readStateOf, readImageAt, stepFace, stepTop } from './read.ts'
+import { EMPTY_READ, faceRowsOf, facesOf, firstFace, readWrap, readStateOf, readImageAt, stepFace, stepTop } from './read.ts'
 import type { ReadFaceName, ReadState } from './read.ts'
 import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
@@ -178,6 +178,8 @@ export function openStage(deps: StageDeps): Stage {
    */
   let readState: ReadState = EMPTY_READ
   let reading: { face: ReadFaceName; top: number } | null = null
+  /** 当前待确认卡的全文坐标；内容每次从同一 gate face 取得，不另存计划。 */
+  let planTop: number | null = null
   /**
    * 跑完一趟要不要**自动**接着起下一条（`T7`）。缺省要；**被 `Esc` / `Ctrl-C` 打断之后不要**——
    * 人刚说了停，排队那几条停在那儿等他（`Enter` 起下一条 · `Esc` 丢掉）。起新的一条时又回到"要"。
@@ -202,6 +204,7 @@ export function openStage(deps: StageDeps): Stage {
     lastGate = key
     gate = next
     gateHidden = false
+    planTop = null
     // **批次换了就把选中那一份与举手那一栏都归零**：上一批举过的手不许带到这一批上。
     gateView = GATE_VIEW
     // **结论行进永久行**（第二幕 ⑧）：门口一开就说清这一批「打算开几件事 · 覆盖哪些 · 按什么验收」。
@@ -226,14 +229,19 @@ export function openStage(deps: StageDeps): Stage {
     readState = readStateOf(rows, { agent: focusNow(), prev: readState, snapshot })
   }
 
-  const heightWant = (): number => panelWantOf(deps.termRows(), panel !== null || reading !== null || (showInput && gate !== null && !gateHidden))
+  const heightWant = (): number => panelWantOf(deps.termRows(), panel !== null || reading !== null || planTop !== null || (showInput && gate !== null && !gateHidden))
+  const planRows = (): readonly string[] => {
+    const card = gate === null ? null : cardAt(gate, gateView.at)
+    return card === null ? [] : [`计划全文 · 当前 ${gateView.at + 1}/${gate!.cards.length}`, ...previewLinesOf(card)]
+      .flatMap(line => readWrap(line, cols()))
+  }
   let previewJob: { key: string; controller: AbortController; state: ReadPreview['state']; image?: PixelImage } | null = null
   let closed = false
   const imageKey = (r: ImageRequest): string => JSON.stringify([r.agent, r.path, r.blob])
   const imageAt = () => reading?.face === 'diff' ? readImageAt(readState, cols(), reading.top, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1) - 4) : null
   const syncImage = (): void => {
     const graphics = deps.graphics?.()
-    const at = !closed && showInput && (graphics === 'kitty' || graphics === 'sixel') && panel === null && queue.items.length === 0 && !(gate !== null && !gateHidden) ? imageAt() : null
+    const at = !closed && showInput && planTop === null && (graphics === 'kitty' || graphics === 'sixel') && panel === null && queue.items.length === 0 && !(gate !== null && !gateHidden) ? imageAt() : null
     const key = at === null ? null : imageKey(at.request)
     if (key !== null && key === previewJob?.key) return
     previewJob?.controller.abort()
@@ -369,11 +377,11 @@ export function openStage(deps: StageDeps): Stage {
   const cols = (): number => innerOf(deps.columns())
   const view = (): ViewInput => {
     // 门口那一块开着没有：提示行那一档与最下面那一栏都要它（先算一次，两处读同一个）。
-    const gateOn = gate !== null && !gateHidden
+    const gateOn = gate !== null && !gateHidden && planTop === null
     // 提示行（第二幕 ④ · 第三幕 ② 按处境分档）**与输入行在不在无关**：stdin 不是终端时它就是那一
     // 句"这一档不收按键"——画一个收不到按键的提示符比不画坏得多，而"按键收不到"这件事更得说出来。
     // **阅读面压过门口**（判据在 `hintWhenOf` 那一头）：门口那三个键它自己在屏幕上印着。
-    const when = hintWhenOf({ gate: gateOn, read: reading !== null, pending: gate !== null && gateHidden })
+    const when = panel !== null && (planTop !== null || reading !== null) ? 'menu' : planTop !== null ? 'plan' : hintWhenOf({ gate: gateOn, read: reading !== null, pending: gate !== null && gateHidden })
     const hintPart = { hint: deps.hint(when) }
     if (!showInput) return hintPart
     const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
@@ -389,7 +397,7 @@ export function openStage(deps: StageDeps): Stage {
             bottom: {
               rows: bottomRows,
               keep: (gatePart?.keep ?? 0) + (queueOn ? 1 : 0),
-              ...(gatePart === null ? {} : { waitingAt: gatePart.waitingAt, waitingCount: gatePart.waitingCount, headingAt: gatePart.headingAt, headingCount: gatePart.headingCount }),
+              ...(gatePart === null ? {} : { waitingAt: gatePart.waitingAt, waitingCount: gatePart.waitingCount, headingAt: gatePart.headingAt, headingCount: gatePart.headingCount, overflow: gatePart.overflow }),
             },
           }
     // 树那一栏（`T8`，排在最上面）与"切到哪一格"（`focus`：`null` = 整份账）。
@@ -398,7 +406,7 @@ export function openStage(deps: StageDeps): Stage {
     // 阅读面那一栏（`T9`，排在内容那一栏最下面）：**开着才占地方**。三面是从 `readState` 排的版
     // （`facesOf` 不再折一次），看到第几行由 `reading.top` 说了算。
     const readPart =
-      reading === null
+      planTop !== null ? (() => { const rows = planRows(); return { read: { rows, top: stepTop(rows.length, planTop, 0) } } })() : reading === null
         ? {}
         : (() => {
             const faces = facesOf(readState)
@@ -440,6 +448,8 @@ export function openStage(deps: StageDeps): Stage {
     if (rows.some((r) => r.e.t.startsWith('round/') || r.e.t.startsWith('holder/'))) void refreshGate()
   }
   const onAction = (d: Decoded): void => {
+    // 全文页只供检查，不能继承举手或起排队命令；返回确认后再重新点头。
+    if (planTop !== null && (d.action === 'approve' || d.action === 'reject' || (d.action === 'submit' && panel === null))) return
     // ⓪ **门口那一批那两档**（`T6`）：开关是"门口那一块开着没有 **且** 输入行空着没有"——不是
     // `actsOnEmpty` 判的"行里有没有字"（那一条判的是键入的处境，而 `y` / `n` 是可打印的，门口
     // 那一块关着的时候它们就是人打的字）。二段确认的判据只有一处（`ui/gate.ts` 的 `pressGate`）：
@@ -492,9 +502,9 @@ export function openStage(deps: StageDeps): Stage {
       if (d.action === 'cancel') {
         const step = escStepOf({
           // **门口那一块是 `Esc` 链最外那一级**（`T6`）：它开着（且行是空的）就只收它。
-          atGate: gate !== null && !gateHidden,
+          atGate: gate !== null && !gateHidden && planTop === null,
           // 弹层栈有几层：候选那一层与阅读面（`T9`）各算一层——`Esc` 只关最上面那一层。
-          overlays: (panel === null ? 0 : 1) + (reading === null ? 0 : 1),
+          overlays: (panel === null ? 0 : 1) + (reading === null ? 0 : 1) + (planTop === null ? 0 : 1),
           running: deps.run()?.running === true,
           // 排队那几条（`T7`）：一条都没有时这一级够不着（次序不变——在途那一趟压着它）。
           queued: queue.items.length,
@@ -511,6 +521,7 @@ export function openStage(deps: StageDeps): Stage {
         if (step === 'overlay') {
           // 候选菜单画在阅读面的下部，先关它，返回同一份阅读与滚动位置。
           if (panel !== null) panel = null
+          else if (planTop !== null) planTop = null
           else reading = null
           settle()
           return
@@ -572,6 +583,7 @@ export function openStage(deps: StageDeps): Stage {
     if (d.action === 'go') {
       if (gate !== null) {
         gateHidden = false
+        planTop = null
         gateView = { ...gateView, armed: null }
         panel = null
         reading = null
@@ -596,10 +608,20 @@ export function openStage(deps: StageDeps): Stage {
       settle()
       return
     }
-    // ⑥ `Ctrl-R`（`T9`）：**阅读面**——开与关都在这一下上（看一眼就走）。开着的时候 `Tab` 换一面 ·
+    // ⑥ `Ctrl-R`：当前确认卡开计划全文、返回时重新举手；其余处境仍开原有账上阅读面。
+    // 账上阅读面（`T9`）开着的时候 `Tab` 换一面 ·
     // `↑`/`↓` 翻 · `Esc` 收起（走上面取消链那一级）。读的是**账**（`readState` 从行折出来），
     // 界面这一头没有第二份"这一格动过哪些路径"的清单。
     if (d.action === 'read') {
+      if (planTop !== null) { planTop = null; settle(); return }
+      if (showInput && gate !== null && !gateHidden && cardAt(gate, gateView.at) !== null) {
+        planTop = 0
+        gateView = { ...gateView, armed: null }
+        reading = null; panel = null
+        deps.note('阅读面 · 计划全文')
+        deps.note(deps.keysOf('plan'))
+        settle(); return
+      }
       if (reading === null) {
         // 开的那一下就要把详情面折出来（`reading` 还没置上，所以显式要）。
         refreshRead(true)
@@ -615,8 +637,25 @@ export function openStage(deps: StageDeps): Stage {
       settle()
       return
     }
+    // 阅读上面的菜单是可见顶层；导航只移它，保留背后的全文/账上阅读坐标。
+    if (panel !== null && (planTop !== null || reading !== null)) {
+      const n = rowsOf(panel.source).length
+      if (d.action === 'historyOlder' || d.action === 'historyNewer') {
+        panel = { ...panel, sel: moveSel(n, panel.sel, d.action === 'historyOlder' ? -1 : 1) }
+        settle(); return
+      }
+      if (d.action === 'pageUp' || d.action === 'pageDown' || d.action === 'jumpFirst' || d.action === 'jumpLast') {
+        const sel = d.action === 'jumpFirst' ? 0 : d.action === 'jumpLast' ? Math.max(0, n - 1)
+          : clampSel(n, panel.sel + (d.action === 'pageUp' ? -PAGE_STEP : PAGE_STEP))
+        panel = { ...panel, sel }; settle(); return
+      }
+    }
     // ⑥之二 阅读面开着时那三下：`Tab` 换一面 · `↑`/`↓` 翻（一屏一行地翻——这是"读"，
     // 不是"选"）。别的键照旧走它们自己的路（打字还是打字）。
+    if (planTop !== null && (d.action === 'historyOlder' || d.action === 'historyNewer')) {
+      planTop = stepTop(planRows().length, planTop, d.action === 'historyOlder' ? -1 : 1)
+      settle(); return
+    }
     if (reading !== null) {
       if (d.action === 'complete') {
         const faces = facesOf(readState)
@@ -637,7 +676,11 @@ export function openStage(deps: StageDeps): Stage {
     // 就安静丢掉——翻页键不是全局滚动（没有"正在翻的东西"时按它，什么都不要动）。
     if (d.action === 'pageUp' || d.action === 'pageDown' || d.action === 'jumpFirst' || d.action === 'jumpLast') {
       const back = d.action === 'pageUp' || d.action === 'jumpFirst'
-      if (reading !== null) {
+      if (planTop !== null) {
+        const n = planRows().length
+        const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -PAGE_STEP : PAGE_STEP
+        planTop = stepTop(n, planTop, delta)
+      } else if (reading !== null) {
         const n = faceRowsOf(facesOf(readState), reading.face, cols()).length
         // 跳首尾用一个够大的数一步到头（`stepTop` 夹得住）。
         const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -PAGE_STEP : PAGE_STEP

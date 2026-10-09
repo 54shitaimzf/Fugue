@@ -10,11 +10,11 @@ import {openStage} from './stage.ts'
 import {openTerm} from './term.ts'
 import {themeOf} from './theme.ts'
 const face=gateFaceOf({round:'r1',fingerprint:'batch',same:[],contracts:[1,2,3].map(i=>({id:`r1.implement.${i}`,agent:`agent/r1/${i}`,kind:'implement',goal:`修复第 ${i} 项提示`,ownedPaths:[`src/file-${i}.ts`],assertions:[{name:'检查提示',action:'test'}],deliverables:[],seed:[]})) as unknown as Contract[]},{test:'node tools/test-entry.js'})
-test('approval hint first reveals existing item navigation and follows configured keys without losing any binding',()=>{
- assert.deepEqual(hintPicksOf(KEYMAP,'gate').slice(0,2).map(b=>b.action),['historyOlder','historyNewer'])
- assert.equal(hintLineOf(KEYMAP,2,'gate'),'按键 ↑ 上一项 · ↓ 下一项')
+test('approval hint reveals full reading and existing item navigation and follows configured keys without losing any binding',()=>{
+ assert.deepEqual(hintPicksOf(KEYMAP,'gate').slice(0,3).map(b=>b.action),['read','historyOlder','historyNewer'])
+ assert.equal(hintLineOf(KEYMAP,3,'gate'),'按键 Ctrl-R 看全 · ↑ 上一项 · ↓ 下一项')
  const custom=keymapOf({historyOlder:'Ctrl-U',historyNewer:'Ctrl-J'})
- assert.equal(hintLineOf(custom,2,'gate'),'按键 Ctrl-U 上一项 · Ctrl-J 下一项')
+ assert.equal(hintLineOf(custom,3,'gate'),'按键 Ctrl-R 看全 · Ctrl-U 上一项 · Ctrl-J 下一项')
  assert.deepEqual(hintPicksOf(KEYMAP,'gate').map(b=>b.action).sort(),hintPicksOf(KEYMAP,'any').map(b=>b.action).sort())
 })
 test('approval title and action retain emphasis while colorful body is regular; clipping and old attribute/text floors stay exact',()=>{
@@ -40,8 +40,8 @@ test('approval title and action retain emphasis while colorful body is regular; 
  }
 })
 test('visible item navigation changes only the inspected plan; batch confirmation and its two phases retain their exact command',async()=>{
- const presses:string[]=[],notes:string[]=[],stage=openStage({rows:()=>[],columns:()=>40,termRows:()=>24,pendingFace:async()=>face,note:s=>notes.push(s),redraw:()=>{},hint:w=>hintLineOf(KEYMAP,2,w),keysOf:()=>'',run:()=>({running:false,last:[],argvOf:()=>({words:[],argv:[],why:null}),press:s=>{presses.push(s);return true},stop:()=>false}),now:()=>0,abort:()=>{}})
- stage.setRaw(true);await stage.refreshGate();assert.equal(stage.view().hint,'按键 ↑ 上一项 · ↓ 下一项')
+ const presses:string[]=[],notes:string[]=[],stage=openStage({rows:()=>[],columns:()=>40,termRows:()=>24,pendingFace:async()=>face,note:s=>notes.push(s),redraw:()=>{},hint:w=>hintLineOf(KEYMAP,3,w),keysOf:()=>'',run:()=>({running:false,last:[],argvOf:()=>({words:[],argv:[],why:null}),press:s=>{presses.push(s);return true},stop:()=>false}),now:()=>0,abort:()=>{}})
+ stage.setRaw(true);await stage.refreshGate();assert.equal(stage.view().hint,'按键 Ctrl-R 看全 · ↑ 上一项 · ↓ 下一项')
  const shown=frameOf({width:40,height:13,snapshot:statusOf([]),...stage.view()});assert.ok(shown.roles.includes('overlayBody'),'actual Stage forwards body/heading geometry into Frame')
  assert.deepEqual(shown.roles.flatMap((r,i)=>r==='overlay'?[shown.lines[i]!.slice(1,-1).trim()]:[]),['待确认 3 项任务 · 当前 1/3'])
  for(const n of [2,3,3]){stage.onAction({action:'historyNewer'});assert.ok(stage.view().bottom!.rows.join(' ').includes(`当前 ${n}/3`));assert.equal(presses.length,0)}

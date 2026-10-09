@@ -95,7 +95,7 @@ export type Stage = 'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'T8' | 'T9'
  * （`keymap.test.ts` ⑦ 量这一条）——宽着的时候人看不出档，窄着的时候**先露出来的那几条**才是这一档
  * 的判断。
  */
-export type HintWhen = 'any' | 'gate' | 'read' | 'pending'
+export type HintWhen = 'any' | 'gate' | 'read' | 'pending' | 'plan' | 'menu'
 
 /** 能按处境换一句话的那几档（`any` 那一档没有"换一句"这回事：它就是表里那一句）。 */
 export type HintSayWhen = Exclude<HintWhen, 'any'>
@@ -168,7 +168,7 @@ export const TABLE: readonly Binding[] = [
     keys: ['↑'],
     hint: '上一条',
     note: '输入历史往前翻；有面板开着的时候是往上选',
-    says: { read: '上一行', gate: '上一项' },
+    says: { read: '上一行', gate: '上一项', plan: '上一行', menu: '上一条' },
     by: 'T4',
   },
   {
@@ -176,7 +176,7 @@ export const TABLE: readonly Binding[] = [
     keys: ['↓'],
     hint: '下一条',
     note: '输入历史往后翻；翻到底回到手里原来那一行',
-    says: { read: '下一行', gate: '下一项' },
+    says: { read: '下一行', gate: '下一项', plan: '下一行', menu: '下一条' },
     by: 'T4',
   },
   {
@@ -353,7 +353,7 @@ export const TABLE: readonly Binding[] = [
     keys: ['Ctrl-R'],
     hint: '阅读面',
     note: '读这一格：diff · 契约正文 · 事件流（`Tab` 换面 · `↑`/`↓` 翻 · `Esc` 收起；读的是账，不是第二份数据）',
-    says: { read: '收起' },
+    says: { read: '收起', gate: '看全', plan: '返回确认' },
     by: 'T9',
   },
   {
@@ -405,10 +405,14 @@ export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
   // 不看处境：先露这七条（提交 · 菜单 · 补全 · 阅读 · 打断 · 退出 · 键表面板——次序与 `TABLE` 一致），
   // 表里其余那些照旧缀在后面。**这一档就是 `fugue tui` 起来时那一行**（缺省档），逐字节锁着。
   any: ['submit', 'menu', 'complete', 'read', 'interrupt', 'quit', 'panel'],
-  // 门口卡片已印放行/拒绝/收起，提示行先露如何翻看各项任务；键位仍从同一张表取。
+  // 确认卡已印放行/拒绝/收起，提示行先露完整阅读，再露翻项；键位仍从同一张表取。
   // 收起的批次仍等人：先露重新查看的入口，配置改键也随同一张表。
   pending: ['go', 'read', 'help'],
-  gate: ['historyOlder', 'historyNewer', 'pageUp', 'pageDown', 'help', 'approve', 'reject', 'cancel'],
+  // 阅读上面的候选菜单先露选项导航与返回，背后的阅读坐标不动。
+  menu: ['historyOlder', 'historyNewer', 'cancel', 'pageUp', 'pageDown', 'help'],
+  // 计划全文是只读页；向下读与返回确认使用原有动作/配置键，不加执行路径。
+  plan: ['historyNewer', 'historyOlder', 'pageDown', 'pageUp', 'cancel', 'read', 'help'],
+  gate: ['read', 'historyOlder', 'historyNewer', 'pageUp', 'pageDown', 'help', 'approve', 'reject', 'cancel'],
   // 阅读面开着：`Tab` 换一面 · `↑`/`↓` 翻行 · `Esc` 收起（这三样在别处都不是这个意思）。
   read: ['complete', 'historyOlder', 'historyNewer', 'cancel', 'pageUp', 'pageDown', 'read', 'help'],
 }
