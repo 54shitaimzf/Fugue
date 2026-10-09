@@ -5,12 +5,13 @@
 //
 //   ① **黄金帧**：一份固定事件串折出来的快照 → 整帧逐字节等于那一份原文，而且每一行的列宽恰好
 //      是 `width`（框对得上，中日韩宽字符那把尺没错）。
-//   ② **负对照 · 左栏**：账里多一条 `round/state`（一条图上真的走得到的边）→ 左栏变、
-//      **右栏逐字节不变**；账尾那条会动——它是全账的读数，不属于任何一栏（那一栏的分工就写在
-//      `frame.ts` 的头注里，这一条是它的判据）。
-//   ③ **负对照 · 右栏**：账里多一条 `merge/attempt`（冲突 2）→ **左栏逐字节不变**、右栏变。
-//   ④ **两栏都动的那一条也是对的**：多一次 `llm/call` → 两栏都变（调用次数在左栏"每一格"与
-//      右栏"用量"各有一处口径）。它说明两栏不是按事件类型分的，是按**读法**分的。
+//   ② **负对照 · 进展那一档**：账里多一条 `round/state`（一条图上真的走得到的边）→ 它变、
+//      **结果与花费那一档逐字节不变**；账尾那条会动——它是全账的读数，不属于任何一档
+//      （两档各自读什么写在 `frame.ts` 的头注里，这一条是它的判据）。
+//   ③ **负对照 · 结果与花费那一档**：账里多一条 `merge/attempt`（冲突 2）→ 进展那一档
+//      逐字节不变、它变。
+//   ④ **两档都动的那一条也是对的**：多一次 `llm/call` → 两档都变（调用次数在进展那一档的"每一格"
+//      与结果与花费那一档的"用量"各有一处口径）。它说明两档不是按事件类型分的，是按**读法**分的。
 //   ⑤ **地板**：窄了收成单栏（同一个框，少中间那根竖线，内容一行不少）· 矮了截断并说出还剩
 //      几行 · 三行都不到印一句"太矮"（不静默给空帧）· **三列都不到印一句"太窄"**（`innerOf` 给 0，
 //      `'─'.repeat` 会拿到负数）· 尺寸给 0 给一个空帧。
@@ -30,11 +31,13 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
-import { linesOf, statusOf } from '../probe/status.ts'
+import { linesOf, statusOf, usageByRoundOf } from '../probe/status.ts'
 import { BUILTIN_CATALOG } from '../model/catalog.ts'
 import { bodyOf, footerOf, frameOf, innerOf, panelOf, windowOf } from './frame.ts'
-import { clip, widthOf, wrap } from './glyph.ts'
+import { FRAME_ROWS } from './layout.ts'
+import { clip, setGlyphTier, widthOf, wrap } from './glyph.ts'
 import { readWrap } from './read.ts'
+import { SLOT_256, ROLE_SLOT, theme256 } from './theme.ts'
 
 let seq = 0
 /** 一条事件（`round` 那一份上）。**seq 每次从 0 起**：两次折用的序号于是对得上。 */
@@ -139,37 +142,29 @@ function snapshotOf(extra: readonly StatusRow[] = []): StatusSnapshot {
 }
 
 const GOLDEN: readonly string[] = [
-  "┌─ 处境 ───────────────────────────────┬─ 读数 ────────────────────────────────────────────────────┐",
-  "│轮次 r1 · 状态 Rebuilding · 转移 5 条 │契约 2 · 折叠尝试 1 · 冲突 0 · 验收 1 次（过 3 / 没过 0）  │",
-  "│跳步 1 · 打回 1 次 ·                  │用量 调用 3 · input 3000 · cacheRead 4096 · cacheWrite 0 · │",
-  "│最近一条落在这一轮                    │output 300 · 思考 120                                      │",
-  "│  Idle ──land──> Planning             │detour-rate 0（0/2）                                       │",
-  "│  Planning ──contracts-issued──>      │prefix-hit-rate 1（3/3）                                   │",
-  "│Delegated                             │打回 conflicts 0 · rejects 1 · denied 0                    │",
-  "│  Delegated ──branches-started──>     │                                                           │",
-  "│Working                               │                                                           │",
-  "│  Verifying ──verdict-fail──> Working │                                                           │",
-  "│  Verifying ⇒ Rebuilding（跳步，经    │                                                           │",
-  "│verdict-pass · advanced）             │                                                           │",
-  "│格 agent/r1/1 · 调 2 次 · 2 步 ·      │                                                           │",
-  "│工具调用 3 · 动作 0 · 停：2 步 · 收敛 │                                                           │",
-  "│格 agent/r1/2 · 调 1 次 · 1 步 ·      │                                                           │",
-  "│工具调用 3 · 动作 0 · 停：没停        │                                                           │",
-  "├──────────────────────────────────────┴───────────────────────────────────────────────────────────┤",
-  "│最近 merge/accept（round 13）· 事件 13 条                                                         │",
-  "└──────────────────────────────────────┴───────────────────────────────────────────────────────────┘",
+  "┌─ 对话 ───────────────────────────────────────────────────────────────────────────────────────────┐",
+  "│ 正在处理你的任务。                                                                               │",
+  "│                                                                                                  │",
+  "│                                                                                                  │",
+  "│                                                                                                  │",
+  "│                                                                                                  │",
+  "│                                                                                                  │",
+  "├──────────────────────────────────────────────────────────────────────────────────────────────────┤",
+  "│ 修改中 · 1 项任务在运行                                                                          │",
+  "└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
 ]
-
 test('① 黄金帧：整帧逐字节等于那一份原文，而且每一行恰好 width 列', () => {
-  const f = frameOf({ snapshot: snapshotOf(), metrics: METRICS, report: REPORT, width: 100, height: 19 })
+  // 高度取**真终端上框的那 10 行**（`ui/layout.ts` 的 `FRAME_ROWS`，一处真源）：第二幕 ⑦ 起框
+  // 自己就填满这一屏，所以这一份黄金帧就是主面在 100 列 × 10 行上的那一眼。
+  const f = frameOf({ snapshot: snapshotOf(), metrics: METRICS, report: REPORT, width: 100, height: FRAME_ROWS })
   assert.deepEqual([...f.lines], [...GOLDEN], '帧与黄金那一份不逐字节相同')
   const widths = f.lines.map((l) => widthOf(l))
   assert.deepEqual(widths, f.lines.map(() => 100), `每一行都该是 100 列：${widths.join(',')}`)
-  assert.deepEqual(f.columns, { left: 38, right: 59 }, '两栏的列宽（U10c：左 2/5 · 右 3/5）')
-  assert.equal(f.lines.length, 19, '这一屏给了 19 行，装得下就该印满（含账尾；左栏窄了折行多两行，高度跟着补）')
+  assert.deepEqual(f.columns, { left: 96, right: 0 }, '一栏占满框内（第二幕 ⑦ 之后没有第二栏）')
+  assert.equal(f.lines.length, FRAME_ROWS, '框恒填满这一屏（上边 1 + 内容 6 + 分隔 1 + 账尾 1 + 下边 1）：内容那 6 行里够不着的拿空行补足')
   console.log(
-    `① 读数：${f.lines.length} 行 · 每行 ${f.width} 列 · 左 ${f.columns.left} / 右 ${f.columns.right}` +
-      ` · 账尾「${f.footer}」· 处境 ${bodyOf({ snapshot: snapshotOf() }).left.length} 行`,
+    `① 读数：${f.lines.length} 行 · 每行 ${f.width} 列 · 内容那一栏 ${f.columns.left} 列（右 ${f.columns.right}）` +
+      ` · 账尾「${f.footer}」· 处境那一档 ${bodyOf({ snapshot: snapshotOf() }).left.length} 行`,
   )
 })
 
@@ -198,31 +193,33 @@ test('⑫ 跳步那一栏：两张读脸同一个数、同一句话（判据改�
   assert.doesNotMatch(outLeft, /-\d/, `读面上不许出现负数：${outLeft}`)
 })
 
-test('② 负对照 · 左栏：多一条 round/state → 左栏变、右栏一字不变（账尾会动，它是全账的读数）', () => {
+test('② 负对照 · 进展那一档：多一条 round/state → 它变，结果与花费那一档一字不变（账尾会动，它是全账的读数）', () => {
   const a = snapshotOf()
   const b = snapshotOf([row({ t: 'round/state', round: 'r1' as never, from: 'Working' as never, to: 'Collecting' as never })])
   const fa = bodyOf({ snapshot: a, metrics: METRICS, report: REPORT })
   const fb = bodyOf({ snapshot: b, metrics: METRICS, report: REPORT })
-  assert.notDeepEqual([...fa.left], [...fb.left], '多一条边，左栏却没变')
-  assert.deepEqual([...fa.right], [...fb.right], '右栏不该因为一条 round/state 而动')
-  assert.equal(fb.left.length, fa.left.length + 1, '多一条边，左栏正好多一行')
+  assert.notDeepEqual([...fa.left], [...fb.left], '多一条边，进展那一档却没变')
+  assert.deepEqual([...fa.right], [...fb.right], '结果与花费那一档不该因为一条 round/state 而动')
+  // **不再"正好多一行"**：那几条原始转移不上主面——多一条边动的是轮次那一行的
+  // 条数。这一条量的还是"进展那一档真的读了它"，只是读的是数，不是那一行原文。
+  assert.match(fb.left[0] ?? '', /转移 6 条/, `多一条边，轮次那一行的条数该动：${fb.left[0]}`)
   // 账尾是**全账**的读数：它会动。这一条写出来，免得下一个人把它当成"右栏变了"。
   assert.notEqual(footerOf(a), footerOf(b), '账尾该动（最近一条与条数都变了）')
-  console.log(`② 读数：左栏 ${fa.left.length} → ${fb.left.length} 行 · 右栏 ${fa.right.length} 行一字不变 · 账尾「${footerOf(a)}」→「${footerOf(b)}」`)
+  console.log(`② 读数：进展那一档 ${fa.left.length} → ${fb.left.length} 行 · 结果与花费那一档 ${fa.right.length} 行一字不变 · 账尾「${footerOf(a)}」→「${footerOf(b)}」`)
 })
 
-test('③ 负对照 · 右栏：多一条 merge/attempt（冲突 2）→ 右栏变、左栏一字不变', () => {
+test('③ 负对照 · 结果与花费那一档：多一条 merge/attempt（冲突 2）→ 它变，进展那一档一字不变', () => {
   const a = snapshotOf()
   const b = snapshotOf([row({ t: 'merge/attempt', round: 'r1' as never, branches: [] as never, conflicts: 2 })])
   const fa = bodyOf({ snapshot: a, metrics: METRICS, report: REPORT })
   const fb = bodyOf({ snapshot: b, metrics: METRICS, report: REPORT })
-  assert.deepEqual([...fa.left], [...fb.left], '左栏不该因为一条 merge/attempt 而动')
-  assert.notDeepEqual([...fa.right], [...fb.right], '多一条合并尝试，右栏却没变')
-  assert.match(fb.right[0] ?? '', /折叠尝试 2 · 冲突 2/, `右栏那一行的两个数都该动：${fb.right[0]}`)
-  console.log(`③ 读数：右栏那一行「${fb.right[0]}」· 左栏 ${fa.left.length} 行一字不变`)
+  assert.deepEqual([...fa.left], [...fb.left], '进展那一档不该因为一条 merge/attempt 而动')
+  assert.notDeepEqual([...fa.right], [...fb.right], '多一条合并尝试，结果与花费那一档却没变')
+  assert.match(fb.right[0] ?? '', /合并试了 2 次 · 冲突 2/, `它那一行的两个数都该动：${fb.right[0]}`)
+  console.log(`③ 读数：结果与花费那一档那一行「${fb.right[0]}」· 进展那一档 ${fa.left.length} 行一字不变`)
 })
 
-test('④ 多一次 llm/call：两栏都动（调用次数在两栏各有一处口径——分的是读法，不是事件类型）', () => {
+test('④ 多一次 llm/call：两档都动（调用次数在两边各有一处口径——分的是读法，不是事件类型）', () => {
   const a = snapshotOf()
   const b = snapshotOf([
     row(
@@ -245,30 +242,38 @@ test('④ 多一次 llm/call：两栏都动（调用次数在两栏各有一处�
   ])
   const fa = bodyOf({ snapshot: a, metrics: METRICS, report: REPORT })
   const fb = bodyOf({ snapshot: b, metrics: METRICS, report: REPORT })
-  assert.notDeepEqual([...fa.left], [...fb.left], '左栏那一条"格"的行该动（调 2 次 → 3 次）')
+  assert.notDeepEqual([...fa.left], [...fb.left], '左栏那一条"格"的行该动（调用 2 次 → 3 次）')
   assert.notDeepEqual([...fa.right], [...fb.right], '右栏那一条"用量"的行该动（调用 3 → 4）')
-  assert.match(fb.left.join('\n'), /agent\/r1\/1 · 调 3 次 · 3 步/, `左栏那一行的数该动：${fb.left.join(' ｜ ')}`)
+  // 格那一行拆成两行之后（头一行只说哪一格 · 停在没停，计数在缩进那一行）：
+  // **拿缩进那一行当锚**，头一行里已经没有数了。
+  assert.match(fb.left.join('\n'), /agent\/r1\/1 · 2 步就停（收敛）\n  调用 3 次 · 走了 3 步/, `左栏那一行的数该动：${fb.left.join(' ｜ ')}`)
   assert.match(fb.right.join('\n'), /用量 调用 4/, `右栏那一行的数该动：${fb.right.join(' ｜ ')}`)
-  console.log('④ 读数：左栏「调 3 次 · 3 步」· 右栏「用量 调用 4」——同一件事两处口径，两栏都动是对的')
+  console.log('④ 读数：进展那一档「调用 3 次 · 3 步」· 结果与花费那一档「用量 调用 4」——同一件事两处口径，两档都动是对的')
 })
 
-test('⑤ 地板：窄了收单栏 · 矮了截断并说出剩几行 · 三行都不到说"太矮" · 尺寸 0 给空帧', () => {
+test('⑤ 地板：窄屏照画（没有第二栏这回事了）· 矮了截断并说出剩几行 · 三行都不到说"太矮" · 尺寸 0 给空帧', () => {
   const snapshot = snapshotOf()
   const narrow = frameOf({ snapshot, metrics: METRICS, report: REPORT, width: 40, height: 40 })
-  assert.equal(narrow.columns.right, 0, '40 列画不出两栏')
-  assert.equal(narrow.lines.some((l) => l.includes('┬')), false, '单栏那一档不该有中间那根竖线')
+  // 第二幕 ⑦ 之后每一档视图**只有一栏**（决策材料问三：各拿满宽）：`right` 恒 0，中间那根竖线没了。
+  assert.equal(narrow.columns.right, 0, '没有第二栏')
+  assert.equal(narrow.columns.left, innerOf(40), '内容那一栏就是框内宽')
+  assert.equal(narrow.lines.some((l) => l.includes('┬')), false, '不该有中间那根竖线')
   const text = narrow.lines.join('\n')
-  for (const one of ['轮次 r1 · 状态 Rebuilding', '契约 2', '用量 调用 3']) {
-    assert.ok(text.includes(one), `单栏那一档少了这一处：${one}`)
+  for (const one of ['正在处理你的任务。', '修改中', '1 项任务在运行']) {
+    assert.ok(text.includes(one), `对话视图窄屏那一档少了这一处：${one}`)
   }
+  // 另两档在窄屏上也画得出来（折得更勤，一格不丢）——这一条量的是「窄了不丢档」。
+  const spend = frameOf({ snapshot, metrics: METRICS, report: REPORT, width: 40, height: 40, view: 'spending' }).lines.join('\n')
+  assert.ok(spend.includes('任务 2') && spend.includes('用量 调用 3'), `结果与花费视图窄屏上该有记账与用量：\n${spend}`)
   // 账尾是**状态条**：40 列那一档它装不下，从右边截并留一个 `…`（说了它被截过）。截掉的是尾巴上
   // 那半截（`…· 事件 13 条`），留下的是"账在动"那个信号——次序就是为这个排的。
-  assert.ok(text.includes('最近 merge/accept'), '单栏那一档也该有账尾')
-  assert.ok(text.includes('…'), '账尾在这一档截过，该留一个 `…`——不然就是静默少印')
+  assert.ok(text.includes('修改中'), '单栏那一档也该有账尾')
+  assert.ok(!text.includes('agent/r1/'), '主面不显示内部任务编号')
 
-  // 矮：给 8 行，内容装不下 → 末行说出还剩几行。
-  const short = frameOf({ snapshot, metrics: METRICS, report: REPORT, width: 100, height: 8 })
-  assert.ok(short.lines.length <= 8, `这一屏只给 8 行，印出来 ${short.lines.length} 行`)
+  // 矮：压到 5 行（`MIN_HEIGHT`，画得出框的下限）——对话视图的内容自己就 4 行，给 8 行装得下、
+  // 不会被截，所以这一档要真压到装不下才量得到那句「还有几行没印」。
+  const short = frameOf({ snapshot, metrics: METRICS, report: REPORT, width: 100, height: 5, conversation: [{ text: '第一段汇报', role: 'body' }, { text: '第二段汇报', role: 'body' }] })
+  assert.ok(short.lines.length <= 5, `这一屏只给 5 行，印出来 ${short.lines.length} 行`)
   const cut = short.lines.find((l) => l.includes('还有'))
   assert.ok(cut !== undefined, `截断了却没说出还剩几行：${short.lines.join('\n')}`)
   assert.match(cut as string, /还有 \d+ 行没印/)
@@ -304,26 +309,31 @@ test('⑤ 地板：窄了收单栏 · 矮了截断并说出剩几行 · 三行�
   assert.deepEqual(frameOf({ snapshot, width: 0, height: 0 }).lines, [])
 
   console.log(
-    `⑤ 读数：40 列 → 单栏（右 0，${narrow.lines.length} 行，一处内容不少）· 8 行 → 「${(cut as string).split('│').map((x) => x.trim()).filter((x) => x !== '').join(' ｜ ')}」` +
+    `⑤ 读数：40 列 → 单栏（右 0，${narrow.lines.length} 行，一处内容不少）· 5 行 → 「${(cut as string).split('│').map((x) => x.trim()).filter((x) => x !== '').join(' ｜ ')}」` +
       ` · 3 行 → 「${(tiny.lines[0] as string).replace(/^│|│$/g, '').trim()}」· 0 列 0 行 → ${frameOf({ snapshot, width: 0, height: 0 }).lines.length} 行` +
       ` · 1–2 列 → 「${(frameOf({ snapshot, width: 2, height: 20 }).lines[0] as string).replace(/^│|│$/g, '').trim()}」· 3 列 → 「${edge.lines[0]}」`,
   )
 })
 
-test('⑦ 账尾那一列：给了"永久行"就印它的最后一条（没给照旧印最近一条事件）', () => {
+test('⑦ 账尾只显示运行状态；永久历史不重复打印到状态栏', () => {
   const snapshot = snapshotOf()
-  const permanent = ['round 1 · 轮次 r1 · Idle → Planning', 'round 5 · 轮次 r1 · 合并接受 abcdef01… · 断言 3 条（过 3 / 没过 0）']
-  assert.equal(footerOf(snapshot), '最近 merge/accept（round 13）· 事件 13 条', '没给那一列时账尾该是最近一条事件')
-  assert.equal(footerOf(snapshot, []), footerOf(snapshot), '一条永久行都没有时照旧')
-  assert.equal(footerOf(snapshot, permanent), permanent[1], `给了那一列，账尾该是它最后一条：${footerOf(snapshot, permanent)}`)
+  const permanent = ['round 1 · 轮次 r1 · Idle → Planning', 'round 5 · 轮次 r1 · 合并接受 abcdef01… · 验收 3 条（过 3 / 没过 0）']
+  assert.equal(footerOf(snapshot), '修改中 · 1 项任务在运行')
   const withRow = frameOf({ snapshot, permanent, width: 100, height: 16 })
-  assert.equal(withRow.footer, permanent[1], '整帧那一栏也是它')
-  assert.equal(withRow.lines.length, 16, '多这一列不该动行数')
-  assert.notEqual(withRow.footer, frameOf({ snapshot, width: 100, height: 16 }).footer, '两条路该分得开')
+  assert.equal(withRow.footer, footerOf(snapshot), '整帧状态栏不重复历史')
+  // **不重复历史这一条直接量**：账尾那一行里一条永久行都不出现（`footerOf` 从前挂着一个没人读的
+  // 可选参数，那时量的是"给了也不变"——量的是参数无效，不是那一行长什么样）。
+  for (const one of permanent) {
+    assert.equal(withRow.footer.includes(one), false, `账尾里出现了一条永久行：${withRow.footer}`)
+  }
+  assert.equal(withRow.lines.length, frameOf({ snapshot, width: 100, height: 16 }).lines.length, '多这一列不该动行数')
+  assert.equal(withRow.footer, frameOf({ snapshot, width: 100, height: 16 }).footer)
   // 补到 K 行那一处（终端那一层要的）：多出来的行不写，少的那几行补空白（不是补内容）。
   assert.deepEqual([...panelOf(['ab'], 2, 4)], ['ab  ', '    '], '补空行那一处不对')
   assert.deepEqual([...panelOf(['ab', 'cd', 'ef'], 2, 4)], ['ab  ', 'cd  '], '多出来的行该不写')
-  console.log(`⑦ 读数：没给 → 「${footerOf(snapshot)}」· 给了 → 「${withRow.footer}」· panelOf 补空行 4 列 × 2 行`)
+  console.log(
+    `⑦ 读数：账尾「${footerOf(snapshot)}」· 整帧账尾「${withRow.footer}」· 那两条永久行在账尾里 0 处 · panelOf 补空行 4 列 × 2 行`,
+  )
 })
 
 test('⑥ 纯：同一份输入两次逐字节相同，进去的那一份快照一个字段都没被改', () => {
@@ -376,7 +386,7 @@ test('⑧ 阅读面那一栏：整块地方给它（树与内容都让位）· �
 
   // 从第 0 行起：标题在头一行，**处境与读数那两栏让位**（整块地方给正文）。
   const all = frameOf({ ...base, read: { rows, top: 0 } })
-  const shown = all.lines.filter((l) => l.includes('│标题 · 三面之一'))
+  const shown = all.lines.filter((l) => l.includes('│ 标题 · 三面之一'))
   assert.equal(shown.length, 1, '标题在（阅读面那一栏是横贯整栏的）')
   assert.ok(all.lines.some((l) => l.includes('第一行')), '第二行也在')
   assert.ok(!all.lines.some((l) => l.includes('轮次 r1 · 状态')), '内容那一栏不印了（地方整块给正文）')
@@ -414,7 +424,9 @@ test('⑧ 阅读面那一栏：整块地方给它（树与内容都让位）· �
 
 // ── ⑨ 行的角色（U20 样式层地基）─────────────────────────────────────────────
 test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账尾 footer · 正文 body · 候选与门口 overlay · 阅读面 read · 矮帧报 body', () => {
-  const base = { snapshot: snapshotOf(), metrics: METRICS, report: REPORT, width: 100, height: 19 }
+  // 高度 20：这一格量的是「哪些行是哪个角色」，给它几行让块间细线 · 分隔线与账尾都还在
+  // （让位那一条由 ① 与 ⑤ 量）。
+  const base = { snapshot: snapshotOf(), metrics: METRICS, report: REPORT, width: 100, height: 20 }
   const f = frameOf({
     ...base,
     menu: { rows: ['候选一', '候选二'], sel: 0 },
@@ -423,7 +435,11 @@ test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账
   assert.equal(f.roles.length, f.lines.length, 'roles 与 lines 平行（逐行对应）')
   assert.equal(f.roles[0], 'border', '头一行是框线')
   assert.equal(f.roles[f.roles.length - 1], 'border', '末行是框线')
-  assert.equal(f.roles.filter((r) => r === 'border').length, 3, '框线三行（上下两根 + 账尾那根分隔）')
+  assert.equal(
+    f.roles.filter((r) => r === 'border').length,
+    3,
+    '框线三行（上下两根 + 账尾那根分隔 + 对话视图里那条块间细线——它也是框线那一档的颜色）',
+  )
   const footAt = f.lines.findIndex((l) => l.includes(f.footer))
   assert.ok(footAt >= 0, '账尾那一行找得到')
   assert.equal(f.roles[footAt], 'footer', '账尾那一行报 footer')
@@ -431,7 +447,7 @@ test('⑨ 行的角色（U20）：roles 与 lines 平行 · 框线 border · 账
   assert.ok(menuAt >= 0 && f.roles[menuAt] === 'overlay', '候选那一层报 overlay')
   const gateAt = f.lines.findIndex((l) => l.includes('门口那一块'))
   assert.ok(gateAt >= 0 && f.roles[gateAt] === 'overlay', '门口那一块报 overlay')
-  const bodyAt = f.lines.findIndex((l) => l.includes('轮次 r1 · 状态'))
+  const bodyAt = f.lines.findIndex((l) => l.includes('正在处理你的任务。'))
   assert.ok(bodyAt >= 0 && f.roles[bodyAt] === 'body', '读数那一行报 body')
 
   // 阅读面开着：框名那一行报 `readHeading`（U3），正文那些行报 `read`。
@@ -479,7 +495,7 @@ test('⑩ 一把尺：`innerOf` 是框内宽的唯一出处 · 长行折开印�
   assert.equal(narrow.join(''), wide.join(''), '两档拼回来是同一份字节——折的只是行')
 
   const f = frameOf({ ...base, width: 26, read: { rows: narrow, top: 0 } })
-  const shown = f.lines.filter((l) => l.startsWith('│')).map((l) => l.slice(1, -1).trimEnd())
+  const shown = f.lines.filter((l) => l.startsWith('│')).map((l) => l.slice(2, -2).trimEnd())
   assert.ok(shown.join('').includes(long), `整条正文都在屏上（一个字节都没被截）：${JSON.stringify(shown)}`)
   // **负对照**：旧版那一串（未折行的原文）在同一个框里被截掉尾巴——上面那一条正是为它写的。
   assert.notEqual(clip(long, innerOf(26)), long, '旧版走 `cell` → `clip`：尾巴没了')
@@ -488,11 +504,158 @@ test('⑩ 一把尺：`innerOf` 是框内宽的唯一出处 · 长行折开印�
   // **翻到第几行**：`top` 数的是同一串物理行——屏上第一条正文就是 `rows[top]`。
   for (const top of [0, 1, 4, narrow.length - 1]) {
     const g = frameOf({ ...base, width: 26, read: { rows: narrow, top } })
-    const body = g.lines.filter((l) => l.startsWith('│')).map((l) => l.slice(1, -1).trimEnd())
+    const body = g.lines.filter((l) => l.startsWith('│')).map((l) => l.slice(2, -2).trimEnd())
     assert.equal(body[0], narrow[top], `翻到第 ${top} 行：屏上第一条就是它`)
   }
   console.log(
     `⑩ 读数：130 列的正文在框内 ${innerOf(26)} 列里折成 ${readWrap(long, innerOf(26)).length} 行（旧版只印头 ${innerOf(26)} 列）` +
       ` · top 0/1/4/${narrow.length - 1} 屏上第一条都对得上`,
   )
+})
+
+test('⑬ 近几轮用量那条小条形（可读性三件 ②）：每轮一格 · 四档从字形档取 · 没有这一栏就同形', () => {
+  const ev = (input: number | null): LogEvent => ({
+    t: 'llm/call',
+    agent: 'agent/r1/1' as never,
+    step: 's' as never,
+    model: 'deepseek-flash/anthropic' as never,
+    wire: 'anthropic-messages',
+    toolCount: 0,
+    invocations: 0,
+    status: null,
+    headers: null,
+    thinking: null,
+    usage: { inputTokens: input, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: null },
+    rawStop: 'end_turn',
+    stop: 'end-turn',
+  })
+  const rows: StatusRow[] = [
+    row({ t: 'round/state', round: 'r1' as never, from: 'Idle' as never, to: 'Working' as never }),
+    row(ev(100), 'agent/r1/1'),
+    row({ t: 'round/state', round: 'r2' as never, from: 'Idle' as never, to: 'Working' as never }),
+    // 量到 0 的那一轮：条形上就是那一个空格位（列位照旧对齐）。
+    row(ev(0), 'agent/r2/1'),
+    row({ t: 'round/state', round: 'r3' as never, from: 'Idle' as never, to: 'Working' as never }),
+    row(ev(400), 'agent/r3/1'),
+  ]
+  const snap = statusOf(rows)
+  const per = usageByRoundOf(rows)
+  const at = { snapshot: snap, permanent: [], width: 100, height: FRAME_ROWS } as const
+  const line = bodyOf({ snapshot: snap, usageByRound: per }).right.find((l) => l.includes('轮用量'))
+  assert.equal(line, '近 3 轮用量 ░ █（最高 400）', `那一行该逐字是它：${String(line)}`)
+  const spent = frameOf({ ...at, view: 'spending', usageByRound: per }).lines.join('\n')
+  assert.ok(spent.includes('近 3 轮用量 ░ █（最高 400）'), `读数那一档上该看得见它：\n${spent}`)
+  // **退化档**：不给这一栏（或者给个空表）→ 逐字节与从前相同（"没有这一档"就是没有）。
+  assert.equal(
+    frameOf({ ...at, view: 'spending', usageByRound: [] }).lines.join('\n'),
+    frameOf({ ...at, view: 'spending' }).lines.join('\n'),
+    '空表与不给该逐字节同形',
+  )
+  assert.ok(!frameOf({ ...at, view: 'spending' }).lines.join('\n').includes('轮用量'), '不给就不印')
+  // 只给得到一轮：一个格子的趋势不算趋势。
+  assert.equal(
+    bodyOf({ snapshot: snap, usageByRound: usageByRoundOf(rowsOf()) }).right.some((l) => l.includes('轮用量')),
+    false,
+    '一轮不印',
+  )
+  // 另两档不印它（那一条是读数那一档的话）。
+  assert.ok(!frameOf({ ...at, view: 'progress', usageByRound: per }).lines.join('\n').includes('轮用量'), '进展那一档不印')
+  assert.ok(!frameOf({ ...at, usageByRound: per }).lines.join('\n').includes('轮用量'), '对话那一档不印')
+  // 四档从字形档取一处：`ascii` 那一档用 `.` 与 `#`。
+  const was = setGlyphTier('ascii')
+  try {
+    assert.equal(
+      bodyOf({ snapshot: snap, usageByRound: per }).right.find((l) => l.includes('轮用量')),
+      '近 3 轮用量 . #（最高 400）',
+      'ascii 档该用 ASCII 那几格（条形的四档也住字形档一处）',
+    )
+  } finally {
+    setGlyphTier(was)
+  }
+  console.log(`⑬ 读数：${String(line)} · ascii 档「近 3 轮用量 . #（最高 400）」· 没量到那一栏在括号里 · 不给这一栏逐字节同形`)
+})
+
+test('⑭ 门口要按的那一行（第三幕 ①）：给了坐标就报 waiting，不给就与从前逐字节相同', () => {
+  const base = { snapshot: snapshotOf(), width: 100, height: 14 } as const
+  const rows = ['写路径：src/ui/frame.ts', '还有 1 份等你点头 · 第 1/1 份（↑↓ 翻）', '放行一次(y) · 拒(n) · 中止(Esc)']
+  const after = frameOf({ ...base, bottom: { rows, keep: 2, waitingAt: 2 } })
+  const at = (f: { readonly lines: readonly string[] }, s: string): number => f.lines.findIndex((l) => l.includes(s))
+  assert.equal(after.roles[at(after, '写路径')], 'overlay', '预览走弹层那一格')
+  assert.equal(after.roles[at(after, '等你点头')], 'overlay', '排队行也还走弹层那一格')
+  assert.equal(after.roles[at(after, '放行一次(y)')], 'waiting', '要人此刻按的那一行走等待那一格（宪法 ②）')
+  // **退化档**：不给坐标（或坐标越界）→ 文字与从前逐字节相同，角色整块还是弹层那一格。
+  const before = frameOf({ ...base, bottom: { rows, keep: 2 } })
+  assert.deepEqual([...before.lines], [...after.lines], '文字一个字节都不该差（这一栏是加出来的）')
+  assert.deepEqual(
+    [...before.roles],
+    [...after.roles.map((r) => (r === 'waiting' ? 'overlay' : r))],
+    '角色只差那一格',
+  )
+  const out = frameOf({ ...base, bottom: { rows, keep: 2, waitingAt: 9 } })
+  assert.deepEqual([...out.roles], [...before.roles], '坐标越界 = 没给（不报错、也不猜）')
+  // **让位是从头切的**：矮屏上预览被切掉，末 `keep` 行还在，那一行仍报 waiting（坐标按"离末行几个"算）。
+  const short = frameOf({ ...base, height: 5, bottom: { rows, keep: 2, waitingAt: 2 } })
+  assert.equal(short.roles[at(short, '放行一次(y)')], 'waiting', '矮屏上那一行仍是等待那一格')
+  assert.equal(short.roles[at(short, '写路径')], undefined, '预览那一行该先让位（它不在了）')
+  // 那一格在第 2 级上真的是等待黄，而且是从表推的（不手抄一个 SGR）。
+  assert.equal(ROLE_SLOT.waiting, 'waiting', '`waiting` 角色落在等待那一格')
+  assert.equal(theme256().waiting, SLOT_256.waiting, '第 2 级那一份从 `SLOT_256` 推')
+  assert.equal(SLOT_256.waiting, '\x1b[38;5;214m', '等待黄是 214（第三幕 ① 的取值依据在 `theme.ts`）')
+  console.log(
+    `⑭ 读数：门口 ${rows.length} 行里末一行报 waiting（第 2 级 ${JSON.stringify(SLOT_256.waiting)}）· ` +
+      '不给坐标与给越界坐标都与从前逐字节相同 · 矮屏上让位的是预览',
+  )
+})
+
+
+test('正文统一留白、长内容不挤走账尾；极窄档保留完整几何', () => {
+  for (const width of [3, 4, 5, 20, 40, 100]) {
+    const f = frameOf({ snapshot: snapshotOf(), width, height: FRAME_ROWS, view: 'spending' })
+    assert.equal(f.lines.length, FRAME_ROWS)
+    assert.equal(f.roles.filter((r) => r === 'footer').length, 1)
+    for (const line of f.lines) assert.equal(widthOf(line), width)
+    if (width >= 5) {
+      for (const [i, line] of f.lines.entries()) {
+        if (f.roles[i] !== 'border') assert.ok(line.startsWith('│ ') && line.endsWith(' │'))
+      }
+    }
+  }
+})
+
+
+test('对话只显示最近汇报；内部编号与调用计数留在进展视图', () => {
+  const snapshot = snapshotOf()
+  const conversation = [
+    { text: '任务：「改善终端阅读体验」', role: 'body' as const },
+    { text: '验收通过：3 项。', role: 'ok' as const },
+    { text: '已拒绝越界写入：src/private.ts', role: 'refuse' as const },
+  ]
+  const main = frameOf({ snapshot, conversation, width: 100, height: FRAME_ROWS, focus: 'agent/r1/1' })
+  assert.ok(main.lines.some((l) => l.includes('改善终端阅读体验')))
+  assert.ok(!main.lines.join('').includes('agent/r1/'))
+  assert.ok(!main.lines.join('').includes('工具调用'))
+  assert.ok(main.roles.includes('ok') && main.roles.includes('refuse'))
+  const details = frameOf({ snapshot, width: 100, height: 30, view: 'progress' }).lines.join('')
+  assert.ok(details.includes('agent/r1/1') && details.includes('调用'))
+})
+
+
+test('持轮者的计划记录不计作运行中的子任务', () => {
+  const snapshot = statusOf([{pos:{writer:'round',seq:1},e:{t:'holder/distill',round:'r1',agent:'round',digest:'d',body:'计划'}}] as unknown as StatusRow[])
+  assert.equal(footerOf(snapshot), '等待输入')
+})
+
+test('⑯ 树那一栏的命中按坐标定：两行字一样时只有选中那一行染色', () => {
+  // 原先那一处拿**印出去的串**与选中那一行比字（`l === navAll[sel]`）：两格名字一样时两行一起亮，
+  // 而"哪一格被选中"是坐标上的事。这一条就是那个错的判据——两行字一样、选第二行，命中恰一处。
+  const snapshot = snapshotOf()
+  const rows = ['主线（round）', '主线（round）']
+  const f = frameOf({ snapshot, width: 100, height: 16, view: 'progress', nav: { rows, sel: 1 } })
+  const hits = f.lines.filter((_, i) => f.roles[i] === 'hit')
+  assert.equal(hits.length, 1, `两行字一样时命中该恰一处，实得 ${hits.length} 处：${JSON.stringify(hits)}`)
+  assert.equal((hits[0] as string).includes(rows[0] as string), true, `命中那一行是树那一栏里的：${hits[0]}`)
+  // 换选第一行：命中的行数一样是一处（变的是位置，不是条数）。
+  const g = frameOf({ snapshot, width: 100, height: 16, view: 'progress', nav: { rows, sel: 0 } })
+  assert.equal(g.lines.filter((_, i) => g.roles[i] === 'hit').length, 1, '换一行选，命中还是一处')
+  console.log(`⑯ 读数：两行同名 · 选第 ${1} 行 → 命中 ${hits.length} 处（旧判据这里是 2 处）`)
 })

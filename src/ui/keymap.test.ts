@@ -23,8 +23,9 @@
 //   ⑤ **覆盖**（`config set ui.keys.<动作> <键串>`）：改了那一条的字节 · 别的动作不动 · 认不出来的
 //      键名与抢同一个字节**都报出来**（那一条照缺省走，不静默变成"按不出来"）。
 //   ⑥ **提示行与帮助面板的形状**：提示行只印已经落地的（`by` 在 `WIRED` 里）那几条——没接线的动作
-//      一个都不许出现 · `limit` 那一档把剩下的写成"还有 N 条"（N 从表里数）· 帮助面板列全部、
-//      键那一列**逐行对齐**（列宽是算出来的，不是写死的）。
+//      一个都不许出现 · `limit` 那一档**只印前几条、不说还剩几条**（"还有 N 条 · 按 Ctrl-P 看全部"
+//      是把键表有多少条端给人看——已经去掉）· 帮助面板列全部、键那一列**逐行对齐**
+//      （列宽是算出来的，不是写死的）。
 //   ⑦ **打字与粘贴**（`T4` 把输入行接上线时补的）：表里没吃掉的可打印字符走 `insert`（带着那个
 //      字），认不出来的控制字符**一个都不出**；可打印字符的那几条绑定只在**行里没字的地方**算动作
 //      （`actsOnEmpty`：`/round go` 里那个 `g` 要是也当动作，这一行会当场被发出去）；bracketed
@@ -32,8 +33,8 @@
 import assert from 'node:assert/strict'
 import { widthOf } from './glyph.ts'
 import test from 'node:test'
-import type { KeyInput, UiAction } from './keymap.ts'
-import { ESC_WAIT_MS, KEYMAP, PASTE_WAIT_MS, TABLE, WIRED, actionsOf, actsOnEmpty, bytesOfKey, decodeOf, decoderOf, escapeAt, escapeTruncatedAt, fallsToText, helpRowsOf, hintLimitOf, hintLineOf, keyLabelOf, keymapOf, openKeys, PASTE_OFF, PASTE_ON } from './keymap.ts'
+import type { Binding, HintSayWhen, HintWhen, KeyInput, UiAction } from './keymap.ts'
+import { ESC_WAIT_MS, HINT_WHEN, KEYMAP, PASTE_WAIT_MS, TABLE, WIRED, actionsOf, actsOnEmpty, bytesOfKey, decodeOf, decoderOf, escapeAt, escapeTruncatedAt, fallsToText, helpRowsOf, hintKeysOf, hintLimitOf, hintLineOf, hintPicksOf, keyLabelOf, keymapOf, openKeys, PASTE_OFF, PASTE_ON } from './keymap.ts'
 import type { WaitFn } from './keymap.ts'
 
 /** 品牌类型那一栏（`RoundId` 一类）：这一份里那些值是拿来喂接口的，不是账上真发生过的。 */
@@ -382,8 +383,9 @@ test('⑥ 形状：提示行只印接上线的 · limit 那一档 · 帮助面�
     `提示行里该正好是已接线的那几条（多一条就是空头许诺）：${hint}`,
   )
   const cut = hintLineOf(KEYMAP, 2)
-  assert.ok(cut.includes(`还有 ${ready.length - 2} 条`), `limit 那一档要说清还剩几条（N 从表里数）：${cut}`)
-  assert.equal(cut.split(' · ').length, 3, '头两条 + "还有 N 条"那一句')
+  assert.equal(cut.split(' · ').length, 2, 'limit 那一档就只印头两条')
+  // **不许说"还有 N 条 · 按 Ctrl-P 看全部"**：那是把"这个界面一共多少个键、去哪儿看全部"端给人看。
+  assert.ok(!cut.includes('还有') && !cut.includes('Ctrl-P'), `提示行只印此刻按得着的键：${cut}`)
   // **宽度是入参**（提示行是给屏幕看的）：宽到装得下就全印，窄了就少印几条 + 说清还剩多少。
   assert.equal(hintLimitOf(1000), ready.length, '够宽就把接线的都印上')
   assert.ok(hintLimitOf(80) < ready.length, '80 列装不下 28 条（实测整行 438 列）')
@@ -474,5 +476,60 @@ test('⑦ 打字与粘贴：`insert` 带着那个字 · 控制字符一个都不
       `粘贴「第一行\\n第二行」是 1 条 insert（换行留着、没被当成 Enter）· 记号切成两块也拼得回来 · ` +
       `actsOnEmpty 10 档（行空 4 档是动作 · 行里有字 4 档让位成那个字 · 别的动作 2 档不看）· ` +
       `fallsToText 10 档（可打印的让位 4 档 · 控制字符丢掉 2 档 · 行空不算让位 2 档 · 别的 2 档）`,
+  )
+})
+
+// ── ⑧ 提示行按处境分档（第三幕 ②）────────────────────────────────────────────
+test('⑧ 分档只换次序与措辞，不藏东西：不看处境那一档逐字节不变 · 点名的排前面 · 每条都指得回表', () => {
+  const picksOf = (when: HintWhen): readonly Binding[] => hintPicksOf(KEYMAP, when)
+  const wired = KEYMAP.rows.filter((b) => WIRED.includes(b.by))
+  // **地板**：`any` 那一档就是表自己的次序（第三幕 ② 之前那一串），而且"不给处境"= 给 `any`。
+  assert.deepEqual(picksOf('any').map((b) => b.action).sort(), wired.map((b) => b.action).sort(), '默认提示重排但不丢绑定')
+  assert.deepEqual(picksOf('any').slice(0, 4).map((b) => b.action), ['submit', 'menu', 'complete', 'read'])
+  assert.equal(hintLineOf(KEYMAP), hintLineOf(KEYMAP, 0, 'any'), '不给处境 = 不看处境（同一个答案）')
+  assert.equal(hintLimitOf(60), hintLimitOf(60, KEYMAP, 'any'), '取几条也一样')
+  assert.ok(hintLineOf(KEYMAP, 3).includes('Enter 提交'), `不看处境那一档照旧从头印：${hintLineOf(KEYMAP, 3)}`)
+  const setOf = (when: HintWhen): string[] => picksOf(when).map((b) => b.action).sort()
+  for (const when of ['gate', 'read'] as const) {
+    // **分档不藏东西**：三档同一个集合（分档是"先露谁"，不是"藏谁"）。
+    assert.deepEqual(setOf(when), setOf('any'), `${when} 那一档的集合与不看处境那一档一样`)
+    const named = HINT_WHEN[when]
+    assert.ok(named.length > 0, `${when} 那一档点了名`)
+    assert.equal(new Set(named).size, named.length, `${when} 那一档点重了名`)
+    assert.deepEqual(
+      picksOf(when).slice(0, named.length).map((b) => b.action),
+      [...named],
+      `${when} 那一档点名的那几条在最前面、按点名的次序`,
+    )
+    // **漂移守卫**：点名的每一条在表里都真有一条、真有键、也真接上了线。
+    for (const a of named) {
+      const row = TABLE.find((x) => x.action === a)
+      assert.ok(row !== undefined, `点名的这个动作表里没有：${a}`)
+      const b = row as Binding
+      assert.ok(b.keys.length > 0, `点名的这个动作没有键：${a}`)
+      assert.ok(WIRED.includes(b.by), `点名的这个动作还没接线（提示行印它就是许诺）：${a}`)
+    }
+  }
+  // 门口那一档：此刻要按的那两个键在最前面，措辞来自表里的 `says`（不在这一份里手抄）。
+  const gate = hintLineOf(KEYMAP, 3, 'gate')
+  assert.ok(
+    gate.startsWith('按键 y 放行这一份 · n 拒这一份 · Esc 收起门口'),
+    `门口那一档先露这三条：${gate}`,
+  )
+  // 阅读面那一档：`Tab` / `↑` / `↓` / `Esc` 在那一档里说的是另一件事。
+  const read = hintKeysOf(KEYMAP, 'read')
+  assert.equal(read, 'Tab 换一面 · ↑ 上一行 · ↓ 下一行 · Esc 收起', `阅读面那一档那一段：${read}`)
+  // **换过词的那几句都真有人在读**（`says` 点的那一档必须在 `HINT_WHEN` 里点到过它——不然是死字）。
+  for (const b of TABLE) {
+    for (const when of Object.keys(b.says ?? {}) as HintSayWhen[]) {
+      assert.ok(HINT_WHEN[when].includes(b.action), `says.${when} 没人读：HINT_WHEN 那一档没点名 ${b.action}`)
+    }
+  }
+  // **这一条尺子抓得住东西**：分档真换了先后（不然上面几条量的是空气）。
+  assert.notEqual(gate, hintLineOf(KEYMAP, 3), '门口那一档与不看处境那一档不是一串')
+  console.log(
+    `⑧ 读数：三档（any ${picksOf('any').length} 条 · gate ${picksOf('gate').length} 条 · ` +
+      `read ${picksOf('read').length} 条，三档同一个集合）· 门口那档先露「${gate}」· ` +
+      `阅读面那一段「${read}」· 换过词的 ${TABLE.filter((b) => b.says !== undefined).length} 条`,
   )
 })

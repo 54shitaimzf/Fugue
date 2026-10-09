@@ -41,16 +41,28 @@
 //
 // **信号那一头是入参。** `Ctrl-C`（`AbortSignal`）由调用方给；`SIGWINCH` 那一档由调用方接
 // `redraw()`。这一份不注册任何信号、不碰 `process`——那样它才在 `node --test` 里跑得动。
-import type { Log } from '../log/events.ts'
+//
+// **读源是事件通道那一份**（客户端化）：`source` 就是 `serve/source.ts` 的 `LedgerSource`，
+// 一趟调用回一趟事。这一份因此**不认识账本**——不 import `log/log.ts`，也不 import
+// `probe/watch.ts`；那两条直连住在 serve 那一头。界面手上那些行只有这一个来路。
 import type { Phase } from '../model/price.ts'
 import type { Catalog } from '../model/catalog.ts'
-import type { ReadingsOptions, StatusReadings, StatusRow } from '../probe/status.ts'
-import { readingsOf } from '../probe/status.ts'
-import { follow, readNew } from '../probe/watch.ts'
-import type { FrameInput } from './frame.ts'
+import type { ReadingsOptions, RoundUsage, StatusReadings, StatusRow } from '../probe/status.ts'
+import { readingsOf, usageByRoundOf } from '../probe/status.ts'
+import type { LedgerSource } from '../serve/source.ts'
+import type { ConversationRow, FrameInput } from './frame.ts'
 import { frameOf } from './frame.ts'
 import type { FamilyTable } from './stream.ts'
-import { permanentLinesOf } from './stream.ts'
+import { conversationOf, permanentLinesOf } from './stream.ts'
+
+/**
+ * 对话区留最近几条（`frameOf` 的 `conversation` 那一栏）。**三条**＝框里挤掉轮次头与细线之后
+ * 还看得完的条数；这个数**不随终端高度变**（改它就是改主面的信息量，要人批）。
+ *
+ * **什么条件下改主意**：人判"最近三条"不够用（要往下翻更早的汇报），就把那一栏做成可滚的
+ * ——那时这个数换成按窗口高度分账，与 `ui/layout.ts` 那几个数同一条路。
+ */
+export const CONVERSATION_KEEP = 3
 import type { Panel, Term, ViewInput } from './term.ts'
 
 /**
@@ -72,6 +84,27 @@ export function tuiModeOf(o: {
   if (o.once) return 'lines-once'
   if (!o.ansi) return o.follow ? 'lines-follow' : 'lines-once'
   return 'panel'
+}
+
+/**
+ * 睡一会儿，**信号一到就当场醒**（跟随那一趟的节拍：账上没动就不空转）。
+ *
+ * 它替掉了原先 `probe/watch.ts` 那一份里的等待：那一条住在直连模块里，界面这一侧不再 import 它。
+ */
+function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((done) => {
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(t)
+      signal?.removeEventListener('abort', finish)
+      done()
+    }
+    const t = setTimeout(finish, ms)
+    if (signal?.aborted === true) finish()
+    else signal?.addEventListener('abort', finish)
+  })
 }
 
 /** 折一帧要的那几样（与 `probe/status.ts` 的 `readingsOf` 那两个开关同名同义）。 */
@@ -164,9 +197,12 @@ export function openSession(o: SessionOptions = {}): TuiSession {
   // 前缀检查照旧当场抛——错位不会静默。
   let folded: readonly string[] = []
   let foldedAt = 0
+  let conversation: readonly ConversationRow[] = []
   const permanent = (): readonly string[] => {
     if (foldedAt === rows.length) return folded
-    folded = [...folded, ...permanentLinesOf(rows.slice(foldedAt), o.table)]
+    const fresh = rows.slice(foldedAt)
+    folded = [...folded, ...permanentLinesOf(fresh, o.table)]
+    conversation = [...conversation, ...conversationOf(fresh, o.table)].slice(-CONVERSATION_KEEP)
     foldedAt = rows.length
     return folded
   }
@@ -194,6 +230,20 @@ export function openSession(o: SessionOptions = {}): TuiSession {
     snap = { rows, focus, readings: o.readings, value }
     return value
   }
+  /**
+   * 近几轮用量那一份（可读性三件 ② 的 sparkline）。**与 `readingsAt` 同一手**：折法是纯函数
+   * （`probe/status.ts` 的 `usageByRoundOf`），键是这一批行的引用——一批新到恰折一次。
+   *
+   * **只在结果与花费那一档视图里折**（`frameFullAt` 按视图传）：另两档不印那一条，白折一趟是
+   * O(账上那些行)。
+   */
+  let sparkSnap: { readonly rows: readonly StatusRow[]; readonly value: readonly RoundUsage[] } | null = null
+  const sparkAt = (): readonly RoundUsage[] => {
+    if (sparkSnap !== null && sparkSnap.rows === rows) return sparkSnap.value
+    const value = usageByRoundOf(rows)
+    sparkSnap = { rows, value }
+    return value
+  }
   const frameFullAt = (size: { readonly columns: number; readonly height: number }) => {
     const v = o.view?.()
     const input: FrameInput = {
@@ -207,7 +257,13 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(v?.nav === undefined ? {} : { nav: v.nav }),
       ...(v?.read === undefined ? {} : { read: v.read }),
       ...(v?.bottom === undefined ? {} : { bottom: v.bottom }),
+      // 视图与本帧读的是哪一格（第二幕 ⑦）：折法那一边按 `focus` 筛行，这一边按它写框名。
+      ...(v?.view === undefined ? {} : { view: v.view }),
+      // 近几轮那条小条形只在读数那一档视图里有读者（可读性三件 ②）：按视图折，省掉白折的那一趟。
+      ...(v?.view === 'spending' ? { usageByRound: sparkAt() } : {}),
+      ...(v?.focus === undefined ? {} : { focus: v.focus }),
       permanent: permanent(),
+      conversation,
       width: size.columns,
       height: size.height,
     }
@@ -240,7 +296,13 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       const v = o.view?.()
       const f = frameFullAt(size)
       // `roles` 与 `rows` 平行（U20）：终端那一层按它查主题；排版在 `ui/frame.ts`，这里只是带话。
-      return { rows: f.lines, roles: f.roles, ...(v?.input === undefined ? {} : { input: v.input }) }
+      // 框下面那几行（第二幕 ④）：提示行 ＋ 输入行——两样都在框外面，终端那一层按"框画几行、下面还几行"摆。
+      return {
+        rows: f.lines,
+        roles: f.roles,
+        ...(v?.hint === undefined ? {} : { hint: v.hint }),
+        ...(v?.input === undefined ? {} : { input: v.input }),
+      }
     },
   }
 }
@@ -263,8 +325,11 @@ export interface TuiCounts {
 }
 
 export interface TuiOptions {
-  /** 读源：`probe/watch.ts` 要的那一半（`readMerged`）。**这一份不新开读法**。 */
-  readonly log: Pick<Log, 'readMerged'>
+  /**
+   * 读源：**事件通道那一份**（`serve/source.ts` 的 `LedgerSource`）。界面这一侧只有这一条路
+   * ——不开账本口、不顺着账本口扫（那两条住在 serve 那一头）。
+   */
+  readonly source: LedgerSource
   /** 摆的那一头（`ui/term.ts`）：擦 K 行、写 K 行。 */
   readonly term: Term
   /** 只印永久行那一档的出口（`cli` 那一侧的 `emitLine`）。面板那一档用不到它。 */
@@ -352,22 +417,29 @@ export function openTui(o: TuiOptions): Tui {
     for (const line of fresh) o.emit(line)
   }
   const counts = (async (): Promise<TuiCounts> => {
-    // **第一趟读齐**（`follow` 里面就是 `readNew`）：账上已经有的那些一次折一帧。
-    const first = await readNew(o.log, {})
+    // **第一趟读齐**（不给游标就是从零起问一趟）：账上已经有的那些一次折一帧。
+    const first = await o.source.pass('')
     session.push(first.rows)
     sync()
     paint()
     // **第一趟那一批也算"往前动了"**：界面开着的时候门口已经停着一批，这一条是它唯一的触发点。
     if (first.rows.length > 0) o.onAdvance?.(first.rows)
     if (o.mode === 'lines-once') return { ...c }
-    // 之后跟着走：新到的行**一趟一批**地来（`follow` 每一趟读全量、按每个 writer 的游标筛掉看过的，
-    // 一趟一批地吐，U4）——一批进账、一趟一画。同一趟到的几条对屏幕来说是同一瞬间；逐条画几十遍
-    // 而字节一个不差，是白烧（`UI2` 实测一次启动 31 次重画 · 394 次清行）。
-    for await (const batch of follow(o.log, { intervalMs: o.intervalMs ?? 200, signal: o.signal, from: first.cursors })) {
-      session.push(batch)
+    // 之后跟着走：**一趟调用一趟事**（架构 § 9.11）——游标每趟带回来，下一趟带着它接着问；
+    // 新到的行一趟一批地进来（同一趟到的几条对屏幕来说是同一瞬间）。逐条画几十遍而字节一个不差
+    // 是白烧（`UI2` 实测一次启动 31 次重画 · 394 次清行），所以一批进账、一趟一画。
+    let resume = first.resume
+    while (o.signal?.aborted !== true) {
+      const batch = await o.source.pass(resume)
+      resume = batch.resume
+      if (batch.rows.length === 0) {
+        await sleepMs(o.intervalMs ?? 200, o.signal)
+        continue
+      }
+      session.push(batch.rows)
       sync()
       paint()
-      o.onAdvance?.(batch)
+      o.onAdvance?.(batch.rows)
     }
     return { ...c }
   })()

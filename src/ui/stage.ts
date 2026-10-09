@@ -9,73 +9,58 @@
 // 不开一个真终端就能驱动（`stage.test.ts` 五条接线断言）。`FLAGS_OF` 从 cli 那一层读
 // （`../cli/flags.ts`）：菜单候选与分发处读**同一个对象**——「哪些命令存在」仍只有一处真源（那张
 // 表自己不 import 任何东西，不成环）。
-import { PAGE_STEP, fallsToText, helpRowsOf, hintLineOf } from './keymap.ts'
-import type { Decoded } from './keymap.ts'
+import { PAGE_STEP, fallsToText, helpRowsOf, hintWhenOf } from './keymap.ts'
+import type { Decoded, HintWhen } from './keymap.ts'
 import { ctrlCStepOf, escStepOf, quitStepOf, stillArmed } from './cancel.ts'
 import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmit, submitOf } from './input.ts'
 import type { Editor } from './input.ts'
 import { acceptOf, candidatesOf, clampSel, completeOf, moveSel, pathsOf, queryOf, rowsTextOf, specsOf } from './menu.ts'
 import type { MenuRow, MenuSource } from './menu.ts'
-import { GATE_KEEP, GATE_VIEW, gateRowsOf, lineOf, pressGate, stepAt } from './gate.ts'
+import { GATE_KEEP, GATE_VIEW, conclusionLineOf, gateRowsOf, lineOf, pressGate, stepAt } from './gate.ts'
 import type { GateFace, GateOption, GateView } from './gate.ts'
 import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from './queue.ts'
-import { altAt, clampNav, navNodesOf, navRowsOf, stepNav, writerAt } from './nav.ts'
+import { altAt, clampNav, navNodesOf, navRowsOf, writerAt } from './nav.ts'
 import type { NavNode } from './nav.ts'
+import { stepView, viewAt } from './views.ts'
 import { EMPTY_READ, faceRowsOf, facesOf, firstFace, readStateOf, stepFace, stepTop } from './read.ts'
 import type { ReadFaceName, ReadState } from './read.ts'
 import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
 import type { LineMode, RunLauncher, RunOutcome } from './run.ts'
 import { innerOf } from './frame.ts'
-import { K } from './term.ts'
+import { panelWantOf } from './layout.ts'
 import type { ViewInput } from './term.ts'
 import { FLAGS_OF } from '../cli/flags.ts'
+import { statusOf } from '../probe/status.ts'
 import type { StatusRow } from '../probe/status.ts'
 
-/**
- * 弹层（菜单 · 阅读面）开着时的期望高度上限（U6）：候选与正文要装得下几行。它仍要夹进终端行数
- * （`ui/term.ts` 那一层量得到行数就夹）——想要多大是这一头的事，画得下多大是那一头的事。
- */
-const OVERLAY_WANT = 24
-
-/**
- * 面板高度怎么按终端行数**分账**（2026-09-29 用户拍的口径：**输入那块不得与显示区等高**——固定
- * 12 行在常见的 24 行终端上占了半屏，底下那块与上面留给输出的地方一边高，不符合直觉）：
- *
- *   · 缺省那档至多占终端（行数 − 1）的 **2/5**：24 行终端 → 9 行（面板 9 + 输入行 1 = 10，上面
- *     显示区 14——显示占大头）；40 行及以上回到 `K` 那个上限（12）；
- *   · 弹层开着那档至多占 **3/5**（上限 `OVERLAY_WANT`），下限是缺省那档 + 4——弹层要的是更大，
- *     不是更小；
- *   · 再矮不矮过 `PANEL_MIN`（框与账尾 4 行 + 内容 4 行）——终端真的很小时输入那块占大头是免不了
- *     的事，如实如此；
- *   · 量不到行数（`undefined`）就不分账，回 `K` / `OVERLAY_WANT`——与 `ui/term.ts`「量不到就
- *     不夹」同一条。
- *
- * 出来的数仍是**期望**：夹进终端行数（`clamp(期望, 1, 行数 − 1)`）归 `ui/term.ts` 那一层。
- */
-export const PANEL_SHARE = 2 / 5
-export const OVERLAY_SHARE = 3 / 5
-export const PANEL_MIN = 8
-
-/** 分账那一档的期望高度。纯函数：`stage.test.ts` ⑥ 拿几档典型终端的读数钉着它。 */
-export function panelWantOf(rows: number | undefined, overlay: boolean): number {
-  if (rows === undefined) return overlay ? OVERLAY_WANT : K
-  const base = Math.min(K, Math.max(PANEL_MIN, Math.floor((rows - 1) * PANEL_SHARE)))
-  if (!overlay) return base
-  return Math.max(base + 4, Math.min(OVERLAY_WANT, Math.floor((rows - 1) * OVERLAY_SHARE)))
-}
+// 分账那几个数（`panelWantOf` · 份额 · 上下限）住 `ui/layout.ts` 那一份布局常量表（第二幕 ④ 收成
+// 一处）：这一份只管把它们接上 `deps.termRows`（`heightWant`），算式一个字都不留在这里。
 
 /** 舞台要的外面那几样：全是「问一句」的函数（晚绑定——句柄建起来之前舞台先立着）。 */
 export interface StageDeps {
   /** 写一行界面自己的话（面板上方，只写一次）——`tui.note`。 */
   readonly note: (line: string) => void
+  /**
+   * 框下面那一行提示行（第二幕 ④ · 第三幕 ② 按处境分档）的原文——`ui/console.ts` 那一头给的
+   * （键表与 stdin 是不是终端都只有那一头知道）。**每帧现问**：列宽变了它就跟着换
+   * （`hintLimitOf` 按列数取前几条）；**哪一档**由舞台自己算（`hintWhenOf`：阅读面 > 门口 >
+   * 都不看）——"此刻屏幕上是什么"只有这一头知道。
+   */
+  readonly hint: (when: HintWhen) => string
+  /**
+   * 同一档下"按什么键干什么"的那一段（第三幕 ②）：**不带 `按键 ` 抬头**——写给终端历史的那一句
+   * 注记（阅读面开的那一下）用它。与提示行**同一份来源**（`ui/keymap.ts` 的 `hintKeysOf`），两处
+   * 不会各说各的。
+   */
+  readonly keysOf: (when: HintWhen) => string
   /** 重画一帧（不重读）——`tui.redraw`。 */
   readonly redraw: () => void
   /** 这一刻的终端列数——`term.columns`。 */
   readonly columns: () => number
   /**
    * 这一刻的终端行数——`term.rows`（量不到是 `undefined`）。面板高度按它分账（`panelWantOf`：
-   * 输入那块不得与显示区等高，2026-09-29 的口径）；量不到就回 `K` / `OVERLAY_WANT`。
+   * 输入那块不得与显示区等高，2026-09-29 的口径）；量不到就回框的 10 行 / `OVERLAY_WANT`。
    */
   readonly termRows: () => number | undefined
   /** 这一刻账上的行——`tui.session.rows`（导航树与阅读面都从它推，不另开读法）。 */
@@ -106,7 +91,7 @@ export interface Stage {
   onRunDone(r: RunOutcome): void
   /**
    * 这一刻期望的面板高度（`openTerm` 的 `heightOf`）：按终端行数分账（`panelWantOf`——缺省至多
-   * 2/5 · 弹层开着至多 3/5；量不到行数回 `K` / `OVERLAY_WANT`）。画得下多少仍归终端层夹。
+   * 2/5 · 弹层开着至多 3/5；量不到行数回框的 10 行 / `OVERLAY_WANT`）。画得下多少仍归终端层夹。
    */
   heightWant(): number
   /** stdin 是不是终端（`openKeys` 之后才知道——`view` 里输入行画不画看它）。 */
@@ -170,6 +155,11 @@ export function openStage(deps: StageDeps): Stage {
   let navNodes: readonly NavNode[] = []
   let navAt = 0
   /**
+   * 看第几档视图（第二幕 ⑦）：对话（缺省）· 处境 · 读数，`Tab` 轮换。**纯视图状态**——
+   * 不落账、不进日志、进程一退就没了（与 `navAt` 同一档；PLAN § 5.19 一 · 3）。
+   */
+  let viewIndex = 0
+  /**
    * 阅读面（`T9`）：**折到哪儿了** + 现在看第几面 + 看到第几行起。
    *
    * 那份状态是**从账折出来的**（`ui/read.ts` 的 `readStateOf`）——界面这一头没有第二份"这一格动过
@@ -204,6 +194,9 @@ export function openStage(deps: StageDeps): Stage {
     gateHidden = false
     // **批次换了就把选中那一份与举手那一栏都归零**：上一批举过的手不许带到这一批上。
     gateView = GATE_VIEW
+    // **结论行进永久行**（第二幕 ⑧）：门口一开就说清这一批「打算开几件事 · 覆盖哪些 · 按什么验收」。
+    // **一批只说一次**——上面那道 `key` 已经挡住重复（同一批再算几遍都不说）；换了一批才再说一条。
+    if (next !== null) deps.note(conclusionLineOf(next.conclusion))
     deps.redraw()
   }
   /** 这一刻树上选的是哪一格（`null` = 整份账）。阅读面读的就是它。 */
@@ -211,9 +204,15 @@ export function openStage(deps: StageDeps): Stage {
   /**
    * 折一次阅读面（`T9`）。**接着上一次那一份只折尾部**；切了格（`agent` 变了）或前缀被顶掉时
    * `readStateOf` 自己从头折——两种情形它都答得对，所以调用点不必先判是哪一种。
+   *
+   * **详情面那一栏（第二幕 ⑧）按需给快照**：它读的是 `probe/status.ts` 折出来的那一份（跳步 ·
+   * 内核拒 · 边界挡 · 最近那几样只在那一个地方算），而那一趟是 O(账上那些行)——与「只折尾部」
+   * 那条增量是两码事。所以**只在阅读面开着时折它**；关着那一档不给就等于没有详情面。
    */
-  function refreshRead(): void {
-    readState = readStateOf(deps.rows(), { agent: focusNow(), prev: readState })
+  function refreshRead(withDetail: boolean = reading !== null): void {
+    const rows = deps.rows()
+    const snapshot = withDetail ? statusOf(rows) : undefined
+    readState = readStateOf(rows, { agent: focusNow(), prev: readState, snapshot })
   }
 
   /** 起一次弹层：选中项从头一条起（候选变了以后 `settle` 会把它夹回来）。 */
@@ -332,20 +331,34 @@ export function openStage(deps: StageDeps): Stage {
    */
   const cols = (): number => innerOf(deps.columns())
   const view = (): ViewInput => {
-    if (!showInput) return {}
+    // 门口那一块开着没有：提示行那一档与最下面那一栏都要它（先算一次，两处读同一个）。
+    const gateOn = gate !== null && !gateHidden
+    // 提示行（第二幕 ④ · 第三幕 ② 按处境分档）**与输入行在不在无关**：stdin 不是终端时它就是那一
+    // 句"这一档不收按键"——画一个收不到按键的提示符比不画坏得多，而"按键收不到"这件事更得说出来。
+    // **阅读面压过门口**（判据在 `hintWhenOf` 那一头）：门口那三个键它自己在屏幕上印着。
+    const when = hintWhenOf({ gate: gateOn, read: reading !== null })
+    const hintPart = { hint: deps.hint(when) }
+    if (!showInput) return hintPart
     const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
     // 最下面那一栏：**门口那一块**（`T6`）与**排队那一行**（`T7`），都在面板那一栏的最下面（输入行
     // 还在它们下面）。两样都没有时一个字节都不占。
-    const gateOn = gate !== null && !gateHidden
     const queueOn = queue.items.length > 0
-    const bottomRows = [
-      ...(gateOn ? gateRowsOf({ face: gate as GateFace, view: gateView, columns: cols() }) : []),
-      ...(queueOn ? [queueRowOf(queue)] : []),
-    ]
+    const gateRows = gateOn ? gateRowsOf({ face: gate as GateFace, view: gateView, columns: cols() }) : []
+    const bottomRows = [...gateRows, ...(queueOn ? [queueRowOf(queue)] : [])]
+    // **门口那一块的末一行就是选项行**（`ui/gate.ts` 的 `gateRowsOf` 把次序定死：预览… · 排队行 ·
+    // 选项行）——它是"要人此刻按的那一行"，走等待那一格（第三幕 ①）。排队那一行的位置因此不影响
+    // 它：坐标是按门口那一块自己数出来的。
+    const waitingAt = gateRows.length === 0 ? undefined : gateRows.length - 1
     const bottomPart =
       bottomRows.length === 0
         ? {}
-        : { bottom: { rows: bottomRows, keep: (gateOn ? GATE_KEEP : 0) + (queueOn ? 1 : 0) } }
+        : {
+            bottom: {
+              rows: bottomRows,
+              keep: (gateOn ? GATE_KEEP : 0) + (queueOn ? 1 : 0),
+              ...(waitingAt === undefined ? {} : { waitingAt }),
+            },
+          }
     // 树那一栏（`T8`，排在最上面）与"切到哪一格"（`focus`：`null` = 整份账）。
     const navRows = navRowsOf(navNodes, navAt, cols())
     const navPart = navRows.length === 0 ? {} : { nav: { rows: navRows, sel: navAt } }
@@ -361,11 +374,13 @@ export function openStage(deps: StageDeps): Stage {
             return rows.length === 0 ? {} : { read: { rows, top } }
           })()
     return {
+      ...hintPart,
       ...navPart,
       ...(panel === null ? {} : { menu: { rows: rowsTextOf(rowsOf(panel.source)), sel: panel.sel } }),
       ...bottomPart,
       ...readPart,
       focus: writerAt(navNodes, navAt),
+      view: viewAt(viewIndex),
       input: { rows: frame.rows, caret: frame.caret },
     }
   }
@@ -424,9 +439,12 @@ export function openStage(deps: StageDeps): Stage {
       settle()
       return
     }
-    // ② `?`：把按键那一行重印一遍（写在面板上方，只写一次）。
+    // ② `?`：开按键那一张面板（与 `Ctrl-P` 同一个入口）。**"把提示行重印一遍"那一条撤了**——
+    // 第二幕 ④ 把提示行搬进了重画区（常驻在框下面那一行），它已经在屏幕上；`?` 要看的是**全部**
+    // 那一张表，不是屏幕上那几条。
     if (d.action === 'help') {
-      deps.note(hintLineOf())
+      openPanel('keys')
+      settle()
       return
     }
     // ③ **取消与退出那一组**（`ui/cancel.ts` 那两条链 + 退出那一条——判据全在那一份里，这一份
@@ -542,10 +560,13 @@ export function openStage(deps: StageDeps): Stage {
     // 界面这一头没有第二份"这一格动过哪些路径"的清单。
     if (d.action === 'read') {
       if (reading === null) {
-        refreshRead()
+        // 开的那一下就要把详情面折出来（`reading` 还没置上，所以显式要）。
+        refreshRead(true)
         const faces = facesOf(readState)
         reading = { face: firstFace(faces), top: 0 }
-        deps.note(`阅读面 · ${faces[reading.face]?.title ?? ''}（Tab 换一面 · ↑↓ 翻 · Esc 收起）`)
+        // 那一句注记里"按什么键干什么"那一段与提示行**同一份来源**（第三幕 ②）：写死在这里就迟早
+        // 与提示行说两样的话（`deps.keysOf('read')` = `hintKeysOf` 的阅读面那一档）。
+        deps.note(`阅读面 · ${faces[reading.face]?.title ?? ''}（${deps.keysOf('read')}）`)
       } else {
         reading = null
       }
@@ -657,8 +678,8 @@ export function openStage(deps: StageDeps): Stage {
       settle()
       return
     }
-    // ⑦ `Tab`：补全（候选从行推：命令那一档补命令名，别处补手里那个词）。补不动就什么都不做
-    // ——在各面板之间轮换是 `T8` 的事。
+    // ⑦ `Tab`：补全（候选从行推：命令那一档补命令名，别处补手里那个词）。**补不动就换视图**
+    // （第二幕 ⑦：对话 → 处境 → 读数，环形；切格走 `Alt-1…9`）。
     if (d.action === 'complete') {
       const source: MenuSource = panel?.source ?? (ed.draft.text.startsWith('/') ? 'cmd' : 'keys')
       const next = completeOf({ rows: rowsOf(source), line: ed.draft.text, source })
@@ -667,14 +688,11 @@ export function openStage(deps: StageDeps): Stage {
         settle()
         return
       }
-      // **补不动就轮到"在面板之间循环"**（§ 5.19 二那张表 `Tab` 那一行的后半句）：树上的节点换一个
-      // （主线 → 各 agent → 主线）。两处不让：弹层开着时 `↑`/`↓` 是选项那一档，这一下不抢它。
-      if (panel === null && navNodes.length > 1) {
-        navAt = stepNav(navNodes.length, navAt, 1)
-        // 换了一格：阅读面跟着换成那一格的（`readStateOf` 按 `agent` 判 `prev` 还能不能用）。
-        refreshRead()
-        deps.note(`切到 ${navNodes[navAt]?.label ?? ''}（${navAt + 1}/${navNodes.length}）`)
-      }
+      // **补不动就换视图**（第二幕 ⑦；形状从 `nav.ts` 取——`stepView` 就是 `stepNav` 那一手）。
+      // 不写注记：换视图在屏上看得见（框名从「对话」变成「进展」/「结果与花费」），而终端历史是
+      // 给人翻的流水——为一次纯视觉的切换往里头写一行，是把历史当日志用（交互律一「安静即稳态」）。
+      // 一处不让：弹层开着时 `↑`/`↓` 是选项那一档，这一下不抢它（`panel === null` 那个条件）。
+      if (panel === null) viewIndex = stepView(viewIndex, 1)
       settle()
       return
     }

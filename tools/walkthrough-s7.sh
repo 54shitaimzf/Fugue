@@ -269,7 +269,7 @@ const snap = process.argv[2]
 const j = JSON.parse(fs.readFileSync(T + "/run2.json", "utf8"))
 const m = Object.fromEntries(j.report.map((r) => [r.metric, r.count]))
 console.log("  三个数：" + JSON.stringify(m))
-console.log("  预检：Planning " + j.precheckPlanning + " 对 · 合并前 " + j.precheckMerge.count + " 对")
+console.log("  预检：准备计划 " + j.precheckPlanning + " 对 · 合并前 " + j.precheckMerge.count + " 对")
 console.log("  冲突树：" + JSON.stringify(j.conflictTree))
 console.log("  被拒的动作：" + JSON.stringify(j.deniedAction))
 console.log("  验收：" + JSON.stringify(j.verify))

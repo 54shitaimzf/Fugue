@@ -1,8 +1,11 @@
 // TUI 的第二版第八格：**导航**——树（主线为根 · 按父级缩进）+ `Alt-1…9` + `Tab`。
 //
-// 出处：PLAN § 5.19 第二版「二 · 按键」那张表（`Tab`：补全；没有补全可补时在面板之间循环 · `Alt-1…9`：
-// 直接切到第 n 格 agent 或第 n 轮）· 第九节 `T8` 那一行（"树（主线为根、按父级缩进）+ `Alt-1…9` +
-// `Tab`；断言：切过去之后面板与 `status --agent <x> --once` 逐字相同"）· 架构 § 9.8。
+// 出处：PLAN § 5.19 第二版「二 · 按键」那张表 · 第九节 `T8` 那一行（"树（主线为根、按父级缩进）+
+// `Alt-1…9`；断言：切过去之后面板与 `status --agent <x> --once` 逐字相同"）· 架构 § 9.8。
+//
+// **`Tab` 那半句改了**（第二幕 ⑦）：「没有补全可补时在面板之间循环」从 `Tab` 让给了**换视图**
+// （`ui/views.ts` 那三档）——切格仍走 `Alt-1…9`。这一份留下的就是「走第几个节点」那两下
+// （`clampNav` / `stepNav`），而「在几档之间循环」与「在几格之间循环」共用它（`stepView`）。
 //
 // **"切过去"在这一份里就是一件事：换一个读的 writer。** 主线那一档**不滤**（`writer: null` = 整份账）
 // ——处境那一条链住在持轮者那一份日志里（`round/state`），把主线也滤成 `round` 会让"切回主线"看不见
@@ -54,7 +57,8 @@ export function clampNav(n: number, at: number): number {
   return at >= n ? n - 1 : at
 }
 
-/** 走一个节点（`Tab` 用）：**环形**——最后一个再往下回到第一个，这就是"在面板之间循环"。 */
+/** 走一个节点：**环形**——最后一个再往下回到第一个，这就是"在几格之间循环"（`ui/views.ts` 的
+ * `stepView` 也走它：视图那一档是同一件事）。 */
 export function stepNav(n: number, at: number, delta: number): number {
   if (n <= 0) return 0
   return (((clampNav(n, at) + delta) % n) + n) % n

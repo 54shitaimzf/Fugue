@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import type { LogEvent } from '../log/events.ts'
 import type { StatusRow } from '../probe/status.ts'
-import { BODY_CHARS, BODY_LIMIT, FAMILY_KIND, permanentLinesOf, unclassified } from './stream.ts'
+import { BODY_CHARS, BODY_LIMIT, FAMILY_KIND, conversationOf, permanentLinesOf, unclassified } from './stream.ts'
 import type { EventFamily, FamilyKind } from './stream.ts'
 
 /** 类型上不必较真的那几栏（品牌类型与几个值域）：这些行是喂给渲染的，不是账上真发生过的。 */
@@ -201,11 +201,11 @@ function mix(): StatusRow[] {
 
 /** ④ 的黄金：只计数那三族（`llm/call` · `view/write`）一条都不进历史。 */
 const MIX_GOLDEN: readonly string[] = [
-  'round 1 · 轮次 r1 · 意图「给记账库加一条按天汇总 第二条约束：别越界写」· 底 01234567…',
-  'round 2 · 轮次 r1 · Idle → Planning',
-  'agent/r1/1 3 · 格 agent/r1/1 · 3 步 · 停：收敛 · 交过 2 次接',
-  'round 3 · 轮次 r1 · 合并尝试 2 条分支 · 冲突 1',
-  'round 4 · 轮次 r1 · 合并接受 abcdef01… · 断言 3 条（过 2 / 没过 0 / 跑不起来 1）',
+  "任务：「给记账库加一条按天汇总 第二条约束：别越界写」",
+  "进展：准备计划",
+  "一项任务已停止，交接说明可在阅读面查看。",
+  "正在合并结果，有 1 处冲突需要处理。",
+  "验收：2 项通过，1 项无法运行。"
 ]
 
 test('① 表与联合逐字对得上：30 族一个不多一个不少', () => {
@@ -234,13 +234,13 @@ test('③ 负对照 · 挪一格：round/state 挪进"只计数"，那一趟历�
   const m = mix()
   const lines = permanentLinesOf(m)
   assert.equal(lines.length, MIX_GOLDEN.length, '正着那一趟进历史的行数')
-  assert.ok(lines.some((l) => l.includes('Idle → Planning')), `正着那一趟该有那条转移：${lines.join(' ｜ ')}`)
-  const moved = permanentLinesOf(m, { ...FAMILY_KIND, 'round/state': 'transient' })
+  assert.ok(lines.some((l) => l.includes('进展：准备计划')), `正着那一趟该有那条转移：${lines.join(' ｜ ')}`)
+  const moved = permanentLinesOf(m, { ...FAMILY_KIND, conversationOf, 'round/state': 'transient' })
   assert.equal(moved.length, lines.length - 1, '挪走一族，历史该正好少一行')
-  assert.equal(moved.some((l) => l.includes('Idle → Planning')), false, '挪进只计数了，历史里却还有那条转移')
+  assert.equal(moved.some((l) => l.includes('进展：准备计划')), false, '挪进只计数了，历史里却还有那条转移')
   // 反面：只计数的那一族挪进"永久"——分法说它配得上一行历史，而渲染里没有它的写法，当场抛。
   assert.throws(
-    () => permanentLinesOf([row(llmCall('agent/r1/1', '1'), 'agent/r1/1')], { ...FAMILY_KIND, 'llm/call': 'permanent' }),
+    () => permanentLinesOf([row(llmCall('agent/r1/1', '1'), 'agent/r1/1')], { ...FAMILY_KIND, conversationOf, 'llm/call': 'permanent' }),
     /这一族没有分到永久行：llm\/call/,
     'llm/call 挪进永久却没抛——那就成了静默给一个空行',
   )
@@ -290,9 +290,8 @@ test('⑤ 一族一行都不少：夹具覆盖 30 族、进历史的正好那 10
   for (let i = 0; i < permanent.length; i += 1) {
     const r = permanent[i] as StatusRow
     const line = lines[i] as string
-    const prefix = `${r.pos.writer} ${r.pos.seq} · `
-    assert.ok(line.startsWith(prefix), `第 ${i + 1} 行的前缀不是账上的坐标：${line}`)
-    assert.ok(line.length > prefix.length, `第 ${i + 1} 行只有坐标、没有内容：${line}`)
+    assert.ok(line.length > 0, '永久事件必须有可读汇报')
+    assert.ok(!line.includes(r.pos.writer + ' ' + r.pos.seq + ' · '), '内部坐标不进入对话历史')
     assert.equal(line.includes('undefined'), false, `第 ${i + 1} 行里漏了一栏（那一族没有写法）：${line}`)
     assert.equal(line.includes('\n'), false, `第 ${i + 1} 行里带换行：${line}`)
   }
@@ -310,4 +309,20 @@ test('⑥ 纯：两次逐字节相同、进去的 rows 一个字段都没被改 
   assert.deepEqual([...permanentLinesOf([])], [], '账上一条都没有时该给空历史')
   assert.equal(permanentLinesOf([row(llmCall('agent/r1/1', '1'), 'agent/r1/1')]).length, 0, '只有只计数那一族时该给空历史')
   console.log(`⑥ 读数：两次逐字节相同（${one.length} 行 · ${before.length} 字节的行两趟同值）· 空账 0 行 · 只有 llm/call 0 行 · 截断按族（80）兜 ${BODY_CHARS}`)
+})
+
+
+test('生产格式的目标按人话显示；损坏的已识别 JSON 照原文印出来（不吞、也不打死这一帧）', () => {
+  reset()
+  const event = { t: 'round/intent' as const, round: brand('r1'), base: brand('b0'), digest: 'd', body: JSON.stringify({goal:'改善终端阅读体验'}) }
+  assert.deepEqual(permanentLinesOf([row(event)]), ['任务：「改善终端阅读体验」'])
+  // **坏掉这件事照样看得见**：半截 `{"goal":` 印在那一行上（原先那一档当场抛 `SyntaxError`——
+  // 那是观察窗，不是校验器：抛出去整帧就没了，人反而什么都看不到）。
+  const broken = permanentLinesOf([row({...event, body:'{"goal":'})])
+  assert.equal(broken.length, 1, '坏 JSON 那一条照样折得出来')
+  assert.ok((broken[0] as string).includes('{"goal":'), `坏的原文该印出来：${broken[0]}`)
+  // 认得出形状而 `goal` 不是字符串（写成数 · 写成对象）也照原文印，不猜。
+  const odd = permanentLinesOf([row({...event, body:'{"goal":123}'})])
+  assert.ok((odd[0] as string).includes('{"goal":123}'), `goal 不是字符串时照原文印：${odd[0]}`)
+  console.log(`读数：好的一条 → 「${(permanentLinesOf([row(event)])[0] as string)}」· 坏的一条照原文印（0 次抛出）`)
 })

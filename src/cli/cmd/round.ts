@@ -6,7 +6,8 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, 
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { BindingError, actionNames, readBinding } from '../../boundary/binding.ts'
+import { BindingError, readBinding } from '../../boundary/binding.ts'
+import { actionsTableOf } from '../../round/actions.ts'
 import { ConfigError, getConfig, readConfig } from '../../config.ts'
 import type { ConfigDoc } from '../../config.ts'
 import { identFor } from '../../identity.ts'
@@ -41,6 +42,7 @@ import { RoundWorkError, issuedBatchOf } from '../../round/work.ts'
 import type { DriverSupport, Stub } from '../../round/execute.ts'
 import { realDriver, stubDriver } from '../../round/driver.ts'
 import { RETRY_DEFAULT } from '../../round/machine.ts'
+import { WORDS, stateFaceOf } from '../../words.ts'
 import { wireCallOver } from '../../runtime/step.ts'
 import type { AgentHandle, CallModel, ToolExecutor } from '../../runtime/step.ts'
 import { makeDumpCall, wireInTransport, targetAt } from '../../model/http.ts'
@@ -220,7 +222,7 @@ export async function roundCmd(
       })
     } else {
       const owners = [...new Set(started.built.contracts.map((c) => c.agent))]
-      emitLine(`${started.round}\t${started.base}\t${started.built.contracts.length} 份契约\t${owners.length} 条分支`)
+      emitLine(`${started.round}\t${started.base}\t${started.built.contracts.length} 份${WORDS.task}\t${owners.length} 条分支`)
       for (const c of started.built.contracts) {
         emitLine(`  ${c.id}\t${c.agent}\t${c.kind}\t${writeSetLine(c)}`)
       }
@@ -593,9 +595,9 @@ function emitRunFace(o: {
       callLines: [...report.callLines],
     })
   } else {
-    emitLine(`${run.round}\t${run.base}\t${run.state}`)
-    emitLine(`  契约 ${run.batch.contracts.length} 份：${run.batch.contracts.map((c) => c.id).join(' · ')}`)
-    emitLine(`  预检：Planning ${run.precheckPlanning} 对 · 合并前 ${run.precheckMerge.count} 对`)
+    emitLine(`${run.round}\t${run.base}\t${stateFaceOf(run.state)}`)
+    emitLine(`  ${WORDS.task} ${run.batch.contracts.length} 份：${run.batch.contracts.map((c) => c.id).join(' · ')}`)
+    emitLine(`  预检：${stateFaceOf('Planning')} ${run.precheckPlanning} 对 · 合并前 ${run.precheckMerge.count} 对`)
     emitLine(`  折叠：${run.fold.kind === 'folded' ? `折了 ${run.fold.steps} 步` : '停在冲突上'}`)
     emitLine(`  验收：通过 ${run.report.pass} · 没通过 ${run.report.fail} · 跑不起来 ${run.report.unrunnable}`)
     if (run.advanced !== null) {
@@ -609,7 +611,7 @@ function emitRunFace(o: {
     if (flags.has('report')) {
       emitLine(REPORT_HEAD)
       for (const l of report.lines) emitLine(`  ${l}`)
-      emitLine('归因三处对照（闸四：命中落在哪一段；三行恒在，缺的写「没有读数」）：')
+      emitLine('归因三处对照（闸四：命中落在哪一段；三行恒在，缺的写「没有量到」）：')
       for (const l of report.attributionLines) emitLine(`  ${l}`)
       // **每趟 `usage` 一行**（`G5` 那句话的兑现）：末行是合计，钱按官方价目表算。
       emitLine('逐趟账（每一条 `llm/call` 一行，末行是合计；钱按官方价目表算）：')
@@ -920,7 +922,7 @@ export async function roundPlan(
       }
       // **判出来的那一批契约**（门后面那一批）：停着的时候它已经在了，人批的就是它。
       if (built !== null && r.gate.precheck !== null) {
-        emitLine(`  判：${built.contracts.length} 份契约造得出来（值域持有者逐字段核过）· 还没发`)
+        emitLine(`  判：${built.contracts.length} 份${WORDS.task}造得出来（值域持有者逐字段核过）· 还没发`)
         for (const c of built.contracts) emitLine(`    ${c.id}\t${c.agent}\t${c.kind}\t${writeSetLine(c)}`)
         emitLine(`  预检：${writeSetPaths(built.contracts).length} 条路径 · ${r.gate.precheck.intersections.length} 对相交`)
         for (const line of r.gate.precheck.lines) emitLine(`    ${line}（照发：这一站的口径是报出来、照发）`)
@@ -930,7 +932,7 @@ export async function roundPlan(
         }
       }
       if (draft !== null) {
-        emitLine('  每一格的预估占用（三区 + 工具目录 + seed；估账，不是读数）：')
+        emitLine('  每一格的预估占用（三区 + 工具目录 + seed；估账，不是量出来的）：')
         for (const row of r.occupancy) {
           emitLine(
             `    第 ${row.at} 节\tseed ${row.seed}\tused ${row.used}\t触发点 ${row.trigger}\t与上限的差额 ${row.headroom}\t甜点=${row.sweet ? '是' : '否'}` +
@@ -948,7 +950,7 @@ export async function roundPlan(
         process.stderr.write('改完再跑一遍：' + `fugue --root ${root} round plan ${JSON.stringify(goal)}\n`)
       } else {
         process.stderr.write(
-          '门停在这里等人批：一个契约都没发 · 一条分支都没起 · 真实工作树一个字节没动。' +
+          `门停在这里等人批：一个${WORDS.task}都没发 · 一条分支都没起 · 真实工作树一个字节没动。` +
             `放行是 \`fugue round go\`。\n`,
         )
       }
@@ -1104,7 +1106,7 @@ export async function sayCommand(
         if (r.distill !== null) {
           for (const line of versionLinesOf(version, '讨论态')) emitLine(line)
         }
-        emitLine(`  这一态的处境没动：${r.state}（讨论不落地——落地是 fugue round plan <目标>）`)
+        emitLine(`  状态没动：${stateFaceOf(r.state)}（讨论不落地——落地是 fugue round plan <目标>）`)
       } else {
         emitLine(`  草案：${draftPathOf(round)}\t这一趟改的是它（原话不另存：工作区里找不到第二份）`)
         // **人面那一栏**（C5.b）：这一版是第几版 · 与上一版差在哪几节。
@@ -1112,7 +1114,7 @@ export async function sayCommand(
           for (const line of versionLinesOf(version, '预备态')) emitLine(line)
         }
         emitLine(
-          `  判：${r.plan?.held === true ? '仍然停在门口' : '退回'}\t契约造得出来 ` +
+          `  判：${r.plan?.held === true ? '仍然停在门口' : '退回'}\t${WORDS.task}造得出来 ` +
             `${r.plan?.gate.built?.contracts.length ?? 0} 份 · 一份都没发`,
         )
       }
@@ -1368,7 +1370,7 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
       })
     } else {
       const owners = [...new Set(r.built.contracts.map((c) => c.agent))]
-      emitLine(`${r.round}\t${r.base}\t放行：${r.built.contracts.length} 份契约\t${owners.length} 条分支`)
+      emitLine(`${r.round}\t${r.base}\t放行：${r.built.contracts.length} 份${WORDS.task}\t${owners.length} 条分支`)
       for (const c of r.built.contracts) emitLine(`  ${c.id}\t${c.agent}\t${c.kind}\t${writeSetLine(c)}`)
       emitLine(`  批号：${r.fingerprint}（这一批的编号——拆分的形状，不含轮次与身份）`)
       if (same !== null) {
@@ -1395,7 +1397,7 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
       }
       // **发了就是发了**：契约逐条在日志里，分支定在同一个底上——这一轮的处境已经是 `Working`。
       process.stderr.write(
-        `放行完了：${r.built.contracts.length} 份契约在日志里（contract/issue 逐条）· ${owners.length} 条分支定在 ${r.base}\n`,
+        `放行完了：${r.built.contracts.length} 份${WORDS.task}在日志里（contract/issue 逐条）· ${owners.length} 条分支定在 ${r.base}\n`,
       )
     }
     return 0
@@ -1575,34 +1577,6 @@ function writeSetLine(c: {
   if (c.kind === 'implement') return (c.ownedPaths ?? []).join(' · ')
   if (c.kind === 'resolve') return (c.conflictPaths ?? []).join(' · ')
   return (c.evidenceRequired ?? []).map((e) => e.artifact).join(' · ')
-}
-
-/**
- * 绑好的动作表：名字 → 它声明的产出（`actions.<名字>` 那一条）。
- *
- * **持轮者给的断言只能从这里选**（PLAN § 5.10 的 C1 ⑦：架构 § 8.12 那张表里
- * `assertions` 的候选就是工作区配置）。读它的是 `readBinding` 一处，所以“这个名字合不合形状”
- * 的判据只有一份——报出来的话就是那一份说的（不猜、不补、不替它挑）。
- */
-export function actionsTableOf(doc: ConfigDoc): Readonly<Record<string, readonly RelPath[]>> {
-  const out: Record<string, readonly RelPath[]> = {}
-  for (const name of actionNames(doc)) out[name] = readBinding(doc, name).outputs as readonly RelPath[]
-  return out
-}
-
-/**
- * 绑好的动作**跑什么**：名字 → `argv` 拼起来。**与 `actionsTableOf` 同一个来源**（`readBinding`
- * 一处读）。P3b2 起它的消费方只剩**门停给人看的那张表**（`observe.ts`）——模型那一侧的清单
- * 住在 A 区系统状态的 `actions` 栏（名字 + argv，同一份来源），不再由提示词内联。
- *
- * 那张表为什么留着：`assertions.action` 只能从这几个里挑，而"只给名字"那一版真档烧掉过一整趟的
- * 预算——那一趟为了弄清哪个动作核哪一处，去找工作区的配置（它猜 `*.json` / `*.yaml` /
- * `*.toml`，而那一份叫 `.fugue/config`），8 步里四步花在找它上，一次都没伸手写草案。
- */
-export function actionCommandsOf(doc: ConfigDoc): Readonly<Record<string, string>> {
-  const out: Record<string, string> = {}
-  for (const name of actionNames(doc)) out[name] = readBinding(doc, name).argv.join(' ')
-  return out
 }
 
 /**

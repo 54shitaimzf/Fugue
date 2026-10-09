@@ -4,7 +4,7 @@
 //   ① **挂什么**：`SIGTERM` / `SIGHUP` 经 `on` · `exit` 经 `once`（那一条只该来一次）；两条分别接到
 //      「递给在途那一趟」与「把终端还原回去」；`close()` 把信号那两个摘掉而且幂等（收尾那一路正常退
 //      与 `finally` 都会走到它）。负对照：`removeListener` 那一句删掉 → ① 红。
-//   ② **挂的时机**：`observe.ts` 里这一组排在 `openTui(` 与 `openKeys(` 之前——首帧之前收到的
+//   ② **挂的时机**：`ui/console.ts` 里这一组排在 `openTui(` 与 `openKeys(` 之前——首帧之前收到的
 //      `SIGTERM` 会走缺省的杀进程路径，`--full` 那一档那台终端就被留在另一块屏上（还原终端全靠
 //      `term.close()`）。负对照：把那一块挪到 `ui.tui = tui` 之后（U4 之前那个顺序）→ ② 当场红。
 //
@@ -83,14 +83,14 @@ function at(src: string, needle: string): number {
   return list.findIndex((l) => l.includes(needle)) + 1
 }
 
-test('② 挂的时机：`observe.ts` 里这一组排在开首帧与进 raw mode 之前（负对照：挪回旧顺序当场红）', () => {
-  const src = readFileSync(new URL('../cli/cmd/observe.ts', import.meta.url), 'utf8')
+test('② 挂的时机：`ui/console.ts` 里这一组排在开首帧与进 raw mode 之前（负对照：挪回旧顺序当场红）', () => {
+  const src = readFileSync(new URL('./console.ts', import.meta.url), 'utf8')
   const hook = at(src, 'openExitHooks(process')
   const frame = at(src, 'const tui = openTui({')
   const typing = at(src, 'keys = openKeys({')
   const decl = at(src, 'let keys: KeySource | null = null')
   assert.ok(hook > 0 && frame > 0 && typing > 0 && decl > 0, `四个锚点都要找得到（${hook}/${frame}/${typing}/${decl}）`)
-  console.log(`② 读数：observe.ts 第 ${decl} 行声明 keys · 第 ${hook} 行挂钩子 · 第 ${frame} 行开首帧 · 第 ${typing} 行进 raw mode`)
+  console.log(`② 读数：ui/console.ts 第 ${decl} 行声明 keys · 第 ${hook} 行挂钩子 · 第 ${frame} 行开首帧 · 第 ${typing} 行进 raw mode`)
   assert.ok(hook < frame, `钩子要挂在开首帧之前（第 ${hook} 行 vs 第 ${frame} 行）`)
   assert.ok(hook < typing, `也要挂在进 raw mode 之前（第 ${hook} 行 vs 第 ${typing} 行）`)
   assert.ok(decl < hook, '`keys` 先声明再挂钩子（钩子那一下引用它，落在 TDZ 里会当场抛）')

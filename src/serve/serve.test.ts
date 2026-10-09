@@ -12,7 +12,7 @@
 //      `subprocess`，`stdout` 与 CLI 逐字节相同；
 //   ⑥ **`--wait` 糖**——等到了报等到了 · 到点如实报超时（不静默成功）。
 //
-// **它不测 TUI · 外观 · attach/pause/step**（0.4.3 的活，施工单 § 三 7）。
+// **它不测 TUI · 外观 · attach/pause/step**（本幕的活，施工单 § 三 7）。
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'

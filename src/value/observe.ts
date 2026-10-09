@@ -20,10 +20,35 @@ import type { StatusReadings, StatusRow } from '../probe/status.ts'
 import { cursorsOf, follow, readNew, tokenOf } from '../probe/watch.ts'
 import type { Cursors } from '../probe/watch.ts'
 import { readConfig } from '../config.ts'
+import { intervalOf as intervalFlagOf } from '../cli/flags.ts'
 import { PHRASES } from '../phrases.ts'
-import { actionCommandsOf } from '../cli/cmd/round.ts'
+import { actionCommandsOf } from '../round/actions.ts'
 import { CommandError, UsageError, ok } from './types.ts'
 import type { ValueArgs, ValueResult } from './types.ts'
+
+/**
+ * TSV 那四列的名字，**列头与行同源**：`--header` 印的是这一份，`eventLine` 拼行照的也是它
+ * 那个顺序。为什么要一处——列头是给人一眼看明白哪一列是什么的，**它跟它下面那些行对不上
+ * 就比不印更坏**（`cli/header.test.ts` ① 量的就是"列数相同"）。
+ */
+export const EMIT_COLUMNS: readonly string[] = ['writer', 'seq', 't', 'payload']
+
+/** `--header` 印的那一行（制表符分隔，与它下面每一行同一种形状）。 */
+export const EMIT_HEADER = EMIT_COLUMNS.join('\t')
+
+/**
+ * `--header`（列头那一行）：要不要印，以及**与 `--json` 说不到一起**。
+ *
+ * `--json` 那一份是对象，本来就有键名——再塞一行列头进去是把机器读的那条流弄脏（NDJSON 那
+ * 一档逐行可解析这条纪律就破了）。一处判据，两个消费者（`log` 与 `watch` 印的是同一种行）。
+ */
+export function headerWanted(a: ValueArgs): boolean {
+  if (!a.flags.has('header')) return false
+  if (a.flags.has('json')) {
+    throw new UsageError('--header 说的是列头那一行；--json 那一份是对象，没有列——两者说不到一起')
+  }
+  return true
+}
 
 /** 一行事件的**人读那一面**（与 `cmd/observe.ts` 的 `emit` 逐字节相同）。 */
 export function eventLine(pos: LogPos, e: LogEvent): string {
@@ -31,7 +56,10 @@ export function eventLine(pos: LogPos, e: LogEvent): string {
   const brief = Object.keys(payload)
     .map((k) => `${k}=${JSON.stringify(payload[k])}`)
     .join(' ')
-  return `${pos.writer}\t${pos.seq}\t${t}\t${brief}`
+  // **列名与取值同一张表**：顺序由 `EMIT_COLUMNS` 说，这一行照着它取——两处各写一遍顺序，
+  // 列头就会跟它下面那些行走岔，而走岔了不报错（`cli/header.test.ts` ① 量这一条）。
+  const cells: Record<string, string> = { writer: pos.writer, seq: String(pos.seq), t, payload: brief }
+  return EMIT_COLUMNS.map((name) => cells[name]!).join('\t')
 }
 
 /** 一行事件的 `--json` 那一面。 */
@@ -173,17 +201,6 @@ export async function statusValue(a: ValueArgs): Promise<ValueResult> {
   }
 }
 
-/** `--interval <毫秒>`：跟随那一趟睡多久（判据与 `observe.ts` 那一道门同一份）。 */
-function intervalOf(a: ValueArgs): number {
-  const raw = a.flags.get('interval')
-  if (raw === undefined) return 200
-  if (typeof raw !== 'string') throw new UsageError('--interval 要一个数：--interval 200')
-  const n = Number(raw)
-  if (!Number.isInteger(n) || n < 1) {
-    throw new UsageError(`--interval 要一个正整数（毫秒），拿到 ${JSON.stringify(raw)}`)
-  }
-  return n
-}
 
 /**
  * `--resume <游标串>`：接着读的入口（架构 § 9.11 的事件通道——游标是每个 writer 一个，语义是
@@ -200,9 +217,10 @@ export function resumeFrom(a: ValueArgs): Cursors | undefined {
   return parsed
 }
 
-/** `log [--agent <id>]`：把账原样列出来，一行一条事件，不做任何加工。 */
+/** `log [--agent <id>] [--header]`：把账原样列出来，一行一条事件，不做任何加工。 */
 export async function logValue(a: ValueArgs): Promise<ValueResult> {
   const only = a.flags.get('agent')
+  const head = headerWanted(a)
   const log = openLog(a.root)
   const rows: StatusRow[] = []
   try {
@@ -213,11 +231,13 @@ export async function logValue(a: ValueArgs): Promise<ValueResult> {
   } finally {
     await log.close()
   }
+  // 列头只在人读那一面（`--json` 那一面是对象，见 `headerWanted`）——它在最前面一行。
+  const lines = rows.map((r) => eventLine(r.pos, r.e))
   return ok({
     value: rows.map((r) => ({ pos: r.pos, e: r.e })),
     faces: {
       json: rows.map((r) => eventJson(r.pos, r.e)).join('\n'),
-      human: rows.map((r) => eventLine(r.pos, r.e)).join('\n'),
+      human: (head ? [EMIT_HEADER, ...lines] : lines).join('\n'),
     },
   })
 }
@@ -259,7 +279,9 @@ export async function watchValue(
     readonly tail?: RowTail
   } = {},
 ): Promise<{ result: ValueResult; value: WatchValue }> {
-  const intervalMs = intervalOf(a)
+  const intervalMs = intervalFlagOf(a.flags)
+  if (typeof intervalMs === 'string') throw new UsageError(intervalMs)
+  const head = headerWanted(a)
   const from = resumeFrom(a)
   const only = a.flags.get('agent')
   const tail = hooks.tail
@@ -321,6 +343,13 @@ export async function watchValue(
     cursors,
     resume: token,
   }
+  // **实时那一档的行已经随读随印了**（壳给了 `onBatch`）：收尾这一份人读面因此是空的——
+  // 两处都印的话，人按一下 Ctrl-C 之后每一行都会出现两次（实测 2 条事件印出 4 行）。
+  // 这不是"少印"：印出去的那些行已经在 stdout 上了，这一份只是同一批行的第二份拷贝。
+  const streamed = hooks.onBatch !== undefined
+  // 列头那一行（`--header`）：实时那一档的行已经随读随印了，所以那一档由壳在开头把这一行印掉
+  // ——这里（以及下面那一格空的 `human`）都不再补。人读那一面的第一行因此永远是列头。
+  const lines = rows.map((r) => eventLine(r.pos, r.e))
   const notes = a.flags.has('follow') ? [`${PHRASES.resumeHead}：--resume ${token}`] : []
   return {
     result: ok(
@@ -328,7 +357,7 @@ export async function watchValue(
         value,
         faces: {
           json: rows.map((r) => eventJson(r.pos, r.e)).join('\n'),
-          human: rows.map((r) => eventLine(r.pos, r.e)).join('\n'),
+          human: streamed ? '' : (head ? [EMIT_HEADER, ...lines] : lines).join('\n'),
         },
       },
       notes,

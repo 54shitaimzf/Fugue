@@ -20,7 +20,7 @@
   ],
   "face": {
     "code": 0,
-    "stdout": "r1\t562151d97429fda94cd79b517b4f2b5b28cd219d\t1 份契约\t1 条分支\n  r1.implement.1\tagent/r1/1\timplement\ta.txt\n  种子\t上限 <N> token\t逐份 <N>\t在钉住的底上取到 <N> 份内容\n",
+    "stdout": "r1\t562151d97429fda94cd79b517b4f2b5b28cd219d\t1 份任务\t1 条分支\n  r1.implement.1\tagent/r1/1\timplement\ta.txt\n  种子\t上限 <N> token\t逐份 <N>\t在钉住的底上取到 <N> 份内容\n",
     "stderr": "物化没有铺（架构 § 14.1 的 deferMaterialize：走按需物化）；要现在铺就加 --materialize\n写入集预检：1 条路径 · 0 对相交\n"
   }
 }

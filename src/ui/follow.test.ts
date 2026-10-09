@@ -30,12 +30,14 @@ import { test, mock } from 'node:test'
 import type { Log, LogEvent } from '../log/events.ts'
 import type { ReadingsOptions, StatusReadings, StatusRow } from '../probe/status.ts'
 import { readingsOf } from '../probe/status.ts'
-import { readNew } from '../probe/watch.ts'
+import { cursorsOf, tokenOf } from '../probe/watch.ts'
+import { PROTOCOL_VERSION } from '../protocol.ts'
+import type { LedgerSource, SourcePass } from '../serve/source.ts'
 import type { Frame } from './frame.ts'
 import { frameOf, panelOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
 import type { FamilyTable } from './stream.ts'
-import { FAMILY_KIND, permanentLinesOf } from './stream.ts'
+import { FAMILY_KIND, conversationOf, permanentLinesOf } from './stream.ts'
 import { K } from './term.ts'
 import type { Term } from './term.ts'
 import type { Tui, TuiCounts, TuiMode } from './follow.ts'
@@ -126,6 +128,9 @@ function mergedOf(rows: readonly StatusRow[]): StatusRow[] {
 }
 
 interface Scripted {
+  /** **界面真正拿到的那一份**：事件通道（一趟调用回一趟事）。 */
+  readonly source: LedgerSource
+  /** 底下的那一本假账：负对照要按 `readMerged` 的语义自己写一个跟随器。 */
   readonly log: Pick<Log, 'readMerged'>
   /** 到这一刻为止放出来的那些行（按片放，片内按合并序）。 */
   readonly released: () => readonly StatusRow[]
@@ -142,16 +147,34 @@ function scripted(
 ): Scripted {
   const out: StatusRow[] = []
   let calls = 0
+  /** 第 n 趟放第 n 片，片放出来之后就一直在（与 `readMerged` 同一条读法）。 */
+  const readAt = (fromSeq: number): StatusRow[] => {
+    calls += 1
+    const ch = chapters[calls - 1]
+    if (ch !== undefined) out.push(...ch)
+    o.onRead?.(calls)
+    return mergedOf(out).filter((r) => r.pos.seq > fromSeq)
+  }
   const log = {
     async *readMerged(fromSeq = 0): AsyncGenerator<{ pos: StatusRow['pos']; e: LogEvent }> {
-      calls += 1
-      const ch = chapters[calls - 1]
-      if (ch !== undefined) out.push(...ch)
-      o.onRead?.(calls)
-      for (const r of mergedOf(out)) if (r.pos.seq > fromSeq) yield { pos: r.pos as never, e: r.e }
+      for (const r of readAt(fromSeq)) yield { pos: r.pos as never, e: r.e }
     },
   }
-  return { log: log as Pick<Log, 'readMerged'>, released: () => out, calls: () => calls }
+  // **事件通道那一份**：界面读账只经它。一趟调用回一趟事，游标串沿用 `--resume` 那一形
+  // （每 writer 一个 · 排他下界）——与 `serve/source.ts` 的 `pass()` 同一个形状。
+  const source: LedgerSource = {
+    hello: { protocol: PROTOCOL_VERSION, product: '', methods: [] },
+    async pass(resume: string): Promise<SourcePass> {
+      const parsed = cursorsOf(resume)
+      const from: Readonly<Record<string, number>> = typeof parsed === 'string' ? {} : parsed
+      const rows = readAt(0).filter((r) => r.pos.seq > (from[r.pos.writer] ?? 0))
+      const next: Record<string, number> = { ...from }
+      for (const r of rows) if (r.pos.seq > (next[r.pos.writer] ?? 0)) next[r.pos.writer] = r.pos.seq
+      return { rows, resume: tokenOf(next) }
+    },
+    async close(): Promise<void> {},
+  }
+  return { source, log: log as Pick<Log, 'readMerged'>, released: () => out, calls: () => calls }
 }
 
 /** 摆的那一头：记下每一次 `draw` 摆了什么（`panelOf` 那一步是真的，所以记的就是屏幕上那几行）。 */
@@ -216,7 +239,7 @@ async function runFollow(o: {
   })
   const lines: string[] = []
   const tui = openTui({
-    log: s.log,
+    source: s.source,
     term: rec.term,
     emit: (line) => lines.push(line),
     mode: o.mode ?? 'panel',
@@ -230,10 +253,11 @@ async function runFollow(o: {
 /** 一次性那一档：同一批事件，另一本账**从一开始就全都有**，读齐、折一帧。 */
 async function oneShot(chapters: readonly (readonly StatusRow[])[]): Promise<{ rows: StatusRow[]; frame: Frame }> {
   const whole = scripted([chapters.flat()])
-  const all = await readNew(whole.log, {})
+  const all = await whole.source.pass('')
   const frame = frameOf({
     ...readingsOf(all.rows),
     permanent: permanentLinesOf(all.rows),
+    conversation: conversationOf(all.rows).slice(-3),
     width: 80,
     height: K,
   })
@@ -245,7 +269,7 @@ const panelOfFrame = (f: Frame): string[] => [...panelOf(f.lines, K, 80)]
 
 /** 折一帧（尺寸与记录器一致）。 */
 function frameAt(rows: readonly StatusRow[]): Frame {
-  return frameOf({ ...readingsOf(rows), permanent: permanentLinesOf(rows), width: 80, height: K })
+  return frameOf({ ...readingsOf(rows), permanent: permanentLinesOf(rows), conversation: conversationOf(rows).slice(-3), width: 80, height: K })
 }
 
 /** 跟随那一档画帧的那几步：**一片一帧**（每趟读齐一片、一趟一画，U4）。 */
@@ -291,14 +315,14 @@ test('② 一条都不少：晚出现的 writer（seq=1 排在读过的 seq=3 �
   assert.deepEqual([...written].sort(), [...still].sort(), '同一个集合（次序那一档两条路本来就不同）')
   assert.equal(written.length, still.length, `历史条数对不上：跟随 ${written.length} 条 · 一次性 ${still.length} 条`)
   assert.equal(
-    written.some((l) => l.startsWith('agent/r1/1 1 · ')),
+    written.some((l) => l === '一项任务已停止。'),
     true,
     `晚出现那个 writer 的那一条该在历史里：${written.join(' ｜ ')}`,
   )
   assert.notDeepEqual(written, still, '这一份夹具里到达序与全序本来就不同——相同就量不到"到达序"这件事了')
   assert.equal(r.counts.rows, one.rows.length, '跟随读进来的行数与一次性读齐的行数对不上（漏了或重了）')
   console.log(
-    `② 读数：跟随 ${r.counts.rows} 行（到达序，含 agent/r1/1 的 ${written.filter((l) => l.startsWith('agent/r1/1')).length} 条）· ` +
+    `② 读数：跟随 ${r.counts.rows} 行（到达序，含 agent/r1/1 的 ${written.filter((l) => l.startsWith('一项任务已停止')).length} 条）· ` +
       `一次性 ${one.rows.length} 行（全序）· 集合逐字相同、次序不同（就此一条）`,
   )
 })
@@ -553,7 +577,7 @@ test('⑩ 帧快照记忆（U16）：同批连问（含 note()×3）不新增 fo
     },
   })
   const tui = openTui({
-    log: s.log,
+    source: s.source,
     term: rec.term,
     emit: () => {},
     mode: 'panel',

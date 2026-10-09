@@ -18,21 +18,24 @@
 //
 // 一帧分三层，每层读的都是同一份快照，**没有一处从事件重算**（那是 `probe/` 那两处的事）：
 //
-//   · **左栏 = 处境**：`round/state` 链重放出来的那几行（每一步 · 每一格走到哪儿 · 停因）；
-//   · **右栏 = 读数**：契约 · 折叠尝试 · 冲突 · 验收 · 用量 · 八元 · 打回三数；
-//   · **账尾（footer）**：全账的那一条状态条（最近一条事件是什么 · 一共几条）。它**不进任何一栏**：
-//     它是"这份账到哪儿了"，不是某一栏的读数——放进右栏的话，"多一条 `round/state` 只动左栏"
-//     这条性质就会被它搅浑（`frame.test.ts` ②）。
+//   · **对话视图那一档（缺省）**：轮次头 · 块间细线 · 在飞那几格（`chatOf`）——这是主面；
+//   · **另两档视图**：`progress` = `round/state` 链重放出来的那几行（每一步 · 每一格走到哪儿 · 停因）；
+//     `spending` = 记账那几行（契约 · 折叠尝试 · 冲突 · 验收 · 用量 · 八元 · 打回三数）；
+//   · **账尾（footer）**：全账的那一条状态条（最近一条永久行的原文 · 或"最近一条事件是什么 ·
+//     一共几条"）。它**不进任何一栏**：它是"这份账到哪儿了"，不是某一栏的读数——放进某一档
+//     视图的话，"多一条 `round/state` 只动 `progress` 那一档"这条性质就会被它搅浑（`frame.test.ts` ②）。
 //
 // 于是有三条可证伪的性质（`frame.test.ts` ②/③/④ 那三条对照）：
 //
-//   · 账里多一条 `round/state` → **左栏变**，右栏逐字节不变（账尾那条会动，那是全账的读数）；
-//   · 账里多一条 `merge/attempt`（冲突 2）→ **右栏变**，左栏逐字节不变；
-//   · 账里多一次 `llm/call` → **两栏都变**（调用次数在左栏与右栏各有一处口径）——这一条也是对的，
-//     它说明两栏不是按事件类型分的，是按**读法**分的。
+//   · 账里多一条 `round/state` → **`progress` 那一档变**，`spending` 逐字节不变（账尾那条会动，那是
+//     全账的读数）；
+//   · 账里多一条 `merge/attempt`（冲突 2）→ **`spending` 变**，`progress` 逐字节不变；
+//   · 账里多一次 `llm/call` → **两档都变**（调用次数在两边各有一处口径）——这一条也是对的，
+//     它说明那两档不是按事件类型分的，是按**读法**分的。
 //
-// **装不下怎么办**：宽了**折行**（一行都不少——折在空格处，折不出来才硬切），窄了收成单栏
-// （同一个框，少中间那根竖线）；只有屏幕**矮**到装不下这几行时才截断，并且末行说出还剩几行。
+// **装不下怎么办**：宽了**折行**（一行都不少——折在空格处，折不出来才硬切）；只有屏幕**矮**到
+// 装不下这几行时才截断，并且末行说出还剩几行。**框恒填满这一屏**（第二幕 ⑦）：内容不够就用
+// 空行补足（补在候选与门口那一块的上面）——宽了折 · 矮了截 · 不够补空，三条各管一件事。
 // 高度连五行都没有（画不出框 + 账尾）时印一句"太矮"，不静默给一个空帧。
 import type { MetricValue } from '../probe/metrics.ts'
 import { costOf, matchModels, moneyText } from '../model/price.ts'
@@ -40,14 +43,23 @@ import type { Phase } from '../model/price.ts'
 import type { Catalog } from '../model/catalog.ts'
 import type { MetricReading } from '../probe/round.ts'
 import { skipsNote } from '../probe/status.ts'
-import type { StatusSnapshot } from '../probe/status.ts'
-import { clip, widthOf, wrap } from './glyph.ts'
+import type { RoundUsage, StatusSnapshot } from '../probe/status.ts'
+import { clip, glyphs, widthOf, wrap } from './glyph.ts'
+import { iconOf } from './icons.ts'
+import type { IconName } from './icons.ts'
+import { airOf, MIN_FRAME_ROWS } from './layout.ts'
+import { humanNumber } from '../human.ts'
+import { WORDS, stateFaceOf } from '../words.ts'
+import { DEFAULT_VIEW, viewNameOf } from './views.ts'
+import type { ViewKey } from './views.ts'
 
-/** 两栏至少要这么宽才画得下（再窄就收成单栏）：左 24 · 右 20 · 框与中间那根竖线 3 列。 */
-export const MIN_TWO_COLUMN = 24 + 20 + 3
+export { AIR_COLUMNS } from './layout.ts'
 
-/** 画得出框 + 账尾至少要几行：上下两条边 · 一行内容 · 一条分隔 · 一行账尾。 */
-export const MIN_HEIGHT = 5
+/**
+ * 画得出框 + 账尾至少要几行：上下两条边 · 一行内容 · 一条分隔 · 一行账尾。**值住在 `ui/layout.ts`
+ * 那一份布局常量表里**（第二幕 ④ 把这一带的数收成一处），这一行只是把那个名字露给这一份的读者。
+ */
+export const MIN_HEIGHT = MIN_FRAME_ROWS
 
 /**
  * 画得出框至少要几列：左右两根竖线 + 框内一列。**出处是代码，不是直觉**：`ui/term.ts` 的列宽探测是
@@ -71,14 +83,20 @@ export const MIN_WIDTH = 3
  * 的极窄提示兜住，见 `MIN_WIDTH`）。
  */
 export function innerOf(width: number): number {
-  return Math.max(0, width - 2)
+  return Math.max(0, width - 2 - 2 * airOf(width))
 }
 
-/** 一条读数的两栏。**它是这一份唯一的中间产物**——渲染与那三条对照都从它读。 */
+/**
+ * 一条读数的两栏。**它是这一份唯一的中间产物**——渲染与那三条对照都从它读。
+ *
+ * 第二幕 ⑦ 之后这两栏**不再并排**：它们各是一档 `Tab` 视图（`progress` / `spending`）的内容，
+ * 行文一字没动（决策材料问三：两栏各拿满宽，行文与今天 `bodyOf` 一字不变）。对照那三条
+ * （`frame.test.ts` ②③④）量的仍是这两栏，与它们印在屏上怎么摆无关。
+ */
 export interface FrameBody {
-  /** 左栏那些行：处境。 */
+  /** 处境那几行（`progress` 视图的内容）。 */
   readonly left: readonly string[]
-  /** 右栏那些行：读数。 */
+  /** 读数那几行（`spending` 视图的内容）。 */
   readonly right: readonly string[]
 }
 
@@ -86,7 +104,11 @@ export interface FrameBody {
 export interface Frame {
   readonly width: number
   readonly height: number
-  /** 左栏与右栏各占多少列（单栏那一档 `right` 是 0）。 */
+  /**
+   * 内容那一栏占多少列。第二幕 ⑦ 之后没有第二栏了（`right` 恒 0）——留着那一格是为了不动
+   * 这一份形状：读者与测试都按 `left + right + 3 = width` 读它。改主意的条件：再没有第二个
+   * 读者时（0.5.0 那一档看）就把 `right` 收掉，那时 `columns` 直接是一个数。
+   */
   readonly columns: { readonly left: number; readonly right: number }
   /** 账尾那一行（已经是把 `footerOf` 折进框宽之后的样子）。 */
   readonly footer: string
@@ -100,15 +122,22 @@ export interface Frame {
 }
 
 /**
- * 行的角色（U20；U3 加了 `readHeading`）：`border` 框线 · `body` 正文（树与读数）· `footer` 账尾 ·
- * `overlay` 临时那一层（候选 · 门口那一块 · 排队）· `read` 阅读面正文 · `readHeading` 阅读面开着时
- * **那个框的名字**。**只在地基这一层声明**——值是给终端那一层的 `theme` 查的键，排版本身不知道
+ * 行的角色（U20；U3 加了 `readHeading`；第三幕 ① 加了 `waiting`）：`border` 框线 · `body` 正文
+ * （树与读数）· `footer` 账尾 · `overlay` 临时那一层（候选 · 门口那一块的预览与排队行）·
+ * `waiting` **门口那一块里要人此刻按的那一行**（宪法 ② 点名的「门口选项行走等待黄」——它是"在等你"
+ * 那一件事，不是又一个弹层）· `read` 阅读面正文 · `readHeading` 阅读面开着时**那个框的名字**。**只在地基这一层声明**——值是给终端那一层的 `theme` 查的键，排版本身不知道
  * 任何样式。（**永久行与输入行不在这张表里**：U20 那条形状不动——永久行进终端历史要保持干净
  * 流水，输入行是光标算术那一行。）
  */
-export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'read' | 'readHeading'
+export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'waiting' | 'read' | 'readHeading' | 'hint' | 'ok' | 'refuse' | 'hit'
+
+export interface ConversationRow {
+  readonly text: string
+  readonly role: LineRole
+}
 
 export interface FrameInput {
+  readonly conversation?: readonly ConversationRow[]
   /** 读源一：那一刻的处境（`status --once` 印的那一份）。 */
   readonly snapshot: StatusSnapshot
   /** 读源二：八元指标。**不给就不印那一栏**——不拿 0 顶（`B1` 那一条）。 */
@@ -133,6 +162,14 @@ export interface FrameInput {
    */
   readonly permanent?: readonly string[]
   /**
+   * 读源九（**可读性三件 ② 的 sparkline**）：近几轮用量的那一份（`probe/status.ts` 的
+   * `usageByRoundOf` 折出来的）。
+   *
+   * **它只在结果与花费那一档视图里印**（另两档不印那一条），所以调用方按视图给。不给就一个字节都
+   * 不占——那一条小条形是增强，不是地板（"没有这一栏 → 与无该档输出逐字节同形"）。
+   */
+  readonly usageByRound?: readonly RoundUsage[] | undefined
+  /**
    * 读源五（**临时那一层**）：面板的候选行（`ui/menu.ts` 算好的原文）与选中项落在第几条。
    *
    * 它排在内容那一栏的**最下面**（挨着账尾）——面板是临时的一层，永久行与读数都不为它让位到看不见；
@@ -151,21 +188,70 @@ export interface FrameInput {
    * （`T9` 之前那一帧逐字节相同）。
    */
   readonly read?: ReadInput | undefined
+  /**
+   * 看哪一档视图（第二幕 ⑦）：`chat`（缺省，对话主面）· `progress`（处境）· `spending`（读数）。
+   * 缺省那一档由 `ui/views.ts` 的表说（`DEFAULT_VIEW`），这一份不另抄一个缺省值。
+   */
+  readonly view?: ViewKey | undefined
+  /**
+   * 切到哪一格（`T8`）：**在这一份里只进框名**（标题那一行印 `对话 · agent/r1/2`）。
+   *
+   * 折帧那一头按它筛行（`ui/follow.ts`），所以这一份拿到的快照已经是那一格的了；这里再要一次
+   * 是因为对话视图不印树（决策材料的线框稿里没有它）——不写框名，人就不知道读的是哪一格。
+   */
+  readonly focus?: string | null | undefined
   readonly width: number
   readonly height: number
 }
 
 /** 用量那四个数：**量到的和 + 没量到的条数**（与 `status --once` 同一个口径）。 */
 function usageText(t: { readonly total: number; readonly missing: number }): string {
-  return t.missing > 0 ? `${t.total}（缺 ${t.missing} 条）` : String(t.total)
+  return t.missing > 0 ? `${humanNumber(t.total)}（缺 ${humanNumber(t.missing)} 条）` : humanNumber(t.total)
 }
 
 /**
- * 两栏的内容。**只读快照，不算任何东西**——这一份里没有一处从事件重算的口径（那是
+ * 那条小条形最多印几轮（可读性三件 ② 的 sparkline）。**它是一个常量，可调**：八轮够看出"这一阵
+ * 是越花越多还是收住了"，再长一行里也读不出更多。改主意的条件＝人嫌短——改这一个数，那一行别处
+ * 一个字节都不动。
+ */
+export const SPARK_ROUNDS = 8
+
+/**
+ * 近几轮用量那条小条形（可读性三件 ② 的 sparkline）。**每轮一格**，四档从字形档取
+ * （空 · `░` · `▒` · `█`——`▓` 在 console-setup 那一档零命中，不用；决策材料 § 5.1）。
+ *
+ * 分级：零那一轮就是那一个空格位（"零就不印"在条形里是不印色块，**列位照旧对齐**——第几格是第几轮
+ * 这件事因此读得出来）；非零按**这一段里的峰值**分三级。量的是**每轮用量**（四个 token 数的合计），
+ * 不是钱：钱要价目与峰谷两样都得给，缺一样这一栏就不该印。**改主意的条件**＝有人要按钱量（那时把
+ * `costOf` 那一手接在这一处，仍是这一处判据）。
+ *
+ * 印不出来就不印（不是印一条空的）：一轮都没有 · 只有一轮（一个格子的趋势不算趋势）· 或者全是零。
+ * **没量到的那些项一起报**（"少印要说出来"）——条形是下界时那句话说在括号里。
+ */
+function sparkLineOf(usage: readonly RoundUsage[] | undefined): string | null {
+  const plots = (usage ?? []).filter((u) => u.round !== null)
+  if (plots.length < 2) return null
+  const shown = plots.slice(-SPARK_ROUNDS)
+  const max = shown.reduce((n, u) => Math.max(n, u.tokens.total), 0)
+  if (max <= 0) return null
+  const g: readonly [string, string, string, string] = glyphs().spark
+  const bar = shown
+    .map((u) => {
+      const level = u.tokens.total <= 0 ? 0 : 1 + Math.min(2, Math.floor((u.tokens.total / max) * 3))
+      return g[level] as string
+    })
+    .join('')
+  const miss = shown.reduce((n, u) => n + u.tokens.missing, 0)
+  return `近 ${shown.length} 轮${WORDS.usage} ${bar}（最高 ${humanNumber(max)}${miss > 0 ? ` · ${miss} 项没量到` : ''}）`
+}
+
+/**
+ * 两档视图的内容。**只读快照，不算任何东西**——这一份里没有一处从事件重算的口径（那是
  * `probe/` 那两处的事，两处都在它们自己那一份文件里）。
  *
- * 次序两栏都是"先粗后细"：左栏先是轮次那一行（状态 · 转移条数 · 打回几次）再逐条边、再每一格；
- * 右栏先是记账那几行（契约 · 验收 · 用量），再八元、再打回三数。
+ * 次序两档都是"先粗后细"：`progress` 那一档先是轮次那一行（状态 · 转移条数 · 打回几次）再逐条边、
+ * 再每一格；`spending` 那一档先是记账那几行（契约 · 验收 · 用量 · **近几轮那条小条形**），再八元、
+ * 再打回三数。
  */
 export function bodyOf(o: {
   readonly snapshot: StatusSnapshot
@@ -173,6 +259,7 @@ export function bodyOf(o: {
   readonly report?: readonly MetricReading[]
   readonly phase?: Phase
   readonly cat?: Catalog
+  readonly usageByRound?: readonly RoundUsage[] | undefined
 }): FrameBody {
   const s = o.snapshot
 
@@ -184,24 +271,56 @@ export function bodyOf(o: {
     const here = r.round === s.current ? ' · 最近一条落在这一轮' : ''
     // 跳步那一栏**不再自己做减法**（`hops - transitions` 在图外边那一档印出过 -1，在自环那一档
     // 把真的跳步抵成不印）；数与写法都从 `probe/status.ts` 那一处取，与命令行那一张脸同源。
-    left.push(`轮次 ${r.round} · 状态 ${r.state} · 转移 ${r.transitions} 条${skipsNote(r.skips)} · 打回 ${r.rejects} 次${here}`)
-    for (const e of r.edges) left.push(`  ${e}`)
+    left.push(
+      `${WORDS.round} ${r.round} · ${stateFaceOf(r.state)} · ${WORDS.transitions} ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
+        ` · ${WORDS.rejects} ${humanNumber(r.rejects)} 次${here}`,
+    )
+    // **那几条原始转移不上主面**：它们是值层原文（`r.edges` 逐条进 `--json`），
+    // 印出来是 `Idle ──land──> Planning` 这种内部名字——机器名上屏，人读不懂也不缺。条数与跳步数
+    // 在轮次那一行；逐条原文的读法在阅读面的事件流与 `fugue log`。同一条口径：**主面只留人话，
+    // 原文去阅读面**。改主意的条件：若实测发现"跳步那一条到底走了哪几步"在主面上要得紧，
+    // 就把 `probe/status.ts` 的每一步改成**结构化的**（`from` / `to` / `on` 三栏，与 `round new
+    // --json` 的 `trail` 同形），再由每一面各印各的人话——那是加值层的一栏，要人批。
     if (r.unrouted > 0) left.push(`  （图上走不通的 ${r.unrouted} 条：账与图对不上）`)
   }
   for (const a of s.agents) {
-    const stop = a.stopped === null ? '没停' : `${a.stopSteps ?? '?'} 步 · ${a.stopped}`
-    left.push(`格 ${a.agent} · 调 ${a.calls} 次 · ${a.steps} 步 · 工具调用 ${a.invocations} · 动作 ${a.actions} · 停：${stop}`)
+    // **零那一条印成一个状态，不印成一个"没有"**（决策材料问九：`停：没停` → `还在跑`）；
+    // 停下来的那一档是 `N 步就停（停因）`——停因是账上的原话（`agent/stop` 的 `stopped`），一个字不动。
+    const stop =
+      a.stopped === null
+        ? WORDS.moving
+        : `${a.stopSteps === undefined ? '?' : humanNumber(a.stopSteps)} ${WORDS.steps}${WORDS.halted}（${a.stopped}）`
+    // **一行一件事**：头一行只说"这是哪一格 · 它还在跑还是停了"，计数挪到缩进的那一行
+    // ——与对话面同一个形状（`chatOf` 那两行）。**零值不上屏**：一条命令都没起过的格不印
+    // 「运行命令 0 次」，与跳步 · 内核拒 · 边界挡同一条口径（零那一条不占宽度）。
+    left.push(`${WORDS.agent} ${a.agent} · ${stop}`)
+    left.push(
+      `  ${[
+        `${WORDS.calls} ${humanNumber(a.calls)} 次`,
+        `走了 ${humanNumber(a.steps)} ${WORDS.steps}`,
+        `${WORDS.invocations} ${humanNumber(a.invocations)}`,
+        a.actions > 0 ? `${WORDS.commands} ${humanNumber(a.actions)} 次` : '',
+      ]
+        .filter((one) => one !== '')
+        .join(' · ')}`,
+    )
   }
 
   const right: string[] = []
   right.push(
-    `契约 ${s.contracts} · 折叠尝试 ${s.attempts} · 冲突 ${s.conflicts} · 验收 ${s.accepts.accepts} 次（过 ${s.accepts.pass} / 没过 ${s.accepts.fail}）`,
+    `${WORDS.task} ${humanNumber(s.contracts)} · ${WORDS.merges} ${humanNumber(s.attempts)} 次 · ` +
+      `${WORDS.conflicts} ${humanNumber(s.conflicts)}` +
+      ` · ${WORDS.accepts} ${humanNumber(s.accepts.accepts)} 次（过 ${humanNumber(s.accepts.pass)} / 没过 ${humanNumber(s.accepts.fail)}）`,
   )
   right.push(
-    `用量 调用 ${s.usage.calls} · input ${usageText(s.usage.inputTokens)} · cacheRead ${usageText(s.usage.cacheReadTokens)}` +
+    `${WORDS.usage} ${WORDS.calls} ${humanNumber(s.usage.calls)} · input ${usageText(s.usage.inputTokens)}` +
+      ` · cacheRead ${usageText(s.usage.cacheReadTokens)}` +
       ` · cacheWrite ${usageText(s.usage.cacheWriteTokens)} · output ${usageText(s.usage.outputTokens)}` +
       ` · 思考 ${usageText(s.usage.reasoningTokens)}`,
   )
+  // 近几轮用量那条小条形（可读性三件 ②）：**排在用量那一行下面**——先给合计，再给"这一阵的走势"。
+  const spark = sparkLineOf(o.usageByRound)
+  if (spark !== null) right.push(spark)
   // 钱那一栏：与 `status --once` 同一处算法、同一句话（`src/model/price.ts` 的 `moneyText`）。
   if (o.phase !== undefined && o.cat !== undefined) {
     const match = matchModels(s.models, o.cat)
@@ -211,23 +330,62 @@ export function bodyOf(o: {
     right.push(`${m.metric} ${m.value === null ? '算不出来' : m.value}（${m.numerator ?? '—'}/${m.denominator ?? '—'}）`)
   }
   if (o.report !== undefined && o.report.length > 0) {
-    right.push(`打回 ${o.report.map((r) => `${r.metric} ${r.count}`).join(' · ')}`)
+    right.push(`打回 ${o.report.map((r) => `${r.metric} ${humanNumber(r.count)}`).join(' · ')}`)
   }
   return { left, right }
 }
 
 /**
- * 账尾那一行（全账的读数，**不属于任何一栏**）：**最近那条永久行的原文**；一条永久行都还没有时
- * 才是"最近一条事件是什么 + 一共几条"。
+ * 对话视图那一栏的一行：轮次头 · 块间细线 · 一格 agent · 那一格的读数（`aside`，缩进一行）。
  *
- * 次序是"最近一条"在前：这一行窄起来要从右边截（状态条那一档），先留住的是"账还在动"这个信号。
- * 永久行那一栏由分法给（`ui/stream.ts` 那一张表），这一份只读它的最后一条——不分法、不重算。
+ * `aside` 这一行的来由：格那一行从前五样挤在一起（这是谁 · 调用几次 · 几步 · 工具调用几次 ·
+ * 停没停），用小圆点串到底——读的人得先自己把那一行拆开。现在第一行只说"这是谁 · 它还在跑还是停了"，
+ * 计数那几样缩进着跟在下面。
  */
-export function footerOf(s: StatusSnapshot, permanent?: readonly string[]): string {
-  const last = permanent?.[permanent.length - 1]
-  if (last !== undefined) return last
-  if (s.last === null) return '事件 0 条（账上还没有一条）'
-  return `最近 ${s.last.t}（${s.last.writer} ${s.last.seq}）· 事件 ${s.events} 条`
+export interface ChatRow {
+  readonly kind: 'head' | 'rule' | 'agent' | 'aside'
+  readonly icon?: IconName | undefined
+  readonly text: string
+  readonly role?: LineRole
+}
+
+/**
+ * 图标那两列（第二幕 ⑨ 的前一半）：**档关着给空串**——一个字节都不占，于是与"根本没有这一档"
+ * 逐字节相同。开着是"一颗图标 + 一个空格"（两列，由 `widthOf` 量，不另记一个数）。
+ */
+function iconPrefixOf(icon: IconName | undefined): string {
+  if (icon === undefined) return ''
+  const glyph = iconOf(icon)
+  return glyph === '' ? '' : `${glyph} `
+}
+
+/** 最近汇报占据主面；状态与计数分别进入账尾和视图。 */
+export function chatOf(o: { readonly snapshot: StatusSnapshot; readonly conversation?: readonly ConversationRow[] }): readonly ChatRow[] {
+  if ((o.conversation?.length ?? 0) > 0) {
+    return (o.conversation as readonly ConversationRow[]).map((r) => ({ kind: 'head', text: r.text, role: r.role }))
+  }
+  const s = o.snapshot
+  const state = s.rounds.find((r) => r.round === s.current)?.state
+  if (state === 'Planning') return [{ kind: 'head', text: '计划已准备，等待你确认。', role: 'waiting' }]
+  if (state === 'Committed') return [{ kind: 'head', text: '任务已完成，可以继续对话。', role: 'ok' }]
+  if (state === 'Aborted') return [{ kind: 'head', text: '任务已中止，进展视图可查看原因。', role: 'refuse' }]
+  if (state !== undefined || s.agents.some((a) => a.stopped === null)) return [{ kind: 'head', icon: 'round', text: '正在处理你的任务。' }]
+  return [
+    { kind: 'head', icon: 'round', text: '说说你想做什么。' },
+    { kind: 'aside', text: '输入问题开始对话；/ 查看命令。', role: 'hint' },
+  ]
+}
+
+/**
+ * 账尾只显示运行状态，**不重复历史**（永久行已经在上面那块历史里了），也不显示内部事件坐标。
+ *
+ * **永久行不是它的入参**（原先挂着一个没人读的可选参数）：账尾一个字都不从那一列取。
+ */
+export function footerOf(s: StatusSnapshot): string {
+  const state = s.rounds.find((r) => r.round === s.current)?.state
+  const running = s.agents.filter((a) => a.agent !== 'round' && a.stopped === null).length
+  return (state === undefined ? '等待输入' : stateFaceOf(state)) +
+    (running > 0 ? ` · ${humanNumber(running)} 项任务在运行` : '')
 }
 
 /**
@@ -252,10 +410,11 @@ function cell(s: string, w: number): string {
   return cut + ' '.repeat(Math.max(0, w - widthOf(cut)))
 }
 
-/** 一段框线：左边一个空格与标签，右边拿 `─` 补满（位置不够就只剩 `─`）。 */
+/** 一段框线：左边一个空格与标签，右边拿横线补满（位置不够就只剩横线）。字形从档取。 */
 function bar(w: number, label?: string): string {
-  if (label === undefined || widthOf(label) + 3 > w) return '─'.repeat(Math.max(0, w))
-  return `─ ${label} ` + '─'.repeat(w - widthOf(label) - 3)
+  const h = glyphs().h
+  if (label === undefined || widthOf(label) + 3 > w) return h.repeat(Math.max(0, w))
+  return `${h} ${label} ` + h.repeat(w - widthOf(label) - 3)
 }
 
 /** 候选那一层那几行（`ui/menu.ts` 算好的原文）与选中项落在第几条（`T4`）。 */
@@ -274,6 +433,14 @@ export interface MenuInput {
 export interface BottomInput {
   readonly rows: readonly string[]
   readonly keep: number
+  /**
+   * 这几行里**要人此刻按的那一行**在第几个（`ui/gate.ts` 的选项行：`放行一次(y) · 拒(n) ·
+   * 中止(Esc)` 那一行，以及它举起手之后的两种写法）。
+   *
+   * 它走「等待」那一格（宪法 ②：门口选项行走等待黄），其余各行走候选/弹层那一格。不给（或越界）
+   * 时整块都还是弹层那一格——**与从前逐字节相同**（这一栏是加出来的，不是换掉）。
+   */
+  readonly waitingAt?: number | undefined
 }
 
 /** 树那几个节点（`ui/nav.ts` 算好的原文）与选中项落在第几个（`T8`）。 */
@@ -322,9 +489,9 @@ export function windowOf(n: number, sel: number, budget: number): MenuWindow {
 /**
  * 一帧。**纯函数**：进去的那几样决定出来的那几行，别的一处都不看。
  *
- * 尺寸：`width` / `height` 是入参。两栏要 `MIN_TWO_COLUMN` 以上才画得出，否则收成单栏；
- * 内容装不下时按行截断，末行说出还剩多少行（账尾那一条装不下时先让位——它是全账的读数，
- * 不是这一屏的内容）。`width <= 0 || height <= 0` 时给一个空帧（终端那一刻没给出尺寸）。
+ * 看哪一档视图由 `view` 说（不给就是 `ui/views.ts` 的 `DEFAULT_VIEW`）。尺寸：`width` / `height`
+ * 是入参；内容装不下时按行截断，末行说出还剩多少行（账尾那一条装不下时先让位——它是全账的
+ * 读数，不是这一屏的内容）。`width <= 0 || height <= 0` 时给一个空帧（终端那一刻没给出尺寸）。
  */
 export function frameOf(o: FrameInput): Frame {
   const { width, height } = o
@@ -332,52 +499,48 @@ export function frameOf(o: FrameInput): Frame {
   if (width <= 0 || height <= 0) return empty
   if (width < MIN_WIDTH) {
     // 极窄帧：画不出框就说出来。不加这一道，出来的是一整幅 `││`（框内 0 列）——那是静默的空帧。
-    const why = `（这一屏太窄：要 ${MIN_WIDTH} 列以上才画得出框，拿到的是 ${width} 列）`
+    const why = `（这一屏太窄：要 ${MIN_WIDTH} 列以上才画得出框）`
     return { ...empty, lines: [cell(why, width)], roles: ['body'] }
   }
   if (height < MIN_HEIGHT) {
     // 画不出框就说出来，不静默给一个空帧（读面那一条：少印要说）。
-    const why = `（这一屏太矮：要 ${MIN_HEIGHT} 行以上才画得出框与账尾，拿到的是 ${height} 行）`
+    const why = `（这一屏太矮：要 ${MIN_HEIGHT} 行以上才画得出框与账尾）`
     return { ...empty, lines: [cell(why, width)], roles: ['body'] }
   }
 
   const body = bodyOf(o)
-  // 阅读面开着（下面那一栏有行）：**整块地方给它**，框也跟着收成单栏——那一刻左右两栏一个字节都
-  // 不印，还留着 `┬` 与「读数」那个栏名，只会让人以为右边的数在别处（框名见下面 `topName`）。
+  // 阅读面开着（下面那一栏有行）：**整块地方给它**，内容那一栏一个字节都不印（框名见下面）。
   const readingOn = (o.read?.rows.length ?? 0) > 0
-  const two = !readingOn && width >= MIN_TWO_COLUMN && body.left.length > 0 && body.right.length > 0
-  // **右栏拿大头（3/5）**（U10c）：读数那一栏是"数字 + 分子/分母"的长行（八元指标一条
-  // 就是一句），40 列那档两栏对半时它截得最狠；处境那一栏的行短（轮次 · 状态 · 边），
-  // 2/5 装得下。两根竖线加两头的框占 3 列，先扣再分。
+  /**
+   * 看哪一档视图（第二幕 ⑦）：对话（缺省）· 处境 · 读数。三档**各拿满宽**——两栏不再并排，
+   * 于是「左栏 2/5 把一条边折成两行」与「右栏 3/5 把 `（过 2 / 没过` 切开」这两件事一起没了
+   * （决策材料问三：两栏各拿满宽，行文与今天 `bodyOf` 一字不变）。
+   */
+  const view: ViewKey = o.view ?? DEFAULT_VIEW
   const inner = innerOf(width)
-  const left = two ? Math.floor(((width - 3) * 2) / 5) : inner
-  const right = two ? width - 3 - left : 0
+  const edge = width - 2
+  const inset = ' '.repeat(airOf(width))
 
-  // 内容那一栏：**先把每一行折进它那一栏的列宽**，再一行对一行（右边短的那些补空）；
-  // 单栏那一档先把左栏印完再印右栏（同一个框，只是没有中间那根竖线）。
-  const rows: { readonly l: string; readonly r: string; readonly full?: boolean }[] = []
-  if (two) {
-    const l2 = body.left.flatMap((one) => wrap(one, left))
-    const r2 = body.right.flatMap((one) => wrap(one, right))
-    const n = Math.max(l2.length, r2.length)
-    for (let i = 0; i < n; i += 1) rows.push({ l: l2[i] ?? '', r: r2[i] ?? '' })
-  } else {
-    for (const one of body.left.flatMap((x) => wrap(x, left))) rows.push({ l: one, r: '' })
-    for (const one of body.right.flatMap((x) => wrap(x, left))) rows.push({ l: one, r: '' })
-  }
+
+  // 内容那一栏那几行：**哪一档视图说什么话**。对话视图是 `chatOf` 折出来的那几行
+  // （轮次头 · 细线 · 在飞那几格）；另两档是 `bodyOf` 的那一半，行文一字不变，只是各拿满宽。
+  const bodyRows: readonly { readonly l: string; readonly role: LineRole }[] =
+    view === 'chat'
+      ? chatOf(o).map((x) =>
+          x.kind === 'rule'
+            ? { l: glyphs().div.repeat(inner), role: 'border' as const }
+            : x.kind === 'aside'
+              ? { l: `  ${x.text}`, role: x.role ?? 'body' as const }
+              : { l: `${iconPrefixOf(x.icon)}${x.text}`, role: x.role ?? 'body' as const },
+        )
+      : (view === 'progress' ? body.left : body.right).map((l) => ({ l, role: 'body' as const }))
+  const rows = bodyRows.flatMap((one) => wrap(one.l, inner).map((x) => ({ l: x, role: one.role })))
 
   // 账尾那条状态条：**一行**，超出就从右边截（`clip` 留 `…`，说了它被截过）。
-  const footer = clip(footerOf(o.snapshot, o.permanent), inner)
-  // 框占上下两行，账尾占分隔 + 一行；装不下就先让账尾让位。**阅读面开着时内容那一栏一个字节都
-  // 不印**（`content` 是空的），所以让它参与"装不装得下"的只有框与账尾自己——不留那条看不见的
-  // 依赖（阅读面能印几行，取决于被它盖住的那一栏折成几行）。
-  const used = readingOn ? 0 : rows.length
-  let withFooter = used + 4 <= height
+  const footer = clip(footerOf(o.snapshot), inner)
+  // 上下框两行、分隔与账尾两行；六行正文的预算不随信息量漂移。
+  const withFooter = (o.bottom?.keep ?? 0) + 1 <= height - 4
   let budget = height - 2 - (withFooter ? 2 : 0)
-  if (budget < 1) {
-    withFooter = false
-    budget = height - 2
-  }
 
   // 候选那一层（`/` 菜单 · `Ctrl-P` 面板）**从内容那一栏的最下面切一块**（最多一半）：面板开开关关，
   // 上面那几行读数一个字节都不动；它自己装不下时把选中的那一条留在窗里，并把还剩几条说出来。
@@ -390,10 +553,11 @@ export function frameOf(o: FrameInput): Frame {
     else {
       const w = win as MenuWindow
       const at = Math.max(0, Math.min(menuAll.length - 1, o.menu?.sel ?? 0))
+      const g = glyphs()
       for (let i = w.from; i < w.from + w.count; i += 1) {
-        menuBody.push(`${i === at ? '▸' : ' '} ${menuAll[i] as string}`)
+        menuBody.push(`${i === at ? g.sel : ' '} ${menuAll[i] as string}`)
       }
-      if (w.summary) menuBody.push(`… 还有 ${w.above + w.below} 条（↑↓ 翻，选中第 ${at + 1} 条）`)
+      if (w.summary) menuBody.push(`${g.mark} 还有 ${w.above + w.below} 条`)
     }
   }
   // 阅读面那一栏（`T9`）**开着的时候整块地方给它**：树与内容那一栏都不印——那一刻人要看的就是
@@ -409,20 +573,28 @@ export function frameOf(o: FrameInput): Frame {
     const below = readAll.length - (top + count)
     // **被这一句提示顶掉的那一行也算遗漏**（交接单判决 7）：末行本来要印第 `top + count` 行，它现在
     // 被提示换了——这一行数的是"屏上没看见几行"，不是"游标之后还剩几行"。
-    if (below > 0) readBody[readBody.length - 1] = `… 下面还有 ${below + 1} 行（↑↓ 翻 · Esc 收起）`
+    if (below > 0) {
+      const g = glyphs()
+      readBody[readBody.length - 1] = `${g.mark} 下面还有 ${below + 1} 行`
+    }
   }
   budget -= readBody.length
 
   // 树那一栏（`T8`）**排在内容那一栏的最上面**（它是导航：主线为根 · agent 缩进一级）。它最多占四行
   // ——装不下时 `windowOf` 把选中那一个留在窗里，并把还剩几个说出来；预算先从这里扣（一栏都没有时
   // 下面这几步与从前逐字节相同）。**阅读面开着就不印它**（地方让给正文）。
-  const navAll = readingOn ? [] : (o.nav?.rows ?? [])
+  // 树那一栏（`T8`）**不进对话视图**：决策材料的线框稿里没有它，而对话视图那 6 行按 ④ 的行账
+  // 分给了轮次头 · 细线 · 在飞那几格；切格走 `Alt-1…9`，读的是哪一格由框名说（见下）。
+  const navAll = readingOn || view === 'chat' ? [] : (o.nav?.rows ?? [])
   const navCap = navAll.length === 0 ? 0 : Math.max(1, Math.min(4, budget - 2))
   const navWin = navAll.length === 0 ? null : windowOf(navAll.length, o.nav?.sel ?? 0, navCap)
-  const navBody: string[] = []
+  // **命中按坐标定，不按字面定**（原先拿印出去的那一串跟选中的那一行比字）：两格名字一样时
+  // 两行会一起亮，而"哪一格被选中"是坐标上的事。`hit` 于是跟着这一行一起折出来。
+  const navBody: { readonly l: string; readonly hit: boolean }[] = []
   if (navWin !== null) {
-    for (let i = navWin.from; i < navWin.from + navWin.count; i += 1) navBody.push(navAll[i] as string)
-    if (navWin.summary) navBody.push(`  … 还有 ${navWin.above + navWin.below} 个节点（Tab 循环 · Alt-1…9 直选）`)
+    const sel = o.nav?.sel ?? 0
+    for (let i = navWin.from; i < navWin.from + navWin.count; i += 1) navBody.push({ l: navAll[i] as string, hit: i === sel })
+    if (navWin.summary) navBody.push({ l: `  ${glyphs().mark} 还有 ${navWin.above + navWin.below} 个节点`, hit: false })
   }
   budget -= navBody.length
 
@@ -443,38 +615,58 @@ export function frameOf(o: FrameInput): Frame {
   const dropped = readingOn ? 0 : rows.length - content.length
   // 树那一栏在最上面，然后才是内容那一栏（它的每一行都是横贯整栏的）。行带着**角色**（U20）：
   // 树与读数是正文 · 阅读面正文是 `read` · 候选与门口那一块是临时的 `overlay`。
-  const shown: { readonly l: string; readonly r: string; readonly full?: boolean; readonly role: LineRole }[] = [
-    ...navBody.map((l) => ({ l, r: '', full: true, role: 'body' as const })),
-    ...content.map((x) => ({ ...x, role: 'body' as const })),
+  // 内容那一栏与临时那几层都**横贯整栏**（第二幕 ⑦ 之后没有第二栏了）：每行一个角色。
+  const shown: { readonly l: string; readonly role: LineRole }[] = [
+    ...navBody.map((one) => ({ l: one.l, role: one.hit ? ('hit' as const) : ('body' as const) })),
+    ...content.map((x) => ({ l: x.l, role: x.role })),
   ]
-  if (dropped > 0) shown.push({ l: `… 还有 ${dropped} 行没印（这一屏 ${height} 行）`, r: '', role: 'body' })
-  for (const one of readBody) shown.push({ l: one, r: '', full: true, role: 'read' as const })
-  for (const one of menuBody) shown.push({ l: one, r: '', full: true, role: 'overlay' as const })
-  for (const one of gateBody) shown.push({ l: one, r: '', full: true, role: 'overlay' as const })
+  if (dropped > 0) shown.push({ l: `${glyphs().mark} 还有 ${dropped} 行没印`, role: 'body' })
+  for (const one of readBody) shown.push({ l: one, role: 'read' })
+  // **框恒填满这一屏**（第二幕 ⑦ 收尾）：`ui/layout.ts` 那本行账里「内容 6 行」是个**定数**
+  // （框恒 10 行），而这一份从前只是"内容够长时看起来填满了"——账还小的时候（一两格 agent）
+  // 框就短一截：框底浮上来，空行落在框与提示行之间，而且框底随账长大缩小、每帧多几行要重写。
+  // 补出来的空行补在**候选与门口那一块的上面**：那两块接着输入行（决策材料那张线框里门口那一块
+  // 就压在分隔线上），不该被空行顶上去。矮到装不下时走的是截断那条路（`还有 N 行没印`），
+  // 这一处只补**多出来的**空行，不顶掉任何一行。
+  //
+  // 改主意的条件：有人嫌账小的时候框里空——去掉这一段，框就回到"内容多高就多高"
+  // （框底随账动，逐行 diff 会多写几行）。
+  const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length
+  for (let i = fixed; i < height; i += 1) shown.push({ l: '', role: 'body' })
+  for (const one of menuBody) shown.push({ l: one, role: 'overlay' })
+  // 门口那一块（第三幕 ①）：**要人此刻按的那一行**（选项行）走「等待」那一格，其余各行走弹层那一格。
+  // 位置按"**离末行几个**"算：上面那几段让位是从**头**开始切的（末 `keep` 行一定还在），所以选项行
+  // 与末行的距离在切前切后是同一个。
+  const waitFromEnd =
+    o.bottom === undefined || o.bottom.waitingAt === undefined ? -1 : gateAll.length - 1 - o.bottom.waitingAt
+  for (const [i, one] of gateBody.entries()) {
+    shown.push({ l: one, role: gateBody.length - 1 - i === waitFromEnd ? 'waiting' : 'overlay' })
+  }
 
   const lines: string[] = []
   const roles: LineRole[] = []
   // 框名（U3）：阅读面开着时那个框叫「阅读面」，它那一行报 `readHeading`（主题里是加粗）——整块
-  // 地方给的是它，框就得说它。两栏那一档照旧是「处境 / 读数」。
-  lines.push(`┌${bar(left, readingOn ? '阅读面' : '处境')}${two ? `┬${bar(right, '读数')}` : ''}┐`)
+  // 地方给的是它，框就得说它。其余照视图的名字（对话 · 进展 · 结果与花费），切到某一格时带上
+  // 那一格：对话视图不印树，框名是「读的是哪一格」这件事唯一的落点。
+  const g = glyphs()
+  const focus = o.focus === undefined || o.focus === null ? '' : ` · ${o.focus}`
+  const head = readingOn ? '阅读面' : `${viewNameOf(view)}${view === 'chat' ? '' : focus}`
+  lines.push(`${g.tl}${bar(edge, head)}${g.tr}`)
   roles.push(readingOn ? 'readHeading' : 'border')
   for (const one of shown) {
-    // 候选那一层**横贯整栏**（它是临时的一层，不参与左右两栏的分工）。
-    if (one.full === true) {
-      lines.push(`│${cell(one.l, inner)}│`)
-      roles.push(one.role)
-      continue
-    }
-    lines.push(`│${cell(one.l, left)}${two ? `│${cell(one.r, right)}` : ''}│`)
+    lines.push(`${g.v}${inset}${cell(one.l, inner)}${inset}${g.v}`)
     roles.push(one.role)
   }
   if (withFooter) {
-    lines.push(`├${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┤`)
+    // **账尾的分隔那一行**：横线从字形档的 `div` 取（与框线那一横分成两格）——`box` 那一档交集里
+    // 没有比 `─` 更细的一横，所以它与框同一条；`rich` 那一档是 `┈`。它**铺满框内**（块与块之间那条
+    // 细线是另一件事：那条在对话视图的内容里，走空气列，见 `AIR_COLUMNS`）。
+    lines.push(`${g.ml}${g.div.repeat(edge)}${g.mr}`)
     roles.push('border')
-    lines.push(`│${cell(footer, inner)}│`)
+    lines.push(`${g.v}${inset}${cell(footer, inner)}${inset}${g.v}`)
     roles.push('footer')
   }
-  lines.push(`└${'─'.repeat(left)}${two ? `┴${'─'.repeat(right)}` : ''}┘`)
+  lines.push(`${g.bl}${g.h.repeat(edge)}${g.br}`)
   roles.push('border')
-  return { width, height, columns: { left, right }, footer, lines, roles }
+  return { width, height, columns: { left: inner, right: 0 }, footer, lines, roles }
 }

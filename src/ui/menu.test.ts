@@ -24,6 +24,7 @@ import { FLAGS_OF } from '../cli/flags.ts'
 import { statusOf } from '../probe/status.ts'
 import { tmpDir } from '../../test/helpers/tmp.ts'
 import { frameOf } from './frame.ts'
+import { glyphs } from './glyph.ts'
 import { openSession } from './follow.ts'
 import {
   PATHS_DEPTH,
@@ -103,7 +104,8 @@ test('② 两段都从同一张表推：名字前缀筛 · 一个都匹配不上
     '--root', '--agent', '--json', '--help', '--materialize', '--no-clock',
   ])
   assert.deepEqual(names('/round go --r'), ['--root'], '手里那个词跟着筛')
-  assert.deepEqual(names('/log '), ['--root', '--agent', '--json', '--help'])
+  // `--header` 也在这一格里（第一幕 ②）：开关那一段从 FLAGS_OF 推，表长了它就跟着长。
+  assert.deepEqual(names('/log '), ['--root', '--agent', '--json', '--help', '--header'])
   // 最长的那一条命令赢（`round go` 赢过 `round`）。
   assert.deepEqual(names('/round '), ['round new', 'round plan', 'round go', 'round run', 'round work'])
   // 查询词是从行里推的（三个来源各一条规则）。
@@ -198,10 +200,13 @@ test('⑤ 面板那一帧：候选排在内容下面 · 选中带记号 · 装�
       menu: { rows: o.rows ?? rows, sel: o.sel ?? 0 },
     }).lines
   const lines = frame({ sel: 2 })
-  assert.ok(lines.some((l) => l.includes('▸ watch')), `选中的那一条带记号：\n${lines.join('\n')}`)
+  // 选中的记号**从字形档推**（第二幕 ⑤ 起那是 `▶`）：手抄一个字形，换档那天这条断言不跟动。
+  const g = glyphs()
+  const picked = `${g.sel} watch`
+  assert.ok(lines.some((l) => l.includes(picked)), `选中的那一条带记号：\n${lines.join('\n')}`)
   assert.ok(lines.some((l) => l.includes('status')), '候选那几行在面板里')
   // 候选排在内容下面（挨着框底），而且**没有把框撑破**。
-  const at = lines.findIndex((l) => l.includes('▸ watch'))
+  const at = lines.findIndex((l) => l.includes(picked))
   assert.ok(at > 0 && at < lines.length - 1, `候选夹在框里面：第 ${at + 1} 行 / 共 ${lines.length} 行`)
   for (const l of lines) assert.equal([...l].length > 0, true)
   assert.ok(lines.some((l) => l.includes('还有')), `30 条装不下，要说还剩几条：\n${lines.join('\n')}`)
@@ -212,9 +217,9 @@ test('⑤ 面板那一帧：候选排在内容下面 · 选中带记号 · 装�
   assert.deepEqual(frame({ sel: 2 }), lines, '同一份输入两次折出来逐字节相同')
   // 选中的那一条一定看得见（窗跟着选中走）。
   const last = frame({ sel: rows.length - 1 })
-  assert.ok(last.some((l) => l.includes('▸ ')), '选到最后一条时它也在窗里')
+  assert.ok(last.some((l) => l.includes(`${g.sel} `)), '选到最后一条时它也在窗里')
   console.log(
-    `⑤ 读数：${rows.length} 条候选 → 一屏 ${K} 行的框里印出 ${lines.filter((l) => /^│[ ▸]/.test(l)).length} 行（候选 3 行 + 内容）· ` +
+    `⑤ 读数：${rows.length} 条候选 → 一屏 ${K} 行的框里印出 ${lines.filter((l) => l.startsWith(`${g.v} `) || l.startsWith(`${g.v}${g.sel}`)).length} 行（候选 3 行 + 内容）· ` +
       `箭头指向第 3 条（窗跟着它走）· 装不下时说"还有 29 条"· 0 条时说"（没有匹配的）"· 两次折出来逐字节相同`,
   )
 })

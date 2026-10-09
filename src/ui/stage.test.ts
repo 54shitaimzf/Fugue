@@ -8,13 +8,17 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { StatusRow } from '../probe/status.ts'
-import { gateFaceOf, lineOf } from './gate.ts'
+import { conclusionLineOf, gateFaceOf, lineOf } from './gate.ts'
+import type { Contract } from '../contract/types.ts'
+import { WORDS } from '../words.ts'
 import type { GateFace } from './gate.ts'
-import { openStage, panelWantOf } from './stage.ts'
+import { openStage } from './stage.ts'
+import { panelWantOf } from './layout.ts'
 import type { LineArgv, RunLauncher } from './run.ts'
 import { innerOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
 import { faceRowsOf, facesOf, firstFace, readStateOf } from './read.ts'
+import type { HintWhen } from './keymap.ts'
 
 /** 假的那一只手（`RunLauncher` 的四样全记下来：起了什么 · 停过没有 · argv 现推）。 */
 interface Ctl {
@@ -26,6 +30,8 @@ interface Ctl {
   running: boolean
   face: GateFace | null
   rows: readonly StatusRow[]
+  /** 提示行为哪一档问过（第三幕 ②）：`hint` 与 `keysOf` 两处都记，次序就是问的次序。 */
+  readonly whens: HintWhen[]
 }
 
 /**
@@ -38,6 +44,8 @@ function stageOf(
     rows?: readonly StatusRow[]
     running?: boolean
     termRows?: number
+    /** 框下面那一行提示行的原文（第二幕 ④）。缺省空串——不给就与从前逐字节相同。 */
+    hint?: string
     /** 这一刻的终端列数（U2 的一把尺那一格要它随测试改）。缺省 80，与从前逐字节相同。 */
     columns?: () => number
   } = {},
@@ -55,6 +63,7 @@ function stageOf(
     running: o.running ?? false,
     face: o.face ?? null,
     rows: o.rows ?? [],
+    whens: [],
   }
   const go: RunLauncher = {
     argvOf: (line: string): LineArgv => ({ words: line.split(' '), argv: ['fugue', ...line.split(' ')], why: null }),
@@ -81,6 +90,14 @@ function stageOf(
     },
     columns: o.columns ?? ((): number => 80),
     termRows: () => o.termRows,
+    hint: (when) => {
+      ctl.whens.push(when)
+      return o.hint ?? ''
+    },
+    keysOf: (when) => {
+      ctl.whens.push(when)
+      return `${when} 那一段`
+    },
     rows: () => ctl.rows,
     pendingFace: async () => ctl.face,
     run: () => go,
@@ -116,18 +133,19 @@ test('① 门口开着且行空：按两次 y → 举手一次 · press 恰一�
   assert.ok(ctl.redraws > 0, '生效那一下重画了')
 })
 
-test('② Tab 补不动就在树里循环：主线 → agent → 主线（环形，不越界）', () => {
-  const { stage, ctl } = stageOf({ rows: NAV_ROWS })
+test('② Tab 补不动就换视图：对话 → 进展 → 结果与花费 → 对话（环形，不越界）', () => {
+  const { stage } = stageOf({ rows: NAV_ROWS })
   stage.onAdvance(NAV_ROWS)
-  // 空行按 Tab：没有词可补（`completeOf` 答不动）→ 轮到「在面板之间循环」那半句。
+  // 空行按 Tab：没有词可补（`completeOf` 答不动）→ 轮到「换视图」那半句（第二幕 ⑦：
+  // 三档视图环形轮换；切格改走 `Alt-1…9`，所以这一档不再写注记——换视图在屏上看得见）。
+  const viewOf = (): string | undefined => stage.view().view
+  assert.equal(viewOf(), 'chat', '缺省那一档是对话（`ui/views.ts` 的 `DEFAULT_VIEW`）')
   stage.onAction({ action: 'complete' })
+  assert.equal(viewOf(), 'progress', '第一下换到进展')
   stage.onAction({ action: 'complete' })
+  assert.equal(viewOf(), 'spending', '第二下换到结果与花费')
   stage.onAction({ action: 'complete' })
-  const swaps = ctl.notes.filter((n) => n.startsWith('切到 '))
-  assert.equal(swaps.length, 3, '三下 Tab 该切三次（补不动全走循环）')
-  assert.equal(swaps[0], '切到 agent/a1（2/2）', `第一下切到 agent（实得 ${swaps[0]}）`)
-  assert.equal(swaps[1], '切到 主线（round）（1/2）', `第二下循环回主线（实得 ${swaps[1]}）`)
-  assert.equal(swaps[2], '切到 agent/a1（2/2）', `第三下又切过去——是环形不是到头停（实得 ${swaps[2]}）`)
+  assert.equal(viewOf(), 'chat', '第三下绕回对话——是环形不是到头停')
 })
 
 test('③ Esc 七级的次序：门口最外，一层一层往里退（每一下只动最外那一级）', async () => {
@@ -202,8 +220,8 @@ test('⑥ 面板高度按终端行数分账：输入那块不得与显示区等�
   // 3/5（上限 24 · 下限是缺省档 + 4）· 量不到行数不分账。
   assert.deepEqual(
     [24, 30, 40, 16].map((r) => panelWantOf(r, false)),
-    [9, 11, 12, 8],
-    '缺省档：24 行终端 9 行（+输入行 = 10，显示区 14——显示占大头）· 40 行及以上回到 K',
+    [9, 10, 10, 8],
+    '缺省档：24 行终端 9 行框 · 40 行及以上回到框的 10 行（第二幕 ④：分账收的是框，提示行加在框下面）',
   )
   assert.deepEqual(
     [24, 30, 40, 16].map((r) => panelWantOf(r, true)),
@@ -212,8 +230,8 @@ test('⑥ 面板高度按终端行数分账：输入那块不得与显示区等�
   )
   assert.deepEqual(
     [panelWantOf(undefined, false), panelWantOf(undefined, true)],
-    [12, 24],
-    '量不到行数：不分账，回 K / OVERLAY_WANT（与「量不到就不夹」同一条）',
+    [10, 24],
+    '量不到行数：不分账，回框的 10 行 / OVERLAY_WANT（与「量不到就不夹」同一条）',
   )
   // 接线：24 行的终端上想要 9 行；开一层弹层（Ctrl-P 候选）长到 13；Esc 收掉回到 9。
   const { stage } = stageOf({ termRows: 24 })
@@ -262,4 +280,134 @@ test('⑦ 一把尺：舞台递给阅读面的列宽就是 `innerOf`——屏上
   for (let i = 0; i < 40; i += 1) stage.onAction({ action: 'historyNewer' })
   assert.equal(stage.view().read?.top, want2.length - 1, '`↓` 翻到底：`top` 停在新列宽那一串的末行')
   console.log(`⑦ 读数：200 列（框内 ${innerOf(200)}）折成 ${want2.length} 行 · 翻到底 top=${want2.length - 1}`)
+})
+
+// ── ⑧ 结论行进永久行（第二幕 ⑧）──────────────────────────────────────────────────
+test('⑧ 门口一开就推一条结论行：一批恰一条 · 同一批再算一遍不再说 · 换一批才说', async () => {
+  // 一份最小的调查契约（不占路径 · 不算验收——三个数里只有 tasks 那一栏非零）。
+  const contract = {
+    id: 'r1.investigate.1',
+    agent: 'agent/r1/1',
+    kind: 'investigate',
+    question: '现状怎么写的',
+    evidenceRequired: [],
+    seed: [],
+  } as unknown as Contract
+  const said = (): readonly string[] => ctl.notes.filter((n) => n.includes('打算开'))
+  const { stage, ctl } = stageOf({ face: gateFaceOf({ round: 'r1', fingerprint: 'fp-1', same: [], contracts: [contract] }, {}) })
+  await stage.refreshGate()
+  assert.deepEqual(
+    [...said()],
+    [conclusionLineOf({ tasks: 1, paths: 0, accepts: 0 })],
+    `门口开一次恰一条结论行：${JSON.stringify(said())}`,
+  )
+  // 账又往前动了一条（`round/*` / `holder/*`）→ 重算一遍：**同一批不再说第二遍**。
+  await stage.refreshGate()
+  assert.equal(said().length, 1, '同一批重算不重复推')
+  // 换一批（编号变了）：再说一条，而且是新那一批的数。
+  ctl.face = gateFaceOf({ round: 'r1', fingerprint: 'fp-2', same: [], contracts: [contract, contract] }, {})
+  await stage.refreshGate()
+  assert.equal(said().length, 2, '换了一批要说')
+  assert.ok(said()[1]?.includes('2 个'), `第二条说的是新那一批：${said()[1]}`)
+  // 门口没了（那一批发出去了）：不推任何东西。
+  ctl.face = null
+  await stage.refreshGate()
+  assert.equal(said().length, 2, '门口没了不再推')
+  console.log(`⑧ 读数：结论行 ${said().length} 条（一批一条）· 第一条「${said()[0] ?? ''}」`)
+})
+
+// ── ⑨ 详情面在阅读面里（第二幕 ⑧）───────────────────────────────────────────────
+test('⑨ `Ctrl-R` 开出来的那几面里有详情面（快照只在阅读面开着时折）· 没有账就没有它', () => {
+  const rows: readonly StatusRow[] = [
+    { pos: { writer: 'round', seq: 1 }, e: { t: 'round/state' as never, round: 'r1' as never, from: 'Idle' as never, to: 'Planning' as never } },
+    { pos: { writer: 'agent/r1/1', seq: 1 }, e: { t: 'bound/deny' as never, agent: 'agent/r1/1' as never, path: 'etc/passwd' as never, rule: 'scope' as never, space: 'virtual' as never } },
+  ]
+  const { stage, ctl } = stageOf({ rows })
+  stage.onAction({ action: 'read' })
+  // 换一圈面：每一下 `Tab` 都报那一面的名字（`阅读面换一面 · <标题>`）。
+  for (let i = 0; i < 4; i += 1) stage.onAction({ action: 'complete' })
+  const titles = ctl.notes.filter((n) => n.startsWith('阅读面'))
+  const detail = titles.find((n) => n.includes('详情')) ?? ''
+  assert.ok(detail !== '', `换一圈该换到详情面：${JSON.stringify(titles)}`)
+  // **那几样原始读数在行上**：标题只报"这是哪一面"，不端那一面自己的账（折叠几行 · 只计数几行）。
+  // 收起重开一次再走一步，让当前这一面正好是详情面，然后看它印出来的行。
+  stage.onAction({ action: 'read' })
+  stage.onAction({ action: 'read' })
+  stage.onAction({ action: 'complete' })
+  const shown = [...(stage.view().read?.rows ?? [])].join('\n')
+  assert.ok(shown.includes(WORDS.bounds) && shown.includes(WORDS.last), `详情面的行里该写着那几样：${shown}`)
+  // **零值不上屏**：这一格的内核拒是 0，那一栏一个字都不印。
+  assert.ok(!shown.includes(WORDS.denies), `零值那一栏不上屏（这一格的内核拒是 0）：${shown}`)
+  // **地板**：账上一行都没有时那一面不存在，`Tab` 也不会停在它上面。
+  const empty = stageOf({})
+  empty.stage.onAction({ action: 'read' })
+  for (let i = 0; i < 4; i += 1) empty.stage.onAction({ action: 'complete' })
+  assert.equal(empty.ctl.notes.some((n) => n.includes('详情')), false, '没有账就没有详情面')
+  console.log(`⑨ 读数：${titles.length} 条换面记 · 换到详情面「${detail}」`)
+})
+
+// ── ⑩ 门口那一块里"要按的那一行"的坐标（第三幕 ①）────────────────────────────────
+test('⑩ 门口开着时，那一块的末一行是"要按的那一行"：坐标递给面板，门口收起来就整块不在了', async () => {
+  const contract = {
+    id: 'r1.implement.1',
+    agent: 'agent/r1/1',
+    kind: 'implement',
+    goal: '把门口那一行染黄',
+    assertions: [],
+    ownedPaths: ['src/ui/gate.ts'],
+    deliverables: [],
+    seed: [],
+  } as unknown as Contract
+  const { stage, ctl } = stageOf({ face: gateFaceOf({ round: 'r1', fingerprint: 'fp-w', same: [], contracts: [contract] }, {}) })
+  await stage.refreshGate()
+  const bottom = stage.view().bottom
+  assert.ok(bottom !== undefined, '门口开着就该有那一块')
+  const rows = bottom?.rows ?? []
+  const at = bottom?.waitingAt
+  assert.equal(at, rows.length - 1, '末一行就是选项行（这一档还没有排队那一条）')
+  assert.ok((rows[at as number] ?? '').startsWith('放行一次(y)'), `那一行该是选项行：${String(rows[at as number])}`)
+  assert.equal((rows[0] as string).includes('放行一次'), false, '第一行不是它（预览排在前面）')
+  // 门口收起来：那一块整块不在了——坐标也就不给（不给就与从前同形）。
+  ctl.face = null
+  await stage.refreshGate()
+  assert.equal(stage.view().bottom, undefined, '门口没了那一块也没了')
+  console.log(`⑩ 读数：门口 ${rows.length} 行 · 要按的那一行在第 ${String(at)} 个（末行）「${String(rows[at as number])}」`)
+})
+
+// ── ⑪ 提示行的处境分档与"同一份来源"（第三幕 ②）───────────────────────────────
+test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 > 都不看；阅读面那一句注记与提示行同源', async () => {
+  const contract = {
+    id: 'r1.implement.1',
+    agent: 'agent/r1/1',
+    kind: 'implement',
+    goal: '提示行按处境分档',
+    assertions: [],
+    ownedPaths: ['src/ui/keymap.ts'],
+    deliverables: [],
+    seed: [],
+  } as unknown as Contract
+  const { stage, ctl } = stageOf({
+    face: gateFaceOf({ round: 'r1', fingerprint: 'fp-h', same: [], contracts: [contract] }, {}),
+    rows: NAV_ROWS,
+  })
+  const asked = (): readonly string[] => [...ctl.whens]
+  // ① 都不开：不看处境（`any`）。
+  ctl.whens.length = 0
+  stage.view()
+  assert.deepEqual(asked(), ['any'], '门口与阅读面都没开 → 不看处境')
+  // ② 门口那一块开着：门口那一档。
+  await stage.refreshGate()
+  ctl.whens.length = 0
+  stage.view()
+  assert.deepEqual(asked(), ['gate'], '门口那一块开着 → 门口那一档')
+  // ③ 阅读面开着：阅读面那一档压过门口（门口那三个键它自己在屏幕上印着）。
+  stage.onAction({ action: 'read' })
+  ctl.whens.length = 0
+  stage.view()
+  assert.deepEqual(asked(), ['read'], '阅读面开着 → 阅读面那一档（压过门口）')
+  // ④ **同一份来源**：开的那一句注记里那一段是 `keysOf('read')` 给的，不是写死在 `stage.ts` 里的。
+  const note = ctl.notes.find((n) => n.startsWith('阅读面 ·')) ?? ''
+  assert.ok(note.includes('（read 那一段）'), `那一句注记该读同一份来源：${note}`)
+  assert.equal(note.includes('Tab 换一面'), false, '写死的那一句不该再留在 stage.ts 里')
+  console.log(`⑪ 读数：三档都问到了（any → gate → read）· 那一句注记「${note}」`)
 })

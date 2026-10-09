@@ -14,13 +14,16 @@
 //      一个字都不出现（人拍的：那三档要 S5 的能力闸，见 `gate.ts` 头注）。
 //   ⑤ **放行那一档跑的就是 `round go`**：`lineOf('approve')` 与 `g` 那一键是同一条命令；`reject`
 //      不跑命令（一个字节都不落）。
+//   ⑥ **结论行**（第二幕 ⑧）：那一批的三个数（几件事 · 覆盖几条路径 · 验收几项）与那一行原文；
+//      **负对照**：调查那一档不占路径也不算验收（把它当实现那一档数，三个数当场不同）。
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Contract } from '../contract/types.ts'
-import { GATE_KEEP, GATE_VIEW, clampAt, gateFaceOf, gateRowsOf, lineOf, optionRowOf, pressGate, previewLinesOf, gateQueueRowOf, stepAt } from './gate.ts'
+import { GATE_KEEP, GATE_VIEW, clampAt, conclusionLineOf, conclusionOf, gateFaceOf, gateRowsOf, lineOf, optionRowOf, pressGate, previewLinesOf, gateQueueRowOf, stepAt } from './gate.ts'
 import type { GateBatch, GateCard } from './gate.ts'
 import { widthOf } from './glyph.ts'
 import { GO_LINE } from './run.ts'
+import { WORDS } from '../words.ts'
 
 /** 品牌类型那一栏（`RelPath` 一类）：这一份里那些值是拿来喂接口的，不是账上真发生过的。 */
 const brand = (v: string): never => v as never
@@ -77,9 +80,9 @@ test('① 队列行逐字来自那一批：第 i/N 份就是第 i 份 · 下标�
   for (let at = 0; at < 3; at += 1) {
     const row = gateQueueRowOf(face, at)
     const id = (BATCH.contracts[at] as Contract).id
-    assert.ok(row.includes(`第 ${at + 1}/3 份`), `第 ${at} 份那一行该说"第 ${at + 1}/3 份"：${row}`)
-    assert.ok(row.includes(id), `那一行该带着这一份的 id（${id}）：${row}`)
-    assert.ok(row.includes('还有 3 份等你点头'), `那一行该说还有几份：${row}`)
+    assert.ok(row.includes(`当前 ${at + 1}/3`), `第 ${at} 份那一行该说"第 ${at + 1}/3 份"：${row}`)
+    assert.ok(!row.includes(id), `那一行该带着这一份的 id（${id}）：${row}`)
+    assert.ok(row.includes('待确认 3 项任务'), `那一行该说还有几份：${row}`)
     for (const other of BATCH.contracts) {
       if (other.id === id) continue
       assert.equal(row.includes(other.id), false, `第 ${at} 份那一行里混进了别的契约：${row}`)
@@ -93,7 +96,11 @@ test('① 队列行逐字来自那一批：第 i/N 份就是第 i 份 · 下标�
   assert.equal(stepAt(3, 0, -1), 0, '头一份再往上还是头一份（夹住，不环形）')
   assert.equal(stepAt(3, 2, 1), 2, '最后一份再往下还是最后一份')
   assert.equal(stepAt(3, 1, 1), 2)
-  assert.equal(gateQueueRowOf(gateFaceOf({ ...BATCH, contracts: [] }), 0), '门口这一批一份契约都没有（门不会停在这样一批上——报出来）')
+  assert.equal(
+    gateQueueRowOf(gateFaceOf({ ...BATCH, contracts: [] }), 0),
+    `门口这一批一份${WORDS.task}都没有（门不会停在这样一批上——报出来）`,
+    '一份都没有时要说出来（第二幕 ⑧ 起这句话里的那个词从词表取）',
+  )
   console.log(`① 读数：三份各扫一遍都带自己那个 id · 夹回来的五档（-1 → 0 · 3 → 2 · 1.5 → 0 · 空批次那一句）· ` +
     `行里的字：${gateQueueRowOf(face, 1)}`)
 })
@@ -138,11 +145,11 @@ test('③ 预览按类型分派：三种契约三种话；认不出来的动作�
   // `implement`：头一行是目标，随后是**命令原文**（从配置里读来的那一条，逐字）与写入面。
   const impl = previewLinesOf(implCard).join('\n')
   assert.ok(impl.includes('实现：把解析器拆出来'), impl)
-  assert.ok(impl.includes('起进程：/bin/sh -c true'), impl)
+  assert.ok(impl.includes('运行命令：/bin/sh -c true'), impl)
   assert.ok(impl.includes('写路径：src/parse.ts'), impl)
   assert.ok(impl.includes('交付物：src/parse.ts（模块）'), impl)
   assert.ok(impl.includes('验收：单元测试全过（test）'), impl)
-  assert.ok(impl.includes('种子：src/parse.ts'), impl)
+  assert.ok(impl.includes('参考文件：src/parse.ts'), impl)
   // `investigate`：问什么 · 要交什么证据 · 交上来的说明是什么。**不给命令那一栏**（它不跑动作）。
   const inv = previewLinesOf(invCard).join('\n')
   assert.ok(inv.includes('调查：现状是怎么写的'), inv)
@@ -153,7 +160,7 @@ test('③ 预览按类型分派：三种契约三种话；认不出来的动作�
   const res = previewLinesOf(resCard).join('\n')
   assert.ok(res.includes('解冲突：src/parse.ts'), res)
   assert.ok(res.includes('要动的冲突路径：src/parse.ts'), res)
-  assert.ok(res.includes('起进程：/bin/sh -c true'), res)
+  assert.ok(res.includes('运行命令：/bin/sh -c true'), res)
   // **负对照**：配置里没绑那个动作 → 那一行说出**哪个名字**没绑，而不是印一条不存在的命令。
   const bare = gateFaceOf(BATCH, {})
   const bareImpl = previewLinesOf((bare.cards as readonly GateCard[])[0] as GateCard).join('\n')
@@ -168,7 +175,7 @@ test('③ 预览按类型分派：三种契约三种话；认不出来的动作�
   const tail = rows.slice(-GATE_KEEP)
   assert.equal(tail.length, GATE_KEEP)
   for (const l of preview) assert.ok(widthOf(l) <= 30, `这一行超宽了（${widthOf(l)}）：${l}`)
-  assert.ok((tail[0] as string).startsWith('还有 3 份等你点头 · 第 1/3 份'), `队列行被截也要先留着头几个字：${String(tail[0])}`)
+  assert.ok((tail[0] as string).startsWith('待确认 3 项任务 · 当前 1/3'), `队列行被截也要先留着头几个字：${String(tail[0])}`)
   assert.ok((tail[1] as string).startsWith('放行一次(y)'), `选项行也一样：${String(tail[1])}`)
   console.log(`③ 读数：三张卡各 ${face.cards.map((c) => c.detail.length).join('/')} 行明细 · ` +
     `没绑动作那一档印「（配置里没绑这个动作：test）」· 30 列下预览折成 ${preview.length} 行、每行 ≤ 30 列 · ` +
@@ -192,4 +199,52 @@ test('⑤ 放行跑的就是 `round go`（与 `g` 那一键同一条）· 拒了
   assert.equal(lineOf('approve'), 'round go', '与 `g` 那一键按下去发的那一条逐字相同（界面里没有第二条放行路径）')
   assert.equal(lineOf('reject'), '', '拒了就是一个字节都不落：没有命令可跑')
   console.log(`⑤ 读数：approve → 「${lineOf('approve')}」（= GO_LINE）· reject → 「」（空串）`)
+})
+
+// ── ⑥ 结论行（第二幕 ⑧）──────────────────────────────────────────────────────
+test('⑥ 结论行：打算开几件事 · 覆盖哪些 · 按什么验收（三个数只在一处算）', () => {
+  // 这一批三份：一份实现（1 条写路径 · 1 条验收）· 一份调查（不占路径 · 不算验收）· 一份解冲突
+  // （1 条冲突路径 · 1 条验收）。
+  assert.deepEqual(
+    { ...conclusionOf(BATCH) },
+    { tasks: 3, paths: 2, accepts: 2 },
+    '三个数：3 件事 · 1 写入面 + 1 冲突路径 = 2 · 1 + 1 = 2',
+  )
+  // 算术那一处真的在读每一份契约（不是把第一份乘三）：两份实现契约各自那几条路径都算进去。
+  const two: GateBatch = {
+    ...BATCH,
+    contracts: [
+      { ...IMPL, ownedPaths: [brand('a'), brand('b')], assertions: [{ name: '甲', action: brand('test') }] } as unknown as Contract,
+      { ...IMPL, id: brand('r1.implement.2'), ownedPaths: [brand('c'), brand('d'), brand('e')], assertions: [] } as unknown as Contract,
+    ],
+  }
+  assert.deepEqual({ ...conclusionOf(two) }, { tasks: 2, paths: 5, accepts: 1 }, '两份实现：路径 2 + 3 = 5 · 验收 1 + 0 = 1')
+  // 空批次照数：0 也是一个读数（不印成语义不明的空话——门根本不会停在这样一批上，门口那一行自己会报）。
+  assert.deepEqual({ ...conclusionOf({ ...BATCH, contracts: [] }) }, { tasks: 0, paths: 0, accepts: 0 }, '空批次三个数都是 0')
+  // 那一行原文：词从词表取（表那一格改了，这一行跟着改）。
+  const line = conclusionLineOf(conclusionOf(BATCH))
+  // **钉成字面量**（与黄金帧同一条做法）：拿 `WORDS.*` 拼期望值的话，改词表那一格而没改站点这一条
+  // 照样绿——两种漂法（表漂 / 站点写死）它一种都抓不住。下面那一圈反过来证明这几个词确实从表取。
+  assert.equal(line, '这一轮打算开 3 个任务 · 覆盖 2 条路径 · 验收 2 条 · 门口停着等你', `结论行原文：${line}`)
+  for (const k of ['task', 'paths', 'accepts', 'gate'] as const) {
+    assert.ok(line.includes(WORDS[k]), `结论行里该有词表那一个词「${WORDS[k]}」：${line}`)
+  }
+  // **负对照**：把调查那一份也按实现那一档数（只读 `ownedPaths`、不看 `kind`），路径数当场不同。
+  const naive = BATCH.contracts.reduce((n, c) => n + ((c as { readonly ownedPaths?: readonly unknown[] }).ownedPaths?.length ?? 0), 0)
+  assert.notEqual(naive, conclusionOf(BATCH).paths, '分档数（1 + 0 + 1）与「只读 ownedPaths」那一版（1 + 0 + 0）该分得开')
+  console.log(`⑥ 读数：${line} · 三份契约（${BATCH.contracts.map((c) => c.kind).join(' · ')}）· 空批次 → 0/0/0`)
+})
+
+
+test('缺省十行框中，执行命令与写入路径靠近确认选项保留', async () => {
+  const { frameOf } = await import('./frame.ts')
+  const { statusOf } = await import('../probe/status.ts')
+  const face = gateFaceOf(BATCH, CMDS)
+  const rows = gateRowsOf({ face, view: GATE_VIEW, columns: 96 })
+  const f = frameOf({ snapshot: statusOf([]), width:100, height:10, bottom:{rows,keep:GATE_KEEP,waitingAt:rows.length-1} })
+  const text = f.lines.join('\n')
+  assert.ok(text.includes('运行命令：/bin/sh -c true'))
+  assert.ok(text.includes('写路径：src/parse.ts'))
+  assert.ok(text.includes('放行一次(y)'))
+  assert.ok(!text.includes('agent/r1/'))
 })

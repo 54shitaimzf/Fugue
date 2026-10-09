@@ -99,7 +99,7 @@ function maskText(text, paths = []) {
   )
   for (const p of wanted) out = out.split(p).join('<ROOT>')
   // 路径前缀还在时也换掉
-  out = out.replaceAll(tmpdir(), '<TMP>')
+  out = out.replaceAll(tmpdir(), '<TMP>').replaceAll('/tmp', '<TMP>')
   const home = homedir()
   if (home && home !== '/') out = out.replaceAll(home, '<HOME>')
   for (const [re, to] of PLAIN_RULES) out = out.replace(re, to)

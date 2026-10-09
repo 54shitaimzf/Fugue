@@ -74,8 +74,8 @@ sh tools/live-round.sh src/cli/__fixture__/wire-in/scenario.json \
 
 ```text
 漂移检：HEAD 没动 · 这次合并动到 [notes.md] · 盘上与目标树不同 [] · 会被覆盖的（盘上既不是底也不是目标树）[（没有）]
-  契约 1 份：r1.implement.1
-  预检：Planning 0 对 · 合并前 0 对
+  任务 1 份：r1.implement.1
+  预检：准备计划 0 对 · 合并前 0 对
   折叠：折了 0 步
   验收：通过 2 · 没通过 0 · 跑不起来 0
   推进：写 1 条 · 删 0 条 · 跳过 2 条

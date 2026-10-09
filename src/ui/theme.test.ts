@@ -24,7 +24,7 @@ function sinkOf(o: { columns: number }): { written: string[]; out: TermOut } {
 test('① DEFAULT_THEME：四个角色有值，body 与 read 不在表里；两族名单从这张表推', () => {
   assert.deepEqual(
     Object.keys(DEFAULT_THEME).sort(),
-    ['border', 'footer', 'overlay', 'readHeading'],
+    ['border', 'footer', 'hit', 'ok', 'overlay', 'readHeading', 'refuse', 'waiting'],
     '主题只动"边与弹出"与阅读面那个框名，正文（body · read）缺省不动',
   )
   assert.equal(DEFAULT_THEME.border, '\x1b[2m', '框线：暗一档')
@@ -32,7 +32,11 @@ test('① DEFAULT_THEME：四个角色有值，body 与 read 不在表里；两�
   const byValue = (v: string): string[] =>
     Object.entries(DEFAULT_THEME).filter(([, got]) => got === v).map(([role]) => role).sort()
   assert.deepEqual(byValue('\x1b[2m'), ['border'], '只有框线暗一档')
-  assert.deepEqual(byValue('\x1b[1m'), ['footer', 'overlay', 'readHeading'], '账尾改粗（U3）· 弹层 · 阅读面框名')
+  assert.deepEqual(
+    byValue('\x1b[1m'),
+    ['footer', 'hit', 'ok', 'overlay', 'readHeading', 'refuse', 'waiting'],
+    '账尾改粗（U3）· 弹层 · 阅读面框名 · 门口要按的那一行（第 1 级与弹层同一条属性）',
+  )
   assert.equal(
     byValue('\x1b[2m').length + byValue('\x1b[1m').length,
     Object.keys(DEFAULT_THEME).length,
@@ -50,15 +54,15 @@ test('② 两道退回门：--no-style 或 NO_COLOR 非空 → 不给主题；NO
   assert.equal(themeOf({ noStyle: true, noColor: '' }), undefined, '两道门一起：还是退回')
 })
 
-test('③ 退回档的字节流与没有主题那一档逐字节相同（四族角色全在场 · themeOf 的答案原样递给 openTerm）', () => {
+test('③ 退回档的字节流与没有主题那一档逐字节相同（五族角色全在场 · themeOf 的答案原样递给 openTerm）', () => {
   // 同一帧画三遍：不给 theme（U20 的缺省）· `--no-style` 那一档 · `NO_COLOR=1` 那一档。
   // 后两档的字节流与第一份逐字节相同——退回是"一个字节都不多"，不是"另写一份"。
-  // **四族角色全在场**（U3 之后是 border · footer · overlay · readHeading）：少一族在场，这条对照
-  // 就量不到那一族的退回，是句空话。
-  const rows = ['┌────────────────────────────────────┐', '│阅读面 · 框名那一行│', '│阅读面正文│', '├────────────────────────────────────┤', '│账尾│', '│候选│', '└────────────────────────────────────┘']
-  const roles = ['readHeading', 'read', 'body', 'border', 'footer', 'overlay', 'border']
+  // **五族角色全在场**（U3 之后是 border · footer · overlay · readHeading，第三幕 ① 加了 waiting）：
+  // 少一族在场，这条对照就量不到那一族的退回，是句空话。
+  const rows = ['┌────────────────────────────────────┐', '│阅读面 · 框名那一行│', '│阅读面正文│', '├────────────────────────────────────┤', '│账尾│', '│候选│', '│放行一次(y) · 拒(n) · 中止(Esc)│', '│成功│', '│错误│', '│命中│', '└────────────────────────────────────┘']
+  const roles = ['readHeading', 'read', 'body', 'border', 'footer', 'overlay', 'waiting', 'ok', 'refuse', 'hit', 'border']
   const themedRoles = Object.keys(DEFAULT_THEME) as readonly string[]
-  for (const role of themedRoles) assert.ok(roles.includes(role), `这一帧里要有 ${role}（四族齐了才量得动退回）`)
+  for (const role of themedRoles) assert.ok(roles.includes(role), `这一帧里要有 ${role}（五族齐了才量得动退回）`)
   const drawOnce = (theme: Parameters<typeof openTerm>[0]['theme']): string => {
     const { written, out } = sinkOf({ columns: 40 })
     openTerm({ out, height: rows.length, term: 'xterm-256color', theme }).draw([], () => ({ rows, roles }))

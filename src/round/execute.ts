@@ -201,7 +201,7 @@ export interface RunTailDeps {
   readonly handoff?: boolean
   /**
    * 合并前那一档预检的严宽。**缺省 `false`：只报不拒**——判决照旧进 `precheckMerge` 那一栏、
-   * 照旧印在报告那一行（`预检：Planning N 对 · 合并前 M 对`），而它不再拦下这一轮。
+   * 照旧印在报告那一行（`预检：准备计划 N 对 · 合并前 M 对`），而它不再拦下这一轮。
    * 给 `true` 才是 fail-closed（`mergeGate` 报出即拒）。
    *
    * **为什么反过来**（人拍的 · 样本盘第十二趟之后）：两道闸各管一件事，而"声明相交"不等于
