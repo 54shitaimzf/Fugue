@@ -111,7 +111,7 @@ export function conclusionOf(batch: GateBatch): GateConclusion {
 export function conclusionLineOf(c: GateConclusion): string {
   return (
     `这一轮打算开 ${c.tasks} 个${WORDS.task} · 覆盖 ${c.paths} 条${WORDS.paths}` +
-    ` · ${WORDS.accepts} ${c.accepts} 条 · ${WORDS.gate}停着等你`
+    ` · ${WORDS.accepts} ${c.accepts} 条 · ${WORDS.gate}`
   )
 }
 
@@ -235,16 +235,16 @@ export function lineOf(option: GateOption): string {
 /** 队列行：**还有几份 · 第几份 · 这一份是谁**（`index/total` 就是 § 5.19 那一条）。 */
 export function gateQueueRowOf(face: GateFace, at: number): string {
   const n = face.cards.length
-  if (n === 0) return `门口这一批一份${WORDS.task}都没有（门不会停在这样一批上——报出来）`
+  if (n === 0) return '没有待确认任务'
   const i = clampAt(n, at)
   return `待确认 ${n} 项${WORDS.task} · 当前 ${i + 1}/${n}`
 }
 
 /** 选项行：**三档**；举过手就把那一句"再按一次"说出来（二段确认要对人可见）。 */
 export function optionRowOf(view: GateView): string {
-  if (view.armed === 'approve') return '再按 y / Enter 放行整批 · Esc 收起'
-  if (view.armed === 'reject') return '再按 n / Enter 拒绝整批 · Esc 收起'
-  return 'y 放行整批 · n 拒绝 · Esc 收起'
+  if (view.armed === 'approve') return '再按 y / Enter 执行整批 · Esc 收起'
+  if (view.armed === 'reject') return '再按 n / Enter 暂不执行 · Esc 收起'
+  return 'y 执行整批 · n 暂不执行 · Esc 收起'
 }
 
 /**

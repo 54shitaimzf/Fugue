@@ -124,13 +124,13 @@ test('① 门口开着且行空：按两次 y → 举手一次 · press 恰一�
   // 第一下：举手（二段确认的第一段——只说话，不起进程）。
   stage.onAction({ action: 'approve', key: 'y' })
   assert.equal(ctl.presses.length, 0, '第一下只是举手，一个进程都不起')
-  assert.ok(stage.view().bottom?.rows.some(n => n.includes('再按 y / Enter 放行整批')), '举手反馈在确认行看得见')
+  assert.ok(stage.view().bottom?.rows.some(n => n.includes('再按 y / Enter 执行整批')), '举手反馈在确认行看得见')
   assert.equal(ctl.notes.some(n => n.includes('举了手')), false, '临时反馈不污染历史')
   // 第二下：生效——起的就是 `lineOf('approve')` 那一条（与 `g` 键同一条命令）。
   stage.onAction({ action: 'approve', key: 'y' })
   assert.equal(ctl.presses.length, 1, '两次按下恰一次生效')
   assert.equal(ctl.presses[0]?.line, lineOf('approve'), `起的那一条该是 lineOf('approve')（${lineOf('approve')}）`)
-  assert.ok(ctl.notes.some((n) => n.includes('按了 y')), '生效那一下也要看得见')
+  assert.ok(ctl.notes.some((n) => n.includes('已确认执行这批计划')), '生效那一下也要看得见')
   assert.ok(ctl.redraws > 0, '生效那一下重画了')
 })
 
@@ -155,7 +155,7 @@ test('③ Esc 七级的次序：门口最外，一层一层往里退（每一下
   await stage.refreshGate()
   // 第 1 下（行还空着 · 门口那一块开着）→ 只收它（队列不动 · 那一趟不停）。
   stage.onAction({ action: 'cancel' })
-  assert.ok(ctl.notes.some((n) => n.includes('收起了门口那一块')), '第一下收门口（行空着才走这一级——`escStepOf` 的判据）')
+  assert.ok(ctl.notes.some((n) => n.includes('确认已收起')), '第一下收门口（行空着才走这一级——`escStepOf` 的判据）')
   assert.equal(ctl.stops.length, 0, '收门口那一下不打断在途的趟')
   // 把下面几级全都占上：排队两条草稿（忙时 Enter 入队）。
   stage.onAction({ action: 'insert', text: 'say one', key: 's' })
@@ -366,8 +366,8 @@ test('⑩ 门口开着时，那一块的末一行是"要按的那一行"：坐�
   const rows = bottom?.rows ?? []
   const at = bottom?.waitingAt
   assert.equal(at, rows.length - 1, '末一行就是选项行（这一档还没有排队那一条）')
-  assert.ok((rows[at as number] ?? '').startsWith('y 放行整批'), `那一行该是选项行：${String(rows[at as number])}`)
-  assert.equal((rows[0] as string).includes('y 放行整批'), false, '第一行不是它（预览排在前面）')
+  assert.ok((rows[at as number] ?? '').startsWith('y 执行整批'), `那一行该是选项行：${String(rows[at as number])}`)
+  assert.equal((rows[0] as string).includes('y 执行整批'), false, '第一行不是它（预览排在前面）')
   // 门口收起来：那一块整块不在了——坐标也就不给（不给就与从前同形）。
   ctl.face = null
   await stage.refreshGate()

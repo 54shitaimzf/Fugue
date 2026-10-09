@@ -146,7 +146,7 @@ export const TABLE: readonly Binding[] = [
     note: '取消链第一级：先关一层弹层，再打断、再丢排队草稿、再清空输入，都没有就什么都不做',
     // 同一个 `Esc`，两处处在说的是两件事（第三幕 ②）：门口那一块开着是"收起门口"，阅读面开着是
     // "收起"——两处各有自己的一级，措辞照各自那一级写。
-    says: { gate: '收起门口', read: '收起' },
+    says: { gate: '收起确认', read: '收起' },
     by: 'T5',
   },
   {
@@ -368,23 +368,23 @@ export const TABLE: readonly Binding[] = [
     keys: ['g', 'G'],
     hint: '继续这一轮',
     says: { pending: '查看确认' },
-    note: '有待确认的任务时查看整批，按 y 后再确认才放行；其余时候起一次 `fugue round go`',
+    note: '有待确认的任务时查看计划；其余时候继续当前任务',
     by: 'T2',
   },
   {
     action: 'approve',
     keys: ['y'],
-    hint: '放行',
-    says: { gate: '放行整批' },
-    note: '门口那一批：放行它（起一次 `fugue round go`）；**再按一次 `y` 或 Enter 才生效**——只在门口那一块开着、且输入行空着的时候是动作，别处它就是那个字',
+    hint: '执行',
+    says: { gate: '执行整批' },
+    note: '执行整批：确认卡开着且输入行空时，按 y 后再按 y 或 Enter 才开始',
     by: 'T6',
   },
   {
     action: 'reject',
     keys: ['n'],
-    hint: '拒',
-    says: { gate: '拒绝整批' },
-    note: '门口那一批：拒它——**一个字节都不落**，门照旧停着等人；再按一次 `n` 或 Enter 才生效（同上）',
+    hint: '暂不执行',
+    says: { gate: '暂不执行' },
+    note: '暂不执行：按 n 后再按 n 或 Enter；计划仍保留，可补充要求再讨论',
     by: 'T6',
   },
   {

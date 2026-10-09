@@ -33,7 +33,7 @@ test('确认选项在窄屏中折行，整批范围与收起含义可见', () =>
     assert.ok(!text.includes('中止'), 'Esc 只收起界面，不能声称中止任务')
   }
   assert.match(hintLineOf(KEYMAP, 3, 'gate'), /↑ 上一项 · ↓ 下一项/)
-  assert.ok(gateRowsOf({ face, view: { at: 0, armed: null }, columns: 76 }).join(' ').includes('y 放行整批 · n 拒绝 · Esc 收起'), '行动提示仍在卡片中，提示行露导航')
+  assert.ok(gateRowsOf({ face, view: { at: 0, armed: null }, columns: 76 }).join(' ').includes('y 执行整批 · n 暂不执行 · Esc 收起'), '行动提示仍在卡片中，提示行露导航')
 })
 
 test('确认开合和举手的多帧：9→13→9，首按零执行，未变帧零重写，退出收走全部区域', async () => {
@@ -72,7 +72,7 @@ test('确认开合和举手的多帧：9→13→9，首按零执行，未变帧�
     draw()
     assert.deepEqual(presses, [], '首按只举手，不能起命令')
     assert.equal(notes.length, 1, '只有打开时的一条结论；举手不向历史重复写入')
-    assert.ok(chunks.at(-1)?.includes('再按 y / Enter 放行整批'))
+    assert.ok(chunks.at(-1)?.includes('再按 y / Enter 执行整批'))
     draw()
     const unchanged = chunks.at(-1) as string
     assert.equal(unchanged.split(CLEAR_LINE).length - 1, 0, '完全相同的帧零清行')

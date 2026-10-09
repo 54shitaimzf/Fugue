@@ -98,7 +98,7 @@ test('① 队列行逐字来自那一批：第 i/N 份就是第 i 份 · 下标�
   assert.equal(stepAt(3, 1, 1), 2)
   assert.equal(
     gateQueueRowOf(gateFaceOf({ ...BATCH, contracts: [] }), 0),
-    `门口这一批一份${WORDS.task}都没有（门不会停在这样一批上——报出来）`,
+    '没有待确认任务',
     '一份都没有时要说出来（第二幕 ⑧ 起这句话里的那个词从词表取）',
   )
   console.log(`① 读数：三份各扫一遍都带自己那个 id · 夹回来的五档（-1 → 0 · 3 → 2 · 1.5 → 0 · 空批次那一句）· ` +
@@ -112,7 +112,7 @@ test('② 二段确认：按一下只举手 · 再按同一个键（或 Enter）
   assert.equal(one.t, 'arm')
   if (one.t !== 'arm') return
   assert.equal(one.view.armed, 'approve', '举起来的是这一档')
-  assert.ok(optionRowOf(one.view).includes('再按 y / Enter 放行整批'), `举手之后那一句要说清再按一次：${optionRowOf(one.view)}`)
+  assert.ok(optionRowOf(one.view).includes('再按 y / Enter 执行整批'), `举手之后那一句要说清再按一次：${optionRowOf(one.view)}`)
   // 二 · 第二下才生效。
   assert.equal(pressGate(one.view, 'approve').t, 'do', '同一个键第二下才生效')
   // 三 · `Enter` 是一条等效的路（§5.19 五："同一个键或 Enter 再按一次"）。
@@ -174,7 +174,7 @@ test('③ 预览按类型分派：三种契约三种话；认不出来的动作�
   for (const l of rows) assert.ok(widthOf(l) <= 30, `这一行超宽了（${widthOf(l)}）：${l}`)
   const tail = rows.slice(-layout.keep).join(' ')
   assert.ok(tail.includes('待确认 3 项任务 · 当前 1/3'), tail)
-  assert.ok(tail.includes('y 放行整批'), tail)
+  assert.ok(tail.includes('y 执行整批'), tail)
   assert.ok(tail.includes('Esc 收起'), tail)
   assert.equal(layout.waitingAt, rows.length - layout.waitingCount!)
   console.log(`③ 读数：三种契约逐字核对 · 未绑定动作明确报出 · 30 列所有行 ≤ 30 · 选项保留 ${layout.waitingCount} 行`)
@@ -182,9 +182,9 @@ test('③ 预览按类型分派：三种契约三种话；认不出来的动作�
 })
 
 // ── ④ 三档，不是五档 ─────────────────────────────────────────────────────────
-test('④ 选项行只有三档：y 放行整批 · n 拒绝 · Esc 收起；a / p / 升权档一个字都不出现', () => {
+test('④ 选项行只有三档：y 执行整批 · n 暂不执行 · Esc 收起；a / p / 升权档一个字都不出现', () => {
   const row = optionRowOf(GATE_VIEW)
-  assert.equal(row, 'y 放行整批 · n 拒绝 · Esc 收起')
+  assert.equal(row, 'y 执行整批 · n 暂不执行 · Esc 收起')
   // **负对照**：五档那一版的那三样（人拍的不落，见 `gate.ts` 头注：要 S5 的能力闸）。
   for (const gone of ['(a)', '总是', '(p)', '规则', '给网络', '给写权', '全放']) {
     assert.equal(row.includes(gone), false, `那一行里混进了这一版不落的档：${gone} —— ${row}`)
@@ -224,7 +224,7 @@ test('⑥ 结论行：打算开几件事 · 覆盖哪些 · 按什么验收（�
   const line = conclusionLineOf(conclusionOf(BATCH))
   // **钉成字面量**（与黄金帧同一条做法）：拿 `WORDS.*` 拼期望值的话，改词表那一格而没改站点这一条
   // 照样绿——两种漂法（表漂 / 站点写死）它一种都抓不住。下面那一圈反过来证明这几个词确实从表取。
-  assert.equal(line, '这一轮打算开 3 个任务 · 覆盖 2 条路径 · 验收 2 条 · 门口停着等你', `结论行原文：${line}`)
+  assert.equal(line, '这一轮打算开 3 个任务 · 覆盖 2 条路径 · 验收 2 条 · 等待确认', `结论行原文：${line}`)
   for (const k of ['task', 'paths', 'accepts', 'gate'] as const) {
     assert.ok(line.includes(WORDS[k]), `结论行里该有词表那一个词「${WORDS[k]}」：${line}`)
   }
@@ -244,6 +244,6 @@ test('缺省十行框中，执行命令与写入路径靠近确认选项保留',
   const text = f.lines.join('\n')
   assert.ok(text.includes('运行命令：/bin/sh -c true'))
   assert.ok(text.includes('写路径：src/parse.ts'))
-  assert.ok(text.includes('y 放行整批'))
+  assert.ok(text.includes('y 执行整批'))
   assert.ok(!text.includes('agent/r1/'))
 })

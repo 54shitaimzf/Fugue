@@ -335,19 +335,19 @@ export function openStage(deps: StageDeps): Stage {
     const line = lineOf(option)
     if (line === '') {
       deps.note(
-        `拒了门口那一批（${gate?.cards.length ?? 0} 份）：一个字节都没落——门照旧停着，要改就 /say 一句再判一次`,
+        '本次选择没有启动执行。计划仍等你确认；可补充要求再讨论。',
       )
       settle()
       return
     }
     const go = deps.run()
     if (go === null || go.running) {
-      deps.note('那一趟还在跑：这一下先没发出去（排队是 T7 那一格的事）')
+      deps.note(go === null ? '执行入口不可用，计划仍等你确认。' : '当前任务仍在运行，这批计划尚未开始执行。')
       settle()
       return
     }
-    deps.note(`按了 ${option === 'approve' ? 'y' : 'n'}：起一次 \`${line}\`（${go.argvOf(line).argv.join(' ')}）`)
-    go.press(line)
+    const started = go.press(line)
+    deps.note(started ? `已确认执行这批计划（${gate?.cards.length ?? 0} 项任务）` : '未能启动执行，计划仍等你确认。')
     settle()
   }
   /** 一趟收尾那一下（原 `openRun` 的 `onDone`——搬进来之后 observe 那头只剩一行接线）。 */
@@ -514,7 +514,7 @@ export function openStage(deps: StageDeps): Stage {
         if (step === 'gate') {
           gateView = { ...gateView, armed: null }
           gateHidden = true
-          deps.note('收起了门口那一块；这批任务仍在等你确认')
+          deps.note('确认已收起；这批计划仍等你确认')
           settle()
           return
         }
