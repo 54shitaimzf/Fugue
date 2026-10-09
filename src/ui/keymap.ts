@@ -95,9 +95,9 @@ export type Stage = 'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'T8' | 'T9'
  * （`keymap.test.ts` ⑦ 量这一条）——宽着的时候人看不出档，窄着的时候**先露出来的那几条**才是这一档
  * 的判断。
  */
-export type HintWhen = 'any' | 'gate' | 'read'
+export type HintWhen = 'any' | 'gate' | 'read' | 'pending'
 
-/** 能换一句话的那两档（`any` 那一档没有"换一句"这回事：它就是表里那一句）。 */
+/** 能按处境换一句话的那几档（`any` 那一档没有"换一句"这回事：它就是表里那一句）。 */
 export type HintSayWhen = Exclude<HintWhen, 'any'>
 
 /** 表里的一行。 */
@@ -366,8 +366,9 @@ export const TABLE: readonly Binding[] = [
   {
     action: 'go',
     keys: ['g', 'G'],
-    hint: '放行这一轮',
-    note: '放行：起一次 `fugue round go`（账由那个子进程写，界面一个字节都不写）',
+    hint: '继续这一轮',
+    says: { pending: '查看确认' },
+    note: '有待确认的任务时查看整批，按 y 后再确认才放行；其余时候起一次 `fugue round go`',
     by: 'T2',
   },
   {
@@ -389,8 +390,8 @@ export const TABLE: readonly Binding[] = [
   {
     action: 'help',
     keys: ['?'],
-    hint: '重印这一行',
-    note: '把按键那一行重印一遍（翻上去了再按一下就回来）',
+    hint: '按键帮助',
+    note: '打开按键表，Esc 返回原来的画面',
     by: 'T2',
   },
 ]
@@ -405,20 +406,23 @@ export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
   // 表里其余那些照旧缀在后面。**这一档就是 `fugue tui` 起来时那一行**（缺省档），逐字节锁着。
   any: ['submit', 'menu', 'complete', 'read', 'interrupt', 'quit', 'panel'],
   // 门口那一块开着：此刻要人按的是 `y` / `n`（放行整批 · 拒绝整批），再往下才是收起门口与翻批。
+  // 收起的批次仍等人：先露重新查看的入口，配置改键也随同一张表。
+  pending: ['go', 'read', 'help'],
   gate: ['approve', 'reject', 'cancel', 'pageUp', 'pageDown', 'help'],
   // 阅读面开着：`Tab` 换一面 · `↑`/`↓` 翻行 · `Esc` 收起（这三样在别处都不是这个意思）。
   read: ['complete', 'historyOlder', 'historyNewer', 'cancel', 'pageUp', 'pageDown', 'read', 'help'],
 }
 
 /**
- * 这一刻是哪一档（第三幕 ②）：阅读面开着报 `read`，否则门口那一块开着报 `gate`，都没有报 `any`。
+ * 这一刻是哪一档（第三幕 ②）：阅读面开着报 `read`，门口展开报 `gate`，收起但仍在等待报 `pending`，其余报 `any`。
  *
  * **为什么阅读面压过门口**：门口那一块里**自己就印着**它那三个键（`y 放行整批 · n 拒绝 · Esc 收起`——第三幕 ① 那一行还单独染了等待黄），而阅读面那几样（`Tab` · `↑`/`↓` · `Esc`）在屏幕上
  * 只有提示行这一处说得出。两样同时开着的时候，这一行让给"别处查不到的那一份"。
  */
-export function hintWhenOf(o: { readonly gate: boolean; readonly read: boolean }): HintWhen {
+export function hintWhenOf(o: { readonly gate: boolean; readonly read: boolean; readonly pending?: boolean }): HintWhen {
   if (o.read) return 'read'
   if (o.gate) return 'gate'
+  if (o.pending) return 'pending'
   return 'any'
 }
 
@@ -831,7 +835,7 @@ const entryOf = (b: Binding, when: HintWhen = 'any'): string =>
  * `HINT_WHEN` 点了谁的名。
  *
  * `any` 那一档优先发送、命令、视图与阅读（第三幕 ② 之前的样子）；别的档把点名的那几条按点名的
- * 次序提到前面，**其余照表序缀在后面**——次序只有这一处算，条数三档一样。
+ * 次序提到前面，**其余照表序缀在后面**——次序只有这一处算，每档的绑定集合一样。
  */
 export function hintPicksOf(km: Keymap = KEYMAP, when: HintWhen = 'any'): readonly Binding[] {
   const wired = km.rows.filter((b) => WIRED.includes(b.by))

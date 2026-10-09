@@ -372,7 +372,7 @@ export function openStage(deps: StageDeps): Stage {
     // 提示行（第二幕 ④ · 第三幕 ② 按处境分档）**与输入行在不在无关**：stdin 不是终端时它就是那一
     // 句"这一档不收按键"——画一个收不到按键的提示符比不画坏得多，而"按键收不到"这件事更得说出来。
     // **阅读面压过门口**（判据在 `hintWhenOf` 那一头）：门口那三个键它自己在屏幕上印着。
-    const when = hintWhenOf({ gate: gateOn, read: reading !== null })
+    const when = hintWhenOf({ gate: gateOn, read: reading !== null, pending: gate !== null && gateHidden })
     const hintPart = { hint: deps.hint(when) }
     if (!showInput) return hintPart
     const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
@@ -508,10 +508,9 @@ export function openStage(deps: StageDeps): Stage {
           return
         }
         if (step === 'overlay') {
-          // 弹层是一条栈：**最上面那一层先关**（阅读面是"我要看这一份东西"，
-          // 它开着的时候压着候选那一层）。
-          if (reading !== null) reading = null
-          else panel = null
+          // 候选菜单画在阅读面的下部，先关它，返回同一份阅读与滚动位置。
+          if (panel !== null) panel = null
+          else reading = null
           settle()
           return
         }
@@ -567,9 +566,17 @@ export function openStage(deps: StageDeps): Stage {
       leave()
       return
     }
-    // ④ `g`：放行门口那一批（起一次 `fugue round go`）。跑着的时候按不起了第二次（同一条命令
-    // 不叠第二个进程）——排队与打断是 `T7` 的事。
+    // ④ `g`：待确认的批次只重新展示，清掉旧举手，仍须 y/Enter 两段确认。
+    // 没有待确认批次时沿用 round go；跑着的时候不叠第二个进程。
     if (d.action === 'go') {
+      if (gate !== null) {
+        gateHidden = false
+        gateView = { ...gateView, armed: null }
+        panel = null
+        reading = null
+        settle()
+        return
+      }
       const go = deps.run()
       if (go === null || go.running) return
       deps.note(`按了 g：起一次 \`${GO_LINE}\`（${go.argvOf(GO_LINE).argv.join(' ')}）`)

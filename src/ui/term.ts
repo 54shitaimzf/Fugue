@@ -517,8 +517,9 @@ export function openTerm(o: TermOptions): Term {
           if (lastIsInput) {
             for (let j = 0; j < stale; j += 1) buf.push(`\n\r${CLEAR_LINE}`)
             buf.push(upOf(stale))
-            const back = widthOf(body[body.length - 1] as string) - (input as PanelInput).caret.col
-            if (back > 0) buf.push(leftOf(back))
+            // 每条残行的 CR 已把光标归到行首；上移后向右回到声明列。
+            const caret = (input as PanelInput).caret.col
+            if (caret > 0) buf.push(`\x1b[${caret}C`)
           } else {
             // 没有输入行：那一块末行（有提示行时是提示行，没有时是框的末行）的 `\n` 已把光标放到待擦
             // 的第一行上，不用先下移。

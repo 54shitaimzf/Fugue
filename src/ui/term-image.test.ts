@@ -132,3 +132,18 @@ test('image defaults, unsupported protocol, headless and out-of-bounds keep the 
   assert.equal(bytes({}, { ...panel, image: { ...image, image: { ...pixel, rgba: new Uint8Array(2) } } }), bytes({}, text))
   console.log('default/off/sixel/invalid text bytes equal; headless ANSI=0')
 })
+
+
+test('shrinking approval/input regions restores the actual caret after clearing stale lines',()=>{
+  for(const col of [0,2,9])for(const inputRows of [['> abcdefgh'],['earlier input','> abcdefgh']]){
+    const s=setup({graphics:'none'})
+    s.size(40,24,14);s.draw({rows:['approval'],input:{rows:inputRows,caret:{row:inputRows.length-1,col}}})
+    assert.deepEqual(replay(s.writes.join('')).caret,[col,14+inputRows.length-1])
+    s.size(40,24,10);s.draw({rows:['hidden'],input:{rows:['> abcdefgh'],caret:{row:0,col}}})
+    assert.deepEqual(replay(s.writes.join('')).caret,[col,10],'clearing stale rows finishes at the declared input column')
+    s.draw({rows:['hidden'],input:{rows:['> abcdefgh'],caret:{row:0,col}}})
+    assert.deepEqual(replay(s.writes.join('')).caret,[col,10],'an unchanged draw cannot conceal a bad previous caret')
+    s.term.close()
+  }
+  console.log('height 14→10 / input 2→1: actual caret columns 0,2,9 preserved over shrink and unchanged draw')
+})
