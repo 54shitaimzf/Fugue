@@ -539,8 +539,10 @@ export function openTerm(o: TermOptions): Term {
       // 上一帧比这一帧多出来的那几行（全量那一趟要擦成空行，行数变少不留残影）：输入行变少与高度
       // 变矮都是这一条——两处都是"顶边不动、底下多出来一截"，擦法一样。**宽度变窄那一趟不擦**
       // （旧块整体留给终端重排，新宽度另起一块）；变宽可以覆盖旧块。没画过也没有可擦的上一帧。
+      // 新块已填满当前可见区时，下方没有可擦的旧尾；LF 会把新块卷入历史。
       const stale =
-        drawn && !widthShrank && lastRegion !== null ? Math.max(0, lastRegion.length - region.length) : 0
+        drawn && !widthShrank && lastRegion !== null && !(rowsKnown && region.length >= (rowsSeen as number))
+          ? Math.max(0, lastRegion.length - region.length) : 0
       // **新块摆到哪儿**：full 的自有屏锚在底边；普通屏只向自己写过的空行扩展，余量向下让位。
       // 屏幕增高保留旧顶边；面板变矮也保持顶边，多余尾行交给 stale 清空。
       // 变窄与首帧从光标处另起，原上方空行的坐标也随宿主几何变化作废。
@@ -661,7 +663,12 @@ export function openTerm(o: TermOptions): Term {
         const rowsSafe = nowRows === drawnRows ||
           (typeof nowRows === 'number' && typeof drawnRows === 'number' && nowRows >= drawnRows)
         if (!narrower && rowsSafe) {
-          buf.push(upOf(cursorRow), deleteLinesOf(regionRows))
+          buf.push(upOf(cursorRow))
+          if (!leave && typeof nowRows === 'number' && regionRows === nowRows) {
+            // XTerm390 普通屏全幅删行实测会把被删的 UI 留进历史；逐行擦自有格，不滚屏。
+            for (let i = 0; i < regionRows; i += 1) buf.push(`\r${CLEAR_LINE}${i < regionRows - 1 ? '\x1b[1B' : ''}`)
+            buf.push(upOf(regionRows - 1))
+          } else buf.push(deleteLinesOf(regionRows))
           drawn = false
           lastRegion = null
         }

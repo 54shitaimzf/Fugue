@@ -255,12 +255,26 @@ export function optionRowOf(view: GateView, keymap: Keymap = KEYMAP): string {
  * 确认内容按实际宽度折行。队列与选项折出的所有行优先保留，选项的等待色覆盖整句；
  * 先让位的是卡片前面的补充资料，命令与写入路径仍靠近确认行。
  */
-export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number; readonly keymap?: Keymap }): BottomInput {
+export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number; readonly keymap?: Keymap; readonly height?: number }): BottomInput & { readonly blocked?: true } {
   const fold = (one: string): readonly string[] => o.columns > 0 ? wrap(one.trimStart(), o.columns) : [one]
   const card = cardAt(o.face, o.view.at)
   const head = card === null ? [] : previewLinesOf(card).flatMap(fold)
   const queue = fold(gateQueueRowOf(o.face, o.view.at))
   const options = fold(optionRowOf(o.view, o.keymap))
+  // 首次选择与第二次确认都须容纳整句；另外留一行给已有进展，框边仍占两行。
+  const need = queue.length + Math.max(...[null, 'approve', 'reject'].map(armed =>
+    fold(optionRowOf({ ...o.view, armed: armed as GateOption | null }, o.keymap)).length))
+  if (Number.isFinite(o.height) && o.height! > 0 && need + 1 > o.height! - 2) {
+    const warning = fold(WORDS.gateTooSmall), rows = [...warning]
+    const scope = fold(`待确认 ${o.face.cards.length} 项`)
+    const readKey = (o.keymap ?? KEYMAP).rows.find(b => b.action === 'read')!.keys[0]!
+    const read = fold(`${readKey} 看全`), budget = Math.max(0, o.height! - 3)
+    const scopeOn = rows.length + scope.length <= budget
+    if (scopeOn) rows.push(...scope)
+    if (rows.length + read.length <= budget) rows.push(...read)
+    return { rows, keep: rows.length, waitingAt: 0, waitingCount: warning.length,
+      headingAt: warning.length, headingCount: scopeOn ? scope.length : 0, blocked: true }
+  }
   return {
     rows: [...head, ...queue, ...options],
     keep: queue.length + options.length,
@@ -273,6 +287,6 @@ export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateVi
 }
 
 /** 只要原文的调用方沿用这个入口；坐标与保留行数由同一次排版取得。 */
-export function gateRowsOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number; readonly keymap?: Keymap }): readonly string[] {
+export function gateRowsOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number; readonly keymap?: Keymap; readonly height?: number }): readonly string[] {
   return gateLayoutOf(o).rows
 }

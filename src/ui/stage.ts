@@ -382,6 +382,14 @@ export function openStage(deps: StageDeps): Stage {
    * 换来的是全站只有一个数。
    */
   const cols = (): number => innerOf(deps.columns())
+  const gateLayout = () => gate === null ? null : gateLayoutOf({ face: gate, view: gateView,
+    columns: cols(), keymap: deps.keymap?.(),
+    height: Math.max(1, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1)) })
+  const clearSmallGate = (): boolean => {
+    if (!showInput || gateLayout()?.blocked !== true) return false
+    gateView = { ...gateView, armed: null }
+    return true
+  }
   const view = (): ViewInput => {
     // 门口那一块开着没有：提示行那一档与最下面那一栏都要它（先算一次，两处读同一个）。
     const gateOn = gate !== null && !gateHidden && planTop === null
@@ -395,7 +403,7 @@ export function openStage(deps: StageDeps): Stage {
     // 最下面那一栏：**门口那一块**（`T6`）与**排队那一行**（`T7`），都在面板那一栏的最下面（输入行
     // 还在它们下面）。两样都没有时一个字节都不占。
     const queueOn = queue.items.length > 0
-    const gatePart = gateOn ? gateLayoutOf({ face: gate as GateFace, view: gateView, columns: cols(), keymap: deps.keymap?.() }) : null
+    const gatePart = gateOn ? gateLayout() : null
     const go = queueOn ? deps.run() : null
     const queueRows = queueOn ? queueRowsOf(queue, cols(), {
       submit: keyOf('submit'), cancel: keyOf('cancel'),
@@ -476,6 +484,7 @@ export function openStage(deps: StageDeps): Stage {
     if (d.action === 'approve' || d.action === 'reject') {
       const option: GateOption = d.action === 'approve' ? 'approve' : 'reject'
       if (gate !== null && !gateHidden && ed.draft.text === '') {
+        if (clearSmallGate()) { settle(); return }
         const press = pressGate(gateView, option)
         gateView = press.view
         if (press.t === 'arm') {
@@ -715,6 +724,7 @@ export function openStage(deps: StageDeps): Stage {
     // ⑥ `Enter`：弹层开着就是"认下选中那一条"（**只换掉这一行字，不执行**）；关着就把这一行
     // 发出去（`T3` 那一格：一行字 → argv → 子进程，账由那个子进程写）。
     if (d.action === 'submit') {
+      if (gate !== null && !gateHidden && ed.draft.text === '' && clearSmallGate()) { settle(); return }
       // 门口那一块举着手的时候，`Enter` 是**那一档的确认键**（§ 5.19 五："同一个键或 `Enter`
       // 再按一次才生效"）；没举手时它照旧是提交（`pressGate` 给 'none'，一个副作用都没有）。
       if (gate !== null && !gateHidden && gateView.armed !== null) {
@@ -843,7 +853,7 @@ export function openStage(deps: StageDeps): Stage {
     startNext,
     onRunDone,
     heightWant,
-    onResize: syncImage,
+    onResize() { clearSmallGate(); syncImage() },
     close(): void {
       closed = true
       previewJob?.controller.abort()

@@ -90,6 +90,7 @@ export const WORD_TABLE = {
   conflicts: { face: '冲突', arch: 'conflicts' },
   accepts: { face: '验收', arch: 'assertions（架构里叫"断言"；--json 的字段名不动）' },
   paths: { face: '路径', arch: 'paths（`contract/issue` 的写入面 · `resolve` 的冲突路径）' },
+  gateTooSmall: { face: '放大才能确认', arch: 'UI 几何容量不足以完整显示批次范围与两段确认选项；不接受确认快捷键' },
   gate: { face: '等待确认', arch: '门（架构 § 15.1.a：由人开 · 放行的是这一批；账上就是 `round/state` 停在 `Planning`）' },
   usage: { face: '用量', arch: 'usage' },
   events: { face: '事件', arch: 'events' },
