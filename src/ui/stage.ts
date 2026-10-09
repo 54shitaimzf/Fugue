@@ -54,12 +54,8 @@ export interface StageDeps {
    * 都不看）——"此刻屏幕上是什么"只有这一头知道。
    */
   readonly hint: (when: HintWhen) => string
-  /**
-   * 同一档下"按什么键干什么"的那一段（第三幕 ②）：**不带 `按键 ` 抬头**——写给终端历史的那一句
-   * 注记（阅读面开的那一下）用它。与提示行**同一份来源**（`ui/keymap.ts` 的 `hintKeysOf`），两处
-   * 不会各说各的。
-   */
-  readonly keysOf: (when: HintWhen) => string
+  /** 兼容旧装配的注记入口；阅读说明已收进正文与hint，此回调不再读取。 */
+  readonly keysOf?: (when: HintWhen) => string
   /** 重画一帧（不重读）——`tui.redraw`。 */
   readonly redraw: () => void
   /** 这一刻的终端列数——`term.columns`。 */
@@ -618,8 +614,6 @@ export function openStage(deps: StageDeps): Stage {
         planTop = 0
         gateView = { ...gateView, armed: null }
         reading = null; panel = null
-        deps.note('阅读面 · 计划全文')
-        deps.note(deps.keysOf('plan'))
         settle(); return
       }
       if (reading === null) {
@@ -627,10 +621,7 @@ export function openStage(deps: StageDeps): Stage {
         refreshRead(true)
         const faces = facesOf(readState)
         reading = { face: firstFace(faces), top: 0 }
-        // 那一句注记里"按什么键干什么"那一段与提示行**同一份来源**（第三幕 ②）：写死在这里就迟早
-        // 与提示行说两样的话（`deps.keysOf('read')` = `hintKeysOf` 的阅读面那一档）。
-        deps.note(`阅读面 · ${faces[reading.face]?.title ?? ''}`)
-        deps.note(deps.keysOf('read'))
+        // 当前对象与配置按键由正文/提示行显示；切换阅读不追加永久历史。
       } else {
         reading = null
       }
@@ -660,7 +651,6 @@ export function openStage(deps: StageDeps): Stage {
       if (d.action === 'complete') {
         const faces = facesOf(readState)
         reading = { face: stepFace(faces, reading.face, 1), top: 0 }
-        deps.note(`阅读面换一面 · ${faces[reading.face]?.title ?? ''}`)
         settle()
         return
       }

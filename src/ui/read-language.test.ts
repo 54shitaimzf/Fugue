@@ -4,7 +4,7 @@ import type {StatusRow} from '../probe/status.ts'
 import {statusOf} from '../probe/status.ts'
 import {facesOf,faceRowsOf,readStateOf,readImageAt,readWrap} from './read.ts'
 import {openStage} from './stage.ts'
-import {hintKeysOf,keymapOf} from './keymap.ts'
+import {hintKeysOf,hintLineOf,keymapOf} from './keymap.ts'
 const agent='agent/r1/1',path='图片/完整设计稿-这是带空格与中文的长文件名字 preview.png'
 const events=[{t:'view/write',path,blob:'a'.repeat(40),mode:0o100644},{t:'view/remove',path:'old.txt'},{t:'view/rename',from:'before.txt',to:'after.txt'},{t:'view/chmod',path:'run.sh',mode:0o100755},{t:'view/symlink',path:'link',target:'target'}]
 const rows=events.map((e,i)=>({pos:{writer:agent,seq:i+1},e:{...e,agent,rev:i+1}})) as unknown as StatusRow[]
@@ -28,11 +28,10 @@ test('PNG preview counts the same wrapped human file description at narrow and w
   assert.equal(readImageAt(state,columns,start,body.length+1),null,'one spare row remains text')
  }
 })
-test('opening read emits complete object and configured-key notes without enclosing punctuation fragments',()=>{
+test('opening read shows the complete object and configured keys locally without permanent instructions',()=>{
  const notes:string[]=[],km=keymapOf({complete:'Ctrl-T',historyOlder:'Ctrl-U'}),keys=hintKeysOf(km,'read')
- const stage=openStage({note:s=>notes.push(s),redraw:()=>{},hint:()=>'',keysOf:w=>hintKeysOf(km,w),columns:()=>40,termRows:()=>24,rows:()=>rows.slice(0,1),pendingFace:async()=>null,run:()=>null,now:()=>0,abort:()=>{}})
+ const stage=openStage({note:s=>notes.push(s),redraw:()=>{},hint:w=>hintLineOf(km,4,w),keysOf:w=>hintKeysOf(km,w),columns:()=>40,termRows:()=>24,rows:()=>rows.slice(0,1),pendingFace:async()=>null,run:()=>null,now:()=>0,abort:()=>{}})
  stage.setRaw(true);stage.onAdvance(rows.slice(0,1));stage.onAction({action:'read'})
- assert.deepEqual(notes,['阅读面 · 文件改动 · 1 条',keys]);assert.ok(keys.includes('Ctrl-T')&&keys.includes('Ctrl-U'))
- assert.ok(!notes.some(s=>s.includes('（')||s.includes('）')))
- stage.onAction({action:'read'});assert.equal(notes.length,2,'closing does not repeat the opening instructions');stage.close()
+ assert.deepEqual(notes,[]);assert.ok(stage.view().read!.rows.join('').includes('文件改动'));assert.equal(stage.view().hint,`按键 ${keys}`);assert.ok(keys.includes('Ctrl-T')&&keys.includes('Ctrl-U'))
+ stage.onAction({action:'read'});assert.equal(notes.length,0,'opening/closing instructions do not enter permanent history');stage.close()
 })

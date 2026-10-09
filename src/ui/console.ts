@@ -264,9 +264,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       keys?.raw === true
         ? hintLineOf(km, hintLimitOf(term.columns, km, when), when)
         : 'stdin 不是终端：这一档不收按键（输入行与弹层都在等按键，画出来是骗人）',
-    // 同一档下"按什么键干什么"的那一段（第三幕 ②）：写给终端历史的那一句注记（阅读面开的那一下）
-    // 读它。与提示行同一份来源；那一句只在阅读面真开起来时走得到，而阅读面只能由按键开。
-    keysOf: (when) => hintKeysOf(km, when),
+    // 兼容旧装配的快捷键来源仍与提示行共用 km；Stage 不再读取它或把说明写进历史。
+    keysOf: when => hintKeysOf(km, when),
     columns: () => process.stdout.columns ?? term.columns,
     // 终端行数（分账面板高度那一档的输入；`rows` 那一只 dep 是「账上的行」，名字各归各）。
     termRows: () => process.stdout.rows ?? term.rows,

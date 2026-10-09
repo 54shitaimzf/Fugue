@@ -325,9 +325,10 @@ test('⑨ `Ctrl-R` 开出来的那几面里有详情面（快照只在阅读面�
   ]
   const { stage, ctl } = stageOf({ rows })
   stage.onAction({ action: 'read' })
-  // 换一圈面：每一下 `Tab` 都报那一面的名字（`阅读面换一面 · <标题>`）。
-  for (let i = 0; i < 4; i += 1) stage.onAction({ action: 'complete' })
-  const titles = ctl.notes.filter((n) => n.startsWith('阅读面'))
+  // 换一圈面：标题从当前阅读正文检查，选择不写入永久历史。
+  const titles: string[] = []
+  for (let i = 0; i < 4; i += 1) { stage.onAction({ action: 'complete' }); titles.push(stage.view().read?.rows.join(' ') ?? '') }
+  assert.deepEqual(ctl.notes, [], '阅读开关与换面不追加永久说明')
   const detail = titles.find((n) => n.includes('详情')) ?? ''
   assert.ok(detail !== '', `换一圈该换到详情面：${JSON.stringify(titles)}`)
   // **那几样原始读数在行上**：标题只报"这是哪一面"，不端那一面自己的账（折叠几行 · 只计数几行）。
@@ -342,9 +343,10 @@ test('⑨ `Ctrl-R` 开出来的那几面里有详情面（快照只在阅读面�
   // **地板**：账上一行都没有时那一面不存在，`Tab` 也不会停在它上面。
   const empty = stageOf({})
   empty.stage.onAction({ action: 'read' })
-  for (let i = 0; i < 4; i += 1) empty.stage.onAction({ action: 'complete' })
-  assert.equal(empty.ctl.notes.some((n) => n.includes('详情')), false, '没有账就没有详情面')
-  console.log(`⑨ 读数：${titles.length} 条换面记 · 换到详情面「${detail}」`)
+  const emptyTitles: string[] = []
+  for (let i = 0; i < 4; i += 1) { empty.stage.onAction({ action: 'complete' }); emptyTitles.push(empty.stage.view().read?.rows.join(' ') ?? '') }
+  assert.equal(emptyTitles.some(n => n.includes('详情')), false, '没有账就没有详情面')
+  console.log(`⑨ 读数：${titles.length} 个当前页标题 · 换到详情面「${detail}」`)
 })
 
 // ── ⑩ 门口那一块里"要按的那一行"的坐标（第三幕 ①）────────────────────────────────
@@ -376,7 +378,7 @@ test('⑩ 门口开着时，那一块的末一行是"要按的那一行"：坐�
 })
 
 // ── ⑪ 提示行的处境分档与"同一份来源"（第三幕 ②）───────────────────────────────
-test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 > 都不看；阅读面那一句注记与提示行同源', async () => {
+test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 > 都不看；阅读说明留在当前正文与提示行', async () => {
   const contract = {
     id: 'r1.implement.1',
     agent: 'agent/r1/1',
@@ -406,10 +408,8 @@ test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 
   ctl.whens.length = 0
   stage.view()
   assert.deepEqual(asked(), ['plan'], '当前计划全文开着 → 全文那一档（压过门口）')
-  // ④ **同一份来源**：开的那一句注记里那一段是 `keysOf('plan')` 给的，不是写死在 `stage.ts` 里的。
-  const noteAt = ctl.notes.findIndex((n) => n.startsWith('阅读面 ·'))
-  const note = ctl.notes[noteAt] ?? ''
-  assert.equal(ctl.notes[noteAt + 1], 'plan 那一段', `下一条完整按键注记该读同一份来源：${JSON.stringify(ctl.notes)}`)
-  assert.equal(note.includes('Tab 换一面'), false, '写死的那一句不该再留在 stage.ts 里')
-  console.log(`⑪ 读数：三档都问到了（any → gate → plan）· 那一句注记「${note}」`)
+  // ④ 正文与提示行承载当前对象与动作；原按键注记入口不再读。
+  assert.equal(ctl.notes.filter(n => n.startsWith('阅读面')).length, 0, '只写真实批次结论，阅读不追加说明')
+  assert.ok(stage.view().read?.rows.join(' ').includes('计划全文'))
+  console.log('⑪ 读数：三档都问到了（any → gate → plan）· 永久阅读注记0')
 })

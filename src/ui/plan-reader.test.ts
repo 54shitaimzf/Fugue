@@ -20,7 +20,7 @@ test('a narrow confirmation first reveals the configured full-plan reader while 
  assert.equal(hintLineOf(KEYMAP,hintLimitOf(16,KEYMAP,'gate'),'gate'),'按键 Ctrl-R 看全')
  const custom=keymapOf({read:'Ctrl-T'});assert.equal(hintLineOf(custom,hintLimitOf(16,custom,'gate'),'gate'),'按键 Ctrl-T 看全')
  assert.deepEqual(hintPicksOf(KEYMAP,'gate').map(b=>b.action).sort(),hintPicksOf(KEYMAP,'any').map(b=>b.action).sort())
- assert.equal(hintLineOf(KEYMAP,2,'plan'),'按键 ↓ 下一行 · ↑ 上一行')
+ assert.equal(hintLineOf(KEYMAP,2,'plan'),'按键 Esc 返回 · ↓ 下一行')
 })
 test('full plan uses the actual selected card, every physical row is reachable, and reading never launches or refetches it',async()=>{
  for(const width of [16,40,80]){

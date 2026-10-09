@@ -146,7 +146,7 @@ export const TABLE: readonly Binding[] = [
     note: '取消链第一级：先关一层弹层，再打断、再丢排队草稿、再清空输入，都没有就什么都不做',
     // 同一个 `Esc`，两处处在说的是两件事（第三幕 ②）：门口那一块开着是"收起门口"，阅读面开着是
     // "收起"——两处各有自己的一级，措辞照各自那一级写。
-    says: { gate: '收起确认', read: '收起' },
+    says: { gate: '收起确认', read: '收起', plan: '返回' },
     by: 'T5',
   },
   {
@@ -410,8 +410,8 @@ export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
   pending: ['go', 'read', 'help'],
   // 阅读上面的候选菜单先露选项导航与返回，背后的阅读坐标不动。
   menu: ['historyOlder', 'historyNewer', 'cancel', 'pageUp', 'pageDown', 'help'],
-  // 计划全文是只读页；向下读与返回确认使用原有动作/配置键，不加执行路径。
-  plan: ['historyNewer', 'historyOlder', 'pageDown', 'pageUp', 'cancel', 'read', 'help'],
+  // 计划全文是只读页；窄屏先露返回，再露翻行；仍用原动作/配置键，不加执行路径。
+  plan: ['cancel', 'historyNewer', 'historyOlder', 'pageDown', 'pageUp', 'read', 'help'],
   gate: ['read', 'historyOlder', 'historyNewer', 'pageUp', 'pageDown', 'help', 'approve', 'reject', 'cancel'],
   // 阅读面开着：`Tab` 换一面 · `↑`/`↓` 翻行 · `Esc` 收起（这三样在别处都不是这个意思）。
   read: ['complete', 'historyOlder', 'historyNewer', 'cancel', 'pageUp', 'pageDown', 'read', 'help'],
