@@ -311,6 +311,8 @@ export interface TermOptions {
    * 多大是这一层的事。
    */
   readonly heightOf?: () => number
+  /** 空首帧按舞台会使用的最大框高预留；缺省按宿主容量，坏数值不预留。 */
+  readonly reserveHeightOf?: () => number
   /** 量列宽那一处（缺省读 `out.columns`）：真终端上就是它，resize 那一档要一个会变的数。 */
   readonly columnsOf?: () => number | undefined
   /**
@@ -555,7 +557,10 @@ export function openTerm(o: TermOptions): Term {
       // subsequent expansion uses only those blank rows. Without ownership,
       // grow downward and let the terminal scroll rather than erase history.
       const reserve = !drawn && !wantAlt && o.heightOf !== undefined && rowsKnown && permanentRows.length === 0
-        ? Math.max(0, (rowsSeen as number) - 1 - finalCursor) : 0
+        ? (() => {
+            const maximum = o.reserveHeightOf === undefined ? (rowsSeen as number) - 1 : o.reserveHeightOf()
+            return Number.isFinite(maximum) ? Math.max(0, Math.floor(Math.min(maximum - h, (rowsSeen as number) - 1 - finalCursor))) : 0
+          })() : 0
       for (let i = 0; i < reserve; i += 1) buf.push(`\r${' '.repeat(columns)}\n`)
       if (!drawn) ownedAbove = reserve
       else if (permanentRows.length > 0) ownedAbove = 0

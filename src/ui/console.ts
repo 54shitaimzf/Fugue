@@ -32,6 +32,7 @@ import { degradeNote, openTerm } from './term.ts'
 import { themeOf } from './theme.ts'
 import { openCellProbe, openAlternateProbe } from './cell-probe.ts'
 import { openStage } from './stage.ts'
+import { panelWantOf } from './layout.ts'
 import { gateFaceOf } from './gate.ts'
 import type { GateFace } from './gate.ts'
 import { openRun } from './run.ts'
@@ -294,6 +295,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       colorTerm: process.env.COLORTERM,
     }),
     heightOf: stage.heightWant,
+    reserveHeightOf: () => panelWantOf(process.stdout.rows ?? term.rows, true),
   })
   // 四条地板收成**一张表**（`ui/follow.ts` 的 `tuiModeOf`）：真终端 → 面板；`--once` / 不是 TTY /
   // `$TERM` 认不出来 → 只印永久行那一档（面板一次都不画，一个字节的 ANSI 都不写）。
