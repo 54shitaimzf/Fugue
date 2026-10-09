@@ -367,7 +367,7 @@ function iconPrefixOf(icon: IconName | undefined): string {
 }
 
 /** 最近汇报占据主面；状态与计数分别进入账尾和视图。 */
-export function chatOf(o: { readonly snapshot: StatusSnapshot; readonly conversation?: readonly ConversationRow[]; readonly transition?: RoundTransition }): readonly ChatRow[] {
+export function chatOf(o: { readonly snapshot: StatusSnapshot; readonly conversation?: readonly ConversationRow[]; readonly transition?: RoundTransition; readonly onboarding?: boolean }): readonly ChatRow[] {
   const s = o.snapshot
   const trail = s.rounds.find((r) => r.round === s.current)
   const state = trail?.state
@@ -385,6 +385,8 @@ export function chatOf(o: { readonly snapshot: StatusSnapshot; readonly conversa
   if (state === 'Planning') return [{ kind: 'head', text: WORDS.planPreparing, role: 'body' }]
   if (state !== undefined && state !== 'Idle') return [{ kind: 'head', icon: 'round', text: '正在处理你的任务。' }]
   if (s.agents.length > 0) return [{ kind: 'head', text: WORDS.recordLoaded }]
+  // 空态说明只在没有当前操作时出现；实际进展、结果与汇报在上面已经返回。
+  if (o.onboarding === false) return []
   return [
     { kind: 'head', icon: 'round', text: '说说你想做什么。' },
     { kind: 'aside', text: WORDS.onboardingReview, role: 'hint' },
@@ -552,7 +554,7 @@ export function frameOf(o: FrameInput): Frame {
   // （轮次头 · 细线 · 在飞那几格）；另两档是 `bodyOf` 的那一半，行文一字不变，只是各拿满宽。
   const bodyRows: readonly { readonly l: string; readonly role: LineRole }[] =
     view === 'chat'
-      ? chatOf(o).map((x) =>
+      ? chatOf({ ...o, onboarding: (o.bottom?.rows.length ?? 0) === 0 && o.menu === undefined }).map((x) =>
           x.kind === 'rule'
             ? { l: glyphs().div.repeat(inner), role: 'border' as const }
             : x.kind === 'aside'
@@ -642,13 +644,15 @@ export function frameOf(o: FrameInput): Frame {
   // 人要按 · 要看的东西）。一栏都没有（`bottom` 不给）时下面这几步与从前逐字节相同。
   const gateAll = o.bottom?.rows ?? []
   const keep = Math.max(0, Math.min(o.bottom?.keep ?? 0, gateAll.length))
+  // 没有正文就把那一行预算也交给当前操作；实际汇报仍保留至少一行。
+  const bodyFloor = readingOn || rows.length === 0 ? 0 : 1
   let gateBody = [...gateAll]
-  while (gateBody.length > keep && budget - 1 - gateBody.length < 0) gateBody = gateBody.slice(1)
-  while (menuBody.length > 0 && budget - 1 - gateBody.length - menuBody.length < 0) menuBody.pop()
-  while (gateBody.length > keep && budget - 1 - gateBody.length - menuBody.length < 0) gateBody = gateBody.slice(1)
-  while (menuBody.length > 0 && budget - gateBody.length < 1) menuBody.pop()
-  while (gateBody.length > 0 && budget - gateBody.length < 1) gateBody = gateBody.slice(1)
-  const bodyBudget = Math.max(1, budget - menuBody.length - gateBody.length)
+  while (gateBody.length > keep && budget - bodyFloor - gateBody.length < 0) gateBody = gateBody.slice(1)
+  while (menuBody.length > 0 && budget - bodyFloor - gateBody.length - menuBody.length < 0) menuBody.pop()
+  while (gateBody.length > keep && budget - bodyFloor - gateBody.length - menuBody.length < 0) gateBody = gateBody.slice(1)
+  while (menuBody.length > 0 && budget - gateBody.length < bodyFloor) menuBody.pop()
+  while (gateBody.length > 0 && budget - gateBody.length < bodyFloor) gateBody = gateBody.slice(1)
+  const bodyBudget = Math.max(bodyFloor, budget - menuBody.length - gateBody.length)
   // 阅读面开着：内容那一栏一个字节都不印（地方整块给了正文，见上面那一段）。
   const content = readingOn ? [] : rows.length <= bodyBudget ? rows : rows.slice(0, Math.max(0, bodyBudget - 1))
   const dropped = readingOn ? 0 : rows.length - content.length

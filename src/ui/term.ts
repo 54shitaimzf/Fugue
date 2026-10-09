@@ -389,6 +389,7 @@ export function openTerm(o: TermOptions): Term {
   let altHistory: string[] = [],historyColumns = FALLBACK_COLUMNS
   /** 此刻在不在 alt screen 里。**只由 `draw` 置真、由 `close` 置假**——两处都不猜。 */
   let alt = false
+  let notifyingAlternate = false
   let columns = FALLBACK_COLUMNS
   let drawn = false
   let drawnColumns = 0
@@ -400,6 +401,7 @@ export function openTerm(o: TermOptions): Term {
   let drawnRows: number | undefined = undefined
   /** 上一次画完时光标停在区域第几行（0 = 面板顶）——下一次"上移多少"靠它。 */
   let cursorRow = height
+  let cursorColumn = 0
   /** 上一次画出去的区域一共几行（框 ＋ 框下面那几行：空一行 · 提示行 · 输入行）——`close()` 靠它。 */
   let regionRows = height
   /**
@@ -515,6 +517,11 @@ export function openTerm(o: TermOptions): Term {
       const finalCursor = lastIsInput ? h + tail.length - 1 : h + tail.length
       const imageFrame = images.update(spec.image, { columns, height: h, cursorRow: finalCursor,
         changed: diffable ? region.map((line, i) => line !== lastRegion![i]) : null })
+      const finalColumn = lastIsInput ? (input as PanelInput).caret.col : 0
+      // 文字、光标与图片都没变时保持安静；先让图片层核能力/收回，避免跳过图形变化。
+      if (!notifyingAlternate && rowsKnown && diffable && rowsSeen === drawnRows && cursorRow === finalCursor && cursorColumn === finalColumn &&
+        region.every((line, i) => line === lastRegion![i]) && imageFrame.before === '' && imageFrame.after === '' &&
+        (!fullSixel || o.alternateScreenOf?.() === true)) { out.write(''); return }
       buf.push(imageFrame.before)
       // 上一帧比这一帧多出来的那几行（全量那一趟要擦成空行，行数变少不留残影）：输入行变少与高度
       // 变矮都是这一条——两处都是"顶边不动、底下多出来一截"，擦法一样。**宽度变窄那一趟不擦**
@@ -592,13 +599,18 @@ export function openTerm(o: TermOptions): Term {
       buf.push(imageFrame.after)
       if (buf.length > 0) out.write(buf.join(''))
       cursorRow = finalCursor
+      cursorColumn = finalColumn
       regionRows = h + tail.length
       drawn = true
       drawnColumns = columns
       drawnHeight = h
       drawnRows = rowsSeen
       lastRegion = region
-      if (entered) o.onAlternateScreen?.()
+      if (entered && o.onAlternateScreen !== undefined) {
+        // 进入通知中的同步重画延续原字节路径；通知结束后才走静止帧省略。
+        notifyingAlternate = true
+        try { o.onAlternateScreen() } finally { notifyingAlternate = false }
+      }
     },
     close(): void {
       // alt screen 那一笔先记下来、就地归位（**只写一次**）：`finally` 与 `exit` 那一钩都会调到这一
