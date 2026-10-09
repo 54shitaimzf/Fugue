@@ -14,6 +14,8 @@ export interface ImagePlace {
   readonly id: number
   readonly columns: number
   readonly rows: number
+  /** 已按实测字格缩放的像素；Kitty 按原像素摆放，避免旧宿主拉伸。 */
+  readonly pixelSized?: boolean
   /** Sixel 的可用色格；纯编码缺省 256，宿主接线必须提供核对过的容量。 */
   readonly colors?: number
 }
@@ -43,7 +45,7 @@ export function imageSequence(image: PixelImage, place: ImagePlace, tier: Graphi
   for (let at = 0; at < payload.length; at += IMAGE_CHUNK_BYTES) {
     const more = at + IMAGE_CHUNK_BYTES < payload.length ? 1 : 0
     const head = at === 0
-      ? `a=T,t=d,f=32,s=${image.width},v=${image.height},i=${place.id},c=${place.columns},r=${place.rows},C=1,q=2,`
+      ? `a=T,t=d,f=32,s=${image.width},v=${image.height},i=${place.id},${place.pixelSized ? "" : `c=${place.columns},r=${place.rows},`}C=1,q=2,`
       : 'q=2,'
     out.push(`\x1b_G${head}m=${more};${payload.slice(at, at + IMAGE_CHUNK_BYTES)}\x1b\\`)
   }

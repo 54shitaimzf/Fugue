@@ -4,7 +4,9 @@ import { createHash, randomInt } from 'node:crypto'
 import { imageIsValid, imageSequence, clearImageSequence } from './image-codec.ts'
 import type { PixelImage } from './image-codec.ts'
 import type { GraphicsTier } from './image.ts'
-import { fitSixel } from './pixels.ts'
+import { fitPixels, fitSixel } from './pixels.ts'
+import { MAX_CELL_PIXELS } from './cell-probe.ts'
+import type { CellPixels } from './cell-probe.ts'
 import type { SixelCells } from './cell-probe.ts'
 
 export interface PanelImage {
@@ -42,7 +44,7 @@ function eraseSixel(p: PanelImage, cursorRow: number): string {
 }
 
 /** Kitty owns one random ID. Sixel needs verified cells and known fixed geometry. */
-export function openImageLayer(tier: GraphicsTier = 'none', cellPixels?: () => SixelCells | null) {
+export function openImageLayer(tier: GraphicsTier = 'none', cellPixels?: () => SixelCells | null, kittyPixels?: () => CellPixels | null) {
   const id = tier === 'kitty' ? randomInt(1, 0x100000000) : 0
   let current: { signature: string; clear: string } | undefined
   function clear(): string {
@@ -55,16 +57,18 @@ export function openImageLayer(tier: GraphicsTier = 'none', cellPixels?: () => S
     update(next: PanelImage | undefined, frame: ImageFrame): { before: string; after: string } {
       if ((tier !== 'kitty' && tier !== 'sixel') || next === undefined || !fits(next, frame)) return { before: clear(), after: '' }
       const p = next
+      const kittyCell = tier === 'kitty' ? kittyPixels?.() : undefined
+      if (tier === 'kitty' && kittyPixels !== undefined && (kittyCell == null || ![kittyCell.width, kittyCell.height].every(n => Number.isSafeInteger(n) && n > 0 && n <= MAX_CELL_PIXELS))) return { before: clear(), after: '' }
       const cell = tier === 'sixel' ? cellPixels?.() : undefined
       if (tier === 'sixel' && (cell == null || !Number.isSafeInteger(cell.colors) || cell.colors < 2 || cell.colors > 256 || !Number.isSafeInteger(cell.maxWidth) || cell.maxWidth <= 0 || !Number.isSafeInteger(cell.maxHeight) || cell.maxHeight <= 0)) return { before: clear(), after: '' }
       const signature = createHash('sha256').update(p.image.rgba)
-        .update(`${p.image.width},${p.image.height},${p.row},${p.column},${p.columns},${p.rows},${cell?.width ?? ""},${cell?.height ?? ""},${cell?.colors ?? ""},${cell?.maxWidth ?? ""},${cell?.maxHeight ?? ""}`).digest('hex')
+        .update(`${p.image.width},${p.image.height},${p.row},${p.column},${p.columns},${p.rows},${cell?.width ?? ""},${cell?.height ?? ""},${cell?.colors ?? ""},${cell?.maxWidth ?? ""},${cell?.maxHeight ?? ""},${kittyCell?.width ?? ""},${kittyCell?.height ?? ""}`).digest('hex')
       const repainted = frame.changed === null || frame.changed.slice(p.row, p.row + p.rows).some(Boolean)
       if (current?.signature === signature && !repainted) return { before: '', after: '' }
       const before = clear()
-      const scaled = tier === 'sixel' ? fitSixel(p.image, p, cell, {width:cell!.maxWidth,height:cell!.maxHeight}) : p.image
+      const scaled = tier === 'sixel' ? fitSixel(p.image, p, cell, {width:cell!.maxWidth,height:cell!.maxHeight}) : kittyCell != null ? fitPixels(p.image, p.columns * kittyCell.width, p.rows * kittyCell.height, true) : p.image
       if (scaled === null) return { before, after: '' }
-      const pixels = imageSequence(scaled, { id: tier === 'sixel' ? 1 : id, columns: p.columns, rows: p.rows, colors: cell?.colors }, tier)
+      const pixels = imageSequence(scaled, { id: tier === 'sixel' ? 1 : id, columns: p.columns, rows: p.rows, colors: cell?.colors, pixelSized: kittyCell != null }, tier)
       if (pixels === '') return { before, after: '' }
       current = { signature, clear: tier === 'sixel' ? eraseSixel({ ...p, image: scaled }, frame.cursorRow) : clearImageSequence(p.image, id, tier) }
       // DECSC/DECRC keeps the actual input caret; Kitty also uses C=1.

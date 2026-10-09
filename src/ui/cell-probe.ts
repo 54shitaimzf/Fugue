@@ -142,3 +142,46 @@ export function openAlternateProbe(o: {
     },
   }
 }
+
+
+/** Kitty uses natural pixels after fitting into actual cells; a missing report keeps text.
+ * Expired FIFO entries retain ownership of late reports, including across resizes.
+ */
+export function openPixelProbe(o: {
+  readonly write: (bytes: string) => void
+  readonly changed: () => void
+  readonly wait?: WaitFn
+}) {
+  const wait: WaitFn = o.wait ?? ((ms, fn) => { const t=setTimeout(fn,ms);return ()=>clearTimeout(t) })
+  const pending: {done:boolean}[] = []
+  let current: {done:boolean}|undefined,cell:CellPixels|null=null,closed=false,stop:(()=>void)|undefined
+  const set=(next:CellPixels|null):void=>{if(cell?.width===next?.width && cell?.height===next?.height)return;cell=next;o.changed()}
+  return {
+    get cell():CellPixels|null{return cell},
+    start():void {
+      if(closed)return
+      stop?.();stop=undefined
+      if(current)current.done=true
+      set(null)
+      if(pending.length>=MAX_CELL_REQUESTS)return
+      const r={done:false};current=r;pending.push(r)
+      stop=wait(CELL_WAIT_MS,()=>{if(r!==current||r.done)return;stop=undefined;r.done=true;set(null)})
+      o.write('\x1b[16t')
+    },
+    receive(bytes:string):void {
+      if(closed)return
+      const size=/^\x1b\[6;([0-9]{1,6});([0-9]{1,6})t$/.exec(bytes)
+      if(!size)return
+      const r=pending.shift();if(!r||r.done||r!==current)return
+      r.done=true;stop?.();stop=undefined
+      const height=Number(size[1]),width=Number(size[2])
+      set(height>0&&width>0&&height<=MAX_CELL_PIXELS&&width<=MAX_CELL_PIXELS?{width,height}:null)
+    },
+    close():void {
+      if(closed)return
+      closed=true;stop?.();stop=undefined
+      if(current)current.done=true
+      pending.length=0;cell=null
+    },
+  }
+}

@@ -105,7 +105,7 @@ import type { ViewKey } from './views.ts'
 import { openImageLayer } from './image-layer.ts'
 import type { PanelImage } from './image-layer.ts'
 import type { GraphicsTier } from './image.ts'
-import type { SixelCells } from './cell-probe.ts'
+import type { CellPixels, SixelCells } from './cell-probe.ts'
 
 /**
  * 底部那块**重画区**的期望行数（PLAN § 5.19：K 取 12）——**框 10 ＋ 空一行 ＋ 提示行**（第二幕 ④；
@@ -291,6 +291,8 @@ export interface TermOptions {
   readonly graphics?: GraphicsTier | undefined
   /** 普通缓冲区要求固定几何；full 中终端层收回自有平面并重建。 */
   readonly sixelCells?: (() => SixelCells | null) | undefined
+  /** 实测 Kitty 字格；没有报告时保留文字，旧装配未提供时仍走原协议。 */
+  readonly kittyCells?: (() => CellPixels | null) | undefined
   /** full Sixel 必须实测正在 alternate screen；未知/拒绝切屏时完全走旧文字档。 */
   readonly alternateScreenOf?: (() => boolean) | undefined
   /** ALT_ON 已发出且本帧几何已记好；在 raw 输入接好后查询实际屏幕报告。 */
@@ -385,7 +387,7 @@ export function openTerm(o: TermOptions): Term {
   const wantAlt = ansi && o.full === true
   const verifiedCells = o.sixelCells === undefined ? undefined : () =>
     wantAlt && o.alternateScreenOf?.() !== true ? null : o.sixelCells!()
-  const images = openImageLayer(ansi ? o.graphics : 'none', verifiedCells)
+  const images = openImageLayer(ansi ? o.graphics : 'none', verifiedCells, o.kittyCells)
   const fullSixel = wantAlt && o.graphics === 'sixel' && o.sixelCells !== undefined
   // Keep only a viewport of our own permanent physical rows. Normal history is
   // outside this plane; alternate screens already have no terminal scrollback.
