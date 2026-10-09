@@ -38,6 +38,7 @@ import { frameOf, panelOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
 import type { FamilyTable } from './stream.ts'
 import { FAMILY_KIND, conversationOf, permanentLinesOf } from './stream.ts'
+import { taskOf } from './task.ts'
 import { K } from './term.ts'
 import type { Term } from './term.ts'
 import type { Tui, TuiCounts, TuiMode } from './follow.ts'
@@ -257,7 +258,8 @@ async function oneShot(chapters: readonly (readonly StatusRow[])[]): Promise<{ r
   const frame = frameOf({
     ...readingsOf(all.rows),
     permanent: permanentLinesOf(all.rows),
-    conversation: conversationOf(all.rows).slice(-3),
+    conversation: conversationOf(all.rows),
+    task: taskOf(all.rows),
     width: 80,
     height: K,
   })
@@ -269,7 +271,7 @@ const panelOfFrame = (f: Frame): string[] => [...panelOf(f.lines, K, 80)]
 
 /** 折一帧（尺寸与记录器一致）。 */
 function frameAt(rows: readonly StatusRow[]): Frame {
-  return frameOf({ ...readingsOf(rows), permanent: permanentLinesOf(rows), conversation: conversationOf(rows).slice(-3), width: 80, height: K })
+  return frameOf({ ...readingsOf(rows), permanent: permanentLinesOf(rows), conversation: conversationOf(rows), task: taskOf(rows), width: 80, height: K })
 }
 
 /** 跟随那一档画帧的那几步：**一片一帧**（每趟读齐一片、一趟一画，U4）。 */

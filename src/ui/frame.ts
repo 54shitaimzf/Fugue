@@ -56,6 +56,7 @@ import { roundLabelOf, roundNoticeOf } from './lifecycle.ts'
 import type { RoundTransition } from './lifecycle.ts'
 import { DEFAULT_VIEW, viewNameOf } from './views.ts'
 import type { ViewKey } from './views.ts'
+import type { TaskFace } from './task.ts'
 
 export { AIR_COLUMNS } from './layout.ts'
 
@@ -106,6 +107,7 @@ export interface FrameBody {
 
 /** 一帧的三层。**帧自己说得出它的几何**（谁要把一帧拆开，就按 `columns` 拆）。 */
 export interface Frame {
+  readonly segments?: readonly (readonly { readonly text: string; readonly role: LineRole }[])[] | undefined
   readonly image?: PanelImage | undefined
   readonly width: number
   readonly height: number
@@ -134,7 +136,7 @@ export interface Frame {
  * 任何样式。（**永久行与输入行不在这张表里**：U20 那条形状不动——永久行进终端历史要保持干净
  * 流水，输入行是光标算术那一行。）
  */
-export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'overlayBody' | 'waiting' | 'read' | 'readHeading' | 'hint' | 'ok' | 'refuse' | 'hit'
+export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'overlayBody' | 'waiting' | 'read' | 'readHeading' | 'hint' | 'ok' | 'refuse' | 'hit' | 'user' | 'model' | 'system' | 'instruction' | 'plan'
 
 export interface ConversationRow {
   readonly text: string
@@ -142,6 +144,7 @@ export interface ConversationRow {
 }
 
 export interface FrameInput {
+  readonly task?: TaskFace | undefined
   /** UI 从事件通道保留的最后一条状态转移；不加进机器快照。 */
   readonly transition?: RoundTransition | undefined
   readonly conversation?: readonly ConversationRow[]
@@ -554,7 +557,11 @@ export function frameOf(o: FrameInput): Frame {
    * （决策材料问三：两栏各拿满宽，行文与今天 `bodyOf` 一字不变）。
    */
   const view: ViewKey = o.view ?? DEFAULT_VIEW
-  const inner = innerOf(width)
+  const plan = !readingOn && o.menu === undefined && view === 'chat' ? o.task?.plan ?? [] : []
+  // 保住主区至少64列；侧栏只在有未完成计划、宽且高的窗口展开。
+  const sideWidth = width >= 108 && height >= 16 && plan.length > 0 ? Math.min(34, Math.floor(width / 4)) : 0
+  const mainWidth = sideWidth === 0 ? width : width - sideWidth - 1
+  const inner = innerOf(mainWidth)
   const edge = width - 2
   const inset = ' '.repeat(airOf(width))
   const detail = o.menu?.detail, detailMore = o.menu?.detailMore
@@ -570,7 +577,7 @@ export function frameOf(o: FrameInput): Frame {
   // （轮次头 · 细线 · 在飞那几格）；另两档是 `bodyOf` 的那一半，行文一字不变，只是各拿满宽。
   const bodyRows: readonly { readonly l: string; readonly role: LineRole }[] =
     view === 'chat'
-      ? chatOf({ ...o, onboarding: (o.bottom?.rows.length ?? 0) === 0 && o.menu === undefined }).map((x) =>
+      ? (o.task?.round !== null && o.task !== undefined ? o.task.rows.map(r => ({ kind: 'head' as const, ...r })) : chatOf({ ...o, onboarding: (o.bottom?.rows.length ?? 0) === 0 && o.menu === undefined })).map((x) =>
           x.kind === 'rule'
             ? { l: glyphs().div.repeat(inner), role: 'border' as const }
             : x.kind === 'aside'
@@ -578,7 +585,10 @@ export function frameOf(o: FrameInput): Frame {
               : { l: `${iconPrefixOf(x.icon)}${x.text}`, role: x.role ?? 'body' as const },
         )
       : (view === 'progress' ? body.left : body.right).map((l) => ({ l, role: 'body' as const }))
-  const rows = bodyRows.flatMap((one) => wrap(one.l, inner).map((x) => ({ l: x, role: one.role })))
+  const rows = bodyRows.flatMap((one) => {
+    const paragraphs = o.task === undefined ? [one.l] : one.l.split('\n')
+    return paragraphs.flatMap((p, i) => wrap(p, Math.max(1, inner - (i === 0 ? 0 : 2))).map(x => ({ l: i === 0 ? x : `  ${x}`, role: one.role })))
+  })
 
   // 账尾那条状态条：**一行**，超出就从右边截（`clip` 留 `…`，说了它被截过）。
   const footer = clip(helpOn ? `${Math.max(0, Math.min((o.menu?.rows.length ?? 1) - 1, o.menu?.sel ?? 0)) + 1}/${o.menu!.rows.length} · 筛选` : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
@@ -689,7 +699,9 @@ export function frameOf(o: FrameInput): Frame {
   }
   const bodyBudget = Math.max(bodyFloor, budget - menuBody.length - gateBody.length - gateNotice.length)
   // 阅读面开着：内容那一栏一个字节都不印（地方整块给了正文，见上面那一段）。
-  const content = readingOn || helpOn ? [] : rows.length <= bodyBudget ? rows : rows.slice(0, Math.max(0, bodyBudget - 1))
+  const content = readingOn || helpOn ? [] : rows.length <= bodyBudget ? rows : o.task === undefined
+    ? rows.slice(0, Math.max(0, bodyBudget - 1))
+    : [...rows.slice(0, Math.min(2, Math.max(0, bodyBudget - 2))), ...(bodyBudget > 3 ? rows.slice(-(bodyBudget - 3)) : [])]
   const dropped = readingOn || helpOn ? 0 : rows.length - content.length
   // 树那一栏在最上面，然后才是内容那一栏（它的每一行都是横贯整栏的）。行带着**角色**（U20）：
   // 树与读数是正文 · 阅读面正文是 `read` · 候选与门口那一块是临时的 `overlay`。
@@ -698,7 +710,7 @@ export function frameOf(o: FrameInput): Frame {
     ...navBody.map((one) => ({ l: one.l, role: one.hit ? ('hit' as const) : ('body' as const) })),
     ...content.map((x) => ({ l: x.l, role: x.role })),
   ]
-  if (dropped > 0) shown.push({ l: `${glyphs().mark} 还有 ${dropped} 行没印`, role: 'body' })
+  if (dropped > 0) shown.push(o.task === undefined ? { l: `${glyphs().mark} 还有 ${dropped} 行没印`, role: 'body' } : { l: `${glyphs().mark} ${dropped} 行未展开 · 完整记录可按需阅读`, role: 'system' })
   for (const one of readBody) shown.push({ l: one, role: 'read' })
   // **框恒填满这一屏**（第二幕 ⑦ 收尾）：`ui/layout.ts` 那本行账里「内容 6 行」是个**定数**
   // （框恒 10 行），而这一份从前只是"内容够长时看起来填满了"——账还小的时候（一两格 agent）
@@ -736,7 +748,7 @@ export function frameOf(o: FrameInput): Frame {
   // 那一格：对话视图不印树，框名是「读的是哪一格」这件事唯一的落点。
   const g = glyphs()
   const focus = o.focus === undefined || o.focus === null ? '' : ` · ${o.focus}`
-  const head = helpOn ? '按键帮助' : readingOn ? (typeof o.read?.heading === 'string' && o.read.heading !== '' ? o.read.heading : '阅读面') : `${viewNameOf(view)}${view === 'chat' ? '' : focus}`
+  const head = helpOn ? '按键帮助' : readingOn ? (typeof o.read?.heading === 'string' && o.read.heading !== '' ? o.read.heading : '阅读面') : `${o.task === undefined || o.task.round === null || view !== 'chat' ? viewNameOf(view) : '当前任务'}${view === 'chat' ? '' : focus}`
   lines.push(`${g.tl}${bar(edge, head)}${g.tr}`)
   roles.push(helpOn || readingOn ? 'readHeading' : 'border')
   for (const one of shown) {
@@ -754,5 +766,16 @@ export function frameOf(o: FrameInput): Frame {
   }
   lines.push(`${g.bl}${g.h.repeat(edge)}${g.br}`)
   roles.push('border')
+  if (sideWidth > 0) {
+    const sideInner = sideWidth - 2
+    const labels = ['计划', '', ...plan.flatMap(p => wrap(`${p.status === 'completed' ? '[x]' : p.status === 'in_progress' ? '>' : '[ ]'} ${p.text}`, sideInner)), '', '完整计划可按需阅读']
+    if (labels.length > height) labels.splice(height - 1, labels.length, `${g.mark} 还有计划未展开`)
+    const segments = lines.map((line, i) => {
+      const main = cell(line.slice(0, 1) + inset + cell(shown[i - 1]?.l ?? '', inner) + inset + g.v, mainWidth)
+      const actual = i === 0 ? `${g.tl}${bar(mainWidth - 2, head)}${g.tr}` : i === height - 1 ? `${g.bl}${g.h.repeat(mainWidth - 2)}${g.br}` : i === height - 3 && withFooter ? `${g.ml}${g.div.repeat(mainWidth - 2)}${g.mr}` : i === height - 2 && withFooter ? `${g.v}${inset}${cell(footer, inner)}${inset}${g.v}` : main
+      return [{ text: actual, role: roles[i]! }, { text: ` ${g.v} `, role: 'border' as const }, { text: cell(labels[i] ?? '', sideInner), role: 'plan' as const }]
+    })
+    return { width, height, columns: { left: inner, right: sideInner }, footer, lines: segments.map(s => s.map(p => p.text).join('')), roles, segments }
+  }
   return { width, height, columns: { left: inner, right: 0 }, footer, lines, roles, ...(panelImage === undefined ? {} : { image: panelImage }) }
 }

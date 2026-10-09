@@ -28,6 +28,7 @@ import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
 import type { LineMode, RunLauncher, RunOutcome } from './run.ts'
 import { innerOf } from './frame.ts'
+import { taskOf } from './task.ts'
 import type { ReadPreview } from './frame.ts'
 import type { ImageRequest } from '../serve/image-source.ts'
 import type { PixelImage } from './image-codec.ts'
@@ -233,6 +234,13 @@ export function openStage(deps: StageDeps): Stage {
     readState = readStateOf(rows, { agent: focusNow(), prev: readState, snapshot })
   }
 
+  const readFaces = () => {
+    const faces = facesOf(readState), task = taskOf(deps.rows(), focusNow(), true)
+    return task.round === null ? faces : { ...faces, stream: { title: '当前任务记录', lines: [
+      ...task.rows.flatMap(row => row.text.split('\n')),
+      ...(task.plan.length === 0 ? [] : ['完整计划', ...task.plan.map(p => `${p.status === 'completed' ? '[x]' : p.status === 'in_progress' ? '>' : '[ ]'} ${p.text}`)]),
+    ] } }
+  }
   const heightWant = (): number => panelWantOf(deps.termRows(), panel !== null || reading !== null || planTop !== null || (showInput && gate !== null && !gateHidden))
   const planRows = (): readonly string[] => {
     const card = gate === null ? null : cardAt(gate, gateView.at)
@@ -449,7 +457,7 @@ export function openStage(deps: StageDeps): Stage {
       keyHelpTop !== null ? { read: keyHelpRead() } : planTop !== null ? (() => { const rows = planRows(); return { read: { rows, top: stepTop(rows.length, planTop, 0) } } })() : reading === null
         ? {}
         : (() => {
-            const faces = facesOf(readState)
+            const faces = readFaces()
             const rows = faceRowsOf(faces, reading.face ?? firstFace(faces), cols())
             const top = Math.max(0, Math.min(reading.top, Math.max(0, rows.length - 1)))
             const at = imageAt()
@@ -694,7 +702,7 @@ export function openStage(deps: StageDeps): Stage {
       if (reading === null) {
         // 开的那一下就要把详情面折出来（`reading` 还没置上，所以显式要）。
         refreshRead(true)
-        const faces = facesOf(readState)
+        const faces = readFaces()
         reading = { face: firstFace(faces), top: 0 }
         // 当前对象与配置按键由正文/提示行显示；切换阅读不追加永久历史。
       } else {
@@ -724,13 +732,13 @@ export function openStage(deps: StageDeps): Stage {
     }
     if (reading !== null) {
       if (d.action === 'complete') {
-        const faces = facesOf(readState)
+        const faces = readFaces()
         reading = { face: stepFace(faces, reading.face, 1), top: 0 }
         settle()
         return
       }
       if (d.action === 'historyOlder' || d.action === 'historyNewer') {
-        const n = faceRowsOf(facesOf(readState), reading.face, cols()).length
+        const n = faceRowsOf(readFaces(), reading.face, cols()).length
         reading = { ...reading, top: stepTop(n, reading.top, d.action === 'historyOlder' ? -1 : 1) }
         settle()
         return
@@ -746,7 +754,7 @@ export function openStage(deps: StageDeps): Stage {
         const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -PAGE_STEP : PAGE_STEP
         planTop = stepTop(n, planTop, delta)
       } else if (reading !== null) {
-        const n = faceRowsOf(facesOf(readState), reading.face, cols()).length
+        const n = faceRowsOf(readFaces(), reading.face, cols()).length
         // 跳首尾用一个够大的数一步到头（`stepTop` 夹得住）。
         const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -PAGE_STEP : PAGE_STEP
         reading = { ...reading, top: stepTop(n, reading.top, delta) }

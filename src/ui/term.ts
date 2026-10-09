@@ -225,6 +225,7 @@ export interface PanelInput {
 
 /** 面板那一块：`rows` 是那个框（补到正好 `height` 行），`input` 是它下面那几行输入行（不给就没有）。 */
 export interface Panel {
+  readonly segments?: readonly (readonly { readonly text: string; readonly role: LineRole }[])[] | undefined
   /** 已解码的图片，独立于可转义的文字；缺省不画。 */
   readonly image?: PanelImage | undefined
   readonly rows: readonly string[]
@@ -495,6 +496,11 @@ export function openTerm(o: TermOptions): Term {
       // 同一主题下「变没变」的判定与无主题时一个样；主题中途换了（没人这么用）也只是整帧重写。
       const rows = panelOf(spec.rows, h, columns).map((line, i) => {
         const role = i < (spec.roles?.length ?? 0) ? (spec.roles as readonly LineRole[])[i] : 'body'
+        const parts = spec.segments?.[i]
+        if (parts !== undefined && parts.map(p => p.text).join('') === line) return parts.map(p => {
+          const sgr = o.theme?.[p.role]
+          return sgr === undefined ? p.text : `${sgr}${p.text}${STYLE_OFF}`
+        }).join('')
         const sgr = o.theme?.[role]
         return sgr === undefined ? line : `${sgr}${line}${STYLE_OFF}`
       })

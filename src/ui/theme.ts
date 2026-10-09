@@ -55,6 +55,11 @@ export const ROLE_SLOT: Readonly<Record<LineRole, Slot>> = {
   ok: 'ok',
   refuse: 'refuse',
   hit: 'hit',
+  user: 'readHeading',
+  model: 'body',
+  system: 'dim',
+  instruction: 'overlay',
+  plan: 'dim',
 }
 
 /**

@@ -53,17 +53,11 @@ import type { LedgerSource } from '../serve/source.ts'
 import type { ConversationRow, FrameInput } from './frame.ts'
 import type { RoundTransition } from './lifecycle.ts'
 import { frameOf } from './frame.ts'
+import { taskOf } from './task.ts'
 import type { FamilyTable } from './stream.ts'
 import { conversationOf, permanentLinesOf } from './stream.ts'
 
-/**
- * 对话区留最近几条（`frameOf` 的 `conversation` 那一栏）。**三条**＝框里挤掉轮次头与细线之后
- * 还看得完的条数；这个数**不随终端高度变**（改它就是改主面的信息量，要人批）。
- *
- * **什么条件下改主意**：人判"最近三条"不够用（要往下翻更早的汇报），就把那一栏做成可滚的
- * ——那时这个数换成按窗口高度分账，与 `ui/layout.ts` 那几个数同一条路。
- */
-export const CONVERSATION_KEEP = 3
+// 当前任务容量由实际帧高分配；完整原文在 taskOf 与阅读面中，无固定三条上限。
 import type { Panel, Term, ViewInput } from './term.ts'
 
 /**
@@ -204,7 +198,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
     if (foldedAt === rows.length) return folded
     const fresh = rows.slice(foldedAt)
     folded = [...folded, ...permanentLinesOf(fresh, o.table)]
-    conversation = [...conversation, ...conversationOf(fresh, o.table)].slice(-CONVERSATION_KEEP)
+    conversation = [...conversation, ...conversationOf(fresh, o.table)]
     for (const r of fresh) if (r.e.t === 'round/state') transition = { round: r.e.round, from: r.e.from, to: r.e.to }
     foldedAt = rows.length
     return folded
@@ -247,6 +241,12 @@ export function openSession(o: SessionOptions = {}): TuiSession {
     sparkSnap = { rows, value }
     return value
   }
+  let taskSnap: { rows: readonly StatusRow[]; focus: string | null; value: ReturnType<typeof taskOf> } | null = null
+  const taskAt = (focus: string | null) => {
+    if (taskSnap !== null && taskSnap.rows === rows && taskSnap.focus === focus) return taskSnap.value
+    const value = taskOf(rows, focus)
+    taskSnap = { rows, focus, value }; return value
+  }
   const frameFullAt = (size: { readonly columns: number; readonly height: number }) => {
     const v = o.view?.()
     const input: FrameInput = {
@@ -267,6 +267,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(v?.focus === undefined ? {} : { focus: v.focus }),
       permanent: permanent(),
       conversation,
+      task: taskAt(v?.focus ?? null),
       ...(transition === undefined ? {} : { transition }),
       width: size.columns,
       height: size.height,
@@ -304,6 +305,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       return {
         rows: f.lines,
         roles: f.roles,
+        ...(f.segments === undefined ? {} : { segments: f.segments }),
         ...(f.image === undefined ? {} : { image: f.image }),
         ...(v?.hint === undefined ? {} : { hint: v.hint }),
         ...(v?.input === undefined ? {} : { input: v.input }),
