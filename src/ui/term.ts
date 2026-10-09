@@ -100,6 +100,7 @@ import type { ViewKey } from './views.ts'
 import { openImageLayer } from './image-layer.ts'
 import type { PanelImage } from './image-layer.ts'
 import type { GraphicsTier } from './image.ts'
+import type { SixelCells } from './cell-probe.ts'
 
 /**
  * 底部那块**重画区**的期望行数（PLAN § 5.19：K 取 12）——**框 10 ＋ 空一行 ＋ 提示行**（第二幕 ④；
@@ -281,8 +282,10 @@ export type RenderPanel = (size: {
 }) => readonly string[] | Panel
 
 export interface TermOptions {
-  /** 缺省关；当前只启用可按号清理的 Kitty。 */
+  /** 缺省关；Sixel 另需已核对的能力与固定几何。 */
   readonly graphics?: GraphicsTier | undefined
+  /** 仅由保证固定几何的调用方提供；产品接线须先解决 resize 所有权。 */
+  readonly sixelCells?: (() => SixelCells | null) | undefined
   readonly out: TermOut
   /** 这一台终端叫什么（`process.env.TERM`）。缺省读环境。 */
   readonly term?: string | undefined
@@ -369,7 +372,7 @@ export function openTerm(o: TermOptions): Term {
   const ansi = out.isTTY === true && ansiOf(o.term ?? process.env.TERM)
   /** 这一档要不要整屏（`--full` 且写得出 ANSI）：两样缺一样，那一个字节都不写。 */
   const wantAlt = ansi && o.full === true
-  const images = openImageLayer(ansi ? o.graphics : 'none')
+  const images = openImageLayer(ansi ? o.graphics : 'none', o.sixelCells)
   /** 此刻在不在 alt screen 里。**只由 `draw` 置真、由 `close` 置假**——两处都不猜。 */
   let alt = false
   let columns = FALLBACK_COLUMNS
