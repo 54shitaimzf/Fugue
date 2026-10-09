@@ -67,6 +67,7 @@ export const WORD_TABLE = {
   noStopRecord: { face: '未记录结束', arch: 'UI agent stopped=null，不推断实际进程存活' },
   nextTaskGuide: { face: '可以继续描述任务，或查看记录。', arch: 'UI 写回后的下一步提示' },
   abortGuide: { face: '任务已中止，请查看进展与记录。', arch: 'UI 一般中止不保证工作区从未变化' },
+  runWritebackGuide: { face: '文件是否已写回，请查看进展与记录。', arch: 'UI 子进程停止或非零返回不证明 advance，写回仍读事件事实' },
   imageLoading: { face: '正在读取预览', arch: 'UI 图片带外请求尚未结算' },
   imageUnavailable: { face: '预览不可用，保留文件路径', arch: 'UI 图片读取或解码退化' },
   imageShort: { face: '屏幕较矮，预览暂收起', arch: 'UI 图片图位不足两行' },

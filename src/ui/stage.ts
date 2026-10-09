@@ -9,7 +9,7 @@
 // 不开一个真终端就能驱动（`stage.test.ts` 五条接线断言）。`FLAGS_OF` 从 cli 那一层读
 // （`../cli/flags.ts`）：菜单候选与分发处读**同一个对象**——「哪些命令存在」仍只有一处真源（那张
 // 表自己不 import 任何东西，不成环）。
-import { PAGE_STEP, fallsToText, helpRowsOf, hintWhenOf } from './keymap.ts'
+import { KEYMAP, PAGE_STEP, fallsToText, helpRowsOf, hintWhenOf, keyLabelOf } from './keymap.ts'
 import type { Decoded, HintWhen, Keymap } from './keymap.ts'
 import { ctrlCStepOf, escStepOf, quitStepOf, stillArmed } from './cancel.ts'
 import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmit, submitOf } from './input.ts'
@@ -37,6 +37,7 @@ import type { ViewInput } from './term.ts'
 import { FLAGS_OF } from '../cli/flags.ts'
 import { statusOf } from '../probe/status.ts'
 import type { StatusRow } from '../probe/status.ts'
+import { WORDS } from '../words.ts'
 
 // 分账那几个数（`panelWantOf` · 份额 · 上下限）住 `ui/layout.ts` 那一份布局常量表（第二幕 ④ 收成
 // 一处）：这一份只管把它们接上 `deps.termRows`（`heightWant`），算式一个字都不留在这里。
@@ -125,6 +126,9 @@ export function openStage(deps: StageDeps): Stage {
   /** 键表那一档的候选：提示行 · 帮助面板 · 这一屏，三处同一张表（`ui/keymap.ts`）。 */
   const keyRows = (): readonly MenuRow[] =>
     helpRowsOf(deps.keymap?.()).map((name) => ({ name, note: '', kind: 'key' as const }))
+  // 反馈与帮助/解码共用当前配置键表，缺省仍从同一 KEYMAP 读取。
+  const keyOf = (action: 'submit' | 'quit' | 'cancel' | 'interrupt'): string =>
+    keyLabelOf((deps.keymap?.() ?? KEYMAP).rows.find(b => b.action === action)!)
   const rowsOf = (source: MenuSource): readonly MenuRow[] =>
     candidatesOf({ specs, keys: keyRows(), paths: panel?.paths ?? [], line: ed.draft.text, source })
   /** 提示符：`»` 是命令、`>` 是话（模式是从行推出来的，不是另存的一个开关）。 */
@@ -286,21 +290,22 @@ export function openStage(deps: StageDeps): Stage {
     if (deps.run()?.running === true) {
       if (!leaving) {
         leaving = true
-        deps.note('那一趟还在跑：等它收尾就退出（账要完整）。再按一次是硬退，或者 Esc / Ctrl-C 打断它')
+        deps.note(`任务仍在运行；结束后退出。再按 ${keyOf('quit')} 立即关闭界面，任务可能继续运行。`)
         return
       }
-      deps.note('硬退：那一趟的输出接不上了（它自己的账照写，写到哪算哪）')
+      deps.note(`正在关闭界面，任务可能继续运行。${WORDS.runWritebackGuide}`)
     }
     deps.abort()
   }
   /** `Esc` 第二级与 `Ctrl-C` 第一级都走这一下：把信号递给在途的那一趟（同一句话只说一遍）。 */
   const breakRun = (): void => {
-    deps.run()?.stop('SIGINT')
+    const requested = deps.run()?.stop('SIGINT') === true
     // **打断之后不自动接着起下一条**（`T7`）：人刚说了停，排队那几条就停在那儿等人（`Enter`
     // 起下一条 · `Esc` 丢掉）。不这么定的话，`Esc` 链第三级（丢排队草稿）**永远够不着**——
     // 一趟被打断、`onDone` 立刻起下一条，队列那一栏就又回到"跑着"了。
     advanceQueue = false
-    deps.note('打断了那一趟（SIGINT）：它自己那份账照写，写到哪算哪。排队那几条停着等你（Enter 起下一条）')
+    deps.note(requested ? `已请求停止执行，正在等待结束。${WORDS.runWritebackGuide}` : '没有正在运行的任务。')
+    if (queue.items.length > 0) deps.note(`排队任务暂停；按 ${keyOf('submit')} 开始下一条。`)
     settle()
   }
   /**
@@ -317,7 +322,7 @@ export function openStage(deps: StageDeps): Stage {
     const next = taken.next
     const cut = go.argvOf(next.line, next.mode)
     if (cut.why !== null) {
-      deps.note(`排队里那条起不了：${cut.why}（跳过它，接着看下一条）`)
+      deps.note(`排队任务无法执行：${cut.why}。已跳过该项，其余排队任务保留。`)
       return false
     }
     deps.note(`起了排队里的下一条：\`${next.line}\`（${cut.argv.join(' ')}）`)
@@ -351,8 +356,12 @@ export function openStage(deps: StageDeps): Stage {
   /** 一趟收尾那一下（原 `openRun` 的 `onDone`——搬进来之后 observe 那头只剩一行接线）。 */
   const onRunDone = (r: RunOutcome): void => {
     const go = deps.run()
-    if (r.why !== null) deps.note(`这一趟起不来：${r.why}（手敲一遍看看：${go?.last.join(' ') ?? ''}）`)
-    else if (r.code !== 0) deps.note(`那一趟退了 ${r.code ?? '（信号）'}（账照写：写到哪算哪）`)
+    if (r.why !== null) {
+      deps.note(`执行未能启动：${r.why}。检查运行环境与配置后重试。`)
+      if (go !== null && go.last.length > 0) deps.note(`启动命令：${go.last.join(' ')}`)
+    } else if (r.code !== 0) deps.note(
+      (r.code === null ? '执行因信号结束。' : `执行失败（退出码 ${r.code}）。`) + WORDS.runWritebackGuide,
+    )
     if (leaving) {
       deps.abort()
       return
@@ -568,14 +577,14 @@ export function openStage(deps: StageDeps): Stage {
           return
         }
         armedAt = deps.now()
-        deps.note('再按一次 Ctrl-C 就退出（3 秒内）')
+        deps.note(`再按一次 ${keyOf('interrupt')} 就退出（3 秒内）`)
         return
       }
       // `Ctrl-D`/`q`/`Q`：**只在输入行空着的时候退**（`quitStepOf`）；行里有字时什么都不做——说
       // 一句为什么，不然按下去看着像没反应（这一句只有 `Ctrl-D` 打得出：`q` 行里有字时让位成人
       // 打的字，上面 ① 那一档就把它收走了）。
       if (quitStepOf({ line: ed.draft.text }) === 'none') {
-        deps.note('输入行里还有字：先清掉它（Esc）或者把它发出去，再按 Ctrl-D 退出')
+        deps.note(`输入行里还有字：先清空（${keyOf('cancel')}）或提交，再按 ${keyOf('quit')} 退出。`)
         settle()
         return
       }
@@ -743,9 +752,10 @@ export function openStage(deps: StageDeps): Stage {
           settle()
           return
         }
-        deps.note(
-          `入队（排队 ${queue.items.length} 条，跑完一趟起一条；Enter 起下一条 · Esc 丢掉最后一条）`,
-        )
+        const waiting = go === null ? '执行入口不可用。' : go.running && advanceQueue ? '当前任务结束后逐条执行。' : '排队任务暂停。'
+        const action = go?.running === true ? `按 ${keyOf('cancel')} 请求停止。` :
+          (go === null ? '' : `按 ${keyOf('submit')} 开始下一条，`) + `按 ${keyOf('cancel')} 取消最后一条。`
+        deps.note(`已排队 ${queue.items.length} 条。${waiting}${action}`)
         settle()
         return
       }

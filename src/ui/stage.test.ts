@@ -166,7 +166,7 @@ test('③ Esc 七级的次序：门口最外，一层一层往里退（每一下
   // 第 2 下：门口关了 · 没有弹层 → 打断在途的那一趟。
   stage.onAction({ action: 'cancel' })
   assert.deepEqual(ctl.stops, ['SIGINT'], '第二下打断那一趟（SIGINT）')
-  assert.ok(ctl.notes.some((n) => n.includes('打断了那一趟')), '打断要看得见')
+  assert.ok(ctl.notes.some((n) => n.includes('已请求停止执行，正在等待结束')), '打断要看得见')
   // 第 3 下：那一趟死了（`running` 翻 false）→ 丢排队里最后一条（2 → 1）。
   ctl.running = false
   stage.onAction({ action: 'cancel' })

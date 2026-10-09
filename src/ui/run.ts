@@ -203,7 +203,7 @@ export interface RunLauncher {
   readonly running: boolean
   /**
    * **上一次真要起的那一条命令的 argv**（还没有就是空表）。`argvOf` 是"先看不跑"，这个是"真按下去了
-   * 的那一条"——"这一趟起不来，手敲一遍看看"那句注记要的就是它（起不来时没有进程，可 argv 有）。
+   * 的那一条"——启动失败时的"启动命令"诊断读的就是它（起不来时没有进程，可 argv 有）。
    */
   readonly last: readonly string[]
   /**
