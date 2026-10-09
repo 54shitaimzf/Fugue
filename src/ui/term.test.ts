@@ -469,8 +469,15 @@ test('⑨ 整屏 --full：两档只差 ALT_ON/ALT_OFF 两笔 · 每一条退出�
  * 那几行**。只认这一份会写的几条（`\r` · `\n`（ONLCR：下一行行首）· 上移/下移/左退 · `2K` 清行 ·
  * 删行）；认不得的 CSI（alt screen 那对 · SGR 那一族——主题的 `2m`/`1m`/`0m`，U22）整段跳过。
  * 光标从**屏幕底行**起——真进程是在 shell 提示符后面起画的（`fugue tui` 敲下去那一行），不是从屏幕顶。
+ *
+ * 给一个计数器就地记下"滚了几次屏"（⑮）：一帧之内滚屏会把这一块整体挪走，"它落在第几行"就算不出来。
  */
-function screenOf(stream: string, rows: number, columns: number): string[] {
+function screenOf(
+  stream: string,
+  rows: number,
+  columns: number,
+  scrolls?: { n: number },
+): string[] {
   const screen: string[] = Array.from({ length: rows }, () => '')
   let row = rows - 1
   let col = 0
@@ -484,6 +491,7 @@ function screenOf(stream: string, rows: number, columns: number): string[] {
       row += 1
       col = 0
       if (row === rows) {
+        if (scrolls !== undefined) scrolls.n += 1
         screen.shift()
         screen.push('')
         row = rows - 1
@@ -715,4 +723,94 @@ test('⑬ 默认主题（U22 · U3）：暗一档与加粗两族 · 名单从 DE
     `⑬ 读数：${frame.lines.length} 行里 ${dimN} 行暗（${dimRoles.join('/')}）· ${boldN} 行粗（${boldRoles.join('/')}）· ` +
       `与无主题档差 ${themed.length - plain.length} 字节（全是 SGR 对）· 可见内容全等`,
   )
+})
+
+// ── ⑮ 高度变过那一档（退出零残留的根因）：从下往上长 · 变矮擦尾 · 收尾一条面板行都不剩 ──────────
+
+test('⑮ 高度变过那一档：变高从下往上长（那一帧零滚动 · 旧块被盖住）· 变矮擦掉多出来那几行 · 收尾之后一条面板行都不剩', () => {
+  const COLS = 40
+  const ROWS = 24
+  const f = fakeOut({ columns: COLS, rows: ROWS })
+  let want = 8
+  const t = openTerm({ out: f, term: 'xterm-256color', heightOf: () => want })
+  const panel = (h: number, mark: string): string[] =>
+    Array.from({ length: h }, (_, i) => (i === 0 ? mark : `p${i}`).padEnd(COLS, '.'))
+  const input = { rows: ['» hi'], caret: { row: 0, col: 4 } }
+  let mark = streamOf(f).length
+  const frame = (): string => {
+    const all = streamOf(f)
+    const one = all.slice(mark)
+    mark = all.length
+    return one
+  }
+  const screen = (): string[] => screenOf(streamOf(f), ROWS, COLS).map((r) => r.trimEnd())
+  /** 全流重放到此刻一共滚了几次屏——"这一帧滚没滚"取前后两次的差。 */
+  const scrollsNow = (): number => {
+    const c = { n: 0 }
+    screenOf(streamOf(f), ROWS, COLS, c)
+    return c.n
+  }
+  /** **一帧之内不许滚屏**——滚了，"这一块落在第几行"就算不出来，旧块就留在屏幕上。 */
+  const scrollsIn = (one: () => void): number => {
+    const before = scrollsNow()
+    one()
+    return scrollsNow() - before
+  }
+
+  scrollsIn(() => {
+    t.draw([], () => ({ rows: panel(8, 'AAA'), input }))
+  })
+  frame()
+  assert.deepEqual(screen().slice(-9), [...panel(8, 'AAA'), '» hi'], '首帧：区域落在终端底部（末行 = 输入行）')
+
+  // ① 高度没变那一帧：上移 8 行 · 零滚动。这一条是"上移算术的形状没动"的判据——高度没变时它与
+  //    从前逐字节相同（①③④⑥⑧⑩⑪⑭ 那几条拿字节流盯着同一个形状）。
+  const steadyScrolls = scrollsIn(() => {
+    t.draw([], () => ({ rows: panel(8, 'BBB'), input }))
+  })
+  frame()
+  assert.equal(steadyScrolls, 0, `高度没变那一帧零滚动，实得 ${steadyScrolls} 次`)
+  assert.ok((screen().slice(-9)[0] as string).startsWith('BBB'), '高度没变那一帧照常重画')
+
+  // ② 变高（8 → 20 行）：**从下往上长**——上移的数 =「光标到区域顶几行」＋这一块比上一块多出来的
+  //    行数，新块末行落在旧块末行上，所以那一帧一个滚动都不发生，旧块每一行都在新块底下（被盖住）。
+  //    从前这一档一个字节都不上移：新块就地往下写，一帧滚掉一屏，旧块留在屏幕上（退出后仍看得见）。
+  want = 20
+  const growScrolls = scrollsIn(() => {
+    t.draw([], () => ({ rows: panel(20, 'CCC'), input }))
+  })
+  frame()
+  const tall = screen()
+  assert.equal(growScrolls, 0, `变高那一帧零滚动（滚了就是"新块就地往下写"那条老错法），实得 ${growScrolls} 次`)
+  assert.deepEqual(tall.slice(-21), [...panel(20, 'CCC'), '» hi'], '变高之后新块从下往上占满到底行')
+  assert.equal(
+    tall.some((r) => r.startsWith('AAA') || r.startsWith('BBB')),
+    false,
+    '旧块被新块整个盖住（一条旧行都不剩）',
+  )
+
+  // ③ 变矮（20 → 8 行）：**顶边不动**（上移的仍是「光标到区域顶几行」），多出来的那 12 行在下面
+  //    擦成空行——也零滚动（擦那几行的下移正好停在终端底行上）。
+  want = 8
+  const shrinkScrolls = scrollsIn(() => {
+    t.draw([], () => ({ rows: panel(8, 'DDD'), input }))
+  })
+  frame()
+  const short = screen()
+  assert.equal(shrinkScrolls, 0, `变矮那一帧零滚动，实得 ${shrinkScrolls} 次`)
+  const top = short.findIndex((r) => r.startsWith('DDD'))
+  assert.ok(top >= 0, '变矮之后面板第一行还在屏幕上')
+  assert.deepEqual(short.slice(top, top + 9), [...panel(8, 'DDD'), '» hi'], '变矮之后可见的那一块')
+  assert.equal(short.slice(top + 9).every((r) => r.trim() === ''), true, '下面那 12 行擦成空行（不留旧块的尾巴）')
+
+  // ④ 收尾：面板那一条都不剩——**退出零残留**那一条走的就是这里（上移 `cursorRow` 行 + 删
+  //    `regionRows` 行；上移的数错了，删的就落在别的行上，旧块留在屏幕上）。
+  t.close()
+  assert.equal(frame(), f.written.at(-1), 'close 也是一笔（U3）')
+  assert.equal(
+    screen().some((r) => r.startsWith('p') || r.includes('» hi')),
+    false,
+    '收尾之后屏幕上一条面板行都不剩',
+  )
+  console.log('⑮ 读数：变高那一帧零滚动 · 变矮擦掉 12 行 · 收尾之后面板 0 行')
 })

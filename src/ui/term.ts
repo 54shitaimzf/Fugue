@@ -54,8 +54,20 @@
 // 区域比终端高时上移被屏幕顶钳住，每帧滚一屏）。期望是**每帧现问**的（`heightOf`）：弹层（菜单 ·
 // 阅读面）开着时调用方给更大的数。终端按行数连框都放不下的那一帧（面板最少 `MIN_HEIGHT` 行）
 // **只印永久行**、一个字节的 ANSI 都不写——行数够了下一帧自动回来（`drawn` 没置过，回来时另起
-// 一块）。行数与宽度一样是**那次画的记忆**：上一次用的高度变了就不上移（残的那一块留给终端
-// 重排，与宽度变同一条路），收尾时行数变过也不删面板（量不到它落在哪）。
+// 一块）。高度与宽度**不是**同一条路（这一版改掉的那一处）：宽度变过是量不到重排，高度变过是量得到
+// 的——那一块画在终端底部、每帧都把末行按回底行的位置，所以下一次该上移多少**算得出来**。
+// 一张一块画画看的账：上移的基数是「上一次画完光标离区域顶几行」（`cursorRow`），
+//
+//   · 高度没变 → 上移 `cursorRow` 行（与从前逐字节相同，新块顶落在旧块顶）；
+//   · 高度**变高** → 上移 `cursorRow ＋ 这一块比上一块多出来的行数`：末行落在旧块末行上，
+//     从下往上长——一帧之内写的行数不超过屏幕，屏幕就不滚动，旧块被新块整个盖住；
+//   · 高度**变矮** → 仍上移 `cursorRow` 行（顶边不动），多出来的那几行在下面擦成空行
+//     （与输入行变少那一条同路）。
+//
+// 从前这一档两边都不上移（把高度当成宽度那一条处理）：新块就地往下写，一帧滚掉一屏，旧块留在屏幕上
+// ——退出之后还看得见它。**什么条件下改主意**：这几条 escape 在某一台终端上量错了位置（比如它把
+// `\x1b[KM` 当成别的意思），就从 `KNOWN_TERM` 里划掉那一台，退到只印永久行那一档。
+// 收尾时行数变过仍不删面板（那一块漂到哪儿量不到）。
 //
 // **一帧一笔（U3）**：`draw` 把那一帧的所有片段拼成一个串、`out.write` 恰一次（`close` 同理）。
 // 逐行小 write 在慢链路（ssh · mux 那一头）上是撕裂与闪跳的主因——一帧之内终端先看见半帧。
@@ -424,17 +436,26 @@ export function openTerm(o: TermOptions): Term {
       /** 框下面那几行：空一行 ＋ 提示行 ＋ 输入行。光标停在它的末行（没有输入行时停在它下面一行）。 */
       const tail = [...pad, ...body]
       const region = [...rows, ...tail]
-      // 上移只在"上一次画过、而且宽度和高度都没变过"时做——宽度变过不猜重排；高度变过那一块
-      // 的大小变了，上移回去也对不上新面板顶。
-      const steady = drawn && columns === drawnColumns && h === drawnHeight
+      /** 宽度这一帧变过没有：变过就不猜重排（旧块留给终端重排，新宽度从下面另起一块）。 */
+      const widthChanged = columns !== drawnColumns
+      // `steady`：高度也没变过（那一档的上移与擦残影都与从前逐字节相同）。宽度变过不猜重排；
+      // 高度变过那一块的大小变了，上移回去也对不上新面板顶——那一档走下面 `grew` / `stale` 两条。
+      const steady = drawn && !widthChanged && h === drawnHeight
       // 行级 diff（U8）：与上一帧行数对得上才逐行比——掠过未变行、重写变行，两条路的光标算术相同。
       // **带新永久行的帧不比**：永久行写在面板顶上，那一写把面板整体平移了几行，"屏幕上那行已是
       // 该内容"的前提失效（平移后掠过判断会对错行）——那一帧本来就要写字节，不差面板这几行。
       const diffable = steady && permanent.length === 0 && lastRegion !== null && lastRegion.length === region.length
-      // 上一帧的输入行比这一帧多出来的那几行（全量那一趟要擦成空行，行数变少不留残影）；宽度/高度
-      // 变过的那一趟 `steady` 是假，不擦（旧块整体留给终端重排，另起一块）。
-      const stale = steady && lastRegion !== null ? Math.max(0, lastRegion.length - region.length) : 0
-      if (steady) buf.push(upOf(cursorRow))
+      // 上一帧比这一帧多出来的那几行（全量那一趟要擦成空行，行数变少不留残影）：输入行变少与高度
+      // 变矮都是这一条——两处都是"顶边不动、底下多出来一截"，擦法一样。**宽度变过那一趟不擦**
+      // （旧块整体留给终端重排，新宽度另起一块）；没画过也没有可擦的上一帧。
+      const stale =
+        drawn && !widthChanged && lastRegion !== null ? Math.max(0, lastRegion.length - region.length) : 0
+      // **新块摆到哪儿**（这一份里唯一一处几何）：变高那一边锚在**底边**（上移的多几行，末行落在旧块
+      // 末行上——从下往上长，一帧之内的写入不顶到底行，屏幕不滚动）；变矮那一边锚在**顶边**（上移
+      // `cursorRow` 行，与从前相同），多出来那几行由下面的 `stale` 擦成空行。宽度变过与首帧都不上移
+      // （新块从光标处另起）。
+      const back = !drawn || widthChanged ? 0 : region.length > regionRows ? cursorRow + (region.length - regionRows) : cursorRow
+      if (back > 0) buf.push(upOf(back))
       for (const line of permanent) buf.push(`\r${CLEAR_LINE}${line}\n`)
       if (diffable) {
         for (let i = 0; i < region.length; i += 1) {
