@@ -1,7 +1,7 @@
 // 有界 PNG 静态预览，不执行文件内容。格式依据 https://www.w3.org/TR/png-3/。
 // 支持所有静态颜色/位深组合；Adam7 暂退文字。忽略颜色配置，保留 PNG 的 RGB 样本。
 import { inflateSync } from 'node:zlib'
-import { MAX_IMAGE_PIXELS } from './image-codec.ts'
+import { fitPixels } from './pixels.ts'
 import type { PixelImage } from './image-codec.ts'
 
 export const MAX_PNG_BYTES = 8 * 1024 * 1024
@@ -22,30 +22,6 @@ function crcOf(bytes: Uint8Array): number {
 function paeth(a: number, b: number, c: number): number {
   const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c)
   return pa <= pb && pa <= pc ? a : pb <= pc ? b : c
-}
-
-/** 缩小用面积加权与预乘透明度，细线不因抽样位置消失；不放大原图。 */
-function previewOf(source: PixelImage): PixelImage {
-  if (source.width * source.height <= MAX_IMAGE_PIXELS) return source
-  const scale = Math.min(Math.sqrt(MAX_IMAGE_PIXELS / (source.width * source.height)),
-    MAX_IMAGE_PIXELS / source.width, MAX_IMAGE_PIXELS / source.height)
-  const width = Math.max(1, Math.floor(source.width * scale)), height = Math.max(1, Math.floor(source.height * scale))
-  const rgba = new Uint8Array(width * height * 4)
-  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-    const left = x * source.width / width, right = (x + 1) * source.width / width
-    const top = y * source.height / height, bottom = (y + 1) * source.height / height
-    const sum = [0, 0, 0]; let alpha = 0
-    for (let sy = Math.floor(top); sy < Math.ceil(bottom); sy += 1) for (let sx = Math.floor(left); sx < Math.ceil(right); sx += 1) {
-      const weight = (Math.min(right, sx + 1) - Math.max(left, sx)) * (Math.min(bottom, sy + 1) - Math.max(top, sy))
-      const at = (sy * source.width + sx) * 4, a = source.rgba[at + 3]! * weight
-      alpha += a
-      for (let c = 0; c < 3; c += 1) sum[c] = sum[c]! + source.rgba[at + c]! * a
-    }
-    const at = (y * width + x) * 4
-    for (let c = 0; c < 3; c += 1) rgba[at + c] = alpha === 0 ? 0 : Math.round(sum[c]! / alpha)
-    rgba[at + 3] = Math.round(alpha / ((right - left) * (bottom - top)))
-  }
-  return { width, height, rgba }
 }
 
 /** 坏格式、过大、未知关键块、Adam7 或解压失败给 null，调用方继续显示路径。 */
@@ -130,5 +106,5 @@ export function decodePng(bytes: Uint8Array): PixelImage | null {
         sample(y, x * channels + 1) === transparency.readUInt16BE(2) && sample(y, x * channels + 2) === transparency.readUInt16BE(4)) rgba[at + 3] = 0
     }
   }
-  return previewOf({ width, height, rgba })
+  return fitPixels({ width, height, rgba }, width, height)
 }
