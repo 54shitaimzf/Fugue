@@ -98,6 +98,9 @@ import type { LineRole } from './frame.ts'
 import { widthOf } from './glyph.ts'
 import { FRAME_ROWS, GAP_ROWS, HINT_ROWS, REGION_ROWS } from './layout.ts'
 import type { ViewKey } from './views.ts'
+import { openImageLayer } from './image-layer.ts'
+import type { PanelImage } from './image-layer.ts'
+import type { GraphicsTier } from './image.ts'
 
 /**
  * 底部那块**重画区**的期望行数（PLAN § 5.19：K 取 12）——**框 10 ＋ 空一行 ＋ 提示行**（第二幕 ④；
@@ -216,6 +219,8 @@ export interface PanelInput {
 
 /** 面板那一块：`rows` 是那个框（补到正好 `height` 行），`input` 是它下面那几行输入行（不给就没有）。 */
 export interface Panel {
+  /** 已解码的图片，独立于可转义的文字；缺省不画。 */
+  readonly image?: PanelImage | undefined
   readonly rows: readonly string[]
   /**
    * 那几行各自的角色（U20，与 `rows` 逐行对应；短出来的按 `body`）。**只在地基这一层报**——
@@ -277,6 +282,8 @@ export type RenderPanel = (size: {
 }) => readonly string[] | Panel
 
 export interface TermOptions {
+  /** 缺省关；当前只启用可按号清理的 Kitty。 */
+  readonly graphics?: GraphicsTier | undefined
   readonly out: TermOut
   /** 这一台终端叫什么（`process.env.TERM`）。缺省读环境。 */
   readonly term?: string | undefined
@@ -346,6 +353,7 @@ export function openTerm(o: TermOptions): Term {
   const ansi = out.isTTY === true && ansiOf(o.term ?? process.env.TERM)
   /** 这一档要不要整屏（`--full` 且写得出 ANSI）：两样缺一样，那一个字节都不写。 */
   const wantAlt = ansi && o.full === true
+  const images = openImageLayer(ansi ? o.graphics : 'none')
   /** 此刻在不在 alt screen 里。**只由 `draw` 置真、由 `close` 置假**——两处都不猜。 */
   let alt = false
   let columns = FALLBACK_COLUMNS
@@ -392,9 +400,11 @@ export function openTerm(o: TermOptions): Term {
       // 判据是**终端**矮，不是夹出来的那个数小——调用方硬要一个 3 行的机械档（测试里那一类）照样画。
       if (!ansi || (rowsKnown && (rowsSeen as number) - 1 < MIN_HEIGHT)) {
         // 只印永久行：不是 TTY / `$TERM` 认不出那一档是常态；矮终端那一帧（U6）是**临时的地板**——
-        // 行数够了的下一帧自动回到面板那一档。两种场合都不写一个字节的 ANSI：矮那一帧屏幕顶
+        // 行数够了的下一帧自动回到面板那一档。文字不写 ANSI；已有 Kitty 图片只按号收回，不移动光标。矮帧屏幕顶
         // 紧挨着历史，`CLEAR_LINE` 会把历史吃掉一行。矮帧过后那一块漂到哪儿量不到：上一帧行作废。
-        if (permanent.length > 0) out.write(permanent.map((line) => `${line}\n`).join(''))
+        const removedImage = images.clear()
+        const plain = permanent.map((line) => `${line}\n`).join('')
+        if (removedImage !== '' || plain !== '') out.write(removedImage + plain)
         drawn = false
         lastRegion = null
         return
@@ -445,6 +455,10 @@ export function openTerm(o: TermOptions): Term {
       // **带新永久行的帧不比**：永久行写在面板顶上，那一写把面板整体平移了几行，"屏幕上那行已是
       // 该内容"的前提失效（平移后掠过判断会对错行）——那一帧本来就要写字节，不差面板这几行。
       const diffable = steady && permanent.length === 0 && lastRegion !== null && lastRegion.length === region.length
+      const finalCursor = lastIsInput ? h + tail.length - 1 : h + tail.length
+      const imageFrame = images.update(spec.image, { columns, height: h, cursorRow: finalCursor,
+        changed: diffable ? region.map((line, i) => line !== lastRegion![i]) : null })
+      buf.push(imageFrame.before)
       // 上一帧比这一帧多出来的那几行（全量那一趟要擦成空行，行数变少不留残影）：输入行变少与高度
       // 变矮都是这一条——两处都是"顶边不动、底下多出来一截"，擦法一样。**宽度变过那一趟不擦**
       // （旧块整体留给终端重排，新宽度另起一块）；没画过也没有可擦的上一帧。
@@ -469,11 +483,17 @@ export function openTerm(o: TermOptions): Term {
           }
         }
         // 末尾光标恒回 caret：掠过那条路走完光标还停在最后一行输入行的行首，补那一下退列（重写
-        // 那条路在写的时候已经退过）。无输入行的帧光标停在区域下一行行首（与全量那一版相同）。
+        // 那条路在写的时候仍在行尾）。无输入行的帧光标停在区域下一行行首（与全量那一版相同）。
         if (lastIsInput) {
           const one = body[body.length - 1] as string
-          const back = widthOf(one) - (input as PanelInput).caret.col
-          if (back > 0) buf.push(leftOf(back))
+          const caret = (input as PanelInput).caret.col
+          if (one === lastRegion![region.length - 1]) {
+            // 掠过末行后在行首，向右到 caret；不能从行首再往左退。
+            if (caret > 0) buf.push(`\x1b[${caret}C`)
+          } else {
+            const back = widthOf(one) - caret
+            if (back > 0) buf.push(leftOf(back))
+          }
         }
       } else {
         // 框那几行与框下面那两行（空一行 · 提示行）**一行一条物理行**：每行以 `\r` 起头、末尾 `\n`
@@ -507,8 +527,9 @@ export function openTerm(o: TermOptions): Term {
           }
         }
       }
+      buf.push(imageFrame.after)
       if (buf.length > 0) out.write(buf.join(''))
-      cursorRow = lastIsInput ? h + tail.length - 1 : h + tail.length
+      cursorRow = finalCursor
       regionRows = h + tail.length
       drawn = true
       drawnColumns = columns
@@ -521,7 +542,7 @@ export function openTerm(o: TermOptions): Term {
       // 处，崩那一档走的就是后一条——第二次进来时 `alt` 已经是假，一个字节都不再写。
       const leave = alt
       alt = false
-      const buf: string[] = []
+      const buf: string[] = [images.clear()]
       // 面板那一块：画过、且宽度和行数都没变过才去删它。宽度变过之后终端会把面板那几行重排、行数
       // 变过之后屏幕顶截到哪儿量不到——那一档不去删（宁可留一块旧的，也不去吃历史）。
       if (ansi && drawn) {
@@ -536,7 +557,8 @@ export function openTerm(o: TermOptions): Term {
       // **出来那一笔在三处出口都会写到**（面板删不删是另一码事）：进去过就必须出来，少写它那台终端
       // 就停在另一块屏上——`T10` 那条断言要抓的正是这一条。
       if (leave) buf.push(ALT_OFF)
-      if (buf.length > 0) out.write(buf.join(''))
+      const output = buf.join('')
+      if (output !== '') out.write(output)
     },
   }
 }

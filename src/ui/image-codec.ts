@@ -20,7 +20,7 @@ export const IMAGE_CHUNK_BYTES = 4096
 export const MAX_IMAGE_PIXELS = 262_144
 
 function positive(n: number): boolean { return Number.isSafeInteger(n) && n > 0 }
-function valid(image: PixelImage): boolean {
+export function imageIsValid(image: PixelImage): boolean {
   return positive(image.width) && positive(image.height) && image.width * image.height <= MAX_IMAGE_PIXELS &&
     image.rgba instanceof Uint8Array && image.rgba.length === image.width * image.height * 4
 }
@@ -30,7 +30,7 @@ function validPlace(place: ImagePlace): boolean {
 
 /** 缺省关；坏输入给空串，让调用方保留文字原文。 */
 export function imageSequence(image: PixelImage, place: ImagePlace, tier: GraphicsTier = 'none'): string {
-  if (tier === 'none' || !valid(image) || !validPlace(place)) return ''
+  if (tier === 'none' || !imageIsValid(image) || !validPlace(place)) return ''
   if (tier === 'sixel') return sixelOf(image)
   if (tier !== 'kitty') return ''
   const payload = Buffer.from(image.rgba).toString('base64')
@@ -47,7 +47,7 @@ export function imageSequence(image: PixelImage, place: ImagePlace, tier: Graphi
 
 /** Kitty 释放本号；Sixel 用其已占像素矩形恢复宿主默认背景。 */
 export function clearImageSequence(image: PixelImage, id: number, tier: GraphicsTier = 'none'): string {
-  if (tier === 'none' || !valid(image) || !positive(id) || id > 0xffffffff) return ''
+  if (tier === 'none' || !imageIsValid(image) || !positive(id) || id > 0xffffffff) return ''
   if (tier === 'kitty') return `\x1b_Ga=d,d=I,i=${id},q=2\x1b\\`
   if (tier === 'sixel') return `\x1bP0;0;0q"1;1;${image.width};${image.height}?\x1b\\`
   return ''

@@ -562,7 +562,7 @@ test('⑪ 行级 diff（U8）：可见与 panelOf 全等 · 帧未变零 CLEAR_L
   assert.equal(second.split(CLEAR_LINE).length - 1, 1, `变了的那一行才重写（恰 1 个 CLEAR_LINE），实得 ${second.split(CLEAR_LINE).length - 1}`)
   assert.equal(second.split('\x1b[1B').length - 1, 8, `其余 9 行掠过（8 个下移——最后一行输入行只回车不下移），实得 ${second.split('\x1b[1B').length - 1}`)
   assert.equal(second.includes('p0'), false, '掠过的行不重写：面板第一行的内容一个字节都没写出去')
-  assert.ok(second.includes(leftOf(widthOf('  --tail') - 4)), '光标仍退回 caret 列（末尾恒回 caret）')
+  assert.ok(second.endsWith('\x1b[4C'), '末行掠过后从行首向右到 caret 列；实际坐标另由 term-image.test 回放核验')
 
   // 第三帧：一个字节都没变 → 那帧里 CLEAR_LINE 数是零，屏幕也不动。
   t.draw([], () => ({ rows: panel('BBB'), input: input2 }))
