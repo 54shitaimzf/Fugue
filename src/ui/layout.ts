@@ -57,3 +57,9 @@ export const AIR_COLUMNS = 1
 export function airOf(width: number): number {
   return width >= 2 + 2 * AIR_COLUMNS + 1 ? AIR_COLUMNS : 0
 }
+
+/** 正文与账尾的容量共用这份分配；阅读翻页使用同一口径。 */
+export function frameBudgetOf(height: number, keep = 0): { readonly withFooter: boolean; readonly rows: number } {
+  const withFooter = keep + 1 <= height - FRAME_EDGE_ROWS - RULE_ROWS - TAIL_ROWS
+  return { withFooter, rows: height - FRAME_EDGE_ROWS - (withFooter ? RULE_ROWS + TAIL_ROWS : 0) }
+}

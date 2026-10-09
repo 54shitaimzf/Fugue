@@ -729,7 +729,7 @@ export function decodeOf(chunk: string, km: Keymap = KEYMAP): readonly Decoded[]
 /** 半截 `ESC` 等多久算"人真按了一下 `Esc`"（毫秒）。 */
 export const ESC_WAIT_MS = 40
 
-/** `PgUp`/`PgDn` 一页翻多少行（U14）：内容那一栏约 8 行（PLAN § 5.19「K 取 12」那笔账），半屏就是 4。 */
+/** 未知尺寸的阅读与候选翻页沿用四行；已知正文容量由 stage 按当前半屏计算。 */
 export const PAGE_STEP = 4
 
 /** 粘贴的另一半记号（`ESC[201~`）等多久（毫秒）：到点还没来就退出粘贴态，攒着的照交（U10）。 */

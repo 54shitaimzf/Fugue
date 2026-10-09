@@ -3,7 +3,7 @@ import {test} from 'node:test'
 import {openStage} from './stage.ts'
 import {openSession} from './follow.ts'
 import {openTerm} from './term.ts'
-import {KEYMAP,keymapOf,keyLabelOf,decodeOf,hintLineOf,hintLimitOf,PAGE_STEP} from './keymap.ts'
+import {KEYMAP,keymapOf,keyLabelOf,decodeOf,hintLineOf,hintLimitOf} from './keymap.ts'
 import {frameOf} from './frame.ts'
 import {statusOf} from '../probe/status.ts'
 import {gateFaceOf} from './gate.ts'
@@ -58,7 +58,7 @@ test('missing or malformed full-read metadata and ordinary menus retain exact pr
 test('help read has its own heading and physical position, supports page/end/start, and nested help retains the frozen explanation',()=>{
  const r=rig();r.key('\x1bh');r.key('\x1bj');r.key('\x1bj');r.key('\x1bt');const read=r.stage.view().read!,input=r.stage.view().input
  let f=r.draw();assert.ok(f.rows.some(s=>s.includes('按键说明')));assert.ok(f.rows.some(s=>s.includes(`1/${read.rows.length}`)&&s.includes('Alt-J')),'short reader shows the actual next-row key inside the frame');assert.ok(!f.rows.some(s=>s.includes('等待输入')))
- r.key('\x1b[6~');assert.equal(r.stage.view().read!.top,Math.min(PAGE_STEP,read.rows.length-1));r.key('\x1b[1;5F');assert.equal(r.stage.view().read!.top,read.rows.length-1)
+ r.key('\x1b[6~');assert.equal(r.stage.view().read!.top,Math.min(Math.max(1,Math.floor(f.roles!.filter(role=>role==='read').length/2)),read.rows.length-1));r.key('\x1b[1;5F');assert.equal(r.stage.view().read!.top,read.rows.length-1)
  r.key('\x1b[1;5H');assert.equal(r.stage.view().read!.top,0);r.key('\x1bj');const frozen=r.stage.view().read
  r.key('\x1bh');assert.ok(r.stage.view().menu);r.key('\x1bj');assert.deepEqual(r.stage.view().read,frozen);r.key('yyng');r.key('\r');assert.deepEqual(r.presses,[])
  r.key('\x1be');assert.equal(r.stage.view().menu,undefined);assert.deepEqual(r.stage.view().read,frozen);r.key('\x1be');assert.ok(r.stage.view().menu);assert.equal(r.stage.view().read,undefined)

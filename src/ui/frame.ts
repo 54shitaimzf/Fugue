@@ -49,7 +49,7 @@ import type { RoundUsage, StatusSnapshot } from '../probe/status.ts'
 import { clip, glyphs, widthOf, wrap } from './glyph.ts'
 import { iconOf } from './icons.ts'
 import type { IconName } from './icons.ts'
-import { airOf, MIN_FRAME_ROWS } from './layout.ts'
+import { airOf, frameBudgetOf, MIN_FRAME_ROWS } from './layout.ts'
 import { humanNumber } from '../human.ts'
 import { WORDS } from '../words.ts'
 import { roundLabelOf, roundNoticeOf } from './lifecycle.ts'
@@ -592,9 +592,10 @@ export function frameOf(o: FrameInput): Frame {
 
   // 账尾那条状态条：**一行**，超出就从右边截（`clip` 留 `…`，说了它被截过）。
   const footer = clip(helpOn ? `${Math.max(0, Math.min((o.menu?.rows.length ?? 1) - 1, o.menu?.sel ?? 0)) + 1}/${o.menu!.rows.length} · 筛选` : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
-  // 上下框两行、分隔与账尾两行；六行正文的预算不随信息量漂移。
-  const withFooter = (helpOn ? 0 : (o.bottom?.keep ?? 0)) + 1 <= height - 4
-  let budget = height - 2 - (withFooter ? 2 : 0)
+  // 当前操作与正文共用实际框体的容量，账尾装不下时让位。
+  const allocation = frameBudgetOf(height, helpOn ? 0 : (o.bottom?.keep ?? 0))
+  const withFooter = allocation.withFooter
+  let budget = allocation.rows
 
   // 候选那一层（`/` 菜单 · `Ctrl-P` 面板）**从内容那一栏的最下面切一块**（最多一半）：面板开开关关，
   // 上面那几行读数一个字节都不动；它自己装不下时把选中的那一条留在窗里，并把还剩几条说出来。

@@ -33,7 +33,7 @@ import type { ReadPreview } from './frame.ts'
 import type { ImageRequest } from '../serve/image-source.ts'
 import type { PixelImage } from './image-codec.ts'
 import type { GraphicsTier } from './image.ts'
-import { panelWantOf } from './layout.ts'
+import { frameBudgetOf, panelWantOf } from './layout.ts'
 import type { ViewInput } from './term.ts'
 import { FLAGS_OF } from '../cli/flags.ts'
 import { statusOf } from '../probe/status.ts'
@@ -504,6 +504,13 @@ export function openStage(deps: StageDeps): Stage {
       input: { rows: frame.rows, caret: frame.caret },
     }
   }
+  // 阅读按当前正文区翻半屏；未知宿主尺寸保持旧四行退化档。
+  const readPageStep = (): number => {
+    const rows = deps.termRows()
+    if (rows === undefined || !Number.isFinite(rows) || rows <= 0) return PAGE_STEP
+    const height = Math.max(1, Math.min(heightWant(), rows - 1))
+    return Math.max(1, Math.floor(frameBudgetOf(height, view().bottom?.keep ?? 0).rows / 2))
+  }
   const onAdvance = (rows: readonly StatusRow[]): void => {
     // 树（`T8`）：节点从账推出来，账一动就跟上——**只在集合真的变了的时候重画**（跟随那一趟每条
     // 行都要走这里，白画一次就是白烧一帧）。
@@ -532,7 +539,7 @@ export function openStage(deps: StageDeps): Stage {
       else if (d.action === 'historyOlder' || d.action === 'historyNewer')
         keyHelpTop = stepTop(keyHelpRows().length, keyHelpTop, d.action === 'historyOlder' ? -1 : 1)
       else if (d.action === 'pageUp' || d.action === 'pageDown')
-        keyHelpTop = stepTop(keyHelpRows().length, keyHelpTop, d.action === 'pageUp' ? -PAGE_STEP : PAGE_STEP)
+        keyHelpTop = stepTop(keyHelpRows().length, keyHelpTop, d.action === 'pageUp' ? -readPageStep() : readPageStep())
       else if (d.action === 'jumpFirst') keyHelpTop = 0
       else if (d.action === 'jumpLast') keyHelpTop = Math.max(0, keyHelpRows().length - 1)
       else return
@@ -765,19 +772,19 @@ export function openStage(deps: StageDeps): Stage {
         return
       }
     }
-    // ⑥之三 翻页（U14）：`PgUp`/`PgDn` 翻半屏（`PAGE_STEP`），`Ctrl-Home`/`Ctrl-End` 跳首尾。
+    // ⑥之三 翻页（U14）：阅读按当前正文区翻半屏，`Ctrl-Home`/`Ctrl-End` 跳首尾。
     // **谁开着翻谁**：阅读面 → `top`；门口那一批 → `at`（半批）；候选 → `sel`（半页）。都没开
     // 就安静丢掉——翻页键不是全局滚动（没有"正在翻的东西"时按它，什么都不要动）。
     if (d.action === 'pageUp' || d.action === 'pageDown' || d.action === 'jumpFirst' || d.action === 'jumpLast') {
       const back = d.action === 'pageUp' || d.action === 'jumpFirst'
       if (planTop !== null) {
         const n = planRows().length
-        const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -PAGE_STEP : PAGE_STEP
+        const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -readPageStep() : readPageStep()
         planTop = stepTop(n, planTop, delta)
       } else if (reading !== null) {
         const n = faceRowsOf(readFaces(), reading.face, cols()).length
         // 跳首尾用一个够大的数一步到头（`stepTop` 夹得住）。
-        const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -PAGE_STEP : PAGE_STEP
+        const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -readPageStep() : readPageStep()
         reading = { ...reading, top: stepTop(n, reading.top, delta) }
       } else if (gate !== null && !gateHidden && ed.draft.text === '') {
         // 半批：那一批的一半（一批至少翻一格）。

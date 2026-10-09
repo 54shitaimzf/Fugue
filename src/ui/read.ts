@@ -511,7 +511,7 @@ export function stepFace(faces: ReadFaces, name: ReadFaceName, delta: number): R
 }
 
 /**
- * 那一面从第几行看起（U14）：`↑`/`↓` 是 ±1，`PgUp`/`PgDn` 是 ±`PAGE_STEP`，`Ctrl-Home`/`Ctrl-End`
+ * 那一面从第几行看起（U14）：`↑`/`↓` 是 ±1，`PgUp`/`PgDn` 翻当前正文区的半屏，`Ctrl-Home`/`Ctrl-End`
  * 用一个够大的数一步到头。**夹住，到头停**——正文是一串有头有尾的东西，翻过头绕回来会让人以为
  * 自己没动（与门口 `stepAt` 同一条口径）。
  */
