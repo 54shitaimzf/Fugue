@@ -131,7 +131,24 @@ function themeFrom(slots: Readonly<Record<Slot, string>>): Readonly<Partial<Reco
 }
 
 export function theme16(): Readonly<Partial<Record<LineRole, string>>> { return themeFrom(SLOT_16) }
-export function theme256(): Readonly<Partial<Record<LineRole, string>>> { return themeFrom(SLOT_256) }
+export type Background = 'light' | 'dark' | 'default'
+/** COLORFGBG 的最后一格是宿主背景。只认明确的浅/深基础色；缺失或其他色保持中性。
+ * 不向终端发背景探针，也不假设所有 256 色终端都用暗底。
+ */
+export function backgroundOf(colorFgBg?: string): Background {
+  const last = colorFgBg?.split(';').at(-1)
+  return last === '15' || last === '7' ? 'light' : last === '0' || last === '8' ? 'dark' : 'default'
+}
+export function theme256(background: Background = 'default'): Readonly<Partial<Record<LineRole, string>>> {
+  if (background === 'default') return themeFrom(SLOT_256)
+  const light = background === 'light'
+  const result = themeFrom({ ...SLOT_256,
+    dim: light ? '\x1b[38;5;239m' : '\x1b[38;5;245m',
+    waiting: light ? '\x1b[38;5;130m' : SLOT_256.waiting,
+    readHeading: light ? '\x1b[1;38;5;25m' : '\x1b[1;38;5;111m',
+  })
+  return { ...result, user: light ? '\x1b[1;38;5;25m' : '\x1b[1;38;5;111;48;5;235m' }
+}
 
 /**
  * 终端**自称**能上 256 色吗。`COLORTERM` 说 `256` / `truecolor` / `24bit`，或 `$TERM` 里带
@@ -146,7 +163,7 @@ export function claims256(term: string | undefined, colorTerm: string | undefine
 
 /** 先遵守全关，再尊重内核控制台的能力上限，最后探测模拟器。 */
 export function tierOf(
-  o: { noStyle?: boolean; noColor?: string | undefined; term?: string | undefined; colorTerm?: string | undefined } = {},
+  o: { noStyle?: boolean; noColor?: string | undefined; term?: string | undefined; colorTerm?: string | undefined; colorFgBg?: string | undefined } = {},
 ): ColorTier {
   if (o.noStyle === true) return 0
   if ((o.noColor ?? '') !== '') return 0
@@ -161,9 +178,9 @@ export function tierOf(
  * no-color.org 的口径是"非空才算喊了"。第 0 级给 `undefined`（= 没有主题，`openTerm` 不包一行）。
  */
 export function themeOf(
-  o: { noStyle?: boolean; noColor?: string | undefined; term?: string | undefined; colorTerm?: string | undefined } = {},
+  o: { noStyle?: boolean; noColor?: string | undefined; term?: string | undefined; colorTerm?: string | undefined; colorFgBg?: string | undefined } = {},
 ): Readonly<Partial<Record<LineRole, string>>> | undefined {
   const tier = tierOf(o)
   if (tier === 0) return undefined
-  return tier === 3 ? theme256() : tier === 2 ? theme16() : DEFAULT_THEME
+  return tier === 3 ? theme256(backgroundOf(o.colorFgBg)) : tier === 2 ? theme16() : DEFAULT_THEME
 }

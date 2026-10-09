@@ -23,7 +23,7 @@ test('second confirmation alone launches the exact batch command; defer and hide
  const notes:string[]=[],presses:string[]=[],stage=openStage({rows:()=>[],columns:()=>40,termRows:()=>24,pendingFace:async()=>face,note:s=>notes.push(s),redraw:()=>{},hint:w=>hintLineOf(KEYMAP,4,w),keysOf:w=>hintKeysOf(KEYMAP,w),run:()=>({running:false,last:[],argvOf:s=>({words:s.split(' '),argv:['fugue',...s.split(' ')],why:null}),press:s=>{presses.push(s);return true},stop:()=>false}),now:()=>0,abort:()=>{}})
  stage.setRaw(true);await stage.refreshGate();stage.onAction({action:'approve',key:'y'});assert.deepEqual(presses,[])
  stage.onAction({action:'submit'});assert.deepEqual(presses,['round go']);assert.equal(notes.at(-1),'已确认执行这批计划（2 项任务）')
- stage.onAction({action:'reject',key:'n'});assert.equal(presses.length,1);stage.onAction({action:'submit'});assert.equal(presses.length,1)
+ assert.equal(stage.view().bottom,undefined,'启动后操作区恢复输入');stage.onAction({action:'go',key:'g'});stage.onAction({action:'reject',key:'n'});assert.equal(presses.length,1);stage.onAction({action:'submit'});assert.equal(presses.length,1)
  assert.equal(notes.at(-1),'本次选择没有启动执行。计划仍等你确认；可补充要求再讨论。');assert.ok(stage.view().bottom)
  stage.onAction({action:'cancel'});assert.equal(notes.at(-1),'确认已收起；这批计划仍等你确认');assert.equal(stage.view().bottom,undefined)
  stage.onAction({action:'go',key:'g'});assert.equal(presses.length,1);assert.ok(stage.view().bottom)

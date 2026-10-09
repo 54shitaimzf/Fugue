@@ -15,7 +15,7 @@ test('approval hint reveals full reading and existing item navigation and follow
  assert.equal(hintLineOf(KEYMAP,3,'gate'),'按键 Ctrl-R 看全 · ↑ 上一项 · ↓ 下一项')
  const custom=keymapOf({historyOlder:'Ctrl-U',historyNewer:'Ctrl-J'})
  assert.equal(hintLineOf(custom,3,'gate'),'按键 Ctrl-R 看全 · Ctrl-U 上一项 · Ctrl-J 下一项')
- assert.deepEqual(hintPicksOf(KEYMAP,'gate').map(b=>b.action).sort(),hintPicksOf(KEYMAP,'any').map(b=>b.action).sort())
+ assert.deepEqual(hintPicksOf(KEYMAP,'gate').map(b=>b.action),['read','historyOlder','historyNewer']);assert.equal(hintPicksOf(KEYMAP,'any').length,KEYMAP.rows.length)
 })
 test('approval title and action retain emphasis while colorful body is regular; clipping and old attribute/text floors stay exact',()=>{
  for(const columns of [16,36,76])for(const armed of [null,'approve','reject'] as const){

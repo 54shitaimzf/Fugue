@@ -95,7 +95,7 @@ export type Stage = 'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'T8' | 'T9'
  * （`keymap.test.ts` ⑦ 量这一条）——宽着的时候人看不出档，窄着的时候**先露出来的那几条**才是这一档
  * 的判断。
  */
-export type HintWhen = 'any' | 'gate' | 'read' | 'pending' | 'plan' | 'menu'
+export type HintWhen = 'any' | 'gate' | 'read' | 'pending' | 'plan' | 'menu' | 'input' | 'typing' | 'run' | 'queue' | 'search'
 
 /** 能按处境换一句话的那几档（`any` 那一档没有"换一句"这回事：它就是表里那一句）。 */
 export type HintSayWhen = Exclude<HintWhen, 'any'>
@@ -146,7 +146,7 @@ export const TABLE: readonly Binding[] = [
     note: '每次处理一项：收起最上层、停止任务、撤掉最后一条排队内容、退出反查、清空输入',
     // 同一个 `Esc`，两处处在说的是两件事（第三幕 ②）：门口那一块开着是"收起门口"，阅读面开着是
     // "收起"——两处各有自己的一级，措辞照各自那一级写。
-    says: { gate: '收起确认', read: '收起', plan: '返回', menu: '返回' },
+    says: { read: '收起', plan: '返回' },
     by: 'T5',
   },
   {
@@ -168,7 +168,7 @@ export const TABLE: readonly Binding[] = [
     keys: ['↑'],
     hint: '上一条',
     note: '查看上一条输入；列表或阅读打开时向上移动',
-    says: { read: '上一行', gate: '上一项', plan: '上一行', menu: '上一条' },
+    says: { read: '上一行', gate: '上一项', plan: '上一行' },
     by: 'T4',
   },
   {
@@ -176,7 +176,7 @@ export const TABLE: readonly Binding[] = [
     keys: ['↓'],
     hint: '下一条',
     note: '查看下一条输入；列表或阅读打开时向下移动',
-    says: { read: '下一行', gate: '下一项', plan: '下一行', menu: '下一条' },
+    says: { read: '下一行', gate: '下一项', plan: '下一行' },
     by: 'T4',
   },
   {
@@ -353,7 +353,7 @@ export const TABLE: readonly Binding[] = [
     keys: ['Ctrl-R'],
     hint: '阅读面',
     note: '查看当前计划全文或文件改动、事件与详情；再按一次收起',
-    says: { read: '收起', gate: '看全', plan: '返回确认' },
+    says: { gate: '看全', plan: '返回确认' },
     by: 'T9',
   },
   {
@@ -375,7 +375,6 @@ export const TABLE: readonly Binding[] = [
     action: 'approve',
     keys: ['y'],
     hint: '执行',
-    says: { gate: '执行整批' },
     note: '执行整批：确认卡开着且输入为空时，按一次选择，再按一次或提交键确认',
     by: 'T6',
   },
@@ -383,7 +382,6 @@ export const TABLE: readonly Binding[] = [
     action: 'reject',
     keys: ['n'],
     hint: '暂不执行',
-    says: { gate: '暂不执行' },
     note: '暂不执行：按一次选择，再确认；计划保留，可补充要求再讨论',
     by: 'T6',
   },
@@ -396,25 +394,30 @@ export const TABLE: readonly Binding[] = [
   },
 ]
 
-/**
- * 每一档点名哪几条、按什么次序先露（第三幕 ②）：**只点名，措辞不在这里**——印出去的字仍住 `TABLE`
- * 的 `hint` / `says` 里。点过名的排前面，**表里其余那些照旧缀在后面**：分档是"先露谁"，不是"藏谁"
- * ——宽着的时候整行的集合与 `any` 那一档一样。
+/** 场景内精选当前动作；宽屏也不补入其他场景的键。any 供完整命令行帮助沿用原表。
+ * 确认卡自身已有批准、拒绝、返回，常驻提示只补全文与翻项。
  */
 export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
-  // 不看处境：先露这七条（提交 · 菜单 · 补全 · 阅读 · 打断 · 退出 · 键表面板——次序与 `TABLE` 一致），
-  // 表里其余那些照旧缀在后面。**这一档就是 `fugue tui` 起来时那一行**（缺省档），逐字节锁着。
   any: ['submit', 'menu', 'complete', 'read', 'interrupt', 'quit', 'panel'],
-  // 确认卡已印放行/拒绝/收起，提示行先露完整阅读，再露翻项；键位仍从同一张表取。
-  // 收起的批次仍等人：先露重新查看的入口，配置改键也随同一张表。
+  input: ['submit', 'menu', 'read', 'complete', 'help'],
+  typing: ['submit', 'newline', 'cancel', 'mention'],
+  run: ['cancel', 'submit', 'read', 'help'],
+  queue: ['submit', 'cancel', 'read', 'help'],
+  search: ['cancel', 'historyOlder', 'submit'],
   pending: ['go', 'read', 'help'],
-  // 阅读上面的候选菜单先露选项导航与返回，背后的阅读坐标不动。
-  menu: ['cancel', 'historyNewer', 'historyOlder', 'pageUp', 'pageDown', 'help'],
-  // 计划全文是只读页；窄屏先露返回，再露翻行；仍用原动作/配置键，不加执行路径。
-  plan: ['cancel', 'historyNewer', 'historyOlder', 'pageDown', 'pageUp', 'read', 'help'],
-  gate: ['read', 'historyOlder', 'historyNewer', 'pageUp', 'pageDown', 'help', 'approve', 'reject', 'cancel'],
-  // 阅读面开着：`Tab` 换一面 · `↑`/`↓` 翻行 · `Esc` 收起（这三样在别处都不是这个意思）。
-  read: ['complete', 'historyOlder', 'historyNewer', 'cancel', 'pageUp', 'pageDown', 'read', 'help'],
+  menu: ['cancel', 'historyNewer', 'historyOlder', 'submit', 'read'],
+  plan: ['cancel', 'historyNewer', 'historyOlder', 'pageDown', 'read'],
+  gate: ['read', 'historyOlder', 'historyNewer'],
+  read: ['complete', 'historyOlder', 'historyNewer', 'cancel', 'pageDown'],
+}
+
+const CONTEXT_HINT: Partial<Record<HintWhen, Partial<Record<UiAction, string>>>> = {
+  input: { submit: '发送', menu: '命令', read: '记录', complete: '视图', help: '帮助' },
+  typing: { submit: '发送', newline: '换行', cancel: '清空输入', mention: '文件' },
+  run: { cancel: '停止', submit: '排队', read: '记录', help: '帮助' },
+  queue: { submit: '下一条', cancel: '取消末条', read: '记录', help: '帮助' },
+  search: { cancel: '结束反查', historyOlder: '更早', submit: '发送' },
+  menu: { cancel: '返回', historyNewer: '下一项', historyOlder: '上一项', submit: '选择', read: '看全' },
 }
 
 /**
@@ -834,25 +837,26 @@ export function decoderOf(km: Keymap = KEYMAP, onControl?: (sequence: string) =>
 
 /** 那一条印成什么（第三幕 ②）：键串照旧，那一句话按处境挑（`says[所处那一档]` 没有就用 `hint`）。 */
 const entryOf = (b: Binding, when: HintWhen = 'any'): string =>
-  `${keyLabelOf(b)} ${(when === 'any' ? undefined : b.says?.[when]) ?? b.hint}`
+  `${keyLabelOf(b)} ${CONTEXT_HINT[when]?.[b.action] ?? (when === 'any' ? undefined : b.says?.[when]) ?? b.hint}`
 
 /**
  * 某一档下该印的那几条：`WIRED` 先过一遍（许诺一个按下去没反应的键，比少印几条坏得多），再看
  * `HINT_WHEN` 点了谁的名。
  *
- * `any` 那一档优先发送、命令、视图与阅读（第三幕 ② 之前的样子）；别的档把点名的那几条按点名的
- * 次序提到前面，**其余照表序缀在后面**——次序只有这一处算，每档的绑定集合一样。
+ * `any` 那一档优先发送、命令、视图与阅读（第三幕 ② 之前的样子）；其他场景只
+ * 展示点名的动作——次序与筛选都在这一处算。
  */
 export function hintPicksOf(km: Keymap = KEYMAP, when: HintWhen = 'any'): readonly Binding[] {
   const wired = km.rows.filter((b) => WIRED.includes(b.by))
   const want = HINT_WHEN[when]
-  if (want.length === 0) return wired
+  if (want.length === 0) return when === 'any' ? wired : []
   const byAction = new Map(wired.map((b) => [b.action as string, b]))
   const named: Binding[] = []
   for (const a of want) {
     const b = byAction.get(a)
     if (b !== undefined) named.push(b)
   }
+  if (when !== 'any') return named
   const used = new Set(named.map((b) => b.action))
   return [...named, ...wired.filter((b) => !used.has(b.action))]
 }

@@ -9,7 +9,7 @@
 // 不开一个真终端就能驱动（`stage.test.ts` 五条接线断言）。`FLAGS_OF` 从 cli 那一层读
 // （`../cli/flags.ts`）：菜单候选与分发处读**同一个对象**——「哪些命令存在」仍只有一处真源（那张
 // 表自己不 import 任何东西，不成环）。
-import { KEYMAP, PAGE_STEP, fallsToText, helpRowsOf, hintWhenOf, keyLabelOf } from './keymap.ts'
+import { KEYMAP, PAGE_STEP, fallsToText, helpRowsOf, keyLabelOf } from './keymap.ts'
 import type { Decoded, HintWhen, Keymap } from './keymap.ts'
 import { ctrlCStepOf, escStepOf, quitStepOf, stillArmed } from './cancel.ts'
 import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmit, submitOf } from './input.ts'
@@ -101,7 +101,7 @@ export interface Stage {
   onRunDone(r: RunOutcome): void
   /**
    * 这一刻期望的面板高度（`openTerm` 的 `heightOf`）：按终端行数分账（`panelWantOf`——缺省至多
-   * 2/5 · 弹层开着至多 3/5；量不到行数回框的 10 行 / `OVERLAY_WANT`）。画得下多少仍归终端层夹。
+   * 已知尺寸展开主区；量不到行数回框的 10 行 / `OVERLAY_WANT`）。画得下多少仍归终端层夹。
    */
   heightWant(): number
   /** stdin 是不是终端（`openKeys` 之后才知道——`view` 里输入行画不画看它）。 */
@@ -158,6 +158,16 @@ export function openStage(deps: StageDeps): Stage {
   let gateView: GateView = GATE_VIEW
   /** 按过 `Esc` 把那一块收起来了没有（账再动一次它自己回来）。 */
   let gateHidden = false
+  // 确认切换暂存完整编辑器；草稿、光标、撤销与反查一起恢复，不提交这份草稿。
+  let gateDraft: Editor | null = null
+  const suspendDraft = (): void => {
+    if (!showInput || gateDraft !== null) return
+    gateDraft = ed; ed = emptyEditor()
+  }
+  const restoreDraft = (): void => {
+    if (gateDraft === null) return
+    ed = gateDraft; gateDraft = null
+  }
   /**
    * 排队那几条（`T7`）。**界面自己的草稿队列，不是账**：账上只有"这一趟起过什么"，没有"还等着跑
    * 什么"——所以它进程一退就没了，也不该有第二个读者。忙的时候打的那几条进这里，跑完一趟取一条。
@@ -209,6 +219,8 @@ export function openStage(deps: StageDeps): Stage {
     lastGate = key
     gate = next
     gateHidden = false
+    if (next === null) restoreDraft(); else suspendDraft()
+    panel = null; reading = null; keyHelpTop = null
     planTop = null
     // **批次换了就把选中那一份与举手那一栏都归零**：上一批举过的手不许带到这一批上。
     gateView = GATE_VIEW
@@ -241,7 +253,11 @@ export function openStage(deps: StageDeps): Stage {
       ...(task.plan.length === 0 ? [] : ['完整计划', ...task.plan.map(p => `${p.status === 'completed' ? '[x]' : p.status === 'in_progress' ? '>' : '[ ]'} ${p.text}`)]),
     ] } }
   }
-  const heightWant = (): number => panelWantOf(deps.termRows(), panel !== null || reading !== null || planTop !== null || (showInput && gate !== null && !gateHidden))
+  const heightWant = (): number => {
+    const rows = deps.termRows(), base = panelWantOf(rows, panel !== null || reading !== null || planTop !== null || (showInput && gate !== null && !gateHidden))
+    if (rows === undefined || !showInput || gateDraft !== null) return base
+    return Math.max(1, base - inputFrameOf({ e: ed, prompt: promptOf(), width: cols() }).rows.length + 1)
+  }
   const planRows = (): readonly string[] => {
     const card = gate === null ? null : cardAt(gate, gateView.at)
     return card === null ? [] : [`计划全文 · 当前 ${gateView.at + 1}/${gate!.cards.length}`, ...previewLinesOf(card)]
@@ -361,6 +377,7 @@ export function openStage(deps: StageDeps): Stage {
       return
     }
     const started = go.press(line)
+    if (started) { gateHidden = true; gateView = { ...gateView, armed: null }; restoreDraft() }
     deps.note(started ? `已确认执行这批计划（${gate?.cards.length ?? 0} 项任务）` : '未能启动执行，计划仍等你确认。')
     settle()
   }
@@ -419,10 +436,11 @@ export function openStage(deps: StageDeps): Stage {
     // 提示行（第二幕 ④ · 第三幕 ② 按处境分档）**与输入行在不在无关**：stdin 不是终端时它就是那一
     // 句"这一档不收按键"——画一个收不到按键的提示符比不画坏得多，而"按键收不到"这件事更得说出来。
     // **阅读面压过门口**（判据在 `hintWhenOf` 那一头）：门口那三个键它自己在屏幕上印着。
-    const when = panel !== null && (panel.source === 'keys' || planTop !== null || reading !== null) ? 'menu' : planTop !== null ? 'plan' : hintWhenOf({ gate: gateOn, read: reading !== null, pending: gate !== null && gateHidden })
+    const when: HintWhen = keyHelpTop !== null && !keyHelpCovered ? 'plan' : panel !== null ? 'menu' : planTop !== null ? 'plan' : reading !== null ? 'read' : gateOn ? 'gate' :
+      deps.run()?.running === true ? 'run' : ed.search !== null ? 'search' : ed.draft.text !== '' ? 'typing' : queue.items.length > 0 ? 'queue' : gate !== null && gateHidden ? 'pending' : 'input'
     const hintPart = { hint: deps.hint(when) }
     if (!showInput) return hintPart
-    const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
+    const frame = gateDraft !== null && panel === null ? { rows: [''], caret: { row: 0, col: 0 } } : inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
     if (keyHelpTop !== null && !keyHelpCovered) return { hint: deps.hint('plan'),
       read: keyHelpRead(),
       input: { rows: frame.rows, caret: frame.caret }, focus: writerAt(navNodes, navAt), view: viewAt(viewIndex) }
@@ -528,6 +546,7 @@ export function openStage(deps: StageDeps): Stage {
     // 那一块关着的时候它们就是人打的字）。二段确认的判据只有一处（`ui/gate.ts` 的 `pressGate`）：
     // 按一下只举手，再按同一个键或 `Enter` 才生效。
     if (d.action === 'approve' || d.action === 'reject') {
+      if (panel !== null || reading !== null) return
       const option: GateOption = d.action === 'approve' ? 'approve' : 'reject'
       if (gate !== null && !gateHidden && ed.draft.text === '') {
         if (clearSmallGate()) { settle(); return }
@@ -576,7 +595,7 @@ export function openStage(deps: StageDeps): Stage {
       if (d.action === 'cancel') {
         const step = escStepOf({
           // **门口那一块是 `Esc` 链最外那一级**（`T6`）：它开着（且行是空的）就只收它。
-          atGate: gate !== null && !gateHidden && planTop === null,
+          atGate: gate !== null && !gateHidden && planTop === null && reading === null && panel === null,
           // 弹层栈有几层：候选那一层与阅读面（`T9`）各算一层——`Esc` 只关最上面那一层。
           overlays: (panel === null ? 0 : 1) + (reading === null ? 0 : 1) + (planTop === null ? 0 : 1),
           running: deps.run()?.running === true,
@@ -588,13 +607,14 @@ export function openStage(deps: StageDeps): Stage {
         if (step === 'gate') {
           gateView = { ...gateView, armed: null }
           gateHidden = true
+          restoreDraft()
           deps.note('确认已收起；这批计划仍等你确认')
           settle()
           return
         }
         if (step === 'overlay') {
           // 候选菜单画在阅读面的下部，先关它，返回同一份阅读与滚动位置。
-          if (panel !== null) panel = null
+          if (panel !== null) { panel = null; if (gateDraft !== null) ed = emptyEditor() }
           else if (planTop !== null) planTop = null
           else reading = null
           settle()
@@ -657,6 +677,7 @@ export function openStage(deps: StageDeps): Stage {
     if (d.action === 'go') {
       if (gate !== null) {
         gateHidden = false
+        suspendDraft()
         planTop = null
         gateView = { ...gateView, armed: null }
         panel = null
@@ -778,7 +799,7 @@ export function openStage(deps: StageDeps): Stage {
       if (gate !== null && !gateHidden && ed.draft.text === '' && clearSmallGate()) { settle(); return }
       // 门口那一块举着手的时候，`Enter` 是**那一档的确认键**（§ 5.19 五："同一个键或 `Enter`
       // 再按一次才生效"）；没举手时它照旧是提交（`pressGate` 给 'none'，一个副作用都没有）。
-      if (gate !== null && !gateHidden && gateView.armed !== null) {
+      if (panel === null && reading === null && gate !== null && !gateHidden && gateView.armed !== null) {
         const press = pressGate(gateView, 'confirm')
         gateView = press.view
         if (press.t === 'do') takeGate(press.option)
@@ -890,6 +911,8 @@ export function openStage(deps: StageDeps): Stage {
       }
       return
     }
+    // 确认与全文期间不编辑暂存的草稿；先返回输入区。
+    if (gateDraft !== null && panel === null) return
     // ⑩ 剩下的编辑动作（`ui/input.ts` 认的那些）一律进输入行；别的（认不出来的动作）安静丢掉。
     const it = intentOf(d.action, d.text ?? '')
     if (it === null) return
@@ -912,6 +935,8 @@ export function openStage(deps: StageDeps): Stage {
     },
     setRaw(raw: boolean): void {
       showInput = raw
+      if (raw && gate !== null && !gateHidden) suspendDraft()
+      else if (!raw) restoreDraft()
       syncImage()
     },
   }

@@ -103,11 +103,11 @@ test('height/width changes cancel reads and remove images that no longer fit',as
   assert.equal(r.session.panel({columns:40,height:7}).image,undefined)
   r.resize(40,24);assert.equal(r.requests.length,2)
   r.requests[1]!.resolve(pixel);await tick();assert.ok(r.draw().includes('a=T'))
-  r.resize(8,24);const narrow=r.draw();assert.ok(narrow.includes('a=d,d=I'))
+  r.resize(8,24);r.draw();assert.ok(r.session.panel({columns:8,height:r.stage.heightWant()}).image,'expanded height can show the complete image description at 8 columns');r.resize(4,24);const narrow=r.draw();assert.ok(narrow.includes('a=d,d=I'))
   assert.equal(r.requests.length,2,'an incomplete wrapped file description cannot start a new read')
-  assert.equal(r.session.panel({columns:8,height:r.stage.heightWant()}).image,undefined)
+  assert.equal(r.session.panel({columns:4,height:r.stage.heightWant()}).image,undefined)
   r.stage.close();r.term.close()
-  console.log('80→40×8 abort=1; 40×24 requests=2 and image=1; 8 columns image=0 and scoped delete=1')
+  console.log('80→40×8 abort=1; 40×24 requests=2 and image=1; 8 columns image fits; 4 columns image=0 and scoped delete=1')
 })
 
 test('default source capability is silent; loading adds one text line and no image reservation',()=>{

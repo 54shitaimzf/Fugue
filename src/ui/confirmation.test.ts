@@ -36,7 +36,7 @@ test('确认选项在窄屏中折行，整批范围与收起含义可见', () =>
   assert.ok(gateRowsOf({ face, view: { at: 0, armed: null }, columns: 76 }).join(' ').includes('y 执行整批 · n 暂不执行 · Esc 收起'), '行动提示仍在卡片中，提示行露导航')
 })
 
-test('确认开合和举手的多帧：9→13→9，首按零执行，未变帧零重写，退出收走全部区域', async () => {
+test('确认开合和举手的多帧：19→19→19，首按零执行，未变帧零重写，退出收走全部区域', async () => {
   const old = setGlyphTier('ascii')
   try {
     let pending: typeof face | null = null
@@ -63,7 +63,7 @@ test('确认开合和举手的多帧：9→13→9，首按零执行，未变帧�
     pending = face
     await stage.refreshGate()
     draw()
-    assert.deepEqual(heights, [9, 13], '确认内容也享有已有弹层高度；关着仍是原档')
+    assert.deepEqual(heights, [19, 19], '确认与输入在同一操作区，开合高度稳定')
     const visible = session.frame({ columns: 40, height: 13 }).join('\n')
     assert.match(visible, /运行命令：node --test/)
     assert.match(visible, /test\/login\.test\.ts/)
@@ -78,16 +78,16 @@ test('确认开合和举手的多帧：9→13→9，首按零执行，未变帧�
     assert.equal(unchanged.split(CLEAR_LINE).length - 1, 0, '完全相同的帧零清行')
     stage.onAction({ action: 'cancel' })
     draw()
-    assert.equal(heights.at(-1), 9, '收起回到缺省高度')
+    assert.equal(heights.at(-1), 19, '收起回到缺省高度')
     assert.equal(stage.view().bottom, undefined)
     // 没有 raw 输入时不画确认块，也不为它撑高。
     pending = { ...face, fingerprint: 'next' }
     await stage.refreshGate()
     stage.setRaw(false)
-    assert.equal(stage.heightWant(), 9)
+    assert.equal(stage.heightWant(), 19)
     assert.equal(stage.view().bottom, undefined)
     term.close()
-    assert.match(chunks.at(-1) as string, /\x1b\[12M$/, '9 框 + 2 提示 + 1 输入全部收走')
-    console.log(`确认序列：height=${heights.join('→')} · 首按执行=${presses.length} · 未变帧清行=0 · 退出删行=12`)
+    assert.match(chunks.at(-1) as string, /\x1b\[22M$/, '19 框 + 2 提示 + 1 输入全部收走')
+    console.log(`确认序列：height=${heights.join('→')} · 首按执行=${presses.length} · 未变帧清行=0 · 退出删行=22`)
   } finally { setGlyphTier(old) }
 })

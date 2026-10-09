@@ -295,6 +295,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       noColor: process.env.NO_COLOR,
       term: process.env.TERM,
       colorTerm: process.env.COLORTERM,
+      colorFgBg: process.env.COLORFGBG,
     }),
     heightOf: stage.heightWant,
     reserveHeightOf: () => panelWantOf(process.stdout.rows ?? term.rows, true),

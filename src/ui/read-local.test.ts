@@ -31,5 +31,5 @@ test('full-plan open and return keep their content and do not add history; narro
   assert.ok(r.frame().rows.some(s=>s.includes('计划全文')));assert.ok(r.stage.view().read!.rows.join('').includes('修复登录提示'))
   r.stage.onAction({action:'historyNewer'});r.stage.onAction({action:'cancel'});assert.equal(r.stage.view().read,undefined);assert.ok(r.stage.view().bottom);assert.deepEqual(r.notes,original);assert.deepEqual(r.presses,[]);r.stage.close()
  }
- assert.deepEqual(hintPicksOf(KEYMAP,'plan').map(b=>b.action).sort(),hintPicksOf(KEYMAP,'any').map(b=>b.action).sort(),'priority retains every binding')
+ assert.deepEqual(hintPicksOf(KEYMAP,'plan').map(b=>b.action),['cancel','historyNewer','historyOlder','pageDown','read'],'readonly hint contains only current actions')
 })

@@ -480,7 +480,7 @@ test('⑦ 打字与粘贴：`insert` 带着那个字 · 控制字符一个都不
 })
 
 // ── ⑧ 提示行按处境分档（第三幕 ②）────────────────────────────────────────────
-test('⑧ 分档只换次序与措辞，不藏东西：不看处境那一档逐字节不变 · 点名的排前面 · 每条都指得回表', () => {
+test('⑧ 场景只展示精选动作，完整帮助仍有全部绑定，配置与解码同源', () => {
   const picksOf = (when: HintWhen): readonly Binding[] => hintPicksOf(KEYMAP, when)
   const wired = KEYMAP.rows.filter((b) => WIRED.includes(b.by))
   // **地板**：`any` 那一档就是表自己的次序（第三幕 ② 之前那一串），而且"不给处境"= 给 `any`。
@@ -490,9 +490,9 @@ test('⑧ 分档只换次序与措辞，不藏东西：不看处境那一档逐�
   assert.equal(hintLimitOf(60), hintLimitOf(60, KEYMAP, 'any'), '取几条也一样')
   assert.ok(hintLineOf(KEYMAP, 3).includes('Enter 提交'), `不看处境那一档照旧从头印：${hintLineOf(KEYMAP, 3)}`)
   const setOf = (when: HintWhen): string[] => picksOf(when).map((b) => b.action).sort()
-  for (const when of ['gate', 'read'] as const) {
+  for (const when of Object.keys(HINT_WHEN).filter(k => k !== 'any') as HintWhen[]) {
     // **分档不藏东西**：三档同一个集合（分档是"先露谁"，不是"藏谁"）。
-    assert.deepEqual(setOf(when), setOf('any'), `${when} 那一档的集合与不看处境那一档一样`)
+    assert.deepEqual(picksOf(when).map(b => b.action), [...HINT_WHEN[when]], `${when} 只含当前精选动作，宽屏不补余项`)
     const named = HINT_WHEN[when]
     assert.ok(named.length > 0, `${when} 那一档点了名`)
     assert.equal(new Set(named).size, named.length, `${when} 那一档点重了名`)
@@ -522,14 +522,14 @@ test('⑧ 分档只换次序与措辞，不藏东西：不看处境那一档逐�
   // **换过词的那几句都真有人在读**（`says` 点的那一档必须在 `HINT_WHEN` 里点到过它——不然是死字）。
   for (const b of TABLE) {
     for (const when of Object.keys(b.says ?? {}) as HintSayWhen[]) {
-      assert.ok(HINT_WHEN[when].includes(b.action), `says.${when} 没人读：HINT_WHEN 那一档没点名 ${b.action}`)
+      assert.ok(HINT_WHEN[when].includes(b.action), `says.${when} 必须在当前场景被读取：${b.action}`)
     }
   }
   // **这一条尺子抓得住东西**：分档真换了先后（不然上面几条量的是空气）。
   assert.notEqual(gate, hintLineOf(KEYMAP, 3), '门口那一档与不看处境那一档不是一串')
   console.log(
     `⑧ 读数：三档（any ${picksOf('any').length} 条 · gate ${picksOf('gate').length} 条 · ` +
-      `read ${picksOf('read').length} 条，三档同一个集合）· 门口那档先露「${gate}」· ` +
+      `read ${picksOf('read').length} 条，场景集合只含点名项）· 门口那档先露「${gate}」· ` +
       `阅读面那一段「${read}」· 换过词的 ${TABLE.filter((b) => b.says !== undefined).length} 条`,
   )
 })

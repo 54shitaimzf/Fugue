@@ -64,7 +64,7 @@ test('hidden-waiting hint follows configured keys and keeps the same complete bi
   assert.equal(hintWhenOf({gate:false,read:false,pending:true}),'pending')
   assert.equal(hintWhenOf({gate:false,read:true,pending:true}),'read')
   assert.deepEqual(HINT_WHEN.pending.slice(0,1),['go'])
-  assert.deepEqual(hintPicksOf(KEYMAP,'pending').map(b=>b.action).sort(),hintPicksOf(KEYMAP,'any').map(b=>b.action).sort())
+  assert.deepEqual(hintPicksOf(KEYMAP,'pending').map(b=>b.action),['go','read','help'])
   const custom=keymapOf({go:'Ctrl-G'})
   assert.ok(hintLineOf(custom,1,'pending').startsWith('按键 Ctrl-G 查看确认'))
   console.log('pending hint first=go; configured key=Ctrl-G; hidden bindings lost=0')

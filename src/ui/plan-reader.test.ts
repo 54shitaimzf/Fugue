@@ -19,12 +19,12 @@ test('a narrow confirmation first reveals the configured full-plan reader while 
  assert.deepEqual(hintPicksOf(KEYMAP,'gate').slice(0,3).map(b=>b.action),['read','historyOlder','historyNewer'])
  assert.equal(hintLineOf(KEYMAP,hintLimitOf(16,KEYMAP,'gate'),'gate'),'按键 Ctrl-R 看全')
  const custom=keymapOf({read:'Ctrl-T'});assert.equal(hintLineOf(custom,hintLimitOf(16,custom,'gate'),'gate'),'按键 Ctrl-T 看全')
- assert.deepEqual(hintPicksOf(KEYMAP,'gate').map(b=>b.action).sort(),hintPicksOf(KEYMAP,'any').map(b=>b.action).sort())
+ assert.deepEqual(hintPicksOf(KEYMAP,'gate').map(b=>b.action),['read','historyOlder','historyNewer'])
  assert.equal(hintLineOf(KEYMAP,2,'plan'),'按键 Esc 返回 · ↓ 下一行')
 })
 test('full plan uses the actual selected card, every physical row is reachable, and reading never launches or refetches it',async()=>{
  for(const width of [16,40,80]){
-  const r=rig(width);await r.stage.refreshGate();if(width<=40)assert.ok(r.frame().rows.some(line=>line.includes('计划有省略')),'actual Stage forwards disclosure to a cropped native frame');r.stage.onAction({action:'historyNewer'});r.stage.onAction({action:'read'})
+  const r=rig(width);await r.stage.refreshGate();const layout=r.stage.view().bottom!;if(layout.rows.length>r.stage.heightWant()-4)assert.ok(r.frame().rows.some(line=>line.includes('计划有省略')),'actual cropped geometry must disclose omitted plan');else assert.ok(r.frame().roles!.includes('waiting'),'expanded geometry still retains actions');r.stage.onAction({action:'historyNewer'});r.stage.onAction({action:'read'})
   const reading=r.stage.view().read;assert.ok(reading,'the current plan has a complete reader even before any contract/issue event')
   assert.equal(r.stage.view().bottom,undefined,'plan reading gets the body budget without a duplicate confirmation card')
   const text=reading.rows.join('').replace(/\s/g,'');for(const phrase of ['计划全文','当前2/2','修复第2项登录失败提示','src/login-2.ts','test/login-2.test.ts','node tools/test-entry.js'])assert.ok(text.includes(phrase.replace(/\s/g,'')),phrase)

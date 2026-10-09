@@ -216,31 +216,14 @@ test('⑤ 门关着按 y：它就是个字（进输入行），一个进程都�
   assert.ok(line.includes('yn'), `y 与 n 都进了输入行（实得 ${JSON.stringify(line)}）`)
 })
 
-test('⑥ 面板高度按终端行数分账：输入那块不得与显示区等高（2026-09-29 的口径）', () => {
-  // 纯表：panelWantOf 在几档典型终端上的读数——缺省至多 2/5（下限 8 · 上限 K）· 弹层至多
-  // 3/5（上限 24 · 下限是缺省档 + 4）· 量不到行数不分账。
-  assert.deepEqual(
-    [24, 30, 40, 16].map((r) => panelWantOf(r, false)),
-    [9, 10, 10, 8],
-    '缺省档：24 行终端 9 行框 · 40 行及以上回到框的 10 行（第二幕 ④：分账收的是框，提示行加在框下面）',
-  )
-  assert.deepEqual(
-    [24, 30, 40, 16].map((r) => panelWantOf(r, true)),
-    [13, 17, 23, 12],
-    '弹层档：至多 3/5（上限 24），下限是缺省档 + 4',
-  )
-  assert.deepEqual(
-    [panelWantOf(undefined, false), panelWantOf(undefined, true)],
-    [10, 24],
-    '量不到行数：不分账，回框的 10 行 / OVERLAY_WANT（与「量不到就不夹」同一条）',
-  )
-  // 接线：24 行的终端上想要 9 行；开一层弹层（Ctrl-P 候选）长到 13；Esc 收掉回到 9。
+test('⑥ 实际终端容量展开，操作区域在菜单开合时稳定，未知尺寸保持地板', () => {
+  assert.deepEqual([24, 30, 40, 16].map(r => panelWantOf(r, false)), [19, 25, 35, 11])
+  assert.deepEqual([24, 30, 40, 16].map(r => panelWantOf(r, true)), [19, 25, 35, 11])
+  assert.deepEqual([panelWantOf(undefined, false), panelWantOf(undefined, true)], [10, 24])
   const { stage } = stageOf({ termRows: 24 })
-  assert.equal(stage.heightWant(), 9, '接线：heightWant 读 deps.termRows 分账')
-  stage.onAction({ action: 'panel' })
-  assert.equal(stage.heightWant(), 13, '弹层开着走 3/5 那一档')
-  stage.onAction({ action: 'cancel' })
-  assert.equal(stage.heightWant(), 9, '收掉弹层回到缺省那一档')
+  assert.equal(stage.heightWant(), 19)
+  stage.onAction({ action: 'panel' }); assert.equal(stage.heightWant(), 19)
+  stage.onAction({ action: 'cancel' }); assert.equal(stage.heightWant(), 19)
 })
 // ── ⑦ 一把尺（0.2.8 U2）：阅读面折的列宽与框内宽是同一处 ────────────────────────────────
 test('⑦ 一把尺：舞台递给阅读面的列宽就是 `innerOf`——屏上印的与翻页数的是同一串', () => {
@@ -397,7 +380,7 @@ test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 
   // ① 都不开：不看处境（`any`）。
   ctl.whens.length = 0
   stage.view()
-  assert.deepEqual(asked(), ['any'], '门口与阅读面都没开 → 不看处境')
+  assert.deepEqual(asked(), ['input'], '门口与阅读面都没开 → 输入场景')
   // ② 门口那一块开着：门口那一档。
   await stage.refreshGate()
   ctl.whens.length = 0
@@ -411,5 +394,5 @@ test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 
   // ④ 正文与提示行承载当前对象与动作；原按键注记入口不再读。
   assert.equal(ctl.notes.filter(n => n.startsWith('阅读面')).length, 0, '只写真实批次结论，阅读不追加说明')
   assert.ok(stage.view().read?.rows.join(' ').includes('计划全文'))
-  console.log('⑪ 读数：三档都问到了（any → gate → plan）· 永久阅读注记0')
+  console.log('⑪ 读数：三档都问到了（input → gate → plan）· 永久阅读注记0')
 })
