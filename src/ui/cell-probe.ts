@@ -2,11 +2,13 @@
 // Protocol: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
 // DA advertises Sixel (attribute 4); CSI 16t reports actual character-cell pixels.
 // DECSDM must already anchor at the cursor, and palettes must be private.
+// XTSMGRAPHICS reads actual color-register capacity; all five reports are one result.
 // We only query these modes; missing/invalid reports keep text. Expired requests stay in FIFO until consumed:
 // an unidentified late reply can never be promoted to a newer request's result.
 import type { WaitFn } from './keymap.ts'
 
 export interface CellPixels { readonly width: number; readonly height: number }
+export interface SixelCells extends CellPixels { readonly colors: number }
 export const CELL_WAIT_MS = 200
 export const MAX_CELL_PIXELS = 512
 export const MAX_CELL_REQUESTS = 16
@@ -17,6 +19,7 @@ interface Request {
   pixels?: CellPixels | null
   anchored?: boolean
   privatePalette?: boolean
+  colors?: number | null
 }
 
 export function openCellProbe(o: {
@@ -25,28 +28,28 @@ export function openCellProbe(o: {
   readonly wait?: WaitFn
 }) {
   const wait: WaitFn = o.wait ?? ((ms, fn) => { const t=setTimeout(fn,ms); return ()=>clearTimeout(t) })
-  const attributes: Request[] = [],pixels: Request[] = [],anchors: Request[] = [],palettes: Request[] = []
-  let current: Request | undefined,cell: CellPixels | null = null,closed=false,stop:(()=>void)|undefined
-  const set=(next:CellPixels|null):void=>{
-    if(cell?.width===next?.width && cell?.height===next?.height)return
+  const attributes: Request[] = [],pixels: Request[] = [],anchors: Request[] = [],palettes: Request[] = [],colors: Request[] = []
+  let current: Request | undefined,cell: SixelCells | null = null,closed=false,stop:(()=>void)|undefined
+  const set=(next:SixelCells|null):void=>{
+    if(cell?.width===next?.width && cell?.height===next?.height && cell?.colors===next?.colors)return
     cell=next;o.changed()
   }
   const finish=(r:Request):void=>{
-    if(r.done || r!==current || r.attributes===undefined || r.pixels===undefined || r.anchored===undefined || r.privatePalette===undefined)return
+    if(r.done || r!==current || r.attributes===undefined || r.pixels===undefined || r.anchored===undefined || r.privatePalette===undefined || r.colors===undefined)return
     r.done=true;stop?.();stop=undefined
-    set(r.attributes && r.anchored && r.privatePalette ? r.pixels : null)
+    set(r.attributes && r.anchored && r.privatePalette && r.pixels && r.colors !== null ? {...r.pixels, colors:r.colors} : null)
   }
   return {
-    get cell():CellPixels|null{return cell},
+    get cell():SixelCells|null{return cell},
     start():void {
       if(closed)return
       stop?.();stop=undefined
       if(current)current.done=true
       set(null)
-      if(Math.max(attributes.length,pixels.length,anchors.length,palettes.length)>=MAX_CELL_REQUESTS)return
-      const r:Request={done:false};current=r;attributes.push(r);pixels.push(r);anchors.push(r);palettes.push(r)
+      if(Math.max(attributes.length,pixels.length,anchors.length,palettes.length,colors.length)>=MAX_CELL_REQUESTS)return
+      const r:Request={done:false};current=r;attributes.push(r);pixels.push(r);anchors.push(r);palettes.push(r);colors.push(r)
       stop=wait(CELL_WAIT_MS,()=>{if(r!==current||r.done)return;stop=undefined;r.done=true;set(null)})
-      o.write('\x1b[c\x1b[16t\x1b[?80$p\x1b[?1070$p')
+      o.write('\x1b[c\x1b[16t\x1b[?80$p\x1b[?1070$p\x1b[?1;1;0S')
     },
     receive(bytes:string):void {
       if(closed)return
@@ -64,6 +67,13 @@ export function openCellProbe(o: {
         else r.privatePalette=value===1||value===3
         finish(r);return
       }
+      const capacity=/^\x1b\[\?1;([0-3])(?:;([0-9]{1,6}))?S$/.exec(bytes)
+      if(capacity){
+        const r=colors.shift();if(!r||r.done)return
+        const value=Number(capacity[2])
+        r.colors=capacity[1]==='0' && Number.isSafeInteger(value) && value>=2 ? Math.min(value,256) : null
+        finish(r);return
+      }
       const size=/^\x1b\[6;([0-9]{1,6});([0-9]{1,6})t$/.exec(bytes)
       if(size){
         const r=pixels.shift();if(!r||r.done)return
@@ -76,7 +86,7 @@ export function openCellProbe(o: {
       if(closed)return
       closed=true;stop?.();stop=undefined
       if(current)current.done=true
-      attributes.length=0;pixels.length=0;anchors.length=0;palettes.length=0;cell=null
+      attributes.length=0;pixels.length=0;anchors.length=0;palettes.length=0;colors.length=0;cell=null
     },
   }
 }

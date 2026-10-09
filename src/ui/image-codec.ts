@@ -14,6 +14,8 @@ export interface ImagePlace {
   readonly id: number
   readonly columns: number
   readonly rows: number
+  /** Sixel 的可用色格；纯编码缺省 256，宿主接线必须提供核对过的容量。 */
+  readonly colors?: number
 }
 
 export const IMAGE_CHUNK_BYTES = 4096
@@ -31,7 +33,10 @@ function validPlace(place: ImagePlace): boolean {
 /** 缺省关；坏输入给空串，让调用方保留文字原文。 */
 export function imageSequence(image: PixelImage, place: ImagePlace, tier: GraphicsTier = 'none'): string {
   if (tier === 'none' || !imageIsValid(image) || !validPlace(place)) return ''
-  if (tier === 'sixel') return sixelOf(image)
+  if (tier === 'sixel') {
+    const colors = place.colors ?? 256
+    return Number.isSafeInteger(colors) && colors >= 2 && colors <= 256 ? sixelOf(image, colors) : ''
+  }
   if (tier !== 'kitty') return ''
   const payload = Buffer.from(image.rgba).toString('base64')
   const out: string[] = []
@@ -68,18 +73,18 @@ function boxOf(cells: ColorCell[]): ColorBox {
   return { cells, axis, score: cells.length > 1 ? ranges[axis]! ** 2 * weight : 0, weight }
 }
 
-/** 少色图保留原色；多色图按加权中位切分到至多256格。半透明在 Sixel 上以128为界。 */
-function paletteOf(image: PixelImage): { indexed: Int16Array; colors: readonly number[][] } {
+/** 少色图保留原色；多色图按加权中位切分到宿主可用的色格。半透明在 Sixel 上以128为界。 */
+function paletteOf(image: PixelImage, limit: number): { indexed: Int16Array; colors: readonly number[][] } {
   const { rgba, width, height } = image
   const exact = new Map<number, number>()
   for (let at = 0; at < rgba.length; at += 4) {
     if (rgba[at + 3]! < 128) continue
     const key = rgba[at]! * 65536 + rgba[at + 1]! * 256 + rgba[at + 2]!
     if (!exact.has(key)) exact.set(key, exact.size)
-    if (exact.size > 256) break
+    if (exact.size > limit) break
   }
   const indexed = new Int16Array(width * height).fill(-1)
-  if (exact.size <= 256) {
+  if (exact.size <= limit) {
     const colors = [...exact.keys()].map(k => [k >> 16, (k >> 8) & 255, k & 255])
     for (let at = 0; at < rgba.length; at += 4) if (rgba[at + 3]! >= 128) {
       indexed[at / 4] = exact.get(rgba[at]! * 65536 + rgba[at + 1]! * 256 + rgba[at + 2]!)!
@@ -98,7 +103,7 @@ function paletteOf(image: PixelImage): { indexed: Int16Array; colors: readonly n
   }
   for (const cell of cells.values()) cell.rgb = cell.rgb.map(n => n / cell.count)
   const boxes = [boxOf([...cells.values()])]
-  while (boxes.length < 256) {
+  while (boxes.length < limit) {
     let best = 0
     for (let i = 1; i < boxes.length; i += 1) if (boxes[i]!.score > boxes[best]!.score) best = i
     const box = boxes[best]!
@@ -134,9 +139,9 @@ function runsOf(chars: string): string {
   return out
 }
 
-function sixelOf(image: PixelImage): string {
+function sixelOf(image: PixelImage, limit: number): string {
   const { width, height, rgba } = image
-  const { indexed, colors } = paletteOf(image)
+  const { indexed, colors } = paletteOf(image, limit)
   const out = [`\x1bP0;1;0q"1;1;${width};${height}`]
   for (const [color, rgb] of colors.entries()) {
     out.push(`#${color};2;${rgb.map(n => Math.round(n * 100 / 255)).join(';')}`)
