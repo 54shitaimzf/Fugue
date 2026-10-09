@@ -275,7 +275,7 @@ export function bodyOf(o: {
       `${WORDS.round} ${r.round} · ${stateFaceOf(r.state)} · ${WORDS.transitions} ${humanNumber(r.transitions)} 条${skipsNote(r.skips)}` +
         ` · ${WORDS.rejects} ${humanNumber(r.rejects)} 次${here}`,
     )
-    // **那几条原始转移不上主面**（收口后按人令）：它们是值层原文（`r.edges` 逐条进 `--json`），
+    // **那几条原始转移不上主面**：它们是值层原文（`r.edges` 逐条进 `--json`），
     // 印出来是 `Idle ──land──> Planning` 这种内部名字——机器名上屏，人读不懂也不缺。条数与跳步数
     // 在轮次那一行；逐条原文的读法在阅读面的事件流与 `fugue log`。同一条口径：**主面只留人话，
     // 原文去阅读面**。改主意的条件：若实测发现"跳步那一条到底走了哪几步"在主面上要得紧，
@@ -290,7 +290,7 @@ export function bodyOf(o: {
       a.stopped === null
         ? WORDS.moving
         : `${a.stopSteps === undefined ? '?' : humanNumber(a.stopSteps)} ${WORDS.steps}${WORDS.halted}（${a.stopped}）`
-    // **一行一件事**（收口后按人令）：头一行只说"这是哪一格 · 它还在跑还是停了"，计数挪到缩进的那一行
+    // **一行一件事**：头一行只说"这是哪一格 · 它还在跑还是停了"，计数挪到缩进的那一行
     // ——与对话面同一个形状（`chatOf` 那两行）。**零值不上屏**：一条命令都没起过的格不印
     // 「运行命令 0 次」，与跳步 · 内核拒 · 边界挡同一条口径（零那一条不占宽度）。
     left.push(`${WORDS.agent} ${a.agent} · ${stop}`)
@@ -338,7 +338,7 @@ export function bodyOf(o: {
 /**
  * 对话视图那一栏的一行：轮次头 · 块间细线 · 一格 agent · 那一格的读数（`aside`，缩进一行）。
  *
- * `aside` 是收口后按人令加的：格那一行从前五样挤在一起（这是谁 · 调用几次 · 几步 · 工具调用几次 ·
+ * `aside` 这一行的来由：格那一行从前五样挤在一起（这是谁 · 调用几次 · 几步 · 工具调用几次 ·
  * 停没停），用小圆点串到底——读的人得先自己把那一行拆开。现在第一行只说"这是谁 · 它还在跑还是停了"，
  * 计数那几样缩进着跟在下面。
  */

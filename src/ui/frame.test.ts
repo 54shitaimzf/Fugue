@@ -200,7 +200,7 @@ test('② 负对照 · 进展那一档：多一条 round/state → 它变，结�
   const fb = bodyOf({ snapshot: b, metrics: METRICS, report: REPORT })
   assert.notDeepEqual([...fa.left], [...fb.left], '多一条边，进展那一档却没变')
   assert.deepEqual([...fa.right], [...fb.right], '结果与花费那一档不该因为一条 round/state 而动')
-  // **不再"正好多一行"**（收口后按人令）：那几条原始转移不上主面了——多一条边动的是轮次那一行的
+  // **不再"正好多一行"**：那几条原始转移不上主面——多一条边动的是轮次那一行的
   // 条数。这一条量的还是"进展那一档真的读了它"，只是读的是数，不是那一行原文。
   assert.match(fb.left[0] ?? '', /转移 6 条/, `多一条边，轮次那一行的条数该动：${fb.left[0]}`)
   // 账尾是**全账**的读数：它会动。这一条写出来，免得下一个人把它当成"右栏变了"。
@@ -244,7 +244,7 @@ test('④ 多一次 llm/call：两档都动（调用次数在两边各有一处�
   const fb = bodyOf({ snapshot: b, metrics: METRICS, report: REPORT })
   assert.notDeepEqual([...fa.left], [...fb.left], '左栏那一条"格"的行该动（调用 2 次 → 3 次）')
   assert.notDeepEqual([...fa.right], [...fb.right], '右栏那一条"用量"的行该动（调用 3 → 4）')
-  // 格那一行拆成两行之后（收口后按人令：头一行只说哪一格 · 停在没停，计数在缩进那一行）：
+  // 格那一行拆成两行之后（头一行只说哪一格 · 停在没停，计数在缩进那一行）：
   // **拿缩进那一行当锚**，头一行里已经没有数了。
   assert.match(fb.left.join('\n'), /agent\/r1\/1 · 2 步就停（收敛）\n  调用 3 次 · 走了 3 步/, `左栏那一行的数该动：${fb.left.join(' ｜ ')}`)
   assert.match(fb.right.join('\n'), /用量 调用 4/, `右栏那一行的数该动：${fb.right.join(' ｜ ')}`)

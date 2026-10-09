@@ -264,7 +264,8 @@ function detailLinesOf(s: StatusSnapshot | undefined, agent: string | null): rea
   }
   for (const a of s.agents) {
     if (agent !== null && a.agent !== agent) continue
-    // **零值不上屏**（收口后按人令改）：没事发生的那两栏不占地方，也不留一串"0 · 0"。
+    // **零值不上屏**：没事发生的那两栏不占地方，也不留一串"0 · 0"（主面那几条零值同一条口径，
+    // 阅读面反过来——它是读数那一面，零也印）。
     const refused = [
       a.denies > 0 ? `${WORDS.denies} ${a.denies}` : '',
       a.bounds > 0 ? `${WORDS.bounds} ${a.bounds}` : '',
@@ -465,8 +466,8 @@ function tallyLineOf(tally: Readonly<Record<string, number>>): string | null {
 /**
  * 四面：**只排版，不再折**（进去的是 `readStateOf` 那一份）。`limit` 是每一面的行数上限。
  *
- * 一面的标题只说"这是哪一面"。从前它带着那一面自己的读数（几条变更 · 折掉了多少 · 只计数多少），
- * 那是把折叠那一本账端给人看；收口后按人令去掉——"折叠不是丢"靠行本身与那句"其余事件 N 条"
+ * 一面的标题只说"这是哪一面"，不带那一面自己的读数（几条变更 · 折掉了多少 · 只计数多少）：
+ * 把折叠那一本账端到标题上，读的人要的是内容。"折叠不是丢"靠行本身与那句"其余事件 N 条"
  * 说得清。
  */
 export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}): ReadFaces {
