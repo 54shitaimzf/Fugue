@@ -18,7 +18,7 @@ import { acceptOf, candidatesOf, clampSel, completeOf, moveSel, pathsOf, queryOf
 import type { MenuRow, MenuSource } from './menu.ts'
 import { GATE_VIEW, cardAt, previewLinesOf, conclusionLineOf, gateLayoutOf, lineOf, pressGate, stepAt } from './gate.ts'
 import type { GateFace, GateOption, GateView } from './gate.ts'
-import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from './queue.ts'
+import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowsOf, shiftOf } from './queue.ts'
 import { altAt, clampNav, navNodesOf, navRowsOf, writerAt } from './nav.ts'
 import type { NavNode } from './nav.ts'
 import { stepView, viewAt } from './views.ts'
@@ -396,14 +396,20 @@ export function openStage(deps: StageDeps): Stage {
     // 还在它们下面）。两样都没有时一个字节都不占。
     const queueOn = queue.items.length > 0
     const gatePart = gateOn ? gateLayoutOf({ face: gate as GateFace, view: gateView, columns: cols() }) : null
-    const bottomRows = [...(gatePart?.rows ?? []), ...(queueOn ? [queueRowOf(queue)] : [])]
+    const go = queueOn ? deps.run() : null
+    const queueRows = queueOn ? queueRowsOf(queue, cols(), {
+      submit: keyOf('submit'), cancel: keyOf('cancel'),
+      covered: gateOn || panel !== null || reading !== null || planTop !== null || ed.draft.text !== '',
+      state: go === null ? 'unavailable' : go.running ? (advanceQueue ? 'running' : 'stopping') : 'paused',
+    }) : []
+    const bottomRows = [...(gatePart?.rows ?? []), ...queueRows]
     const bottomPart =
       bottomRows.length === 0
         ? {}
         : {
             bottom: {
               rows: bottomRows,
-              keep: (gatePart?.keep ?? 0) + (queueOn ? 1 : 0),
+              keep: (gatePart?.keep ?? 0) + queueRows.length,
               ...(gatePart === null ? {} : { waitingAt: gatePart.waitingAt, waitingCount: gatePart.waitingCount, headingAt: gatePart.headingAt, headingCount: gatePart.headingCount, overflow: gatePart.overflow }),
             },
           }

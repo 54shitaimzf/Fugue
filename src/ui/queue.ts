@@ -11,7 +11,7 @@
 // 为什么不做"改当前那一趟"（steer）：那要子进程收得下 stdin，而今天 `spawn` 的 stdin 是 `/dev/null`
 // （§ 5.19 六，人拍的）。**改主意的条件**：`round run` 收得下"中途插一句"的那一天。
 import type { LineMode } from './run.ts'
-import { clip } from './glyph.ts'
+import { clip, widthOf, wrap } from './glyph.ts'
 
 /** 排队的一条：**那一行原文**与它交出去时的模式（`Command` / `Say`）。 */
 export interface Queued {
@@ -62,4 +62,30 @@ export function queueRowOf(q: QueueState, columns = 0): string {
   const more = q.items.length > 1 ? `（还有 ${q.items.length - 1} 条在后头）` : ''
   const text = `排队 ${q.items.length} 条 · 下一条：${next.line}${more} · Enter 起下一条 · Esc 丢掉最后一条`
   return columns > 0 ? clip(text, columns) : text
+}
+
+/** 当前排队动作读同一运行状态和键表；没给时保留原单行投影。 */
+export interface QueueControls {
+  readonly submit: string
+  readonly cancel: string
+  readonly state: 'running' | 'stopping' | 'paused' | 'unavailable'
+  /** 其他当前操作先接收这些键，排队块暂不提供动作。 */
+  readonly covered?: boolean
+}
+
+export function queueRowsOf(q: QueueState, columns: number, controls?: QueueControls): readonly string[] {
+  if (q.items.length === 0) return []
+  if (controls === undefined || columns <= 0) return [queueRowOf(q, columns)]
+  const state = { running: '自动继续', stopping: '等待结束', paused: '等待开始', unavailable: '无法开始' }[controls.state]
+  const count = `排队 ${q.items.length} 条`
+  const head = `${count} · ${state}`
+  const actions = controls.covered === true ? [] : controls.state === 'running' || controls.state === 'stopping'
+    ? [`${controls.cancel} 停止`]
+    : [...(controls.state === 'paused' ? [`${controls.submit} 开始`] : []), `${controls.cancel} 撤回`]
+  const summary = [head, ...actions].join(' · ')
+  const preview = clip(`下一条：${q.items[0]!.line}`, columns)
+  const actionLine = actions.join(' · ')
+  return widthOf(summary) <= columns ? [summary, preview]
+    : [...(widthOf(head) <= columns ? [head] : [clip(count, columns), ...wrap(state, columns)]), preview,
+      ...(actions.length === 0 ? [] : widthOf(actionLine) <= columns ? [actionLine] : actions.flatMap(action => wrap(action, columns)))]
 }
