@@ -91,7 +91,7 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
   result.push({ text: status, role: notice?.role ?? (state === 'Aborted' ? 'refuse' : 'system') })
   if (notice?.text === WORDS.verifyNotWritten) result.push({ text: WORDS.verifyFailedGuide, role: 'instruction' })
   if (state === 'Committed') result.push({ text: '验收已通过 · 待写回', role: 'instruction' })
-  else if (state === 'Working' && action !== '') result.push({ text: action, role: 'instruction' })
+  else if (state === 'Working' && action !== '' && action !== problem) result.push({ text: action, role: 'instruction' })
   if (problem !== '') result.push({ text: problem, role: 'refuse' })
   for (const message of messages) result.push({ text: '', role: 'body' }, message)
   if (verification !== '' && state !== 'Committed') result.push({ text: verification, role: 'system' })

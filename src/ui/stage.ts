@@ -100,7 +100,7 @@ export interface Stage {
   /** 一趟收尾那一下（原 `openRun` 的 `onDone`：说了什么 · 要退就退 · 要接就接下一条）。 */
   onRunDone(r: RunOutcome): void
   /**
-   * 这一刻期望的面板高度（`openTerm` 的 `heightOf`）：按终端行数分账（`panelWantOf`——缺省至多
+   * 这一刻期望的面板高度（`openTerm` 的 `heightOf`）：按终端行数分账（`panelWantOf`——
    * 已知尺寸展开主区；量不到行数回框的 10 行 / `OVERLAY_WANT`）。画得下多少仍归终端层夹。
    */
   heightWant(): number

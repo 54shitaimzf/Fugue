@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { StatusRow } from '../probe/status.ts'
 import { openSession } from './follow.ts'
+import { taskOf } from './task.ts'
 import { widthOf } from './glyph.ts'
 
 function ledger() {
@@ -64,4 +65,14 @@ test('全完成或空的计划不占侧栏；坏计划保留可查入口，不�
     const panel = text(session.frame({ columns: 120, height: 34 }))
     assert.ok(!panel.includes('运行回归检查')); assert.ok(!panel.includes('全部做完')); assert.ok(!/\d+%/.test(panel))
   }
+})
+
+test('失败在主面只说明一次，不把同一失败同时当动作与问题反复强调', () => {
+  const { rows, add } = ledger()
+  add({ t: 'run/end', agent: 'agent/r1/1', exit: 1 }, 'agent/r1/1')
+  const face = taskOf(rows)
+  const failures = face.rows.filter(row => row.text.includes('命令失败'))
+  assert.equal(failures.length, 1)
+  assert.equal(failures[0]!.role, 'refuse')
+  assert.ok(face.rows.some(row => row.text.includes('模型说明结尾')))
 })
