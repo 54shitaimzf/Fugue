@@ -361,9 +361,9 @@ export function openTerm(o: TermOptions): Term {
   let drawnColumns = 0
   /** 上一次量到的终端行数（`draw` 每帧先量再问期望——`rows` 那只口读它）。 */
   let seenRows: number | undefined = undefined
-  /** 上一次那一帧实际画的高度——高度变了就不上移（残的那一块留给终端重排，与宽度变同一条路）。 */
+  /** 上一次那一帧实际画的高度；重画时按旧区域与新区域分账。 */
   let drawnHeight = 0
-  /** 上一次画的时候终端有几行——close 现量一次，行数变了就不删面板（量不到它落在哪）。 */
+  /** 上一次画的时候终端有几行；变小可能截去旧区域，close 不猜。 */
   let drawnRows: number | undefined = undefined
   /** 上一次画完时光标停在区域第几行（0 = 面板顶）——下一次"上移多少"靠它。 */
   let cursorRow = height
@@ -446,9 +446,10 @@ export function openTerm(o: TermOptions): Term {
       /** 框下面那几行：空一行 ＋ 提示行 ＋ 输入行。光标停在它的末行（没有输入行时停在它下面一行）。 */
       const tail = [...pad, ...body]
       const region = [...rows, ...tail]
-      /** 宽度这一帧变过没有：变过就不猜重排（旧块留给终端重排，新宽度从下面另起一块）。 */
+      /** 变窄会拆旧行，不能猜；变宽时旧区域的硬换行仍各占一行，可原位替换。 */
       const widthChanged = columns !== drawnColumns
-      // `steady`：高度也没变过（那一档的上移与擦残影都与从前逐字节相同）。宽度变过不猜重排；
+      const widthShrank = columns < drawnColumns
+      // `steady`：高度也没变过（那一档的上移与擦残影都与从前逐字节相同）。宽度变过要全量重画；
       // 高度变过那一块的大小变了，上移回去也对不上新面板顶——那一档走下面 `grew` / `stale` 两条。
       const steady = drawn && !widthChanged && h === drawnHeight
       // 行级 diff（U8）：与上一帧行数对得上才逐行比——掠过未变行、重写变行，两条路的光标算术相同。
@@ -460,15 +461,16 @@ export function openTerm(o: TermOptions): Term {
         changed: diffable ? region.map((line, i) => line !== lastRegion![i]) : null })
       buf.push(imageFrame.before)
       // 上一帧比这一帧多出来的那几行（全量那一趟要擦成空行，行数变少不留残影）：输入行变少与高度
-      // 变矮都是这一条——两处都是"顶边不动、底下多出来一截"，擦法一样。**宽度变过那一趟不擦**
-      // （旧块整体留给终端重排，新宽度另起一块）；没画过也没有可擦的上一帧。
+      // 变矮都是这一条——两处都是"顶边不动、底下多出来一截"，擦法一样。**宽度变窄那一趟不擦**
+      // （旧块整体留给终端重排，新宽度另起一块）；变宽可以覆盖旧块。没画过也没有可擦的上一帧。
       const stale =
-        drawn && !widthChanged && lastRegion !== null ? Math.max(0, lastRegion.length - region.length) : 0
+        drawn && !widthShrank && lastRegion !== null ? Math.max(0, lastRegion.length - region.length) : 0
       // **新块摆到哪儿**（这一份里唯一一处几何）：变高那一边锚在**底边**（上移的多几行，末行落在旧块
-      // 末行上——从下往上长，一帧之内的写入不顶到底行，屏幕不滚动）；变矮那一边锚在**顶边**（上移
-      // `cursorRow` 行，与从前相同），多出来那几行由下面的 `stale` 擦成空行。宽度变过与首帧都不上移
+      // 末行上——从下往上长，一帧之内的写入不顶到底行，屏幕不滚动）；屏幕增高时保留旧顶边，避免吞掉刚露出的历史；变矮那一边锚在**顶边**（上移
+      // `cursorRow` 行，与从前相同），多出来那几行由下面的 `stale` 擦成空行。宽度变窄与首帧都不上移
       // （新块从光标处另起）。
-      const back = !drawn || widthChanged ? 0 : region.length > regionRows ? cursorRow + (region.length - regionRows) : cursorRow
+      const screenGrew = rowsKnown && typeof drawnRows === 'number' && (rowsSeen as number) > drawnRows
+      const back = !drawn || widthShrank ? 0 : !screenGrew && region.length > regionRows ? cursorRow + (region.length - regionRows) : cursorRow
       if (back > 0) buf.push(upOf(back))
       for (const line of permanent) buf.push(`\r${CLEAR_LINE}${line}\n`)
       if (diffable) {
@@ -544,12 +546,15 @@ export function openTerm(o: TermOptions): Term {
       const leave = alt
       alt = false
       const buf: string[] = [images.clear()]
-      // 面板那一块：画过、且宽度和行数都没变过才去删它。宽度变过之后终端会把面板那几行重排、行数
-      // 变过之后屏幕顶截到哪儿量不到——那一档不去删（宁可留一块旧的，也不去吃历史）。
+      // 旧区域每行都在当时的列宽内，且显式换行：变宽/增高不会拆它，可按原行数收回。
+      // 变窄/变矮可能已把一部分旧区域送进 scrollback 或截去，不能多删几行猜位置。
       if (ansi && drawn) {
         const now = measure()
         const nowRows = measureRows()
-        if (!(typeof now === 'number' && now > 0 && now !== drawnColumns) && nowRows === drawnRows) {
+        const narrower = typeof now === 'number' && now > 0 && now < drawnColumns
+        const rowsSafe = nowRows === drawnRows ||
+          (typeof nowRows === 'number' && typeof drawnRows === 'number' && nowRows >= drawnRows)
+        if (!narrower && rowsSafe) {
           buf.push(upOf(cursorRow), deleteLinesOf(regionRows))
           drawn = false
           lastRegion = null
