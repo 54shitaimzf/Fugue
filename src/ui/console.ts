@@ -255,7 +255,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     keymap: () => km,
     graphics: () => imageSource === null ? 'none' : tiers.graphics === 'sixel'
       ? cellProbe?.cell != null && alternateProbe?.owned === true ? 'sixel' : 'none'
-      : tiers.graphics === 'kitty' && pixelProbe?.cell == null ? 'none' : tiers.graphics,
+      : tiers.graphics === 'kitty' && (pixelProbe?.cell == null || (flags.has('full') && alternateProbe?.owned !== true)) ? 'none' : tiers.graphics,
     readImage: (request, signal) => imageSource?.read(request, signal) ?? Promise.resolve(null),
     note: (line) => ui.tui?.note(line),
     redraw: () => ui.tui?.redraw(),
@@ -373,17 +373,17 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     }
     keys = openKeys({ input: process.stdin, out: process.stdout, onControl: (sequence) => { cellProbe?.receive(sequence); pixelProbe?.receive(sequence); alternateProbe?.receive(sequence) },
       onAction: stage.onAction, km })
-    // 只在 auto 探到 Sixel 且确实收 raw 输入时问宿主；没有回执保留文字。
-    // full 所有权只在进入屏时查询；resize 不切屏，刷新六份图形能力时仍能安全重建自有屏。
+    // full 所有权只在进入屏时查询；已确认自有的平面才能在 resize 后重建。
+    if (keys.raw && flags.has('full') && tiers.graphics !== 'none') alternateProbe = openAlternateProbe({ write: bytes => process.stdout.write(bytes),
+      changed: () => { stage.onResize(); tui.redraw() } })
+    // auto Sixel 另需六份图形能力报告，缺失时保留文字。
     if (keys.raw && tiers.graphics === 'sixel') {
-      if (flags.has('full')) alternateProbe = openAlternateProbe({ write: (bytes) => process.stdout.write(bytes),
-        changed: () => { stage.onResize(); tui.redraw() } })
       cellProbe = openCellProbe({ write: (bytes) => process.stdout.write(bytes),
         changed: () => { stage.onResize(); tui.redraw() } })
       cellProbe.start()
       // 首帧可能先于 raw 输入接好；此处查询补上那一次，后续 ALT_ON 由回调触发。
-      alternateProbe?.start()
     }
+    alternateProbe?.start()
     if (keys.raw && tiers.graphics === 'kitty') {
       pixelProbe = openPixelProbe({ write: bytes => process.stdout.write(bytes),
         changed: () => { stage.onResize(); tui.redraw() } })

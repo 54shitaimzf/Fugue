@@ -48,8 +48,9 @@
 // screen 就没有终端历史可翻——永久行落在那一块里，与人一起消失。**所以缺省关**（PLAN § 5.19 第二版
 // 一 · 取舍第一条：同类里三家把它做成可选或缺省关）。
 //
-// **full Sixel 的 resize**：调用方实测正在 alternate screen 后才出图。终端尺寸变化时只重建
-// 这块自有屏，按新宽度重放最近一屏永久行；未知或拒绝切屏时与旧 full 文字档逐字节相同。
+// **实测自有 full 的 resize**：调用方提供实际 alternate screen 报告后，尺寸变化只重建这块屏，
+// 按新宽度重放最近一屏永久行。Kitty 先收回本号图片，再清文字；Sixel 不再使用旧相对坐标。
+// CLI 只在显式 auto 图形档读取所有权；关图不探测，未知或拒绝切屏保留旧 full 文字路径。
 // 普通缓冲区仍要求固定几何；终端后台普通缓冲区的 resize 行为不由此层控制。
 //
 // **行数也量（U6）：期望高度夹进终端行数。** `K` 是**期望**，不是死的：实际画的高度是
@@ -293,7 +294,7 @@ export interface TermOptions {
   readonly sixelCells?: (() => SixelCells | null) | undefined
   /** 实测 Kitty 字格；没有报告时保留文字，旧装配未提供时仍走原协议。 */
   readonly kittyCells?: (() => CellPixels | null) | undefined
-  /** full Sixel 必须实测正在 alternate screen；未知/拒绝切屏时完全走旧文字档。 */
+  /** full 重排只清理实测自有的 alternate screen；未知/拒绝切屏走旧文字档。 */
   readonly alternateScreenOf?: (() => boolean) | undefined
   /** ALT_ON 已发出且本帧几何已记好；在 raw 输入接好后查询实际屏幕报告。 */
   readonly onAlternateScreen?: (() => void) | undefined
@@ -387,7 +388,10 @@ export function openTerm(o: TermOptions): Term {
   const wantAlt = ansi && o.full === true
   const verifiedCells = o.sixelCells === undefined ? undefined : () =>
     wantAlt && o.alternateScreenOf?.() !== true ? null : o.sixelCells!()
-  const images = openImageLayer(ansi ? o.graphics : 'none', verifiedCells, o.kittyCells)
+  const verifiedKitty = o.kittyCells === undefined ? undefined : () =>
+    wantAlt && o.alternateScreenOf?.() !== true ? null : o.kittyCells!()
+  const images = openImageLayer(ansi ? o.graphics : 'none', verifiedCells, verifiedKitty)
+  const ownedFull = wantAlt && o.alternateScreenOf !== undefined
   const fullSixel = wantAlt && o.graphics === 'sixel' && o.sixelCells !== undefined
   // Keep only a viewport of our own permanent physical rows. Normal history is
   // outside this plane; alternate screens already have no terminal scrollback.
@@ -440,7 +444,7 @@ export function openTerm(o: TermOptions): Term {
       const cap = rowsKnown ? (rowsSeen as number) - 1 : Number.POSITIVE_INFINITY
       const h = Math.max(1, Math.min(wantOf(), cap))
       const short = rowsKnown && (rowsSeen as number) - 1 < MIN_HEIGHT
-      if (fullSixel && (alt || !short)) {
+      if (ownedFull && (alt || !short)) {
         if (historyColumns !== columns) altHistory = altHistory.flatMap(row => historyRows(row, columns))
         historyColumns = columns
         const limit = rowsKnown ? rowsSeen as number : REGION_ROWS
@@ -451,9 +455,9 @@ export function openTerm(o: TermOptions): Term {
       // Only the alternate plane is ours: discard stale moves and reset that plane.
       // A host can switch back itself: stale alternate-plane erases must never reach normal history.
       if (fullSixel && alt && o.alternateScreenOf?.() !== true) images.clear()
-      const ownedResize = fullSixel && alt && o.alternateScreenOf?.() === true &&
+      const ownedResize = ownedFull && alt && o.alternateScreenOf?.() === true &&
         (columns !== drawnColumns || rowsSeen !== drawnRows)
-      const reset = ownedResize ? '\x1b[2J\x1b[H' : ''
+      const reset = ownedResize ? (o.graphics === 'kitty' ? images.clear() : '') + '\x1b[2J\x1b[H' : ''
       if (ownedResize) {
         images.clear()
         drawn = false;lastRegion = null;drawnColumns = columns;drawnRows = rowsSeen
