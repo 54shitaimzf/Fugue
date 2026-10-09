@@ -741,7 +741,7 @@ export interface Decoder {
   bailPaste(): readonly Decoded[]
 }
 
-export function decoderOf(km: Keymap = KEYMAP): Decoder {
+export function decoderOf(km: Keymap = KEYMAP, onControl?: (sequence: string) => void): Decoder {
   const bytes = byteMapOf(km)
   let pending = ''
   /** 粘到一半的那一段（`ESC[200~` 到了、`ESC[201~` 还没到）。 */
@@ -753,8 +753,10 @@ export function decoderOf(km: Keymap = KEYMAP): Decoder {
       const esc = escapeAt(s, i)
       if (esc > 0) {
         if (escapeTruncatedAt(s, i)) return { out, rest: s.slice(i) }
-        const d = bytes.get(s.slice(i, i + esc))
+        const sequence = s.slice(i, i + esc)
+        const d = bytes.get(sequence)
         if (d !== undefined) out.push(d)
+        else onControl?.(sequence)
         i += esc
         continue
       }
@@ -951,6 +953,8 @@ const realWait: WaitFn = (ms, fn) => {
 export function openKeys(o: {
   readonly input: KeyInput
   readonly onAction: (d: Decoded) => void
+  /** Unbound complete controls, outside bracketed paste; terminal reports only. */
+  readonly onControl?: (sequence: string) => void
   readonly km?: Keymap
   readonly wait?: WaitFn
   /** 写字节的那一头（`process.stdout`）：**只用来开关 bracketed paste**。不给就不开。 */
@@ -959,7 +963,7 @@ export function openKeys(o: {
   const input = o.input
   const raw = input.isTTY === true && typeof input.setRawMode === 'function'
   if (!raw) return { raw: false, close(): void {} }
-  const dec = decoderOf(o.km ?? KEYMAP)
+  const dec = decoderOf(o.km ?? KEYMAP, o.onControl)
   const wait = o.wait ?? realWait
   // **流式解码（U9）**：一个闭包里的 `TextDecoder` 带 `{ stream: true }` 喂到底——多字节字符
   // 被拆在两个 chunk 里时（慢链路上常事）第二个块接着解，不出替换符。此前每个 chunk 新开一个
