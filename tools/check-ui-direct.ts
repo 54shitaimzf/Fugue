@@ -69,6 +69,11 @@ export function importsOf(text: string): readonly Spec[] {
   const re = /(^|\n)import\s+(type\s+)?([^'\n]*?)from\s+'([^']+)'/g
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) out.push({ spec: m[4] as string, typeOnly: m[2] !== undefined })
+  // **副作用导入**（`import './x.ts'`）：没有 `from`，上面那一条正则一个字都看不见它——而它运行时
+  // 真把那一条边接上了（模块体当场执行）。所以单独认一遍，`typeOnly` 恒是假。
+  // 实测过的那一发：`src/ui/console.ts` 顶上塞 `import '../log/log.ts'`，补这一条之前 lint 退 0。
+  const side = /(^|\n)import\s+'([^']+)'/g
+  while ((m = side.exec(text)) !== null) out.push({ spec: m[2] as string, typeOnly: false })
   return out
 }
 

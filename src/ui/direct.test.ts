@@ -73,6 +73,24 @@ test('③ 负对照 · 塞一条 `.fugue/session` 直读：当场红；点名进
   assert.deepEqual(LEGACY_READERS, [], '这一版不新开这条直连，所以放行表今天是空的')
 })
 
+test('⑤ 负对照 · 塞一条**副作用** import（没有 `from` 的那种）：一样当场红', () => {
+  // 这一条是补上的缺口：`importsOf` 原先只认 `from '…'`，而 `import './x.ts'` 运行时照样把那一条边
+  // 接上（模块体当场执行）。实测过——补正则之前，往 `src/ui/console.ts` 顶上塞
+  // `import '../log/log.ts'`，`node tools/check-ui-direct.ts` 照旧退 0。
+  const mods = readRepo()
+  const entries = uiModules(mods)
+  const here = 'src/ui/console.ts'
+  const source = mods.find((m) => m.path === here)?.text ?? ''
+  const broken = withText(mods, here, `import '../log/log.ts'\n` + source)
+  const bad = problemsIn(broken, entries)
+  assert.ok(bad.length > 0, '副作用 import 没被报出来——这一条 lint 对"没有 from 的静态导入"是空话')
+  assert.match(bad.join('\n'), /src\/log\/log\.ts/, `报出来的该点名那个模块：${JSON.stringify(bad)}`)
+  // 反面：同一份文本里把那一行写成 `import type …` 就不算一条边（类型那几行运行时被削掉）。
+  const typed = withText(mods, here, `import type { LogHandle } from '../log/log.ts'\n` + source)
+  assert.deepEqual(problemsIn(typed, entries), [], '`import type` 那一档不算一条依赖边')
+  console.log('⑤ 读数：副作用 import 进闭包 → 报出 1 条（旧正则这里是 0 条）· import type 照旧不算边')
+})
+
 test('④ 命令面：`node tools/check-ui-direct.ts` 退 0 并把读数印出来（跑的是同一份判据）', () => {
   const r = spawnSync(process.execPath, [TOOL], { encoding: 'utf8' })
   assert.equal(r.status, 0, `lint 该退 0：\n${r.stdout}\n${r.stderr}`)

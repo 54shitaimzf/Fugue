@@ -11,10 +11,12 @@
 //
 // 负对照（红得起来才是断言）：
 //   ① 往 `SLOT_MEANING` 加第九格而不给 `SLOT_256` 补一格 → ② 当场红（八格与色表对不上）；
+//      往 `frame.ts` 的 `LineRole` 加一格而不给 `ROLE_SLOT` 补落点 → ② 也当场红（名单从那份联合读）；
 //   ② 把 `claims256` 改成恒假 → ① 的第 2 级那两条当场红；
 //   ③ 把第 1 级那四个角色改一个（比如 `footer` 改成 `\x1b[2m`）→ ③ 当场红（地板动了）；
 //   ④ 把 `tierOf` 的 `noStyle` 那一道门删掉 → ④ 当场红（`--no-style` 还上色）。
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   COLOR_TIERS,
@@ -88,6 +90,18 @@ test('② 八格从 SLOT_MEANING 推：色表逐格对齐 · 角色都落在格�
   for (const [role, slot] of Object.entries(ROLE_SLOT)) {
     assert.ok(SLOTS.includes(slot), `${role} 落在八格里：${slot}`)
   }
+  // **角色的名单从 `ui/frame.ts` 的 `LineRole` 联合里现读**，不手抄一份（抄下来的那一份会漂）：
+  // `Record<LineRole, Slot>` 只是个类型，而 `.ts` 直跑是 strip-only——**运行时一个字都不管**。
+  // 所以"帧那一层报得出的角色，每一格都有落点"必须在这里真的量一遍。
+  // 实测过的那一发：摘掉 `ROLE_SLOT.hit`，补这一条之前一条都不红。
+  const frameSrc = readFileSync(new URL('./frame.ts', import.meta.url), 'utf8')
+  const union = /export type LineRole =([^\n]*)/.exec(frameSrc)?.[1] ?? ''
+  const roles = [...union.matchAll(/'([a-zA-Z]+)'/g)].map((m) => m[1] as string)
+  assert.ok(roles.length >= 10, `\`LineRole\` 那个联合该有一串角色，读到的只有 ${roles.length} 个：${union}`)
+  for (const role of roles) {
+    assert.ok(role in ROLE_SLOT, `帧那一层报得出的角色 \`${role}\` 在 \`ROLE_SLOT\` 里没有落点`)
+  }
+  assert.equal(roles.length, Object.keys(ROLE_SLOT).length, `两边角色数该一样：联合 ${roles.length} · 表 ${Object.keys(ROLE_SLOT).length}`)
   // theme256 的键集合 = "落在非空格子上的那些角色"（推导，不是手抄一遍角色名）。
   const want = (Object.keys(ROLE_SLOT) as readonly LineRole[])
     .filter((r) => SLOT_256[ROLE_SLOT[r]] !== '')
