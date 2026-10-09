@@ -24,7 +24,7 @@ process.stdout.write=(chunk,...args)=>{
  return write(chunk,...args)
 }
 const timer=setInterval(()=>{
- if(!sent&&raw.includes('\\x1b[?2004h')&&raw.includes('\\x1b[2K')){sent=true;readAt=Date.now();process.stdin.emit('data','\\x12')}
+ if(!sent&&raw.includes('\\x1b[?2004h')&&raw.includes('现有记录已载入。')){sent=true;readAt=Date.now();process.stdin.emit('data','\\x12')}
  if(sent&&!closed&&(${expected}?raw.includes('\\x1bP0;1;0q'):Date.now()-readAt>600)){closed=true;process.stdin.emit('data','\\x04')}
 },20);timer.unref()
 const limit=setTimeout(()=>{process.stderr.write(JSON.stringify({screen,sent,raw:raw.slice(-4500)})+String.fromCharCode(10));assert.fail('configured full Sixel PNG did not reach actual console output')},7000);limit.unref()

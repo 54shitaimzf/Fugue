@@ -412,7 +412,7 @@ function tail(lines: readonly string[], limit: number): readonly string[] {
   return [`… 前面还有 ${cut} 行`, ...lines.slice(cut)]
 }
 
-/** 一格变更那一行：坐标 + 那一格。 */
+/** 一格变更那一行：默认文件摘要传空前缀，详情传原始坐标。 */
 function deltaLineOf(d: DeltaFace, at_: string): string {
   switch (d.kind) {
     case 'write':
@@ -462,7 +462,12 @@ function tallyLineOf(tally: Readonly<Record<string, number>>): string | null {
  */
 export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}): ReadFaces {
   const limit = opts.limit ?? READ_LIMIT
-  const diffLines = state.diff.map((d, i) => deltaLineOf(d, state.diffAt[i] as string))
+  const diffLines = state.diff.map((d) => deltaLineOf(d, ''))
+  // 默认先读文件；原始坐标留在已有详情中，账与机器面不重写。
+  const detailLines = state.detail.length === 0 ? [] : [
+    ...(state.diff.length === 0 ? [] : [WORDS.fileChangeSources, ...state.diff.map((d, i) => deltaLineOf(d, state.diffAt[i] as string))]),
+    ...state.detail,
+  ]
   const contractLines = state.contracts.flatMap((c) => [...contractLinesOf(c)])
   const tally = tallyLineOf(state.tally)
   const streamAll = tally === null ? [...state.stream] : [...state.stream, tally]
@@ -471,7 +476,7 @@ export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}
       state.diff.length === 0
         ? null
         : {
-            title: `diff · ${state.diff.length} 条变更`,
+            title: `${WORDS.fileChanges} · ${state.diff.length} 条`,
             lines: tail(diffLines, limit),
           },
     contract:
@@ -483,11 +488,11 @@ export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}
       lines: tail(streamAll, limit),
     },
     detail:
-      state.detail.length === 0
+      detailLines.length === 0
         ? null
         : {
             title: '详情',
-            lines: tail(state.detail, limit),
+            lines: tail(detailLines, limit),
           },
   }
 }
@@ -596,7 +601,7 @@ export function readImageAt(state: ReadState, cols: number, top: number, budget:
   if (cut > 0) line += readWrap(`… 前面还有 ${cut} 行`, cols).length
   for (let i = cut; i < state.diff.length; i += 1) {
     const d = state.diff[i]!, start = line
-    line += readWrap(deltaLineOf(d, state.diffAt[i] as string), cols).length
+    line += readWrap(deltaLineOf(d, ''), cols).length
     if (d.kind === 'write' && d.image && start >= top && line - top <= budget - 2 - (i < state.diff.length - 1 ? 1 : 0)) return { request: d.image, after: line }
   }
   return null

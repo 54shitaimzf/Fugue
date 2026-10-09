@@ -407,8 +407,9 @@ test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 
   stage.view()
   assert.deepEqual(asked(), ['read'], '阅读面开着 → 阅读面那一档（压过门口）')
   // ④ **同一份来源**：开的那一句注记里那一段是 `keysOf('read')` 给的，不是写死在 `stage.ts` 里的。
-  const note = ctl.notes.find((n) => n.startsWith('阅读面 ·')) ?? ''
-  assert.ok(note.includes('（read 那一段）'), `那一句注记该读同一份来源：${note}`)
+  const noteAt = ctl.notes.findIndex((n) => n.startsWith('阅读面 ·'))
+  const note = ctl.notes[noteAt] ?? ''
+  assert.equal(ctl.notes[noteAt + 1], 'read 那一段', `下一条完整按键注记该读同一份来源：${JSON.stringify(ctl.notes)}`)
   assert.equal(note.includes('Tab 换一面'), false, '写死的那一句不该再留在 stage.ts 里')
   console.log(`⑪ 读数：三档都问到了（any → gate → read）· 那一句注记「${note}」`)
 })

@@ -125,13 +125,13 @@ test('default source capability is silent; loading adds one text line and no ima
 })
 
 test('image coordinates follow wrapped descriptions and the truncated history marker',()=>{
-  const rows=Array.from({length:205},(_,i)=>write(i+1,`file-${i}.png`))
+  const rows=Array.from({length:205},(_,i)=>write(i+1,`目录/这是完整描述中需要折行的长文件路径/file-${i}.png`))
   const state=readStateOf(rows), text=faceRowsOf(facesOf(state),'diff',38)
   const top=text.findIndex(s=>s.includes('file-204.png'))
   // The filename can be on a continuation row; walk to the complete description start.
-  let start=top;while(start>0&&!text[start]!.includes('agent/r1/1'))start--
+  let start=top;while(start>0&&!text[start]!.startsWith('写 '))start--
   const at=readImageAt(state,38,start,20)
-  assert.ok(at);assert.equal(at.request.path,'file-204.png')
+  assert.ok(at);assert.equal(at.request.path,'目录/这是完整描述中需要折行的长文件路径/file-204.png')
   assert.ok(at.after>start);assert.equal(readImageAt(state,38,start+1,20),null)
   assert.equal(readImageAt(state,38,start,at.after-start+1),null,'one remaining row is not an image floor')
   console.log(`truncated text=${text.length} rows; final description starts=${start}, image after=${at.after}; partial description=none`)

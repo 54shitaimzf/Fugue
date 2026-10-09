@@ -51,6 +51,8 @@ export interface Word {
  * `WORD_KEYS`），不另抄一遍——与 `ui/theme.ts` 的 `SLOT_MEANING` → `SLOTS` 同一手。
  */
 export const WORD_TABLE = {
+  fileChanges: { face: '文件改动', arch: 'UI 阅读面由 view/* 折出的 diff；add/modify 同为写' },
+  fileChangeSources: { face: '文件改动来源', arch: 'UI 文件改动对应的原始 writer/seq 坐标' },
   onboardingReview: { face: '先查看计划，再确认执行。', arch: 'UI 初次打开说明门由人开' },
   onboardingWriteback: { face: '验收通过后写回工作区。', arch: 'UI 初次打开说明 commitThenAdvance 的通过闸' },
   resultWritten: { face: '验收通过，结果已写回工作区。', arch: 'UI Rebuilding：executeRound 在 advance 后记录的事实' },
