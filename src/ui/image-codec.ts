@@ -45,7 +45,7 @@ export function imageSequence(image: PixelImage, place: ImagePlace, tier: Graphi
   return out.join('')
 }
 
-/** Kitty 释放本号；Sixel 用其已占像素矩形恢复宿主默认背景。 */
+/** Kitty 释放本号；Sixel 生成色表第 0 色的不透明矩形，UI 收回用 image-layer 的字格擦除。 */
 export function clearImageSequence(image: PixelImage, id: number, tier: GraphicsTier = 'none'): string {
   if (tier === 'none' || !imageIsValid(image) || !positive(id) || id > 0xffffffff) return ''
   if (tier === 'kitty') return `\x1b_Ga=d,d=I,i=${id},q=2\x1b\\`
