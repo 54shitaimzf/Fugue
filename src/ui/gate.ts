@@ -28,6 +28,8 @@ import type { BottomInput } from './frame.ts'
 import { WORDS } from '../words.ts'
 import { GO_LINE } from './run.ts'
 import { wrap } from './glyph.ts'
+import { KEYMAP, keyLabelOf } from './keymap.ts'
+import type { Keymap } from './keymap.ts'
 
 /** 门口那一档的动作。**三个**（`a` / `p` / 升权档见头注）。 */
 export type GateOption = 'approve' | 'reject'
@@ -241,22 +243,23 @@ export function gateQueueRowOf(face: GateFace, at: number): string {
 }
 
 /** 选项行：**三档**；举过手就把那一句"再按一次"说出来（二段确认要对人可见）。 */
-export function optionRowOf(view: GateView): string {
-  if (view.armed === 'approve') return '再按 y / Enter 执行整批 · Esc 收起'
-  if (view.armed === 'reject') return '再按 n / Enter 暂不执行 · Esc 收起'
-  return 'y 执行整批 · n 暂不执行 · Esc 收起'
+export function optionRowOf(view: GateView, keymap: Keymap = KEYMAP): string {
+  const key = (action: GateOption | 'submit' | 'cancel'): string => keyLabelOf(keymap.rows.find(b => b.action === action)!)
+  if (view.armed === 'approve') return `再按 ${key('approve')} / ${key('submit')} 执行整批 · ${key('cancel')} 收起`
+  if (view.armed === 'reject') return `再按 ${key('reject')} / ${key('submit')} 暂不执行 · ${key('cancel')} 收起`
+  return `${key('approve')} 执行整批 · ${key('reject')} 暂不执行 · ${key('cancel')} 收起`
 }
 
 /**
  * 确认内容按实际宽度折行。队列与选项折出的所有行优先保留，选项的等待色覆盖整句；
  * 先让位的是卡片前面的补充资料，命令与写入路径仍靠近确认行。
  */
-export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number }): BottomInput {
+export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number; readonly keymap?: Keymap }): BottomInput {
   const fold = (one: string): readonly string[] => o.columns > 0 ? wrap(one.trimStart(), o.columns) : [one]
   const card = cardAt(o.face, o.view.at)
   const head = card === null ? [] : previewLinesOf(card).flatMap(fold)
   const queue = fold(gateQueueRowOf(o.face, o.view.at))
-  const options = fold(optionRowOf(o.view))
+  const options = fold(optionRowOf(o.view, o.keymap))
   return {
     rows: [...head, ...queue, ...options],
     keep: queue.length + options.length,
@@ -269,6 +272,6 @@ export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateVi
 }
 
 /** 只要原文的调用方沿用这个入口；坐标与保留行数由同一次排版取得。 */
-export function gateRowsOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number }): readonly string[] {
+export function gateRowsOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number; readonly keymap?: Keymap }): readonly string[] {
   return gateLayoutOf(o).rows
 }

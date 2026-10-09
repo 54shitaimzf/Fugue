@@ -395,7 +395,7 @@ export function openStage(deps: StageDeps): Stage {
     // 最下面那一栏：**门口那一块**（`T6`）与**排队那一行**（`T7`），都在面板那一栏的最下面（输入行
     // 还在它们下面）。两样都没有时一个字节都不占。
     const queueOn = queue.items.length > 0
-    const gatePart = gateOn ? gateLayoutOf({ face: gate as GateFace, view: gateView, columns: cols() }) : null
+    const gatePart = gateOn ? gateLayoutOf({ face: gate as GateFace, view: gateView, columns: cols(), keymap: deps.keymap?.() }) : null
     const go = queueOn ? deps.run() : null
     const queueRows = queueOn ? queueRowsOf(queue, cols(), {
       submit: keyOf('submit'), cancel: keyOf('cancel'),
