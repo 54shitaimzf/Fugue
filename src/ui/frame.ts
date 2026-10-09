@@ -438,6 +438,8 @@ function bar(w: number, label?: string): string {
 export interface MenuInput {
   /** 当前按键的完整物理说明；缺失、坏形状或放不下时回原列表。 */
   readonly detail?: readonly string[] | undefined
+  /** 完整说明放不下时的实际全文入口；缺失/坏形状回旧列表。 */
+  readonly detailMore?: readonly string[] | undefined
   readonly rows: readonly string[]
   readonly sel: number
 }
@@ -487,6 +489,9 @@ export interface ReadPreview {
 }
 
 export interface ReadInput {
+  /** 当前阅读内容自己的标题与位置；不给仍用原阅读面/状态栏。 */
+  readonly heading?: string | undefined
+  readonly footer?: string | undefined
   readonly preview?: ReadPreview | undefined
   readonly rows: readonly string[]
   readonly top: number
@@ -552,10 +557,13 @@ export function frameOf(o: FrameInput): Frame {
   const inner = innerOf(width)
   const edge = width - 2
   const inset = ' '.repeat(airOf(width))
-  const detail = o.menu?.detail
-  const helpOn = Array.isArray(detail) && detail.length > 0 && detail.length <= height - 4
-    && (o.menu?.rows.length ?? 0) > 0
+  const detail = o.menu?.detail, detailMore = o.menu?.detailMore
+  const validDetail = Array.isArray(detail) && detail.length > 0 && (o.menu?.rows.length ?? 0) > 0
     && detail.every(row => typeof row === 'string' && row !== '' && widthOf(row) <= inner)
+  const shortDetail = validDetail && detail.length > height - 4 && Array.isArray(detailMore)
+    && detailMore.length > 0 && detailMore.length <= height - 4
+    && detailMore.every(row => typeof row === 'string' && row !== '' && widthOf(row) <= inner)
+  const helpOn = validDetail && (detail.length <= height - 4 || shortDetail)
 
 
   // 内容那一栏那几行：**哪一档视图说什么话**。对话视图是 `chatOf` 折出来的那几行
@@ -573,7 +581,7 @@ export function frameOf(o: FrameInput): Frame {
   const rows = bodyRows.flatMap((one) => wrap(one.l, inner).map((x) => ({ l: x, role: one.role })))
 
   // 账尾那条状态条：**一行**，超出就从右边截（`clip` 留 `…`，说了它被截过）。
-  const footer = clip(helpOn ? `${Math.max(0, Math.min((o.menu?.rows.length ?? 1) - 1, o.menu?.sel ?? 0)) + 1}/${o.menu!.rows.length} · 筛选` : footerOf(o.snapshot, o.transition), inner)
+  const footer = clip(helpOn ? `${Math.max(0, Math.min((o.menu?.rows.length ?? 1) - 1, o.menu?.sel ?? 0)) + 1}/${o.menu!.rows.length} · 筛选` : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
   // 上下框两行、分隔与账尾两行；六行正文的预算不随信息量漂移。
   const withFooter = (helpOn ? 0 : (o.bottom?.keep ?? 0)) + 1 <= height - 4
   let budget = height - 2 - (withFooter ? 2 : 0)
@@ -585,7 +593,7 @@ export function frameOf(o: FrameInput): Frame {
   const win = menuAll === null || menuAll.length === 0 ? null : windowOf(menuAll.length, o.menu?.sel ?? 0, menuCap)
   const menuBody: string[] = []
   if (helpOn) {
-    menuBody.push(...detail!)
+    menuBody.push(...(shortDetail ? [...detail!.slice(0, Math.max(0, budget - detailMore!.length)), ...detailMore!] : detail!))
     const nearbyCap = inner >= 32 ? Math.max(0, budget - detail!.length - 1) : 0
     if (nearbyCap > 0 && menuAll!.length > 1) {
       const at = Math.max(0, Math.min(menuAll!.length - 1, o.menu?.sel ?? 0))
@@ -728,7 +736,7 @@ export function frameOf(o: FrameInput): Frame {
   // 那一格：对话视图不印树，框名是「读的是哪一格」这件事唯一的落点。
   const g = glyphs()
   const focus = o.focus === undefined || o.focus === null ? '' : ` · ${o.focus}`
-  const head = helpOn ? '按键帮助' : readingOn ? '阅读面' : `${viewNameOf(view)}${view === 'chat' ? '' : focus}`
+  const head = helpOn ? '按键帮助' : readingOn ? (typeof o.read?.heading === 'string' && o.read.heading !== '' ? o.read.heading : '阅读面') : `${viewNameOf(view)}${view === 'chat' ? '' : focus}`
   lines.push(`${g.tl}${bar(edge, head)}${g.tr}`)
   roles.push(helpOn || readingOn ? 'readHeading' : 'border')
   for (const one of shown) {

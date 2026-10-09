@@ -119,6 +119,8 @@ export function openStage(deps: StageDeps): Stage {
   let ed: Editor = emptyEditor()
   /** 弹层（这一格只有一层：菜单/面板/路径）。`null` = 没有弹层。 */
   let panel: { readonly source: MenuSource; readonly sel: number; readonly paths: readonly string[] } | null = null
+  let keyHelpTop: number | null = null
+  let keyHelpText = '', keyHelpCovered = false
   /** 输入行画不画：`stdin` 不是终端就不画（画一个收不到按键的提示符，比不画坏得多）。 */
   let showInput = false
   /** 命令面那一张表（**分发处读的是同一份**：`cli/flags.ts` 的 `FLAGS_OF`）。 */
@@ -263,6 +265,7 @@ export function openStage(deps: StageDeps): Stage {
 
   /** 起一次弹层：选中项从头一条起（候选变了以后 `settle` 会把它夹回来）。 */
   const openPanel = (source: MenuSource): void => {
+    keyHelpTop = null; keyHelpText = ''; keyHelpCovered = false
     // 路径那一档的候选**开的时候走一遍**（`@` 不该在每一次重画时把树重读一遍）；命令与键表是
     // 静态的，每次都现推——它们本来就只有一处真源。
     panel = { source, sel: 0, paths: source === 'path' ? pathsOf(process.cwd()) : [] }
@@ -390,6 +393,18 @@ export function openStage(deps: StageDeps): Stage {
     gateView = { ...gateView, armed: null }
     return true
   }
+  const selectedKeyRows = (): readonly string[] => {
+    const rows = panel?.source === 'keys' ? rowsOf('keys') : []
+    const picked = rows[clampSel(rows.length, panel?.sel ?? 0)]
+    return picked === undefined ? [] : readWrap(picked.name.replace(/ {2,}/g, ' '), cols())
+  }
+  const keyHelpRows = (): readonly string[] => readWrap(keyHelpText, cols())
+  const keyHelpRead = () => {
+    const rows = keyHelpRows(), top = stepTop(rows.length, keyHelpTop ?? 0, 0)
+    const nextKey = (deps.keymap?.() ?? KEYMAP).rows.find(b => b.action === 'historyNewer')!.keys[0]!
+    return { rows, top, heading: '按键说明', footer: `${top + 1}/${rows.length} · ${nextKey}` }
+  }
+
   const view = (): ViewInput => {
     // 门口那一块开着没有：提示行那一档与最下面那一栏都要它（先算一次，两处读同一个）。
     const gateOn = gate !== null && !gateHidden && planTop === null
@@ -400,6 +415,10 @@ export function openStage(deps: StageDeps): Stage {
     const hintPart = { hint: deps.hint(when) }
     if (!showInput) return hintPart
     const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
+    if (keyHelpTop !== null && !keyHelpCovered) return { hint: deps.hint('plan'),
+      read: keyHelpRead(),
+      input: { rows: frame.rows, caret: frame.caret }, focus: writerAt(navNodes, navAt), view: viewAt(viewIndex) }
+
     // 最下面那一栏：**门口那一块**（`T6`）与**排队那一行**（`T7`），都在面板那一栏的最下面（输入行
     // 还在它们下面）。两样都没有时一个字节都不占。
     const queueOn = queue.items.length > 0
@@ -427,7 +446,7 @@ export function openStage(deps: StageDeps): Stage {
     // 阅读面那一栏（`T9`，排在内容那一栏最下面）：**开着才占地方**。三面是从 `readState` 排的版
     // （`facesOf` 不再折一次），看到第几行由 `reading.top` 说了算。
     const readPart =
-      planTop !== null ? (() => { const rows = planRows(); return { read: { rows, top: stepTop(rows.length, planTop, 0) } } })() : reading === null
+      keyHelpTop !== null ? { read: keyHelpRead() } : planTop !== null ? (() => { const rows = planRows(); return { read: { rows, top: stepTop(rows.length, planTop, 0) } } })() : reading === null
         ? {}
         : (() => {
             const faces = facesOf(readState)
@@ -445,9 +464,12 @@ export function openStage(deps: StageDeps): Stage {
       ...(() => {
         if (panel === null) return {}
         const rows = rowsOf(panel.source), picked = rows[clampSel(rows.length, panel.sel)]
+        const detail = panel.source === 'keys' && picked !== undefined ? selectedKeyRows() : undefined
+        const height = Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1)
+        const readKey = (deps.keymap?.() ?? KEYMAP).rows.find(b => b.action === 'read')!.keys[0]!
         return { menu: { rows: rowsTextOf(rows), sel: panel.sel,
-          ...(panel.source === 'keys' && picked !== undefined
-            ? { detail: readWrap(picked.name.replace(/ {2,}/g, ' '), cols()) } : {}) } }
+          ...(detail === undefined ? {} : { detail,
+            ...(detail.length <= height - 4 ? {} : { detailMore: readWrap(`${readKey} 看全`, cols()) }) }) } }
       })(),
       ...bottomPart,
       ...readPart,
@@ -475,6 +497,22 @@ export function openStage(deps: StageDeps): Stage {
     if (rows.some((r) => r.e.t.startsWith('round/') || r.e.t.startsWith('holder/'))) void refreshGate()
   }
   const onAction = (d: Decoded): void => {
+    // 当前按键的全文只读；返回同一筛选与选中项，背后的计划/阅读坐标原样。
+    if (keyHelpTop !== null && (d.action === 'approve' || d.action === 'reject' || d.action === 'go' || d.action === 'submit')) return
+    if (keyHelpTop !== null && d.action === 'help') { keyHelpCovered = true; settle(); return }
+    if (keyHelpTop !== null && keyHelpCovered && d.action === 'cancel') { keyHelpCovered = false; settle(); return }
+    if (keyHelpTop !== null && !keyHelpCovered && d.action !== 'quit' && d.action !== 'interrupt') {
+      if (d.action === 'cancel' || d.action === 'read') keyHelpTop = null
+      else if (d.action === 'historyOlder' || d.action === 'historyNewer')
+        keyHelpTop = stepTop(keyHelpRows().length, keyHelpTop, d.action === 'historyOlder' ? -1 : 1)
+      else if (d.action === 'pageUp' || d.action === 'pageDown')
+        keyHelpTop = stepTop(keyHelpRows().length, keyHelpTop, d.action === 'pageUp' ? -PAGE_STEP : PAGE_STEP)
+      else if (d.action === 'jumpFirst') keyHelpTop = 0
+      else if (d.action === 'jumpLast') keyHelpTop = Math.max(0, keyHelpRows().length - 1)
+      else return
+      settle(); return
+    }
+
     // 全文页只供检查，不能继承举手或起排队命令；返回确认后再重新点头。
     if (planTop !== null && (d.action === 'approve' || d.action === 'reject' || (d.action === 'submit' && panel === null))) return
     // ⓪ **门口那一批那两档**（`T6`）：开关是"门口那一块开着没有 **且** 输入行空着没有"——不是
@@ -641,6 +679,11 @@ export function openStage(deps: StageDeps): Stage {
     // `↑`/`↓` 翻 · `Esc` 收起（走上面取消链那一级）。读的是**账**（`readState` 从行折出来），
     // 界面这一头没有第二份"这一格动过哪些路径"的清单。
     if (d.action === 'read') {
+      if (panel?.source === 'keys' && selectedKeyRows().length > 0) {
+        keyHelpText = rowsOf('keys')[clampSel(rowsOf('keys').length, panel.sel)]!.name.replace(/ {2,}/g, ' ')
+        keyHelpTop = 0; keyHelpCovered = false; gateView = { ...gateView, armed: null }; settle(); return
+      }
+
       if (planTop !== null) { planTop = null; settle(); return }
       if (showInput && gate !== null && !gateHidden && cardAt(gate, gateView.at) !== null) {
         planTop = 0
