@@ -10,7 +10,7 @@
 // （`panelOf` 先截后补）——1 逻辑行 = 1 物理行，所以"上移 K 行"永远落回面板顶上。一次重画：
 //
 //   · 上移「上一次画完时光标停的那一行」（0 = 面板顶）→ 光标到面板顶；
-//   · 新到的永久行**从面板顶写下去**（一条一行）——面板因此被顶下去 n 行；
+//   · 新到的永久行**从面板顶写下去**（按列宽拆成物理行，逐行清写）——面板因此被顶下去 n 行；
 //   · 面板那 K 行接着往下写（`\x1b[2K` 逐行清 + 重写）；
 //   · 输入行那几行写在面板**下面**（`Panel.input`；逐行清 + 重写，最后一行不带换行）；
 //   · 光标停在**最后一行输入行**上——不变量：下一次上移「上一次停的那一行」仍然落在面板顶上。
@@ -32,10 +32,9 @@
 // **永久行只写一次。** 它们在面板上方，重画时只有面板那 K 行被擦改：终端历史里那一串是干净的
 // 流水（翻得回去 · 搜索 · 连 `| tee` 出去都没有转义序列）。
 //
-// **宽度变过（resize）就不猜重排。** 终端会把已经印出去的那 K 行按新宽度重排，而重排之后那几行
-// 占几个物理行是**这一层量不到的**（各家终端的 reflow 行为不一样）。所以宽度一变就不"上移 K 行"：
-// 上一块按终端自己的重排留在历史里，新宽度从下面另起一块。宁可多留一块旧的，也不去吃历史——
-// 吃历史那一条错法是不可逆的。
+// **宽度变窄（resize）不猜重排。** 旧行可能拆成多条并进入 scrollback，各家终端重排行为不同。
+// 这一档从下面另起一块，避免猜位置吃历史。变宽时旧区域每行都有显式换行，仍各占一条物理行，
+// 可以原位替换；终端增高也保留旧顶边。缩小后的残留与永久历史保留仍须另行解决。
 //
 // **地板：不是 TTY / `$TERM` 认不出来 → 一个字节的 ANSI 都不写。** 那一档 `draw` 只把永久行按
 // 到达序印出去，面板整块不画（重定向出去就是一份干净的事件流水，CI 里不会有半块面板）。
@@ -95,7 +94,7 @@
 import type { BottomInput, MenuInput, NavInput, ReadInput } from './frame.ts'
 import { MIN_HEIGHT, panelOf } from './frame.ts'
 import type { LineRole } from './frame.ts'
-import { widthOf } from './glyph.ts'
+import { clustersOf, widthOf } from './glyph.ts'
 import { FRAME_ROWS, GAP_ROWS, HINT_ROWS, REGION_ROWS } from './layout.ts'
 import type { ViewKey } from './views.ts'
 import { openImageLayer } from './image-layer.ts'
@@ -344,6 +343,23 @@ export interface Term {
  * 开一块。**一个句柄都不持有**：不管 stdin、不注册信号、不碰日志——信号与跟随是调用方的事
  * （`cli/fugue.ts` 的 `tui`），这一份只管那一块地方。
  */
+// Permanent text keeps every cluster and separator. Explicit physical rows
+// let each continuation clear old UI cells before writing; display wrap() trims
+// separators and therefore cannot be used for permanent history.
+function historyRows(line: string, columns: number): readonly string[] {
+  const rows: string[] = []
+  let row = '', used = 0
+  for (const c of clustersOf(line)) {
+    if (used > 0 && used + c.width > columns) {
+      rows.push(row)
+      row = ''; used = 0
+    }
+    row += c.text; used += c.width
+  }
+  rows.push(row)
+  return rows
+}
+
 export function openTerm(o: TermOptions): Term {
   const out = o.out
   const height = o.height ?? FRAME_ROWS
@@ -472,7 +488,9 @@ export function openTerm(o: TermOptions): Term {
       const screenGrew = rowsKnown && typeof drawnRows === 'number' && (rowsSeen as number) > drawnRows
       const back = !drawn || widthShrank ? 0 : !screenGrew && region.length > regionRows ? cursorRow + (region.length - regionRows) : cursorRow
       if (back > 0) buf.push(upOf(back))
-      for (const line of permanent) buf.push(`\r${CLEAR_LINE}${line}\n`)
+      for (const line of permanent) {
+        for (const row of historyRows(line, columns)) buf.push(`\r${CLEAR_LINE}${row}\n`)
+      }
       if (diffable) {
         for (let i = 0; i < region.length; i += 1) {
           const one = region[i] as string
