@@ -6,22 +6,24 @@ import {imageSequence} from './image-codec.ts'
 import {openImageLayer} from './image-layer.ts'
 const base=['\x1b[?62;4;22c','\x1b[6;20;10t','\x1b[?80;2$y','\x1b[?1070;1$y']
 const report=(n:number)=>`\x1b[?1;0;${n}S`
-function rig(){let timeout=()=>{},changes=0;const writes:string[]=[];const probe=openCellProbe({write:s=>writes.push(s),changed:()=>changes++,wait:(_,fn)=>{timeout=fn;return ()=>{}}});return {probe,writes,expire:()=>timeout(),get changes(){return changes}}}
+// Capacity scenarios provide known graphic limits with the size fixture.
+// The geometry suite independently exercises all six reports and missing limits.
+function rig(){let timeout=()=>{},changes=0;const writes:string[]=[];const probe=openCellProbe({write:s=>writes.push(s),changed:()=>changes++,wait:(_,fn)=>{timeout=fn;return ()=>{}}});const receive=probe.receive;probe.receive=(s:string)=>{if(s.includes('\x1b[6;'))receive('\x1b[?2;0;1000;1000S');receive(s)};return {probe,writes,expire:()=>timeout(),get changes(){return changes}}}
 function permutations(a:string[]):string[][]{return a.length===0?[[]]:a.flatMap((v,i)=>permutations(a.filter((_,j)=>i!==j)).map(rest=>[v,...rest]))}
 test('Sixel queries actual register capacity without changing it; four old reports alone cannot enable pixels',()=>{
  const r=rig();r.probe.start();base.forEach(r.probe.receive);assert.equal(r.probe.cell,null)
- assert.equal(r.writes.join(''),'\x1b[c\x1b[16t\x1b[?80$p\x1b[?1070$p\x1b[?1;1;0S')
- r.probe.receive(report(16));assert.deepEqual(r.probe.cell,{width:10,height:20,colors:16});assert.equal(r.changes,1);r.probe.close()
+ assert.equal(r.writes.join(''),'\x1b[c\x1b[16t\x1b[?80$p\x1b[?1070$p\x1b[?1;1;0S\x1b[?2;1;0S')
+ r.probe.receive(report(16));assert.deepEqual(r.probe.cell,{width:10,height:20,colors:16,maxWidth:1000,maxHeight:1000});assert.equal(r.changes,1);r.probe.close()
 })
 test('all 120 report orders remain atomic; fragmented color reports share the raw decoder',()=>{
  for(const reports of permutations([...base,report(32)])){
   const r=rig();r.probe.start();for(const [i,s] of reports.entries()){r.probe.receive(s);if(i<4)assert.equal(r.probe.cell,null)}
-  assert.deepEqual(r.probe.cell,{width:10,height:20,colors:32});assert.equal(r.changes,1);r.probe.close()
+  assert.deepEqual(r.probe.cell,{width:10,height:20,colors:32,maxWidth:1000,maxHeight:1000});assert.equal(r.changes,1);r.probe.close()
  }
  const bytes=base.join('')+report(256)
  for(let split=1;split<bytes.length;split++){
   const r=rig();r.probe.start();const d=decoderOf(undefined,r.probe.receive);d.feed(bytes.slice(0,split));d.feed(bytes.slice(split))
-  assert.deepEqual(r.probe.cell,{width:10,height:20,colors:256});r.probe.close()
+  assert.deepEqual(r.probe.cell,{width:10,height:20,colors:256,maxWidth:1000,maxHeight:1000});r.probe.close()
  }
 })
 test('missing, failed and invalid capacity retains text; large reported capacity is bounded to 256',()=>{
@@ -54,7 +56,7 @@ test('invalid encoder capacity emits no partial Sixel and never changes Kitty en
 })
 const picture={image,row:1,column:2,columns:12,rows:3},frame={columns:40,height:5,cursorRow:5,changed:null}
 test('Sixel layer requires capacity and updates when only the capacity changes',()=>{
- let cell:any={width:10,height:20};const layer=openImageLayer('sixel',()=>cell)
+ let cell:any={width:10,height:20,maxWidth:1000,maxHeight:1000};const layer=openImageLayer('sixel',()=>cell)
  assert.deepEqual(layer.update(picture,frame),{before:'',after:''},'dimensions alone do not prove palette capacity')
  cell={...cell,colors:16};const initial=layer.update(picture,frame);assert.ok(initial.after.includes('\x1bP'))
  assert.ok([...initial.after.matchAll(/#(\d+)/g)].every(m=>Number(m[1])<16))

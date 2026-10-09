@@ -1,5 +1,5 @@
 // 图片与文字分层。Kitty 按号收回；Sixel 在调用方保证的固定几何内只擦自己的字格。
-// Sixel 需要已核对的字符像素与调色板容量；终端接线仍须解决尺寸变化，缺省及未知能力保留文字。
+// Sixel 需要已核对的字符像素、调色板容量与图形尺寸上限；终端接线仍须解决尺寸变化，缺省及未知能力保留文字。
 import { createHash, randomInt } from 'node:crypto'
 import { imageIsValid, imageSequence, clearImageSequence } from './image-codec.ts'
 import type { PixelImage } from './image-codec.ts'
@@ -56,13 +56,13 @@ export function openImageLayer(tier: GraphicsTier = 'none', cellPixels?: () => S
       if ((tier !== 'kitty' && tier !== 'sixel') || next === undefined || !fits(next, frame)) return { before: clear(), after: '' }
       const p = next
       const cell = tier === 'sixel' ? cellPixels?.() : undefined
-      if (tier === 'sixel' && (cell == null || !Number.isSafeInteger(cell.colors) || cell.colors < 2 || cell.colors > 256)) return { before: clear(), after: '' }
+      if (tier === 'sixel' && (cell == null || !Number.isSafeInteger(cell.colors) || cell.colors < 2 || cell.colors > 256 || !Number.isSafeInteger(cell.maxWidth) || cell.maxWidth <= 0 || !Number.isSafeInteger(cell.maxHeight) || cell.maxHeight <= 0)) return { before: clear(), after: '' }
       const signature = createHash('sha256').update(p.image.rgba)
-        .update(`${p.image.width},${p.image.height},${p.row},${p.column},${p.columns},${p.rows},${cell?.width ?? ""},${cell?.height ?? ""},${cell?.colors ?? ""}`).digest('hex')
+        .update(`${p.image.width},${p.image.height},${p.row},${p.column},${p.columns},${p.rows},${cell?.width ?? ""},${cell?.height ?? ""},${cell?.colors ?? ""},${cell?.maxWidth ?? ""},${cell?.maxHeight ?? ""}`).digest('hex')
       const repainted = frame.changed === null || frame.changed.slice(p.row, p.row + p.rows).some(Boolean)
       if (current?.signature === signature && !repainted) return { before: '', after: '' }
       const before = clear()
-      const scaled = tier === 'sixel' ? fitSixel(p.image, p, cell) : p.image
+      const scaled = tier === 'sixel' ? fitSixel(p.image, p, cell, {width:cell!.maxWidth,height:cell!.maxHeight}) : p.image
       if (scaled === null) return { before, after: '' }
       const pixels = imageSequence(scaled, { id: tier === 'sixel' ? 1 : id, columns: p.columns, rows: p.rows, colors: cell?.colors }, tier)
       if (pixels === '') return { before, after: '' }

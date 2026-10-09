@@ -33,11 +33,13 @@ export function fitPixels(source: PixelImage, maxWidth: number, maxHeight: numbe
   return { width, height, rgba }
 }
 
-/** Sixel paints six-pixel bands; its entire footprint must stay in assigned cells. */
-export function fitSixel(source: PixelImage, place: { readonly columns: number; readonly rows: number }, cell: CellPixels | null | undefined): PixelImage | null {
+/** Sixel paints six-pixel bands; its entire footprint must stay in assigned cells and known host limits. */
+export function fitSixel(source: PixelImage, place: { readonly columns: number; readonly rows: number }, cell: CellPixels | null | undefined, limits?: CellPixels): PixelImage | null {
   if (cell == null || !positive(cell.width) || !positive(cell.height) || cell.width > MAX_CELL_PIXELS || cell.height > MAX_CELL_PIXELS ||
-      !positive(place.columns) || !positive(place.rows)) return null
-  const width = place.columns * cell.width, height = Math.floor(place.rows * cell.height / 6) * 6
+      !positive(place.columns) || !positive(place.rows) ||
+      (limits !== undefined && (!positive(limits.width) || !positive(limits.height)))) return null
+  const width = Math.min(place.columns * cell.width, limits?.width ?? Infinity)
+  const height = Math.floor(Math.min(place.rows * cell.height, limits?.height ?? Infinity) / 6) * 6
   if (!positive(width) || !positive(height)) return null
   return fitPixels(source, width, height, true)
 }

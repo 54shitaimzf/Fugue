@@ -4,7 +4,7 @@ import {openImageLayer} from './image-layer.ts'
 const pixel={width:100,height:100,rgba:new Uint8Array(40000).fill(255)}
 const picture={image:pixel,row:1,column:2,columns:10,rows:2}
 const frame={columns:40,height:5,cursorRow:5,changed:null}
-const cell={width:8,height:17,colors:256}
+const cell={width:8,height:17,colors:256,maxWidth:1000,maxHeight:1000}
 test('Sixel uses measured pixels at the picture anchor and restores the input caret',()=>{
  const layer=openImageLayer('sixel',()=>cell),r=layer.update(picture,frame)
  assert.equal(r.before,'');assert.match(r.after,/^\x1b7\x1b\[4A\r\x1b\[2C\x1bP0;1;0q"1;1;30;30/);assert.ok(r.after.endsWith('\x1b\\\x1b8'))
@@ -42,7 +42,7 @@ test('invalid picture position, dimensions or pixels never writes graphics',()=>
 })
 test('different measured cells or source pixels replace the old image; dimensions are part of identity',()=>{
  let measured=cell;const layer=openImageLayer('sixel',()=>measured);layer.update(picture,frame)
- measured={width:12,height:24,colors:256};const resized=layer.update(picture,{...frame,changed:[false,false,false,false,false]})
+ measured={width:12,height:24,colors:256,maxWidth:1000,maxHeight:1000};const resized=layer.update(picture,{...frame,changed:[false,false,false,false,false]})
  assert.match(resized.before,/\x1b\[10X/);assert.match(resized.after,/"1;1;48;48/)
  const replaced=layer.update({...picture,image:{...pixel,rgba:pixel.rgba.map((n,i)=>i%4===0?0:n)}},{...frame,changed:[false,false,false,false,false]})
  assert.match(replaced.before,/\x1b\[10X/);assert.match(replaced.after,/\x1bP/)
