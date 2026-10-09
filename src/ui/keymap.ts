@@ -401,7 +401,8 @@ export const TABLE: readonly Binding[] = [
  * ——宽着的时候整行的集合与 `any` 那一档一样。
  */
 export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
-  // 不看处境：**空 = 照表自己的次序**（这一档就是第三幕 ② 之前那个样子，逐字节锁着）。
+  // 不看处境：先露这七条（提交 · 菜单 · 补全 · 阅读 · 打断 · 退出 · 键表面板——次序与 `TABLE` 一致），
+  // 表里其余那些照旧缀在后面。**这一档就是 `fugue tui` 起来时那一行**（缺省档），逐字节锁着。
   any: ['submit', 'menu', 'complete', 'read', 'interrupt', 'quit', 'panel'],
   // 门口那一块开着：此刻要人按的是 `y` / `n`（放行那一份 · 拒那一份），再往下才是收起门口与翻批。
   gate: ['approve', 'reject', 'cancel', 'pageUp', 'pageDown', 'help'],

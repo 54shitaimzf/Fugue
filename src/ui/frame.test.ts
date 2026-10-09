@@ -319,16 +319,21 @@ test('⑦ 账尾只显示运行状态；永久历史不重复打印到状态栏'
   const snapshot = snapshotOf()
   const permanent = ['round 1 · 轮次 r1 · Idle → Planning', 'round 5 · 轮次 r1 · 合并接受 abcdef01… · 验收 3 条（过 3 / 没过 0）']
   assert.equal(footerOf(snapshot), '修改中 · 1 项任务在运行')
-  assert.equal(footerOf(snapshot, []), footerOf(snapshot), '一条永久行都没有时照旧')
-  assert.equal(footerOf(snapshot, permanent), footerOf(snapshot), `给了那一列，账尾该是它最后一条：${footerOf(snapshot, permanent)}`)
   const withRow = frameOf({ snapshot, permanent, width: 100, height: 16 })
   assert.equal(withRow.footer, footerOf(snapshot), '整帧状态栏不重复历史')
+  // **不重复历史这一条直接量**：账尾那一行里一条永久行都不出现（`footerOf` 从前挂着一个没人读的
+  // 可选参数，那时量的是"给了也不变"——量的是参数无效，不是那一行长什么样）。
+  for (const one of permanent) {
+    assert.equal(withRow.footer.includes(one), false, `账尾里出现了一条永久行：${withRow.footer}`)
+  }
   assert.equal(withRow.lines.length, frameOf({ snapshot, width: 100, height: 16 }).lines.length, '多这一列不该动行数')
   assert.equal(withRow.footer, frameOf({ snapshot, width: 100, height: 16 }).footer)
   // 补到 K 行那一处（终端那一层要的）：多出来的行不写，少的那几行补空白（不是补内容）。
   assert.deepEqual([...panelOf(['ab'], 2, 4)], ['ab  ', '    '], '补空行那一处不对')
   assert.deepEqual([...panelOf(['ab', 'cd', 'ef'], 2, 4)], ['ab  ', 'cd  '], '多出来的行该不写')
-  console.log(`⑦ 读数：没给 → 「${footerOf(snapshot)}」· 给了 → 「${withRow.footer}」· panelOf 补空行 4 列 × 2 行`)
+  console.log(
+    `⑦ 读数：账尾「${footerOf(snapshot)}」· 整帧账尾「${withRow.footer}」· 那两条永久行在账尾里 0 处 · panelOf 补空行 4 列 × 2 行`,
+  )
 })
 
 test('⑥ 纯：同一份输入两次逐字节相同，进去的那一份快照一个字段都没被改', () => {
@@ -638,4 +643,19 @@ test('对话只显示最近汇报；内部编号与调用计数留在进展视�
 test('持轮者的计划记录不计作运行中的子任务', () => {
   const snapshot = statusOf([{pos:{writer:'round',seq:1},e:{t:'holder/distill',round:'r1',agent:'round',digest:'d',body:'计划'}}] as unknown as StatusRow[])
   assert.equal(footerOf(snapshot), '等待输入')
+})
+
+test('⑯ 树那一栏的命中按坐标定：两行字一样时只有选中那一行染色', () => {
+  // 原先那一处拿**印出去的串**与选中那一行比字（`l === navAll[sel]`）：两格名字一样时两行一起亮，
+  // 而"哪一格被选中"是坐标上的事。这一条就是那个错的判据——两行字一样、选第二行，命中恰一处。
+  const snapshot = snapshotOf()
+  const rows = ['主线（round）', '主线（round）']
+  const f = frameOf({ snapshot, width: 100, height: 16, view: 'progress', nav: { rows, sel: 1 } })
+  const hits = f.lines.filter((_, i) => f.roles[i] === 'hit')
+  assert.equal(hits.length, 1, `两行字一样时命中该恰一处，实得 ${hits.length} 处：${JSON.stringify(hits)}`)
+  assert.equal((hits[0] as string).includes(rows[0] as string), true, `命中那一行是树那一栏里的：${hits[0]}`)
+  // 换选第一行：命中的行数一样是一处（变的是位置，不是条数）。
+  const g = frameOf({ snapshot, width: 100, height: 16, view: 'progress', nav: { rows, sel: 0 } })
+  assert.equal(g.lines.filter((_, i) => g.roles[i] === 'hit').length, 1, '换一行选，命中还是一处')
+  console.log(`⑯ 读数：两行同名 · 选第 ${1} 行 → 命中 ${hits.length} 处（旧判据这里是 2 处）`)
 })

@@ -312,9 +312,17 @@ test('⑥ 纯：两次逐字节相同、进去的 rows 一个字段都没被改 
 })
 
 
-test('生产格式的目标按人话显示，损坏的已识别 JSON 不被吞掉', () => {
+test('生产格式的目标按人话显示；损坏的已识别 JSON 照原文印出来（不吞、也不打死这一帧）', () => {
   reset()
   const event = { t: 'round/intent' as const, round: brand('r1'), base: brand('b0'), digest: 'd', body: JSON.stringify({goal:'改善终端阅读体验'}) }
   assert.deepEqual(permanentLinesOf([row(event)]), ['任务：「改善终端阅读体验」'])
-  assert.throws(() => permanentLinesOf([row({...event, body:'{"goal":'})]), SyntaxError)
+  // **坏掉这件事照样看得见**：半截 `{"goal":` 印在那一行上（原先那一档当场抛 `SyntaxError`——
+  // 那是观察窗，不是校验器：抛出去整帧就没了，人反而什么都看不到）。
+  const broken = permanentLinesOf([row({...event, body:'{"goal":'})])
+  assert.equal(broken.length, 1, '坏 JSON 那一条照样折得出来')
+  assert.ok((broken[0] as string).includes('{"goal":'), `坏的原文该印出来：${broken[0]}`)
+  // 认得出形状而 `goal` 不是字符串（写成数 · 写成对象）也照原文印，不猜。
+  const odd = permanentLinesOf([row({...event, body:'{"goal":123}'})])
+  assert.ok((odd[0] as string).includes('{"goal":123}'), `goal 不是字符串时照原文印：${odd[0]}`)
+  console.log(`读数：好的一条 → 「${(permanentLinesOf([row(event)])[0] as string)}」· 坏的一条照原文印（0 次抛出）`)
 })

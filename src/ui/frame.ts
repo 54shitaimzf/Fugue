@@ -376,8 +376,12 @@ export function chatOf(o: { readonly snapshot: StatusSnapshot; readonly conversa
   ]
 }
 
-/** 账尾只显示运行状态，不重复历史，也不显示内部事件坐标。 */
-export function footerOf(s: StatusSnapshot, _permanent?: readonly string[]): string {
+/**
+ * 账尾只显示运行状态，**不重复历史**（永久行已经在上面那块历史里了），也不显示内部事件坐标。
+ *
+ * **永久行不是它的入参**（原先挂着一个没人读的可选参数）：账尾一个字都不从那一列取。
+ */
+export function footerOf(s: StatusSnapshot): string {
   const state = s.rounds.find((r) => r.round === s.current)?.state
   const running = s.agents.filter((a) => a.agent !== 'round' && a.stopped === null).length
   return (state === undefined ? '等待输入' : stateFaceOf(state)) +
@@ -524,7 +528,7 @@ export function frameOf(o: FrameInput): Frame {
     view === 'chat'
       ? chatOf(o).map((x) =>
           x.kind === 'rule'
-            ? { l: `${''}${glyphs().div.repeat(inner)}`, role: 'border' as const }
+            ? { l: glyphs().div.repeat(inner), role: 'border' as const }
             : x.kind === 'aside'
               ? { l: `  ${x.text}`, role: x.role ?? 'body' as const }
               : { l: `${iconPrefixOf(x.icon)}${x.text}`, role: x.role ?? 'body' as const },
@@ -533,7 +537,7 @@ export function frameOf(o: FrameInput): Frame {
   const rows = bodyRows.flatMap((one) => wrap(one.l, inner).map((x) => ({ l: x, role: one.role })))
 
   // 账尾那条状态条：**一行**，超出就从右边截（`clip` 留 `…`，说了它被截过）。
-  const footer = clip(footerOf(o.snapshot, o.permanent), inner)
+  const footer = clip(footerOf(o.snapshot), inner)
   // 上下框两行、分隔与账尾两行；六行正文的预算不随信息量漂移。
   const withFooter = (o.bottom?.keep ?? 0) + 1 <= height - 4
   let budget = height - 2 - (withFooter ? 2 : 0)
@@ -584,10 +588,13 @@ export function frameOf(o: FrameInput): Frame {
   const navAll = readingOn || view === 'chat' ? [] : (o.nav?.rows ?? [])
   const navCap = navAll.length === 0 ? 0 : Math.max(1, Math.min(4, budget - 2))
   const navWin = navAll.length === 0 ? null : windowOf(navAll.length, o.nav?.sel ?? 0, navCap)
-  const navBody: string[] = []
+  // **命中按坐标定，不按字面定**（原先拿印出去的那一串跟选中的那一行比字）：两格名字一样时
+  // 两行会一起亮，而"哪一格被选中"是坐标上的事。`hit` 于是跟着这一行一起折出来。
+  const navBody: { readonly l: string; readonly hit: boolean }[] = []
   if (navWin !== null) {
-    for (let i = navWin.from; i < navWin.from + navWin.count; i += 1) navBody.push(navAll[i] as string)
-    if (navWin.summary) navBody.push(`  ${glyphs().mark} 还有 ${navWin.above + navWin.below} 个节点`)
+    const sel = o.nav?.sel ?? 0
+    for (let i = navWin.from; i < navWin.from + navWin.count; i += 1) navBody.push({ l: navAll[i] as string, hit: i === sel })
+    if (navWin.summary) navBody.push({ l: `  ${glyphs().mark} 还有 ${navWin.above + navWin.below} 个节点`, hit: false })
   }
   budget -= navBody.length
 
@@ -610,7 +617,7 @@ export function frameOf(o: FrameInput): Frame {
   // 树与读数是正文 · 阅读面正文是 `read` · 候选与门口那一块是临时的 `overlay`。
   // 内容那一栏与临时那几层都**横贯整栏**（第二幕 ⑦ 之后没有第二栏了）：每行一个角色。
   const shown: { readonly l: string; readonly role: LineRole }[] = [
-    ...navBody.map((l) => ({ l, role: l === navAll[o.nav?.sel ?? 0] ? 'hit' as const : 'body' as const })),
+    ...navBody.map((one) => ({ l: one.l, role: one.hit ? ('hit' as const) : ('body' as const) })),
     ...content.map((x) => ({ l: x.l, role: x.role })),
   ]
   if (dropped > 0) shown.push({ l: `${glyphs().mark} 还有 ${dropped} 行没印`, role: 'body' })

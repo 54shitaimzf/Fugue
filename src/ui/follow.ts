@@ -54,6 +54,15 @@ import type { ConversationRow, FrameInput } from './frame.ts'
 import { frameOf } from './frame.ts'
 import type { FamilyTable } from './stream.ts'
 import { conversationOf, permanentLinesOf } from './stream.ts'
+
+/**
+ * 对话区留最近几条（`frameOf` 的 `conversation` 那一栏）。**三条**＝框里挤掉轮次头与细线之后
+ * 还看得完的条数；这个数**不随终端高度变**（改它就是改主面的信息量，要人批）。
+ *
+ * **什么条件下改主意**：人判"最近三条"不够用（要往下翻更早的汇报），就把那一栏做成可滚的
+ * ——那时这个数换成按窗口高度分账，与 `ui/layout.ts` 那几个数同一条路。
+ */
+export const CONVERSATION_KEEP = 3
 import type { Panel, Term, ViewInput } from './term.ts'
 
 /**
@@ -193,7 +202,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
     if (foldedAt === rows.length) return folded
     const fresh = rows.slice(foldedAt)
     folded = [...folded, ...permanentLinesOf(fresh, o.table)]
-    conversation = [...conversation, ...conversationOf(fresh, o.table)].slice(-3)
+    conversation = [...conversation, ...conversationOf(fresh, o.table)].slice(-CONVERSATION_KEEP)
     foldedAt = rows.length
     return folded
   }

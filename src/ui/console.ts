@@ -15,7 +15,8 @@ import { DEFAULT_GLYPH_TIER, GLYPH_TIERS, setGlyphTier } from './glyph.ts'
 import type { GlyphTier } from './glyph.ts'
 import { DEFAULT_ICON_TIER, ICON_TIERS, setIconTier } from './icons.ts'
 import type { IconTier } from './icons.ts'
-import { graphicsFor, setGraphics } from './image.ts'
+import { DEFAULT_GRAPHICS_TIER, graphicsFor, setGraphics } from './image.ts'
+import type { GraphicsTier } from './image.ts'
 import { actionCommandsOf, actionsTableOf } from '../round/actions.ts'
 import { pendingOf } from '../round/dispatch.ts'
 import { identFor } from '../identity.ts'
@@ -33,6 +34,50 @@ import { gateFaceOf } from './gate.ts'
 import type { GateFace } from './gate.ts'
 import { openRun } from './run.ts'
 import type { RunLauncher } from './run.ts'
+
+/**
+ * 界面那三档（字形 · 图标 · 图片）从配置里读出来的结果。
+ *
+ * **为什么单独一份**：与 `gateSetupOf` 同一手——那一块原先内联在 `tuiCmd` 里，注释写着"读不出配置
+ * 不是退出的理由"，而代码里没有那一道 `catch`：配置一坏 `fugue tui` 就起不来（`readConfig` 抛在
+ * 函数体里，外面没有第二道网）。摆成一个函数，它自己那一条断言（`ui/ui-tiers.test.ts` ②）就抓得住
+ * 这一类"说好的地板没接上"。
+ *
+ * **三档缺省值就是各自那一份里的 `DEFAULT_*`**（`ui/glyph.ts` · `ui/icons.ts` · `ui/image.ts`）：
+ * 配置读不出来时读的是它们，不是猜一个。
+ */
+export interface UiTiers {
+  readonly glyph: GlyphTier
+  readonly icon: IconTier
+  readonly graphics: GraphicsTier
+  /** 读不出配置时说那一句；读得出是 `null`。**说一声是这一档地板的一半**——静默退回缺省档，人只
+   *  会以为"我的配置没生效"而不知道为什么（`gateSetupOf` 的 `why` 同一条）。 */
+  readonly why: string | null
+}
+
+/** 读工作区配置，折出界面那三档。读不出来就退到缺省档，`why` 说一句为什么。 */
+export async function uiTiersOf(root: string): Promise<UiTiers> {
+  try {
+    const doc = await readConfig(root)
+    const glyph = getConfig(doc, 'ui.glyphs')
+    const icon = getConfig(doc, 'ui.icons')
+    return {
+      glyph: typeof glyph === 'string' && (GLYPH_TIERS as readonly string[]).includes(glyph)
+        ? glyph as GlyphTier : DEFAULT_GLYPH_TIER,
+      icon: typeof icon === 'string' && (ICON_TIERS as readonly string[]).includes(icon)
+        ? icon as IconTier : DEFAULT_ICON_TIER,
+      graphics: graphicsFor(getConfig(doc, 'ui.images'), process.env),
+      why: null,
+    }
+  } catch (err) {
+    return {
+      glyph: DEFAULT_GLYPH_TIER,
+      icon: DEFAULT_ICON_TIER,
+      graphics: DEFAULT_GRAPHICS_TIER,
+      why: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
 
 export interface GateSetup {
   readonly round: string
@@ -142,16 +187,13 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // `--tail N`（U15）：首趟只写尾部 N 条（判据在 `tailOf` 那一道门里）。
   const tail = tailOf(flags)
   if (typeof tail === 'string') return usageFail(tail, json)
-  // **字形档定一次**（第二幕 ⑤）：`ui.glyphs` 点名才换，缺省 `box`（交集那一档）。
-  // 读不出配置不是退出的理由——按缺省档起，与门口那一块同一条口径。
-  const uiConfig = await readConfig(root)
-  const glyph = getConfig(uiConfig, 'ui.glyphs')
-  setGlyphTier(typeof glyph === 'string' && (GLYPH_TIERS as readonly string[]).includes(glyph)
-    ? glyph as GlyphTier : DEFAULT_GLYPH_TIER)
-  const icon = getConfig(uiConfig, 'ui.icons')
-  setIconTier(typeof icon === 'string' && (ICON_TIERS as readonly string[]).includes(icon)
-    ? icon as IconTier : DEFAULT_ICON_TIER)
-  setGraphics(graphicsFor(getConfig(uiConfig, 'ui.images'), process.env))
+  // **字形档定一次**（第二幕 ⑤）：`ui.glyphs` 点名才换，缺省 `box`（交集那一档）。读法是
+  // `uiTiersOf` 那一份（它自己那一条断言量得动"读不出配置"那一档）；说一声归这一头。
+  const tiers = await uiTiersOf(root)
+  setGlyphTier(tiers.glyph)
+  setIconTier(tiers.icon)
+  setGraphics(tiers.graphics)
+  if (tiers.why !== null) process.stderr.write(`配置读不出来，字形 · 图标 · 图片三档按缺省起：${tiers.why}\n`)
 
   const phase = phaseOf(new Date())
   // 价目与模型目录按这一台算（P2d，与 `status --once` 同一份）。

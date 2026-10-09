@@ -142,9 +142,24 @@ function excerpt(body: string, family: EventFamily): string {
 }
 
 
-/** 生产者 round/start 与 round/plan 将目标序列化为 {goal}；旧的纯文本记录照读。 */
+/**
+ * 生产者 `round/start` 与 `round/plan` 把目标序列化成 `{"goal":"…"}`；更早的纯文本记录照读。
+ *
+ * **读不出来不是崩的理由**（这一档是看的东西，不是校验器）：正文是别处写进来的，截断过 · 手改过
+ * 都可能让它不是合法 JSON。抛出去这一帧就没了（`follow()` 那一头没有第二道 catch），而人想看的
+ * 恰恰是"这一条意图写的是什么"——**坏掉这件事照样看得见**：照原文印出来，那半截 `{"goal":` 就在
+ * 屏幕上，比整块面板消失清楚得多。与 `STATE_FACE` 里"表里没有的取值照原样印"是同一条口径。
+ *
+ * **什么条件下改主意**：`round/intent` 的正文换了形状（不再以 `{"goal"` 起头）时，这一条跟着换。
+ */
 function intentText(body: string): string {
-  return body.startsWith('{"goal":') ? (JSON.parse(body) as { goal: string }).goal : body
+  if (!body.startsWith('{"goal":')) return body
+  try {
+    const goal = (JSON.parse(body) as { goal?: unknown }).goal
+    return typeof goal === 'string' ? goal : body
+  } catch {
+    return body
+  }
 }
 
 function lineOf(row: StatusRow): ConversationRow {
