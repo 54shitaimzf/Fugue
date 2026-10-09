@@ -1,20 +1,4 @@
-// 第二幕 ③ 的断言：四级色表与八格语义色位（宪法那一行 ①②· 施工单 § 五 ③）。
-//
-// 四条各量一件事：
-//   · ① **四级表**：名字逐条 · `tierOf` 三档各在什么条件下选中 · **第 3 级一档都选不出来**
-//     （truecolor 不开——那是类型上的事，这里从外面再量一遍）；
-//   · ② **八格不手抄**：`SLOTS` 从 `SLOT_MEANING` 推 · `SLOT_256` 与它逐格对齐 · `ROLE_SLOT`
-//     的值都在八格里 · `theme256()` 的角色集合恰好是"落在非空格子上的那些角色"；
-//   · ③ **黑白地板逐字节不变**：`--no-style` / `NO_COLOR` / 认不得 256 色 → 与 0.2.8 那一份
-//     逐字节相同，且**与第 2 级不同**（不然这一条量不到东西）；
-//   · ④ **两道门逐字节全关**：第 0 级与"没有主题"那一档的字节流逐字节相同（0.2.8 口径）。
-//
-// 负对照（红得起来才是断言）：
-//   ① 往 `SLOT_MEANING` 加第九格而不给 `SLOT_256` 补一格 → ② 当场红（八格与色表对不上）；
-//      往 `frame.ts` 的 `LineRole` 加一格而不给 `ROLE_SLOT` 补落点 → ② 也当场红（名单从那份联合读）；
-//   ② 把 `claims256` 改成恒假 → ① 的第 2 级那两条当场红；
-//   ③ 把第 1 级那四个角色改一个（比如 `footer` 改成 `\x1b[2m`）→ ③ 当场红（地板动了）；
-//   ④ 把 `tierOf` 的 `noStyle` 那一道门删掉 → ④ 当场红（`--no-style` 还上色）。
+// 色档按宿主能力选择，八格角色映射与原有黑白/全关退化逐字节保留。
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -52,33 +36,27 @@ function drawOnce(theme: Parameters<typeof openTerm>[0]['theme']): string {
   return written.join('')
 }
 
-test('① 四级表：名字逐条 · tierOf 三档各自的条件 · 真彩那一档一档都选不出来', () => {
-  assert.equal(COLOR_TIERS.length, 4, '四级表就是四条')
-  assert.deepEqual([...COLOR_TIERS], ['全关', '黑白属性', '256 色', 'truecolor（不开）'])
-  // 第 0 级：两道门各是一条。
+test('① 五级表：全关、属性、16 色、256 色；真彩只落到 256 色', () => {
+  assert.deepEqual([...COLOR_TIERS], ['全关', '黑白属性', '16 色', '256 色', 'truecolor（不开）'])
   assert.equal(tierOf({ noStyle: true }), 0)
   assert.equal(tierOf({ noColor: '1' }), 0)
-  assert.equal(tierOf({ noStyle: true, colorTerm: 'truecolor' }), 0, '门比色档靠前')
-  assert.equal(tierOf({ noColor: '' }), 1, 'NO_COLOR 空串算没喊（no-color.org）')
-  // 第 1 级：没说自己能上 256 色的都退这儿。
+  assert.equal(tierOf({ noStyle: true, colorTerm: 'truecolor' }), 0)
+  assert.equal(tierOf({ noColor: '' }), 1)
   assert.equal(tierOf(), 1)
-  assert.equal(tierOf({ term: 'xterm' }), 1)
-  assert.equal(tierOf({ term: 'linux' }), 1, '认不出 256 就退属性档，不半上色')
-  assert.equal(tierOf({ colorTerm: 'yes' }), 1, '说不认得 256 的都不算')
-  // 第 2 级：COLORTERM 或 TERM 认得才算。
-  assert.equal(tierOf({ term: 'xterm-256color' }), 2)
-  assert.equal(tierOf({ colorTerm: '256' }), 2)
-  assert.equal(tierOf({ colorTerm: 'truecolor' }), 2, '真彩声明落在第 2 级——第 3 级不开')
-  assert.equal(tierOf({ colorTerm: '24bit' }), 2)
-  assert.ok(claims256('screen-256color', undefined), 'TERM 里带 256color 也算')
-  assert.ok(!claims256('xterm', 'nope'), '两处都不认 → 不算')
-  // 第 3 级：可选出来的档只有三个（类型是 `0 | 1 | 2`，这里从外面再点一遍）。
+  assert.equal(tierOf({ term: 'xterm' }), 1, '未声明更高能力保留黑白地板')
+  assert.equal(tierOf({ term: 'linux' }), 2)
+  assert.equal(tierOf({ term: 'xterm-16color' }), 2)
+  assert.equal(tierOf({ colorTerm: 'yes' }), 1)
+  assert.equal(tierOf({ term: 'xterm-256color' }), 3)
+  for (const colorTerm of ['256', 'truecolor', '24bit']) assert.equal(tierOf({ colorTerm }), 3)
+  assert.ok(claims256('screen-256color', undefined))
+  assert.ok(!claims256('xterm', 'nope'))
   const seen = new Set<number>()
-  for (const t of [undefined, 'xterm', 'xterm-256color', 'dumb', '']) {
-    for (const c of [undefined, '', '256', 'truecolor']) seen.add(tierOf({ term: t, colorTerm: c }))
+  for (const term of [undefined, 'xterm', 'linux', 'xterm-256color', 'dumb', '']) {
+    for (const colorTerm of [undefined, '', '256', 'truecolor']) seen.add(tierOf({ term, colorTerm }))
   }
-  assert.deepEqual([...seen].sort(), [1, 2], `选得出的只有 1 与 2：拿到 ${[...seen].sort().join(' · ')}`)
-  console.log(`① 读数：四级表 ${COLOR_TIERS.join(' → ')}；实测选出来的档 ${[...seen].sort().join(' · ')}（第 0 级要开门才到）`)
+  assert.deepEqual([...seen].sort(), [1, 2, 3])
+  console.log(`① 色档：${COLOR_TIERS.join(' → ')}；可选 ${[...seen].sort().join('/')}（0 全关、4 不开）`)
 })
 
 test('② 八格从 SLOT_MEANING 推：色表逐格对齐 · 角色都落在格里 · theme256 一个不多一个不少', () => {
@@ -107,7 +85,7 @@ test('② 八格从 SLOT_MEANING 推：色表逐格对齐 · 角色都落在格�
     .filter((r) => SLOT_256[ROLE_SLOT[r]] !== '')
     .sort()
   assert.deepEqual((Object.keys(theme256()) as readonly LineRole[]).sort(), want, 'theme256 恰好覆盖该覆盖的角色')
-  // 第 2 级里凡有值的角色都在八格的某一格上，取到的 SGR 与那一格逐字节相同。
+  // 256 色档里凡有值的角色都在八格的某一格上，取到的 SGR 与那一格逐字节相同。
   for (const [role, sgr] of Object.entries(theme256())) {
     assert.equal(sgr, SLOT_256[ROLE_SLOT[role as LineRole]], `${role} 取的就是它那一格`)
   }
@@ -117,8 +95,8 @@ test('② 八格从 SLOT_MEANING 推：色表逐格对齐 · 角色都落在格�
   )
 })
 
-test('③ 黑白地板逐字节不变：认不得 256 色那一档既有角色字节不变、新汇报角色使用黑白属性', () => {
-  assert.deepEqual(themeOf({ term: 'xterm' }), DEFAULT_THEME, '认不得 256 → 属性档那一份，逐字节相同')
+test('③ 黑白地板逐字节不变：能力未声明时既有角色字节不变、新汇报角色使用黑白属性', () => {
+  assert.deepEqual(themeOf({ term: 'xterm' }), DEFAULT_THEME, '能力未声明 → 属性档那一份，逐字节相同')
   assert.deepEqual(themeOf(), DEFAULT_THEME, '什么都不给 → 属性档（theme.test.ts ② 那条口径不动）')
   assert.deepEqual(DEFAULT_THEME, {
     border: '\x1b[2m',
@@ -130,12 +108,12 @@ test('③ 黑白地板逐字节不变：认不得 256 色那一档既有角色�
     refuse: '\x1b[1m',
     hit: '\x1b[1m',
   })
-  // **这一条要有对手**：第 2 级必须与它不同，不然"逐字节相同"量的是空气。
+  // **这一条要有对手**：256 色档必须与它不同，不然"逐字节相同"量的是空气。
   const two = themeOf({ term: 'xterm-256color' })
-  assert.notDeepEqual(two, DEFAULT_THEME, '第 2 级与第 1 级不同——不然上面那几条量不到东西')
-  assert.equal(two?.border, '\x1b[38;5;242m', '框线在第 2 级走弱化那一格')
-  assert.equal(two?.readHeading, '\x1b[1;38;5;75m', '阅读面标题在第 2 级是粗 + 蓝')
-  console.log(`③ 读数：第 1 级 ${JSON.stringify(DEFAULT_THEME)} · 第 2 级 ${JSON.stringify(two)}`)
+  assert.notDeepEqual(two, DEFAULT_THEME, '256 色档与第 1 级不同——不然上面那几条量不到东西')
+  assert.equal(two?.border, '\x1b[38;5;242m', '框线在256 色档走弱化那一格')
+  assert.equal(two?.readHeading, '\x1b[1;38;5;75m', '阅读面标题在256 色档是粗 + 蓝')
+  console.log(`③ 读数：第 1 级 ${JSON.stringify(DEFAULT_THEME)} · 256 色档 ${JSON.stringify(two)}`)
 })
 
 test('④ 两道门逐字节全关：第 0 级写出来的字节流与"没有主题"那一档逐字节相同', () => {
@@ -143,7 +121,7 @@ test('④ 两道门逐字节全关：第 0 级写出来的字节流与"没有主
   assert.equal(drawOnce(themeOf({ noStyle: true })), plain, '--no-style：逐字节相同')
   assert.equal(drawOnce(themeOf({ noColor: '1' })), plain, 'NO_COLOR 非空：逐字节相同')
   assert.equal(drawOnce(themeOf({ noStyle: true, term: 'xterm-256color' })), plain, '门比色档靠前：还是全关')
-  // 对手：第 1 级与第 2 级都该写出东西（不然上面那三条是"什么都没写"对"什么都没写"）。
+  // 对手：第 1 级与256 色档都该写出东西（不然上面那三条是"什么都没写"对"什么都没写"）。
   assert.notEqual(drawOnce(themeOf({ term: 'xterm' })), plain, '第 1 级有 SGR')
-  assert.notEqual(drawOnce(themeOf({ term: 'xterm-256color' })), plain, '第 2 级有 SGR')
+  assert.notEqual(drawOnce(themeOf({ term: 'xterm-256color' })), plain, '256 色档有 SGR')
 })
