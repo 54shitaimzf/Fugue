@@ -251,6 +251,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   let keys: KeySource | null = null
   let km: Keymap = KEYMAP
   const stage = openStage({
+    keymap: () => km,
     graphics: () => imageSource === null ? 'none' : tiers.graphics === 'sixel'
       ? cellProbe?.cell != null && alternateProbe?.owned === true ? 'sixel' : 'none'
       : tiers.graphics,

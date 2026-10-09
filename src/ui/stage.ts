@@ -10,7 +10,7 @@
 // （`../cli/flags.ts`）：菜单候选与分发处读**同一个对象**——「哪些命令存在」仍只有一处真源（那张
 // 表自己不 import 任何东西，不成环）。
 import { PAGE_STEP, fallsToText, helpRowsOf, hintWhenOf } from './keymap.ts'
-import type { Decoded, HintWhen } from './keymap.ts'
+import type { Decoded, HintWhen, Keymap } from './keymap.ts'
 import { ctrlCStepOf, escStepOf, quitStepOf, stillArmed } from './cancel.ts'
 import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmit, submitOf } from './input.ts'
 import type { Editor } from './input.ts'
@@ -43,6 +43,8 @@ import type { StatusRow } from '../probe/status.ts'
 
 /** 舞台要的外面那几样：全是「问一句」的函数（晚绑定——句柄建起来之前舞台先立着）。 */
 export interface StageDeps {
+  /** 与实际解码/提示行共用的配置键表；晚绑定，缺省回原键表。 */
+  readonly keymap?: (() => Keymap) | undefined
   readonly graphics?: (() => GraphicsTier) | undefined
   readonly readImage?: ((request: ImageRequest, signal: AbortSignal) => Promise<PixelImage | null>) | undefined
   /** 写一行界面自己的话（面板上方，只写一次）——`tui.note`。 */
@@ -122,7 +124,7 @@ export function openStage(deps: StageDeps): Stage {
   const specs = specsOf(FLAGS_OF)
   /** 键表那一档的候选：提示行 · 帮助面板 · 这一屏，三处同一张表（`ui/keymap.ts`）。 */
   const keyRows = (): readonly MenuRow[] =>
-    helpRowsOf().map((name) => ({ name, note: '', kind: 'key' as const }))
+    helpRowsOf(deps.keymap?.()).map((name) => ({ name, note: '', kind: 'key' as const }))
   const rowsOf = (source: MenuSource): readonly MenuRow[] =>
     candidatesOf({ specs, keys: keyRows(), paths: panel?.paths ?? [], line: ed.draft.text, source })
   /** 提示符：`»` 是命令、`>` 是话（模式是从行推出来的，不是另存的一个开关）。 */
