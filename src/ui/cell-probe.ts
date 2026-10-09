@@ -100,3 +100,45 @@ export function openCellProbe(o: {
     },
   }
 }
+
+
+/** Read actual alternate-plane ownership after entry/resize, without setting host modes.
+ * Only a set, resettable mode (1) grants ownership: permanent-set (3) cannot be restored on exit.
+ * Unidentified expired replies keep their FIFO place, just like the six capability reports above.
+ */
+export function openAlternateProbe(o: {
+  readonly write: (bytes: string) => void
+  readonly changed: () => void
+  readonly wait?: WaitFn
+}) {
+  const wait: WaitFn = o.wait ?? ((ms, fn) => { const t=setTimeout(fn,ms);return ()=>clearTimeout(t) })
+  const pending: {done:boolean}[] = []
+  let current: {done:boolean}|undefined,owned=false,closed=false,stop:(()=>void)|undefined
+  const set=(next:boolean):void=>{if(owned===next)return;owned=next;o.changed()}
+  return {
+    get owned():boolean{return owned},
+    start():void {
+      if(closed)return
+      stop?.();stop=undefined
+      if(current)current.done=true
+      set(false)
+      if(pending.length>=MAX_CELL_REQUESTS)return
+      const r={done:false};current=r;pending.push(r)
+      stop=wait(CELL_WAIT_MS,()=>{if(r!==current||r.done)return;stop=undefined;r.done=true;set(false)})
+      o.write('\x1b[?1049$p')
+    },
+    receive(bytes:string):void {
+      if(closed)return
+      const mode=/^\x1b\[\?1049;([0-4])\$y$/.exec(bytes)
+      if(!mode)return
+      const r=pending.shift();if(!r||r.done||r!==current)return
+      r.done=true;stop?.();stop=undefined;set(mode[1]==='1')
+    },
+    close():void {
+      if(closed)return
+      closed=true;stop?.();stop=undefined
+      if(current)current.done=true
+      pending.length=0;owned=false
+    },
+  }
+}
