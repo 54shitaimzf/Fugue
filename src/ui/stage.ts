@@ -492,7 +492,7 @@ export function openStage(deps: StageDeps): Stage {
     // 提示行（第二幕 ④ · 第三幕 ② 按处境分档）**与输入行在不在无关**：stdin 不是终端时它就是那一
     // 句"这一档不收按键"——画一个收不到按键的提示符比不画坏得多，而"按键收不到"这件事更得说出来。
     // **阅读面压过门口**（判据在 `hintWhenOf` 那一头）：门口那三个键它自己在屏幕上印着。
-    const when: HintWhen = keyHelpTop !== null && !keyHelpCovered ? 'plan' : panel !== null ? (panel.source === 'keys' && rowsOf('keys').length === 0 ? 'helpEmpty' : 'menu') : planTop !== null ? 'plan' : reading !== null ? 'read' : gateOn ? 'gate' :
+    const when: HintWhen = keyHelpTop !== null && !keyHelpCovered ? 'plan' : panel !== null ? (rowsOf(panel.source).length === 0 ? 'menuEmpty' : 'menu') : planTop !== null ? 'plan' : reading !== null ? 'read' : gateOn ? 'gate' :
       deps.run()?.running === true ? 'run' : ed.search !== null ? 'search' : ed.draft.text !== '' ? 'typing' : queue.items.length > 0 ? 'queue' : gate !== null && gateHidden ? 'pending' :
       showInput && viewAt(viewIndex) === 'chat' && taskOf(deps.rows()).state === 'Rebuilding' ? 'done' : 'input'
     // 省略处只许诺打开任务记录的键；确认、菜单与只读层各自承担当前阅读提示。

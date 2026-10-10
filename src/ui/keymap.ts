@@ -88,7 +88,7 @@ export type UiAction =
 export type Stage = 'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'T8' | 'T9'
 
 /** 提示场景从当前界面推导；日常提示精选能用的动作，any保完整命令行帮助。 */
-export type HintWhen = 'any' | 'gate' | 'read' | 'pending' | 'plan' | 'menu' | 'input' | 'typing' | 'run' | 'queue' | 'search' | 'done' | 'helpEmpty'
+export type HintWhen = 'any' | 'gate' | 'read' | 'pending' | 'plan' | 'menu' | 'input' | 'typing' | 'run' | 'queue' | 'search' | 'done' | 'menuEmpty'
 
 /** 能按处境换一句话的那几档（`any` 那一档没有"换一句"这回事：它就是表里那一句）。 */
 export type HintSayWhen = Exclude<HintWhen, 'any'>
@@ -400,7 +400,7 @@ export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
   search: ['cancel', 'historyOlder', 'submit'],
   pending: ['go', 'read', 'help'],
   menu: ['cancel', 'historyNewer', 'historyOlder', 'submit', 'read'],
-  helpEmpty: ['cancel', 'killToStart'],
+  menuEmpty: ['cancel', 'killToStart'],
   plan: ['cancel', 'historyNewer', 'historyOlder', 'pageDown', 'read'],
   gate: ['read', 'historyOlder', 'historyNewer'],
   read: ['complete', 'historyOlder', 'historyNewer', 'cancel', 'pageDown'],
@@ -414,7 +414,7 @@ const CONTEXT_HINT: Partial<Record<HintWhen, Partial<Record<UiAction, string>>>>
   queue: { submit: '下一条', cancel: '取消末条', read: '记录', help: '帮助' },
   search: { cancel: '结束反查', historyOlder: '更早', submit: '发送' },
   menu: { cancel: '返回', historyNewer: '下一项', historyOlder: '上一项', submit: '选择', read: '看全' },
-  helpEmpty: { cancel: '返回' },
+  menuEmpty: { cancel: '返回' },
 }
 
 /**

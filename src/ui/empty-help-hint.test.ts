@@ -65,16 +65,16 @@ const helpTitle=(f:ReturnType<ReturnType<typeof openSession>['panel']>)=>{const 
 
 test('empty-help hints name only current return and line editing, retain configured physical keys, and use existing exact width floors',()=>{
  let cases=0
- assert.deepEqual(HINT_WHEN.helpEmpty,['cancel','killToStart'],'an empty help result has no selection, navigation or full-read affordance')
+ assert.deepEqual(HINT_WHEN.menuEmpty,['cancel','killToStart'],'an empty help result has no selection, navigation or full-read affordance')
  try{for(const glyph of ['ascii','box','rich'] as const){setGlyphTier(glyph)
  for(const km of [KEYMAP,keymapOf({cancel:'Alt-E',killToStart:'Alt-U'}),keymapOf({cancel:'Alt-Enter',killToStart:'Alt-U'})]){
-  const named=hintPicksOf(km,'helpEmpty');assert.deepEqual(named.map(b=>b.action),['cancel','killToStart'])
+  const named=hintPicksOf(km,'menuEmpty');assert.deepEqual(named.map(b=>b.action),['cancel','killToStart'])
   assert.deepEqual(named.map(b=>b.keys),['cancel','killToStart'].map(action=>km.rows.find(b=>b.action===action)!.keys),'actual configured physical keys are authoritative')
   const full='按键 '+keyLabelOf(named[0]!)+' 返回 · '+keyLabelOf(named[1]!)+' 清行'
-  assert.equal(hintLineOf(km,0,'helpEmpty'),full)
+  assert.equal(hintLineOf(km,0,'menuEmpty'),full)
   assert.ok(!/下一项|上一项|选择|看全/.test(full))
   for(let width=1;width<=240;width++){
-   const line=hintLineForWidth(width,km,'helpEmpty'),first=hintLineOf(km,1,'helpEmpty')
+   const line=hintLineForWidth(width,km,'menuEmpty'),first=hintLineOf(km,1,'menuEmpty')
    if(width>=widthOf(full))assert.equal(line,full)
    if(width>=widthOf(first))assert.ok(widthOf(line)<=width)
    const compact=keyLabelOf({...named[0]!,keys:named[0]!.keys.slice(0,1)})+' 返回'
@@ -82,8 +82,8 @@ test('empty-help hints name only current return and line editing, retain configu
    if(width<widthOf(compact))assert.equal(line,first,'host too narrow for one full key/action retains original overflow floor')
    assert.ok(!line.endsWith(' · '));assert.ok(line.includes(named[0]!.keys[0]!));cases++
   }
-  assert.equal(hintLineForWidth(NaN,km,'helpEmpty'),full)
-  assert.equal(hintLineForWidth(0,km,'helpEmpty'),hintLineOf(km,1,'helpEmpty'),'zero-width retains the original first-entry floor')
+  assert.equal(hintLineForWidth(NaN,km,'menuEmpty'),full)
+  assert.equal(hintLineForWidth(0,km,'menuEmpty'),hintLineOf(km,1,'menuEmpty'),'zero-width retains the original first-entry floor')
   assert.deepEqual(hintPicksOf(km,'menu').map(b=>b.action),['cancel','historyNewer','historyOlder','submit','read'],'normal menu hint is unchanged')
  }
  }}finally{setGlyphTier('box')}
@@ -98,7 +98,7 @@ test('actual empty help changes only its current hint through clear/undo, multil
   const empty=()=>{
    assert.equal(r.stage.view().menu!.rows.length,0)
    assert.ok(!/下一项|上一项|选择|看全/.test(r.stage.view().hint!),'unavailable actions do not occupy the current hint')
-   assert.equal(r.stage.view().hint,hintLineForWidth(width,r.km,'helpEmpty'))
+   assert.equal(r.stage.view().hint,hintLineForWidth(width,r.km,'menuEmpty'))
    const f=r.draw();assert.ok(helpTitle(f).includes('按键帮助'));assert.ok(!f.roles!.includes('read'))
    if(height>=12)assert.ok(r.vt.lines.includes(r.stage.view().hint!.trimEnd()),'current complete hint is physically visible whenever the existing operation capacity admits it')
   }
