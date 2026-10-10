@@ -95,7 +95,7 @@ export type Stage = 'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'T8' | 'T9'
  * （`keymap.test.ts` ⑦ 量这一条）——宽着的时候人看不出档，窄着的时候**先露出来的那几条**才是这一档
  * 的判断。
  */
-export type HintWhen = 'any' | 'gate' | 'read' | 'pending' | 'plan' | 'menu' | 'input' | 'typing' | 'run' | 'queue' | 'search'
+export type HintWhen = 'any' | 'gate' | 'read' | 'pending' | 'plan' | 'menu' | 'input' | 'typing' | 'run' | 'queue' | 'search' | 'done'
 
 /** 能按处境换一句话的那几档（`any` 那一档没有"换一句"这回事：它就是表里那一句）。 */
 export type HintSayWhen = Exclude<HintWhen, 'any'>
@@ -400,6 +400,7 @@ export const TABLE: readonly Binding[] = [
 export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
   any: ['submit', 'menu', 'complete', 'read', 'interrupt', 'quit', 'panel'],
   input: ['submit', 'menu', 'read', 'complete', 'help'],
+  done: ['quit', 'read', 'submit', 'help'],
   typing: ['submit', 'newline', 'cancel', 'mention'],
   run: ['cancel', 'submit', 'read', 'help'],
   queue: ['submit', 'cancel', 'read', 'help'],
@@ -413,6 +414,7 @@ export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
 
 const CONTEXT_HINT: Partial<Record<HintWhen, Partial<Record<UiAction, string>>>> = {
   input: { submit: '发送', menu: '命令', read: '记录', complete: '视图', help: '帮助' },
+  done: { read: '记录', submit: '发送', help: '帮助' },
   typing: { submit: '发送', newline: '换行', cancel: '清空输入', mention: '文件' },
   run: { cancel: '停止', submit: '排队', read: '记录', help: '帮助' },
   queue: { submit: '下一条', cancel: '取消末条', read: '记录', help: '帮助' },
@@ -833,7 +835,7 @@ export function decoderOf(km: Keymap = KEYMAP, onControl?: (sequence: string) =>
 
 /** 那一条印成什么（第三幕 ②）：键串照旧，那一句话按处境挑（`says[所处那一档]` 没有就用 `hint`）。 */
 const entryOf = (b: Binding, when: HintWhen = 'any'): string =>
-  `${keyLabelOf(b)} ${CONTEXT_HINT[when]?.[b.action] ?? (when === 'any' ? undefined : b.says?.[when]) ?? b.hint}`
+  `${keyLabelOf(when === 'done' ? { ...b, keys: b.keys.slice(0, 1) } : b)} ${CONTEXT_HINT[when]?.[b.action] ?? (when === 'any' ? undefined : b.says?.[when]) ?? b.hint}`
 
 /**
  * 某一档下该印的那几条：`WIRED` 先过一遍（许诺一个按下去没反应的键，比少印几条坏得多），再看
