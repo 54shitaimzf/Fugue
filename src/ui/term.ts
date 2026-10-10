@@ -545,7 +545,7 @@ export function openTerm(o: TermOptions): Term {
       if (columns > (normalRecovery?.columns ?? drawnColumns) || permanent.length > 0 || !rowsKnown || !textOnly ||
         (normalRecovery !== null && (rowsSeen as number) > normalRecovery.rows)) normalRecovery = null
       const normalShrink = !wantAlt && textOnly && drawn && columns <= drawnColumns && permanent.length === 0 && rowsKnown &&
-        typeof drawnRows === 'number' && (rowsSeen as number) < drawnRows && lastIsInput && region.length === rowsSeen &&
+        Number.isSafeInteger(rowsSeen) && typeof drawnRows === 'number' && (rowsSeen as number) < drawnRows && lastIsInput && region.length <= (rowsSeen as number) &&
         normalAnchor !== null && normalAnchor.columns === drawnColumns && normalAnchor.rows === drawnRows &&
         normalAnchor.top < (rowsSeen as number) && normalAnchor.top + regionRows === drawnRows && cursorRow === regionRows - 1
       // Bottom hard lines retain row coordinates when only columns shrink.
@@ -602,6 +602,10 @@ export function openTerm(o: TermOptions): Term {
         // visible prefix is our emitted reserve, erase it before LF can
         // move stale wide cells into history (actual NorthWest XTerm).
         buf.push(normalOwnedPrefix ? '\x1b[2J\x1b[H' : `\x1b[${normalAnchor!.top + 1};1H`)
+        // Fill spare rows before the new region. The visible prefix is now our
+        // emitted blank space; unowned old prefix rows move into real history.
+        recoveredHead = (rowsSeen as number) - region.length
+        for (let i = 0; i < recoveredHead; i += 1) buf.push('\r\n')
       } else if (normalWidth) {
         buf.push(`\x1b[${normalAnchor!.top + 1};1H`)
       } else if (back > 0) buf.push(upOf(back))
@@ -691,7 +695,7 @@ export function openTerm(o: TermOptions): Term {
       drawnHeight = h
       drawnRows = rowsSeen
       lastRegion = region
-      if (normalReturn) ownedAbove = recoveredHead
+      if (normalReturn || normalShrink) ownedAbove = recoveredHead
       if (!wantAlt && textOnly && rowsKnown && lastIsInput && region.length === finalCursor + 1) {
         const frameColumns = columns, frameRows = rowsSeen as number
         o.requestCursor?.(frameRows, (row, column) => {
