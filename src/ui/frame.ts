@@ -819,16 +819,21 @@ export function frameOf(o: FrameInput): Frame {
     menuBody.length = 0
   }
   const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length + gateNotice.length
-  // 当前正文靠近固定操作区；保留整窗容量，不用内容多少改变框底或输入位置。
+  // 保留整窗容量与固定操作区；有余量时让当前任务从顶部展开。
   // 已知空会话和可信任务可移动留白；阅读、菜单、二级面及坏操作元数据沿用原排法。
   const emptyContext = o.task !== undefined && o.task.round === null && o.task.state === null && o.task.rows.length === 0
     && o.snapshot.current === null && o.snapshot.events === 0 && o.snapshot.agents.length === 0
   const nearby = o.operationArea === true && !readingOn && dropped === 0 && o.menu === undefined && view === 'chat' && (taskStatus || emptyContext)
     && (o.bottom === undefined || operationStatus)
   const spare = Math.max(0, height - fixed)
+  // 有足够的现成留白时，任务从顶部读，固定操作留在下方；两区只围实际内容。
+  // 两条框线与至少一行框外留白都从余量取，短帧或未知上下文保留原布局。
+  const separate = nearby && spare >= 3
+  const contentRows = shown.length
+  const lowerRows = gateBody.length + gateNotice.length
   const gap = nearby && gateBody.length + gateNotice.length > 0 ? Math.min(1, spare) : 0
-  if (nearby) shown.unshift(...Array.from({ length: spare - gap }, () => ({ l: '', role: 'body' as const })))
-  for (let i = 0; i < (nearby ? gap : spare); i += 1) shown.push({ l: '', role: 'body' })
+  if (nearby && !separate) shown.unshift(...Array.from({ length: spare - gap }, () => ({ l: '', role: 'body' as const })))
+  for (let i = 0; i < (nearby && !separate ? gap : spare); i += 1) shown.push({ l: '', role: 'body' })
   // 确认与对话用已有的最后一行留白分隔；满容量时不另占正文或操作行。
   if (operationStatus && fixed < height) shown[shown.length - 1] = { l: glyphs().div.repeat(inner), role: 'border' }
   for (const one of menuBody) shown.push({ l: one, role: 'overlay' })
@@ -878,13 +883,25 @@ export function frameOf(o: FrameInput): Frame {
   }
   lines.push(`${g.bl}${g.h.repeat(edge)}${g.br}`)
   roles.push('border')
-  // 稀疏当前组的框名与正文相邻；空余行仍在整窗内，组外不画空框。
-  const headerAt = nearby ? spare - gap : 0
+  // 标题紧邻正文；余量不足时沿用相邻操作区的紧凑摆法。
+  const headerAt = nearby && !separate ? spare - gap : 0
   if (headerAt > 0) {
     lines.fill(' '.repeat(width), 0, headerAt)
     roles.fill('body', 0, headerAt)
     lines[headerAt] = `${g.tl}${bar(edge, head)}${g.tr}`
     roles[headerAt] = 'border'
+  }
+  const contentEnd = 1 + contentRows
+  const lowerHead = lowerRows > 0 ? height - (withFooter ? 2 : 0) - lowerRows - 2 : withFooter ? height - 3 : height
+  if (separate) {
+    lines[contentEnd] = `${g.bl}${g.h.repeat(edge)}${g.br}`
+    roles[contentEnd] = 'border'
+    lines.fill(' '.repeat(width), contentEnd + 1, lowerHead)
+    roles.fill('body', contentEnd + 1, lowerHead)
+    if (lowerHead < height) {
+      lines[lowerHead] = `${g.tl}${g.h.repeat(edge)}${g.tr}`
+      roles[lowerHead] = 'border'
+    }
   }
   if (sideWidth > 0) {
     const sideInner = sideWidth - 2
@@ -896,7 +913,11 @@ export function frameOf(o: FrameInput): Frame {
     const segments = lines.map((line, i) => {
       const main = cell(line.slice(0, 1) + inset + cell(shown[i - 1]?.l ?? '', inner) + inset + g.v, mainWidth)
       const actual = i < headerAt ? ' '.repeat(mainWidth) : i === headerAt ? `${g.tl}${bar(mainWidth - 2, head)}${g.tr}` : i === height - 1 ? `${g.bl}${g.h.repeat(mainWidth - 2)}${g.br}` : i === height - 3 && withFooter ? `${g.ml}${g.div.repeat(mainWidth - 2)}${g.mr}` : i === height - 2 && withFooter ? `${g.v}${inset}${cell(footer, inner)}${inset}${g.v}` : main
-      return [{ text: actual, role: roles[i]! }, { text: i < sideAt ? '   ' : ` ${g.v} `, role: 'border' as const }, { text: cell(labels[i] ?? '', sideInner), role: 'plan' as const }]
+      const separated = !separate ? actual : i === contentEnd ? `${g.bl}${g.h.repeat(mainWidth - 2)}${g.br}`
+        : i > contentEnd && i < lowerHead ? ' '.repeat(mainWidth)
+        : i === lowerHead ? `${g.tl}${g.h.repeat(mainWidth - 2)}${g.tr}` : actual
+      const separator = i < sideAt || (separate && i >= labels.length) ? '   ' : ` ${g.v} `
+      return [{ text: separated, role: roles[i]! }, { text: separator, role: 'border' as const }, { text: cell(labels[i] ?? '', sideInner), role: 'plan' as const }]
     })
     return { width, height, columns: { left: inner, right: sideInner }, footer, lines: segments.map(s => s.map(p => p.text).join('')), roles, segments }
   }

@@ -17,31 +17,32 @@ const events=(state='Working')=>[
 const headAt=(f:ReturnType<typeof frameOf>)=>f.lines.findIndex(l=>l.startsWith(glyphs().tl))
 function base(rows:StatusRow[],width=120,height=35){return {snapshot:statusOf(rows),task:taskOf(rows),width,height,operationArea:true}}
 
-test('sparse current title is adjacent to its unchanged body and operation area; unused full-window capacity is outside the frame',()=>{
+test('sparse current title and complete conversation start at the top; unused capacity is outside the current outline and input remains fixed',()=>{
  let cases=0
  try{for(const glyph of ['ascii','box','rich'] as const){setGlyphTier(glyph)
   for(const [width,height] of [[192,45],[160,45],[120,35],[80,19],[24,35],[16,24]])for(const rows of [[],events(),events('Aborted'),events('Rebuilding')]){
    const o=base(rows,width,height),f=frameOf(o),at=headAt(f)
-   assert.ok(at>0,`${glyph} ${width}x${height} spare space moves outside current outline`)
+   assert.equal(at,0,`${glyph} ${width}x${height} current title is top-led`)
    assert.equal(f.roles[at],'border');assert.notEqual(f.lines[at+1]!.slice(1,-1).trim(),'','title directly precedes current body')
-   assert.ok(f.lines.slice(0,at).every(l=>l===' '.repeat(width)),'no empty box above current group')
-   assert.ok(f.roles.slice(0,at).every(r=>r==='body'))
    assert.equal(f.lines.length,height);assert.equal(f.roles.length,height);assert.ok(f.lines.every(l=>widthOf(l)===width))
-   const old=frameOf({...o,operationArea:false}),footerAt=old.roles.indexOf('footer'),end=footerAt<0?height-1:footerAt-1
-   const last=old.lines.findLastIndex((l,i)=>i<end&&i>0&&l.slice(1,-1).trim()!=='')
-   const body=old.lines.slice(1,last+1)
-   assert.deepEqual(f.lines.slice(at+1,at+1+body.length),body,'all current body bytes and order retained')
-   assert.deepEqual(f.lines.slice(at+1+body.length),old.lines.slice(end),'frame bottom/footer remains fixed')
+   const old=frameOf({...o,operationArea:false})
+   const text=(x:typeof f)=>x.lines.flatMap((l,i)=>!['border','footer'].includes(x.roles[i]!)&&l.slice(1,-1).trim()!==''?[{line:l,role:x.roles[i]}]:[])
+   assert.deepEqual(text(f),text(old),'all current nonempty body bytes, roles and order retained')
+   const closed=f.lines.findIndex((l,i)=>i>0&&l.startsWith(glyphs().bl))
+   assert.ok(closed>1&&closed<height-2,'outline ends with current content')
+   const footer=old.roles.indexOf('footer')
+   if(footer>=0)assert.equal(f.lines[footer],old.lines[footer],'footer and input anchor retain their physical row')
+   else assert.equal(f.lines.at(-1),' '.repeat(width),'remaining capacity stays outside the outline')
    assert.deepEqual(frameOf(o),f);cases++
   }
  }}finally{setGlyphTier('box')}
- console.log(`current group:${cases} first/work/failure/result xdesktop/narrow x3 glyphs;title-to-body1;unused outline0;body/bottom exact;full geometry`)
+ console.log(`current group:${cases} first/work/failure/result xdesktop/narrow x3glyph;title top0/body1;unused outline0;body roles/order exact;full geometry/input anchor`)
 })
 
 test('readers, menus, unknown sources, dense content and long auxiliary plans retain capacity and their original floor',()=>{
  const o=base(events()),plan=[{text:'检查登录',status:'in_progress' as const},{text:'验证重试',status:'pending' as const}]
  const f=frameOf({...o,task:{...o.task,plan}}),at=headAt(f)
- assert.ok(at>0);assert.ok(f.lines.slice(0,at).every(l=>l.trim()===''),'sidebar does not fence empty space')
+ assert.equal(at,0);assert.notEqual(f.segments![1]![0]!.text.slice(1,-1).trim(),'','primary body starts below the top title')
  assert.equal(f.segments!.findIndex(s=>s[2]!.text.trim()==='计划'),at,'both titles share one row')
  const many=Array.from({length:50},(_,i)=>({text:`完整步骤${i}`,status:'pending' as const}))
  const long=frameOf({...o,task:{...o.task,plan:many}})
@@ -71,7 +72,7 @@ test('actual Stage/Session/Term streaming expands the group without moving the i
    const batch=next?[{pos:{writer:'round',seq:20},e:{t:'round/state',round:'r2',from:'Idle',to:'Working'}},{pos:{writer:'round',seq:21},e:{t:'round/intent',round:'r2',body:'检查重试'}}] as StatusRow[]:[{pos:{writer:'holder/r1',seq:n+20},e:{t:'holder/distill',agent:'holder/r1',body:Array.from({length:n},(_,i)=>`进展${i}`).join('\n')}}] as StatusRow[]
    rows=[...rows,...batch];stage.onAdvance(batch);session.push(batch);const p=draw();heads.push(p.rows.findIndex(l=>l.startsWith(glyphs().tl)));bottoms.push(p.rows.length);idle()
   }
-  assert.ok(heads[0]!>0&&heads[4]===0&&heads[5]!>0,'sparse/dense/sparse uses full capacity then regroups')
+  assert.ok(heads.every(h=>h===0),'sparse/dense/sparse retains top-led task identity and full capacity')
   assert.ok(bottoms.every(n=>n===bottoms[0]),'input anchor remains fixed')
   stage.onAction({action:'read'});const read=draw();assert.ok(read.rows[0]!.includes('记录'));stage.onAction({action:'cancel'});draw();idle()
   for(const [w,h] of [[192,50],[160,50],[80,24],[24,12],[16,8],[120,40]]){width=w!;height=h!;stage.onResize();draw();idle()}
