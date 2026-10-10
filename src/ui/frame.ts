@@ -948,6 +948,28 @@ export function frameOf(o: FrameInput): Frame {
       roles[at] = one.role
     })
   }
+  // 当前用户消息的强调只围住实际内容；整窗容量、纯文本行与原角色保持。
+  const messageSpans = new Map<number, number>()
+  if (o.operationArea === true && currentTask && !readingOn && dropped === 0 && o.menu === undefined && (o.bottom === undefined || operationStatus)) {
+    for (let i = 0; i < roles.length; i += 1) {
+      if (roles[i] !== 'user') continue
+      const start = i
+      while (roles[i + 1] === 'user') i += 1
+      const occupied = Math.max(...shown.slice(start - 1, i).map(one => widthOf(cell(one.l, inner).replace(/ +$/, ''))))
+      if (occupied > 0 && occupied + 1 < inner)
+        for (let row = start; row <= i; row += 1) messageSpans.set(row, occupied + 1)
+    }
+  }
+  const messageParts = (text: string, row: number) => {
+    const span = messageSpans.get(row)
+    const original = [{ text, role: roles[row]! }]
+    if (span === undefined) return original
+    const content = cell(shown[row - 1]!.l, inner).replace(/ +$/, '')
+    const parts = [{ text: text.slice(0, 1) + inset, role: 'body' as const },
+      { text: cell(content, span), role: 'user' as const },
+      { text: ' '.repeat(inner - span) + inset + g.v, role: 'body' as const }]
+    return parts.map(p => p.text).join('') === text ? parts : original
+  }
   if (sideWidth > 0) {
     const sideInner = sideWidth - 2
     const labels = ['计划', '', ...plan.flatMap(p => wrap(`${p.status === 'completed' ? '[x]' : p.status === 'in_progress' ? '>' : '[ ]'} ${p.text}`, sideInner)), '', '完整计划可按需阅读']
@@ -962,9 +984,10 @@ export function frameOf(o: FrameInput): Frame {
         : i > contentEnd && i < lowerHead ? ' '.repeat(mainWidth)
         : i === lowerHead ? `${g.tl}${g.h.repeat(mainWidth - 2)}${g.tr}` : actual
       const separator = i < sideAt || (separate && i >= labels.length) ? '   ' : ` ${g.v} `
-      return [{ text: separated, role: roles[i]! }, { text: separator, role: 'border' as const }, { text: cell(labels[i] ?? '', sideInner), role: 'plan' as const }]
+      return [...messageParts(separated, i), { text: separator, role: 'border' as const }, { text: cell(labels[i] ?? '', sideInner), role: 'plan' as const }]
     })
     return { width, height, columns: { left: inner, right: sideInner }, footer, lines: segments.map(s => s.map(p => p.text).join('')), roles, segments }
   }
-  return { width, height, columns: { left: inner, right: 0 }, footer, lines, roles, ...(panelImage === undefined ? {} : { image: panelImage }) }
+  return { width, height, columns: { left: inner, right: 0 }, footer, lines, roles,
+    ...(messageSpans.size === 0 ? {} : { segments: lines.map(messageParts) }), ...(panelImage === undefined ? {} : { image: panelImage }) }
 }
