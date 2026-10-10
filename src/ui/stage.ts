@@ -523,7 +523,9 @@ export function openStage(deps: StageDeps): Stage {
     // Current confirmation scope and its whole next action precede covered queued drafts.
     // Spare capacity may show the queue summary first; hiding that projection never drops a draft.
     const queueRoom = Math.max(0, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1) - 3 - (gatePart?.keep ?? 0))
-    const queueRows = gatePart === null ? allQueueRows : allQueueRows.slice(0, queueRoom)
+    // 当前全文与行位置先于被覆盖的队列；返回后仍用同一份完整FIFO。
+    const queueRows = reading !== null || planTop !== null || keyHelpTop !== null
+      ? [] : gatePart === null ? allQueueRows : allQueueRows.slice(0, queueRoom)
     const bottomRows = [...(gatePart?.rows ?? []), ...queueRows]
     const bottomPart =
       bottomRows.length === 0
@@ -564,6 +566,7 @@ export function openStage(deps: StageDeps): Stage {
         const height = Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1)
         const readKey = (deps.keymap?.() ?? KEYMAP).rows.find(b => b.action === 'read')!.keys[0]!
         return { menu: { rows: rowsTextOf(rows), sel: panel.sel,
+          ...(panel.source === 'keys' ? { help: true } : {}),
           ...(detail === undefined ? {} : { detail,
             ...(detail.length <= height - 4 ? {} : { detailMore: readWrap(`${readKey} 看全`, cols()) }) }) } }
       })(),
@@ -898,6 +901,8 @@ export function openStage(deps: StageDeps): Stage {
           const next = acceptOf(ed.draft.text, panel.source, picked)
           if (next !== null) ed = applyIntent(ed, { t: 'setLine', text: next })
         }
+        // 按键筛选只用于阅读；返回待确认区域时不把它当成要提交的新草稿。
+        if (panel.source === 'keys' && gateDraft !== null) ed = emptyEditor()
         panel = null
         settle()
         return

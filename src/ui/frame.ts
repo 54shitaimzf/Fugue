@@ -449,6 +449,8 @@ function bar(w: number, label?: string): string {
 
 /** 候选那一层那几行（`ui/menu.ts` 算好的原文）与选中项落在第几条（`T4`）。 */
 export interface MenuInput {
+  /** 实际按键面板正在前景；缺失/坏元数据保留原列表与阅读排法。 */
+  readonly help?: boolean | undefined
   /** 当前按键的完整物理说明；缺失、坏形状或放不下时回原列表。 */
   readonly detail?: readonly string[] | undefined
   /** 完整说明放不下时的实际全文入口；缺失/坏形状回旧列表。 */
@@ -619,7 +621,8 @@ export function frameOf(o: FrameInput): Frame {
   const shortDetail = validDetail && detail.length > height - 4 && Array.isArray(detailMore)
     && detailMore.length > 0 && detailMore.length <= height - 4
     && detailMore.every(row => typeof row === 'string' && row !== '' && widthOf(row) <= inner)
-  const helpOn = validDetail && (detail.length <= height - 4 || shortDetail)
+  const focusedHelp = validDetail && (detail.length <= height - 4 || shortDetail)
+  const helpOn = o.menu?.help === true || focusedHelp
 
 
   const taskMatches = o.task !== undefined && o.task.round !== null && o.task.state !== null
@@ -684,7 +687,9 @@ export function frameOf(o: FrameInput): Frame {
   const taskStatus = !readingOn && !helpOn && view === 'chat' && taskMatches
     && first !== undefined && first.text !== '' && ['system', 'waiting', 'ok', 'refuse', 'instruction'].includes(first.role)
   const statusOn = taskStatus || operationStatus || emptyInput
-  const footer = statusOn ? '' : clip(helpOn ? `${Math.max(0, Math.min((o.menu?.rows.length ?? 1) - 1, o.menu?.sel ?? 0)) + 1}/${o.menu!.rows.length} · 筛选` : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
+  const helpCount = o.menu === undefined ? '' : (o.menu.rows.length === 0 ? 0 : Math.max(0, Math.min(o.menu.rows.length - 1, o.menu.sel ?? 0)) + 1) + '/' + o.menu.rows.length
+  const helpFooter = helpCount + ' · 筛选'
+  const footer = statusOn ? '' : clip(helpOn ? (o.menu?.help === true && widthOf(helpFooter) > inner ? helpCount : helpFooter) : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
   // 不需要页脚时两行都交给正文与当前操作，框体高度保持。
   const allocation = frameBudgetOf(height, helpOn ? 0 : (o.bottom?.keep ?? 0), !statusOn)
   const withFooter = allocation.withFooter
@@ -696,7 +701,7 @@ export function frameOf(o: FrameInput): Frame {
   const menuCap = menuAll === null ? 0 : Math.max(1, Math.min(Math.floor(budget / 2), Math.max(1, menuAll.length)))
   const win = menuAll === null || menuAll.length === 0 ? null : windowOf(menuAll.length, o.menu?.sel ?? 0, menuCap)
   const menuBody: string[] = []
-  if (helpOn) {
+  if (focusedHelp) {
     menuBody.push(...(shortDetail ? [...detail!.slice(0, Math.max(0, budget - detailMore!.length)), ...detailMore!] : detail!))
     const nearbyCap = inner >= 32 ? Math.max(0, budget - detail!.length - 1) : 0
     if (nearbyCap > 0 && menuAll!.length > 1) {
