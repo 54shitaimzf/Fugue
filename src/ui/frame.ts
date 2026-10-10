@@ -559,7 +559,16 @@ export function frameOf(o: FrameInput): Frame {
    * （决策材料问三：两栏各拿满宽，行文与今天 `bodyOf` 一字不变）。
    */
   const view: ViewKey = o.view ?? DEFAULT_VIEW
-  const plan = !readingOn && o.menu === undefined && view === 'chat' ? o.task?.plan ?? [] : []
+  // 有完整的当前确认指示时，确认区域承担操作状态；未知元数据仍沿用旧页脚。
+  const operationAt = o.bottom?.waitingAt ?? -1, operationCount = o.bottom?.waitingCount ?? 0
+  const operationStatus = !readingOn && o.menu === undefined && view === 'chat'
+    && Number.isInteger(operationAt) && Number.isInteger(operationCount) && operationAt >= 0 && operationCount > 0
+    && Number.isInteger(o.bottom?.keep) && o.bottom!.keep >= operationCount && o.bottom!.keep <= o.bottom!.rows.length
+    && operationAt + operationCount <= (o.bottom?.rows.length ?? 0)
+    && operationAt >= (o.bottom?.rows.length ?? 0) - (o.bottom?.keep ?? 0)
+    && o.bottom!.rows.slice(operationAt, operationAt + operationCount).every(l => l.trim() !== '')
+  // 确认接管全宽操作区，辅助计划在返回后展开，卡片折行与实际绘制使用同一宽度。
+  const plan = !readingOn && !operationStatus && o.menu === undefined && view === 'chat' ? o.task?.plan ?? [] : []
   // 保住主区至少64列；侧栏只在有未完成计划、宽且高的窗口展开。
   const sideWidth = width >= 108 && height >= 16 && plan.length > 0 ? Math.min(34, Math.floor(width / 4)) : 0
   const mainWidth = sideWidth === 0 ? width : width - sideWidth - 1
@@ -607,14 +616,6 @@ export function frameOf(o: FrameInput): Frame {
       || (o.focus !== undefined && o.focus !== null && o.snapshot.current === null))
   const taskStatus = !readingOn && !helpOn && view === 'chat' && taskMatches
     && first !== undefined && first.text !== '' && ['system', 'waiting', 'ok', 'refuse', 'instruction'].includes(first.role)
-  // 有完整的当前确认指示时，确认区域承担操作状态；未知元数据仍沿用旧页脚。
-  const operationAt = o.bottom?.waitingAt ?? -1, operationCount = o.bottom?.waitingCount ?? 0
-  const operationStatus = !readingOn && !helpOn && o.menu === undefined && view === 'chat'
-    && Number.isInteger(operationAt) && Number.isInteger(operationCount) && operationAt >= 0 && operationCount > 0
-    && Number.isInteger(o.bottom?.keep) && o.bottom!.keep >= operationCount && o.bottom!.keep <= o.bottom!.rows.length
-    && operationAt + operationCount <= (o.bottom?.rows.length ?? 0)
-    && operationAt >= (o.bottom?.rows.length ?? 0) - (o.bottom?.keep ?? 0)
-    && o.bottom!.rows.slice(operationAt, operationAt + operationCount).every(l => l.trim() !== '')
   const statusOn = taskStatus || operationStatus
   const footer = statusOn ? '' : clip(helpOn ? `${Math.max(0, Math.min((o.menu?.rows.length ?? 1) - 1, o.menu?.sel ?? 0)) + 1}/${o.menu!.rows.length} · 筛选` : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
   // 不需要页脚时两行都交给正文与当前操作，框体高度保持。
@@ -773,6 +774,8 @@ export function frameOf(o: FrameInput): Frame {
   }
   const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length + gateNotice.length
   for (let i = fixed; i < height; i += 1) shown.push({ l: '', role: 'body' })
+  // 确认与对话用已有的最后一行留白分隔；满容量时不另占正文或操作行。
+  if (operationStatus && fixed < height) shown[shown.length - 1] = { l: glyphs().div.repeat(inner), role: 'border' }
   for (const one of menuBody) shown.push({ l: one, role: 'overlay' })
   for (const one of gateNotice) shown.push({ l: one, role: 'overlayBody' })
   // 按切掉的头部行数还原坐标：选项折成几行，就给几行同一种等待反馈。
