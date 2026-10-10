@@ -57,7 +57,8 @@ import { roundLabelOf, roundNoticeOf } from './lifecycle.ts'
 import type { RoundTransition } from './lifecycle.ts'
 import { DEFAULT_VIEW, viewNameOf } from './views.ts'
 import type { ViewKey } from './views.ts'
-import type { TaskFace } from './task.ts'
+import { issueRowsOf } from './task.ts'
+import type { TaskFace, RunIssue } from './task.ts'
 import type { MenuSource } from './menu.ts'
 
 export { AIR_COLUMNS } from './layout.ts'
@@ -157,6 +158,7 @@ export interface FrameInput {
   readonly pendingRound?: string | undefined
   /** 当前配置的任务记录阅读键；舞台只在该动作可用时提供。 */
   readonly taskReadKey?: string | undefined
+  readonly runIssue?: RunIssue | undefined
   readonly task?: TaskFace | undefined
   /** UI 从事件通道保留的最后一条状态转移；不加进机器快照。 */
   readonly transition?: RoundTransition | undefined
@@ -650,8 +652,12 @@ export function frameOf(o: FrameInput): Frame {
     && bytesOfKey(o.taskReadKey).length > 0 && !/[\x00-\x1f\x7f-\x9f]/.test(o.taskReadKey) && widthOf(o.taskReadKey + ' 草案原文') <= inner ? o.taskReadKey : ''
   const compactDraft = taskMatches && o.operationArea === true && !readingOn && !foregroundMenu && o.menu === undefined
     && (confirmationReady || draftKey !== '')
-  const lastDraft = compactDraft ? o.task!.rows.findLastIndex(r => r.role === 'model' && typeof r.preview === 'string') : -1
-  const taskRows = o.task?.rows.flatMap((r, i) => [
+  const projectedTask = o.operationArea === true && taskMatches && !readingOn && !foregroundMenu && o.menu === undefined
+    && view === 'chat' && !operationStatus && !pendingReady && (o.focus === undefined || o.focus === null)
+    ? issueRowsOf(o.task!, o.runIssue) : o.task?.rows
+  const issueOn = projectedTask !== undefined && projectedTask !== o.task?.rows
+  const lastDraft = compactDraft ? projectedTask!.findLastIndex(r => r.role === 'model' && typeof r.preview === 'string') : -1
+  const taskRows = projectedTask?.flatMap((r, i) => [
     { kind: 'head' as const, ...r, ...((confirmationReady || pendingReady) && i === 0 ? { text: WORDS.gateReview, role: 'waiting' as const }
       : compactDraft && r.role === 'model' && typeof r.preview === 'string' ? { text: r.preview } : {}) },
     ...(i === lastDraft && !confirmationReady ? [{ kind: 'head' as const, text: draftKey + ' 草案原文', role: 'system' as const }] : []),
@@ -678,7 +684,7 @@ export function frameOf(o: FrameInput): Frame {
       : (view === 'progress' ? body.left : body.right).map((l) => ({ l, role: 'body' as const }))
   const bodyRows = [...taskBodyRows,
     ...(o.operationArea === true && view === 'chat' && !readingOn && !foregroundMenu && o.menu === undefined
-      ? (o.feedback ?? []).map(l => ({ l: `系统 · ${l}`, role: 'instruction' as const })) : []),
+      ? (o.feedback ?? []).filter(l => !issueOn || o.runIssue!.feedback !== true || l !== o.runIssue!.text + WORDS.runWritebackGuide).map(l => ({ l: `系统 · ${l}`, role: 'instruction' as const })) : []),
   ]
   let rowAt = 0
   const rows = bodyRows.flatMap((one) => {

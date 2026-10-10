@@ -261,6 +261,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(v?.read === undefined ? {} : { read: v.read }),
       ...(v?.taskReadKey === undefined ? {} : { taskReadKey: v.taskReadKey }),
       ...(v?.feedback === undefined ? {} : { feedback: v.feedback }),
+      ...(v?.runIssue === undefined ? {} : { runIssue: v.runIssue }),
       ...(v?.inputIdle === undefined ? {} : { inputIdle: v.inputIdle }),
       ...(v?.pendingRound === undefined ? {} : { pendingRound: v.pendingRound }),
       ...(v?.bottom === undefined ? {} : { bottom: v.bottom }),

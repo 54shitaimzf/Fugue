@@ -252,6 +252,7 @@ export interface ViewInput {
   /** 当前输入尚未开始，也没有在途执行；未知时保留原空态引导。 */
   readonly inputIdle?: boolean | undefined
   /** 舞台从同一待确认整批取得的事实，仅供主面状态投影。 */
+  readonly runIssue?: FrameInput['runIssue']
   readonly pendingRound?: FrameInput['pendingRound']
   /** 任务记录的实际阅读键，供省略处就近显示。 */
   readonly taskReadKey?: string | undefined

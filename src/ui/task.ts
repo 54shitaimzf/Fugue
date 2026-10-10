@@ -16,6 +16,28 @@ export interface TaskFace {
   readonly rows: readonly ConversationRow[]
   readonly plan: readonly PlanItem[]
 }
+export interface RunIssue {
+  /** True only for the feedback produced by this same observed command. */
+  readonly feedback?: boolean | undefined
+  readonly round: string
+  readonly state: string
+  readonly text: string
+}
+const MERGING = '正在合并结果，尚待验收与写回。'
+
+// The observed process outcome changes the view, not the recorded phase or writeback facts.
+export function issueRowsOf(task: TaskFace, issue: RunIssue | undefined): readonly ConversationRow[] {
+  const first = task.rows[0]
+  if (issue == null || typeof issue.round !== 'string' || issue.round.trim() === ''
+    || typeof issue.state !== 'string' || typeof issue.text !== 'string' || issue.text.trim() === ''
+    || /[\x00-\x1f\x7f-\x9f]/.test(issue.round + issue.state + issue.text)
+    || issue.round !== task.round || issue.state !== task.state
+    || !['Planning', 'Working', 'Collecting', 'Merging', 'Verifying'].includes(issue.state)
+    || first === undefined || !['system', 'instruction'].includes(first.role ?? '')
+    || (first.text !== WORDS.planPreparing && first.text !== MERGING && first.text !== roundLabelOf(issue.state)
+      && !(first.role === 'instruction' && first.text.startsWith('正在执行：')))) return task.rows
+  return [{ text: issue.text, role: 'refuse' }, { text: WORDS.runWritebackGuide, role: 'system' }, ...task.rows.slice(1)]
+}
 const clean = (text: string): string => text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`).replace(/\t/g, '  ').trim()
 function objectOf(body: string): Record<string, unknown> | null {
   try { const value = JSON.parse(body); return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null }
@@ -83,7 +105,7 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
       case 'run/start': action = `正在执行：${clean((e.argv ?? [e.argv0]).join(' '))}`; break
       case 'run/end': action = e.exit === 0 ? '当前命令已结束。' : `命令失败（退出码 ${e.exit}）。`; if (e.exit !== 0) problem = action; break
       case 'bound/deny': problem = `已拒绝越界写入：${clean(e.path)}`; break
-      case 'merge/attempt': action = e.conflicts > 0 ? `合并遇到 ${e.conflicts} 处冲突。` : '正在合并结果，尚待验收与写回。'; problem = e.conflicts > 0 ? action : ''; break
+      case 'merge/attempt': action = e.conflicts > 0 ? `合并遇到 ${e.conflicts} 处冲突。` : MERGING; problem = e.conflicts > 0 ? action : ''; break
       case 'merge/accept': {
         const passed = e.assertions.filter(a => a.verdict === 'pass').length
         const failed = e.assertions.length - passed

@@ -30,6 +30,7 @@ import type { LineMode, RunLauncher, RunOutcome } from './run.ts'
 import { innerOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
 import { taskOf } from './task.ts'
+import type { RunIssue } from './task.ts'
 import type { ReadPreview } from './frame.ts'
 import type { ImageRequest } from '../serve/image-source.ts'
 import type { PixelImage } from './image-codec.ts'
@@ -131,7 +132,17 @@ export function openStage(deps: StageDeps): Stage {
   let feedback: string[] = []
   let runStartedAt = 0
   let runRound: string | null = null
-  const startRun = (): void => { runStartedAt = deps.rows().length; runRound = taskOf(deps.rows()).round }
+  let runTask = false, runIssue: RunIssue | null = null
+  let runIssueAction: string | undefined
+  const startRun = (words: readonly string[]): void => {
+    runStartedAt = deps.rows().length; runRound = taskOf(deps.rows()).round
+    runTask = words[0] === 'round' && ['plan', 'go', 'run', 'work'].includes(words[1] ?? '')
+    if (runIssue !== null) {
+      if (runIssue.feedback === true) feedback = feedback.filter(line => line !== runIssue!.text + WORDS.runWritebackGuide)
+      runIssue = { ...runIssue, feedback: false }
+    }
+    if (runTask) runIssue = null
+  }
   const note = (line: string, visible = true): void => {
     if (closed) return
     if (visible) feedback.push(line)
@@ -422,7 +433,7 @@ export function openStage(deps: StageDeps): Stage {
       return false
     }
     note(`起了排队里的下一条：\`${next.line}\`（${cut.argv.join(' ')}）`, false)
-    startRun()
+    startRun(cut.words)
     go.press(next.line, next.mode)
     return true
   }
@@ -446,7 +457,7 @@ export function openStage(deps: StageDeps): Stage {
       settle()
       return
     }
-    startRun()
+    startRun(go.argvOf(line).words)
     const started = go.press(line)
     if (started) { gateHidden = true; gateView = { ...gateView, armed: null }; restoreDraft() }
     note(started ? `已确认执行这批计划（${gate?.cards.length ?? 0} 项任务）` : '未能启动执行，计划仍等你确认。', !started)
@@ -461,6 +472,13 @@ export function openStage(deps: StageDeps): Stage {
     const reported = r.code === 1 && deps.rows().slice(runStartedAt).some(row =>
       row.e.t === 'round/state' && row.e.round === current.round && row.e.round === runRound
       && row.e.from === 'Verifying' && row.e.to === 'Working')
+    const freshRound = deps.rows().slice(runStartedAt).some(row => 'round' in row.e && row.e.round === runRound)
+    if (!reported && runTask && freshRound && runRound !== null && current.round === runRound && current.state !== null
+      && r.why === null && (r.code === null || (Number.isSafeInteger(r.code) && r.code > 0))) {
+      runIssueAction = current.rows[0]?.text
+      runIssue = { round: runRound, state: current.state, feedback: true,
+        text: r.code === null ? '执行因信号结束。' : '执行失败（退出码 ' + r.code + '）。' }
+    }
     if (r.why !== null) {
       note(`执行未能启动：${r.why}。检查运行环境与配置后重试。`)
       if (go !== null && go.last.length > 0) note(`启动命令：${go.last.join(' ')}`)
@@ -581,6 +599,7 @@ export function openStage(deps: StageDeps): Stage {
       ...hintPart,
       ...(gate === null || gate.cards.length === 0 ? {} : { pendingRound: gate.round }),
       ...(feedback.length === 0 ? {} : { feedback }),
+      ...(runIssue === null ? {} : { runIssue }),
       ...navPart,
       ...(() => {
         if (panel === null) return {}
@@ -609,6 +628,15 @@ export function openStage(deps: StageDeps): Stage {
     return Math.max(1, Math.floor(frameBudgetOf(height, view().bottom?.keep ?? 0).rows / 2))
   }
   const onAdvance = (rows: readonly StatusRow[]): void => {
+    if (runIssue !== null) {
+      const current = taskOf(deps.rows())
+      if (current.round !== runIssue.round || current.state !== runIssue.state || current.rows[0]?.text !== runIssueAction || rows.some(row => row.e.t === 'round/intent')) {
+        const oldFeedback = runIssue.text + WORDS.runWritebackGuide
+        if (runIssue.feedback === true) feedback = feedback.filter(line => line !== oldFeedback)
+        runIssue = null
+        deps.redraw()
+      }
+    }
     if (feedback.length > 0 && rows.some(r => r.e.t === 'round/state' || r.e.t === 'round/intent')) {
       feedback = []
       deps.redraw()
@@ -632,6 +660,7 @@ export function openStage(deps: StageDeps): Stage {
   }
   const onAction = (d: Decoded): void => {
     feedback = []
+    if (runIssue !== null && runIssue.feedback === true) runIssue = { ...runIssue, feedback: false }
     // 当前按键的全文只读；返回同一筛选与选中项，背后的计划/阅读坐标原样。
     if (keyHelpTop !== null && (d.action === 'approve' || d.action === 'reject' || d.action === 'go' || d.action === 'submit')) return
     if (keyHelpTop !== null && d.action === 'help') { keyHelpCovered = true; settle(); return }
@@ -797,7 +826,7 @@ export function openStage(deps: StageDeps): Stage {
       const go = deps.run()
       if (go === null || go.running) return
       note(`按了 g：起一次 \`${GO_LINE}\`（${go.argvOf(GO_LINE).argv.join(' ')}）`, false)
-      startRun()
+      startRun(go.argvOf(GO_LINE).words)
       go.press(GO_LINE)
       return
     }
@@ -976,7 +1005,7 @@ export function openStage(deps: StageDeps): Stage {
       }
       note(`发了这一行：\`${line}\`（${cut.argv.join(' ')}）`, false)
       advanceQueue = true
-      startRun()
+      startRun(cut.words)
       go.press(line, lineMode)
       settle()
       return

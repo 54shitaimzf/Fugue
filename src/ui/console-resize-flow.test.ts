@@ -25,7 +25,7 @@ let base=git('rev-parse','HEAD');const paths=['alpha.txt','beta.txt']
 mkdirSync(join(root,'.fugue'),{recursive:true})
 const check="const fs=require('fs');setTimeout(()=>process.exit("+ (scenario==='failure'?'7':"['alpha.txt','beta.txt'].every(p=>fs.readFileSync(p,'utf8').includes('改了 '+p))?0:9")+"),1300)"
 writeFileSync(join(root,'checks.cjs'),check)
-git('add','checks.cjs');git('commit','-qm','verification command');base=git('rev-parse','HEAD')
+if(scenario!=='exception'){git('add','checks.cjs');git('commit','-qm','verification command');base=git('rev-parse','HEAD')}
 writeFileSync(join(root,'.fugue/config'),JSON.stringify({round:{id:'r1'},actions:{check:{argv:[process.execPath,'checks.cjs'],outputs:[]}},ui:{glyphs:process.env.FUGUE_FLOW_GLYPH||'ascii',images:'off'}}))
 const sections=[{kind:'investigate',question:'确认现有文件的保留范围',evidenceRequired:[{note:'保留范围'}],seed:['keep.txt']},...paths.map(p=>({kind:'implement',goal:'更新 '+p,ownedPaths:[p],deliverables:[{path:p,form:'文本文件'}],assertions:[{action:'check',name:'两个文件内容正确'}],seed:[]}))]
 const draft=sections.map((s,i)=>'## 第 '+(i+1)+' 项\n\n\x60\x60\x60json\n'+JSON.stringify(s)+'\n\x60\x60\x60').join('\n\n')
@@ -144,8 +144,11 @@ await send('\x1b[200~/status --metrics\x1b[201~\r')
 assert.ok(visible().includes('排队 2 条'),'real queued readonly commands are visible while work runs')
 await snap('running-queued')
 await resize(80,24);await snap('running-narrow')
+if(scenario==='exception')await until(()=>visible().includes('执行失败（退出码 1）。'),'actual CLI exception reaches main')
+else{
 await until(()=>events().some(e=>e.t==='round/state'&&e.from==='Verifying'),'actual work completed')
 await until(()=>visible().includes(scenario==='failure'?'未写回':'已写回'),'backend outcome reaches current main face')
+}
 
 await until(()=>commandStarts.filter(x=>x.args.includes('status')).length===2,'both queued readonly commands actually launch')
 const queueStarts=commandStarts.filter(x=>x.args.includes('status'))
@@ -155,7 +158,7 @@ await resize(120,40);await snap('result-expanded')
 await resize(initialCols,initialRows);await snap('result-wide')
 assert.equal(readFileSync(join(root,'keep.txt'),'utf8'),'keep original\n')
 const acceptance=events().find(e=>e.t==='merge/accept')
-if(scenario==='failure'){
+if(scenario==='failure'||scenario==='exception'){
  assert.ok(paths.every(p=>!existsSync(join(root,p))),'failed verification leaves project files absent');assert.equal(git('rev-parse','HEAD'),base)
  assert.equal(acceptance,undefined);assert.ok(!visible().includes('正在合并结果，尚待验收与写回。'));assert.ok(visible().includes('失败')||visible().includes('未通过'))
 }else{
@@ -175,7 +178,7 @@ if(!native)savedWrite(JSON.stringify(report)+'\n');process.stdin.pause()
 
 `
 
-for(const scenario of ['success','failure'])test('actual Console mixed approval/read/resize and FIFO through '+scenario+' verification',()=>{
+for(const scenario of ['success','failure','exception'])test('actual Console mixed approval/read/resize and FIFO through '+scenario+' verification',()=>{
  const root=tmpDir('fugue-console-resize-'),file=join(root,'.fugue/actor.mjs')
  mkdirSync(join(root,'.fugue'));writeFileSync(file,actor)
  const run=spawnSync(process.execPath,[file,fileURLToPath(new URL('./console.ts',import.meta.url)),root,scenario],{
@@ -189,7 +192,7 @@ for(const scenario of ['success','failure'])test('actual Console mixed approval/
  assert.ok(!report.queueStarts[0].args.includes('--metrics')&&report.queueStarts[1].args.includes('--metrics'))
  assert.ok(report.rawRestored&&report.childrenClosed)
  assert.ok(report.idleSamples.every(s=>s.bytes===0))
- assert.equal(report.head===report.base,scenario==='failure')
+ assert.equal(report.head===report.base,scenario!=='success')
  console.log(JSON.stringify({scenario,phases:report.snapshots.length,resizes:report.resizes,approvals:report.approvals,
   contracts:report.contracts,FIFO:report.queueStarts.map(s=>s.args.slice(-2)),idle:report.idleSamples,
   rawRestored:report.rawRestored,childrenClosed:report.childrenClosed,headChanged:report.head!==report.base}))
