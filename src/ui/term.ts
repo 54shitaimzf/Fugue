@@ -587,7 +587,8 @@ export function openTerm(o: TermOptions): Term {
       const screenGrew = rowsKnown && typeof drawnRows === 'number' && (rowsSeen as number) > drawnRows
       if (!drawn || widthShrank || rowsSeen !== drawnRows) ownedAbove = 0
       const growth = Math.max(0, region.length - regionRows)
-      const ownGrowth = drawn && !widthShrank && !screenGrew ? Math.min(ownedAbove, growth) : 0
+      // An input row replaces the old trailing cursor row; only physical cursor growth consumes reserve.
+      const ownGrowth = drawn && !widthShrank && !screenGrew ? Math.min(ownedAbove, Math.max(0, finalCursor - cursorRow)) : 0
       const back = !drawn || widthShrank ? 0 : wantAlt
         ? !screenGrew && growth > 0 ? cursorRow + growth : cursorRow
         : cursorRow + ownGrowth

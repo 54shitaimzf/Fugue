@@ -57,3 +57,18 @@ test('a permanent result after a proven partial shrink invalidates return cleari
  for(const fact of ['SHELL0','SHELL1','KEEP FACT','NEW FACT'])assert.equal(vt.text.split('\n').filter(l=>l===fact).length,1)
  console.log('partial recovery new result:temporary ownership invalidated;return full clear0;original and new fact each1')
 })
+
+test('adding an editor consumes only its physical cursor displacement from reserved blank rows',()=>{
+ let cases=0,idles=0
+ for(const gravity of ['south','north'] as const)for(const initialHint of [false,true])for(const hasHistory of [false,true]){
+  const vt=host(gravity),facts=hasHistory?['SHELL0']:[];if(facts.length)vt.put(facts[0]+'\r\n')
+  let ready=false
+  const t=openTerm({out:{isTTY:true,write:vt.put},term:'xterm',columnsOf:()=>vt.columns,rowsOf:()=>vt.rows,heightOf:()=>19,reserveHeightOf:()=>23,requestCursor:(_n,a)=>a(...vt.cursor)})
+  const panel=(s:{height:number})=>({rows:Array(s.height).fill('TUI'),...((initialHint||ready)?{hint:'keys'}:{}),...(ready?{input:{rows:['> draft'],caret:{row:0,col:2}}}:{})})
+  t.draw([],panel);assert.equal(vt.cursor[0],23,'no-input cursor has reserved physical bottom')
+  ready=true;t.draw([],panel);assert.deepEqual(vt.cursor,[23,2],'an editor replaces the old trailing cursor row; it is not one extra physical row')
+  const before=vt.writes;t.draw([],panel);assert.equal(vt.writes,before+1);idles++
+  t.close();assert.equal(vt.text.trimEnd(),facts.join('\n'),'complete prior history remains exact after input attachment');cases++
+ }
+ console.log('input attachment:8 gravity/hint/history combinations;before/after physical bottom8/8;complete history8/8;unchanged writes8')
+})
