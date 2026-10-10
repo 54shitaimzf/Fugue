@@ -32,6 +32,6 @@ test('opening read shows the complete object and configured keys locally without
  const notes:string[]=[],km=keymapOf({complete:'Ctrl-T',historyOlder:'Ctrl-U'}),keys=hintKeysOf(km,'read')
  const stage=openStage({note:s=>notes.push(s),redraw:()=>{},hint:w=>hintLineOf(km,4,w),keysOf:w=>hintKeysOf(km,w),columns:()=>40,termRows:()=>24,rows:()=>rows.slice(0,1),pendingFace:async()=>null,run:()=>null,now:()=>0,abort:()=>{}})
  stage.setRaw(true);stage.onAdvance(rows.slice(0,1));stage.onAction({action:'read'})
- assert.deepEqual(notes,[]);assert.ok(stage.view().read!.rows.join('').includes('文件改动'));assert.equal(stage.view().hint,`按键 ${keys}`);assert.ok(keys.includes('Ctrl-T')&&keys.includes('Ctrl-U'))
+ assert.deepEqual(notes,[]);assert.ok(stage.view().read!.heading!.includes('文件改动'));assert.ok(stage.view().read!.rows.join('').includes(path));assert.equal(stage.view().hint,`按键 ${keys}`);assert.ok(keys.includes('Ctrl-T')&&keys.includes('Ctrl-U'))
  stage.onAction({action:'read'});assert.equal(notes.length,0,'opening/closing instructions do not enter permanent history');stage.close()
 })

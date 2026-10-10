@@ -27,7 +27,7 @@ test('full plan uses the actual selected card, every physical row is reachable, 
   const r=rig(width);await r.stage.refreshGate();const layout=r.stage.view().bottom!;if(layout.rows.length>r.stage.heightWant()-4)assert.ok(r.frame().rows.some(line=>line.includes('计划有省略')),'actual cropped geometry must disclose omitted plan');else assert.ok(r.frame().roles!.includes('waiting'),'expanded geometry still retains actions');r.stage.onAction({action:'historyNewer'});r.stage.onAction({action:'read'})
   const reading=r.stage.view().read;assert.ok(reading,'the current plan has a complete reader even before any contract/issue event')
   assert.equal(r.stage.view().bottom,undefined,'plan reading gets the body budget without a duplicate confirmation card')
-  const text=reading.rows.join('').replace(/\s/g,'');for(const phrase of ['计划全文','当前2/2','修复第2项登录失败提示','src/login-2.ts','test/login-2.test.ts','node tools/test-entry.js'])assert.ok(text.includes(phrase.replace(/\s/g,'')),phrase)
+  const text=[reading.heading,...reading.rows].join('').replace(/\s/g,'');for(const phrase of ['计划全文','当前2/2','修复第2项登录失败提示','src/login-2.ts','test/login-2.test.ts','node tools/test-entry.js'])assert.ok(text.includes(phrase.replace(/\s/g,'')),phrase)
   const seen=new Set<string>()
   for(let n=0;n<=reading.rows.length;n++){
    const f=r.frame();assert.ok(f.rows.every(line=>widthOf(line)<=width),'native frame rows never exceed actual width')
@@ -54,7 +54,7 @@ test('opening the plan clears an earlier arm, menu escape retains reading positi
  r.stage.onAction({action:'approve',key:'y'});r.stage.onAction({action:'submit'});assert.deepEqual(r.presses,['round go'])
  r.stage.onAction({action:'read'});r.pending(null);await r.stage.refreshGate();assert.equal(r.stage.view().read,undefined,'a replaced pending face invalidates its reading coordinates')
  assert.equal(r.notes.filter(s=>s.includes('这一轮打算开')).length,1);r.stage.close()
- const plain=rig();plain.pending(null);await plain.stage.refreshGate();plain.stage.onAction({action:'read'});assert.ok(plain.stage.view().read!.rows.join(' ').includes('事件流'),'no pending card keeps the existing log reader');const log=plain.stage.view().read;plain.stage.onAction({action:'panel'});plain.stage.onAction({action:'historyNewer'});assert.equal(plain.stage.view().menu!.sel,1);assert.deepEqual(plain.stage.view().read,log,'log reading shares the same top-menu priority');plain.stage.onAction({action:'cancel'});assert.deepEqual(plain.stage.view().read,log);plain.stage.close()
+ const plain=rig();plain.pending(null);await plain.stage.refreshGate();plain.stage.onAction({action:'read'});assert.ok(plain.stage.view().read!.heading==='事件流','no pending card keeps the existing log reader');const log=plain.stage.view().read;plain.stage.onAction({action:'panel'});plain.stage.onAction({action:'historyNewer'});assert.equal(plain.stage.view().menu!.sel,1);assert.deepEqual(plain.stage.view().read,log,'log reading shares the same top-menu priority');plain.stage.onAction({action:'cancel'});assert.deepEqual(plain.stage.view().read,log);plain.stage.close()
 })
 test('a truncated card reports its own omission while preserving all batch and action rows; missing disclosure keeps the old layout',()=>{
  for(const width of [16,40])for(const armed of [null,'approve','reject'] as const){

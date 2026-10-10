@@ -17,7 +17,7 @@ import { panelWantOf } from './layout.ts'
 import type { LineArgv, RunLauncher } from './run.ts'
 import { innerOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
-import { faceRowsOf, facesOf, firstFace, readStateOf } from './read.ts'
+import { faceRowsOf, facesOf, firstFace, readStateOf, readWrap } from './read.ts'
 import type { HintWhen } from './keymap.ts'
 
 /** 假的那一只手（`RunLauncher` 的四样全记下来：起了什么 · 停过没有 · argv 现推）。 */
@@ -243,7 +243,8 @@ test('⑦ 一把尺：舞台递给阅读面的列宽就是 `innerOf`——屏上
   const faces = facesOf(readStateOf(rows))
   const name = firstFace(faces)
   assert.equal(name, 'diff', '这一份账有变更：先看 diff 那一面')
-  const want = faceRowsOf(faces, name, innerOf(30))
+  const want = faces.diff!.lines.flatMap(line => [...readWrap(line, innerOf(30))])
+  assert.equal(stage.view().read!.heading, faces.diff!.title)
   assert.deepEqual([...(stage.view().read?.rows ?? [])], [...want], '舞台按 `innerOf(columns)` 折，不是自己那一把尺')
   assert.ok(want.some((l) => l.includes('深/')), '这一面真折到了那条长路径')
   assert.ok(want.every((l) => widthOf(l) <= innerOf(30)), '每一行都画得进框')
@@ -258,7 +259,8 @@ test('⑦ 一把尺：舞台递给阅读面的列宽就是 `innerOf`——屏上
 
   // **窄 → 宽**：折的就是新列宽下那一串；`↓` 翻到底停在新那一串的末行上。
   width = 200
-  const want2 = faceRowsOf(faces, name, innerOf(200))
+  const want2 = faces.diff!.lines.flatMap(line => [...readWrap(line, innerOf(200))])
+  assert.equal(stage.view().read!.heading, faces.diff!.title)
   assert.deepEqual([...(stage.view().read?.rows ?? [])], [...want2], '窄 → 宽：同一把尺重新折一遍')
   assert.ok(want2.length < want.length, `宽了折得少（窄 ${want.length} · 宽 ${want2.length}）`)
   for (let i = 0; i < 40; i += 1) stage.onAction({ action: 'historyNewer' })
@@ -310,7 +312,7 @@ test('⑨ `Ctrl-R` 开出来的那几面里有详情面（快照只在阅读面�
   stage.onAction({ action: 'read' })
   // 换一圈面：标题从当前阅读正文检查，选择不写入永久历史。
   const titles: string[] = []
-  for (let i = 0; i < 4; i += 1) { stage.onAction({ action: 'complete' }); titles.push(stage.view().read?.rows.join(' ') ?? '') }
+  for (let i = 0; i < 4; i += 1) { stage.onAction({ action: 'complete' }); titles.push([stage.view().read?.heading,...(stage.view().read?.rows??[])].join(' ')) }
   assert.deepEqual(ctl.notes, [], '阅读开关与换面不追加永久说明')
   const detail = titles.find((n) => n.includes('详情')) ?? ''
   assert.ok(detail !== '', `换一圈该换到详情面：${JSON.stringify(titles)}`)
@@ -327,7 +329,7 @@ test('⑨ `Ctrl-R` 开出来的那几面里有详情面（快照只在阅读面�
   const empty = stageOf({})
   empty.stage.onAction({ action: 'read' })
   const emptyTitles: string[] = []
-  for (let i = 0; i < 4; i += 1) { empty.stage.onAction({ action: 'complete' }); emptyTitles.push(empty.stage.view().read?.rows.join(' ') ?? '') }
+  for (let i = 0; i < 4; i += 1) { empty.stage.onAction({ action: 'complete' }); emptyTitles.push([empty.stage.view().read?.heading,...(empty.stage.view().read?.rows??[])].join(' ')) }
   assert.equal(emptyTitles.some(n => n.includes('详情')), false, '没有账就没有详情面')
   console.log(`⑨ 读数：${titles.length} 个当前页标题 · 换到详情面「${detail}」`)
 })
@@ -393,6 +395,6 @@ test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 
   assert.deepEqual(asked(), ['plan'], '当前计划全文开着 → 全文那一档（压过门口）')
   // ④ 正文与提示行承载当前对象与动作；原按键注记入口不再读。
   assert.equal(ctl.notes.filter(n => n.startsWith('阅读面')).length, 0, '只写真实批次结论，阅读不追加说明')
-  assert.ok(stage.view().read?.rows.join(' ').includes('计划全文'))
+  assert.ok(stage.view().read?.heading?.includes('计划全文'))
   console.log('⑪ 读数：三档都问到了（input → gate → plan）· 永久阅读注记0')
 })

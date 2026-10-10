@@ -19,7 +19,7 @@ test('opening and cycling log reading redraws once per action; current titles an
  assert.deepEqual(r.notes,[]);assert.equal(r.legacyCalls(),0);assert.equal(r.redraws()-before,1)
  assert.ok(r.frame().rows.join(' ').includes('文件改动'));assert.match(r.stage.view().hint??'',/Alt-V 换一面/)
  const titles:string[]=[]
- for(let n=0;n<4;n++){const at=r.redraws();r.stage.onAction({action:'complete'});assert.equal(r.redraws()-at,1);titles.push(r.stage.view().read!.rows.join(' '));assert.deepEqual(r.notes,[])}
+ for(let n=0;n<4;n++){const at=r.redraws();r.stage.onAction({action:'complete'});assert.equal(r.redraws()-at,1);titles.push([r.stage.view().read!.heading,...r.stage.view().read!.rows].join(' '));assert.deepEqual(r.notes,[])}
  assert.ok(titles.some(s=>s.includes('事件流')));assert.ok(titles.some(s=>s.includes('详情')));assert.ok(titles.some(s=>s.includes('文件改动')));assert.deepEqual(r.presses,[])
  r.stage.onAction({action:'cancel'});assert.equal(r.stage.view().read,undefined);assert.deepEqual(r.notes,[]);r.stage.close()
 })

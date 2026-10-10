@@ -22,7 +22,7 @@ import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowsOf, shiftOf } from './queu
 import { altAt, clampNav, navNodesOf, navRowsOf, writerAt } from './nav.ts'
 import type { NavNode } from './nav.ts'
 import { stepView, viewAt } from './views.ts'
-import { EMPTY_READ, faceRowsOf, facesOf, firstFace, readWrap, readStateOf, readImageAt, stepFace, stepTop } from './read.ts'
+import { EMPTY_READ, readContentOf, facesOf, firstFace, readWrap, readStateOf, readImageAt, stepFace, stepTop } from './read.ts'
 import type { ReadFaceName, ReadState } from './read.ts'
 import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
@@ -258,15 +258,27 @@ export function openStage(deps: StageDeps): Stage {
     if (rows === undefined || !showInput || gateDraft !== null) return base
     return Math.max(1, base - inputFrameOf({ e: ed, prompt: promptOf(), width: cols() }).rows.length + 1)
   }
-  const planRows = (): readonly string[] => {
-    const card = gate === null ? null : cardAt(gate, gateView.at)
-    return card === null ? [] : [`计划全文 · 当前 ${gateView.at + 1}/${gate!.cards.length}`, ...previewLinesOf(card)]
-      .flatMap(line => readWrap(line, cols()))
+  const readerContent = (faces: ReturnType<typeof facesOf>, name: ReadFaceName) => {
+    const face = faces[name]
+    return face === null ? { heading: '', rows: [], removedTitleRows: 0 } : readContentOf(face.title, face.lines, cols(), deps.columns())
   }
+  const planContent = () => {
+    const card = gate === null ? null : cardAt(gate, gateView.at)
+    return card === null ? { heading: '', rows: [], removedTitleRows: 0 } :
+      readContentOf(`计划全文 · 当前 ${gateView.at + 1}/${gate!.cards.length}`, previewLinesOf(card), cols(), deps.columns())
+  }
+  const planRows = (): readonly string[] => planContent().rows
+  const readPosition = (rows: readonly string[], top: number): string => `${top + 1}/${rows.length} 行 · 只读`
   let previewJob: { key: string; controller: AbortController; state: ReadPreview['state']; image?: PixelImage } | null = null
   let closed = false
   const imageKey = (r: ImageRequest): string => JSON.stringify([r.agent, r.path, r.blob])
-  const imageAt = () => reading?.face === 'diff' ? readImageAt(readState, cols(), reading.top, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1) - 4) : null
+  const imageAt = () => {
+    if (reading?.face !== 'diff') return null
+    const content = readerContent(readFaces(), 'diff')
+    // 标题移出正文后，仍保留原预览容量地板，不顺带启用更矮窗口的图片。
+    const at = readImageAt(readState, cols(), reading.top + content.removedTitleRows, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1) - 4 - content.removedTitleRows)
+    return at === null ? null : { request: at.request, after: at.after - content.removedTitleRows }
+  }
   const syncImage = (): void => {
     const graphics = deps.graphics?.()
     const at = !closed && showInput && planTop === null && (graphics === 'kitty' || graphics === 'sixel') && panel === null && queue.items.length === 0 && !(gate !== null && !gateHidden) ? imageAt() : null
@@ -472,17 +484,17 @@ export function openStage(deps: StageDeps): Stage {
     // 阅读面那一栏（`T9`，排在内容那一栏最下面）：**开着才占地方**。三面是从 `readState` 排的版
     // （`facesOf` 不再折一次），看到第几行由 `reading.top` 说了算。
     const readPart =
-      keyHelpTop !== null ? { read: keyHelpRead() } : planTop !== null ? (() => { const rows = planRows(); return { read: { rows, top: stepTop(rows.length, planTop, 0) } } })() : reading === null
+      keyHelpTop !== null ? { read: keyHelpRead() } : planTop !== null ? (() => { const { rows, heading } = planContent(), top = stepTop(rows.length, planTop, 0); return { read: { rows, top, heading, footer: readPosition(rows, top) } } })() : reading === null
         ? {}
         : (() => {
             const faces = readFaces()
-            const rows = faceRowsOf(faces, reading.face ?? firstFace(faces), cols())
+            const { rows, heading } = readerContent(faces, reading.face ?? firstFace(faces))
             const top = Math.max(0, Math.min(reading.top, Math.max(0, rows.length - 1)))
             const at = imageAt()
             const preview = at === null || previewJob?.key !== imageKey(at.request)
               ? undefined
               : { after: at.after, state: previewJob.state, ...(previewJob.image === undefined ? {} : { image: previewJob.image }) }
-            return rows.length === 0 ? {} : { read: { rows, top, ...(preview === undefined ? {} : { preview }) } }
+            return rows.length === 0 ? {} : { read: { rows, top, heading, footer: readPosition(rows, top), ...(preview === undefined ? {} : { preview }) } }
           })()
     return {
       ...hintPart,
@@ -766,7 +778,7 @@ export function openStage(deps: StageDeps): Stage {
         return
       }
       if (d.action === 'historyOlder' || d.action === 'historyNewer') {
-        const n = faceRowsOf(readFaces(), reading.face, cols()).length
+        const n = readerContent(readFaces(), reading.face).rows.length
         reading = { ...reading, top: stepTop(n, reading.top, d.action === 'historyOlder' ? -1 : 1) }
         settle()
         return
@@ -782,7 +794,7 @@ export function openStage(deps: StageDeps): Stage {
         const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -readPageStep() : readPageStep()
         planTop = stepTop(n, planTop, delta)
       } else if (reading !== null) {
-        const n = faceRowsOf(readFaces(), reading.face, cols()).length
+        const n = readerContent(readFaces(), reading.face).rows.length
         // 跳首尾用一个够大的数一步到头（`stepTop` 夹得住）。
         const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -readPageStep() : readPageStep()
         reading = { ...reading, top: stepTop(n, reading.top, delta) }

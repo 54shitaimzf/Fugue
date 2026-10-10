@@ -38,7 +38,7 @@
 import type { Delta } from '../delta.ts'
 import { FAMILY_KIND } from './stream.ts'
 import { permanentLinesOf } from './stream.ts'
-import { clip, clustersOf } from './glyph.ts'
+import { clip, clustersOf, widthOf } from './glyph.ts'
 import type { Cluster } from './glyph.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
 import { WORDS } from '../words.ts'
@@ -591,6 +591,17 @@ export function faceRowsOf(faces: ReadFaces, name: ReadFaceName, cols: number): 
   return one === null ? [] : [one.title, ...one.lines].flatMap((l) => [...readWrap(l, cols)])
 }
 
+
+
+/** 固定标题装得下时移出正文；窄框保留完整标题，removedTitleRows 供原文坐标换算。 */
+export function readContentOf(title: string, lines: readonly string[], cols: number, frameWidth: number): {
+  readonly heading: string; readonly rows: readonly string[]; readonly removedTitleRows: number
+} {
+  const fits = widthOf(title) + 5 <= frameWidth
+  const rows = (fits ? lines : [title, ...lines]).flatMap(line => [...readWrap(line, cols)])
+  return { heading: clip(title, Math.max(0, frameWidth - 5)), rows: rows.length === 0 ? ['暂无记录'] : rows,
+    removedTitleRows: fits ? readWrap(title, cols).length : 0 }
+}
 
 /** 当前窗口里能完整看见文件行、且还放得下两行预览的第一份 PNG。只用已折状态，不读文件。 */
 export function readImageAt(state: ReadState, cols: number, top: number, budget: number): { request: ImageRequest; after: number } | null {
