@@ -559,6 +559,7 @@ export function openStage(deps: StageDeps): Stage {
           })()
     return {
       ...hintPart,
+      ...(gate === null || gate.cards.length === 0 ? {} : { pendingRound: gate.round }),
       ...(feedback.length === 0 ? {} : { feedback }),
       ...navPart,
       ...(() => {

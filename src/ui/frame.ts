@@ -153,6 +153,8 @@ export interface FrameInput {
   readonly operationArea?: boolean | undefined
   /** 当前输入尚未开始，也没有在途执行；未知时保留原空态引导。 */
   readonly inputIdle?: boolean | undefined
+  /** 已从待确认整批取得的轮次；收起操作区不改变其准备事实。 */
+  readonly pendingRound?: string | undefined
   /** 当前配置的任务记录阅读键；舞台只在该动作可用时提供。 */
   readonly taskReadKey?: string | undefined
   readonly task?: TaskFace | undefined
@@ -635,11 +637,14 @@ export function frameOf(o: FrameInput): Frame {
   const taskMatches = o.task !== undefined && o.task.round !== null && o.task.state !== null
     && ((o.task.round === o.snapshot.current && o.task.state === o.snapshot.rounds.find(r => r.round === o.snapshot.current)?.state)
       || (o.focus !== undefined && o.focus !== null && o.snapshot.current === null))
-  // Planning只说明准备阶段；本轮已有有效确认区域时，说此刻等人决定什么。
-  // 只替换投影的第一条标准状态，不改模型原文、日志或机器快照。
-  const confirmationReady = operationStatus && taskMatches && o.task!.state === 'Planning'
-    && o.bottom?.confirmationRound === o.task!.round
+  // Planning本身只说明准备阶段；有效待确认整批收起后，准备事实仍成立。
+  // 只替换主面的标准状态；确认卡、草案原文入口及其他视图保持原投影。
+  const standardPlanning = taskMatches && o.task!.state === 'Planning'
     && o.task!.rows[0]?.role === 'system' && o.task!.rows[0]?.text === WORDS.planPreparing
+  const confirmationReady = operationStatus && standardPlanning && o.bottom?.confirmationRound === o.task!.round
+  const pendingReady = o.operationArea === true && !readingOn && o.menu === undefined && view === 'chat'
+    && standardPlanning && typeof o.pendingRound === 'string' && o.pendingRound.trim() !== ''
+    && !/[\x00-\x1f\x7f-\x9f]/.test(o.pendingRound) && o.pendingRound === o.task!.round
 
   const draftKey = typeof o.taskReadKey === 'string' && o.taskReadKey.trim() !== ''
     && bytesOfKey(o.taskReadKey).length > 0 && !/[\x00-\x1f\x7f-\x9f]/.test(o.taskReadKey) && widthOf(o.taskReadKey + ' 草案原文') <= inner ? o.taskReadKey : ''
@@ -647,7 +652,7 @@ export function frameOf(o: FrameInput): Frame {
     && (confirmationReady || draftKey !== '')
   const lastDraft = compactDraft ? o.task!.rows.findLastIndex(r => r.role === 'model' && typeof r.preview === 'string') : -1
   const taskRows = o.task?.rows.flatMap((r, i) => [
-    { kind: 'head' as const, ...r, ...(confirmationReady && i === 0 ? { text: WORDS.gateReview, role: 'waiting' as const }
+    { kind: 'head' as const, ...r, ...((confirmationReady || pendingReady) && i === 0 ? { text: WORDS.gateReview, role: 'waiting' as const }
       : compactDraft && r.role === 'model' && typeof r.preview === 'string' ? { text: r.preview } : {}) },
     ...(i === lastDraft && !confirmationReady ? [{ kind: 'head' as const, text: draftKey + ' 草案原文', role: 'system' as const }] : []),
   ])

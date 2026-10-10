@@ -48,7 +48,7 @@ test('gate layout carries its own round; absent/foreign/bad metadata, unknown st
  console.log('approval status floor: blocked round retained; missing/foreign/bad metadata and waiting range exact; noncurrent/unknown/messages unchanged; read/menu/views exact; 40/24/16/8/3 x19/7/5 geometry')
 })
 
-test('actual Stage/Session/Term sequence shows approval only while present; readonly, draft, resize, batch refresh and fresh two-step approval stay intact',async()=>{
+test('actual Stage/Session/Term keeps known pending readiness when confirmation is folded; readonly, draft, resize, batch refresh and fresh two-step approval stay intact',async()=>{
  let pending:typeof face|null=null,width=120,height=40;const writes:string[]=[],launches:string[]=[]
  const stage=openStage({rows:()=>rows,columns:()=>width,termRows:()=>height,pendingFace:async()=>pending,note:()=>{},redraw:()=>{},now:()=>0,abort:()=>{},hint:w=>hintLineOf(KEYMAP,3,w),run:()=>({running:false,last:[],argvOf:()=>({words:[],argv:[],why:null}),press:s=>{launches.push(s);return true},stop:()=>false})})
  stage.setRaw(true);stage.onAdvance(rows);const session=openSession({view:stage.view});session.push(rows)
@@ -60,8 +60,8 @@ test('actual Stage/Session/Term sequence shows approval only while present; read
   stage.onAction({action:'approve',key:'y'});assert.ok(draw().includes(ready));stage.onAction({action:'read'});const read=draw();assert.ok(read.includes('计划全文'));assert.ok(!read.includes(ready));stage.onAction({action:'submit'});stage.onAction({action:'approve',key:'y'});assert.deepEqual(launches,[]);idle()
   stage.onAction({action:'cancel'});assert.ok(draw().includes(ready));stage.onAction({action:'submit'});draw();assert.deepEqual(launches,[])
   width=16;height=8;stage.onResize();draw();stage.onAction({action:'submit'});draw();assert.deepEqual(launches,[])
-  width=120;height=40;stage.onResize();assert.ok(draw().includes(ready));idle();stage.onAction({action:'cancel'});const hidden=draw();assert.ok(hidden.includes(preparing)&&!hidden.includes(ready));assert.deepEqual(stage.view().input,draft);idle()
+  width=120;height=40;stage.onResize();assert.ok(draw().includes(ready));idle();stage.onAction({action:'cancel'});const hidden=draw();assert.ok(hidden.includes(ready));assert.ok(hidden.includes('原始模型说明：正在准备计划。'),'original model words stay');assert.equal(stage.view().bottom?.confirmationRound,undefined);assert.equal(stage.view().pendingRound,'r1');assert.deepEqual(stage.view().input,draft);idle()
   pending=null;await stage.refreshGate();assert.ok(draw().includes(preparing));pending={...face,fingerprint:'status-next'};await stage.refreshGate();assert.ok(draw().includes(ready));stage.onAction({action:'approve',key:'y'});draw();stage.onAction({action:'submit'});draw();assert.deepEqual(launches,['round go']);assert.deepEqual(stage.view().input,draft);idle()
-  console.log(`approval status sequence: frames${frames}; idles${idles} bytes0; no pending/hidden=preparing; current pending=waiting; readonly/old/short execute0; fresh second1; draft exact`)
+  console.log(`approval status sequence: frames${frames}; idles${idles} bytes0; no pending=preparing; current pending/hidden=waiting; readonly/old/short execute0; fresh second1; draft exact`)
  }finally{stage.close();term.close()}
 })

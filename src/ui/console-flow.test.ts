@@ -88,6 +88,7 @@ for(const [typed,selected] of [['/status','/status '],['@AGENTS.md','@AGENTS.md'
  process.stdin.emit('data',Buffer.from(typed));await wait(80)
  process.stdin.emit('data',Buffer.from('\r'));await wait(80)
  assert.ok(visible().includes(selected.trim()),'selected ordinary input is visible before sending')
+ assert.ok(visible().includes('等待你确认整批任务。')&&!visible().includes('正在准备计划。'),'the prepared batch stays waiting after ordinary selection returns to typing')
  assert.ok(visible().includes('Enter 发送'),'the instruction describes actual input')
  assert.ok(!visible().includes('y 执行整批'),'the editor has no contradictory confirmation actions')
  assert.equal(count('round/approve'),0);assert.equal(count('contract/issue'),0)

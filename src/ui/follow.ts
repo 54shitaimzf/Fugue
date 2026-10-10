@@ -262,6 +262,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(v?.taskReadKey === undefined ? {} : { taskReadKey: v.taskReadKey }),
       ...(v?.feedback === undefined ? {} : { feedback: v.feedback }),
       ...(v?.inputIdle === undefined ? {} : { inputIdle: v.inputIdle }),
+      ...(v?.pendingRound === undefined ? {} : { pendingRound: v.pendingRound }),
       ...(v?.bottom === undefined ? {} : { bottom: v.bottom }),
       // 视图与本帧读的是哪一格（第二幕 ⑦）：折法那一边按 `focus` 筛行，这一边按它写框名。
       ...(v?.view === undefined ? {} : { view: v.view }),

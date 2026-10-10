@@ -99,7 +99,7 @@
 // **退出**：`close()` 把面板那 K 行删掉（`\x1b[KM`），终端历史里只剩永久行；没画过、或宽度变过
 // （重排之后不知道那 K 行落在哪）就一个字节都不写。**alt screen 那一条是例外**：进去过就一定要出来
 // ——少写它，那台终端就停在另一块屏上，而 `--full` 缺省关的时候一个字节都不会写（两档各归各的）。
-import type { BottomInput, MenuInput, NavInput, ReadInput } from './frame.ts'
+import type { BottomInput, FrameInput, MenuInput, NavInput, ReadInput } from './frame.ts'
 import { MIN_HEIGHT, panelOf } from './frame.ts'
 import type { LineRole } from './frame.ts'
 import { clustersOf, widthOf } from './glyph.ts'
@@ -251,6 +251,8 @@ export interface ViewInput {
   readonly feedback?: readonly string[] | undefined
   /** 当前输入尚未开始，也没有在途执行；未知时保留原空态引导。 */
   readonly inputIdle?: boolean | undefined
+  /** 舞台从同一待确认整批取得的事实，仅供主面状态投影。 */
+  readonly pendingRound?: FrameInput['pendingRound']
   /** 任务记录的实际阅读键，供省略处就近显示。 */
   readonly taskReadKey?: string | undefined
   readonly menu?: MenuInput | undefined

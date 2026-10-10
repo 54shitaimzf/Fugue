@@ -64,7 +64,7 @@ export const WORD_TABLE = {
   verifyNotWritten: { face: '验收未通过，本次结果未写回工作区。', arch: 'UI Verifying→Working/Aborted：失败闸不 advance' },
   verifyFailedLabel: { face: '验收未通过', arch: 'UI 失败验收的状态条短句' },
   planPreparing: { face: '正在准备计划。', arch: 'UI Planning：还不能由状态推定 holder 已有完整草案' },
-  gateReview: { face: '等待你确认整批任务。', arch: 'UI 本轮Planning且实际确认区域存在；不把值层状态改成已执行' },
+  gateReview: { face: '等待你确认整批任务。', arch: 'UI 本轮Planning且已知有效待确认整批；不把值层状态改成已执行' },
   recordLoaded: { face: '现有记录已载入。', arch: 'UI 有记录而没有轮次状态，不推断任务正在执行' },
   noStopRecord: { face: '未记录结束', arch: 'UI agent stopped=null，不推断实际进程存活' },
   nextTaskGuide: { face: '可以继续描述任务，或查看记录。', arch: 'UI 写回后的下一步提示' },
