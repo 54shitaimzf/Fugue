@@ -937,6 +937,18 @@ export function frameOf(o: FrameInput): Frame {
       roles[lowerHead] = 'border'
     }
   }
+  // 文字原文与位置组成一块；仅移走填充行，实际视窗容量和底下输入保持。
+  const compactRead = o.operationArea === true && readingOn && o.menu === undefined && o.bottom === undefined
+    && o.read!.preview === undefined && withFooter && spare > 0
+    && Number.isSafeInteger(o.read!.top) && o.read!.top >= 0 && o.read!.top < readAll.length
+    && typeof o.read!.heading === 'string' && !/[\x00-\x1f\x7f-\x9f]/.test(o.read!.heading)
+    && typeof o.read!.footer === 'string' && o.read!.footer.trim() !== '' && !/[\x00-\x1f\x7f-\x9f]/.test(o.read!.footer)
+    && readBody.every(line => typeof line === 'string' && widthOf(line) <= inner)
+  if (compactRead) {
+    const tail = lines.slice(height - 3), tailRoles = roles.slice(height - 3)
+    lines.splice(contentEnd, height - contentEnd, ...tail, ...Array(spare).fill(' '.repeat(width)))
+    roles.splice(contentEnd, height - contentEnd, ...tailRoles, ...Array<LineRole>(spare).fill('body'))
+  }
   // 空态没有任务标题或进度；只把完整邀请与当前反馈放到固定输入上方，余量留在框外。
   // 装不下完整内容时保留上面的省略路径，提示仍可按需查看；不缩小实际屏幕容量。
   if (emptyInput && dropped === 0) {
