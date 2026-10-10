@@ -70,18 +70,18 @@ test('任务阅读的对象与真实行位置在滚动后仍可见，宽窗不�
     console.log(`reader context: stable task heading; down/end/start=${positions.join('/')}; full original; narrow title fallback; draft retained; readonly execute=0; idle bytes=0`)
   } finally { r.close() }
 })
-test('计划全文显示当前任务与行位置，窄窗仍可完整阅读标题和内容，空记录与坏元数据保持地板', async () => {
+test('计划全文显示整批任务与行位置，窄窗仍可完整阅读标题和内容，空记录与坏元数据保持地板', async () => {
   for (const width of [120, 16, 8]) {
     const r = rig([], width, 40, true)
     try {
       await r.stage.refreshGate(); r.stage.onAction({ action: 'historyNewer' }); r.stage.onAction({ action: 'read' })
       const read = r.stage.view().read!
-      assert.equal(read.heading, clip('计划全文 · 当前 2/2', Math.max(0, width - 5)))
-      assert.ok(r.draw().rows[0]!.includes(read.heading!), '实际固定框头显示同一选中任务')
-      const source = previewLinesOf(batch.cards[1]!).flatMap(line => [...readWrap(line, innerOf(width))])
-      assert.deepEqual(read.rows.slice(-source.length), source, '完整选中计划按实际框内宽度排版')
+      assert.equal(read.heading, clip('计划全文 · 2 项任务', Math.max(0, width - 5)))
+      assert.ok(r.draw().rows[0]!.includes(read.heading!), '实际固定框头显示整批任务数量')
+      const source = batch.cards.flatMap((card,i) => [...(i === 0 ? [] : ['']), ...previewLinesOf(card).map((line,j) => j === 0 ? `${i+1}/2 · ${line}` : line)]).flatMap(line => [...readWrap(line, innerOf(width))])
+      assert.deepEqual(read.rows.slice(-source.length), source, '整批每项计划按实际框内宽度排版')
       if (width === 120) assert.ok(!read.rows.join('').includes('计划全文'))
-      else assert.ok(read.rows.join('').includes('计划全文 · 当前 2/2'), '标题装不下时全文留在正文')
+      else assert.ok(read.rows.join('').includes('计划全文 · 2 项任务'), '标题装不下时全文留在正文')
       r.stage.onAction({ action: 'jumpLast' }); const end = r.stage.view().read!
       assert.equal(end.footer, `${end.top + 1}/${end.rows.length} 行 · 只读`)
       const frame = r.draw(); assert.equal(frame.rows[frame.roles!.indexOf('footer')]!.slice(1, -1).trim(), clip(end.footer!, innerOf(width)))
@@ -94,7 +94,7 @@ test('计划全文显示当前任务与行位置，窄窗仍可完整阅读标�
   const base = { width: 40, height: 14, snapshot: statusOf([]), read: { rows: ['original'], top: 0 } }
   const legacy = frameOf(base)
   assert.deepEqual(frameOf({ ...base, read: { ...base.read, heading: 7 as never, footer: 8 as never } }), legacy)
-  console.log('reader plan: selected2/2 complete at120/16/8; end position actual; readonly execute=0; empty record readable; bad metadata exact legacy')
+  console.log('reader plan: whole2 complete; selected2/2 restores at120/16/8; end position actual; readonly execute=0; empty record readable; bad metadata exact legacy')
 })
 test('文件阅读的稳定标题不挤入正文，图片坐标仍紧随完整文件描述，关图退回原文', async () => {
   const events = ['preview.png', 'following.txt'].map((path, i) => ({

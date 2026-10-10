@@ -17,7 +17,7 @@ function batch(id: string) {
   })) } as never)
   const heads = face.cards.map(c => c.head), reads = [0, 0]
   face.cards.forEach((c, i) => Object.defineProperty(c, 'head', { get() { reads[i]++; return heads[i] } }))
-  return { face, reads, expected: (at: number, width: number) => readContentOf(`计划全文 · 当前 ${at + 1}/2`, [heads[at]!, ...face.cards[at]!.detail], innerOf(width), width) }
+  return { face, reads, expected: (width: number) => readContentOf('计划全文 · 2 项任务', heads.flatMap((head, i) => [...(i === 0 ? [] : ['']), `${i + 1}/2 · ${head}`, ...face.cards[i]!.detail]), innerOf(width), width) }
 }
 function rig() {
   const one = batch('one'), two = batch('two')
@@ -45,7 +45,7 @@ test('未变的长计划在翻页、菜单和重绘中只排一次，完整原�
   try {
     await r.stage.refreshGate(); r.stage.onAction({ action: 'read' }); r.one.reads.fill(0)
     const first = r.stage.view().read!
-    assert.deepEqual({ heading: first.heading, rows: first.rows }, { heading: r.one.expected(0, 16).heading, rows: r.one.expected(0, 16).rows })
+    assert.deepEqual({ heading: first.heading, rows: first.rows }, { heading: r.one.expected(16).heading, rows: r.one.expected(16).rows })
     const positions: number[] = []
     for (let n = 0; n < 20; n++) {
       r.stage.onAction({ action: 'pageDown' }); positions.push(r.stage.view().read!.top); r.draw(); r.draw()
@@ -58,10 +58,10 @@ test('未变的长计划在翻页、菜单和重绘中只排一次，完整原�
     r.resize(16, 8); r.draw(); r.resize(16, undefined); r.draw()
     assert.deepEqual(r.stage.view().read!.rows, first.rows, '滚动、菜单与高度变化保留相同的完整物理行')
     assert.equal(r.one.reads[0], 1, '相同计划与列宽只读一次卡片正文')
-    assert.equal(r.one.reads[1], 0, '不读取未选中的全文')
+    assert.equal(r.one.reads[1], 1, '未选中任务也只读一次完整正文')
     r.stage.onAction({ action: 'approve', key: 'y' }); r.stage.onAction({ action: 'submit' })
     assert.deepEqual(r.presses, [])
-    console.log(`long plan: rows=${first.rows.length}; pages=${positions.join(',')}; sourceReads=${r.one.reads[0]}; unchangedDrawBytes=0; readonlyExecute=0`)
+    console.log(`long plan: rows=${first.rows.length}; pages=${positions.join(',')}; sourceReads=${r.one.reads.join('/')}; unchangedDrawBytes=0; readonlyExecute=0`)
   } finally { r.close() }
 })
 test('列宽、选中任务与批次变化重新排版，旧正文和批准不能沿用，空批次回到事件阅读地板', async () => {
@@ -70,26 +70,26 @@ test('列宽、选中任务与批次变化重新排版，旧正文和批准不�
     await r.stage.refreshGate(); r.stage.onAction({ action: 'read' }); r.one.reads.fill(0)
     const small = r.stage.view().read!
     r.resize(120, 40); const wide = r.stage.view().read!
-    assert.notEqual(wide.rows, small.rows); assert.deepEqual(wide.rows, r.one.expected(0, 120).rows)
-    assert.equal(wide.heading, '计划全文 · 当前 1/2'); assert.ok(!wide.rows.join('').includes('计划全文'))
+    assert.notEqual(wide.rows, small.rows); assert.deepEqual(wide.rows, r.one.expected(120).rows)
+    assert.equal(wide.heading, '计划全文 · 2 项任务'); assert.ok(!wide.rows.join('').includes('计划全文'))
     r.stage.onAction({ action: 'pageDown' }); r.draw()
     assert.equal(r.one.reads[0], 2, '仅列宽变化重读全文')
     r.resize(16, 24); assert.deepEqual(r.stage.view().read!.rows, small.rows)
     assert.equal(r.one.reads[0], 3, '只保留一份排版；回旧列宽重新计算')
     r.stage.onAction({ action: 'cancel' }); r.stage.onAction({ action: 'historyNewer' }); r.stage.onAction({ action: 'read' })
     r.one.reads.fill(0)
-    assert.deepEqual(r.stage.view().read!.rows, r.one.expected(1, 16).rows)
-    r.stage.onAction({ action: 'pageDown' }); r.draw(); assert.deepEqual(r.one.reads, [0, 1])
+    assert.deepEqual(r.stage.view().read!.rows, r.one.expected(16).rows)
+    r.stage.onAction({ action: 'pageDown' }); r.draw(); assert.deepEqual(r.one.reads, [0, 0], '选择改变仍复用同一整批全文')
     r.stage.onAction({ action: 'cancel' }); r.stage.onAction({ action: 'historyOlder' }); r.stage.onAction({ action: 'read' })
-    assert.deepEqual(r.stage.view().read!.rows, r.one.expected(0, 16).rows)
+    assert.deepEqual(r.stage.view().read!.rows, r.one.expected(16).rows)
     r.pending(r.two.face); await r.stage.refreshGate(); assert.equal(r.stage.view().read, undefined)
     r.stage.onAction({ action: 'read' }); r.two.reads.fill(0)
-    assert.deepEqual(r.stage.view().read!.rows, r.two.expected(0, 16).rows)
-    r.stage.onAction({ action: 'jumpLast' }); r.draw(); assert.deepEqual(r.two.reads, [1, 0])
+    assert.deepEqual(r.stage.view().read!.rows, r.two.expected(16).rows)
+    r.stage.onAction({ action: 'jumpLast' }); r.draw(); assert.deepEqual(r.two.reads, [1, 1])
     assert.equal(r.stage.view().read!.top, r.stage.view().read!.rows.length - 1)
     r.stage.onAction({ action: 'approve', key: 'y' }); r.stage.onAction({ action: 'submit' }); assert.deepEqual(r.presses, [])
     r.pending(null); await r.stage.refreshGate(); r.stage.onAction({ action: 'read' })
     assert.equal(r.stage.view().read!.heading, '事件流'); assert.deepEqual(r.stage.view().read!.rows, ['暂无记录'])
-    console.log('long plan invalidation: 16->120->16 reads=3; card/batch reads=1 each; empty fallback=暂无记录; readonlyExecute=0')
+    console.log('long plan invalidation: 16->120->16 reads=3; selection reuse0; new batch reads=1/1; empty fallback=暂无记录; readonlyExecute=0')
   } finally { r.close() }
 })

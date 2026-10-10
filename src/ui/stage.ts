@@ -193,10 +193,10 @@ export function openStage(deps: StageDeps): Stage {
    */
   let readState: ReadState = EMPTY_READ
   let reading: { face: ReadFaceName; top: number } | null = null
-  /** 当前待确认卡的全文坐标；内容每次从同一 gate face 取得，不另存计划。 */
+  /** 当前待确认整批计划的全文坐标；内容从同一 gate face 取得，不另存计划。 */
   let planTop: number | null = null
-  // 同一批次、选中卡与列宽的全文只排一次；仅留当前一份，尺寸未知也沿用原折行。
-  let planSnap: { face: GateFace; at: number; columns: number; width: number; value: ReturnType<typeof readContentOf> } | null = null
+  // 同一批次与列宽的整批全文只排一次；选择和高度变化复用，仅留当前一份。
+  let planSnap: { face: GateFace; columns: number; width: number; value: ReturnType<typeof readContentOf> } | null = null
   /**
    * 跑完一趟要不要**自动**接着起下一条（`T7`）。缺省要；**被 `Esc` / `Ctrl-C` 打断之后不要**——
    * 人刚说了停，排队那几条停在那儿等他（`Enter` 起下一条 · `Esc` 丢掉）。起新的一条时又回到"要"。
@@ -266,12 +266,17 @@ export function openStage(deps: StageDeps): Stage {
     return face === null ? { heading: '', rows: [], removedTitleRows: 0 } : readContentOf(face.title, face.lines, cols(), deps.columns())
   }
   const planContent = () => {
-    const card = gate === null ? null : cardAt(gate, gateView.at)
-    if (card === null) { planSnap = null; return { heading: '', rows: [], removedTitleRows: 0 } }
+    const face = gate
+    if (face === null || face.cards.length === 0) { planSnap = null; return { heading: '', rows: [], removedTitleRows: 0 } }
     const width = deps.columns(), columns = innerOf(width)
-    if (planSnap !== null && planSnap.face === gate && planSnap.at === gateView.at && planSnap.columns === columns && planSnap.width === width) return planSnap.value
-    const value = readContentOf(`计划全文 · 当前 ${gateView.at + 1}/${gate!.cards.length}`, previewLinesOf(card), columns, width)
-    planSnap = { face: gate!, at: gateView.at, columns, width, value }
+    if (planSnap !== null && planSnap.face === face && planSnap.columns === columns && planSnap.width === width) return planSnap.value
+    // 批准的是整批：完整阅读也按原顺序包含每项，选择只决定返回时的预览。
+    const lines = face.cards.flatMap((card, i) => [
+      ...(i === 0 ? [] : ['']),
+      ...previewLinesOf(card).map((line, j) => j === 0 ? `${i + 1}/${face.cards.length} · ${line}` : line),
+    ])
+    const value = readContentOf(`计划全文 · ${face.cards.length} 项任务`, lines, columns, width)
+    planSnap = { face, columns, width, value }
     return value
   }
   const planRows = (): readonly string[] => planContent().rows
