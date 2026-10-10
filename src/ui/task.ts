@@ -87,11 +87,13 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
     result.push({ text: WORDS.nextTaskGuide, role: 'system' })
     return { round, state, rows: result, plan: [] }
   }
-  const status = notice?.text ?? (state === null ? '当前任务记录' : state === 'Planning' ? WORDS.planPreparing : roundLabelOf(state, from))
-  result.push({ text: status, role: notice?.role ?? (state === 'Aborted' ? 'refuse' : 'system') })
+  // 实际动作已经说明当前进展；失败、验收与写回结论仍优先。
+  const actionStatus = notice === null && state === 'Working' && action !== '' && action !== problem
+  const status = notice?.text ?? (actionStatus ? action : state === null ? '当前任务记录' : state === 'Planning' ? WORDS.planPreparing : roundLabelOf(state, from))
+  result.push({ text: status, role: notice?.role ?? (actionStatus ? 'instruction' : state === 'Aborted' ? 'refuse' : 'system') })
   if (notice?.text === WORDS.verifyNotWritten) result.push({ text: WORDS.verifyFailedGuide, role: 'instruction' })
   if (state === 'Committed') result.push({ text: '验收已通过 · 待写回', role: 'instruction' })
-  else if (state === 'Working' && action !== '' && action !== problem) result.push({ text: action, role: 'instruction' })
+  else if (!actionStatus && state === 'Working' && action !== '' && action !== problem) result.push({ text: action, role: 'instruction' })
   if (problem !== '') result.push({ text: problem, role: 'refuse' })
   for (const message of messages) result.push({ text: '', role: 'body' }, message)
   if (verification !== '' && state !== 'Committed') result.push({ text: verification, role: 'system' })

@@ -58,13 +58,20 @@ test('opening the plan clears an earlier arm, menu escape retains reading positi
 })
 test('a truncated card reports its own omission while preserving all batch and action rows; missing disclosure keeps the old layout',()=>{
  for(const width of [16,40])for(const armed of [null,'approve','reject'] as const){
-  const bottom=gateLayoutOf({face,view:{at:0,armed},columns:innerOf(width)}),frame=frameOf({snapshot:statusOf([]),width,height:13,bottom})
+  // 去掉重复页脚后，40列卡片在13行已完整；用11行继续验证真实裁切。
+  const height=width===40?11:13
+  const bottom=gateLayoutOf({face,view:{at:0,armed},columns:innerOf(width)}),frame=frameOf({snapshot:statusOf([]),width,height,bottom})
   assert.ok(frame.lines.some(l=>l.includes('计划有省略')),'the omitted plan does not silently turn into only its tail paths')
-  assert.ok(frame.roles.includes('waiting'));assert.ok(frame.lines.length<=13)
+  assert.ok(frame.roles.includes('waiting'));assert.ok(frame.lines.length<=height)
   assert.deepEqual(frame.lines.flatMap((line,i)=>frame.roles[i]==='overlay'||frame.roles[i]==='waiting'?[line.slice(1,-1).trim()]:[]),bottom.rows.slice(-bottom.keep),'the complete batch heading and all wrapped actions remain visible')
-  const legacy=frameOf({snapshot:statusOf([]),width,height:13,bottom:{...bottom,overflow:undefined}})
+  const legacy=frameOf({snapshot:statusOf([]),width,height,bottom:{...bottom,overflow:undefined}})
   assert.ok(!legacy.lines.some(l=>l.includes('计划有省略')),'absent metadata retains the old suffix layout')
-  assert.doesNotThrow(()=>assert.deepEqual(frameOf({snapshot:statusOf([]),width,height:13,bottom:{...bottom,overflow:12 as unknown as string}}),legacy),'bad optional metadata retains exact legacy layout')
+  assert.doesNotThrow(()=>assert.deepEqual(frameOf({snapshot:statusOf([]),width,height,bottom:{...bottom,overflow:12 as unknown as string}}),legacy),'bad optional metadata retains exact legacy layout')
   assert.equal(frame.roles.filter(r=>r==='waiting').length,bottom.waitingCount,'disclosure never consumes an action row')
  }
+ const complete=gateLayoutOf({face,view:{at:0,armed:null},columns:innerOf(40)})
+ const full=frameOf({snapshot:statusOf([]),width:40,height:13,bottom:complete})
+ assert.ok(!full.roles.includes('footer'),'complete confirmation owns the operation status')
+ assert.ok(!full.lines.some(l=>l.includes('计划有省略')),'a complete card must not claim omission')
+ assert.deepEqual(full.lines.slice(1,-1).map(l=>l.slice(1,-1).trim()),complete.rows,'reclaimed rows show the entire card')
 })

@@ -585,9 +585,16 @@ export function frameOf(o: FrameInput): Frame {
               : { l: `${iconPrefixOf(x.icon)}${x.text}`, role: x.role ?? 'body' as const },
         )
       : (view === 'progress' ? body.left : body.right).map((l) => ({ l, role: 'body' as const }))
+  let rowAt = 0
   const rows = bodyRows.flatMap((one) => {
     const paragraphs = o.task === undefined ? [one.l] : one.l.split('\n')
-    return paragraphs.flatMap((p, i) => wrap(p, Math.max(1, inner - (i === 0 ? 0 : 2))).map(x => ({ l: i === 0 ? x : `  ${x}`, role: one.role })))
+    const parts = paragraphs.map((p, i) => wrap(p, Math.max(1, inner - (i === 0 ? 0 : 2))))
+    const identified = o.task !== undefined && ['user', 'model'].includes(one.role) && paragraphs.length > 1
+    const headingAt = rowAt, headingCount = parts[0]?.length ?? 0
+    const physical = parts.flatMap((part, i) => part.map(x => ({ l: i === 0 ? x : `  ${x}`, role: one.role,
+      ...(identified ? { headingAt, headingCount } : {}) })))
+    rowAt += physical.length
+    return physical
   })
 
   // 当前任务正文已承担状态说明，主面不再重复阶段。任务投影未知时保留旧页脚地板；
@@ -596,10 +603,19 @@ export function frameOf(o: FrameInput): Frame {
   const taskStatus = !readingOn && !helpOn && view === 'chat' && o.task !== undefined && o.task.round !== null
     && o.task.state !== null && ((o.task.round === o.snapshot.current && o.task.state === o.snapshot.rounds.find(r => r.round === o.snapshot.current)?.state)
       || (o.focus !== undefined && o.focus !== null && o.snapshot.current === null))
-    && first !== undefined && first.text !== '' && ['system', 'waiting', 'ok', 'refuse'].includes(first.role)
-  const footer = taskStatus ? '' : clip(helpOn ? `${Math.max(0, Math.min((o.menu?.rows.length ?? 1) - 1, o.menu?.sel ?? 0)) + 1}/${o.menu!.rows.length} · 筛选` : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
+    && first !== undefined && first.text !== '' && ['system', 'waiting', 'ok', 'refuse', 'instruction'].includes(first.role)
+  // 有完整的当前确认指示时，确认区域承担操作状态；未知元数据仍沿用旧页脚。
+  const operationAt = o.bottom?.waitingAt ?? -1, operationCount = o.bottom?.waitingCount ?? 0
+  const operationStatus = !readingOn && !helpOn && o.menu === undefined && view === 'chat'
+    && Number.isInteger(operationAt) && Number.isInteger(operationCount) && operationAt >= 0 && operationCount > 0
+    && Number.isInteger(o.bottom?.keep) && o.bottom!.keep >= operationCount && o.bottom!.keep <= o.bottom!.rows.length
+    && operationAt + operationCount <= (o.bottom?.rows.length ?? 0)
+    && operationAt >= (o.bottom?.rows.length ?? 0) - (o.bottom?.keep ?? 0)
+    && o.bottom!.rows.slice(operationAt, operationAt + operationCount).every(l => l.trim() !== '')
+  const statusOn = taskStatus || operationStatus
+  const footer = statusOn ? '' : clip(helpOn ? `${Math.max(0, Math.min((o.menu?.rows.length ?? 1) - 1, o.menu?.sel ?? 0)) + 1}/${o.menu!.rows.length} · 筛选` : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
   // 不需要页脚时两行都交给正文与当前操作，框体高度保持。
-  const allocation = frameBudgetOf(height, helpOn ? 0 : (o.bottom?.keep ?? 0), !taskStatus)
+  const allocation = frameBudgetOf(height, helpOn ? 0 : (o.bottom?.keep ?? 0), !statusOn)
   const withFooter = allocation.withFooter
   let budget = allocation.rows
 
@@ -708,7 +724,18 @@ export function frameOf(o: FrameInput): Frame {
   // 阅读面开着：内容那一栏一个字节都不印（地方整块给了正文，见上面那一段）。
   const content = readingOn || helpOn ? [] : rows.length <= bodyBudget ? rows : o.task === undefined
     ? rows.slice(0, Math.max(0, bodyBudget - 1))
-    : [...rows.slice(0, Math.min(2, Math.max(0, bodyBudget - 2))), ...(bodyBudget > 3 ? rows.slice(-(bodyBudget - 3)) : [])]
+    : (() => {
+        const head = rows.slice(0, Math.min(2, Math.max(0, bodyBudget - 2)))
+        const tail = bodyBudget > 3 ? rows.slice(-(bodyBudget - 3)) : []
+        const first = tail[0], tailAt = rows.length - tail.length
+        // 尾部从消息中间开始时，原有身份标题随正文进入视窗；不改消息原文。
+        if (first?.headingAt !== undefined && first.headingAt < tailAt
+          && first.headingAt + first.headingCount! > head.length) {
+          const count = Math.min(first.headingCount!, tail.length)
+          return [...head, ...rows.slice(first.headingAt, first.headingAt + count), ...tail.slice(count)]
+        }
+        return [...head, ...tail]
+      })()
   const dropped = readingOn || helpOn ? 0 : rows.length - content.length
   // 树那一栏在最上面，然后才是内容那一栏（它的每一行都是横贯整栏的）。行带着**角色**（U20）：
   // 树与读数是正文 · 阅读面正文是 `read` · 候选与门口那一块是临时的 `overlay`。
