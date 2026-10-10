@@ -22,7 +22,7 @@ import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowsOf, shiftOf } from './queu
 import { altAt, clampNav, navNodesOf, navRowsOf, writerAt } from './nav.ts'
 import type { NavNode } from './nav.ts'
 import { stepView, viewAt } from './views.ts'
-import { EMPTY_READ, readContentOf, facesOf, firstFace, readWrap, readStateOf, readImageAt, stepFace, stepTop } from './read.ts'
+import { EMPTY_READ, readContentOf, facesOf, firstFace, readWrap, readStateOf, readImageAt, stepFace, stepTop, reflowTopOf } from './read.ts'
 import type { ReadFaceName, ReadState } from './read.ts'
 import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
@@ -210,7 +210,7 @@ export function openStage(deps: StageDeps): Stage {
   /** 当前待确认整批计划的全文坐标；内容从同一 gate face 取得，不另存计划。 */
   let planTop: number | null = null
   // 同一批次与列宽的整批全文只排一次；选择和高度变化复用，仅留当前一份。
-  let planSnap: { face: GateFace; columns: number; width: number; value: ReturnType<typeof readContentOf> } | null = null
+  let planSnap: { face: GateFace; columns: number; width: number; lines: readonly string[]; value: ReturnType<typeof readContentOf> } | null = null
   /**
    * 跑完一趟要不要**自动**接着起下一条（`T7`）。缺省要；**被 `Esc` / `Ctrl-C` 打断之后不要**——
    * 人刚说了停，排队那几条停在那儿等他（`Enter` 起下一条 · `Esc` 丢掉）。起新的一条时又回到"要"。
@@ -288,18 +288,38 @@ export function openStage(deps: StageDeps): Stage {
     const face = faces[name]
     return face === null ? { heading: '', rows: [], removedTitleRows: 0 } : readContentOf(face.title, face.lines, cols(), deps.columns())
   }
+  const planLines = (): readonly string[] => {
+    const face = gate
+    if (face === null) return []
+    return face.cards.flatMap((card, i) => [
+      ...(i === 0 ? [] : ['']),
+      ...previewLinesOf(card).map((line, j) => j === 0 ? `${i + 1}/${face.cards.length} · ${line}` : line),
+    ])
+  }
+  let readingWidth: number | undefined
+  const reflowRead = (): void => {
+    const width = deps.columns(), oldWidth = readingWidth
+    readingWidth = width
+    if (oldWidth === undefined || width === oldWidth) return
+    const before = { width: oldWidth, columns: innerOf(oldWidth) }, after = { width, columns: innerOf(width) }
+    if (planTop !== null && gate !== null) planTop = reflowTopOf({ lines: planSnap?.face === gate ? planSnap.lines : planLines(), title: `计划全文 · ${gate.cards.length} 项任务`, top: planTop, before, after })
+    const graphics = deps.graphics?.()
+    // 图片阅读保原预览坐标与容量地板；本轮只重排文字阅读。
+    if (reading !== null && !(reading.face === 'diff' && (graphics === 'kitty' || graphics === 'sixel'))) {
+      const face = readFaces()[reading.face]
+      if (face !== null) reading = { ...reading, top: reflowTopOf({ lines: face.lines, title: face.title, top: reading.top, before, after }) }
+    }
+    if (keyHelpTop !== null) keyHelpTop = reflowTopOf({ lines: [keyHelpText], top: keyHelpTop, before, after })
+  }
   const planContent = () => {
     const face = gate
     if (face === null || face.cards.length === 0) { planSnap = null; return { heading: '', rows: [], removedTitleRows: 0 } }
     const width = deps.columns(), columns = innerOf(width)
     if (planSnap !== null && planSnap.face === face && planSnap.columns === columns && planSnap.width === width) return planSnap.value
     // 批准的是整批：完整阅读也按原顺序包含每项，选择只决定返回时的预览。
-    const lines = face.cards.flatMap((card, i) => [
-      ...(i === 0 ? [] : ['']),
-      ...previewLinesOf(card).map((line, j) => j === 0 ? `${i + 1}/${face.cards.length} · ${line}` : line),
-    ])
+    const lines = planLines()
     const value = readContentOf(`计划全文 · ${face.cards.length} 项任务`, lines, columns, width)
-    planSnap = { face, columns, width, value }
+    planSnap = { face, columns, width, lines, value }
     return value
   }
   const planRows = (): readonly string[] => planContent().rows
@@ -467,7 +487,7 @@ export function openStage(deps: StageDeps): Stage {
    * 通常输入行也用框内宽度；极窄时至少留一格，双列字簇在实际两列上保全。
    * 实际一列放不下的字簇由显示投影标记，原草稿仍在；两处都沿用这一把尺。
    */
-  const cols = (): number => innerOf(deps.columns())
+  const cols = (): number => { const width = deps.columns(); readingWidth ??= width; return innerOf(width) }
   const gateLayout = () => gate === null ? null : gateLayoutOf({ face: gate, view: gateView,
     columns: cols(), keymap: deps.keymap?.(),
     height: Math.max(1, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1)) })
@@ -1030,7 +1050,7 @@ export function openStage(deps: StageDeps): Stage {
     startNext,
     onRunDone,
     heightWant,
-    onResize() { clearSmallGate(); syncImage() },
+    onResize() { reflowRead(); clearSmallGate(); syncImage() },
     close(): void {
       closed = true
       planSnap = null

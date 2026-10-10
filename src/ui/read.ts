@@ -603,6 +603,35 @@ export function readContentOf(title: string, lines: readonly string[], cols: num
     removedTitleRows: fits ? readWrap(title, cols).length : 0 }
 }
 
+
+/** 宽度变化后仍从同一原文行与字簇附近继续读；这里只换投影坐标。 */
+export function reflowTopOf(o: {
+  readonly lines: readonly string[]; readonly title?: string; readonly top: number
+  readonly before: { readonly width: number; readonly columns: number }
+  readonly after: { readonly width: number; readonly columns: number }
+}): number {
+  if (!Number.isSafeInteger(o.top) || o.top < 0 || ![o.before.width, o.before.columns, o.after.width, o.after.columns].every(n => Number.isSafeInteger(n) && n > 0)
+    || (o.before.width === o.after.width && o.before.columns === o.after.columns)) return o.top
+  const hasTitle = (width: number): boolean => o.title !== undefined && widthOf(o.title) + 5 > width
+  const source = (line: number): string => line < 0 ? o.title! : o.lines[line]!
+  let line = hasTitle(o.before.width) ? -1 : 0, row = o.top
+  while (line < o.lines.length) {
+    const rows = readWrap(source(line), o.before.columns)
+    if (row < rows.length) break
+    row -= rows.length; line += 1
+  }
+  if (line >= o.lines.length) return o.top
+  // 标题已移到固定标题行时，从正文首行开始；原文行不受标题进出正文影响。
+  if (line < 0 && !hasTitle(o.after.width)) return 0
+  const offset = readWrap(source(line), o.before.columns).slice(0, row).join('').length
+  let top = line >= 0 && hasTitle(o.after.width) ? readWrap(o.title!, o.after.columns).length : 0
+  for (let i = 0; i < line; i += 1) top += readWrap(o.lines[i]!, o.after.columns).length
+  const rows = readWrap(source(line), o.after.columns)
+  let at = 0, next = 0
+  while (next + 1 < rows.length && at + rows[next]!.length <= offset) { at += rows[next]!.length; next += 1 }
+  return top + next
+}
+
 /** 当前窗口里能完整看见文件行、且还放得下两行预览的第一份 PNG。只用已折状态，不读文件。 */
 export function readImageAt(state: ReadState, cols: number, top: number, budget: number): { request: ImageRequest; after: number } | null {
   const face = facesOf(state).diff
