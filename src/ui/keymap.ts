@@ -667,8 +667,11 @@ const STRING_CONTROLS = new Set(['P', ']', '_', '^', 'X'])
 function stringEndOf(s: string, i: number): number {
   const st = s.indexOf('\x1b\\', i + 2)
   const bel = s[i + 1] === ']' ? s.indexOf('\x07', i + 2) : -1
-  if (bel >= 0 && (st < 0 || bel < st)) return bel + 1
-  return st < 0 ? -1 : st + 2
+  // CAN/SUB cancel string mode; bytes after them are ordinary input again.
+  const can = s.indexOf('\x18', i + 2), sub = s.indexOf('\x1a', i + 2)
+  const ends = [st < 0 ? -1 : st + 2, bel < 0 ? -1 : bel + 1,
+    can < 0 ? -1 : can + 1, sub < 0 ? -1 : sub + 1].filter(end => end >= 0)
+  return ends.length === 0 ? -1 : Math.min(...ends)
 }
 
 export function escapeAt(s: string, i: number): number {
