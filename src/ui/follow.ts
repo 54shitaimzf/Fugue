@@ -3,7 +3,7 @@
 // PLAN § 5.18 的三面表（事件面是唯一读源）。
 //
 // 这一份把**读**与**摆**接起来（`probe/watch.ts` 的 `follow()` → `ui/term.ts` 的 `draw`），中间只夹
-// 一样东西：**累起来的那些行**。于是跟随与一次性读在渲染那一头是同一段代码——面板那 K 行是"这些
+// 一样东西：**累起来的那些行**。交互 Console 将流水留在阅读面，观察窗和纯文本仍按原样追加。于是跟随与一次性读在渲染那一头是同一段代码——面板那 K 行是"这些
 // 行"的一个纯函数（`ui/frame.ts`），跟随只决定"这些行此刻有哪些"。
 //
 // 三条不许破的性质（`follow.test.ts` 逐条量）：
@@ -260,6 +260,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(v?.nav === undefined ? {} : { nav: v.nav }),
       ...(v?.read === undefined ? {} : { read: v.read }),
       ...(v?.taskReadKey === undefined ? {} : { taskReadKey: v.taskReadKey }),
+      ...(v?.feedback === undefined ? {} : { feedback: v.feedback }),
       ...(v?.bottom === undefined ? {} : { bottom: v.bottom }),
       // 视图与本帧读的是哪一格（第二幕 ⑦）：折法那一边按 `focus` 筛行，这一边按它写框名。
       ...(v?.view === undefined ? {} : { view: v.view }),
@@ -343,6 +344,8 @@ export interface TuiOptions {
   readonly term: Term
   /** 只印永久行那一档的出口（`cli` 那一侧的 `emitLine`）。面板那一档用不到它。 */
   readonly emit: (line: string) => void
+  /** Interactive Console keeps ledger and command history in the existing reader. Read-only/plain modes retain their stream. */
+  readonly interactive?: boolean | undefined
   readonly mode: TuiMode
   readonly readings?: ReadingsOptions
   readonly phase?: Phase
@@ -367,12 +370,15 @@ export interface TuiOptions {
 
 /** 接上的那一档：一个句柄，两样东西——这一档累起来的行，与"跑完了"那一下。 */
 export interface Tui {
+  /** Original UI/command messages, in arrival order; process-local, never a second ledger. */
+  readonly notes: readonly string[]
   /** 累起来的那些行（"这一帧是从什么折出来的"这句问得出来）。 */
   readonly session: TuiSession
   /** 这一档跑完的那一下（`lines-once` 读一趟就 resolve）。 */
   readonly counts: Promise<TuiCounts>
   /**
-   * 往终端历史里写一行**界面自己的话**：按键提示 · 按下去那条命令的输出 · 它收尾的退出码。
+   * Record an original UI/command message. Interactive Console reads it in details;
+   * read-only and plain-text modes append it once, as before.
    *
    * **它不是账上的一行**（账上有什么由 `probe/` 那两处说了算），所以它进不了任何一栏，也不参与
    * `fresh()` 那条"已经写出去的那几条不许被回头改"的判据——它只写一次，写完就算了。
@@ -405,7 +411,10 @@ export function openTui(o: TuiOptions): Tui {
     fold: o.fold,
   })
   const c = { rows: 0, permanent: 0, draws: 0, lines: 0, notes: 0 }
-  /** 界面自己写的那几行（还没落到历史里的）：与永久行同一档、都写在面板上方，**都只写一次**。 */
+  // Interactive records stay readable without a stale prefix above the current task.
+  // The original append-only queue is retained for read-only and plain-text modes.
+  const record: string[] = []
+  const interactive = o.mode === 'panel' && o.interactive === true
   const notes: string[] = []
   const takeNotes = (): readonly string[] => (notes.length === 0 ? [] : notes.splice(0, notes.length))
   const sync = (): void => {
@@ -416,7 +425,8 @@ export function openTui(o: TuiOptions): Tui {
   const paint = (): void => {
     // 次序：**账上那些行在前、界面自己的话在后**（`note` 说的是"刚刚按了一下"，它总发生在已经
     // 读到的那些行之后）。两条轨各管各的：`fresh()` 那条"前缀不许改"的判据只盯账上那一串。
-    const fresh = [...session.fresh(), ...takeNotes()]
+    const ledger = session.fresh()
+    const fresh = interactive ? [] : [...ledger, ...takeNotes()]
     if (o.mode === 'panel') {
       c.draws += 1
       o.term.draw(fresh, (size) => session.panel(size))
@@ -464,9 +474,11 @@ export function openTui(o: TuiOptions): Tui {
   return {
     session,
     counts,
+    get notes(): readonly string[] { return record },
     note(line: string): void {
       if (line === '') return
-      notes.push(line)
+      record.push(line)
+      if (!interactive) notes.push(line)
       c.notes += 1
       // 立刻画一次：**按下去了这件事要当场看得见**（等下一次账动可能很久，而"按了没反应"是这一档
       // 最坏的一种体验）。没按过键时这一档一次都不会被调到。

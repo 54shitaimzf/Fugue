@@ -147,6 +147,7 @@ export interface ConversationRow {
 }
 
 export interface FrameInput {
+  readonly feedback?: readonly string[] | undefined
   /** 当前舞台确有输入或批准操作区；只读跟踪不移动正文留白。 */
   readonly operationArea?: boolean | undefined
   /** 当前配置的任务记录阅读键；舞台只在该动作可用时提供。 */
@@ -641,7 +642,7 @@ export function frameOf(o: FrameInput): Frame {
 
   // 内容那一栏那几行：**哪一档视图说什么话**。对话视图是 `chatOf` 折出来的那几行
   // （轮次头 · 细线 · 在飞那几格）；另两档是 `bodyOf` 的那一半，行文一字不变，只是各拿满宽。
-  const bodyRows: readonly { readonly l: string; readonly role: LineRole }[] =
+  const taskBodyRows: readonly { readonly l: string; readonly role: LineRole }[] =
     view === 'chat'
       ? (o.task?.round !== null && o.task !== undefined ? taskRows! : chatOf({ ...o, onboarding: (o.bottom?.rows.length ?? 0) === 0 && o.menu === undefined })).map((x) =>
           x.kind === 'rule'
@@ -651,6 +652,10 @@ export function frameOf(o: FrameInput): Frame {
               : { l: `${iconPrefixOf(x.icon)}${x.text}`, role: x.role ?? 'body' as const },
         )
       : (view === 'progress' ? body.left : body.right).map((l) => ({ l, role: 'body' as const }))
+  const bodyRows = [...taskBodyRows,
+    ...(o.operationArea === true && view === 'chat' && !readingOn && !helpOn && o.menu === undefined
+      ? (o.feedback ?? []).map(l => ({ l: `系统 · ${l}`, role: 'instruction' as const })) : []),
+  ]
   let rowAt = 0
   const rows = bodyRows.flatMap((one) => {
     const paragraphs = o.task === undefined ? [one.l] : one.l.split('\n')

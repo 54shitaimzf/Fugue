@@ -246,6 +246,8 @@ export interface Panel {
 
 /** 界面自己那几样（`T4`）：候选那一层与输入行。**纯视图状态**（授权 · 排队 · 处境一律落在账上）。 */
 export interface ViewInput {
+  /** Necessary feedback for the current operation; its original message stays in the reader. */
+  readonly feedback?: readonly string[] | undefined
   /** 任务记录的实际阅读键，供省略处就近显示。 */
   readonly taskReadKey?: string | undefined
   readonly menu?: MenuInput | undefined

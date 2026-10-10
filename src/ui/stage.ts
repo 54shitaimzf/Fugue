@@ -49,8 +49,9 @@ export interface StageDeps {
   readonly keymap?: (() => Keymap) | undefined
   readonly graphics?: (() => GraphicsTier) | undefined
   readonly readImage?: ((request: ImageRequest, signal: AbortSignal) => Promise<PixelImage | null>) | undefined
-  /** 写一行界面自己的话（面板上方，只写一次）——`tui.note`。 */
+  /** Record an original UI message; Console routes interactive records into the reader. */
   readonly note: (line: string) => void
+  readonly notes?: (() => readonly string[]) | undefined
   /**
    * 框下面那一行提示行（第二幕 ④ · 第三幕 ② 按处境分档）的原文——`ui/console.ts` 那一头给的
    * （键表与 stdin 是不是终端都只有那一头知道）。**每帧现问**：列宽变了它就跟着换
@@ -83,6 +84,8 @@ export interface StageDeps {
 
 /** 舞台的公面：`observe.ts` 那一头递进 openKeys / openTui / openTerm / openRun 的那几个口。 */
 export interface Stage {
+  /** External configuration problems use the same current-feedback and record path. */
+  notify(line: string): void
   /** 收起界面自己的预览请求；不写账。 */
   close(): void
   /** 尺寸变化时取消放不下的预览；账不重读。 */
@@ -124,6 +127,16 @@ export function openStage(deps: StageDeps): Stage {
   let keyHelpText = '', keyHelpCovered = false
   /** 输入行画不画：`stdin` 不是终端就不画（画一个收不到按键的提示符，比不画坏得多）。 */
   let showInput = false
+  let feedback: string[] = []
+  let runStartedAt = 0
+  let runRound: string | null = null
+  const startRun = (): void => { runStartedAt = deps.rows().length; runRound = taskOf(deps.rows()).round }
+  const note = (line: string, visible = true): void => {
+    if (closed) return
+    if (visible) feedback.push(line)
+    deps.note(line)
+  }
+
   /** 命令面那一张表（**分发处读的是同一份**：`cli/flags.ts` 的 `FLAGS_OF`）。 */
   const specs = specsOf(FLAGS_OF)
   /** 键表那一档的候选：提示行 · 帮助面板 · 这一屏，三处同一张表（`ui/keymap.ts`）。 */
@@ -229,7 +242,7 @@ export function openStage(deps: StageDeps): Stage {
     gateView = GATE_VIEW
     // **结论行进永久行**（第二幕 ⑧）：门口一开就说清这一批「打算开几件事 · 覆盖哪些 · 按什么验收」。
     // **一批只说一次**——上面那道 `key` 已经挡住重复（同一批再算几遍都不说）；换了一批才再说一条。
-    if (next !== null) deps.note(conclusionLineOf(next.conclusion))
+    if (next !== null) note(conclusionLineOf(next.conclusion), false)
     syncImage()
     deps.redraw()
   }
@@ -250,7 +263,15 @@ export function openStage(deps: StageDeps): Stage {
   }
 
   const readFaces = () => {
-    const faces = facesOf(readState), task = taskOf(deps.rows(), focusNow(), true)
+    const original = facesOf(readState), task = taskOf(deps.rows(), focusNow(), true)
+    const notes = deps.notes?.()
+    const faces = notes === undefined ? original : { ...original, detail: {
+      title: '详情',
+      lines: [...(original.detail?.lines ?? []),
+        ...(original.stream.lines.length === 0 ? [] : ['历史进展', ...original.stream.lines]),
+        ...(notes.length === 0 ? [] : ['命令记录', ...notes.flatMap(line => line.split('\n'))]),
+      ],
+    } }
     return task.round === null ? faces : { ...faces, stream: { title: '当前任务记录', lines: [
       ...task.rows.flatMap(row => row.text.split('\n')),
       ...(task.plan.length === 0 ? [] : ['完整计划', ...task.plan.map(p => `${p.status === 'completed' ? '[x]' : p.status === 'in_progress' ? '>' : '[ ]'} ${p.text}`)]),
@@ -342,10 +363,10 @@ export function openStage(deps: StageDeps): Stage {
     if (deps.run()?.running === true) {
       if (!leaving) {
         leaving = true
-        deps.note(`任务仍在运行；结束后退出。再按 ${keyOf('quit')} 立即关闭界面，任务可能继续运行。`)
+        note(`任务仍在运行；结束后退出。再按 ${keyOf('quit')} 立即关闭界面，任务可能继续运行。`)
         return
       }
-      deps.note(`正在关闭界面，任务可能继续运行。${WORDS.runWritebackGuide}`)
+      note(`正在关闭界面，任务可能继续运行。${WORDS.runWritebackGuide}`)
     }
     deps.abort()
   }
@@ -356,8 +377,8 @@ export function openStage(deps: StageDeps): Stage {
     // 起下一条 · `Esc` 丢掉）。不这么定的话，`Esc` 链第三级（丢排队草稿）**永远够不着**——
     // 一趟被打断、`onDone` 立刻起下一条，队列那一栏就又回到"跑着"了。
     advanceQueue = false
-    deps.note(requested ? `已请求停止执行，正在等待结束。${WORDS.runWritebackGuide}` : '没有正在运行的任务。')
-    if (queue.items.length > 0) deps.note(`排队任务暂停；按 ${keyOf('submit')} 开始下一条。`)
+    note(requested ? `已请求停止执行，正在等待结束。${WORDS.runWritebackGuide}` : '没有正在运行的任务。')
+    if (queue.items.length > 0) note(`排队任务暂停；按 ${keyOf('submit')} 开始下一条。`, false)
     settle()
   }
   /**
@@ -374,10 +395,11 @@ export function openStage(deps: StageDeps): Stage {
     const next = taken.next
     const cut = go.argvOf(next.line, next.mode)
     if (cut.why !== null) {
-      deps.note(`排队任务无法执行：${cut.why}。已跳过该项，其余排队任务保留。`)
+      note(`排队任务无法执行：${cut.why}。已跳过该项，其余排队任务保留。`)
       return false
     }
-    deps.note(`起了排队里的下一条：\`${next.line}\`（${cut.argv.join(' ')}）`)
+    note(`起了排队里的下一条：\`${next.line}\`（${cut.argv.join(' ')}）`, false)
+    startRun()
     go.press(next.line, next.mode)
     return true
   }
@@ -389,7 +411,7 @@ export function openStage(deps: StageDeps): Stage {
   const takeGate = (option: GateOption): void => {
     const line = lineOf(option)
     if (line === '') {
-      deps.note(
+      note(
         '本次选择没有启动执行。计划仍等你确认；可补充要求再讨论。',
       )
       settle()
@@ -397,23 +419,31 @@ export function openStage(deps: StageDeps): Stage {
     }
     const go = deps.run()
     if (go === null || go.running) {
-      deps.note(go === null ? '执行入口不可用，计划仍等你确认。' : '当前任务仍在运行，这批计划尚未开始执行。')
+      note(go === null ? '执行入口不可用，计划仍等你确认。' : '当前任务仍在运行，这批计划尚未开始执行。')
       settle()
       return
     }
+    startRun()
     const started = go.press(line)
     if (started) { gateHidden = true; gateView = { ...gateView, armed: null }; restoreDraft() }
-    deps.note(started ? `已确认执行这批计划（${gate?.cards.length ?? 0} 项任务）` : '未能启动执行，计划仍等你确认。')
+    note(started ? `已确认执行这批计划（${gate?.cards.length ?? 0} 项任务）` : '未能启动执行，计划仍等你确认。', !started)
     settle()
   }
   /** 一趟收尾那一下（原 `openRun` 的 `onDone`——搬进来之后 observe 那头只剩一行接线）。 */
   const onRunDone = (r: RunOutcome): void => {
     const go = deps.run()
+    const current = taskOf(deps.rows())
+    // Only a fresh verification failure from this launch can replace generic exit feedback.
+    // An old failure, another round, a signal or a spawn failure still needs its own message.
+    const reported = r.code === 1 && deps.rows().slice(runStartedAt).some(row =>
+      row.e.t === 'round/state' && row.e.round === current.round && row.e.round === runRound
+      && row.e.from === 'Verifying' && row.e.to === 'Working')
     if (r.why !== null) {
-      deps.note(`执行未能启动：${r.why}。检查运行环境与配置后重试。`)
-      if (go !== null && go.last.length > 0) deps.note(`启动命令：${go.last.join(' ')}`)
-    } else if (r.code !== 0) deps.note(
+      note(`执行未能启动：${r.why}。检查运行环境与配置后重试。`)
+      if (go !== null && go.last.length > 0) note(`启动命令：${go.last.join(' ')}`)
+    } else if (r.code !== 0) note(
       (r.code === null ? '执行因信号结束。' : `执行失败（退出码 ${r.code}）。`) + WORDS.runWritebackGuide,
+      !reported,
     )
     if (leaving) {
       deps.abort()
@@ -515,6 +545,7 @@ export function openStage(deps: StageDeps): Stage {
           })()
     return {
       ...hintPart,
+      ...(feedback.length === 0 ? {} : { feedback }),
       ...navPart,
       ...(() => {
         if (panel === null) return {}
@@ -541,6 +572,10 @@ export function openStage(deps: StageDeps): Stage {
     return Math.max(1, Math.floor(frameBudgetOf(height, view().bottom?.keep ?? 0).rows / 2))
   }
   const onAdvance = (rows: readonly StatusRow[]): void => {
+    if (feedback.length > 0 && rows.some(r => r.e.t === 'round/state' || r.e.t === 'round/intent')) {
+      feedback = []
+      deps.redraw()
+    }
     // 树（`T8`）：节点从账推出来，账一动就跟上——**只在集合真的变了的时候重画**（跟随那一趟每条
     // 行都要走这里，白画一次就是白烧一帧）。
     const nodes = navNodesOf(deps.rows())
@@ -559,6 +594,7 @@ export function openStage(deps: StageDeps): Stage {
     if (rows.some((r) => r.e.t.startsWith('round/') || r.e.t.startsWith('holder/'))) void refreshGate()
   }
   const onAction = (d: Decoded): void => {
+    feedback = []
     // 当前按键的全文只读；返回同一筛选与选中项，背后的计划/阅读坐标原样。
     if (keyHelpTop !== null && (d.action === 'approve' || d.action === 'reject' || d.action === 'go' || d.action === 'submit')) return
     if (keyHelpTop !== null && d.action === 'help') { keyHelpCovered = true; settle(); return }
@@ -644,7 +680,7 @@ export function openStage(deps: StageDeps): Stage {
           gateView = { ...gateView, armed: null }
           gateHidden = true
           restoreDraft()
-          deps.note('确认已收起；这批计划仍等你确认')
+          note('确认已收起；这批计划仍等你确认', false)
           settle()
           return
         }
@@ -665,7 +701,7 @@ export function openStage(deps: StageDeps): Stage {
           const before = queue.items.length
           queue = dropLastOf(queue)
           const done = queue.items.length === 0
-          deps.note(
+          note(
             `丢掉了排队里最后那一条（${before} → ${queue.items.length} 条）` +
               (done ? '；队列空了' : `；下一条：${queue.items[0]?.line ?? ''}`),
           )
@@ -694,14 +730,14 @@ export function openStage(deps: StageDeps): Stage {
           return
         }
         armedAt = deps.now()
-        deps.note(`再按一次 ${keyOf('interrupt')} 就退出（3 秒内）`)
+        note(`再按一次 ${keyOf('interrupt')} 就退出（3 秒内）`)
         return
       }
       // `Ctrl-D`/`q`/`Q`：**只在输入行空着的时候退**（`quitStepOf`）；行里有字时什么都不做——说
       // 一句为什么，不然按下去看着像没反应（这一句只有 `Ctrl-D` 打得出：`q` 行里有字时让位成人
       // 打的字，上面 ① 那一档就把它收走了）。
       if (quitStepOf({ line: ed.draft.text }) === 'none') {
-        deps.note(`输入行里还有字：先清空（${keyOf('cancel')}）或提交，再按 ${keyOf('quit')} 退出。`)
+        note(`输入行里还有字：先清空（${keyOf('cancel')}）或提交，再按 ${keyOf('quit')} 退出。`)
         settle()
         return
       }
@@ -723,7 +759,8 @@ export function openStage(deps: StageDeps): Stage {
       }
       const go = deps.run()
       if (go === null || go.running) return
-      deps.note(`按了 g：起一次 \`${GO_LINE}\`（${go.argvOf(GO_LINE).argv.join(' ')}）`)
+      note(`按了 g：起一次 \`${GO_LINE}\`（${go.argvOf(GO_LINE).argv.join(' ')}）`, false)
+      startRun()
       go.press(GO_LINE)
       return
     }
@@ -879,18 +916,19 @@ export function openStage(deps: StageDeps): Stage {
         const waiting = go === null ? '执行入口不可用。' : go.running && advanceQueue ? '当前任务结束后逐条执行。' : '排队任务暂停。'
         const action = go?.running === true ? `按 ${keyOf('cancel')} 请求停止。` :
           (go === null ? '' : `按 ${keyOf('submit')} 开始下一条，`) + `按 ${keyOf('cancel')} 取消最后一条。`
-        deps.note(`已排队 ${queue.items.length} 条。${waiting}${action}`)
+        note(`已排队 ${queue.items.length} 条。${waiting}${action}`, false)
         settle()
         return
       }
       const cut = go.argvOf(line, lineMode)
       if (cut.why !== null) {
-        deps.note(`这一行起不了：${cut.why}`)
+        note(`这一行起不了：${cut.why}`)
         settle()
         return
       }
-      deps.note(`发了这一行：\`${line}\`（${cut.argv.join(' ')}）`)
+      note(`发了这一行：\`${line}\`（${cut.argv.join(' ')}）`, false)
       advanceQueue = true
+      startRun()
       go.press(line, lineMode)
       settle()
       return
@@ -941,7 +979,7 @@ export function openStage(deps: StageDeps): Stage {
       if (at !== null) {
         navAt = at
         refreshRead()
-        deps.note(`切到 ${navNodes[at]?.label ?? ''}（${at + 1}/${navNodes.length}）`)
+        note(`切到 ${navNodes[at]?.label ?? ''}（${at + 1}/${navNodes.length}）`, false)
         settle()
         return
       }
@@ -956,6 +994,7 @@ export function openStage(deps: StageDeps): Stage {
     settle()
   }
   return {
+    notify(line: string): void { note(line); if (!closed) deps.redraw() },
     onAction,
     view,
     onAdvance,

@@ -259,6 +259,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       : tiers.graphics === 'kitty' && (pixelProbe?.cell == null || (flags.has('full') && alternateProbe?.owned !== true)) ? 'none' : tiers.graphics,
     readImage: (request, signal) => imageSource?.read(request, signal) ?? Promise.resolve(null),
     note: (line) => ui.tui?.note(line),
+    notes: () => ui.tui?.notes ?? [],
     redraw: () => ui.tui?.redraw(),
     // 框下面那一行（第二幕 ④ · 第三幕 ② 按处境分档）：stdin 不是终端时它就是那一句"收不到按键"
     // ——按屏幕宽度取前几条的那一手在 `hintLimitOf`（整行 438 列会被终端折成五行）；哪一档由舞台
@@ -338,6 +339,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     term,
     emit: emitLine,
     mode,
+    interactive: mode === 'panel' && process.stdin.isTTY === true && typeof process.stdin.setRawMode === 'function',
     view: stage.view,
     // `--tail N`（U15）：首趟只写尾部 N 条——跳过的前几条按「已写出去」记，前缀检查照走。
     reveal: tail,
@@ -398,7 +400,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     // **stdin 不是终端就不印它**（`stdout` 是终端而 `stdin` 不是：面板照画，可按键收不到）——
     // 印一行"按 g 放行"而按下去没反应，是这一档最坏的一种体验。
     stage.setRaw(keys.raw)
-    for (const p of km.problems) tui.note(`键位 ${p.action} 配不了（${JSON.stringify(p.key)}）：${p.why}`)
+    for (const p of km.problems) stage.notify(`键位 ${p.action} 配不了（${JSON.stringify(p.key)}）：${p.why}`)
     // **提示行从前在这里写了第一遍**（`tui.note` 一行永久行）。第二幕 ④ 之后它常驻框下面那一行
     // （`ui/stage.ts` 的 `view()` 每帧现问一次 `deps.hint`），这一处**一个字都不写**——写下去那一行
     // 就留在终端历史里，而它的内容是跟着列宽变的。

@@ -136,9 +136,9 @@ for(const lateKeys of [false,true])for(const scenario of ['success','failure'])t
   const copied=join(root,'.fugue/startup-console.ts')
   let source=readFileSync(module,'utf8').replace(/\bfrom\s+(['"])(\.[^'"]+)\1/g,(_all,quote,relative)=>'from '+quote+new URL(relative,new URL('./console.ts',import.meta.url)).href+quote)
   const mark='km = keymapOf(raw ?? {})';assert.equal(source.split(mark).length,2)
-  source=source.replace(mark,mark+'\n      await (globalThis as any).fugueBeforeKeys()')
+  source=source.replace(mark,mark+'\n      await (globalThis as any).fugueBeforeKeys(ui.tui)')
   writeFileSync(copied,source);module=copied
-  const hook="globalThis.fugueBeforeKeys=async()=>{await until(()=>visible().includes('这一轮打算开 3 个任务'),'gate snapshot precedes keys');await wait(100);globalThis.fugueBeforeKeysResult={raw,hint:visible().includes('当前输入不可用')}}\n"
+  const hook="globalThis.fugueBeforeKeys=async(tui)=>{await until(()=>tui.notes.some(line=>line.includes('这一轮打算开 3 个任务')),'gate record precedes keys');await wait(100);globalThis.fugueBeforeKeysResult={raw,hint:visible().includes('当前输入不可用')}}\n"
   const lateActor=actor
    .replace("const cli=join(dirname(module),'../cli/fugue.ts')",'const cli='+JSON.stringify(fileURLToPath(new URL('../cli/fugue.ts',import.meta.url))))
    .replace("pathToFileURL(join(dirname(module),'../log/log.ts'))",'pathToFileURL('+JSON.stringify(fileURLToPath(new URL('../log/log.ts',import.meta.url)))+')')
@@ -151,4 +151,27 @@ for(const lateKeys of [false,true])for(const scenario of ['success','failure'])t
  assert.equal(r.status,0,r.stderr||String(r.error));const v=JSON.parse(r.stdout)
  assert.equal(v.contracts,3);assert.equal(v.approvals,1);assert.deepEqual(v.kinds,['investigate','implement','implement']);assert.equal(v.idleSamples.length,4);assert.ok(v.idleSamples.every(s=>s.bytes===0));assert.ok(v.rawRestored&&v.childrenClosed)
  console.log('Console flow:'+scenario+(lateKeys?';gate-before-keys':'' )+';actual serve/go/work;held3 mixed;single approval;read clears arm;idle4 bytes0;outcome on main;project '+(scenario==='success'?'matches accepted HEAD':'bytes/head unchanged')+';raw/children restored')
+})
+
+test('actual Console without a raw-input capability keeps the readable permanent stream and never hides records behind unavailable controls',()=>{
+ const root=tmpDir('fugue-console-readonly-'),file=join(root,'.fugue/actor.mjs');mkdirSync(join(root,'.fugue'))
+ let s=actor
+ const raw="process.stdin.setRawMode=n=>{raw=n;return process.stdin}";assert.equal(s.split(raw).length,2);s=s.replace(raw,"delete process.stdin.setRawMode")
+ const start="await until(()=>visible().includes('待确认 3 项任务')&&raw,'mixed gate arrives through actual serve')"
+ assert.equal(s.split(start).length,2)
+ s=s.replace(start,`
+await until(()=>visible().includes('进展：准备计划')&&visible().includes('当前输入不可用'),'read-only Console keeps permanent state visible')
+await until(()=>visible().includes('这一轮打算开 3 个任务'),'read-only conclusion stays in permanent stream')
+assert.equal(raw,false);assert.equal(paste,false);assert.equal(count('round/approve'),0)
+process.emit('SIGINT');assert.equal(await done,0)
+assert.equal(process._getActiveHandles().filter(h=>h.constructor.name==='ChildProcess'&&h.exitCode===null).length,0)
+assert.deepEqual(signals.map(s=>process.listenerCount(s)),before)
+for(const line of original)assert.equal(text().filter(s=>s===line).length,1)
+savedWrite(JSON.stringify({raw:false,approval:0,permanent:true,childrenClosed:true})+'\\n');process.stdin.pause()
+if(false){
+`)
+ s+='}\n';writeFileSync(file,s)
+ const r=spawnSync(process.execPath,[file,fileURLToPath(new URL('./console.ts',import.meta.url)),root,'success'],{encoding:'utf8',env:{...process.env,TERM:'xterm',FUGUE_SYSTEM_DIR:join(root,'system')},timeout:40000})
+ assert.equal(r.status,0,r.stderr||String(r.error));assert.deepEqual(JSON.parse(r.stdout),{raw:false,approval:0,permanent:true,childrenClosed:true})
+ console.log('readonly Console:stdout TTY/stdin self-reported TTY/no setRawMode;permanent progress and conclusion visible;approval0;raw/paste/serve/signals restored')
 })
