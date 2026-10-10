@@ -457,7 +457,10 @@ export function openStage(deps: StageDeps): Stage {
     // **阅读面压过门口**（判据在 `hintWhenOf` 那一头）：门口那三个键它自己在屏幕上印着。
     const when: HintWhen = keyHelpTop !== null && !keyHelpCovered ? 'plan' : panel !== null ? 'menu' : planTop !== null ? 'plan' : reading !== null ? 'read' : gateOn ? 'gate' :
       deps.run()?.running === true ? 'run' : ed.search !== null ? 'search' : ed.draft.text !== '' ? 'typing' : queue.items.length > 0 ? 'queue' : gate !== null && gateHidden ? 'pending' : 'input'
-    const hintPart = { hint: deps.hint(when) }
+    // 省略处只许诺打开任务记录的键；确认、菜单与只读层各自承担当前阅读提示。
+    const taskReadKey = showInput && !gateOn && panel === null && reading === null && planTop === null && keyHelpTop === null
+      ? (deps.keymap?.() ?? KEYMAP).rows.find(b => b.action === 'read')?.keys[0] : undefined
+    const hintPart = { hint: deps.hint(when), ...(taskReadKey === undefined ? {} : { taskReadKey }) }
     if (!showInput) return hintPart
     const frame = gateDraft !== null && panel === null ? { rows: [''], caret: { row: 0, col: 0 } } : inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
     if (keyHelpTop !== null && !keyHelpCovered) return { hint: deps.hint('plan'),

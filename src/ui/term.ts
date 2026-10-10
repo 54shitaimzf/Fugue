@@ -245,6 +245,8 @@ export interface Panel {
 
 /** 界面自己那几样（`T4`）：候选那一层与输入行。**纯视图状态**（授权 · 排队 · 处境一律落在账上）。 */
 export interface ViewInput {
+  /** 任务记录的实际阅读键，供省略处就近显示。 */
+  readonly taskReadKey?: string | undefined
   readonly menu?: MenuInput | undefined
   /**
    * 面板最下面那一栏（`T6` 的门口那一块 · `T7` 的排队行）：**它是面板那一栏的最下面**，不是输入行

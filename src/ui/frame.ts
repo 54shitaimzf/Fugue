@@ -144,6 +144,8 @@ export interface ConversationRow {
 }
 
 export interface FrameInput {
+  /** 当前配置的任务记录阅读键；舞台只在该动作可用时提供。 */
+  readonly taskReadKey?: string | undefined
   readonly task?: TaskFace | undefined
   /** UI 从事件通道保留的最后一条状态转移；不加进机器快照。 */
   readonly transition?: RoundTransition | undefined
@@ -745,7 +747,15 @@ export function frameOf(o: FrameInput): Frame {
     ...navBody.map((one) => ({ l: one.l, role: one.hit ? ('hit' as const) : ('body' as const) })),
     ...content.map((x) => ({ l: x.l, role: x.role })),
   ]
-  if (dropped > 0) shown.push(o.task === undefined ? { l: `${glyphs().mark} 还有 ${dropped} 行没印`, role: 'body' } : { l: `${glyphs().mark} ${dropped} 行未展开 · 完整记录可按需阅读`, role: 'system' })
+  if (dropped > 0) {
+    const omission = `${glyphs().mark} ${dropped} 行未展开`
+    const key = taskMatches && view === 'chat' && o.menu === undefined && typeof o.taskReadKey === 'string'
+      && o.taskReadKey.trim() !== '' && !/[\x00-\x1f\x7f-\x9f]/.test(o.taskReadKey) ? o.taskReadKey : ''
+    const full = `${omission} · ${key} 看全`, compact = `${key} 看全 · ${dropped} 行`
+    const notice = key !== '' && widthOf(compact) <= inner
+      ? (widthOf(full) <= inner ? full : compact) : `${omission} · 完整记录可按需阅读`
+    shown.push(o.task === undefined ? { l: `${glyphs().mark} 还有 ${dropped} 行没印`, role: 'body' } : { l: notice, role: 'system' })
+  }
   for (const one of readBody) shown.push({ l: one, role: 'read' })
   // **框恒填满这一屏**（第二幕 ⑦ 收尾）：`ui/layout.ts` 那本行账里「内容 6 行」是个**定数**
   // （框恒 10 行），而这一份从前只是"内容够长时看起来填满了"——账还小的时候（一两格 agent）
