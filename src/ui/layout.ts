@@ -59,7 +59,7 @@ export function airOf(width: number): number {
 }
 
 /** 正文与账尾的容量共用这份分配；阅读翻页使用同一口径。 */
-export function frameBudgetOf(height: number, keep = 0): { readonly withFooter: boolean; readonly rows: number } {
-  const withFooter = keep + 1 <= height - FRAME_EDGE_ROWS - RULE_ROWS - TAIL_ROWS
+export function frameBudgetOf(height: number, keep = 0, showFooter = true): { readonly withFooter: boolean; readonly rows: number } {
+  const withFooter = showFooter && keep + 1 <= height - FRAME_EDGE_ROWS - RULE_ROWS - TAIL_ROWS
   return { withFooter, rows: height - FRAME_EDGE_ROWS - (withFooter ? RULE_ROWS + TAIL_ROWS : 0) }
 }

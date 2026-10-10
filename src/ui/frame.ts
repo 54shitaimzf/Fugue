@@ -590,10 +590,16 @@ export function frameOf(o: FrameInput): Frame {
     return paragraphs.flatMap((p, i) => wrap(p, Math.max(1, inner - (i === 0 ? 0 : 2))).map(x => ({ l: i === 0 ? x : `  ${x}`, role: one.role })))
   })
 
-  // 账尾那条状态条：**一行**，超出就从右边截（`clip` 留 `…`，说了它被截过）。
-  const footer = clip(helpOn ? `${Math.max(0, Math.min((o.menu?.rows.length ?? 1) - 1, o.menu?.sel ?? 0)) + 1}/${o.menu!.rows.length} · 筛选` : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
-  // 当前操作与正文共用实际框体的容量，账尾装不下时让位。
-  const allocation = frameBudgetOf(height, helpOn ? 0 : (o.bottom?.keep ?? 0))
+  // 当前任务正文已承担状态说明，主面不再重复阶段。任务投影未知时保留旧页脚地板；
+  // 阅读位置、帮助筛选与二级视图的页脚各有当前用途，仍按原容量显示。
+  const first = o.task?.rows[0]
+  const taskStatus = !readingOn && !helpOn && view === 'chat' && o.task !== undefined && o.task.round !== null
+    && o.task.state !== null && ((o.task.round === o.snapshot.current && o.task.state === o.snapshot.rounds.find(r => r.round === o.snapshot.current)?.state)
+      || (o.focus !== undefined && o.focus !== null && o.snapshot.current === null))
+    && first !== undefined && first.text !== '' && ['system', 'waiting', 'ok', 'refuse'].includes(first.role)
+  const footer = taskStatus ? '' : clip(helpOn ? `${Math.max(0, Math.min((o.menu?.rows.length ?? 1) - 1, o.menu?.sel ?? 0)) + 1}/${o.menu!.rows.length} · 筛选` : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
+  // 不需要页脚时两行都交给正文与当前操作，框体高度保持。
+  const allocation = frameBudgetOf(height, helpOn ? 0 : (o.bottom?.keep ?? 0), !taskStatus)
   const withFooter = allocation.withFooter
   let budget = allocation.rows
 
