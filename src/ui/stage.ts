@@ -901,6 +901,7 @@ export function openStage(deps: StageDeps): Stage {
         const rows = rowsOf(panel.source)
         const picked = rows[clampSel(rows.length, panel.sel)]
         const next = picked === undefined ? null : acceptOf(ed.draft.text, panel.source, picked)
+        const returnToInput = panel.source !== 'keys' && (next !== null || gateDraft !== null)
         if (panel.source !== 'keys' && gateDraft !== null) {
           // 普通候选回到可见输入；先恢复原编辑器，让原草稿与光标留在同一撤销栈。
           const text = next ?? ed.draft.text
@@ -910,6 +911,8 @@ export function openStage(deps: StageDeps): Stage {
         } else if (next !== null) ed = applyIntent(ed, { t: 'setLine', text: next })
         // 按键筛选只用于阅读；返回待确认区域时不把它当成要提交的新草稿。
         if (panel.source === 'keys' && gateDraft !== null) ed = emptyEditor()
+        // 选择填回输入后收起阅读层；取消、帮助和普通无匹配查询仍回原阅读位置。
+        if (returnToInput) { planTop = null; reading = null }
         panel = null
         settle()
         return
