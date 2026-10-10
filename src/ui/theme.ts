@@ -140,14 +140,17 @@ export function backgroundOf(colorFgBg?: string): Background {
   return last === '15' || last === '7' ? 'light' : last === '0' || last === '8' ? 'dark' : 'default'
 }
 export function theme256(background: Background = 'default'): Readonly<Partial<Record<LineRole, string>>> {
-  if (background === 'default') return themeFrom(SLOT_256)
+  // 背景不明时等待、系统事实与当前操作提示使用宿主前景；不猜一副配色。
+  if (background === 'default') return { ...themeFrom(SLOT_256),
+    waiting: '\x1b[1m', system: '\x1b[39m', hint: '\x1b[39m',
+  }
   const light = background === 'light'
   const result = themeFrom({ ...SLOT_256,
     dim: light ? '\x1b[38;5;239m' : '\x1b[38;5;245m',
-    waiting: light ? '\x1b[38;5;130m' : SLOT_256.waiting,
+    waiting: light ? '\x1b[1;38;5;94m' : '\x1b[1;38;5;214m',
     readHeading: light ? '\x1b[1;38;5;25m' : '\x1b[1;38;5;111m',
   })
-  return { ...result, user: light ? '\x1b[1;38;5;25m' : '\x1b[1;38;5;111;48;5;235m' }
+  return { ...result, system: light ? '\x1b[38;5;238m' : '\x1b[38;5;248m', user: light ? '\x1b[1;38;5;25m' : '\x1b[1;38;5;111;48;5;235m' }
 }
 
 /**

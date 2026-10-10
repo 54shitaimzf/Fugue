@@ -85,9 +85,10 @@ test('② 八格从 SLOT_MEANING 推：色表逐格对齐 · 角色都落在格�
     .filter((r) => SLOT_256[ROLE_SLOT[r]] !== '')
     .sort()
   assert.deepEqual((Object.keys(theme256()) as readonly LineRole[]).sort(), want, 'theme256 恰好覆盖该覆盖的角色')
-  // 256 色档里凡有值的角色都在八格的某一格上，取到的 SGR 与那一格逐字节相同。
+  // 背景不明的三个关键角色使用宿主前景；其余角色仍逐字节取语义色位。
   for (const [role, sgr] of Object.entries(theme256())) {
-    assert.equal(sgr, SLOT_256[ROLE_SLOT[role as LineRole]], `${role} 取的就是它那一格`)
+    const critical: Partial<Record<LineRole, string>> = { waiting: '\x1b[1m', system: '\x1b[39m', hint: '\x1b[39m' }
+    assert.equal(sgr, critical[role as LineRole] ?? SLOT_256[ROLE_SLOT[role as LineRole]], `${role} 遵循当前背景与角色的样式`)
   }
   console.log(
     `② 读数：八格 ${SLOTS.map((s) => `${s}=${SLOT_MEANING[s]}`).join(' · ')}；` +

@@ -597,9 +597,10 @@ test('⑭ 门口要按的那一行（第三幕 ①）：给了坐标就报 waiti
   const short = frameOf({ ...base, height: 5, bottom: { rows, keep: 2, waitingAt: 2 } })
   assert.equal(short.roles[at(short, '放行一次(y)')], 'waiting', '矮屏上那一行仍是等待那一格')
   assert.equal(short.roles[at(short, '写路径')], undefined, '预览那一行该先让位（它不在了）')
-  // 那一格在第 2 级上真的是等待黄，而且是从表推的（不手抄一个 SGR）。
+  // 等待角色保持；背景未知用字重，已知深底用等待黄，语义基色保持。
   assert.equal(ROLE_SLOT.waiting, 'waiting', '`waiting` 角色落在等待那一格')
-  assert.equal(theme256().waiting, SLOT_256.waiting, '第 2 级那一份从 `SLOT_256` 推')
+  assert.equal(theme256().waiting, '\x1b[1m', '背景未知用宿主前景和字重，不猜等待黄')
+  assert.equal(theme256('dark').waiting, '\x1b[1;38;5;214m', '已知深底用等待黄并加粗')
   assert.equal(SLOT_256.waiting, '\x1b[38;5;214m', '等待黄是 214（第三幕 ① 的取值依据在 `theme.ts`）')
   console.log(
     `⑭ 读数：门口 ${rows.length} 行里末一行报 waiting（第 2 级 ${JSON.stringify(SLOT_256.waiting)}）· ` +
