@@ -61,6 +61,7 @@ function rig(width:number,height:number,queued=false){
  return {stage,vt,presses,notes,queueNames,type,draw,get frames(){return frames},get idles(){return idles},showGate:async()=>{pending=face;await stage.refreshGate()},stop:()=>{running=false},close:()=>{stage.close();term.close();assert.ok(vt.lines.every(s=>s===''),'whole fixed owned rectangle closes blank')}}
 }
 const flat=(s:readonly string[])=>s.map(x=>x.trim()).join('')
+const helpTitle=(f:ReturnType<ReturnType<typeof openSession>['panel']>)=>{const at=f.rows.findIndex(s=>s.trim()!=='');assert.ok(at>=0);assert.equal(f.roles![at],'readHeading','the first visible help heading keeps its actual role');return f.rows[at]!}
 test('trusted actual help retains its own foreground, empty-match count and body even over a reader or queue; unknown and ordinary menus keep exact old frames',()=>{
  let cases=0,frames=0
  try{for(const glyph of ['ascii','box','rich'] as const){setGlyphTier(glyph)
@@ -94,10 +95,10 @@ test('actual help filtering over full-plan reading keeps current identity and fr
    r.stage.onAction({action:'historyNewer'});r.stage.onAction({action:'approve',key:'y'});assert.deepEqual(r.presses,[])
    r.stage.onAction({action:'read'});r.stage.onAction({action:'historyNewer'});r.draw();const read=r.stage.view().read!,input=r.stage.view().input
    assert.ok(read.heading?.startsWith('计划全文'));assert.ok(read.top>0)
-   r.stage.onAction({action:'help'});let f=r.draw();assert.ok(f.rows[0]!.includes('按键帮助'));assert.ok(!f.roles!.includes('read'));assert.ok(!f.roles!.includes('waiting'));assert.ok(r.stage.view().hint!.includes('Alt-E'))
+   r.stage.onAction({action:'help'});let f=r.draw();assert.ok(helpTitle(f).includes('按键帮助'));assert.ok(!f.roles!.includes('read'));assert.ok(!f.roles!.includes('waiting'));assert.ok(r.stage.view().hint!.includes('Alt-E'))
    r.stage.onAction({action:'historyNewer'});r.draw();assert.deepEqual(r.stage.view().read,read,'help selection never advances the covered plan')
    r.type('ZZZ');assert.equal(r.stage.view().menu!.rows.length,0);f=r.draw()
-   assert.ok(f.rows[0]!.includes('按键帮助'),'empty help query must not revive the underlying plan title')
+   assert.ok(helpTitle(f).includes('按键帮助'),'empty help query must not revive the underlying plan title')
    assert.ok(f.rows.some(s=>s.includes('0/0')),'empty help results have a real zero count')
    assert.ok(!f.roles!.includes('read'));assert.ok(!flat(f.rows).includes('计划全文'));assert.deepEqual(r.stage.view().read,read)
    r.stage.onAction({action:'home'});r.draw();assert.deepEqual(r.stage.view().read,read)

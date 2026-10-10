@@ -833,7 +833,7 @@ export function frameOf(o: FrameInput): Frame {
   for (const one of readBody) shown.push({ l: one, role: 'read' })
   // 框恒填满实际分配高度；留白只使用剩余行，不挤掉正文、阅读或操作。
   // 输入与确认位置固定，避免短内容让框底随流式汇报上下移动。
-  // 当前按键从正文顶部展开；列表缺省的底部摆法逐字节保留。
+  // 当前按键独占正文；稀疏内容与筛选输入成组，列表缺省布局保持。
   if (helpOn) {
     menuBody.forEach((l, i) => shown.push({ l, role: i === 0 ? 'overlay' : 'overlayBody' }))
     menuBody.length = 0
@@ -844,14 +844,16 @@ export function frameOf(o: FrameInput): Frame {
   const nearby = o.operationArea === true && !readingOn && dropped === 0 && o.menu === undefined && view === 'chat' && (taskStatus || emptyContext)
     && (o.bottom === undefined || operationStatus)
   const spare = Math.max(0, height - fixed)
+  // 真实交互帮助的余量留在框外；不限制正文容量，输入仍在原位置。
+  const helpNearby = o.operationArea === true && o.menu?.help === true && spare > 0
   // 有足够的现成留白时，任务从顶部读，固定操作留在下方；两区只围实际内容。
   // 两条框线与至少一行框外留白都从余量取，短帧或未知上下文保留原布局。
   const separate = nearby && spare >= 3
   const contentRows = shown.length
   const lowerRows = gateBody.length + gateNotice.length
   const gap = nearby && gateBody.length + gateNotice.length > 0 ? Math.min(1, spare) : 0
-  if (nearby && !separate) shown.unshift(...Array.from({ length: spare - gap }, () => ({ l: '', role: 'body' as const })))
-  for (let i = 0; i < (nearby && !separate ? gap : spare); i += 1) shown.push({ l: '', role: 'body' })
+  if (helpNearby || (nearby && !separate)) shown.unshift(...Array.from({ length: helpNearby ? spare : spare - gap }, () => ({ l: '', role: 'body' as const })))
+  for (let i = 0; i < (helpNearby ? 0 : nearby && !separate ? gap : spare); i += 1) shown.push({ l: '', role: 'body' })
   // 确认与对话用已有的最后一行留白分隔；满容量时不另占正文或操作行。
   if (operationStatus && fixed < height) shown[shown.length - 1] = { l: glyphs().div.repeat(inner), role: 'border' }
   for (const one of menuBody) shown.push({ l: one, role: 'overlay' })
@@ -902,12 +904,12 @@ export function frameOf(o: FrameInput): Frame {
   lines.push(`${g.bl}${g.h.repeat(edge)}${g.br}`)
   roles.push('border')
   // 标题紧邻正文；余量不足时沿用相邻操作区的紧凑摆法。
-  const headerAt = nearby && !separate ? spare - gap : 0
+  const headerAt = helpNearby ? spare : nearby && !separate ? spare - gap : 0
   if (headerAt > 0) {
     lines.fill(' '.repeat(width), 0, headerAt)
     roles.fill('body', 0, headerAt)
     lines[headerAt] = `${g.tl}${bar(edge, head)}${g.tr}`
-    roles[headerAt] = 'border'
+    roles[headerAt] = helpOn ? 'readHeading' : 'border'
   }
   const contentEnd = 1 + contentRows
   const lowerHead = lowerRows > 0 ? height - (withFooter ? 2 : 0) - lowerRows - 2 : withFooter ? height - 3 : height

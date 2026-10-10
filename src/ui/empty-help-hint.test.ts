@@ -61,6 +61,7 @@ function rig(width:number,height:number,queued=false){
  return {stage,vt,presses,notes,queueNames,km,type,draw,get frames(){return frames},get idles(){return idles},showGate:async()=>{pending=face;await stage.refreshGate()},stop:()=>{running=false},close:()=>{stage.close();term.close();assert.ok(vt.lines.every(s=>s===''),'whole fixed owned rectangle closes blank')}}
 }
 const flat=(s:readonly string[])=>s.map(x=>x.trim()).join('')
+const helpTitle=(f:ReturnType<ReturnType<typeof openSession>['panel']>)=>{const at=f.rows.findIndex(s=>s.trim()!=='');assert.ok(at>=0);assert.equal(f.roles![at],'readHeading','the first visible help heading keeps its actual role');return f.rows[at]!}
 
 test('empty-help hints name only current return and line editing, retain configured physical keys, and use existing exact width floors',()=>{
  let cases=0
@@ -98,7 +99,7 @@ test('actual empty help changes only its current hint through clear/undo, multil
    assert.equal(r.stage.view().menu!.rows.length,0)
    assert.ok(!/下一项|上一项|选择|看全/.test(r.stage.view().hint!),'unavailable actions do not occupy the current hint')
    assert.equal(r.stage.view().hint,hintLineForWidth(width,r.km,'helpEmpty'))
-   const f=r.draw();assert.ok(f.rows[0]!.includes('按键帮助'));assert.ok(!f.roles!.includes('read'))
+   const f=r.draw();assert.ok(helpTitle(f).includes('按键帮助'));assert.ok(!f.roles!.includes('read'))
    if(height>=12)assert.ok(r.vt.lines.includes(r.stage.view().hint!.trimEnd()),'current complete hint is physically visible whenever the existing operation capacity admits it')
   }
   try{
