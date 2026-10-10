@@ -13,7 +13,7 @@
 //   · 新到的永久行**从面板顶写下去**（按列宽拆成物理行，逐行清写）——面板因此被顶下去 n 行；
 //   · 面板那 K 行接着往下写（`\x1b[2K` 逐行清 + 重写）；
 //   · 输入行那几行写在面板**下面**（`Panel.input`；逐行清 + 重写，最后一行不带换行）；
-//   · 光标停在**最后一行输入行**上——不变量：下一次上移「上一次停的那一行」仍然落在面板顶上。
+//   · 光标回到输入声明的行与列；下一次按记下的位置上移，仍落在面板顶上。
 //
 // **输入行是 `T4` 加进来的**（在那之前这一块区域只有 K 行面板）。它那几行**不计进 K**：K 是面板的
 // 高度，输入行是它下面另起的一行块。于是"上移多少"从一个常数变成一个记下来的数（`cursorRow`），
@@ -27,7 +27,7 @@
 //
 // **输入行不长出去**：调用方给的每一行宽度 ≤ `columns` − 1（`ui/input.ts` 的 `inputFrameOf` 就是按
 // "量到的列宽减一"折的），所以一行输入行就是一个物理行，`\x1b[KA` 那条算术不会被终端的自动换行
-// 打乱。光标那一下是在写完那一行之后**往左退**到光标列（显示宽度算，不是 code unit）。
+// 打乱。写完全部输入行后按声明的行列返回光标位置；列按显示宽度算，不是 code unit。
 //
 // **永久行只写一次。** 它们在面板上方，重画时只有面板那 K 行被擦改：终端历史里那一串是干净的
 // 流水（翻得回去 · 搜索 · 连 `| tee` 出去都没有转义序列）。
@@ -220,7 +220,7 @@ export interface TermOut {
 /** 输入行那几行：已经带提示符，每行宽度 ≤ `columns` − 1（所以一行就是一个物理行）。 */
 export interface PanelInput {
   readonly rows: readonly string[]
-  /** 光标在第 `row` 行第 `col` 列（显示列，0 基）。**最后一行就是光标停的那一行。** */
+  /** 光标在第 `row` 行第 `col` 列（显示列，0 基）。输入光标可以位于这几行中的任意一行。 */
   readonly caret: { readonly row: number; readonly col: number }
 }
 
@@ -418,6 +418,7 @@ export function openTerm(o: TermOptions): Term {
   let drawnRows: number | undefined = undefined
   /** 上一次画完时光标停在区域第几行（0 = 面板顶）——下一次"上移多少"靠它。 */
   let cursorRow = height
+  let cursorTail = 0
   let cursorColumn = 0
   // Only blank rows that this dynamic normal panel emitted are safe to grow into.
   // New permanent rows or changed host geometry invalidate that ownership.
@@ -519,7 +520,7 @@ export function openTerm(o: TermOptions): Term {
       })
       const input = spec.input
       const body = input === undefined ? [] : input.rows
-      /** 光标最后停在输入行上（那几行的末行）——不是的话光标停在整块下面一行。 */
+      /** 有输入时停在其声明位置；没有输入时停在整块下面一行。 */
       const lastIsInput = input !== undefined && body.length > 0
       // **框下面那两行**（第二幕 ④）：空一行 ＋ 提示行。提示行是这一块里**让位第一条**——终端装不下
       // 整块时先丢它（`框 ＋ 空 ＋ 提示 > 画得下的行数`），框那一格一行不让（交接单 § 五 ④：矮屏先
@@ -542,7 +543,11 @@ export function openTerm(o: TermOptions): Term {
       const widthShrank = columns < drawnColumns
       // `steady`：高度也没变过（那一档的上移与擦残影都与从前逐字节相同）。宽度变过要全量重画；
       // 高度变过那一块的大小变了，上移回去也对不上新面板顶——那一档走下面 `grew` / `stale` 两条。
-      const finalCursor = lastIsInput ? h + tail.length - 1 : h + tail.length
+      const caretTail = lastIsInput && Number.isSafeInteger(input!.caret.row) && input!.caret.row >= 0 && input!.caret.row < body.length
+        ? body.length - 1 - input!.caret.row : 0
+      // Capacity and reserve use the bottom reached while painting; only the final caret moves upward.
+      const paintCursor = lastIsInput ? h + tail.length - 1 : h + tail.length
+      const finalCursor = paintCursor - caretTail
       const textOnly = o.graphics === undefined || o.graphics === 'none'
       if (columns > (normalRecovery?.columns ?? drawnColumns) || permanent.length > 0 || !rowsKnown || !textOnly ||
         (normalRecovery !== null && (rowsSeen as number) > normalRecovery.rows)) normalRecovery = null
@@ -588,7 +593,7 @@ export function openTerm(o: TermOptions): Term {
       if (!drawn || widthShrank || rowsSeen !== drawnRows) ownedAbove = 0
       const growth = Math.max(0, region.length - regionRows)
       // An input row replaces the old trailing cursor row; only physical cursor growth consumes reserve.
-      const ownGrowth = drawn && !widthShrank && !screenGrew ? Math.min(ownedAbove, Math.max(0, finalCursor - cursorRow)) : 0
+      const ownGrowth = drawn && !widthShrank && !screenGrew ? Math.min(ownedAbove, Math.max(0, paintCursor - cursorRow - cursorTail)) : 0
       const back = !drawn || widthShrank ? 0 : wantAlt
         ? !screenGrew && growth > 0 ? cursorRow + growth : cursorRow
         : cursorRow + ownGrowth
@@ -624,7 +629,7 @@ export function openTerm(o: TermOptions): Term {
       const reserve = !drawn && !wantAlt && o.heightOf !== undefined && rowsKnown && permanentRows.length === 0
         ? (() => {
             const maximum = o.reserveHeightOf === undefined ? (rowsSeen as number) - 1 : o.reserveHeightOf()
-            return Number.isFinite(maximum) ? Math.max(0, Math.floor(Math.min(maximum - h, (rowsSeen as number) - 1 - finalCursor))) : 0
+            return Number.isFinite(maximum) ? Math.max(0, Math.floor(Math.min(maximum - h, (rowsSeen as number) - 1 - paintCursor))) : 0
           })() : 0
       for (let i = 0; i < reserve; i += 1) buf.push(`\r${' '.repeat(columns)}\n`)
       if (!drawn) ownedAbove = reserve
@@ -686,11 +691,17 @@ export function openTerm(o: TermOptions): Term {
           }
         }
       }
+      // All input rows remain visible. Return from the painted bottom to the actual editor row.
+      if (caretTail > 0) {
+        buf.push(upOf(caretTail), '\r')
+        if (finalColumn > 0) buf.push('\x1b[' + finalColumn + 'C')
+      }
       buf.push(imageFrame.after)
       const framePaint = ++paint
       normalAnchor = null
       if (buf.length > 0) out.write(buf.join(''))
       cursorRow = finalCursor
+      cursorTail = caretTail
       cursorColumn = finalColumn
       regionRows = h + tail.length
       drawn = true
