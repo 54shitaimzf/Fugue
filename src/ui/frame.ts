@@ -748,7 +748,8 @@ export function frameOf(o: FrameInput): Frame {
     }
     addPreview()
     const below = readAll.length - next
-    if (below > 0) readBody[readBody.length - 1] = `${glyphs().mark} 下面还有 ${below + 1} 行`
+    // A single available row must carry actual reading content; the footer still reports position.
+    if (below > 0 && readBody.length > 1) readBody[readBody.length - 1] = `${glyphs().mark} 下面还有 ${below + 1} 行`
   }
   budget -= readBody.length
 

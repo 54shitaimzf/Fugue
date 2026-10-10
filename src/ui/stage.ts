@@ -280,7 +280,7 @@ export function openStage(deps: StageDeps): Stage {
   }
   const heightWant = (): number => {
     const rows = deps.termRows(), base = panelWantOf(rows, panel !== null || reading !== null || planTop !== null || (showInput && gate !== null && !gateHidden))
-    if (rows === undefined || !showInput || gateDraft !== null) return base
+    if (rows === undefined || !showInput || (gateDraft !== null && panel === null)) return base
     // 矮窗先给单行操作区留位，再按实际折行让出正文；最小期望不能超过宿主。
     return Math.max(1, Math.min(base, rows - 1) - inputFrameOf({ e: ed, prompt: promptOf(), width: cols() }).rows.length + 1)
   }
@@ -462,8 +462,8 @@ export function openStage(deps: StageDeps): Stage {
    *
    * 从前这里是三处各写一遍的 `deps.columns() - 1`（输入行 · 门口那一块 · 树），而框内宽是
    * `columns - 2`：宽出去的那一列画不进框，`cell` 把它截掉——不报错，只少一个字符。收成一处之后
-   * 输入行比它自己的上界（`columns` − 1，`ui/term.ts` 头注写着）还严一列；那个上界仍然满足，
-   * 换来的是全站只有一个数。
+   * 通常输入行也用框内宽度；极窄时至少留一格，双列字簇在实际两列上保全。
+   * 实际一列放不下的字簇由显示投影标记，原草稿仍在；两处都沿用这一把尺。
    */
   const cols = (): number => innerOf(deps.columns())
   const gateLayout = () => gate === null ? null : gateLayoutOf({ face: gate, view: gateView,
@@ -515,11 +515,15 @@ export function openStage(deps: StageDeps): Stage {
     const queueOn = queue.items.length > 0
     const gatePart = gateOn ? gateLayout() : null
     const go = queueOn ? deps.run() : null
-    const queueRows = queueOn ? queueRowsOf(queue, cols(), {
+    const allQueueRows = queueOn ? queueRowsOf(queue, cols(), {
       submit: keyOf('submit'), cancel: keyOf('cancel'),
       covered: gateOn || panel !== null || reading !== null || planTop !== null || ed.draft.text !== '',
       state: go === null ? 'unavailable' : go.running ? (advanceQueue ? 'running' : 'stopping') : 'paused',
     }) : []
+    // Current confirmation scope and its whole next action precede covered queued drafts.
+    // Spare capacity may show the queue summary first; hiding that projection never drops a draft.
+    const queueRoom = Math.max(0, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1) - 3 - (gatePart?.keep ?? 0))
+    const queueRows = gatePart === null ? allQueueRows : allQueueRows.slice(0, queueRoom)
     const bottomRows = [...(gatePart?.rows ?? []), ...queueRows]
     const bottomPart =
       bottomRows.length === 0
@@ -878,8 +882,10 @@ export function openStage(deps: StageDeps): Stage {
       if (gate !== null && !gateHidden && ed.draft.text === '' && clearSmallGate()) { settle(); return }
       // 门口那一块举着手的时候，`Enter` 是**那一档的确认键**（§ 5.19 五："同一个键或 `Enter`
       // 再按一次才生效"）；没举手时它照旧是提交（`pressGate` 给 'none'，一个副作用都没有）。
-      if (panel === null && reading === null && gate !== null && !gateHidden && gateView.armed !== null) {
+      if (panel === null && reading === null && gate !== null && !gateHidden && (gateView.armed !== null || ed.draft.text === '')) {
         const press = pressGate(gateView, 'confirm')
+        // Unarmed confirmation owns Enter too; it must not start a covered queued draft.
+        if (press.t === 'none') return
         gateView = press.view
         if (press.t === 'do') takeGate(press.option)
         return
