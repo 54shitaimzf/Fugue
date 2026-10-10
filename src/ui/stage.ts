@@ -336,6 +336,8 @@ export function openStage(deps: StageDeps): Stage {
 
   /** 起一次弹层：选中项从头一条起（候选变了以后 `settle` 会把它夹回来）。 */
   const openPanel = (source: MenuSource): void => {
+    // 注意力切到候选层后，返回确认须重新举手；原选中项、草稿与批准协议保持。
+    gateView = { ...gateView, armed: null }
     keyHelpTop = null; keyHelpText = ''; keyHelpCovered = false
     // 路径那一档的候选**开的时候走一遍**（`@` 不该在每一次重画时把树重读一遍）；命令与键表是
     // 静态的，每次都现推——它们本来就只有一处真源。

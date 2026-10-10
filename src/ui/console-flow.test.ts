@@ -82,6 +82,19 @@ const done=tuiCmd(root,new Map([['interval','25'],...(native&&process.env.FUGUE_
 await until(()=>visible().includes('待确认 3 项任务')&&raw,'mixed gate arrives through actual serve')
 await snap('pending');assert.ok(visible().includes('模型 · 任务草案'));assert.ok(!visible().includes('ownedPaths'))
 assert.equal(count('round/approve'),0);assert.ok(!existsSync(join(root,paths[0])))
+// A menu changes the foreground context; its return cannot reuse an old arm.
+for(const [name,key] of [['keys','\x10'],['cmd','/'],['path','@']])for(const option of ['y','n']){
+ process.stdin.emit('data',Buffer.from(option));await wait(80)
+ assert.ok(visible().includes('Enter'),'original first key arms before '+name)
+ process.stdin.emit('data',Buffer.from(key));await wait(80)
+ assert.ok(visible().includes(name==='keys'?'按键帮助':name==='cmd'?'命令':'文件路径'),'actual menu owns foreground')
+ process.stdin.emit('data',Buffer.from('\x1b'));await wait(80)
+ process.stdin.emit('data',Buffer.from('\r'));await wait(80)
+ await until(()=>process._getActiveHandles().filter(h=>h.constructor.name==='ChildProcess'&&h.exitCode===null).length===1,'no command remains after '+name+' return')
+ assert.equal(count('round/approve'),0,'menu return Enter cannot reuse the previous approval arm')
+ assert.ok(visible().includes('y 执行整批')&&visible().includes('n 暂不执行'),'menu return Enter cannot reuse rejection or hide the pending batch')
+ assert.ok(paths.every(p=>!existsSync(join(root,p))),'menu return has not written project files')
+}
 process.stdin.emit('data',Buffer.from('y'));await wait(80)
 assert.equal(count('round/approve'),0,'first y must not write approval')
 assert.ok(visible().includes('Enter'),'armed confirm is visible')
