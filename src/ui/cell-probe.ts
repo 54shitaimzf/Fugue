@@ -185,3 +185,56 @@ export function openPixelProbe(o: {
     },
   }
 }
+
+
+/** CPR locates a completed text frame only with absolute origin and full margins.
+ * Expired reports retain their FIFO slots. Callbacks record coordinates without
+ * redraw; a host missing any report keeps the original text path.
+ */
+export function openCursorProbe(o: {
+  readonly write: (bytes: string) => void
+  readonly wait?: WaitFn
+}) {
+  const wait: WaitFn = o.wait ?? ((ms, fn) => { const t=setTimeout(fn,ms); return ()=>clearTimeout(t) })
+  interface CursorRequest {
+    done: boolean
+    rows: number
+    accept: (row: number, column: number) => void
+    position?: readonly [number, number] | null
+    origin?: boolean
+    horizontal?: boolean
+    margins?: boolean
+  }
+  const positions:CursorRequest[]=[],origins:CursorRequest[]=[],horizontals:CursorRequest[]=[],margins:CursorRequest[]=[]
+  let closed=false,stop:(()=>void)|undefined,current:CursorRequest|undefined
+  const finish=(r:CursorRequest):void=>{
+    if(r.done || r!==current || r.position===undefined || r.origin===undefined || r.horizontal===undefined || r.margins===undefined)return
+    r.done=true;stop?.();stop=undefined
+    if(r.position && r.origin && r.horizontal && r.margins)r.accept(...r.position)
+  }
+  return {
+    start(rows:number,accept: (row: number, column: number) => void): void {
+      if(closed)return
+      stop?.();stop=undefined
+      if(current)current.done=true
+      if(!Number.isSafeInteger(rows) || rows<1 || Math.max(positions.length,origins.length,horizontals.length,margins.length)>=MAX_CELL_REQUESTS)return
+      const r:CursorRequest={done:false,rows,accept};current=r;positions.push(r);origins.push(r);horizontals.push(r);margins.push(r)
+      stop=wait(CELL_WAIT_MS,()=>{if(r!==current||r.done)return;stop=undefined;r.done=true})
+      o.write('\x1b[?6$p\x1b[?69$p\x1bP$qr\x1b\\\x1b[6n')
+    },
+    receive(bytes:string):void {
+      if(closed)return
+      const mode=/^\x1b\[\?(6|69);([0-4])\$y$/.exec(bytes)
+      if(mode){const r=(mode[1]==='6'?origins:horizontals).shift();if(!r||r.done)return
+        const reset=mode[2]==='2'||mode[2]==='4';if(mode[1]==='6')r.origin=reset;else r.horizontal=reset;finish(r);return}
+      const region=/^\x1bP([01])\$r(.*?)\x1b\\$/.exec(bytes)
+      if(region && (region[1]==='0' || region[2]!.endsWith('r'))){const r=margins.shift();if(!r||r.done)return
+        r.margins=region[1]==='1' && region[2]===`1;${r.rows}r`;finish(r);return}
+      const position=/^\x1b\[([0-9]{1,6});([0-9]{1,6})R$/.exec(bytes)
+      if(position){const r=positions.shift();if(!r||r.done)return
+        const row=Number(position[1])-1,column=Number(position[2])-1
+        r.position=row>=0&&row<r.rows&&column>=0?[row,column]:null;finish(r)}
+    },
+    close():void { if(closed)return;closed=true;stop?.();stop=undefined;if(current)current.done=true;positions.length=0;origins.length=0;horizontals.length=0;margins.length=0 },
+  }
+}

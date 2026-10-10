@@ -289,6 +289,8 @@ export type RenderPanel = (size: {
 }) => readonly string[] | Panel
 
 export interface TermOptions {
+  /** Fresh zero-based CPR for this completed text frame; no report keeps the original path. */
+  readonly requestCursor?: ((rows: number, accept: (row: number, column: number) => void) => void) | undefined
   /** 缺省关；Sixel 另需已核对的能力与固定几何。 */
   readonly graphics?: GraphicsTier | undefined
   /** 普通缓冲区要求固定几何；full 中终端层收回自有平面并重建。 */
@@ -422,6 +424,11 @@ export function openTerm(o: TermOptions): Term {
    * `null`——那些场合没有可比的上一帧，走全量。
    */
   let lastRegion: readonly string[] | null = null
+  let paint = 0
+  let normalAnchor: { columns: number; rows: number; top: number } | null = null
+  // A bottom-owned frame moved its unowned prefix into genuine history on shrink.
+  // Until a new fact/width change, both height gravities keep the returning viewport ours.
+  let normalRecovery: { columns: number; rows: number } | null = null
   return {
     ansi,
     height,
@@ -466,6 +473,7 @@ export function openTerm(o: TermOptions): Term {
       // 矮档：量得到行数、而按行数画面板连框都放不下（面板最少 `MIN_HEIGHT` 行）→ 只印永久行。
       // 判据是**终端**矮，不是夹出来的那个数小——调用方硬要一个 3 行的机械档（测试里那一类）照样画。
       if (!ansi || short) {
+        paint += 1; normalAnchor = null; normalRecovery = null
         // 只印永久行：不是 TTY / `$TERM` 认不出那一档是常态；矮终端那一帧（U6）是**临时的地板**——
         // 行数够了的下一帧自动回到面板那一档。文字不写 ANSI；已有 Kitty 图片只按号收回，不移动光标。矮帧屏幕顶
         // 紧挨着历史，`CLEAR_LINE` 会把历史吃掉一行。矮帧过后那一块漂到哪儿量不到：上一帧行作废。
@@ -528,12 +536,23 @@ export function openTerm(o: TermOptions): Term {
       const widthShrank = columns < drawnColumns
       // `steady`：高度也没变过（那一档的上移与擦残影都与从前逐字节相同）。宽度变过要全量重画；
       // 高度变过那一块的大小变了，上移回去也对不上新面板顶——那一档走下面 `grew` / `stale` 两条。
-      const steady = drawn && !widthChanged && h === drawnHeight
+      const finalCursor = lastIsInput ? h + tail.length - 1 : h + tail.length
+      const textOnly = o.graphics === undefined || o.graphics === 'none'
+      if (widthChanged || permanent.length > 0 || !rowsKnown || !textOnly ||
+        (normalRecovery !== null && (rowsSeen as number) > normalRecovery.rows)) normalRecovery = null
+      const normalShrink = !wantAlt && textOnly && drawn && !widthChanged && permanent.length === 0 && rowsKnown &&
+        typeof drawnRows === 'number' && (rowsSeen as number) < drawnRows && lastIsInput && region.length === rowsSeen &&
+        normalAnchor !== null && normalAnchor.columns === columns && normalAnchor.rows === drawnRows &&
+        normalAnchor.top < (rowsSeen as number) && normalAnchor.top + regionRows === drawnRows && cursorRow === regionRows - 1
+      const normalReturn = !wantAlt && drawn && rowsKnown && typeof drawnRows === 'number' &&
+        (rowsSeen as number) > drawnRows && normalRecovery !== null && normalRecovery.columns === columns &&
+        (rowsSeen as number) <= normalRecovery.rows && lastIsInput && region.length <= (rowsSeen as number)
+      if (normalShrink) normalRecovery = { columns, rows: Math.max(drawnRows as number, normalRecovery?.rows ?? 0) }
+      const steady = drawn && !widthChanged && h === drawnHeight && !normalShrink && !normalReturn
       // 行级 diff（U8）：与上一帧行数对得上才逐行比——掠过未变行、重写变行，两条路的光标算术相同。
       // **带新永久行的帧不比**：永久行写在面板顶上，那一写把面板整体平移了几行，"屏幕上那行已是
       // 该内容"的前提失效（平移后掠过判断会对错行）——那一帧本来就要写字节，不差面板这几行。
       const diffable = steady && permanent.length === 0 && lastRegion !== null && lastRegion.length === region.length
-      const finalCursor = lastIsInput ? h + tail.length - 1 : h + tail.length
       const imageFrame = images.update(spec.image, { columns, height: h, cursorRow: finalCursor,
         changed: diffable ? region.map((line, i) => line !== lastRegion![i]) : null })
       const finalColumn = lastIsInput ? (input as PanelInput).caret.col : 0
@@ -547,7 +566,7 @@ export function openTerm(o: TermOptions): Term {
       // （旧块整体留给终端重排，新宽度另起一块）；变宽可以覆盖旧块。没画过也没有可擦的上一帧。
       // 新块已填满当前可见区时，下方没有可擦的旧尾；LF 会把新块卷入历史。
       const stale =
-        drawn && !widthShrank && lastRegion !== null && !(rowsKnown && region.length >= (rowsSeen as number))
+        drawn && !widthShrank && lastRegion !== null && !normalShrink && !normalReturn && !(rowsKnown && region.length >= (rowsSeen as number))
           ? Math.max(0, lastRegion.length - region.length) : 0
       // **新块摆到哪儿**：full 的自有屏锚在底边；普通屏只向自己写过的空行扩展，余量向下让位。
       // 屏幕增高保留旧顶边；面板变矮也保持顶边，多余尾行交给 stale 清空。
@@ -560,7 +579,18 @@ export function openTerm(o: TermOptions): Term {
         ? !screenGrew && growth > 0 ? cursorRow + growth : cursorRow
         : cursorRow + ownGrowth
       ownedAbove -= ownGrowth
-      if (back > 0) buf.push(upOf(back))
+      let recoveredHead = 0
+      if (normalReturn) {
+        // Every potentially restored line is a former UI row. Clear before any LF
+        // can put that old UI back into history; keep the new caret at the bottom.
+        buf.push('\x1b[2J\x1b[H')
+        recoveredHead = (rowsSeen as number) - region.length
+        for (let i = 0; i < recoveredHead; i += 1) buf.push('\r\n')
+      } else if (normalShrink) {
+        // North gravity keeps the original prefix on screen, South restores UI at
+        // its top. Starting at our proven old top moves either prefix to history.
+        buf.push(`\x1b[${normalAnchor!.top + 1};1H`)
+      } else if (back > 0) buf.push(upOf(back))
       const historyBudget = rowsKnown ? Math.max(0, (rowsSeen as number) - region.length) : REGION_ROWS
       const permanentRows = ownedResize ? altHistory.slice(Math.max(0, altHistory.length - historyBudget))
         : permanent.flatMap(line => historyRows(line, columns))
@@ -636,6 +666,8 @@ export function openTerm(o: TermOptions): Term {
         }
       }
       buf.push(imageFrame.after)
+      const framePaint = ++paint
+      normalAnchor = null
       if (buf.length > 0) out.write(buf.join(''))
       cursorRow = finalCursor
       cursorColumn = finalColumn
@@ -645,6 +677,16 @@ export function openTerm(o: TermOptions): Term {
       drawnHeight = h
       drawnRows = rowsSeen
       lastRegion = region
+      if (normalReturn) ownedAbove = recoveredHead
+      if (!wantAlt && textOnly && rowsKnown && lastIsInput && region.length === finalCursor + 1) {
+        const frameColumns = columns, frameRows = rowsSeen as number
+        o.requestCursor?.(frameRows, (row, column) => {
+          // Replies belong to an exact completed frame, never a later geometry.
+          if (paint !== framePaint || !drawn || measure() !== frameColumns || measureRows() !== frameRows ||
+            !Number.isSafeInteger(row) || !Number.isSafeInteger(column) || row < finalCursor || row >= frameRows || column !== finalColumn) return
+          normalAnchor = { columns: frameColumns, rows: frameRows, top: row - finalCursor }
+        })
+      }
       if (entered && o.onAlternateScreen !== undefined) {
         // 进入通知中的同步重画延续原字节路径；通知结束后才走静止帧省略。
         notifyingAlternate = true
@@ -652,6 +694,7 @@ export function openTerm(o: TermOptions): Term {
       }
     },
     close(): void {
+      paint += 1; normalAnchor = null; normalRecovery = null
       // alt screen 那一笔先记下来、就地归位（**只写一次**）：`finally` 与 `exit` 那一钩都会调到这一
       // 处，崩那一档走的就是后一条——第二次进来时 `alt` 已经是假，一个字节都不再写。
       const leave = alt

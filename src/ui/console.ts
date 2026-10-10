@@ -30,7 +30,7 @@ import type { Tui } from './follow.ts'
 import { openExitHooks } from './exit-hooks.ts'
 import { degradeNote, openTerm } from './term.ts'
 import { themeOf } from './theme.ts'
-import { openCellProbe, openPixelProbe, openAlternateProbe } from './cell-probe.ts'
+import { openCellProbe, openPixelProbe, openAlternateProbe, openCursorProbe } from './cell-probe.ts'
 import { openStage } from './stage.ts'
 import { panelWantOf } from './layout.ts'
 import { gateFaceOf } from './gate.ts'
@@ -208,6 +208,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   let cellProbe: ReturnType<typeof openCellProbe> | null = null
   let pixelProbe: ReturnType<typeof openPixelProbe> | null = null
   let alternateProbe: ReturnType<typeof openAlternateProbe> | null = null
+  let cursorProbe: ReturnType<typeof openCursorProbe> | null = null
   // ── `T6` 的三样输入（与 `round go` 那一趟逐样对上）─────────────────────────────────────
   // 整块住在下面的 `gateSetupOf` 里（轮次号 · 绑好的动作表 · 每条动作的命令行），身份分配
   // 器是同一个（`identFor`——门只认契约集合，而集合里带着身份，两边换一个就发错一批而且不
@@ -282,6 +283,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // **每帧现问的期望高度**（U6：弹层开着舞台要 `OVERLAY_WANT`，关了回到缺省 `K`）都从舞台递进来。
   const term = openTerm({
     out: process.stdout,
+    requestCursor: (rows, accept) => cursorProbe?.start(rows, accept),
     full: flags.has('full'),
     graphics: tiers.graphics,
     sixelCells: () => cellProbe?.cell ?? null,
@@ -326,6 +328,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
             stage.close()
             term.close()
             alternateProbe?.close()
+            cursorProbe?.close()
           },
         })
       : null
@@ -372,8 +375,9 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       process.stderr.write(`配置读不出来，按键按缺省表走：${(err as Error).message}
 `)
     }
-    keys = openKeys({ input: process.stdin, out: process.stdout, onControl: (sequence) => { cellProbe?.receive(sequence); pixelProbe?.receive(sequence); alternateProbe?.receive(sequence) },
+    keys = openKeys({ input: process.stdin, out: process.stdout, onControl: (sequence) => { cellProbe?.receive(sequence); pixelProbe?.receive(sequence); alternateProbe?.receive(sequence); cursorProbe?.receive(sequence) },
       onAction: stage.onAction, km })
+    if (keys.raw && !flags.has('full') && tiers.graphics === 'none') cursorProbe = openCursorProbe({write: bytes => process.stdout.write(bytes)})
     // full 所有权只在进入屏时查询；已确认自有的平面才能在 resize 后重建。
     if (keys.raw && flags.has('full') && tiers.graphics !== 'none') alternateProbe = openAlternateProbe({ write: bytes => process.stdout.write(bytes),
       changed: () => { stage.onResize(); tui.redraw() } })
@@ -420,6 +424,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     stage.close()
     term.close()
     alternateProbe?.close()
+    cursorProbe?.close()
     await imageSource?.close()
     await source.close()
   }
