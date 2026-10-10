@@ -659,10 +659,24 @@ export function byteMapOf(km: Keymap = KEYMAP): ReadonlyMap<string, Decoded> {
  * 终端报出来的组合键全落在这一条里；**`ESC` 后面跟一个普通字符是 Alt 那一档**（整两个字符吃掉），
  * 所以 `ESC q` 不是"按了 q"。
  */
+// DCS / OSC / APC / PM / SOS carry text until ST; OSC also accepts BEL.
+// Their payload belongs to the terminal and must never reach the editor/key map.
+const STRING_CONTROLS = new Set(['P', ']', '_', '^', 'X'])
+function stringEndOf(s: string, i: number): number {
+  const st = s.indexOf('\x1b\\', i + 2)
+  const bel = s[i + 1] === ']' ? s.indexOf('\x07', i + 2) : -1
+  if (bel >= 0 && (st < 0 || bel < st)) return bel + 1
+  return st < 0 ? -1 : st + 2
+}
+
 export function escapeAt(s: string, i: number): number {
   if (s[i] !== '\u001b') return 0
   const next = s[i + 1]
   if (next === undefined) return 1
+  if (STRING_CONTROLS.has(next)) {
+    const end = stringEndOf(s, i)
+    return end < 0 ? s.length - i : end - i
+  }
   if (next !== '[' && next !== 'O') return 2
   let j = i + 2
   while (j < s.length) {
@@ -680,6 +694,7 @@ export function escapeAt(s: string, i: number): number {
 export function escapeTruncatedAt(s: string, i: number): boolean {
   if (s[i] !== '\u001b') return false
   if (s[i + 1] === undefined) return true
+  if (STRING_CONTROLS.has(s[i + 1]!)) return stringEndOf(s, i) < 0
   if (s[i + 1] !== '[' && s[i + 1] !== 'O') return false
   for (let j = i + 2; j < s.length; j += 1) {
     const c = s.charCodeAt(j)
@@ -707,7 +722,7 @@ export function decodeOf(chunk: string, km: Keymap = KEYMAP): readonly Decoded[]
   while (i < chunk.length) {
     const esc = escapeAt(chunk, i)
     if (esc > 0) {
-      if (!escapeTruncatedAt(chunk, i)) {
+      if (!escapeTruncatedAt(chunk, i) || (esc === 2 && STRING_CONTROLS.has(chunk[i + 1]!))) {
         const d = bytes.get(chunk.slice(i, i + esc))
         if (d !== undefined) out.push(d)
       }
@@ -742,7 +757,7 @@ export interface Decoder {
   /** 粘贴记号开了一半（`ESC[200~` 到了、`ESC[201~` 还没到）。 */
   readonly pasting: boolean
   feed(chunk: string): readonly Decoded[]
-  /** 半截攒不成键了：最前面那一个 `ESC` 当"人按了一下 `Esc`"，**其余整段丢弃**。 */
+  /** 普通半截按 Esc 处理；字符串残包丢弃，共用前缀的完整 Alt 键按绑定处理。 */
   flush(): readonly Decoded[]
   /** 粘贴超时：退出粘贴态，把攒到的那一段当原文交出去（`insert`）。 */
   bailPaste(): readonly Decoded[]
@@ -753,74 +768,55 @@ export function decoderOf(km: Keymap = KEYMAP, onControl?: (sequence: string) =>
   let pending = ''
   /** 粘到一半的那一段（`ESC[200~` 到了、`ESC[201~` 还没到）。 */
   let paste: string | null = null
-  const step = (s: string): { readonly out: readonly Decoded[]; readonly rest: string } => {
-    const out: Decoded[] = []
-    let i = 0
-    while (i < s.length) {
-      const esc = escapeAt(s, i)
-      if (esc > 0) {
-        if (escapeTruncatedAt(s, i)) return { out, rest: s.slice(i) }
-        const sequence = s.slice(i, i + esc)
-        const d = bytes.get(sequence)
-        if (d !== undefined) out.push(d)
-        else onControl?.(sequence)
-        i += esc
-        continue
-      }
-      const size = codepointSize(s.codePointAt(i) as number)
-      const ch = s.slice(i, i + size)
-      const d = bytes.get(ch)
-      // 表里没吃掉的那个字节：**可打印的就是人打的字**（`insert`），别的（认不出来的控制字符）
-      // 丢掉——"认不出来"与"没这个键"在读数上是同一件事。
-      if (d !== undefined) out.push(d)
-      else if (isPrintable(s.codePointAt(i) as number)) out.push({ action: 'insert', text: ch, key: ch })
-      i += size
-    }
-    return { out, rest: '' }
-  }
   return {
-    get pending(): string {
-      return pending
-    },
-    get pasting(): boolean {
-      return paste !== null
-    },
+    get pending(): string { return pending },
+    get pasting(): boolean { return paste !== null },
     feed(chunk: string): readonly Decoded[] {
-      // **大段粘贴**（`ESC[200~` … `ESC[201~`）：记号之间那一整段是**原文**，一个字节都不解释——
-      // 里面的换行不是 `Enter`（不然粘一段代码会在中间把这一行发出去）。记号只到了一半就攒着。
-      const out: Decoded[] = []
       let s = pending + chunk
       pending = ''
-      if (paste !== null) {
-        const end = s.indexOf(PASTE_OFF)
-        if (end < 0) {
-          paste += s
-          return []
+      // A paste delimiter can itself cross chunks; retain its literal prefix.
+      if (paste !== null) { s = paste + s; paste = '' }
+      const out: Decoded[] = []
+      let i = 0
+      while (i < s.length) {
+        // Paste markers are interpreted only outside terminal control strings.
+        if (paste !== null) {
+          const end = s.indexOf(PASTE_OFF, i)
+          if (end < 0) { paste += s.slice(i); return out }
+          out.push({ action: 'insert', text: paste + s.slice(i, end) })
+          paste = null; i = end + PASTE_OFF.length
+          continue
         }
-        out.push({ action: 'insert', text: paste + s.slice(0, end) })
-        paste = null
-        s = s.slice(end + PASTE_OFF.length)
-      }
-      for (;;) {
-        const at = s.indexOf(PASTE_ON)
-        if (at < 0) break
-        out.push(...step(s.slice(0, at)).out)
-        const end = s.indexOf(PASTE_OFF, at + PASTE_ON.length)
-        if (end < 0) {
-          paste = s.slice(at + PASTE_ON.length)
-          return out
+        if (s.startsWith(PASTE_ON, i)) { paste = ''; i += PASTE_ON.length; continue }
+        const esc = escapeAt(s, i)
+        if (esc > 0) {
+          if (escapeTruncatedAt(s, i)) { pending = s.slice(i); break }
+          const sequence = s.slice(i, i + esc)
+          const d = bytes.get(sequence)
+          if (d !== undefined) out.push(d)
+          else onControl?.(sequence)
+          i += esc
+          continue
         }
-        out.push({ action: 'insert', text: s.slice(at + PASTE_ON.length, end) })
-        s = s.slice(end + PASTE_OFF.length)
+        const size = codepointSize(s.codePointAt(i)!)
+        const ch = s.slice(i, i + size), d = bytes.get(ch)
+        if (d !== undefined) out.push(d)
+        else if (isPrintable(s.codePointAt(i)!)) out.push({ action: 'insert', text: ch, key: ch })
+        i += size
       }
-      const r = step(s)
-      pending = r.rest
-      return [...out, ...r.out]
+      return out
     },
     flush(): readonly Decoded[] {
       if (pending === '') return []
+      const rest = pending
       const head = pending[0] as string
       pending = ''
+      if (STRING_CONTROLS.has(rest[1] ?? '')) {
+        // A configured two-byte Alt key can share a string prefix; a partial
+        // report with a payload is never a cancel or a user action.
+        const bound = rest.length === 2 ? bytes.get(rest) : undefined
+        return bound === undefined ? [] : [bound]
+      }
       const one = bytes.get(head)
       // **其余整段丢弃**（U10）：攒在半截里的 `ESC [` 续字节不是人按的键——回灌解一遍会把 `[` 之
       // 类当字打进行里（残包在慢链路上成对出现时，输入行里会多出几个没人打过的字符）。
