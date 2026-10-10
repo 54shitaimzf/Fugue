@@ -259,7 +259,8 @@ export function openStage(deps: StageDeps): Stage {
   const heightWant = (): number => {
     const rows = deps.termRows(), base = panelWantOf(rows, panel !== null || reading !== null || planTop !== null || (showInput && gate !== null && !gateHidden))
     if (rows === undefined || !showInput || gateDraft !== null) return base
-    return Math.max(1, base - inputFrameOf({ e: ed, prompt: promptOf(), width: cols() }).rows.length + 1)
+    // 矮窗先给单行操作区留位，再按实际折行让出正文；最小期望不能超过宿主。
+    return Math.max(1, Math.min(base, rows - 1) - inputFrameOf({ e: ed, prompt: promptOf(), width: cols() }).rows.length + 1)
   }
   const readerContent = (faces: ReturnType<typeof facesOf>, name: ReadFaceName) => {
     const face = faces[name]

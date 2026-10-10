@@ -524,7 +524,8 @@ export function openTerm(o: TermOptions): Term {
       // 让提示行，不让在飞的格）。它按自己那一格上色（`LineRole` 的 `hint`，落在弱化那一格），与
       // 面板那几行同一处包裹（先补宽再包，SGR 零宽）。
       const room = rowsKnown ? (rowsSeen as number) - 1 : Number.POSITIVE_INFINITY
-      const wantHint = typeof spec.hint === 'string' && spec.hint !== '' && h + GAP_ROWS + HINT_ROWS <= room
+      // 输入末行不换行；其余尾行和光标都计入同一物理容量。
+      const wantHint = typeof spec.hint === 'string' && spec.hint !== '' && h + GAP_ROWS + HINT_ROWS + body.length <= room + (lastIsInput ? 1 : 0)
       const hintText = wantHint ? (panelOf([spec.hint as string], 1, columns)[0] as string) : null
       const hintSgr = o.theme?.hint
       const pad =
