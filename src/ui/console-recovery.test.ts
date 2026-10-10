@@ -68,7 +68,7 @@ assert.equal(await done,0);assert.equal(raw,false,'actual Console restores raw m
 assert.equal(process._getActiveHandles().filter(h=>h.constructor.name==='ChildProcess'&&h.exitCode===null).length,0,'serve child finished')
 const lines=text();while(lines.length&&!lines.at(-1))lines.pop()
 const exact=JSON.stringify(lines)===JSON.stringify(original)
-if(scenario==='regular')assert.deepEqual(lines,original,'entire original history, no old or current temporary UI')
+if(scenario==='regular'||(scenario==='direct'&&gravity==='north'))assert.deepEqual(lines,original,'entire original history, no old or current temporary UI')
 else{assert.equal(exact,false,'counterexample remains failure under entire-history gate');for(const s of original)assert.equal(lines.filter(l=>l===s).length,1);if(scenario==='silent')assert.equal(clears,0,'no unproved viewport clear')}
 savedWrite(JSON.stringify({scenario,geometry,gravity,exact,rows:lines.length,expected:67,idles,rawRestored:!raw,serveClosed:true,queries,clears})+'\n')
 process.stdin.pause()
@@ -88,5 +88,13 @@ test('actual Console, raw decoder, scheduled cursor probe and serve compose a hi
 test('actual Console keeps silent-host and direct-short history failures distinct from successful exit and preserves every original line',()=>{
  const cases=[run('192x50','south','silent'),run('192x50','south','direct')]
  assert.ok(cases.every(c=>!c.exact&&c.rawRestored&&c.serveClosed));assert.equal(cases[0].clears,0)
- console.log('Console recovery floor:silent/direct short complete-history failures2/2 retained;original67 each once;raw restored;serve closed;silent viewport clears0')
+ console.log('Console recovery floor:'+JSON.stringify(cases)+';entire-history failures retained;original67 each once is insufficient')
+})
+
+
+test('actual Console direct short exit preserves complete history when host gravity keeps the old top in the viewport',()=>{
+ const cases=[run('192x50','north','direct'),run('80x24','north','direct')]
+ assert.ok(cases.every(c=>c.exact&&c.rows===c.expected&&c.rawRestored&&c.serveClosed))
+ assert.equal(cases.reduce((n,c)=>n+c.idles,0),4)
+ console.log('Console direct exit:'+JSON.stringify(cases)+';NorthWest history exact2/2;SouthWest counterexample remains separate')
 })
