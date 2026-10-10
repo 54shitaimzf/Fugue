@@ -790,7 +790,9 @@ export function decoderOf(km: Keymap = KEYMAP, onControl?: (sequence: string) =>
           continue
         }
         if (s.startsWith(PASTE_ON, i)) { paste = ''; i += PASTE_ON.length; continue }
-        const esc = escapeAt(s, i)
+        // An unbound ESC + ESC is two boundaries, not an invented Alt key.
+        // Preserve a real Esc when a terminal report starts before its timeout.
+        const esc = s.startsWith('\u001b\u001b', i) && !bytes.has('\u001b\u001b') ? 1 : escapeAt(s, i)
         if (esc > 0) {
           if (escapeTruncatedAt(s, i)) { pending = s.slice(i); break }
           const sequence = s.slice(i, i + esc)

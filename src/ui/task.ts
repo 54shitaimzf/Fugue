@@ -4,6 +4,7 @@ import type { StatusRow } from '../probe/status.ts'
 import type { ConversationRow } from './frame.ts'
 import { roundLabelOf, roundNoticeOf } from './lifecycle.ts'
 import { WORDS } from '../words.ts'
+import { draftOf } from '../contract/draft.ts'
 
 export interface PlanItem {
   readonly text: string
@@ -23,6 +24,20 @@ function objectOf(body: string): Record<string, unknown> | null {
 function goalOf(body: string): string {
   const value = objectOf(body)?.goal
   return clean(typeof value === 'string' ? value : body)
+}
+// JSON tasks use the canonical draft validator; prose and non-JSON fences stay intact.
+function draftPreview(body: string): string | undefined {
+  if (!body.includes('\x60\x60\x60')) return undefined
+  try {
+    const draft = draftOf(body)
+    let at = 0
+    const shown = body.replace(/\x60{3}([A-Za-z0-9_-]*)[ \t]*\r?\n[\s\S]*?\x60{3}/g, (block, language: string) => {
+      if (language.toLowerCase() !== 'json') return block
+      const section = draft.sections[at++]
+      return section === undefined ? block : (section.kind === 'investigate' ? '调查：' + section.question : '实现：' + section.goal)
+    })
+    return at === draft.sections.length ? '模型 · 任务草案\n' + clean(shown) : undefined
+  } catch { return undefined }
 }
 export function taskOf(rows: readonly StatusRow[], focus: string | null = null, full = false): TaskFace {
   let round: string | null = null
@@ -48,7 +63,10 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
       // A phase edge expires the previous action; a same-phase record does not.
       case 'round/state': if (e.from !== e.to) action = ''; state = e.to; from = e.from; break
       case 'round/intent': messages.push({ text: `你\n${goalOf(e.body)}`, role: 'user' }); break
-      case 'holder/distill': messages.push({ text: `模型 · 当前理解\n${clean(e.body)}`, role: 'model' }); break
+      case 'holder/distill': {
+        const preview = full ? undefined : draftPreview(e.body)
+        messages.push({ text: `模型 · 当前理解\n${clean(e.body)}`, role: 'model', ...(preview === undefined ? {} : { preview }) }); break
+      }
       case 'agent/handoff': messages.push({ text: `模型 · 交接说明\n${clean(e.body)}`, role: 'model' }); break
       case 'holder/ask': {
         const questions = objectOf(e.body)?.questions

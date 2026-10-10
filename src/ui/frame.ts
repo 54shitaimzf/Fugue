@@ -48,6 +48,7 @@ import { skipsNote } from '../probe/status.ts'
 import type { RoundUsage, StatusSnapshot } from '../probe/status.ts'
 import { clip, glyphs, widthOf, wrap } from './glyph.ts'
 import { iconOf } from './icons.ts'
+import { bytesOfKey } from './keymap.ts'
 import type { IconName } from './icons.ts'
 import { airOf, frameBudgetOf, MIN_FRAME_ROWS } from './layout.ts'
 import { humanNumber } from '../human.ts'
@@ -140,6 +141,8 @@ export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'overlayBody' 
 
 export interface ConversationRow {
   readonly text: string
+  /** 有效草案的人读展示；原文仍在text，只读与未知上下文沿用原文。 */
+  readonly preview?: string | undefined
   readonly role: LineRole
 }
 
@@ -597,11 +600,22 @@ export function frameOf(o: FrameInput): Frame {
     && o.bottom?.confirmationRound === o.task!.round
     && o.task!.rows[0]?.role === 'system' && o.task!.rows[0]?.text === WORDS.planPreparing
 
+  const draftKey = typeof o.taskReadKey === 'string' && o.taskReadKey.trim() !== ''
+    && bytesOfKey(o.taskReadKey).length > 0 && !/[\x00-\x1f\x7f-\x9f]/.test(o.taskReadKey) && widthOf(o.taskReadKey + ' 草案原文') <= inner ? o.taskReadKey : ''
+  const compactDraft = taskMatches && o.operationArea === true && !readingOn && !helpOn && o.menu === undefined
+    && (confirmationReady || draftKey !== '')
+  const lastDraft = compactDraft ? o.task!.rows.findLastIndex(r => r.role === 'model' && typeof r.preview === 'string') : -1
+  const taskRows = o.task?.rows.flatMap((r, i) => [
+    { kind: 'head' as const, ...r, ...(confirmationReady && i === 0 ? { text: WORDS.gateReview, role: 'waiting' as const }
+      : compactDraft && r.role === 'model' && typeof r.preview === 'string' ? { text: r.preview } : {}) },
+    ...(i === lastDraft && !confirmationReady ? [{ kind: 'head' as const, text: draftKey + ' 草案原文', role: 'system' as const }] : []),
+  ])
+
   // 内容那一栏那几行：**哪一档视图说什么话**。对话视图是 `chatOf` 折出来的那几行
   // （轮次头 · 细线 · 在飞那几格）；另两档是 `bodyOf` 的那一半，行文一字不变，只是各拿满宽。
   const bodyRows: readonly { readonly l: string; readonly role: LineRole }[] =
     view === 'chat'
-      ? (o.task?.round !== null && o.task !== undefined ? o.task.rows.map((r, i) => ({ kind: 'head' as const, ...(confirmationReady && i === 0 ? { text: WORDS.gateReview, role: 'waiting' as const } : r) })) : chatOf({ ...o, onboarding: (o.bottom?.rows.length ?? 0) === 0 && o.menu === undefined })).map((x) =>
+      ? (o.task?.round !== null && o.task !== undefined ? taskRows! : chatOf({ ...o, onboarding: (o.bottom?.rows.length ?? 0) === 0 && o.menu === undefined })).map((x) =>
           x.kind === 'rule'
             ? { l: glyphs().div.repeat(inner), role: 'border' as const }
             : x.kind === 'aside'
