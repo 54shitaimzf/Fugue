@@ -572,6 +572,7 @@ export function openStage(deps: StageDeps): Stage {
       focus: writerAt(navNodes, navAt),
       view: viewAt(viewIndex),
       input,
+      inputIdle: when === 'input',
     }
   }
   // 阅读按当前正文区翻半屏；未知宿主尺寸保持旧四行退化档。

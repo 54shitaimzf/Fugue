@@ -37,7 +37,7 @@ test('the context switch suppresses only first-use guidance, never actual work o
  assert.deepEqual(chatOf({snapshot,onboarding:false}),[])
  assert.deepEqual(chatOf({snapshot,onboarding:true}),chatOf({snapshot}),'absent/true switch preserves old pure chat answer')
 })
-test('card-only allocation uses the whole body budget and native draw is silent at rest, with the opening restored on hide',async()=>{
+test('card-only allocation uses the whole body budget and native draw is silent at rest; a hidden pending plan does not ask for new work',async()=>{
  const bottom=gateLayoutOf({face,view:{at:0,armed:null},columns:innerOf(40)})
  const tight=frameOf({snapshot,width:40,height:4+bottom.rows.length,bottom})
  assert.deepEqual(tight.lines.filter((_,i)=>['overlayBody','overlay','waiting'].includes(tight.roles[i]!)).map(l=>l.slice(1,-1).trim()),bottom.rows,'no hidden or reserved onboarding row trims the actual plan')
@@ -47,7 +47,7 @@ test('card-only allocation uses the whole body budget and native draw is silent 
  redraw=()=>term.draw([],size=>session.panel(size));stage.setRaw(true);redraw();const opening=session.frame({columns:40,height:stage.heightWant()})
  pending=face;await stage.refreshGate();const card=session.frame({columns:40,height:stage.heightWant()});assert.ok(!plain(card).includes('说说你想做什么。'))
  const before=chunks.join('');redraw();assert.equal(chunks.join(''),before,'idle writes zero bytes')
- stage.onAction({action:'cancel'});assert.deepEqual(session.frame({columns:40,height:stage.heightWant()}),opening)
+ stage.onAction({action:'cancel'});assert.equal(stage.view().inputIdle,false);assert.deepEqual(session.frame({columns:40,height:stage.heightWant()}),opening.map(()=>' '.repeat(40)),'hidden pending work does not restore a new-task invitation')
  stage.onAction({action:'go'});assert.ok(!plain(session.frame({columns:40,height:stage.heightWant()})).includes('说说你想做什么。'))
  assert.equal(notes.filter(s=>s.includes('这一轮打算开')).length,1,'guide visibility changes add no permanent summary')
  stage.close();term.close()

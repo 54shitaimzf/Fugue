@@ -249,6 +249,8 @@ export interface Panel {
 export interface ViewInput {
   /** Necessary feedback for the current operation; its original message stays in the reader. */
   readonly feedback?: readonly string[] | undefined
+  /** 当前输入尚未开始，也没有在途执行；未知时保留原空态引导。 */
+  readonly inputIdle?: boolean | undefined
   /** 任务记录的实际阅读键，供省略处就近显示。 */
   readonly taskReadKey?: string | undefined
   readonly menu?: MenuInput | undefined

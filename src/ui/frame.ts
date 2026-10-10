@@ -150,6 +150,8 @@ export interface FrameInput {
   readonly feedback?: readonly string[] | undefined
   /** 当前舞台确有输入或批准操作区；只读跟踪不移动正文留白。 */
   readonly operationArea?: boolean | undefined
+  /** 当前输入尚未开始，也没有在途执行；未知时保留原空态引导。 */
+  readonly inputIdle?: boolean | undefined
   /** 当前配置的任务记录阅读键；舞台只在该动作可用时提供。 */
   readonly taskReadKey?: string | undefined
   readonly task?: TaskFace | undefined
@@ -651,7 +653,7 @@ export function frameOf(o: FrameInput): Frame {
   // （轮次头 · 细线 · 在飞那几格）；另两档是 `bodyOf` 的那一半，行文一字不变，只是各拿满宽。
   const taskBodyRows: readonly { readonly l: string; readonly role: LineRole }[] =
     view === 'chat'
-      ? (emptyInput ? [{ kind: 'head' as const, text: WORDS.taskPrompt, role: 'instruction' as const }] : o.task?.round !== null && o.task !== undefined ? taskRows! : chatOf({ ...o, onboarding: (o.bottom?.rows.length ?? 0) === 0 && o.menu === undefined })).map((x) =>
+      ? (emptyInput ? (o.inputIdle === false ? [] : [{ kind: 'head' as const, text: WORDS.taskPrompt, role: 'instruction' as const }]) : o.task?.round !== null && o.task !== undefined ? taskRows! : chatOf({ ...o, onboarding: (o.bottom?.rows.length ?? 0) === 0 && o.menu === undefined })).map((x) =>
           x.kind === 'rule'
             ? { l: glyphs().div.repeat(inner), role: 'border' as const }
             : x.kind === 'aside'

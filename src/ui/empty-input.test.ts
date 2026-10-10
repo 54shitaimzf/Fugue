@@ -65,9 +65,9 @@ test('实际Stage/Session/Term多帧空态、输入、阅读、确认、变宽�
    const idle=()=>{chunks.length=0;draw();assert.equal(chunks.join(''),'');idles++}
    try{
     const opening=draw();assert.equal(opening.rows.at(-1)!.trim(),prompt);assert.equal(opening.roles?.filter(r=>r==='border').length,0);idle()
-    stage.onAction({action:'insert',text:'保留草稿'});const draft=stage.view().input;const typing=draw();assert.equal(typing.rows.length,opening.rows.length);idle()
+    stage.onAction({action:'insert',text:'保留草稿'});const draft=stage.view().input;const typing=draw();assert.equal(typing.rows.length,opening.rows.length);assert.ok(!typing.rows.some(s=>s.includes(prompt)));idle()
     stage.onAction({action:'read'});assert.ok(draw().rows.some(s=>s.includes('事件流')));idle();stage.onAction({action:'cancel'});draw();idle();assert.deepEqual(stage.view().input,draft)
-    for(const next of [24,80,192]){width=next;stage.onResize();const p=draw();assert.ok(p.rows.at(-1)!.includes(prompt));assert.ok(p.rows.length+(p.input?.rows.length??0)+2<=height);idle();resizes++}
+    for(const next of [24,80,192]){width=next;stage.onResize();const p=draw();assert.ok(!p.rows.some(s=>s.includes(prompt)));assert.ok(p.rows.length+(p.input?.rows.length??0)+2<=height);idle();resizes++}
     rows=events;stage.onAdvance(rows);session.push(rows);const working=draw();assert.ok(working.rows[0]!.includes('当前任务'));assert.ok(!working.rows.some(s=>s.includes(prompt)));assert.equal(working.rows.length,opening.rows.length);idle()
     pending=face;await stage.refreshGate();const gate=draw();assert.ok(gate.rows.some(s=>s.includes('核对输入引导')));assert.ok(!gate.rows.some(s=>s.includes(prompt)));idle()
     stage.onAction({action:'approve',key:'y'});draw();stage.onAction({action:'read'});draw();stage.onAction({action:'cancel'});draw();stage.onAction({action:'submit'});draw();assert.deepEqual(presses,[],'全文返回清旧批准')
