@@ -85,9 +85,9 @@ test('② 八格从 SLOT_MEANING 推：色表逐格对齐 · 角色都落在格�
     .filter((r) => SLOT_256[ROLE_SLOT[r]] !== '')
     .sort()
   assert.deepEqual((Object.keys(theme256()) as readonly LineRole[]).sort(), want, 'theme256 恰好覆盖该覆盖的角色')
-  // 背景不明的七个关键角色使用宿主前景；其余角色仍逐字节取语义色位。
+  // 背景不明的八个关键角色使用宿主前景；其余角色仍逐字节取语义色位。
   for (const [role, sgr] of Object.entries(theme256())) {
-    const critical: Partial<Record<LineRole, string>> = { waiting: '\x1b[1m', system: '\x1b[39m', hint: '\x1b[39m', user: '\x1b[1m', readHeading: '\x1b[1m', ok: '\x1b[1m', refuse: '\x1b[1m' }
+    const critical: Partial<Record<LineRole, string>> = { waiting: '\x1b[1m', system: '\x1b[39m', hint: '\x1b[39m', user: '\x1b[1m', readHeading: '\x1b[1m', ok: '\x1b[1m', refuse: '\x1b[1m', modelHeading: '\x1b[1m' }
     assert.equal(sgr, critical[role as LineRole] ?? SLOT_256[ROLE_SLOT[role as LineRole]], `${role} 遵循当前背景与角色的样式`)
   }
   console.log(

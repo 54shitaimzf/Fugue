@@ -7,7 +7,7 @@ import { openTerm, CLEAR_LINE } from './term.ts'
 test('linux 使用 16 色：继承的 COLORTERM 不能把控制台提升到 256 色', () => {
   assert.deepEqual(Object.keys(SLOT_16).sort(), [...SLOTS].sort(), '16色也完整覆盖八格')
   const theme = theme16()
-  for (const [role, slot] of Object.entries(ROLE_SLOT)) assert.equal(theme[role], SLOT_16[slot] || undefined)
+  for (const [role, slot] of Object.entries(ROLE_SLOT)) assert.equal(theme[role], role === 'modelHeading' ? '\x1b[1m' : SLOT_16[slot] || undefined)
   for (const colorTerm of [undefined, '', 'truecolor', '256']) {
     const theme = themeOf({ term: 'linux', colorTerm })
     assert.equal(tierOf({ term: 'linux', colorTerm }), 2)

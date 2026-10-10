@@ -40,7 +40,7 @@ test('当前任务的状态只在正文展示；两行页脚空间用于更多�
     if(width>=80){
       assert.equal(content(f).filter(s=>s==='正在执行').length,1,'窄矮场景仍保留状态，一处足够')
       if(height>=7){
-        const model=(v:ReturnType<typeof frameOf>)=>v.roles.filter(r=>r==='model').length
+        const model=(v:ReturnType<typeof frameOf>)=>v.roles.filter(r=>r==='model'||r==='modelHeading').length
         assert.equal(model(f),model(legacy)+2,'正文实际多显示两行模型原文')
       }
     }

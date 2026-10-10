@@ -137,7 +137,7 @@ export interface Frame {
  * 任何样式。（**永久行与输入行不在这张表里**：U20 那条形状不动——永久行进终端历史要保持干净
  * 流水，输入行是光标算术那一行。）
  */
-export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'overlayBody' | 'waiting' | 'read' | 'readHeading' | 'hint' | 'ok' | 'refuse' | 'hit' | 'user' | 'model' | 'system' | 'instruction' | 'plan'
+export type LineRole = 'border' | 'body' | 'footer' | 'overlay' | 'overlayBody' | 'waiting' | 'read' | 'readHeading' | 'hint' | 'ok' | 'refuse' | 'hit' | 'user' | 'model' | 'modelHeading' | 'system' | 'instruction' | 'plan'
 
 export interface ConversationRow {
   readonly text: string
@@ -535,6 +535,34 @@ export function windowOf(n: number, sel: number, budget: number): MenuWindow {
   return { from, count, above, below, summary: above + below > 0 }
 }
 
+// 模型身份与 Markdown 标题只报显示角色，原文字、行数与缩略坐标不变。
+// 围栏代码与缩进代码中的标记保持正文；消息内容保持原样。
+function modelHeadings(lines: readonly string[]): readonly boolean[] {
+  const headings = lines.map(() => false), prose = lines.map(() => false)
+  let fence: { mark: string; count: number } | undefined
+  for (const [i, line] of lines.entries()) {
+    const marker = /^ {0,3}(\x60{3,}|~{3,})(.*)$/.exec(line)
+    if (fence !== undefined) {
+      if (marker !== null && marker[1]![0] === fence.mark && marker[1]!.length >= fence.count && /^[ \t]*$/.test(marker[2]!)) fence = undefined
+      continue
+    }
+    if (marker !== null && (marker[1]![0] !== '\x60' || !marker[2]!.includes('\x60'))) {
+      fence = { mark: marker[1]![0]!, count: marker[1]!.length }
+      continue
+    }
+    if (i === 0 && /^模型 · /.test(line)) { headings[i] = true; continue }
+    if (/^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)) { headings[i] = true; continue }
+    if (/^ {0,3}(?:=+|-+)[ \t]*$/.test(line) && prose[i - 1]) {
+      for (let at = i - 1; at >= 0 && prose[at]; at -= 1) headings[at] = true
+      continue
+    }
+    prose[i] = line.trim() !== '' &&
+      !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(line) &&
+      !/^(?: {4}|\t| {0,3}(?:>|[-+*] |[0-9]+[.)] ))/.test(line)
+  }
+  return headings
+}
+
 /**
  * 一帧。**纯函数**：进去的那几样决定出来的那几行，别的一处都不看。
  *
@@ -629,7 +657,8 @@ export function frameOf(o: FrameInput): Frame {
     const parts = paragraphs.map((p, i) => wrap(p, Math.max(1, inner - (i === 0 ? 0 : 2))))
     const identified = o.task !== undefined && ['user', 'model'].includes(one.role) && paragraphs.length > 1
     const headingAt = rowAt, headingCount = parts[0]?.length ?? 0
-    const physical = parts.flatMap((part, i) => part.map(x => ({ l: i === 0 ? x : `  ${x}`, role: one.role,
+    const headings = one.role === 'model' ? modelHeadings(paragraphs) : []
+    const physical = parts.flatMap((part, i) => part.map(x => ({ l: i === 0 ? x : `  ${x}`, role: headings[i] ? 'modelHeading' as const : one.role,
       ...(identified ? { headingAt, headingCount } : {}) })))
     rowAt += physical.length
     return physical

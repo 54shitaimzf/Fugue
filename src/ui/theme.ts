@@ -57,6 +57,7 @@ export const ROLE_SLOT: Readonly<Record<LineRole, Slot>> = {
   hit: 'hit',
   user: 'readHeading',
   model: 'body',
+  modelHeading: 'readHeading',
   system: 'dim',
   instruction: 'overlay',
   plan: 'dim',
@@ -130,7 +131,7 @@ function themeFrom(slots: Readonly<Record<Slot, string>>): Readonly<Partial<Reco
   return out
 }
 
-export function theme16(): Readonly<Partial<Record<LineRole, string>>> { return themeFrom(SLOT_16) }
+export function theme16(): Readonly<Partial<Record<LineRole, string>>> { return { ...themeFrom(SLOT_16), modelHeading: '\x1b[1m' } }
 export type Background = 'light' | 'dark' | 'default'
 /** COLORFGBG 的最后一格是宿主背景。只认明确的浅/深基础色；缺失或其他色保持中性。
  * 不向终端发背景探针，也不假设所有 256 色终端都用暗底。
@@ -144,6 +145,7 @@ export function theme256(background: Background = 'default'): Readonly<Partial<R
   if (background === 'default') return { ...themeFrom(SLOT_256),
     waiting: '\x1b[1m', system: '\x1b[39m', hint: '\x1b[39m',
     user: '\x1b[1m', readHeading: '\x1b[1m', ok: '\x1b[1m', refuse: '\x1b[1m',
+    modelHeading: '\x1b[1m',
   }
   const light = background === 'light'
   const result = themeFrom({ ...SLOT_256,
@@ -153,7 +155,7 @@ export function theme256(background: Background = 'default'): Readonly<Partial<R
     waiting: light ? '\x1b[1;38;5;94m' : '\x1b[1;38;5;214m',
     readHeading: light ? '\x1b[1;38;5;25m' : '\x1b[1;38;5;111m',
   })
-  return { ...result, system: light ? '\x1b[38;5;238m' : '\x1b[38;5;248m', user: light ? '\x1b[1;38;5;25m' : '\x1b[1;38;5;111;48;5;235m' }
+  return { ...result, modelHeading: '\x1b[1m', system: light ? '\x1b[38;5;238m' : '\x1b[38;5;248m', user: light ? '\x1b[1;38;5;25m' : '\x1b[1;38;5;111;48;5;235m' }
 }
 
 /**
