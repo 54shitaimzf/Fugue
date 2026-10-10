@@ -266,7 +266,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     hint: (when) =>
       keys?.raw === true
         ? hintLineOf(km, hintLimitOf(term.columns, km, when), when)
-        : 'stdin 不是终端：这一档不收按键（输入行与弹层都在等按键，画出来是骗人）',
+        : '当前输入不可用',
     // 兼容旧装配的快捷键来源仍与提示行共用 km；Stage 不再读取它或把说明写进历史。
     keysOf: when => hintKeysOf(km, when),
     columns: () => process.stdout.columns ?? term.columns,

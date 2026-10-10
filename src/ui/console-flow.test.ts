@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import {spawnSync} from 'node:child_process'
-import {mkdirSync,writeFileSync} from 'node:fs'
+import {mkdirSync,writeFileSync,readFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {test} from 'node:test'
@@ -129,10 +129,26 @@ if(native)writeFileSync(join(root,'.fugue/report.json'),JSON.stringify(report))
 if(!native)savedWrite(JSON.stringify(report)+'\n');process.stdin.pause()
 
 `
-for(const scenario of ['success','failure'])test('actual Console mixed batch approval, work, verification and '+scenario+' writeback',()=>{
+for(const lateKeys of [false,true])for(const scenario of ['success','failure'])test('actual Console mixed batch approval, work, verification and '+scenario+' writeback'+(lateKeys?' with keys after first gate':''),()=>{
  const root=tmpDir('fugue-console-flow-'),file=join(root,'.fugue/actor.mjs');mkdirSync(join(root,'.fugue'));writeFileSync(file,actor)
- const r=spawnSync(process.execPath,[file,fileURLToPath(new URL('./console.ts',import.meta.url)),root,scenario],{encoding:'utf8',env:{...process.env,TERM:'xterm',FUGUE_SYSTEM_DIR:join(root,'system')},timeout:40000})
+ let module=fileURLToPath(new URL('./console.ts',import.meta.url))
+ if(lateKeys){
+  const copied=join(root,'.fugue/startup-console.ts')
+  let source=readFileSync(module,'utf8').replace(/\bfrom\s+(['"])(\.[^'"]+)\1/g,(_all,quote,relative)=>'from '+quote+new URL(relative,new URL('./console.ts',import.meta.url)).href+quote)
+  const mark='km = keymapOf(raw ?? {})';assert.equal(source.split(mark).length,2)
+  source=source.replace(mark,mark+'\n      await (globalThis as any).fugueBeforeKeys()')
+  writeFileSync(copied,source);module=copied
+  const hook="globalThis.fugueBeforeKeys=async()=>{await until(()=>visible().includes('这一轮打算开 3 个任务'),'gate snapshot precedes keys');await wait(100);globalThis.fugueBeforeKeysResult={raw,hint:visible().includes('当前输入不可用')}}\n"
+  const lateActor=actor
+   .replace("const cli=join(dirname(module),'../cli/fugue.ts')",'const cli='+JSON.stringify(fileURLToPath(new URL('../cli/fugue.ts',import.meta.url))))
+   .replace("pathToFileURL(join(dirname(module),'../log/log.ts'))",'pathToFileURL('+JSON.stringify(fileURLToPath(new URL('../log/log.ts',import.meta.url)))+')')
+  const gateReached="await until(()=>visible().includes('待确认 3 项任务')&&raw,'mixed gate arrives through actual serve')"
+  assert.equal(lateActor.split(gateReached).length,2)
+  const checked=lateActor.replace(gateReached,gateReached+"\nassert.equal(globalThis.fugueBeforeKeysResult?.raw,false,'keys are uninstalled at initial gate')\nassert.equal(globalThis.fugueBeforeKeysResult?.hint,true,'startup hint describes input availability outside configuration catch')")
+  assert.equal(checked.split('const done=tuiCmd(').length,2);writeFileSync(file,checked.replace('const done=tuiCmd(',hook+'const done=tuiCmd('))
+ }
+ const r=spawnSync(process.execPath,[file,module,root,scenario],{encoding:'utf8',env:{...process.env,TERM:'xterm',FUGUE_SYSTEM_DIR:join(root,'system')},timeout:40000})
  assert.equal(r.status,0,r.stderr||String(r.error));const v=JSON.parse(r.stdout)
  assert.equal(v.contracts,3);assert.equal(v.approvals,1);assert.deepEqual(v.kinds,['investigate','implement','implement']);assert.equal(v.idleSamples.length,4);assert.ok(v.idleSamples.every(s=>s.bytes===0));assert.ok(v.rawRestored&&v.childrenClosed)
- console.log('Console flow:'+scenario+';actual serve/go/work;held3 mixed;single approval;read clears arm;idle4 bytes0;outcome on main;project '+(scenario==='success'?'matches accepted HEAD':'bytes/head unchanged')+';raw/children restored')
+ console.log('Console flow:'+scenario+(lateKeys?';gate-before-keys':'' )+';actual serve/go/work;held3 mixed;single approval;read clears arm;idle4 bytes0;outcome on main;project '+(scenario==='success'?'matches accepted HEAD':'bytes/head unchanged')+';raw/children restored')
 })

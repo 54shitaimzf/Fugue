@@ -971,10 +971,13 @@ export function openStage(deps: StageDeps): Stage {
       previewJob = null
     },
     setRaw(raw: boolean): void {
+      const changed = showInput !== raw
       showInput = raw
       if (raw && gate !== null && !gateHidden) suspendDraft()
       else if (!raw) restoreDraft()
       syncImage()
+      // 输入可能晚于首批草案接好；视图变化当场可见，不等待账再动。
+      if (changed && !closed) deps.redraw()
     },
   }
 }

@@ -11,6 +11,8 @@ function rig(keymap?:()=>Keymap){
  const run:RunLauncher={get running(){return running},get last(){return last},argvOf:line=>({words:[line],argv:['fugue',line],why:line==='bad'?'missing command':null}),press:line=>{presses.push(line);return true},stop:signal=>{signals.push(signal!);return acceptStop}}
  const stage=openStage({...(keymap===undefined?{}:{keymap}),note:s=>notes.push(s),redraw:()=>{redraws++},hint:()=>'',columns:()=>40,termRows:()=>24,rows:()=>[],pendingFace:async()=>null,run:()=>available?run:null,now:()=>0,abort:()=>{aborts++}})
  stage.setRaw(true)
+ assert.equal(redraws,1,'input installation paints once before run feedback')
+ redraws=0 // Each outcome assertion measures its own redraw, after installation.
  return {stage,notes,presses,signals,running:(v:boolean)=>{running=v},runAvailable:(v:boolean)=>{available=v},stopReply:(v:boolean)=>{acceptStop=v},last:(v:readonly string[])=>{last=v},aborts:()=>aborts,redraws:()=>redraws}
 }
 const unknownWriteback=(notes:readonly string[])=>{
