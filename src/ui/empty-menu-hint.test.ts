@@ -52,6 +52,16 @@ function rig(width:number,height:number,queued=false){
   term.draw([],size=>{panel=session.panel(size);return panel});frames++
   const input=stage.view().input!;assert.equal(vt.wraps,0);assert.equal(vt.scrolls,0)
   assert.deepEqual(vt.caret,{row:height-input.rows.length+input.caret.row,col:input.caret.col});assert.deepEqual(vt.lines.slice(height-input.rows.length),input.rows.map(s=>s.trimEnd()))
+  const menu=stage.view().menu
+  if(menu!==undefined){
+   assert.ok(menu.source==='cmd'||menu.source==='path','actual ordinary menu provides its real source')
+   const at=panel!.roles!.indexOf('readHeading'),title=menu.source==='cmd'?'命令':'文件路径'
+   assert.ok(at>=0&&panel!.rows[at]!.includes(title),'actual candidate source owns its current title')
+   assert.ok(panel!.rows.slice(0,at).every(s=>s.trim()===''),'spare capacity stays outside the candidate block')
+   assert.ok(!panel!.roles!.includes('read')&&!panel!.roles!.includes('waiting'),'covered reader and approval are absent from current candidates')
+   if(panel!.roles!.includes('footer'))assert.ok(panel!.rows[panel!.roles!.indexOf('footer')]!.includes((menu.rows.length===0?0:menu.sel+1)+'/'+menu.rows.length),'footer counts actual candidates')
+   assert.equal(panel!.roles!.filter(s=>s==='hit').length,menu.rows.length===0?0:1,'only the actual selected candidate receives emphasis')
+  }
   const at=writes.length;term.draw([],size=>session.panel(size));frames++;idles++;assert.equal(writes.slice(at).join(''),'','same foreground is byte quiet')
   return panel!
  }

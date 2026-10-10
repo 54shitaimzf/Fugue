@@ -48,7 +48,7 @@ test('missing, invalid or too-tall help detail returns exact original menu bytes
  const base={snapshot:statusOf([]),width:40,height:13,menu:{rows:['Enter 发送输入','Esc 返回'],sel:0}}
  const old=frameOf(base)
  for(const detail of [undefined,[],null,['x'.repeat(100)],Array(100).fill('x'),[42],'bad'])assert.deepEqual(frameOf({...base,menu:{...base.menu,detail:detail as never}}),old,JSON.stringify(detail))
- const r=rig(40);r.stage.onAction({action:'menu',key:'/'});assert.equal((r.stage.view().menu as {detail?:unknown}).detail,undefined);assert.ok(r.frame().roles!.includes('overlay'));assert.deepEqual(r.presses,[]);r.stage.close()
+ const r=rig(40);r.stage.onAction({action:'menu',key:'/'});assert.equal((r.stage.view().menu as {detail?:unknown}).detail,undefined);assert.equal(r.frame().roles!.filter(s=>s==='hit').length,1);assert.ok(r.frame().rows[r.frame().roles!.indexOf('readHeading')]!.includes('命令'));assert.deepEqual(r.presses,[]);r.stage.close()
  assert.ok(innerOf(40)<40)
 })
 test('wide help uses spare rows for nearby configured keys while narrow help keeps only the current full explanation',()=>{

@@ -58,6 +58,7 @@ import type { RoundTransition } from './lifecycle.ts'
 import { DEFAULT_VIEW, viewNameOf } from './views.ts'
 import type { ViewKey } from './views.ts'
 import type { TaskFace } from './task.ts'
+import type { MenuSource } from './menu.ts'
 
 export { AIR_COLUMNS } from './layout.ts'
 
@@ -449,6 +450,8 @@ function bar(w: number, label?: string): string {
 
 /** 候选那一层那几行（`ui/menu.ts` 算好的原文）与选中项落在第几条（`T4`）。 */
 export interface MenuInput {
+  /** 舞台提供的实际候选来源；未知时保留原布局。 */
+  readonly source?: MenuSource | undefined
   /** 实际按键面板正在前景；缺失/坏元数据保留原列表与阅读排法。 */
   readonly help?: boolean | undefined
   /** 当前按键的完整物理说明；缺失、坏形状或放不下时回原列表。 */
@@ -623,6 +626,10 @@ export function frameOf(o: FrameInput): Frame {
     && detailMore.every(row => typeof row === 'string' && row !== '' && widthOf(row) <= inner)
   const focusedHelp = validDetail && (detail.length <= height - 4 || shortDetail)
   const helpOn = o.menu?.help === true || focusedHelp
+  // 实际命令/路径查询独占当前候选块；来源、操作区或帮助元数据不明时保留原帧。
+  const ordinaryOn = o.operationArea === true && (o.menu?.source === 'cmd' || o.menu?.source === 'path')
+    && (o.menu.help === undefined || o.menu.help === false) && detail === undefined && detailMore === undefined
+  const foregroundMenu = helpOn || ordinaryOn
 
 
   const taskMatches = o.task !== undefined && o.task.round !== null && o.task.state !== null
@@ -636,7 +643,7 @@ export function frameOf(o: FrameInput): Frame {
 
   const draftKey = typeof o.taskReadKey === 'string' && o.taskReadKey.trim() !== ''
     && bytesOfKey(o.taskReadKey).length > 0 && !/[\x00-\x1f\x7f-\x9f]/.test(o.taskReadKey) && widthOf(o.taskReadKey + ' 草案原文') <= inner ? o.taskReadKey : ''
-  const compactDraft = taskMatches && o.operationArea === true && !readingOn && !helpOn && o.menu === undefined
+  const compactDraft = taskMatches && o.operationArea === true && !readingOn && !foregroundMenu && o.menu === undefined
     && (confirmationReady || draftKey !== '')
   const lastDraft = compactDraft ? o.task!.rows.findLastIndex(r => r.role === 'model' && typeof r.preview === 'string') : -1
   const taskRows = o.task?.rows.flatMap((r, i) => [
@@ -648,7 +655,7 @@ export function frameOf(o: FrameInput): Frame {
   const emptyContext = o.task !== undefined && o.task.round === null && o.task.state === null && o.task.rows.length === 0
     && o.snapshot.current === null && o.snapshot.events === 0 && o.snapshot.agents.length === 0
   // 只有确有输入的空会话才把邀请放到操作附近；已有记录、阅读、菜单和未知对象保持原排版。
-  const emptyInput = emptyContext && o.operationArea === true && view === 'chat' && !readingOn && !helpOn
+  const emptyInput = emptyContext && o.operationArea === true && view === 'chat' && !readingOn && !foregroundMenu
     && o.snapshot.rounds.length === 0 && o.task!.plan.length === 0 && (o.conversation?.length ?? 0) === 0
     && o.menu === undefined && (o.bottom?.rows.length ?? 0) === 0 && (o.nav?.rows.length ?? 0) === 0
 
@@ -665,7 +672,7 @@ export function frameOf(o: FrameInput): Frame {
         )
       : (view === 'progress' ? body.left : body.right).map((l) => ({ l, role: 'body' as const }))
   const bodyRows = [...taskBodyRows,
-    ...(o.operationArea === true && view === 'chat' && !readingOn && !helpOn && o.menu === undefined
+    ...(o.operationArea === true && view === 'chat' && !readingOn && !foregroundMenu && o.menu === undefined
       ? (o.feedback ?? []).map(l => ({ l: `系统 · ${l}`, role: 'instruction' as const })) : []),
   ]
   let rowAt = 0
@@ -684,21 +691,21 @@ export function frameOf(o: FrameInput): Frame {
   // 当前任务正文已承担状态说明，主面不再重复阶段。任务投影未知时保留旧页脚地板；
   // 阅读位置、帮助筛选与二级视图的页脚各有当前用途，仍按原容量显示。
   const first = o.task?.rows[0]
-  const taskStatus = !readingOn && !helpOn && view === 'chat' && taskMatches
+  const taskStatus = !readingOn && !foregroundMenu && view === 'chat' && taskMatches
     && first !== undefined && first.text !== '' && ['system', 'waiting', 'ok', 'refuse', 'instruction'].includes(first.role)
   const statusOn = taskStatus || operationStatus || emptyInput
   const helpCount = o.menu === undefined ? '' : (o.menu.rows.length === 0 ? 0 : Math.max(0, Math.min(o.menu.rows.length - 1, o.menu.sel ?? 0)) + 1) + '/' + o.menu.rows.length
   const helpFooter = helpCount + ' · 筛选'
-  const footer = statusOn ? '' : clip(helpOn ? (o.menu?.help === true && widthOf(helpFooter) > inner ? helpCount : helpFooter) : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
+  const footer = statusOn ? '' : clip(foregroundMenu ? ((o.menu?.help === true || ordinaryOn) && widthOf(helpFooter) > inner ? helpCount : helpFooter) : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
   // 不需要页脚时两行都交给正文与当前操作，框体高度保持。
-  const allocation = frameBudgetOf(height, helpOn ? 0 : (o.bottom?.keep ?? 0), !statusOn)
+  const allocation = frameBudgetOf(height, foregroundMenu ? 0 : (o.bottom?.keep ?? 0), !statusOn)
   const withFooter = allocation.withFooter
   let budget = allocation.rows
 
   // 候选那一层（`/` 菜单 · `Ctrl-P` 面板）**从内容那一栏的最下面切一块**（最多一半）：面板开开关关，
   // 上面那几行读数一个字节都不动；它自己装不下时把选中的那一条留在窗里，并把还剩几条说出来。
   const menuAll = o.menu === undefined ? null : o.menu.rows
-  const menuCap = menuAll === null ? 0 : Math.max(1, Math.min(Math.floor(budget / 2), Math.max(1, menuAll.length)))
+  const menuCap = menuAll === null ? 0 : Math.max(1, Math.min(ordinaryOn ? budget : Math.floor(budget / 2), Math.max(1, menuAll.length)))
   const win = menuAll === null || menuAll.length === 0 ? null : windowOf(menuAll.length, o.menu?.sel ?? 0, menuCap)
   const menuBody: string[] = []
   if (focusedHelp) {
@@ -731,7 +738,7 @@ export function frameOf(o: FrameInput): Frame {
   const readAll = o.read?.rows ?? []
   const readBody: string[] = []
   let panelImage: PanelImage | undefined
-  if (readingOn && !helpOn) {
+  if (readingOn && !foregroundMenu) {
     const top = Math.max(0, Math.min(o.read?.top ?? 0, Math.max(0, readAll.length - 1)))
     const preview = o.menu === undefined && o.bottom === undefined ? o.read?.preview : undefined
     let next = top, inserted = false
@@ -765,7 +772,7 @@ export function frameOf(o: FrameInput): Frame {
   // 下面这几步与从前逐字节相同）。**阅读面开着就不印它**（地方让给正文）。
   // 树那一栏（`T8`）**不进对话视图**：决策材料的线框稿里没有它，而对话视图那 6 行按 ④ 的行账
   // 分给了轮次头 · 细线 · 在飞那几格；切格走 `Alt-1…9`，读的是哪一格由框名说（见下）。
-  const navAll = readingOn || helpOn || view === 'chat' ? [] : (o.nav?.rows ?? [])
+  const navAll = readingOn || foregroundMenu || view === 'chat' ? [] : (o.nav?.rows ?? [])
   const navCap = navAll.length === 0 ? 0 : Math.max(1, Math.min(4, budget - 2))
   const navWin = navAll.length === 0 ? null : windowOf(navAll.length, o.nav?.sel ?? 0, navCap)
   // **命中按坐标定，不按字面定**（原先拿印出去的那一串跟选中的那一行比字）：两格名字一样时
@@ -781,10 +788,10 @@ export function frameOf(o: FrameInput): Frame {
   // 最下面那一栏（`T6` 的门口那一块 · `T7` 的排队行）先占住它那几行，再轮到候选，最后才是内容那一
   // 栏（装不下时**从后往前让位**，而那一栏自己先让位的是**预览**——头几行；末 `keep` 行留住：那是
   // 人要按 · 要看的东西）。一栏都没有（`bottom` 不给）时下面这几步与从前逐字节相同。
-  const gateAll = helpOn ? [] : (o.bottom?.rows ?? [])
+  const gateAll = foregroundMenu ? [] : (o.bottom?.rows ?? [])
   const keep = Math.max(0, Math.min(o.bottom?.keep ?? 0, gateAll.length))
   // 没有正文就把那一行预算也交给当前操作；实际汇报仍保留至少一行。
-  const bodyFloor = readingOn || helpOn || rows.length === 0 ? 0 : 1
+  const bodyFloor = readingOn || foregroundMenu || rows.length === 0 ? 0 : 1
   let gateBody = [...gateAll]
   while (gateBody.length > keep && budget - bodyFloor - gateBody.length < 0) gateBody = gateBody.slice(1)
   while (menuBody.length > 0 && budget - bodyFloor - gateBody.length - menuBody.length < 0) menuBody.pop()
@@ -799,7 +806,7 @@ export function frameOf(o: FrameInput): Frame {
   }
   const bodyBudget = Math.max(bodyFloor, budget - menuBody.length - gateBody.length - gateNotice.length)
   // 阅读面开着：内容那一栏一个字节都不印（地方整块给了正文，见上面那一段）。
-  const content = readingOn || helpOn ? [] : rows.length <= bodyBudget ? rows : o.task === undefined
+  const content = readingOn || foregroundMenu ? [] : rows.length <= bodyBudget ? rows : o.task === undefined
     ? rows.slice(0, Math.max(0, bodyBudget - 1))
     : (() => {
         const head = rows.slice(0, Math.min(2, Math.max(0, bodyBudget - 2)))
@@ -813,7 +820,7 @@ export function frameOf(o: FrameInput): Frame {
         }
         return [...head, ...tail]
       })()
-  const dropped = readingOn || helpOn ? 0 : rows.length - content.length
+  const dropped = readingOn || foregroundMenu ? 0 : rows.length - content.length
   // 树那一栏在最上面，然后才是内容那一栏（它的每一行都是横贯整栏的）。行带着**角色**（U20）：
   // 树与读数是正文 · 阅读面正文是 `read` · 候选与门口那一块是临时的 `overlay`。
   // 内容那一栏与临时那几层都**横贯整栏**（第二幕 ⑦ 之后没有第二栏了）：每行一个角色。
@@ -833,9 +840,11 @@ export function frameOf(o: FrameInput): Frame {
   for (const one of readBody) shown.push({ l: one, role: 'read' })
   // 框恒填满实际分配高度；留白只使用剩余行，不挤掉正文、阅读或操作。
   // 输入与确认位置固定，避免短内容让框底随流式汇报上下移动。
-  // 当前按键独占正文；稀疏内容与筛选输入成组，列表缺省布局保持。
-  if (helpOn) {
-    menuBody.forEach((l, i) => shown.push({ l, role: i === 0 ? 'overlay' : 'overlayBody' }))
+  // 当前候选独占正文；实际普通菜单用选中角色，帮助与未知来源的角色保持。
+  if (foregroundMenu) {
+    menuBody.forEach((l, i) => shown.push({ l, role: ordinaryOn
+      ? win !== null && i === Math.max(0, Math.min(menuAll!.length - 1, o.menu?.sel ?? 0)) - win.from ? 'hit' : 'overlayBody'
+      : i === 0 ? 'overlay' : 'overlayBody' }))
     menuBody.length = 0
   }
   const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length + gateNotice.length
@@ -844,16 +853,16 @@ export function frameOf(o: FrameInput): Frame {
   const nearby = o.operationArea === true && !readingOn && dropped === 0 && o.menu === undefined && view === 'chat' && (taskStatus || emptyContext)
     && (o.bottom === undefined || operationStatus)
   const spare = Math.max(0, height - fixed)
-  // 真实交互帮助的余量留在框外；不限制正文容量，输入仍在原位置。
-  const helpNearby = o.operationArea === true && o.menu?.help === true && spare > 0
+  // 真实交互候选块的余量留在框外；不限制正文容量，输入仍在原位置。
+  const menuNearby = o.operationArea === true && (o.menu?.help === true || ordinaryOn) && spare > 0
   // 有足够的现成留白时，任务从顶部读，固定操作留在下方；两区只围实际内容。
   // 两条框线与至少一行框外留白都从余量取，短帧或未知上下文保留原布局。
   const separate = nearby && spare >= 3
   const contentRows = shown.length
   const lowerRows = gateBody.length + gateNotice.length
   const gap = nearby && gateBody.length + gateNotice.length > 0 ? Math.min(1, spare) : 0
-  if (helpNearby || (nearby && !separate)) shown.unshift(...Array.from({ length: helpNearby ? spare : spare - gap }, () => ({ l: '', role: 'body' as const })))
-  for (let i = 0; i < (helpNearby ? 0 : nearby && !separate ? gap : spare); i += 1) shown.push({ l: '', role: 'body' })
+  if (menuNearby || (nearby && !separate)) shown.unshift(...Array.from({ length: menuNearby ? spare : spare - gap }, () => ({ l: '', role: 'body' as const })))
+  for (let i = 0; i < (menuNearby ? 0 : nearby && !separate ? gap : spare); i += 1) shown.push({ l: '', role: 'body' })
   // 确认与对话用已有的最后一行留白分隔；满容量时不另占正文或操作行。
   if (operationStatus && fixed < height) shown[shown.length - 1] = { l: glyphs().div.repeat(inner), role: 'border' }
   for (const one of menuBody) shown.push({ l: one, role: 'overlay' })
@@ -885,9 +894,9 @@ export function frameOf(o: FrameInput): Frame {
   const subject = /[\x00-\x1f\x7f-\x9f]/.test(foldedGoal) ? '' : foldedGoal
   const titleRoom = mainWidth - 5 - widthOf('当前任务 · ')
   const taskHead = subject !== '' && titleRoom >= 4 ? `当前任务 · ${clip(subject, titleRoom)}` : '当前任务'
-  const head = helpOn ? '按键帮助' : readingOn ? (typeof o.read?.heading === 'string' && o.read.heading !== '' ? o.read.heading : '阅读面') : `${taskOn ? taskHead : viewNameOf(view)}${view === 'chat' ? '' : focus}`
+  const head = ordinaryOn ? (o.menu?.source === 'cmd' ? '命令' : '文件路径') : foregroundMenu ? '按键帮助' : readingOn ? (typeof o.read?.heading === 'string' && o.read.heading !== '' ? o.read.heading : '阅读面') : `${taskOn ? taskHead : viewNameOf(view)}${view === 'chat' ? '' : focus}`
   lines.push(`${g.tl}${bar(edge, head)}${g.tr}`)
-  roles.push(helpOn || readingOn ? 'readHeading' : 'border')
+  roles.push(foregroundMenu || readingOn ? 'readHeading' : 'border')
   for (const one of shown) {
     lines.push(`${g.v}${inset}${cell(one.l, inner)}${inset}${g.v}`)
     roles.push(one.role)
@@ -904,12 +913,12 @@ export function frameOf(o: FrameInput): Frame {
   lines.push(`${g.bl}${g.h.repeat(edge)}${g.br}`)
   roles.push('border')
   // 标题紧邻正文；余量不足时沿用相邻操作区的紧凑摆法。
-  const headerAt = helpNearby ? spare : nearby && !separate ? spare - gap : 0
+  const headerAt = menuNearby ? spare : nearby && !separate ? spare - gap : 0
   if (headerAt > 0) {
     lines.fill(' '.repeat(width), 0, headerAt)
     roles.fill('body', 0, headerAt)
     lines[headerAt] = `${g.tl}${bar(edge, head)}${g.tr}`
-    roles[headerAt] = helpOn ? 'readHeading' : 'border'
+    roles[headerAt] = foregroundMenu ? 'readHeading' : 'border'
   }
   const contentEnd = 1 + contentRows
   const lowerHead = lowerRows > 0 ? height - (withFooter ? 2 : 0) - lowerRows - 2 : withFooter ? height - 3 : height

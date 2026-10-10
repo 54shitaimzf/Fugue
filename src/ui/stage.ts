@@ -565,7 +565,7 @@ export function openStage(deps: StageDeps): Stage {
         const detail = panel.source === 'keys' && picked !== undefined ? selectedKeyRows() : undefined
         const height = Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1)
         const readKey = (deps.keymap?.() ?? KEYMAP).rows.find(b => b.action === 'read')!.keys[0]!
-        return { menu: { rows: rowsTextOf(rows), sel: panel.sel,
+        return { menu: { source: panel.source, rows: rowsTextOf(rows), sel: panel.sel,
           ...(panel.source === 'keys' ? { help: true } : {}),
           ...(detail === undefined ? {} : { detail,
             ...(detail.length <= height - 4 ? {} : { detailMore: readWrap(`${readKey} 看全`, cols()) }) }) } }
