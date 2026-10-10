@@ -28,6 +28,7 @@ import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
 import type { LineMode, RunLauncher, RunOutcome } from './run.ts'
 import { innerOf } from './frame.ts'
+import { widthOf } from './glyph.ts'
 import { taskOf } from './task.ts'
 import type { ReadPreview } from './frame.ts'
 import type { ImageRequest } from '../serve/image-source.ts'
@@ -500,9 +501,14 @@ export function openStage(deps: StageDeps): Stage {
     const hintPart = { hint: deps.hint(when), ...(taskReadKey === undefined ? {} : { taskReadKey }) }
     if (!showInput) return hintPart
     const frame = gateDraft !== null && panel === null ? { rows: [''], caret: { row: 0, col: 0 } } : inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
+    // At one terminal column, each oversized row is one indivisible cluster.
+    // Mark that display cell only; draft text, logical rows and zero-column caret stay intact.
+    const physicalWidth = deps.columns()
+    const input = { rows: physicalWidth === 1
+      ? frame.rows.map(row => widthOf(row) > 1 ? '?' : row) : frame.rows, caret: frame.caret }
     if (keyHelpTop !== null && !keyHelpCovered) return { hint: deps.hint('plan'),
       read: keyHelpRead(),
-      input: { rows: frame.rows, caret: frame.caret }, focus: writerAt(navNodes, navAt), view: viewAt(viewIndex) }
+      input, focus: writerAt(navNodes, navAt), view: viewAt(viewIndex) }
 
     // 最下面那一栏：**门口那一块**（`T6`）与**排队那一行**（`T7`），都在面板那一栏的最下面（输入行
     // 还在它们下面）。两样都没有时一个字节都不占。
@@ -561,7 +567,7 @@ export function openStage(deps: StageDeps): Stage {
       ...readPart,
       focus: writerAt(navNodes, navAt),
       view: viewAt(viewIndex),
-      input: { rows: frame.rows, caret: frame.caret },
+      input,
     }
   }
   // 阅读按当前正文区翻半屏；未知宿主尺寸保持旧四行退化档。
