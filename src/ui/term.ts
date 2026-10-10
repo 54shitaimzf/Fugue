@@ -34,7 +34,8 @@
 //
 // **宽度变窄（resize）不猜重排。** 旧行可能拆成多条并进入 scrollback，各家终端重排行为不同。
 // 这一档从下面另起一块，避免猜位置吃历史。变宽时旧区域每行都有显式换行，仍各占一条物理行，
-// 可以原位替换；终端增高也保留旧顶边。缩小后的残留与永久历史保留仍须另行解决。
+// 可以原位替换；终端增高也保留旧顶边。可信完整回报且宽高一起缩至满窗时，记录原宽高
+// 上限；在该范围内恢复前清理已证明自有的可见行。无回报、新事实、图形或越过上限保留原路径。
 //
 // **地板：不是 TTY / `$TERM` 认不出来 → 一个字节的 ANSI 都不写。** 那一档 `draw` 只把永久行按
 // 到达序印出去，面板整块不画（重定向出去就是一份干净的事件流水，CI 里不会有半块面板）。
@@ -429,7 +430,7 @@ export function openTerm(o: TermOptions): Term {
   let paint = 0
   let normalAnchor: { columns: number; rows: number; top: number } | null = null
   // A bottom-owned frame moved its unowned prefix into genuine history on shrink.
-  // Until a new fact/width change, both height gravities keep the returning viewport ours.
+  // Until a new fact or growth beyond the proven old width/height, the returning viewport is ours.
   let normalRecovery: { columns: number; rows: number } | null = null
   return {
     ansi,
@@ -540,16 +541,17 @@ export function openTerm(o: TermOptions): Term {
       // 高度变过那一块的大小变了，上移回去也对不上新面板顶——那一档走下面 `grew` / `stale` 两条。
       const finalCursor = lastIsInput ? h + tail.length - 1 : h + tail.length
       const textOnly = o.graphics === undefined || o.graphics === 'none'
-      if (widthChanged || permanent.length > 0 || !rowsKnown || !textOnly ||
+      if (columns > (normalRecovery?.columns ?? drawnColumns) || permanent.length > 0 || !rowsKnown || !textOnly ||
         (normalRecovery !== null && (rowsSeen as number) > normalRecovery.rows)) normalRecovery = null
-      const normalShrink = !wantAlt && textOnly && drawn && !widthChanged && permanent.length === 0 && rowsKnown &&
+      const normalShrink = !wantAlt && textOnly && drawn && columns <= drawnColumns && permanent.length === 0 && rowsKnown &&
         typeof drawnRows === 'number' && (rowsSeen as number) < drawnRows && lastIsInput && region.length === rowsSeen &&
-        normalAnchor !== null && normalAnchor.columns === columns && normalAnchor.rows === drawnRows &&
+        normalAnchor !== null && normalAnchor.columns === drawnColumns && normalAnchor.rows === drawnRows &&
         normalAnchor.top < (rowsSeen as number) && normalAnchor.top + regionRows === drawnRows && cursorRow === regionRows - 1
       const normalReturn = !wantAlt && drawn && rowsKnown && typeof drawnRows === 'number' &&
-        (rowsSeen as number) > drawnRows && normalRecovery !== null && normalRecovery.columns === columns &&
+        (rowsSeen as number) > drawnRows && normalRecovery !== null && columns <= normalRecovery.columns &&
         (rowsSeen as number) <= normalRecovery.rows && lastIsInput && region.length <= (rowsSeen as number)
-      if (normalShrink) normalRecovery = { columns, rows: Math.max(drawnRows as number, normalRecovery?.rows ?? 0) }
+      if (normalShrink) normalRecovery = { columns: Math.max(drawnColumns, normalRecovery?.columns ?? 0), rows: Math.max(drawnRows as number, normalRecovery?.rows ?? 0) }
+      const normalOwnedPrefix = normalShrink && normalAnchor!.top <= ownedAbove
       const steady = drawn && !widthChanged && h === drawnHeight && !normalShrink && !normalReturn
       // 行级 diff（U8）：与上一帧行数对得上才逐行比——掠过未变行、重写变行，两条路的光标算术相同。
       // **带新永久行的帧不比**：永久行写在面板顶上，那一写把面板整体平移了几行，"屏幕上那行已是
@@ -589,9 +591,10 @@ export function openTerm(o: TermOptions): Term {
         recoveredHead = (rowsSeen as number) - region.length
         for (let i = 0; i < recoveredHead; i += 1) buf.push('\r\n')
       } else if (normalShrink) {
-        // North gravity keeps the original prefix on screen, South restores UI at
-        // its top. Starting at our proven old top moves either prefix to history.
-        buf.push(`\x1b[${normalAnchor!.top + 1};1H`)
+        // Preserve an unowned prefix at the verified old top. If the whole
+        // visible prefix is our emitted reserve, erase it before LF can
+        // move stale wide cells into history (actual NorthWest XTerm).
+        buf.push(normalOwnedPrefix ? '\x1b[2J\x1b[H' : `\x1b[${normalAnchor!.top + 1};1H`)
       } else if (back > 0) buf.push(upOf(back))
       const historyBudget = rowsKnown ? Math.max(0, (rowsSeen as number) - region.length) : REGION_ROWS
       const permanentRows = ownedResize ? altHistory.slice(Math.max(0, altHistory.length - historyBudget))
