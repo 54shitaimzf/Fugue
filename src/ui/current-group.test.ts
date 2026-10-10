@@ -17,11 +17,17 @@ const events=(state='Working')=>[
 const headAt=(f:ReturnType<typeof frameOf>)=>f.lines.findIndex(l=>l.startsWith(glyphs().tl))
 function base(rows:StatusRow[],width=120,height=35){return {snapshot:statusOf(rows),task:taskOf(rows),width,height,operationArea:true}}
 
-test('sparse current title and complete conversation start at the top; unused capacity is outside the current outline and input remains fixed',()=>{
+test('sparse current title and conversation start at the top; empty input has no task outline; full capacity and input remain fixed',()=>{
  let cases=0
  try{for(const glyph of ['ascii','box','rich'] as const){setGlyphTier(glyph)
   for(const [width,height] of [[192,45],[160,45],[120,35],[80,19],[24,35],[16,24]])for(const rows of [[],events(),events('Aborted'),events('Rebuilding')]){
    const o=base(rows,width,height),f=frameOf(o),at=headAt(f)
+   if(rows.length===0){
+    assert.equal(at,-1,'empty input has no fictitious task heading');const first=height-(width===16?2:1)
+    assert.equal(f.lines.slice(first).map(l=>l.trim()).join(''),'说说你想做什么。')
+    assert.ok(f.roles.slice(0,first).every(r=>r==='body'));assert.ok(f.roles.slice(first).every(r=>r==='instruction'))
+    assert.equal(f.lines.length,height);assert.ok(f.lines.every(l=>widthOf(l)===width));assert.deepEqual(frameOf(o),f);cases++;continue
+   }
    assert.equal(at,0,`${glyph} ${width}x${height} current title is top-led`)
    assert.equal(f.roles[at],'border');assert.notEqual(f.lines[at+1]!.slice(1,-1).trim(),'','title directly precedes current body')
    assert.equal(f.lines.length,height);assert.equal(f.roles.length,height);assert.ok(f.lines.every(l=>widthOf(l)===width))

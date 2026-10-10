@@ -399,7 +399,7 @@ export function chatOf(o: { readonly snapshot: StatusSnapshot; readonly conversa
   // 空态说明只在没有当前操作时出现；实际进展、结果与汇报在上面已经返回。
   if (o.onboarding === false) return []
   return [
-    { kind: 'head', icon: 'round', text: '说说你想做什么。' },
+    { kind: 'head', icon: 'round', text: WORDS.taskPrompt },
     { kind: 'aside', text: WORDS.onboardingReview, role: 'hint' },
     { kind: 'aside', text: WORDS.onboardingWriteback, role: 'hint' },
     { kind: 'aside', text: '输入任务并发送；/ 查看命令。', role: 'hint' },
@@ -640,11 +640,18 @@ export function frameOf(o: FrameInput): Frame {
     ...(i === lastDraft && !confirmationReady ? [{ kind: 'head' as const, text: draftKey + ' 草案原文', role: 'system' as const }] : []),
   ])
 
+  const emptyContext = o.task !== undefined && o.task.round === null && o.task.state === null && o.task.rows.length === 0
+    && o.snapshot.current === null && o.snapshot.events === 0 && o.snapshot.agents.length === 0
+  // 只有确有输入的空会话才把邀请放到操作附近；已有记录、阅读、菜单和未知对象保持原排版。
+  const emptyInput = emptyContext && o.operationArea === true && view === 'chat' && !readingOn && !helpOn
+    && o.snapshot.rounds.length === 0 && o.task!.plan.length === 0 && (o.conversation?.length ?? 0) === 0
+    && o.menu === undefined && (o.bottom?.rows.length ?? 0) === 0 && (o.nav?.rows.length ?? 0) === 0
+
   // 内容那一栏那几行：**哪一档视图说什么话**。对话视图是 `chatOf` 折出来的那几行
   // （轮次头 · 细线 · 在飞那几格）；另两档是 `bodyOf` 的那一半，行文一字不变，只是各拿满宽。
   const taskBodyRows: readonly { readonly l: string; readonly role: LineRole }[] =
     view === 'chat'
-      ? (o.task?.round !== null && o.task !== undefined ? taskRows! : chatOf({ ...o, onboarding: (o.bottom?.rows.length ?? 0) === 0 && o.menu === undefined })).map((x) =>
+      ? (emptyInput ? [{ kind: 'head' as const, text: WORDS.taskPrompt, role: 'instruction' as const }] : o.task?.round !== null && o.task !== undefined ? taskRows! : chatOf({ ...o, onboarding: (o.bottom?.rows.length ?? 0) === 0 && o.menu === undefined })).map((x) =>
           x.kind === 'rule'
             ? { l: glyphs().div.repeat(inner), role: 'border' as const }
             : x.kind === 'aside'
@@ -674,7 +681,7 @@ export function frameOf(o: FrameInput): Frame {
   const first = o.task?.rows[0]
   const taskStatus = !readingOn && !helpOn && view === 'chat' && taskMatches
     && first !== undefined && first.text !== '' && ['system', 'waiting', 'ok', 'refuse', 'instruction'].includes(first.role)
-  const statusOn = taskStatus || operationStatus
+  const statusOn = taskStatus || operationStatus || emptyInput
   const footer = statusOn ? '' : clip(helpOn ? `${Math.max(0, Math.min((o.menu?.rows.length ?? 1) - 1, o.menu?.sel ?? 0)) + 1}/${o.menu!.rows.length} · 筛选` : readingOn && typeof o.read?.footer === 'string' && o.read.footer !== '' ? o.read.footer : footerOf(o.snapshot, o.transition), inner)
   // 不需要页脚时两行都交给正文与当前操作，框体高度保持。
   const allocation = frameBudgetOf(height, helpOn ? 0 : (o.bottom?.keep ?? 0), !statusOn)
@@ -826,8 +833,6 @@ export function frameOf(o: FrameInput): Frame {
   const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length + gateNotice.length
   // 保留整窗容量与固定操作区；有余量时让当前任务从顶部展开。
   // 已知空会话和可信任务可移动留白；阅读、菜单、二级面及坏操作元数据沿用原排法。
-  const emptyContext = o.task !== undefined && o.task.round === null && o.task.state === null && o.task.rows.length === 0
-    && o.snapshot.current === null && o.snapshot.events === 0 && o.snapshot.agents.length === 0
   const nearby = o.operationArea === true && !readingOn && dropped === 0 && o.menu === undefined && view === 'chat' && (taskStatus || emptyContext)
     && (o.bottom === undefined || operationStatus)
   const spare = Math.max(0, height - fixed)
@@ -907,6 +912,17 @@ export function frameOf(o: FrameInput): Frame {
       lines[lowerHead] = `${g.tl}${g.h.repeat(edge)}${g.tr}`
       roles[lowerHead] = 'border'
     }
+  }
+  // 空态没有任务标题或进度；只把完整邀请与当前反馈放到固定输入上方，余量留在框外。
+  // 装不下完整内容时保留上面的省略路径，提示仍可按需查看；不缩小实际屏幕容量。
+  if (emptyInput && dropped === 0) {
+    lines.fill(' '.repeat(width))
+    roles.fill('body')
+    content.forEach((one, i) => {
+      const at = height - content.length + i
+      lines[at] = ' '.repeat(1 + airOf(width)) + cell(one.l, inner) + ' '.repeat(1 + airOf(width))
+      roles[at] = one.role
+    })
   }
   if (sideWidth > 0) {
     const sideInner = sideWidth - 2

@@ -21,13 +21,13 @@ const meaningful=(f:ReturnType<typeof frameOf>)=>f.lines.flatMap((l,i)=>i>0&&!['
 const trailing=(f:ReturnType<typeof frameOf>)=>{const last=meaningful(f).at(-1)!;let n=0;for(let i=last+1;i<f.lines.length&&!['border','footer'].includes(f.roles[i]!);i++)n++;return n}
 function base(rows:StatusRow[],width=120,height=35){return {snapshot:statusOf(rows),task:taskOf(rows),width,height,operationArea:true}}
 
-test('current sparse conversation and first-open guidance begin at the top without reducing full-window capacity or changing message order',()=>{
+test('current sparse conversation begins at the top and first-open invitation stays near input without reducing capacity',()=>{
  let cases=0
  try{for(const glyph of ['ascii','box','rich'] as const){setGlyphTier(glyph)
   for(const [width,height] of [[120,35],[160,45],[80,35],[24,35]])for(const rows of [[],make(),make('Aborted'),make('Rebuilding')]){
    const o=base(rows,width,height),f=frameOf(o),positions=meaningful(f)
    assert.equal(trailing(f),0,'no unused rows between current content and its footer/frame bottom')
-   assert.equal(positions[0],1,'current task information starts below the top title')
+   assert.equal(positions[0],rows.length===0?height-1:1,'task body follows its title; empty invitation stays next to input')
    assert.equal(f.lines.length,height);assert.equal(f.roles.length,height);for(const l of f.lines)assert.equal(widthOf(l),width)
    assert.deepEqual(frameOf(o),f,'pure render retains exact idle frame')
    if(rows.length&&o.task.state!=='Rebuilding'){assert.ok(at(f,'你')<at(f,'保留账号'));assert.ok(f.roles.includes('user')&&f.roles.includes('model'))}
