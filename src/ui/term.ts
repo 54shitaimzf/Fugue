@@ -535,7 +535,7 @@ export function openTerm(o: TermOptions): Term {
       /** 框下面那几行：空一行 ＋ 提示行 ＋ 输入行。光标停在它的末行（没有输入行时停在它下面一行）。 */
       const tail = [...pad, ...body]
       const region = [...rows, ...tail]
-      /** 变窄会拆旧行，不能猜；变宽时旧区域的硬换行仍各占一行，可原位替换。 */
+      /** 变窄先保守另起；只有下方完整回报证明的底部硬行才能原位替换。变宽保持硬换行。 */
       const widthChanged = columns !== drawnColumns
       const widthShrank = columns < drawnColumns
       // `steady`：高度也没变过（那一档的上移与擦残影都与从前逐字节相同）。宽度变过要全量重画；
@@ -548,6 +548,12 @@ export function openTerm(o: TermOptions): Term {
         typeof drawnRows === 'number' && (rowsSeen as number) < drawnRows && lastIsInput && region.length === rowsSeen &&
         normalAnchor !== null && normalAnchor.columns === drawnColumns && normalAnchor.rows === drawnRows &&
         normalAnchor.top < (rowsSeen as number) && normalAnchor.top + regionRows === drawnRows && cursorRow === regionRows - 1
+      // Bottom hard lines retain row coordinates when only columns shrink.
+      // A complete old frame report and a contained new region permit replacing
+      // that exact rectangle; unknown reports keep the original append path.
+      const normalWidth = !wantAlt && textOnly && drawn && widthShrank && permanent.length === 0 && rowsKnown && rowsSeen === drawnRows &&
+        lastIsInput && normalAnchor !== null && normalAnchor.columns === drawnColumns && normalAnchor.rows === drawnRows &&
+        normalAnchor.top + regionRows === (rowsSeen as number) && cursorRow === regionRows - 1 && region.length <= regionRows
       const normalReturn = !wantAlt && drawn && rowsKnown && typeof drawnRows === 'number' &&
         (rowsSeen as number) > drawnRows && normalRecovery !== null && columns <= normalRecovery.columns &&
         (rowsSeen as number) <= normalRecovery.rows && lastIsInput && region.length <= (rowsSeen as number)
@@ -568,10 +574,10 @@ export function openTerm(o: TermOptions): Term {
       buf.push(imageFrame.before)
       // 上一帧比这一帧多出来的那几行（全量那一趟要擦成空行，行数变少不留残影）：输入行变少与高度
       // 变矮都是这一条——两处都是"顶边不动、底下多出来一截"，擦法一样。**宽度变窄那一趟不擦**
-      // （旧块整体留给终端重排，新宽度另起一块）；变宽可以覆盖旧块。没画过也没有可擦的上一帧。
+      // （旧块整体留给终端重排，新宽度另起一块）；可信底部硬行可在原范围擦尾。没画过则不擦。
       // 新块已填满当前可见区时，下方没有可擦的旧尾；LF 会把新块卷入历史。
       const stale =
-        drawn && !widthShrank && lastRegion !== null && !normalShrink && !normalReturn && !(rowsKnown && region.length >= (rowsSeen as number))
+        drawn && (!widthShrank || normalWidth) && lastRegion !== null && !normalShrink && !normalReturn && !(rowsKnown && region.length >= (rowsSeen as number))
           ? Math.max(0, lastRegion.length - region.length) : 0
       // **新块摆到哪儿**：full 的自有屏锚在底边；普通屏只向自己写过的空行扩展，余量向下让位。
       // 屏幕增高保留旧顶边；面板变矮也保持顶边，多余尾行交给 stale 清空。
@@ -596,6 +602,8 @@ export function openTerm(o: TermOptions): Term {
         // visible prefix is our emitted reserve, erase it before LF can
         // move stale wide cells into history (actual NorthWest XTerm).
         buf.push(normalOwnedPrefix ? '\x1b[2J\x1b[H' : `\x1b[${normalAnchor!.top + 1};1H`)
+      } else if (normalWidth) {
+        buf.push(`\x1b[${normalAnchor!.top + 1};1H`)
       } else if (back > 0) buf.push(upOf(back))
       const historyBudget = rowsKnown ? Math.max(0, (rowsSeen as number) - region.length) : REGION_ROWS
       const permanentRows = ownedResize ? altHistory.slice(Math.max(0, altHistory.length - historyBudget))
