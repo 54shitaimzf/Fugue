@@ -195,6 +195,8 @@ export function openStage(deps: StageDeps): Stage {
   let reading: { face: ReadFaceName; top: number } | null = null
   /** 当前待确认卡的全文坐标；内容每次从同一 gate face 取得，不另存计划。 */
   let planTop: number | null = null
+  // 同一批次、选中卡与列宽的全文只排一次；仅留当前一份，尺寸未知也沿用原折行。
+  let planSnap: { face: GateFace; at: number; columns: number; width: number; value: ReturnType<typeof readContentOf> } | null = null
   /**
    * 跑完一趟要不要**自动**接着起下一条（`T7`）。缺省要；**被 `Esc` / `Ctrl-C` 打断之后不要**——
    * 人刚说了停，排队那几条停在那儿等他（`Enter` 起下一条 · `Esc` 丢掉）。起新的一条时又回到"要"。
@@ -222,6 +224,7 @@ export function openStage(deps: StageDeps): Stage {
     if (next === null) restoreDraft(); else suspendDraft()
     panel = null; reading = null; keyHelpTop = null
     planTop = null
+    planSnap = null
     // **批次换了就把选中那一份与举手那一栏都归零**：上一批举过的手不许带到这一批上。
     gateView = GATE_VIEW
     // **结论行进永久行**（第二幕 ⑧）：门口一开就说清这一批「打算开几件事 · 覆盖哪些 · 按什么验收」。
@@ -264,8 +267,12 @@ export function openStage(deps: StageDeps): Stage {
   }
   const planContent = () => {
     const card = gate === null ? null : cardAt(gate, gateView.at)
-    return card === null ? { heading: '', rows: [], removedTitleRows: 0 } :
-      readContentOf(`计划全文 · 当前 ${gateView.at + 1}/${gate!.cards.length}`, previewLinesOf(card), cols(), deps.columns())
+    if (card === null) { planSnap = null; return { heading: '', rows: [], removedTitleRows: 0 } }
+    const width = deps.columns(), columns = innerOf(width)
+    if (planSnap !== null && planSnap.face === gate && planSnap.at === gateView.at && planSnap.columns === columns && planSnap.width === width) return planSnap.value
+    const value = readContentOf(`计划全文 · 当前 ${gateView.at + 1}/${gate!.cards.length}`, previewLinesOf(card), columns, width)
+    planSnap = { face: gate!, at: gateView.at, columns, width, value }
+    return value
   }
   const planRows = (): readonly string[] => planContent().rows
   const readPosition = (rows: readonly string[], top: number): string => `${top + 1}/${rows.length} 行 · 只读`
@@ -426,7 +433,7 @@ export function openStage(deps: StageDeps): Stage {
     columns: cols(), keymap: deps.keymap?.(),
     height: Math.max(1, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1)) })
   const clearSmallGate = (): boolean => {
-    if (!showInput || gateLayout()?.blocked !== true) return false
+    if (!showInput || planTop !== null || gateLayout()?.blocked !== true) return false
     gateView = { ...gateView, armed: null }
     return true
   }
@@ -949,6 +956,7 @@ export function openStage(deps: StageDeps): Stage {
     onResize() { clearSmallGate(); syncImage() },
     close(): void {
       closed = true
+      planSnap = null
       previewJob?.controller.abort()
       previewJob = null
     },
