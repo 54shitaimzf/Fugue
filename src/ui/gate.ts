@@ -272,10 +272,11 @@ export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateVi
     const scopeOn = rows.length + scope.length <= budget
     if (scopeOn) rows.push(...scope)
     if (rows.length + read.length <= budget) rows.push(...read)
-    return { rows, keep: rows.length, waitingAt: 0, waitingCount: warning.length,
+    return { confirmationRound: o.face.cards.length > 0 ? o.face.round : undefined, rows, keep: rows.length, waitingAt: 0, waitingCount: warning.length,
       headingAt: warning.length, headingCount: scopeOn ? scope.length : 0, blocked: true }
   }
   return {
+    confirmationRound: o.face.cards.length > 0 ? o.face.round : undefined,
     rows: [...head, ...queue, ...options],
     keep: queue.length + options.length,
     waitingAt: head.length + queue.length,

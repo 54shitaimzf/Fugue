@@ -16,7 +16,7 @@ const command='node tools/test-entry.js --work='+ 'x'.repeat(42)+' --required=CO
 const rows=[{pos:{writer:'round',seq:1},e:{t:'round/state',round:'r1',from:'Idle',to:'Planning'}},{pos:{writer:'round',seq:2},e:{t:'round/intent',round:'r1',body:JSON.stringify({goal})}},{pos:{writer:'holder/r1',seq:1},e:{t:'holder/todos',agent:'holder/r1',body:JSON.stringify({todos:[{content:'核对提示分支',status:'in_progress'},{content:'验证账号保留',status:'pending'}]})}},{pos:{writer:'holder/r1',seq:2},e:{t:'holder/reply',agent:'holder/r1',body:'我会保留现有账号，只调整失败提示并验证重试。'}}] as StatusRow[]
 const face=gateFaceOf({round:'r1',fingerprint:'confirmation-space',same:[],contracts:[1,2].map(n=>({id:`r1.implement.${n}`,agent:`agent/r1/${n}`,kind:'implement',goal:`修复第${n}项失败提示`,ownedPaths:[path],seed:[],deliverables:[],assertions:[{name:'提示行为',action:'test'}]}))} as never,{test:command})
 const snapshot=statusOf(rows),task=taskOf(rows)
-const cardText=(f:ReturnType<typeof frameOf>)=>f.lines.flatMap((line,i)=>['overlay','overlayBody','waiting'].includes(f.roles[i]!)?[line.slice(1,-1).trim()]:[])
+const cardText=(f:ReturnType<typeof frameOf>,count:number)=>f.lines.slice(-count-1,-1).map((line,i)=>{assert.ok(['overlay','overlayBody','waiting'].includes(f.roles[f.roles.length-count-1+i]!));return line.slice(1,-1).trim()})
 
 test('确认独占实际窗口宽度，侧栏不裁掉命令和路径；收起后辅助计划恢复',()=>{
  for(const width of [108,120,160])for(const height of [19,35,45])for(const armed of [null,'approve','reject'] as const){
@@ -25,7 +25,7 @@ test('确认独占实际窗口宽度，侧栏不裁掉命令和路径；收起�
   const bottom=gateLayoutOf({face,view:{at:1,armed},columns:innerOf(width),height})
   const f=frameOf({...base,bottom})
   assert.equal(f.columns.right,0,'确认优先使用完整宽度')
-  assert.deepEqual(cardText(f),bottom.rows.map(l=>l.trim()),'已折行卡片逐行完整显示，不能二次裁切')
+  assert.deepEqual(cardText(f,bottom.rows.length),bottom.rows.map(l=>l.trim()),'已折行卡片逐行完整显示，不能二次裁切')
   assert.ok(f.lines.join('').includes('PATH_END.ts'));assert.ok(f.lines.join('').includes('COMMAND_END'))
   assert.equal(f.lines.length,height);assert.ok(f.lines.every(l=>widthOf(l)===width))
   assert.deepEqual(frameOf(base),plain,'返回输入后侧栏与原主区完全恢复')
@@ -41,10 +41,10 @@ test('多余留白中的分隔承担识别，不挤正文或选项；三字形�
   const at=f.roles.findIndex(role=>role==='overlayBody')
   assert.ok(at>1);assert.equal(f.roles[at-1],'border','确认预览前有低权重分隔')
   assert.ok(f.lines[at-1]!.includes(glyphs().div.repeat(innerOf(width))))
-  assert.deepEqual(cardText(f),bottom.rows.map(l=>l.trim()));assert.equal(f.roles.filter(r=>r==='waiting').length,bottom.waitingCount)
+  assert.deepEqual(cardText(f,bottom.rows.length),bottom.rows.map(l=>l.trim()));assert.equal(f.roles.slice(-bottom.rows.length-1,-1).filter(r=>r==='waiting').length,bottom.waitingCount)
   const filled={...task,rows:[...task.rows,{text:'模型\n'+Array.from({length:80},(_,i)=>`原始进展${i}`).join('\n'),role:'model' as const}]}
   const dense=frameOf({...base,task:filled})
-  assert.deepEqual(cardText(dense),bottom.rows.map(l=>l.trim()),'没有空白时不添加分隔，不挤确认正文')
+  assert.deepEqual(cardText(dense,bottom.rows.length),bottom.rows.map(l=>l.trim()),'没有空白时不添加分隔，不挤确认正文')
   const firstCard=dense.roles.findIndex(role=>role==='overlayBody');assert.notEqual(dense.roles[firstCard-1],'border')
   for(const count of [0,-1,Number.NaN]){
    const bad={...bottom,waitingCount:count},invalid=frameOf({...base,bottom:bad})

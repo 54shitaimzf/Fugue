@@ -457,6 +457,8 @@ export interface MenuInput {
  * 人要按 · 要看的东西。不给时一列都不占（`T6` 之前逐字节相同）。
  */
 export interface BottomInput {
+  /** 仅确认排版提供的轮次；缺失或不匹配时沿用原状态词面。 */
+  readonly confirmationRound?: string | undefined
   readonly rows: readonly string[]
   readonly keep: number
   /**
@@ -584,11 +586,20 @@ export function frameOf(o: FrameInput): Frame {
   const helpOn = validDetail && (detail.length <= height - 4 || shortDetail)
 
 
+  const taskMatches = o.task !== undefined && o.task.round !== null && o.task.state !== null
+    && ((o.task.round === o.snapshot.current && o.task.state === o.snapshot.rounds.find(r => r.round === o.snapshot.current)?.state)
+      || (o.focus !== undefined && o.focus !== null && o.snapshot.current === null))
+  // Planning只说明准备阶段；本轮已有有效确认区域时，说此刻等人决定什么。
+  // 只替换投影的第一条标准状态，不改模型原文、日志或机器快照。
+  const confirmationReady = operationStatus && taskMatches && o.task!.state === 'Planning'
+    && o.bottom?.confirmationRound === o.task!.round
+    && o.task!.rows[0]?.role === 'system' && o.task!.rows[0]?.text === WORDS.planPreparing
+
   // 内容那一栏那几行：**哪一档视图说什么话**。对话视图是 `chatOf` 折出来的那几行
   // （轮次头 · 细线 · 在飞那几格）；另两档是 `bodyOf` 的那一半，行文一字不变，只是各拿满宽。
   const bodyRows: readonly { readonly l: string; readonly role: LineRole }[] =
     view === 'chat'
-      ? (o.task?.round !== null && o.task !== undefined ? o.task.rows.map(r => ({ kind: 'head' as const, ...r })) : chatOf({ ...o, onboarding: (o.bottom?.rows.length ?? 0) === 0 && o.menu === undefined })).map((x) =>
+      ? (o.task?.round !== null && o.task !== undefined ? o.task.rows.map((r, i) => ({ kind: 'head' as const, ...(confirmationReady && i === 0 ? { text: WORDS.gateReview, role: 'waiting' as const } : r) })) : chatOf({ ...o, onboarding: (o.bottom?.rows.length ?? 0) === 0 && o.menu === undefined })).map((x) =>
           x.kind === 'rule'
             ? { l: glyphs().div.repeat(inner), role: 'border' as const }
             : x.kind === 'aside'
@@ -611,9 +622,6 @@ export function frameOf(o: FrameInput): Frame {
   // 当前任务正文已承担状态说明，主面不再重复阶段。任务投影未知时保留旧页脚地板；
   // 阅读位置、帮助筛选与二级视图的页脚各有当前用途，仍按原容量显示。
   const first = o.task?.rows[0]
-  const taskMatches = o.task !== undefined && o.task.round !== null && o.task.state !== null
-    && ((o.task.round === o.snapshot.current && o.task.state === o.snapshot.rounds.find(r => r.round === o.snapshot.current)?.state)
-      || (o.focus !== undefined && o.focus !== null && o.snapshot.current === null))
   const taskStatus = !readingOn && !helpOn && view === 'chat' && taskMatches
     && first !== undefined && first.text !== '' && ['system', 'waiting', 'ok', 'refuse', 'instruction'].includes(first.role)
   const statusOn = taskStatus || operationStatus

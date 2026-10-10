@@ -490,7 +490,7 @@ export function openStage(deps: StageDeps): Stage {
             bottom: {
               rows: bottomRows,
               keep: (gatePart?.keep ?? 0) + queueRows.length,
-              ...(gatePart === null ? {} : { waitingAt: gatePart.waitingAt, waitingCount: gatePart.waitingCount, headingAt: gatePart.headingAt, headingCount: gatePart.headingCount, overflow: gatePart.overflow }),
+              ...(gatePart === null ? {} : { confirmationRound: gatePart.confirmationRound, waitingAt: gatePart.waitingAt, waitingCount: gatePart.waitingCount, headingAt: gatePart.headingAt, headingCount: gatePart.headingCount, overflow: gatePart.overflow }),
             },
           }
     // 树那一栏（`T8`，排在最上面）与"切到哪一格"（`focus`：`null` = 整份账）。
