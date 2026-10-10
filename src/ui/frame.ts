@@ -600,9 +600,10 @@ export function frameOf(o: FrameInput): Frame {
   // 当前任务正文已承担状态说明，主面不再重复阶段。任务投影未知时保留旧页脚地板；
   // 阅读位置、帮助筛选与二级视图的页脚各有当前用途，仍按原容量显示。
   const first = o.task?.rows[0]
-  const taskStatus = !readingOn && !helpOn && view === 'chat' && o.task !== undefined && o.task.round !== null
-    && o.task.state !== null && ((o.task.round === o.snapshot.current && o.task.state === o.snapshot.rounds.find(r => r.round === o.snapshot.current)?.state)
+  const taskMatches = o.task !== undefined && o.task.round !== null && o.task.state !== null
+    && ((o.task.round === o.snapshot.current && o.task.state === o.snapshot.rounds.find(r => r.round === o.snapshot.current)?.state)
       || (o.focus !== undefined && o.focus !== null && o.snapshot.current === null))
+  const taskStatus = !readingOn && !helpOn && view === 'chat' && taskMatches
     && first !== undefined && first.text !== '' && ['system', 'waiting', 'ok', 'refuse', 'instruction'].includes(first.role)
   // 有完整的当前确认指示时，确认区域承担操作状态；未知元数据仍沿用旧页脚。
   const operationAt = o.bottom?.waitingAt ?? -1, operationCount = o.bottom?.waitingCount ?? 0
@@ -782,7 +783,16 @@ export function frameOf(o: FrameInput): Frame {
   // 那一格：对话视图不印树，框名是「读的是哪一格」这件事唯一的落点。
   const g = glyphs()
   const focus = o.focus === undefined || o.focus === null ? '' : ` · ${o.focus}`
-  const head = helpOn ? '按键帮助' : readingOn ? (typeof o.read?.heading === 'string' && o.read.heading !== '' ? o.read.heading : '阅读面') : `${o.task === undefined || o.task.round === null || view !== 'chat' ? viewNameOf(view) : '当前任务'}${view === 'chat' ? '' : focus}`
+  // 当前任务的原目标留在框名，长回复裁切不让用户失去正在做哪件事。
+  // 只采用匹配当前轮次的最后一条用户目标；缺失或旧投影保留原框名。
+  const taskOn = o.task !== undefined && o.task.round !== null && view === 'chat'
+  const currentTask = taskOn && taskMatches
+  const titleRow = currentTask ? o.task!.rows.findLast(r => r.role === 'user') : undefined
+  const foldedGoal = titleRow?.text.startsWith('你\n') ? titleRow.text.slice(2).replace(/\s+/g, ' ').trim() : ''
+  const subject = /[\x00-\x1f\x7f-\x9f]/.test(foldedGoal) ? '' : foldedGoal
+  const titleRoom = mainWidth - 5 - widthOf('当前任务 · ')
+  const taskHead = subject !== '' && titleRoom >= 4 ? `当前任务 · ${clip(subject, titleRoom)}` : '当前任务'
+  const head = helpOn ? '按键帮助' : readingOn ? (typeof o.read?.heading === 'string' && o.read.heading !== '' ? o.read.heading : '阅读面') : `${taskOn ? taskHead : viewNameOf(view)}${view === 'chat' ? '' : focus}`
   lines.push(`${g.tl}${bar(edge, head)}${g.tr}`)
   roles.push(helpOn || readingOn ? 'readHeading' : 'border')
   for (const one of shown) {

@@ -321,7 +321,7 @@ export function clip(s: string, w: number): string {
   if (widthOf(s) <= w) return s
   const mark = glyphs().mark
   const mw = widthOf(mark)
-  if (w <= mw) return mark
+  if (w <= mw) return mark.slice(0, w)
   let out = ''
   let used = 0
   for (const c of clustersOf(s)) {
