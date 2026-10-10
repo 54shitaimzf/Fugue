@@ -95,7 +95,7 @@ process.stdin.emit('data',Buffer.from('y'));await wait(80);process.stdin.emit('d
 await until(()=>count('contract/issue')===3&&events().at(-1).to==='Working','actual round go issued same batch')
 await until(()=>visible().includes('按键 Enter 发送'),'input returns after actual round go')
 const issued=events().filter(e=>e.t==='contract/issue').map(e=>JSON.parse(e.body));assert.deepEqual(issued.map(c=>c.kind),['investigate','implement','implement']);assert.deepEqual(issued.slice(1).map(c=>c.ownedPaths),paths.map(p=>[p]));assert.equal(count('round/approve'),1);assert.ok(paths.every(p=>!existsSync(join(root,p))),'dispatch has not written project files')
-await snap('dispatched')
+await snap('dispatched');assert.ok(visible().includes('这批任务已确认，结果尚未写回。'));assert.ok(!visible().includes('正在处理已确认的任务。'))
 process.stdin.emit('data',Buffer.from('\x1b[200~/round work\x1b[201~\r'))
 await until(()=>visible().includes('Esc 停止')||visible().includes('正在验收'),'execution is visible')
 if(native)await snap('running');else snapshots.push({name:'running',screen:visible()})
@@ -106,7 +106,7 @@ assert.equal(readFileSync(join(root,'keep.txt'),'utf8'),'keep original\n')
 const acceptance=events().find(e=>e.t==='merge/accept')
 if(scenario==='failure'){
  assert.ok(paths.every(p=>!existsSync(join(root,p))),'failed verification leaves project files absent');assert.equal(git('rev-parse','HEAD'),base)
- assert.equal(acceptance,undefined);assert.ok(visible().includes('失败')||visible().includes('未通过'))
+ assert.equal(acceptance,undefined);assert.ok(!visible().includes('正在合并结果，尚待验收与写回。'));assert.ok(visible().includes('失败')||visible().includes('未通过'))
 }else{
  assert.ok(acceptance);assert.notEqual(git('rev-parse','HEAD'),base)
  for(const p of paths)assert.equal(readFileSync(join(root,p),'utf8'),git('show','HEAD:'+p)+'\n')

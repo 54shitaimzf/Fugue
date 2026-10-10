@@ -42,10 +42,11 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
   let state: string | null = null, from: string | undefined
   let plan: PlanItem[] = [], planInvalid = false
   const messages: ConversationRow[] = [], changed = new Set<string>()
-  let action = '', problem = '', verification = '', commit = ''
+  let action = '', problem = '', verification = '', commit = '', issued = false
   for (const { e } of current) {
     switch (e.t) {
-      case 'round/state': state = e.to; from = e.from; break
+      // A phase edge expires the previous action; a same-phase record does not.
+      case 'round/state': if (e.from !== e.to) action = ''; state = e.to; from = e.from; break
       case 'round/intent': messages.push({ text: `你\n${goalOf(e.body)}`, role: 'user' }); break
       case 'holder/distill': messages.push({ text: `模型 · 当前理解\n${clean(e.body)}`, role: 'model' }); break
       case 'agent/handoff': messages.push({ text: `模型 · 交接说明\n${clean(e.body)}`, role: 'model' }); break
@@ -74,7 +75,8 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
       }
       case 'view/write': case 'view/remove': case 'view/symlink': case 'view/chmod': changed.add(clean(e.path)); break
       case 'view/rename': changed.add(clean(e.from)); changed.add(clean(e.to)); break
-      case 'contract/issue': if (changed.size === 0) action = '正在处理已确认的任务。'; break
+      // Dispatch proves approval, not a running process.
+      case 'contract/issue': issued = true; break
     }
   }
   const notice = state === null ? null : roundNoticeOf(from, state)
@@ -89,7 +91,7 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
   }
   // 实际动作已经说明当前进展；失败、验收与写回结论仍优先。
   const actionStatus = notice === null && state === 'Working' && action !== '' && action !== problem
-  const status = notice?.text ?? (actionStatus ? action : state === null ? '当前任务记录' : state === 'Planning' ? WORDS.planPreparing : roundLabelOf(state, from))
+  const status = notice?.text ?? (actionStatus ? action : state === null ? '当前任务记录' : state === 'Planning' ? WORDS.planPreparing : state === 'Working' && issued ? '这批任务已确认，结果尚未写回。' : roundLabelOf(state, from))
   result.push({ text: status, role: notice?.role ?? (actionStatus ? 'instruction' : state === 'Aborted' ? 'refuse' : 'system') })
   if (notice?.text === WORDS.verifyNotWritten) result.push({ text: WORDS.verifyFailedGuide, role: 'instruction' })
   if (state === 'Committed') result.push({ text: '验收已通过 · 待写回', role: 'instruction' })

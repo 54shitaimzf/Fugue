@@ -51,9 +51,13 @@ const resize=(nextCols,nextRows)=>{
 }
 const signals=['SIGINT','SIGTERM','SIGHUP','SIGWINCH'],before=signals.map(s=>process.listenerCount(s))
 const done=tuiCmd(root,new Map([['interval','25'],['no-style',true]]))
-for(let i=0;i<500&&(!raw||(scenario!=='silent'&&queries<4));i++)await wait(20)
-assert.ok(raw,'actual Console attached raw keys');if(scenario!=='silent')assert.ok(queries>=4)
-process.stdin.emit('data',Buffer.from('\x1b[200~check retry\x1b[201~'));await wait(150)
+for(let i=0;i<500&&!raw;i++)await wait(20)
+assert.ok(raw,'actual Console attached raw keys')
+// Empty source may paint before raw/probe attachment; a real edit requests the next completed frame.
+process.stdin.emit('data',Buffer.from('\x1b[200~check retry\x1b[201~'))
+for(let i=0;i<500&&scenario!=='silent'&&queries<4;i++)await wait(20)
+if(scenario!=='silent')assert.ok(queries>=4)
+await wait(150)
 let idles=0
 for(const [c,r] of [[24,12],[16,8],...(scenario==='direct'?[]:[[initialCols,initialRows]])]){
  resize(c,r);await wait(150);if(scenario==='regular')assert.equal(y,r-1,'editor caret stays on current bottom row');const b=bytes;await wait(100);assert.equal(bytes,b,'unchanged Console/source poll emits no bytes');idles++
