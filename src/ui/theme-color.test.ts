@@ -85,9 +85,9 @@ test('② 八格从 SLOT_MEANING 推：色表逐格对齐 · 角色都落在格�
     .filter((r) => SLOT_256[ROLE_SLOT[r]] !== '')
     .sort()
   assert.deepEqual((Object.keys(theme256()) as readonly LineRole[]).sort(), want, 'theme256 恰好覆盖该覆盖的角色')
-  // 背景不明的三个关键角色使用宿主前景；其余角色仍逐字节取语义色位。
+  // 背景不明的七个关键角色使用宿主前景；其余角色仍逐字节取语义色位。
   for (const [role, sgr] of Object.entries(theme256())) {
-    const critical: Partial<Record<LineRole, string>> = { waiting: '\x1b[1m', system: '\x1b[39m', hint: '\x1b[39m' }
+    const critical: Partial<Record<LineRole, string>> = { waiting: '\x1b[1m', system: '\x1b[39m', hint: '\x1b[39m', user: '\x1b[1m', readHeading: '\x1b[1m', ok: '\x1b[1m', refuse: '\x1b[1m' }
     assert.equal(sgr, critical[role as LineRole] ?? SLOT_256[ROLE_SLOT[role as LineRole]], `${role} 遵循当前背景与角色的样式`)
   }
   console.log(
@@ -114,7 +114,7 @@ test('③ 黑白地板逐字节不变：能力未声明时既有角色字节不�
   const two = themeOf({ term: 'xterm-256color' })
   assert.notDeepEqual(two, DEFAULT_THEME, '256 色档与第 1 级不同——不然上面那几条量不到东西')
   assert.equal(two?.border, '\x1b[38;5;242m', '框线在256 色档走弱化那一格')
-  assert.equal(two?.readHeading, '\x1b[1;38;5;75m', '阅读面标题在256 色档是粗 + 蓝')
+  assert.equal(two?.readHeading, '\x1b[1m', '未知背景的阅读面标题用宿主前景加粗')
   console.log(`③ 读数：第 1 级 ${JSON.stringify(DEFAULT_THEME)} · 256 色档 ${JSON.stringify(two)}`)
 })
 

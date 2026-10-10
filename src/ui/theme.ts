@@ -64,7 +64,7 @@ export const ROLE_SLOT: Readonly<Record<LineRole, Slot>> = {
 
 /**
  * 第 3 级：八格各一个 256 色索引。**取值按参照系选**（Textual 的设计语言 · Claude Code 与
- * opencode 的实用第一）：低饱和、深色底与浅色底上都读得出来，且**不拿颜色当唯一信号**
+ * opencode 的实用第一）：基表按语义分色，theme256 再按背景声明选择可读样式，且**不拿颜色当唯一信号**
  * （框线与留白照旧分出层次，颜色只是加快判读）。
  *
  *   · 成功 `35`（绿）· 拒绝/错误 `203`（柔红，不刺眼）· 等待/运行中 `214`（琥珀）；
@@ -140,13 +140,16 @@ export function backgroundOf(colorFgBg?: string): Background {
   return last === '15' || last === '7' ? 'light' : last === '0' || last === '8' ? 'dark' : 'default'
 }
 export function theme256(background: Background = 'default'): Readonly<Partial<Record<LineRole, string>>> {
-  // 背景不明时等待、系统事实与当前操作提示使用宿主前景；不猜一副配色。
+  // 背景不明时关键消息、标题、结果与当前提示使用宿主前景；身份和状态仍由文字说明。
   if (background === 'default') return { ...themeFrom(SLOT_256),
     waiting: '\x1b[1m', system: '\x1b[39m', hint: '\x1b[39m',
+    user: '\x1b[1m', readHeading: '\x1b[1m', ok: '\x1b[1m', refuse: '\x1b[1m',
   }
   const light = background === 'light'
   const result = themeFrom({ ...SLOT_256,
     dim: light ? '\x1b[38;5;239m' : '\x1b[38;5;245m',
+    ok: light ? '\x1b[1;38;5;22m' : SLOT_256.ok,
+    refuse: light ? '\x1b[1;38;5;124m' : SLOT_256.refuse,
     waiting: light ? '\x1b[1;38;5;94m' : '\x1b[1;38;5;214m',
     readHeading: light ? '\x1b[1;38;5;25m' : '\x1b[1;38;5;111m',
   })

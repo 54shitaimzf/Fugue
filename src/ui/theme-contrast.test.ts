@@ -78,7 +78,7 @@ test('角色更新在三种字形和常见/窄矮窗口保持几何与停留零�
   for(const theme of profiles)for(const [width,height] of [[192,45],[80,19],[24,7]]){
    const chunks:string[]=[]
    const t=openTerm({out:{isTTY:true,columns:width,rows:height!+5,write:s=>chunks.push(s)},term:'xterm-256color',height:height!,theme})
-   for(const role of ['waiting','system','user','model','instruction','hint'] as LineRole[]){
+   for(const role of ['waiting','system','user','model','instruction','hint','readHeading','ok','refuse'] as LineRole[]){
     const panel=frameOf({snapshot:statusOf([]),width:width!,height:height!,task:{round:'r1',goal:'核查当前内容',state:'Working',rows:[{text:role+' · 当前信息',role}]},operationArea:'input'})
     assert.equal(panel.lines.length,height);assert.ok(panel.lines.every(l=>widthOf(l)===width))
     t.draw([],()=>({rows:panel.lines,roles:panel.roles}));draws++
@@ -89,6 +89,56 @@ test('角色更新在三种字形和常见/窄矮窗口保持几何与停留零�
   }
  }
  setGlyphTier('box')
- console.log('theme sequence:3 glyphs x6 profiles x3 geometries x6 roles;'+draws+' draws'+idles+' idles bytes0; geometry exact; no content mutation')
+ console.log('theme sequence:3 glyphs x6 profiles x3 geometries x9 roles;'+draws+' draws'+idles+' idles bytes0; geometry exact; no content mutation')
 })
 
+
+test('未知背景的用户、阅读标题和结果依赖宿主前景与字重，正文与原状态文字保持',()=>{
+ const labels:{role:LineRole,text:string}[]=[
+  {role:'user',text:'你 · 检查当前内容'},
+  {role:'readHeading',text:'完整记录 · 1 / 12'},
+  {role:'ok',text:'验证通过 · 已写回'},
+  {role:'refuse',text:'验证失败 · 未写回'},
+ ]
+ for(const colorFgBg of unknown){
+  const theme=themeOf({term:'xterm-256color',colorFgBg})!
+  for(const {role} of labels)assert.equal(theme[role],'\x1b[1m',role+' 不能猜未知背景的颜色')
+  assert.equal(theme.model,undefined,'模型原文沿用宿主前景')
+  const chunks:string[]=[]
+  const term=openTerm({out:{isTTY:true,columns:40,rows:20,write:s=>chunks.push(s)},height:5,theme})
+  const rows=labels.map(l=>l.text+' '.repeat(40-widthOf(l.text)))
+  rows.push('模型原文'+' '.repeat(40-widthOf('模型原文')))
+  term.draw([],()=>({rows,roles:[...labels.map(l=>l.role),'model']}))
+  const raw=chunks.join('')
+  for(const [i,{text}] of labels.entries())assert.ok(raw.includes('\x1b[1m'+rows[i]+'\x1b[0m'),text+' 已有文字与字重完整渲染并复位')
+  assert.ok(raw.includes(rows[4]!), '模型原文没有结果属性')
+  chunks.length=0
+  term.draw([],()=>({rows:['已写回 MODEL'+' '.repeat(40-widthOf('已写回 MODEL')),'','','',''],roles:['body','body','body','body','body'],segments:[[{text:'已写回 ',role:'ok'},{text:'MODEL'+' '.repeat(28),role:'model'}]]}))
+  assert.ok(chunks.join('').includes('\x1b[1m已写回 \x1b[0mMODEL'),'结果属性不泄漏到模型正文')
+  term.close()
+ }
+ console.log('message readability:6 unknown declarations x4 critical roles; original user/title/outcome text, row resets and result-to-model segment reset; model host foreground')
+})
+test('明确深浅底的用户、标题与结果在固定RGB底色上可读，浅底结果保有语义颜色与字重',()=>{
+ const readings=[]
+ for(const [colorFgBg,bg] of backgrounds){
+  const theme=themeOf({term:'xterm-256color',colorFgBg})!
+  const values=Object.fromEntries((['user','readHeading','ok','refuse'] as LineRole[]).map(role=>{
+   const contrast=ratio(foreground(theme[role]!),bg)
+   assert.ok(Number.isFinite(contrast)&&contrast>=5,colorFgBg+' '+role+' '+contrast+' >=5')
+   return [role,contrast]
+  }))
+  if(colorFgBg.endsWith(';15')||colorFgBg.endsWith(';7')){
+   for(const role of ['ok','refuse'] as const)assert.ok(theme[role]!.startsWith('\x1b[1;'),'浅底结果有字重')
+   const green=foreground(theme.ok!),red=foreground(theme.refuse!)
+   assert.ok(green[1]!>green[0]!&&green[1]!>green[2]!,'成功用绿')
+   assert.ok(red[0]!>red[1]!&&red[0]!>red[2]!,'失败用红')
+   assert.ok(!theme.user!.includes('48;'),'浅底用户用字重')
+  }else{
+   assert.ok(theme.user!.includes('48;5;235'),'深底用户保有原背景强调')
+   assert.ok(ratio(foreground(theme.user!),rgb(235))>=5,'用户蓝字在自己的强调背景上也可读')
+  }
+  readings.push({colorFgBg,...values})
+ }
+ console.log('message contrast:'+JSON.stringify(readings)+'; fixed canonical palette only, no custom-palette conformity claim')
+})
