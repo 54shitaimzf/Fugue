@@ -269,6 +269,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       permanent: permanent(),
       conversation,
       task: taskAt(v?.focus ?? null),
+      ...(v?.input === undefined ? {} : { operationArea: true }),
       ...(transition === undefined ? {} : { transition }),
       width: size.columns,
       height: size.height,

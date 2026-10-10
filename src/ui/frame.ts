@@ -37,7 +37,7 @@ import type { PanelImage } from './image-layer.ts'
 //
 // **装不下怎么办**：宽了**折行**（一行都不少——折在空格处，折不出来才硬切）；只有屏幕**矮**到
 // 装不下这几行时才截断，并且末行说出还剩几行。**框恒填满这一屏**（第二幕 ⑦）：内容不够就用
-// 空行补足（补在候选与门口那一块的上面）——宽了折 · 矮了截 · 不够补空，三条各管一件事。
+// 空行补足（可信当前对话补在正文前，其他读面补在操作前）——宽了折 · 矮了截 · 不够补空。
 // 高度连五行都没有（画不出框 + 账尾）时印一句"太矮"，不静默给一个空帧。
 import type { MetricValue } from '../probe/metrics.ts'
 import { costOf, matchModels, moneyText } from '../model/price.ts'
@@ -144,6 +144,8 @@ export interface ConversationRow {
 }
 
 export interface FrameInput {
+  /** 当前舞台确有输入或批准操作区；只读跟踪不移动正文留白。 */
+  readonly operationArea?: boolean | undefined
   /** 当前配置的任务记录阅读键；舞台只在该动作可用时提供。 */
   readonly taskReadKey?: string | undefined
   readonly task?: TaskFace | undefined
@@ -766,22 +768,24 @@ export function frameOf(o: FrameInput): Frame {
     shown.push(o.task === undefined ? { l: `${glyphs().mark} 还有 ${dropped} 行没印`, role: 'body' } : { l: notice, role: 'system' })
   }
   for (const one of readBody) shown.push({ l: one, role: 'read' })
-  // **框恒填满这一屏**（第二幕 ⑦ 收尾）：`ui/layout.ts` 那本行账里「内容 6 行」是个**定数**
-  // （框恒 10 行），而这一份从前只是"内容够长时看起来填满了"——账还小的时候（一两格 agent）
-  // 框就短一截：框底浮上来，空行落在框与提示行之间，而且框底随账长大缩小、每帧多几行要重写。
-  // 补出来的空行补在**候选与门口那一块的上面**：那两块接着输入行（决策材料那张线框里门口那一块
-  // 就压在分隔线上），不该被空行顶上去。矮到装不下时走的是截断那条路（`还有 N 行没印`），
-  // 这一处只补**多出来的**空行，不顶掉任何一行。
-  //
-  // 改主意的条件：有人嫌账小的时候框里空——去掉这一段，框就回到"内容多高就多高"
-  // （框底随账动，逐行 diff 会多写几行）。
+  // 框恒填满实际分配高度；留白只使用剩余行，不挤掉正文、阅读或操作。
+  // 输入与确认位置固定，避免短内容让框底随流式汇报上下移动。
   // 当前按键从正文顶部展开；列表缺省的底部摆法逐字节保留。
   if (helpOn) {
     menuBody.forEach((l, i) => shown.push({ l, role: i === 0 ? 'overlay' : 'overlayBody' }))
     menuBody.length = 0
   }
   const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length + gateNotice.length
-  for (let i = fixed; i < height; i += 1) shown.push({ l: '', role: 'body' })
+  // 当前正文靠近固定操作区；保留整窗容量，不用内容多少改变框底或输入位置。
+  // 已知空会话和可信任务可移动留白；阅读、菜单、二级面及坏操作元数据沿用原排法。
+  const emptyContext = o.task !== undefined && o.task.round === null && o.task.state === null && o.task.rows.length === 0
+    && o.snapshot.current === null && o.snapshot.events === 0 && o.snapshot.agents.length === 0
+  const nearby = o.operationArea === true && !readingOn && dropped === 0 && o.menu === undefined && view === 'chat' && (taskStatus || emptyContext)
+    && (o.bottom === undefined || operationStatus)
+  const spare = Math.max(0, height - fixed)
+  const gap = nearby && gateBody.length + gateNotice.length > 0 ? Math.min(1, spare) : 0
+  if (nearby) shown.unshift(...Array.from({ length: spare - gap }, () => ({ l: '', role: 'body' as const })))
+  for (let i = 0; i < (nearby ? gap : spare); i += 1) shown.push({ l: '', role: 'body' })
   // 确认与对话用已有的最后一行留白分隔；满容量时不另占正文或操作行。
   if (operationStatus && fixed < height) shown[shown.length - 1] = { l: glyphs().div.repeat(inner), role: 'border' }
   for (const one of menuBody) shown.push({ l: one, role: 'overlay' })
@@ -835,6 +839,9 @@ export function frameOf(o: FrameInput): Frame {
     const sideInner = sideWidth - 2
     const labels = ['计划', '', ...plan.flatMap(p => wrap(`${p.status === 'completed' ? '[x]' : p.status === 'in_progress' ? '>' : '[ ]'} ${p.text}`, sideInner)), '', '完整计划可按需阅读']
     if (labels.length > height) labels.splice(height - 1, labels.length, `${g.mark} 还有计划未展开`)
+    // 短计划跟当前内容对齐；长计划仍使用全部高度，不因主区稀疏而少印。
+    const sideAt = Math.min(nearby ? spare - gap + 1 : 0, Math.max(0, height - labels.length))
+    if (sideAt > 0) labels.unshift(...Array(sideAt).fill(''))
     const segments = lines.map((line, i) => {
       const main = cell(line.slice(0, 1) + inset + cell(shown[i - 1]?.l ?? '', inner) + inset + g.v, mainWidth)
       const actual = i === 0 ? `${g.tl}${bar(mainWidth - 2, head)}${g.tr}` : i === height - 1 ? `${g.bl}${g.h.repeat(mainWidth - 2)}${g.br}` : i === height - 3 && withFooter ? `${g.ml}${g.div.repeat(mainWidth - 2)}${g.mr}` : i === height - 2 && withFooter ? `${g.v}${inset}${cell(footer, inner)}${inset}${g.v}` : main
