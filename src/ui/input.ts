@@ -541,7 +541,7 @@ export interface InputFrame {
 
 /**
  * 量出一块输入行：提示符占前几列，剩下的按列宽折；超过 `rows` 行就**按光标滚**，滚上去的时候
- * 提示符那一格换成 `…`（说出"上面还有"）。
+ * 提示符那一格换成 `…`（说出"上面还有"）；提示符已让位时不再添加前缀列。
  *
  * 光标那一列**不许等于这一行宽**（终端上那个位置放不下光标）：按实际折行的断点归到下一行，
  * 宽簇挤到下一行时也一样。最后一行占满才补空行；最后一行没占满就停在内容末尾那一格。
@@ -574,7 +574,7 @@ export function inputFrameOf(o: {
   if (row >= all.length) all.push('')
   const start = Math.max(0, Math.min(row < maxRows ? 0 : row - maxRows + 1, Math.max(0, all.length - maxRows)))
   const shown = all.slice(start, start + maxRows)
-  const head = start === 0 ? prompt : `…${' '.repeat(Math.max(0, lead - 1))}`
+  const head = lead === 0 ? '' : start === 0 ? prompt : `…${' '.repeat(lead - 1)}`
   return {
     rows: shown.map((one, i) => `${i === 0 ? head : ' '.repeat(lead)}${one}`),
     caret: { row: row - start, col: lead + (caretAt - before) },
