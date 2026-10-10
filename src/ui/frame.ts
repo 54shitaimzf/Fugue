@@ -835,17 +835,25 @@ export function frameOf(o: FrameInput): Frame {
   }
   lines.push(`${g.bl}${g.h.repeat(edge)}${g.br}`)
   roles.push('border')
+  // 稀疏当前组的框名与正文相邻；空余行仍在整窗内，组外不画空框。
+  const headerAt = nearby ? spare - gap : 0
+  if (headerAt > 0) {
+    lines.fill(' '.repeat(width), 0, headerAt)
+    roles.fill('body', 0, headerAt)
+    lines[headerAt] = `${g.tl}${bar(edge, head)}${g.tr}`
+    roles[headerAt] = 'border'
+  }
   if (sideWidth > 0) {
     const sideInner = sideWidth - 2
     const labels = ['计划', '', ...plan.flatMap(p => wrap(`${p.status === 'completed' ? '[x]' : p.status === 'in_progress' ? '>' : '[ ]'} ${p.text}`, sideInner)), '', '完整计划可按需阅读']
     if (labels.length > height) labels.splice(height - 1, labels.length, `${g.mark} 还有计划未展开`)
     // 短计划跟当前内容对齐；长计划仍使用全部高度，不因主区稀疏而少印。
-    const sideAt = Math.min(nearby ? spare - gap + 1 : 0, Math.max(0, height - labels.length))
+    const sideAt = Math.min(nearby ? headerAt : 0, Math.max(0, height - labels.length))
     if (sideAt > 0) labels.unshift(...Array(sideAt).fill(''))
     const segments = lines.map((line, i) => {
       const main = cell(line.slice(0, 1) + inset + cell(shown[i - 1]?.l ?? '', inner) + inset + g.v, mainWidth)
-      const actual = i === 0 ? `${g.tl}${bar(mainWidth - 2, head)}${g.tr}` : i === height - 1 ? `${g.bl}${g.h.repeat(mainWidth - 2)}${g.br}` : i === height - 3 && withFooter ? `${g.ml}${g.div.repeat(mainWidth - 2)}${g.mr}` : i === height - 2 && withFooter ? `${g.v}${inset}${cell(footer, inner)}${inset}${g.v}` : main
-      return [{ text: actual, role: roles[i]! }, { text: ` ${g.v} `, role: 'border' as const }, { text: cell(labels[i] ?? '', sideInner), role: 'plan' as const }]
+      const actual = i < headerAt ? ' '.repeat(mainWidth) : i === headerAt ? `${g.tl}${bar(mainWidth - 2, head)}${g.tr}` : i === height - 1 ? `${g.bl}${g.h.repeat(mainWidth - 2)}${g.br}` : i === height - 3 && withFooter ? `${g.ml}${g.div.repeat(mainWidth - 2)}${g.mr}` : i === height - 2 && withFooter ? `${g.v}${inset}${cell(footer, inner)}${inset}${g.v}` : main
+      return [{ text: actual, role: roles[i]! }, { text: i < sideAt ? '   ' : ` ${g.v} `, role: 'border' as const }, { text: cell(labels[i] ?? '', sideInner), role: 'plan' as const }]
     })
     return { width, height, columns: { left: inner, right: sideInner }, footer, lines: segments.map(s => s.map(p => p.text).join('')), roles, segments }
   }

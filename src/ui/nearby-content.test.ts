@@ -93,7 +93,7 @@ test('a short auxiliary plan aligns with current content; long plans retain all 
  const f=frameOf({...o,task:{...o.task,plan}})
  const planAt=(x:ReturnType<typeof frameOf>)=>x.segments!.findIndex(s=>s[2]!.text.trim()==='计划')
  const firstMain=f.lines.findIndex((_,i)=>i>0&&f.roles[i]==='system')
- assert.equal(planAt(f),firstMain,'short route is auxiliary to the current primary content, not the first body in an otherwise empty screen')
+ assert.equal(planAt(f),firstMain-1,'short auxiliary plan title aligns with the adjacent current task title')
  assert.ok(f.lines.join('').includes('核对登录行为')&&f.lines.join('').includes('检查账户保留'))
  const many=Array.from({length:40},(_,i)=>({text:`第${i}项待做任务`,status:'pending' as const}))
  const tall=frameOf({...o,task:{...o.task,plan:many}});assert.equal(planAt(tall),0);assert.ok(tall.lines.at(-1)!.includes('还有计划未展开'));assert.equal(tall.lines.length,35)
