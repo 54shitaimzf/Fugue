@@ -212,8 +212,9 @@ export function openCursorProbe(o: {
     r.done=true;stop?.();stop=undefined
     if(r.position && r.origin && r.horizontal && r.margins)r.accept(...r.position)
   }
-  return {
-    start(rows:number,accept: (row: number, column: number) => void): void {
+  let queued:{rows:number,accept:(row:number,column:number)=>void}|null=null,flushing=false
+  const start=(rows:number,accept: (row: number, column: number) => void): void => {
+      queued=null
       if(closed)return
       stop?.();stop=undefined
       if(current)current.done=true
@@ -221,6 +222,21 @@ export function openCursorProbe(o: {
       const r:CursorRequest={done:false,rows,accept};current=r;positions.push(r);origins.push(r);horizontals.push(r);margins.push(r)
       stop=wait(CELL_WAIT_MS,()=>{if(r!==current||r.done)return;stop=undefined;r.done=true})
       o.write('\x1b[?6$p\x1b[?69$p\x1bP$qr\x1b\\\x1b[6n')
+  }
+  return {
+    start,
+    /** Coalesce one synchronous paint burst; emitted replies retain their FIFO slots. */
+    schedule(rows:number,accept:(row:number,column:number)=>void):void {
+      if(closed)return
+      stop?.();stop=undefined;if(current)current.done=true
+      queued={rows,accept}
+      if(flushing)return
+      flushing=true
+      queueMicrotask(()=>{
+        flushing=false
+        const next=queued;queued=null
+        if(next!==null)start(next.rows,next.accept)
+      })
     },
     receive(bytes:string):void {
       if(closed)return
@@ -235,6 +251,6 @@ export function openCursorProbe(o: {
         const row=Number(position[1])-1,column=Number(position[2])-1
         r.position=row>=0&&row<r.rows&&column>=0?[row,column]:null;finish(r)}
     },
-    close():void { if(closed)return;closed=true;stop?.();stop=undefined;if(current)current.done=true;positions.length=0;origins.length=0;horizontals.length=0;margins.length=0 },
+    close():void { if(closed)return;closed=true;queued=null;stop?.();stop=undefined;if(current)current.done=true;positions.length=0;origins.length=0;horizontals.length=0;margins.length=0 },
   }
 }

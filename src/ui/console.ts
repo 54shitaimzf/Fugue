@@ -283,7 +283,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // **每帧现问的期望高度**（U6：弹层开着舞台要 `OVERLAY_WANT`，关了回到缺省 `K`）都从舞台递进来。
   const term = openTerm({
     out: process.stdout,
-    requestCursor: (rows, accept) => cursorProbe?.start(rows, accept),
+    requestCursor: (rows, accept) => cursorProbe?.schedule(rows, accept),
     full: flags.has('full'),
     graphics: tiers.graphics,
     sixelCells: () => cellProbe?.cell ?? null,
