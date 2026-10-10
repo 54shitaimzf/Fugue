@@ -82,6 +82,21 @@ const done=tuiCmd(root,new Map([['interval','25'],...(native&&process.env.FUGUE_
 await until(()=>visible().includes('待确认 3 项任务')&&raw,'mixed gate arrives through actual serve')
 await snap('pending');assert.ok(visible().includes('模型 · 任务草案'));assert.ok(!visible().includes('ownedPaths'))
 assert.equal(count('round/approve'),0);assert.ok(!existsSync(join(root,paths[0])))
+// Ordinary selection returns to the existing visible editor, not a hidden query.
+for(const [typed,selected] of [['/status','/status '],['@AGENTS.md','@AGENTS.md']]){
+ process.stdin.emit('data',Buffer.from('y'));await wait(80)
+ process.stdin.emit('data',Buffer.from(typed));await wait(80)
+ process.stdin.emit('data',Buffer.from('\r'));await wait(80)
+ assert.ok(visible().includes(selected.trim()),'selected ordinary input is visible before sending')
+ assert.ok(visible().includes('Enter 发送'),'the instruction describes actual input')
+ assert.ok(!visible().includes('y 执行整批'),'the editor has no contradictory confirmation actions')
+ assert.equal(count('round/approve'),0);assert.equal(count('contract/issue'),0)
+ assert.equal(process._getActiveHandles().filter(h=>h.constructor.name==='ChildProcess'&&h.exitCode===null).length,1,'menu acceptance starts no command')
+ process.stdin.emit('data',Buffer.from('\x1a'));await wait(80)
+ process.stdin.emit('data',Buffer.from('g'));await wait(80)
+ assert.ok(visible().includes('y 执行整批')&&visible().includes('n 暂不执行'),'undo returns original empty draft; original g reopens the same plan')
+ assert.equal(count('round/approve'),0)
+}
 // A menu changes the foreground context; its return cannot reuse an old arm.
 for(const [name,key] of [['keys','\x10'],['cmd','/'],['path','@']])for(const option of ['y','n']){
  process.stdin.emit('data',Buffer.from(option));await wait(80)
