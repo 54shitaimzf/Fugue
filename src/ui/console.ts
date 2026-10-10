@@ -23,7 +23,7 @@ import { identFor } from '../identity.ts'
 import { openServeSource, rowsReaderOf } from '../serve/source.ts'
 import { openImageSource } from '../serve/image-source.ts'
 import { emitLine, usageFail } from '../cli/out.ts'
-import { KEYMAP, hintKeysOf, hintLimitOf, hintLineOf, keymapOf, openKeys } from './keymap.ts'
+import { KEYMAP, hintKeysOf, hintLineForWidth, keymapOf, openKeys } from './keymap.ts'
 import type { KeySource, Keymap } from './keymap.ts'
 import { openTui, tuiModeOf } from './follow.ts'
 import type { Tui } from './follow.ts'
@@ -262,11 +262,10 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     notes: () => ui.tui?.notes ?? [],
     redraw: () => ui.tui?.redraw(),
     // 框下面那一行（第二幕 ④ · 第三幕 ② 按处境分档）：stdin 不是终端时它就是那一句"收不到按键"
-    // ——按屏幕宽度取前几条的那一手在 `hintLimitOf`（整行 438 列会被终端折成五行）；哪一档由舞台
-    // 算（`hintWhenOf`：门口那一块开着先露 `y`/`n`，阅读面开着先露 `Tab`/`↑`/`↓`/`Esc`）。
+    // 当前容量只放完整键与动作，窄窗首项可去抬头和备用键；场景由舞台选择。
     hint: (when) =>
       keys?.raw === true
-        ? hintLineOf(km, hintLimitOf(term.columns, km, when), when)
+        ? hintLineForWidth(term.columns, km, when)
         : '当前输入不可用',
     // 兼容旧装配的快捷键来源仍与提示行共用 km；Stage 不再读取它或把说明写进历史。
     keysOf: when => hintKeysOf(km, when),

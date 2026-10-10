@@ -891,10 +891,20 @@ export function hintLineOf(km: Keymap = KEYMAP, limit = 0, when: HintWhen = 'any
 export function hintLimitOf(columns: number, km: Keymap = KEYMAP, when: HintWhen = 'any'): number {
   const total = hintPicksOf(km, when).length
   if (total === 0) return 0
-  for (let n = 1; n < total; n += 1) {
+  for (let n = 1; n <= total; n += 1) {
     if (widthOf(hintLineOf(km, n, when)) > columns) return Math.max(1, n - 1)
   }
   return total
+}
+
+/** 已知容量内只放完整条目；首项也太长时去抬头和备用键，完整帮助照旧。 */
+export function hintLineForWidth(columns: number, km: Keymap = KEYMAP, when: HintWhen = 'input'): string {
+  const line = hintLineOf(km, hintLimitOf(columns, km, when), when)
+  if (!Number.isFinite(columns) || columns < 1 || widthOf(line) <= columns) return line
+  const first = hintPicksOf(km, when)[0]
+  if (first === undefined) return line
+  const compact = entryOf({ ...first, keys: first.keys.slice(0, 1) }, when)
+  return widthOf(compact) <= columns ? compact : line
 }
 
 /** 写进终端历史的那一句注记里放几条（第三幕 ②）：常数收在这里，不在两处各写一个数。 */
