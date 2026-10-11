@@ -521,9 +521,20 @@ export function openStage(deps: StageDeps): Stage {
    * 实际一列放不下的字簇由显示投影标记，原草稿仍在；两处都沿用这一把尺。
    */
   const cols = (): number => { const width = deps.columns(); readingWidth ??= width; return innerOf(width) }
+  /**
+   * 期望高度夹进宿主容量（留一行）——**这一个数有四处要**：门口那一块 · 队列余量 · 候选层详情行 ·
+   * 阅读翻页步长。从前是四处各拼一遍 `Math.min(heightWant(), (deps.termRows() ?? ∞) - 1)`，
+   * 各带各的 `Math.max`；算式收在这里一处。
+   *
+   * **先量再问**：`heightWant` 自己读 `deps.termRows()` 分账，所以这里现读一次就是那一帧的行数。
+   * 量不到行数（`undefined`）时不夹——与从前逐字节相同。已经量到手的那一个数经 `rows` 递进来
+   * （`readPageStep` 那一处原文只读一次，这里不许再读第二遍：`out.rows` 与 `rowsOf` 都是活口子）。
+   */
+  const stageHeight = (rows?: number): number =>
+    Math.min(heightWant(), ((rows ?? deps.termRows()) ?? Number.POSITIVE_INFINITY) - 1)
   const gateLayout = () => gate === null ? null : gateLayoutOf({ face: gate, view: gateView,
     columns: cols(), keymap: deps.keymap?.(),
-    height: Math.max(1, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1)) })
+    height: Math.max(1, stageHeight()) })
   const clearSmallGate = (): boolean => {
     if (!showInput || planTop !== null || gateLayout()?.blocked !== true) return false
     gateView = { ...gateView, armed: null }
@@ -577,7 +588,7 @@ export function openStage(deps: StageDeps): Stage {
     }) : []
     // Current confirmation scope and its whole next action precede covered queued drafts.
     // Spare capacity may show the queue summary first; hiding that projection never drops a draft.
-    const queueRoom = Math.max(0, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1) - 3 - (gatePart?.keep ?? 0))
+    const queueRoom = Math.max(0, stageHeight() - 3 - (gatePart?.keep ?? 0))
     // 当前全文与行位置先于被覆盖的队列；返回后仍用同一份完整FIFO。
     const queueRows = reading !== null || planTop !== null || keyHelpTop !== null
       ? [] : gatePart === null ? allQueueRows : allQueueRows.slice(0, queueRoom)
@@ -621,7 +632,7 @@ export function openStage(deps: StageDeps): Stage {
         if (panel === null) return {}
         const rows = rowsOf(panel.source), picked = rows[clampSel(rows.length, panel.sel)]
         const detail = panel.source === 'keys' && picked !== undefined ? selectedKeyRows() : undefined
-        const height = Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1)
+        const height = stageHeight()
         const readKey = (deps.keymap?.() ?? KEYMAP).rows.find(b => b.action === 'read')!.keys[0]!
         return { menu: { source: panel.source, rows: rowsTextOf(rows), sel: panel.sel,
           ...(panel.source === 'keys' ? { help: true } : {}),
@@ -640,7 +651,7 @@ export function openStage(deps: StageDeps): Stage {
   const readPageStep = (): number => {
     const rows = deps.termRows()
     if (rows === undefined || !Number.isFinite(rows) || rows <= 0) return PAGE_STEP
-    const height = Math.max(1, Math.min(heightWant(), rows - 1))
+    const height = Math.max(1, stageHeight(rows))
     return Math.max(1, Math.floor(frameBudgetOf(height, view().bottom?.keep ?? 0).rows / 2))
   }
   const onAdvance = (rows: readonly StatusRow[]): void => {
