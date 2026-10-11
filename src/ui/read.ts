@@ -593,11 +593,24 @@ export function faceRowsOf(faces: ReadFaces, name: ReadFaceName, cols: number): 
 
 
 
+/**
+ * **标题那把尺**：固定标题行装得下这个标题吗（装得下就从正文里移出去，窄框保留完整标题）。
+ *
+ * 一处定义，两处读：`readContentOf`（决定正文里含不含标题）与 `reflowTopOf`（决定重排后从原文
+ * 第几行起算）。从前这两处各推一遍同一个式子（一个写 `<= frameWidth`，一个写 `> width`），
+ * 改一处忘另一处就不报错地漂开——收在这里一处。
+ *
+ * `+ 5` 是被 `clip(title, frameWidth - 5)` 那一栏留出来的宽度（`readContentOf` 的 `heading`）。
+ */
+function titleFits(title: string | undefined, frameWidth: number): boolean {
+  return title !== undefined && widthOf(title) + 5 <= frameWidth
+}
+
 /** 固定标题装得下时移出正文；窄框保留完整标题，removedTitleRows 供原文坐标换算。 */
 export function readContentOf(title: string, lines: readonly string[], cols: number, frameWidth: number): {
   readonly heading: string; readonly rows: readonly string[]; readonly removedTitleRows: number
 } {
-  const fits = widthOf(title) + 5 <= frameWidth
+  const fits = titleFits(title, frameWidth)
   const rows = (fits ? lines : [title, ...lines]).flatMap(line => [...readWrap(line, cols)])
   return { heading: clip(title, Math.max(0, frameWidth - 5)), rows: rows.length === 0 ? ['暂无记录'] : rows,
     removedTitleRows: fits ? readWrap(title, cols).length : 0 }
@@ -612,7 +625,9 @@ export function reflowTopOf(o: {
 }): number {
   if (!Number.isSafeInteger(o.top) || o.top < 0 || ![o.before.width, o.before.columns, o.after.width, o.after.columns].every(n => Number.isSafeInteger(n) && n > 0)
     || (o.before.width === o.after.width && o.before.columns === o.after.columns)) return o.top
-  const hasTitle = (width: number): boolean => o.title !== undefined && widthOf(o.title) + 5 > width
+  // 标题**还在正文里**（没被移到固定标题行）：没有标题就没有这回事，装得下也就没有。
+  // 判据与 `titleFits` 同一把尺，只差一次取反与那次短路。
+  const hasTitle = (width: number): boolean => o.title !== undefined && !titleFits(o.title, width)
   const source = (line: number): string => line < 0 ? o.title! : o.lines[line]!
   let line = hasTitle(o.before.width) ? -1 : 0, row = o.top
   while (line < o.lines.length) {
