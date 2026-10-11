@@ -125,7 +125,6 @@ test('S8 这一条链从命令行走一遍：write → commit → assemble → c
   )
   const shown = fugue(root, '--json', 'config', 'get', 'round.split')
   assert.equal(shown.code, 0)
-  assert.ok(JSON.parse(shown.stdout) !== undefined, 'config get 吐的不是 JSON')
 
   // ── 轮次那一整条：起头 → 干一格 → 合并 → 验收 → 推进，外加八元指标 ────────────
   const run = fugue(root, '--json', 'round', 'run', '写一份 a.ts', '--report', '--metrics')

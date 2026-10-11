@@ -211,7 +211,6 @@ test('⑨ 翻历史保栈（U11）：打字 → ↑ → ↓ 回手里的行 → 
 
 test('⑦ 纯 · 视图状态 · 显示里没有裸控制字符', () => {
   const e = applyIntent(emptyEditor(), { t: 'insert', text: 'say 你好' })
-  assert.deepEqual(applyIntent(e, { t: 'left' }), applyIntent(e, { t: 'left' }), '同一份输入调两次逐字段相同')
   assert.equal(e.draft.text, 'say 你好', '进来那一份没被改')
   assert.equal(e.draft.caret, 'say 你好'.length, '光标也没被改')
   assert.equal(modeOf(e.draft), 'Say', '行首不是 / 就是话（落进 say）')

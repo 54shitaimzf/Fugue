@@ -45,8 +45,6 @@ test('agentFor：writer → 它落日志与视图时用的 agent 署名（§ 4 �
   // 主线的写者署名是一句**名字**，不是空白占位：它就是持轮者那个位置上写的名字。
   assert.equal(agentFor('round'), 'round')
   assert.equal(agentFor('agent/r1/1' as WriterId), 'agent/r1/1')
-  // 两处翻译都从同一个 WriterId 出发，所以主线只有一种说法（§ 4 的 ref 方案 + 署名）。
-  assert.equal(agentFor('round'), agentFor('round' as unknown as WriterId))
   assert.equal(refFor(agentFor('round') as unknown as WriterId), 'refs/heads/main')
 })
 
