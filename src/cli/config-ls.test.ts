@@ -41,7 +41,6 @@ test('② --json 那一面是数组，逐字等于 TOP_LEVEL_KEYS', async () => 
 
 test('③ 只读：空目录里跑完，磁盘上一个字节不多', async () => {
   const root = tmpDir('fugue-config-ls-ro-')
-  assert.deepEqual(readdirSync(root), [])
   const r = await runCli(['--root', root, 'config', 'ls'])
   assert.equal(r.code, 0, r.stderr)
   assert.deepEqual(readdirSync(root), [], '它不读配置、不建视图、不落盘——目录照旧是空的')

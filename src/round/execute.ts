@@ -580,31 +580,5 @@ export async function materializeCommit(truth: Truth, commit: CommitId, dir: str
   }
 }
 
-/** 一个提交的冲突条数——`merge/attempt` 那条事件要它（A5 的 `onAttempt` 已经算过一遍）。 */
-export function conflictsOf(o: Extract<FoldOutcome, { kind: 'conflict' }>): number {
-  return conflictCount(o.conflicts)
-}
-
-/** 折起来的那个提交（`folded` 那一支）——给报告印。 */
-export function commitOfOutcome(o: FoldOutcome): CommitId {
-  return o.kind === 'folded' ? o.commit : o.folded
-}
-
-/** 预检那一条的读数（`Planning` 那一次与合并前那一次各一份）——**两处同一个函数**。 */
-export function precheckOf(contracts: readonly Contract[]): { readonly count: number; readonly lines: readonly string[] } {
-  const r = precheck(contracts)
-  return { count: r.intersections.length, lines: r.lines }
-}
-
-/** 一个 agent 的分支头（走查与报告要印）。 */
-export async function headOf(truth: Truth, agent: AgentId): Promise<CommitId | null> {
-  return baseFor(truth, agent as WriterId)
-}
-
-/** 那个 agent 的分支 ref 名（印出来给人看）。 */
-export function refOf(agent: AgentId): string {
-  return refFor(agent as WriterId)
-}
-
 /** `Intent` 与 `SplitAssignment` 从这一份再导出一次：调用点（CLI）不必同时 import 两个模块。 */
 export type { Intent, SplitAssignment, Built, Contract }

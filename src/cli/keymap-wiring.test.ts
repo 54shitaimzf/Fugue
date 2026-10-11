@@ -92,6 +92,6 @@ test('⑤ 形状坏了整份拒载：ui.keys 不是对象 · 值不是键串，�
 test('⑥ 接线在场：`ui/console.ts` 把配置造出的那一份递给 openKeys 与提示行（负对照：删掉必红）', () => {
   const src = readFileSync(new URL('../ui/console.ts', import.meta.url), 'utf8')
   assert.ok(src.includes('onAction: stage.onAction, km }'), 'openKeys 收到的是配置造出的那一份')
-  assert.ok(src.includes('hintLineOf(km,'), '提示行读同一份')
+  assert.ok(src.includes('hintLineForWidth(term.columns, km, when)'), '提示行读同一份')
   assert.ok(src.includes('hintKeysOf(km'), '写进终端历史的那一句注记读的也是同一份（第三幕 ②）')
 })

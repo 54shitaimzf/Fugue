@@ -690,10 +690,10 @@ export interface ModelCall {
 }
 
 /** 事件序列不成立：次序乱了 · 少了收尾 · 多了收尾 · 数字不是整数 · 参数分片落在一个没开过的调用上。 */
-export class EventSequenceError extends Error {}
+class EventSequenceError extends Error {}
 
 /** 一条事件报的那几个数并进总账：**只覆盖它真的报了的字段**，别的保持原样（包括保持 `null`）。 */
-export function usageUpdate(prev: Usage | null, part: Partial<Usage>): Usage {
+function usageUpdate(prev: Usage | null, part: Partial<Usage>): Usage {
   const base: Usage = prev ?? {
     inputTokens: null,
     cacheReadTokens: null,

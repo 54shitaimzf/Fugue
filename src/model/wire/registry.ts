@@ -39,7 +39,7 @@ export function wireNamed(name: string): WireAdapter {
 }
 
 /** 这条线上的那一份适配器报的名字是不是表里的键——**载入时对一次**，两处漂了当场炸。 */
-export class WireRegistryError extends Error {}
+class WireRegistryError extends Error {}
 
 for (const [key, adapter] of Object.entries(WIRES)) {
   if (adapter.name !== key) {

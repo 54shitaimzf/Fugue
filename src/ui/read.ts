@@ -38,11 +38,11 @@
 import type { Delta } from '../delta.ts'
 import { FAMILY_KIND } from './stream.ts'
 import { permanentLinesOf } from './stream.ts'
-import { clip, clustersOf } from './glyph.ts'
+import { clip, clustersOf, escapeControl, widthOf } from './glyph.ts'
 import type { Cluster } from './glyph.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
 import { WORDS } from '../words.ts'
-import { graphics, imageRowsOf } from './image.ts'
+import type { ImageRequest } from '../serve/image-source.ts'
 
 /**
  * 读面上那一格变更：**账上的 `view/*` 那五族说得出的那几栏**（没有字节——账上没有它）。
@@ -51,7 +51,7 @@ import { graphics, imageRowsOf } from './image.ts'
  * 而账上只有"在 rev N 上写了这条路径"这一个事实。
  */
 type DeltaFace =
-  | { readonly kind: 'write'; readonly path: string }
+  | { readonly kind: 'write'; readonly path: string; readonly image?: ImageRequest }
   | { readonly kind: 'delete'; readonly path: string }
   | { readonly kind: 'rename'; readonly from: string; readonly to: string }
   | { readonly kind: 'chmod'; readonly path: string; readonly mode: number }
@@ -77,7 +77,7 @@ function deltaFaceOf(row: StatusRow): DeltaFace | null {
   const e = row.e
   switch (e.t) {
     case 'view/write':
-      return { kind: 'write', path: e.path }
+      return { kind: 'write', path: e.path, ...(e.path.toLowerCase().endsWith('.png') ? { image: { agent: e.agent, path: e.path, blob: e.blob } } : {}) }
     case 'view/remove':
       return { kind: 'delete', path: e.path }
     case 'view/rename':
@@ -412,7 +412,7 @@ function tail(lines: readonly string[], limit: number): readonly string[] {
   return [`… 前面还有 ${cut} 行`, ...lines.slice(cut)]
 }
 
-/** 一格变更那一行：坐标 + 那一格。 */
+/** 一格变更那一行：默认文件摘要传空前缀，详情传原始坐标。 */
 function deltaLineOf(d: DeltaFace, at_: string): string {
   switch (d.kind) {
     case 'write':
@@ -426,16 +426,6 @@ function deltaLineOf(d: DeltaFace, at_: string): string {
     case 'symlink':
       return `${at_}符号链接 ${d.path} → ${d.target}`
   }
-}
-
-/**
- * 这一格变更牵到的那条路径里，**像图的那一条**（第二幕 ⑨ 的后一半）。只有"改完之后那里有一份
- * 文件"的那两格算（`write` 与 `rename` 的目标）：删掉的那一格后面没有图可留位。
- */
-function deltaImagePathOf(d: DeltaFace): string | null {
-  if (d.kind === 'write') return d.path
-  if (d.kind === 'rename') return d.to
-  return null
 }
 
 /** 一份契约那几行：**账上那一条说得出的那几栏**（正文原文一行，截到 `READ_BODY_COLS`）。 */
@@ -472,13 +462,12 @@ function tallyLineOf(tally: Readonly<Record<string, number>>): string | null {
  */
 export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}): ReadFaces {
   const limit = opts.limit ?? READ_LIMIT
-  // 图片那一档（第二幕 ⑨ 的后一半）：**文件名那一行照旧**，探到支持时在它后面加一块留白
-  // （口径在 `ui/image.ts`）。档是 `none` 时 `imageRowsOf` 给空表——一个字节都不多。
-  const diffLines = state.diff.flatMap((d, i) => {
-    const at = state.diffAt[i] as string
-    const path = deltaImagePathOf(d)
-    return [deltaLineOf(d, at), ...(path === null ? [] : imageRowsOf(path, graphics()))]
-  })
+  const diffLines = state.diff.map((d) => deltaLineOf(d, ''))
+  // 默认先读文件；原始坐标留在已有详情中，账与机器面不重写。
+  const detailLines = state.detail.length === 0 ? [] : [
+    ...(state.diff.length === 0 ? [] : [WORDS.fileChangeSources, ...state.diff.map((d, i) => deltaLineOf(d, state.diffAt[i] as string))]),
+    ...state.detail,
+  ]
   const contractLines = state.contracts.flatMap((c) => [...contractLinesOf(c)])
   const tally = tallyLineOf(state.tally)
   const streamAll = tally === null ? [...state.stream] : [...state.stream, tally]
@@ -487,7 +476,7 @@ export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}
       state.diff.length === 0
         ? null
         : {
-            title: `diff · ${state.diff.length} 条变更`,
+            title: `${WORDS.fileChanges} · ${state.diff.length} 条`,
             lines: tail(diffLines, limit),
           },
     contract:
@@ -499,11 +488,11 @@ export function facesOf(state: ReadState, opts: { readonly limit?: number } = {}
       lines: tail(streamAll, limit),
     },
     detail:
-      state.detail.length === 0
+      detailLines.length === 0
         ? null
         : {
             title: '详情',
-            lines: tail(state.detail, limit),
+            lines: tail(detailLines, limit),
           },
   }
 }
@@ -522,7 +511,7 @@ export function stepFace(faces: ReadFaces, name: ReadFaceName, delta: number): R
 }
 
 /**
- * 那一面从第几行看起（U14）：`↑`/`↓` 是 ±1，`PgUp`/`PgDn` 是 ±`PAGE_STEP`，`Ctrl-Home`/`Ctrl-End`
+ * 那一面从第几行看起（U14）：`↑`/`↓` 是 ±1，`PgUp`/`PgDn` 翻当前正文区的半屏，`Ctrl-Home`/`Ctrl-End`
  * 用一个够大的数一步到头。**夹住，到头停**——正文是一串有头有尾的东西，翻过头绕回来会让人以为
  * 自己没动（与门口 `stepAt` 同一条口径）。
  */
@@ -535,18 +524,6 @@ export function stepTop(length: number, top: number, delta: number): number {
 /** 打开阅读面时先看哪一面：有 diff 就看 diff，没有就看事件流。 */
 export function firstFace(faces: ReadFaces): ReadFaceName {
   return faces.diff !== null ? 'diff' : 'stream'
-}
-
-/**
- * 控制字节 → **可见形状**（`\uXXXX`）。转义之后它就是几个能读的字符，宽度也照这几个字符算。
- *
- * 为什么要有这一道：终端把 `\x1b` 当**一条序列的开头**——账上一条正文里混进一个不可见字节，
- * 屏幕上从那个字节起整幅错位（`\x1b[2J` 是清屏 · `\x1b[?1049h` 是换一块屏）。不可见字节不许原样
- * 落到终端上。只动 C0 与 C1（`[\x00-\x1f\x7f-\x9f]`），含 `\n`：账上一行正文本来就该是一行
- * （`read.test.ts` ④ 那条"一行里没有换行"钉着它），真混进来了也转义，不许它撕开一帧。
- */
-export function escapeOf(s: string): string {
-  return s.replace(/[\x00-\x1f\x7f-\x9f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
 }
 
 /**
@@ -567,7 +544,10 @@ export function escapeOf(s: string): string {
  * （整簇切——不许原地打转，也不许把它吃掉）。
  */
 export function readWrap(s: string, cols: number): readonly string[] {
-  const text = escapeOf(s)
+  // **先转义再量宽**：终端把 `\x1b` 当一条序列的开头，账上一行正文里混进一个不可见字节，
+  // 屏幕上从它起整幅错位；转义成 `\uXXXX` 之后它就是几个能读的字符，宽度也照这几个算。
+  // 只动 C0 与 C1，含 `\n`——账上一行正文本来就该是一行，真混进来了也不许它撕开一帧。
+  const text = escapeControl(s)
   if (cols <= 0 || text === '') return [text]
   const cs = clustersOf(text)
   let total = 0
@@ -600,4 +580,75 @@ export function readWrap(s: string, cols: number): readonly string[] {
 export function faceRowsOf(faces: ReadFaces, name: ReadFaceName, cols: number): readonly string[] {
   const one = faces[name]
   return one === null ? [] : [one.title, ...one.lines].flatMap((l) => [...readWrap(l, cols)])
+}
+
+
+
+/**
+ * **标题那把尺**：固定标题行装得下这个标题吗（装得下就从正文里移出去，窄框保留完整标题）。
+ *
+ * 一处定义，两处读：`readContentOf`（决定正文里含不含标题）与 `reflowTopOf`（决定重排后从原文
+ * 第几行起算）。从前这两处各推一遍同一个式子（一个写 `<= frameWidth`，一个写 `> width`），
+ * 改一处忘另一处就不报错地漂开——收在这里一处。
+ *
+ * `+ 5` 是被 `clip(title, frameWidth - 5)` 那一栏留出来的宽度（`readContentOf` 的 `heading`）。
+ */
+function titleFits(title: string | undefined, frameWidth: number): boolean {
+  return title !== undefined && widthOf(title) + 5 <= frameWidth
+}
+
+/** 固定标题装得下时移出正文；窄框保留完整标题，removedTitleRows 供原文坐标换算。 */
+export function readContentOf(title: string, lines: readonly string[], cols: number, frameWidth: number): {
+  readonly heading: string; readonly rows: readonly string[]; readonly removedTitleRows: number
+} {
+  const fits = titleFits(title, frameWidth)
+  const rows = (fits ? lines : [title, ...lines]).flatMap(line => [...readWrap(line, cols)])
+  return { heading: clip(title, Math.max(0, frameWidth - 5)), rows: rows.length === 0 ? ['暂无记录'] : rows,
+    removedTitleRows: fits ? readWrap(title, cols).length : 0 }
+}
+
+
+/** 宽度变化后仍从同一原文行与字簇附近继续读；这里只换投影坐标。 */
+export function reflowTopOf(o: {
+  readonly lines: readonly string[]; readonly title?: string; readonly top: number
+  readonly before: { readonly width: number; readonly columns: number }
+  readonly after: { readonly width: number; readonly columns: number }
+}): number {
+  if (!Number.isSafeInteger(o.top) || o.top < 0 || ![o.before.width, o.before.columns, o.after.width, o.after.columns].every(n => Number.isSafeInteger(n) && n > 0)
+    || (o.before.width === o.after.width && o.before.columns === o.after.columns)) return o.top
+  // 标题**还在正文里**（没被移到固定标题行）：没有标题就没有这回事，装得下也就没有。
+  // 判据与 `titleFits` 同一把尺，只差一次取反与那次短路。
+  const hasTitle = (width: number): boolean => o.title !== undefined && !titleFits(o.title, width)
+  const source = (line: number): string => line < 0 ? o.title! : o.lines[line]!
+  let line = hasTitle(o.before.width) ? -1 : 0, row = o.top
+  while (line < o.lines.length) {
+    const rows = readWrap(source(line), o.before.columns)
+    if (row < rows.length) break
+    row -= rows.length; line += 1
+  }
+  if (line >= o.lines.length) return o.top
+  // 标题已移到固定标题行时，从正文首行开始；原文行不受标题进出正文影响。
+  if (line < 0 && !hasTitle(o.after.width)) return 0
+  const offset = readWrap(source(line), o.before.columns).slice(0, row).join('').length
+  let top = line >= 0 && hasTitle(o.after.width) ? readWrap(o.title!, o.after.columns).length : 0
+  for (let i = 0; i < line; i += 1) top += readWrap(o.lines[i]!, o.after.columns).length
+  const rows = readWrap(source(line), o.after.columns)
+  let at = 0, next = 0
+  while (next + 1 < rows.length && at + rows[next]!.length <= offset) { at += rows[next]!.length; next += 1 }
+  return top + next
+}
+
+/** 当前窗口里能完整看见文件行、且还放得下两行预览的第一份 PNG。只用已折状态，不读文件。 */
+export function readImageAt(state: ReadState, cols: number, top: number, budget: number): { request: ImageRequest; after: number } | null {
+  const face = facesOf(state).diff
+  if (face === null || budget < 3) return null
+  const cut = state.diff.length > READ_LIMIT ? state.diff.length - READ_LIMIT + 1 : 0
+  let line = readWrap(face.title, cols).length
+  if (cut > 0) line += readWrap(`… 前面还有 ${cut} 行`, cols).length
+  for (let i = cut; i < state.diff.length; i += 1) {
+    const d = state.diff[i]!, start = line
+    line += readWrap(deltaLineOf(d, ''), cols).length
+    if (d.kind === 'write' && d.image && start >= top && line - top <= budget - 2 - (i < state.diff.length - 1 ? 1 : 0)) return { request: d.image, after: line }
+  }
+  return null
 }

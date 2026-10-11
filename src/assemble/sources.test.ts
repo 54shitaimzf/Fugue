@@ -145,10 +145,10 @@ test('③ 产物路径机械追加在最后一段的末尾 · 逐 agent 稳定',
   assert.ok(!onlyTask.includes(onlyId.branch), '`branch` 是系统的键，不该出现在「我的任务」里')
   // 空清单不追加：不凭空造一个目录名。
   const noOut = sourcesFor(SUBAGENT_PROTOCOL, stateWith(), { ...AGENT_2, outputPaths: [] })
-  assert.ok(!(noOut['我的任务'] as string).includes('产物路径'), '产物路径空着的时候不该追加')
+  assert.ok(!(noOut['我的任务'] as string).includes('Output paths:'), '产物路径空着的时候不该追加')
   // 持轮者那一档：它手里是全部契约，不是一份——没有产物路径可追加。
   const held = sourcesFor(HOLDER_PROTOCOL, stateWith(), HOLDER)
-  assert.ok(!(held['我的任务'] as string)?.includes('产物路径'), '持轮者那一份不该有产物路径')
+  assert.ok(!(held['我的任务'] as string)?.includes('Output paths:'), '持轮者那一份不该有产物路径')
 })
 
 test('④ 两份声明的差别只落在 B 区与 C 区（A 区逐字节相同）', () => {

@@ -65,7 +65,7 @@ export interface ServeSourceOptions {
 
 /** 收尾等子进程自己走多久。**它不是超时策略**：`shutdown` 之后那一头已经不再接新请求，
  * 这一档只是不让一个卡住的子进程拖住界面的退出。 */
-export const CLOSE_WAIT_MS = 1_000
+const CLOSE_WAIT_MS = 1_000
 
 /**
  * 开一条：拉起 serve，握一次手，之后 `pass()` 一趟一趟地问。

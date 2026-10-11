@@ -13,12 +13,6 @@ import { fileURLToPath } from 'node:url'
 import { IDLE_MS, serveConnection } from '../../serve/connect.ts'
 import { UsageError } from '../shared.ts'
 
-/** 这一条的用法说明（`--help` 那张表里的那一行就是它）。 */
-export const SERVE_USAGE_LINE =
-  '  serve                      换一种进程角色：stdio 上一行一调用（JSON-RPC 2.0）。给客户端\n' +
-  '                             连着问用（样例客户端在仓库 tools/sample-client.mjs）；命绑客户端 ·\n' +
-  `                             闲时 ${IDLE_MS / 1000} 秒自退，不引守护进程。参数：--root <dir>`
-
 /** 安装版本（`--version --json` 那一栏的来源与它同一处）。 */
 function productVersion(): string {
   try {

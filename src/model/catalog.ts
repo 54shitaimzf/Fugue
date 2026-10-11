@@ -71,7 +71,7 @@ interface ModelEntry {
  * "算不出来"；协议名写错，装配出来的前缀是别人的那一份。报的话一条一行，全报完再拒——只报
  * 第一条的话，改一处还有一处。
  */
-export function validateCatalog(cat: Catalog): void {
+function validateCatalog(cat: Catalog): void {
   const bad: string[] = []
   for (const [name, m] of Object.entries(cat.models)) {
     if (!WIRE_NAMES.includes(m.wire)) bad.push(`${name} 的线协议没有这一条：${m.wire}（有的是 ${WIRE_NAMES.join(' · ')}）`)

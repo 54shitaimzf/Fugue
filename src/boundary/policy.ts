@@ -91,7 +91,7 @@ export interface PolicyInput {
 }
 
 /** 工作区配置里期望档那一个键（P1c，计划 § 5.20）。 */
-export const ENFORCEMENT_KEY = 'boundary.enforcement'
+const ENFORCEMENT_KEY = 'boundary.enforcement'
 
 /**
  * **期望档**（`boundary.enforcement`）：人声明"这一趟要 `full`"——实测层不齐就起跑前拒，

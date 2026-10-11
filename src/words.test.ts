@@ -19,6 +19,7 @@ import { linesOf } from './probe/status.ts'
 import type { StatusRow } from './probe/status.ts'
 import { readCatalog } from './model/catalog.ts'
 import { frameOf } from './ui/frame.ts'
+import { roundLabelOf } from './ui/lifecycle.ts'
 import { STATES } from './round/machine.ts'
 import type { RoundState } from './terms.ts'
 
@@ -166,7 +167,7 @@ test('④ 值层没被顺手翻：--json 那几个字段名照旧（换的只是
 
 test('⑤ 状态那一栏印的是词表里那个词：名单从 STATES 推 · 十个取值各一个中文词 · 三档视图里没有裸英文状态名', () => {
   // 名单**从状态机那一份推**（`round/machine.ts` 的 `STATES`，架构 § 8.13 那十个取值）——不在这一份
-  // 另抄一遍：新状态落地时，`STATE_FACE` 少一格这一条就红（`stateFaceOf` 会照原样印英文）。
+  // 另抄一遍：CLI 原词表仍逐字冻结；UI 可用事件事实细化标签。新状态落地时，`STATE_FACE` 少一格这一条就红（`stateFaceOf` 会照原样印英文）。
   assert.deepEqual(
     [...Object.keys(STATE_FACE)].sort(),
     [...STATES].sort(),
@@ -184,11 +185,12 @@ test('⑤ 状态那一栏印的是词表里那个词：名单从 STATES 推 · �
   for (const state of STATES) {
     const face = stateFaceOf(state)
     assert.equal(face, STATE_FACE[state], `${state} 那一格从表取词`)
-    assert.doesNotMatch(face, /[A-Za-z]/, `${state} 的词该是中文（拿到 ${face}）`)
+    const uiFace = roundLabelOf(state)
+    assert.doesNotMatch(uiFace, /[A-Za-z]/, `${state} 的词该是中文（拿到 ${face}）`)
     for (const view of ['chat', 'progress', 'spending'] as const) {
       const text = frameOf({ ...at(state), view }).lines.join('\n')
       assert.ok(!text.includes(state), `${state} 那一档的 ${view} 视图里印出了裸英文状态名：\n${text}`)
-      if (text.includes(face)) seen.push(`${state}→${face}`)
+      if (text.includes(uiFace)) seen.push(`${state}→${uiFace}`)
     }
     // 三档视图里至少有一处把这一格印出来（状态那一栏在轮次头那一行，它不一定三档都在）。
     assert.ok(

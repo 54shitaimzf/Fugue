@@ -374,12 +374,5 @@ export function evidenceFor(agent: string, intent: Intent): Evidence[] {
   })
 }
 
-/** 构造器认的那几个字面量，给走查与报告印用。 */
-export const KIND_OF: Readonly<Record<Contract['kind'], string>> = {
-  implement: '实现型：写入集由持轮者声明（`ownedPaths`），交付物与断言随契约',
-  investigate: `调查型：产物落在构造器按位置定名的专属目录（\`${EVIDENCE_PREFIX}/<agent 的每一段>/<备注>\`），因此不与任何契约相交`,
-  resolve: '解决型：写入集 = 冲突路径集（`conflictPaths`），底是冲突报告给的那棵树',
-}
-
 /** 缺省那一档（`DEFAULT_MODEL_LIMIT`）的那笔账，给报告印"上限是怎么算出来的"用。**与真判那一条同源。** */
 export const SEED_BUDGET = seedBudgetOf({})

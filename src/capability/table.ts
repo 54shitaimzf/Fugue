@@ -183,13 +183,5 @@ export function checkInvariant(table: Readonly<Record<string, CapabilityRow>>, n
 // 是不是同一份的地方在 `tools/check-invariants.ts` 第一节，挂在 `test/check-invariants.test.ts`
 // （fast 组）。`checkInvariant` 留着——判据本身没变，变的是谁在什么时候读它。
 
-/** 四条推论的名字与各自那一句话，给读表的人与走查用（架构 § 8.9 那张表逐字）。 */
-export const INFERENCES: Readonly<Record<InferenceId, string>> = {
-  materialize: '先物化——落在执行层：M4 的 ensure(rev)',
-  fence: '过路径围栏——落在视图层或执行层：M3 的 Roots.resolveVirtual',
-  confine: '关进 OS 沙箱——落在执行层：M7.confine() 包装出 ConfinedArgv 再交 M5',
-  writeBack: '可回写视图——落在执行层，且该能力声明了声明集：M6 反向通道',
-}
-
 /** 四条推论，按那张表的顺序。 */
 export const INFERENCE_LIST: readonly InferenceId[] = INFERENCE_IDS

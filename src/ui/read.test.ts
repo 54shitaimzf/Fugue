@@ -33,12 +33,11 @@ import { rowsOf, statusOf } from '../probe/status.ts'
 import { WORDS } from '../words.ts'
 import type { StatusRow } from '../probe/status.ts'
 import type { AgentId, BlobId, RoundId, ViewRev, WriterId } from '../terms.ts'
-import { clip, clustersOf, widthOf, wrap } from './glyph.ts'
+import { clip, clustersOf, escapeControl, widthOf, wrap } from './glyph.ts'
 import {
   DELTA_FACE,
   EMPTY_READ,
   READ_LIMIT,
-  escapeOf,
   faceKeyOf,
   faceOfDelta,
   faceRowsOf,
@@ -330,7 +329,7 @@ test('⑦ 折行与洁净：物理行拼回原文逐字节相等 · 切点整簇
   assert.equal(narrow.join(''), escaped, '转了义之后照样折得回来（仍是逐字节往返）')
   assert.equal(narrow[0], 'a\\u001b', '折在 7 列上：整簇切（这一行恰 7 列）')
   assert.ok(narrow.every((l) => widthOf(l) <= 7), '每一行都在列宽里')
-  assert.equal(escapeOf('\u0000'), '\\u0000', '零字节也有可见形状（它就是撕帧的那一个）')
+  assert.equal(escapeControl('\u0000'), '\\u0000', '零字节也有可见形状（它就是撕帧的那一个）')
   console.log(`⑦ 读数：转义档 ${JSON.stringify(raw)} → ${JSON.stringify(narrow)}`)
 
   // **面那一层接上了它**：`faceRowsOf` 把标题与每一行都折进 `cols`——折开的那一份拼起来，与不折

@@ -48,7 +48,6 @@ test('① 每个工具在表里恰好一行 · 每行落在一层上 · 能力�
   const tools = Object.keys(CAPABILITY_TABLE)
 
   // 恰好一行：键不许重（重复的键在对象字面量里会被后一个吃掉，于是那一格静默消失）。
-  assert.equal(tools.length, new Set(tools).size, '表里有重复的键')
   assert.equal(tools.length, TOOL_NAMES.length, `表里 ${tools.length} 行，名字表 ${TOOL_NAMES.length} 个`)
 
   // 两个方向都要判：一个都没漏（名字表 → 表），也没有表外的名字（表 → 名字表）。

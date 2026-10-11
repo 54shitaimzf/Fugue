@@ -148,7 +148,7 @@ export type Planner = (ask: PlanAsk) => Promise<SearchPlan>
  * 那一侧固定要读整份工件。这一条是**取出来的参数**（收口那一笔的四档读数），不是推导
  * 出来的常数；改主意的条件是四档读数上这条线画错了（该走的没走 / 走了的更慢）。
  */
-export const DENSE_FACTOR = 4
+const DENSE_FACTOR = 4
 
 /**
  * **工件字节的单价 / 真源字节的单价**（方案里写作 `w`）。代价模型两侧的字节不再是同一把

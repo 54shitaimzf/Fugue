@@ -48,17 +48,17 @@ export interface ActionBinding {
 }
 
 /** 端口池那一个键。不给就用这个默认值——一个工作区开箱就有一片号。 */
-export const PORTS_KEY = 'ports.range'
+const PORTS_KEY = 'ports.range'
 export const DEFAULT_PORTS = '31000-31099'
 /** 每个 agent 在自己那一片里拿几个号：`PORT` 是第一个，`PORTS` 是整片（含两端）。 */
-export const PORT_SLICE = 4
+const PORT_SLICE = 4
 
 /**
  * 这几样是"本 agent 的坐标"，动作自己的 `env` 与 `-- k=v` 都不许盖。
  *
  * **撞上就拒绝**，不是静默忽略：把它们盖掉，隔离就成了一句空话，而"跑起来了"看起来一模一样。
  */
-export const RESERVED: readonly string[] = ['HOME', 'TMPDIR', 'XDG_CACHE_HOME', 'PATH', 'PORT', 'PORTS']
+const RESERVED: readonly string[] = ['HOME', 'TMPDIR', 'XDG_CACHE_HOME', 'PATH', 'PORT', 'PORTS']
 
 function asObject(v: unknown, what: string): ConfigDoc {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) {
@@ -141,7 +141,7 @@ export function declaredDirs(binding: ActionBinding): string[] {
 }
 
 /** 本 agent 的坐标不许被盖。两处入口（动作的 `env` 与 `-- k=v`）都过它。 */
-export function assertNotReserved(keys: readonly string[], where: string): void {
+function assertNotReserved(keys: readonly string[], where: string): void {
   const hit = keys.filter((k) => RESERVED.includes(k))
   if (hit.length > 0) {
     throw new BindingError(
@@ -154,7 +154,7 @@ export function assertNotReserved(keys: readonly string[], where: string): void 
 // ── env 基线（P1a，计划 § 5.20）────────────────────────────────────────────────
 
 /** 工作区配置里 env 那一个键。 */
-export const ENV_KEY = 'boundary.env'
+const ENV_KEY = 'boundary.env'
 
 /**
  * `core` 档的基线：**跑起一个进程必需的那几样定位性变量**——找得到命令（`PATH`）· 家与临时
@@ -256,7 +256,7 @@ export function portRangeOf(doc: ConfigDoc): string {
  * 从池里切一片给第 `index` 个 agent。**每个 agent 一片、片与片不相交**，所以同一个工作区里
  * N 个 agent 的端口两两不同——这就是"端口"那一项隔离的全部机制（不靠命名空间）。
  */
-export function portSlice(range: string, index: number): { port: number; ports: string } {
+function portSlice(range: string, index: number): { port: number; ports: string } {
   const m = range.trim().match(/^(\d+)-(\d+)$/)
   if (m === null) throw new BindingError(`端口池要写成 a-b，如 ${DEFAULT_PORTS}：${JSON.stringify(range)}`)
   const lo = Number(m[1])

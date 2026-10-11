@@ -83,7 +83,7 @@ import type { BlobId } from '../terms.ts'
 export const IDX_FILE_NAME = 'trigram.idx'
 
 /** 索引住哪儿：`<realRoot>/.fugue/idx/`（与 `log/` · `mat/` · `snap/` 同一层）。 */
-export function idxDir(root: string): string {
+function idxDir(root: string): string {
   return join(root, '.fugue', 'idx')
 }
 

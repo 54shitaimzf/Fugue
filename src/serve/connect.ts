@@ -61,7 +61,7 @@ export interface ServeResult {
 }
 
 /** 从 `params` 里认出开关与位置参数（命令面单一真源：认得的开关就是 `FLAGS_OF` 那一张表）。 */
-export function argsOf(method: string, params: Record<string, unknown>, root: string): ValueArgs {
+function argsOf(method: string, params: Record<string, unknown>, root: string): ValueArgs {
   const key = keyOfMethod(method)
   const table = FLAGS_OF[key]
   const flags = new Map<string, string | true>()
@@ -87,7 +87,7 @@ export function argsOf(method: string, params: Record<string, unknown>, root: st
 }
 
 /** 把一份值层结果编成一次回答的 `result`。**`stdout` 的字节来自值层那两条脸**，serve 不另排版。 */
-export function serveResultOf(r: ValueResult, json: boolean, via: ServeResult['via']): ServeResult {
+function serveResultOf(r: ValueResult, json: boolean, via: ServeResult['via']): ServeResult {
   if (!r.ok) {
     return {
       code: r.code,
@@ -108,7 +108,7 @@ export function serveResultOf(r: ValueResult, json: boolean, via: ServeResult['v
 }
 
 /** 退化档：子进程 `fugue <cmd> --json` 顶班，stdout 原样交回来。 */
-export async function runSubprocess(
+async function runSubprocess(
   cli: string,
   method: string,
   params: Record<string, unknown>,
@@ -352,11 +352,3 @@ export async function serveConnection(io: ConnIo): Promise<void> {
   io.onClose?.()
 }
 
-
-/** 方法面上那些**动词**的键（给测试与文档对账用）。 */
-export const METHOD_KEYS: readonly string[] = verbKeys()
-
-/** 值层里有、方法面上也有的那几条（`tui` 是入口，两边都不出方法名）。 */
-export const MIGRATED_METHODS: readonly string[] = Object.keys(FLAGS_OF)
-  .filter((k) => migrated(k))
-  .map(methodOf)

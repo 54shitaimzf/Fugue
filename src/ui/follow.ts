@@ -3,7 +3,7 @@
 // PLAN § 5.18 的三面表（事件面是唯一读源）。
 //
 // 这一份把**读**与**摆**接起来（`probe/watch.ts` 的 `follow()` → `ui/term.ts` 的 `draw`），中间只夹
-// 一样东西：**累起来的那些行**。于是跟随与一次性读在渲染那一头是同一段代码——面板那 K 行是"这些
+// 一样东西：**累起来的那些行**。交互 Console 将流水留在阅读面，观察窗和纯文本仍按原样追加。于是跟随与一次性读在渲染那一头是同一段代码——面板那 K 行是"这些
 // 行"的一个纯函数（`ui/frame.ts`），跟随只决定"这些行此刻有哪些"。
 //
 // 三条不许破的性质（`follow.test.ts` 逐条量）：
@@ -51,18 +51,13 @@ import type { ReadingsOptions, RoundUsage, StatusReadings, StatusRow } from '../
 import { readingsOf, usageByRoundOf } from '../probe/status.ts'
 import type { LedgerSource } from '../serve/source.ts'
 import type { ConversationRow, FrameInput } from './frame.ts'
+import type { RoundTransition } from './lifecycle.ts'
 import { frameOf } from './frame.ts'
+import { taskOf } from './task.ts'
 import type { FamilyTable } from './stream.ts'
 import { conversationOf, permanentLinesOf } from './stream.ts'
 
-/**
- * 对话区留最近几条（`frameOf` 的 `conversation` 那一栏）。**三条**＝框里挤掉轮次头与细线之后
- * 还看得完的条数；这个数**不随终端高度变**（改它就是改主面的信息量，要人批）。
- *
- * **什么条件下改主意**：人判"最近三条"不够用（要往下翻更早的汇报），就把那一栏做成可滚的
- * ——那时这个数换成按窗口高度分账，与 `ui/layout.ts` 那几个数同一条路。
- */
-export const CONVERSATION_KEEP = 3
+// 当前任务容量由实际帧高分配；完整原文在 taskOf 与阅读面中，无固定三条上限。
 import type { Panel, Term, ViewInput } from './term.ts'
 
 /**
@@ -102,8 +97,7 @@ function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {
       done()
     }
     const t = setTimeout(finish, ms)
-    if (signal?.aborted === true) finish()
-    else signal?.addEventListener('abort', finish)
+    signal?.addEventListener('abort', finish)
   })
 }
 
@@ -198,11 +192,13 @@ export function openSession(o: SessionOptions = {}): TuiSession {
   let folded: readonly string[] = []
   let foldedAt = 0
   let conversation: readonly ConversationRow[] = []
+  let transition: RoundTransition | undefined
   const permanent = (): readonly string[] => {
     if (foldedAt === rows.length) return folded
     const fresh = rows.slice(foldedAt)
     folded = [...folded, ...permanentLinesOf(fresh, o.table)]
-    conversation = [...conversation, ...conversationOf(fresh, o.table)].slice(-CONVERSATION_KEEP)
+    conversation = [...conversation, ...conversationOf(fresh, o.table)]
+    for (const r of fresh) if (r.e.t === 'round/state') transition = { round: r.e.round, from: r.e.from, to: r.e.to }
     foldedAt = rows.length
     return folded
   }
@@ -244,6 +240,12 @@ export function openSession(o: SessionOptions = {}): TuiSession {
     sparkSnap = { rows, value }
     return value
   }
+  let taskSnap: { rows: readonly StatusRow[]; focus: string | null; changes: ViewInput['completedChanges']; value: ReturnType<typeof taskOf> } | null = null
+  const taskAt = (focus: string | null, changes: ViewInput['completedChanges']) => {
+    if (taskSnap !== null && taskSnap.rows === rows && taskSnap.focus === focus && taskSnap.changes === changes) return taskSnap.value
+    const value = taskOf(rows, focus, false, changes)
+    taskSnap = { rows, focus, changes, value }; return value
+  }
   const frameFullAt = (size: { readonly columns: number; readonly height: number }) => {
     const v = o.view?.()
     const input: FrameInput = {
@@ -256,6 +258,11 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(v?.menu === undefined ? {} : { menu: v.menu }),
       ...(v?.nav === undefined ? {} : { nav: v.nav }),
       ...(v?.read === undefined ? {} : { read: v.read }),
+      ...(v?.taskReadKey === undefined ? {} : { taskReadKey: v.taskReadKey }),
+      ...(v?.feedback === undefined ? {} : { feedback: v.feedback }),
+      ...(v?.runIssue === undefined ? {} : { runIssue: v.runIssue }),
+      ...(v?.inputIdle === undefined ? {} : { inputIdle: v.inputIdle }),
+      ...(v?.pendingRound === undefined ? {} : { pendingRound: v.pendingRound }),
       ...(v?.bottom === undefined ? {} : { bottom: v.bottom }),
       // 视图与本帧读的是哪一格（第二幕 ⑦）：折法那一边按 `focus` 筛行，这一边按它写框名。
       ...(v?.view === undefined ? {} : { view: v.view }),
@@ -264,6 +271,9 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(v?.focus === undefined ? {} : { focus: v.focus }),
       permanent: permanent(),
       conversation,
+      task: taskAt(v?.focus ?? null, v?.completedChanges),
+      ...(v?.input === undefined ? {} : { operationArea: true }),
+      ...(transition === undefined ? {} : { transition }),
       width: size.columns,
       height: size.height,
     }
@@ -300,6 +310,8 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       return {
         rows: f.lines,
         roles: f.roles,
+        ...(f.segments === undefined ? {} : { segments: f.segments }),
+        ...(f.image === undefined ? {} : { image: f.image }),
         ...(v?.hint === undefined ? {} : { hint: v.hint }),
         ...(v?.input === undefined ? {} : { input: v.input }),
       }
@@ -334,6 +346,8 @@ export interface TuiOptions {
   readonly term: Term
   /** 只印永久行那一档的出口（`cli` 那一侧的 `emitLine`）。面板那一档用不到它。 */
   readonly emit: (line: string) => void
+  /** Interactive Console keeps ledger and command history in the existing reader. Read-only/plain modes retain their stream. */
+  readonly interactive?: boolean | undefined
   readonly mode: TuiMode
   readonly readings?: ReadingsOptions
   readonly phase?: Phase
@@ -358,12 +372,15 @@ export interface TuiOptions {
 
 /** 接上的那一档：一个句柄，两样东西——这一档累起来的行，与"跑完了"那一下。 */
 export interface Tui {
+  /** Original UI/command messages, in arrival order; process-local, never a second ledger. */
+  readonly notes: readonly string[]
   /** 累起来的那些行（"这一帧是从什么折出来的"这句问得出来）。 */
   readonly session: TuiSession
   /** 这一档跑完的那一下（`lines-once` 读一趟就 resolve）。 */
   readonly counts: Promise<TuiCounts>
   /**
-   * 往终端历史里写一行**界面自己的话**：按键提示 · 按下去那条命令的输出 · 它收尾的退出码。
+   * Record an original UI/command message. Interactive Console reads it in details;
+   * read-only and plain-text modes append it once, as before.
    *
    * **它不是账上的一行**（账上有什么由 `probe/` 那两处说了算），所以它进不了任何一栏，也不参与
    * `fresh()` 那条"已经写出去的那几条不许被回头改"的判据——它只写一次，写完就算了。
@@ -396,7 +413,10 @@ export function openTui(o: TuiOptions): Tui {
     fold: o.fold,
   })
   const c = { rows: 0, permanent: 0, draws: 0, lines: 0, notes: 0 }
-  /** 界面自己写的那几行（还没落到历史里的）：与永久行同一档、都写在面板上方，**都只写一次**。 */
+  // Interactive records stay readable without a stale prefix above the current task.
+  // The original append-only queue is retained for read-only and plain-text modes.
+  const record: string[] = []
+  const interactive = o.mode === 'panel' && o.interactive === true
   const notes: string[] = []
   const takeNotes = (): readonly string[] => (notes.length === 0 ? [] : notes.splice(0, notes.length))
   const sync = (): void => {
@@ -407,7 +427,8 @@ export function openTui(o: TuiOptions): Tui {
   const paint = (): void => {
     // 次序：**账上那些行在前、界面自己的话在后**（`note` 说的是"刚刚按了一下"，它总发生在已经
     // 读到的那些行之后）。两条轨各管各的：`fresh()` 那条"前缀不许改"的判据只盯账上那一串。
-    const fresh = [...session.fresh(), ...takeNotes()]
+    const ledger = session.fresh()
+    const fresh = interactive ? [] : [...ledger, ...takeNotes()]
     if (o.mode === 'panel') {
       c.draws += 1
       o.term.draw(fresh, (size) => session.panel(size))
@@ -443,6 +464,16 @@ export function openTui(o: TuiOptions): Tui {
     }
     return { ...c }
   })()
+  // **拒要在起跑那一刻就有人接。** 这一趟是立刻起跑的（`openTui` 一调它就往下走），而调用方要到
+  // `openKeys`（进 raw mode）之后才 `await` 它——`ui/console.ts` 那一段，中间正好夹着一次读配置的
+  // `await`，让出一次线程。那一小段窗口里这一趟一拒，Node 就把它当成"没人接的拒"当场结束整个进程：
+  // `finally` 与退出钩子都来不及知道有什么要还，于是"**崩了也要把终端还原回来**"这条判据时有时无——
+  // 实测（20 核满载）16 跑 1 红，PTY 里收到的那 612 字节**全是 Node 的崩栈**，`\u001b[?2004h`
+  // 一笔都没有，也就是那一趟压根没进 raw mode，后面三条判据全在量空气。
+  // `src/log/log.ts` 的 `opening` 与 `src/serve/image-source.ts` 那一趟都是这么接的（`void … .then(ok, bad)`
+  // / `})().catch(…)`），这一处当初漏了。
+  // **这不是吞**：拒本身照旧挂在这一条上，调用方 `await counts` 时原样抛出来，退出码照旧非 0。
+  void counts.catch(() => undefined)
   /** `redraw()` 的那一趟（`resize()` 的尾沿也走它）。 */
   const redrawNow = (): void => {
     if (o.mode !== 'panel') return
@@ -455,9 +486,11 @@ export function openTui(o: TuiOptions): Tui {
   return {
     session,
     counts,
+    get notes(): readonly string[] { return record },
     note(line: string): void {
       if (line === '') return
-      notes.push(line)
+      record.push(line)
+      if (!interactive) notes.push(line)
       c.notes += 1
       // 立刻画一次：**按下去了这件事要当场看得见**（等下一次账动可能很久，而"按了没反应"是这一档
       // 最坏的一种体验）。没按过键时这一档一次都不会被调到。

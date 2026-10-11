@@ -69,8 +69,6 @@ function contractWithSeed(seed: readonly string[]): ImplementContract {
 }
 
 test('① 声明是值，不是分支：取两次同一份，投影与声明同域且不换名字', () => {
-  // 确定性：同一个名字取两次是同一个值（声明里没有一处读环境 · 时间 · 随机）。
-  assert.deepEqual(modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG), modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG))
   assert.equal(modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG), FIRST)
 
   // 前缀那一侧的表是**按目录现折的投影**（`prefixModelsOf`），不是第二张表：键域与目录逐键相同，

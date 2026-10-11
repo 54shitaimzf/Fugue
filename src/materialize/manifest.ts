@@ -31,7 +31,7 @@ export interface MatState {
   readonly hashes: readonly string[]
 }
 
-export const NOT_FORKED: MatState = {
+const NOT_FORKED: MatState = {
   forked: false,
   base: null,
   strategy: null,

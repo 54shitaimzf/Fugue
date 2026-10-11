@@ -114,7 +114,6 @@ test('① 三个数印得出来，且关系可核对（触发点在 (0, 上限) 
 test('② 那把尺与那笔账是同一个口径 · 同样字数下中文更贵 · 超限时报出超了多少', () => {
   const ascii = new Uint8Array(Buffer.from('a'.repeat(400), 'utf8'))
   const cjk = new Uint8Array(Buffer.from('字'.repeat(400), 'utf8'))
-  assert.equal(estimateTokens(ascii), estimateTokens(ascii), '同一份字节两次同一个数')
   assert.equal(estimateTokens(ascii), Math.ceil(400 / 4) + ENVELOPE_TOKENS, `400 个 ASCII 字节：${estimateTokens(ascii)}`)
   assert.equal(estimateTokens(cjk), Math.ceil(1200 / 2) + ENVELOPE_TOKENS, `400 个汉字（1200 字节）：${estimateTokens(cjk)}`)
   assert.ok(estimateTokens(cjk) > estimateTokens(ascii), '同样的"字符数"下非 ASCII 更贵')

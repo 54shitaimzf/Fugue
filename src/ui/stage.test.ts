@@ -17,7 +17,7 @@ import { panelWantOf } from './layout.ts'
 import type { LineArgv, RunLauncher } from './run.ts'
 import { innerOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
-import { faceRowsOf, facesOf, firstFace, readStateOf } from './read.ts'
+import { faceRowsOf, facesOf, firstFace, readStateOf, readWrap } from './read.ts'
 import type { HintWhen } from './keymap.ts'
 
 /** 假的那一只手（`RunLauncher` 的四样全记下来：起了什么 · 停过没有 · argv 现推）。 */
@@ -124,12 +124,13 @@ test('① 门口开着且行空：按两次 y → 举手一次 · press 恰一�
   // 第一下：举手（二段确认的第一段——只说话，不起进程）。
   stage.onAction({ action: 'approve', key: 'y' })
   assert.equal(ctl.presses.length, 0, '第一下只是举手，一个进程都不起')
-  assert.ok(ctl.notes.some((n) => n.includes('举了手')), '举手要看得见（note 一句）')
+  assert.ok(stage.view().bottom?.rows.some(n => n.includes('再按 y / Enter 执行整批')), '举手反馈在确认行看得见')
+  assert.equal(ctl.notes.some(n => n.includes('举了手')), false, '临时反馈不污染历史')
   // 第二下：生效——起的就是 `lineOf('approve')` 那一条（与 `g` 键同一条命令）。
   stage.onAction({ action: 'approve', key: 'y' })
   assert.equal(ctl.presses.length, 1, '两次按下恰一次生效')
   assert.equal(ctl.presses[0]?.line, lineOf('approve'), `起的那一条该是 lineOf('approve')（${lineOf('approve')}）`)
-  assert.ok(ctl.notes.some((n) => n.includes('按了 y')), '生效那一下也要看得见')
+  assert.ok(ctl.notes.some((n) => n.includes('已确认执行这批计划')), '生效那一下也要看得见')
   assert.ok(ctl.redraws > 0, '生效那一下重画了')
 })
 
@@ -154,7 +155,7 @@ test('③ Esc 七级的次序：门口最外，一层一层往里退（每一下
   await stage.refreshGate()
   // 第 1 下（行还空着 · 门口那一块开着）→ 只收它（队列不动 · 那一趟不停）。
   stage.onAction({ action: 'cancel' })
-  assert.ok(ctl.notes.some((n) => n.includes('收起了门口那一块')), '第一下收门口（行空着才走这一级——`escStepOf` 的判据）')
+  assert.ok(ctl.notes.some((n) => n.includes('确认已收起')), '第一下收门口（行空着才走这一级——`escStepOf` 的判据）')
   assert.equal(ctl.stops.length, 0, '收门口那一下不打断在途的趟')
   // 把下面几级全都占上：排队两条草稿（忙时 Enter 入队）。
   stage.onAction({ action: 'insert', text: 'say one', key: 's' })
@@ -165,7 +166,7 @@ test('③ Esc 七级的次序：门口最外，一层一层往里退（每一下
   // 第 2 下：门口关了 · 没有弹层 → 打断在途的那一趟。
   stage.onAction({ action: 'cancel' })
   assert.deepEqual(ctl.stops, ['SIGINT'], '第二下打断那一趟（SIGINT）')
-  assert.ok(ctl.notes.some((n) => n.includes('打断了那一趟')), '打断要看得见')
+  assert.ok(ctl.notes.some((n) => n.includes('已请求停止执行，正在等待结束')), '打断要看得见')
   // 第 3 下：那一趟死了（`running` 翻 false）→ 丢排队里最后一条（2 → 1）。
   ctl.running = false
   stage.onAction({ action: 'cancel' })
@@ -215,31 +216,14 @@ test('⑤ 门关着按 y：它就是个字（进输入行），一个进程都�
   assert.ok(line.includes('yn'), `y 与 n 都进了输入行（实得 ${JSON.stringify(line)}）`)
 })
 
-test('⑥ 面板高度按终端行数分账：输入那块不得与显示区等高（2026-09-29 的口径）', () => {
-  // 纯表：panelWantOf 在几档典型终端上的读数——缺省至多 2/5（下限 8 · 上限 K）· 弹层至多
-  // 3/5（上限 24 · 下限是缺省档 + 4）· 量不到行数不分账。
-  assert.deepEqual(
-    [24, 30, 40, 16].map((r) => panelWantOf(r, false)),
-    [9, 10, 10, 8],
-    '缺省档：24 行终端 9 行框 · 40 行及以上回到框的 10 行（第二幕 ④：分账收的是框，提示行加在框下面）',
-  )
-  assert.deepEqual(
-    [24, 30, 40, 16].map((r) => panelWantOf(r, true)),
-    [13, 17, 23, 12],
-    '弹层档：至多 3/5（上限 24），下限是缺省档 + 4',
-  )
-  assert.deepEqual(
-    [panelWantOf(undefined, false), panelWantOf(undefined, true)],
-    [10, 24],
-    '量不到行数：不分账，回框的 10 行 / OVERLAY_WANT（与「量不到就不夹」同一条）',
-  )
-  // 接线：24 行的终端上想要 9 行；开一层弹层（Ctrl-P 候选）长到 13；Esc 收掉回到 9。
+test('⑥ 实际终端容量展开，操作区域在菜单开合时稳定，未知尺寸保持地板', () => {
+  assert.deepEqual([24, 30, 40, 16].map(r => panelWantOf(r, false)), [19, 25, 35, 11])
+  assert.deepEqual([24, 30, 40, 16].map(r => panelWantOf(r, true)), [19, 25, 35, 11])
+  assert.deepEqual([panelWantOf(undefined, false), panelWantOf(undefined, true)], [10, 24])
   const { stage } = stageOf({ termRows: 24 })
-  assert.equal(stage.heightWant(), 9, '接线：heightWant 读 deps.termRows 分账')
-  stage.onAction({ action: 'panel' })
-  assert.equal(stage.heightWant(), 13, '弹层开着走 3/5 那一档')
-  stage.onAction({ action: 'cancel' })
-  assert.equal(stage.heightWant(), 9, '收掉弹层回到缺省那一档')
+  assert.equal(stage.heightWant(), 19)
+  stage.onAction({ action: 'panel' }); assert.equal(stage.heightWant(), 19)
+  stage.onAction({ action: 'cancel' }); assert.equal(stage.heightWant(), 19)
 })
 // ── ⑦ 一把尺（0.2.8 U2）：阅读面折的列宽与框内宽是同一处 ────────────────────────────────
 test('⑦ 一把尺：舞台递给阅读面的列宽就是 `innerOf`——屏上印的与翻页数的是同一串', () => {
@@ -259,7 +243,8 @@ test('⑦ 一把尺：舞台递给阅读面的列宽就是 `innerOf`——屏上
   const faces = facesOf(readStateOf(rows))
   const name = firstFace(faces)
   assert.equal(name, 'diff', '这一份账有变更：先看 diff 那一面')
-  const want = faceRowsOf(faces, name, innerOf(30))
+  const want = faces.diff!.lines.flatMap(line => [...readWrap(line, innerOf(30))])
+  assert.equal(stage.view().read!.heading, faces.diff!.title)
   assert.deepEqual([...(stage.view().read?.rows ?? [])], [...want], '舞台按 `innerOf(columns)` 折，不是自己那一把尺')
   assert.ok(want.some((l) => l.includes('深/')), '这一面真折到了那条长路径')
   assert.ok(want.every((l) => widthOf(l) <= innerOf(30)), '每一行都画得进框')
@@ -274,7 +259,8 @@ test('⑦ 一把尺：舞台递给阅读面的列宽就是 `innerOf`——屏上
 
   // **窄 → 宽**：折的就是新列宽下那一串；`↓` 翻到底停在新那一串的末行上。
   width = 200
-  const want2 = faceRowsOf(faces, name, innerOf(200))
+  const want2 = faces.diff!.lines.flatMap(line => [...readWrap(line, innerOf(200))])
+  assert.equal(stage.view().read!.heading, faces.diff!.title)
   assert.deepEqual([...(stage.view().read?.rows ?? [])], [...want2], '窄 → 宽：同一把尺重新折一遍')
   assert.ok(want2.length < want.length, `宽了折得少（窄 ${want.length} · 宽 ${want2.length}）`)
   for (let i = 0; i < 40; i += 1) stage.onAction({ action: 'historyNewer' })
@@ -324,9 +310,10 @@ test('⑨ `Ctrl-R` 开出来的那几面里有详情面（快照只在阅读面�
   ]
   const { stage, ctl } = stageOf({ rows })
   stage.onAction({ action: 'read' })
-  // 换一圈面：每一下 `Tab` 都报那一面的名字（`阅读面换一面 · <标题>`）。
-  for (let i = 0; i < 4; i += 1) stage.onAction({ action: 'complete' })
-  const titles = ctl.notes.filter((n) => n.startsWith('阅读面'))
+  // 换一圈面：标题从当前阅读正文检查，选择不写入永久历史。
+  const titles: string[] = []
+  for (let i = 0; i < 4; i += 1) { stage.onAction({ action: 'complete' }); titles.push([stage.view().read?.heading,...(stage.view().read?.rows??[])].join(' ')) }
+  assert.deepEqual(ctl.notes, [], '阅读开关与换面不追加永久说明')
   const detail = titles.find((n) => n.includes('详情')) ?? ''
   assert.ok(detail !== '', `换一圈该换到详情面：${JSON.stringify(titles)}`)
   // **那几样原始读数在行上**：标题只报"这是哪一面"，不端那一面自己的账（折叠几行 · 只计数几行）。
@@ -341,9 +328,10 @@ test('⑨ `Ctrl-R` 开出来的那几面里有详情面（快照只在阅读面�
   // **地板**：账上一行都没有时那一面不存在，`Tab` 也不会停在它上面。
   const empty = stageOf({})
   empty.stage.onAction({ action: 'read' })
-  for (let i = 0; i < 4; i += 1) empty.stage.onAction({ action: 'complete' })
-  assert.equal(empty.ctl.notes.some((n) => n.includes('详情')), false, '没有账就没有详情面')
-  console.log(`⑨ 读数：${titles.length} 条换面记 · 换到详情面「${detail}」`)
+  const emptyTitles: string[] = []
+  for (let i = 0; i < 4; i += 1) { empty.stage.onAction({ action: 'complete' }); emptyTitles.push([empty.stage.view().read?.heading,...(empty.stage.view().read?.rows??[])].join(' ')) }
+  assert.equal(emptyTitles.some(n => n.includes('详情')), false, '没有账就没有详情面')
+  console.log(`⑨ 读数：${titles.length} 个当前页标题 · 换到详情面「${detail}」`)
 })
 
 // ── ⑩ 门口那一块里"要按的那一行"的坐标（第三幕 ①）────────────────────────────────
@@ -365,8 +353,8 @@ test('⑩ 门口开着时，那一块的末一行是"要按的那一行"：坐�
   const rows = bottom?.rows ?? []
   const at = bottom?.waitingAt
   assert.equal(at, rows.length - 1, '末一行就是选项行（这一档还没有排队那一条）')
-  assert.ok((rows[at as number] ?? '').startsWith('放行一次(y)'), `那一行该是选项行：${String(rows[at as number])}`)
-  assert.equal((rows[0] as string).includes('放行一次'), false, '第一行不是它（预览排在前面）')
+  assert.ok((rows[at as number] ?? '').startsWith('y 执行整批'), `那一行该是选项行：${String(rows[at as number])}`)
+  assert.equal((rows[0] as string).includes('y 执行整批'), false, '第一行不是它（预览排在前面）')
   // 门口收起来：那一块整块不在了——坐标也就不给（不给就与从前同形）。
   ctl.face = null
   await stage.refreshGate()
@@ -375,7 +363,7 @@ test('⑩ 门口开着时，那一块的末一行是"要按的那一行"：坐�
 })
 
 // ── ⑪ 提示行的处境分档与"同一份来源"（第三幕 ②）───────────────────────────────
-test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 > 都不看；阅读面那一句注记与提示行同源', async () => {
+test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 > 都不看；阅读说明留在当前正文与提示行', async () => {
   const contract = {
     id: 'r1.implement.1',
     agent: 'agent/r1/1',
@@ -394,7 +382,7 @@ test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 
   // ① 都不开：不看处境（`any`）。
   ctl.whens.length = 0
   stage.view()
-  assert.deepEqual(asked(), ['any'], '门口与阅读面都没开 → 不看处境')
+  assert.deepEqual(asked(), ['input'], '门口与阅读面都没开 → 输入场景')
   // ② 门口那一块开着：门口那一档。
   await stage.refreshGate()
   ctl.whens.length = 0
@@ -404,10 +392,9 @@ test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 
   stage.onAction({ action: 'read' })
   ctl.whens.length = 0
   stage.view()
-  assert.deepEqual(asked(), ['read'], '阅读面开着 → 阅读面那一档（压过门口）')
-  // ④ **同一份来源**：开的那一句注记里那一段是 `keysOf('read')` 给的，不是写死在 `stage.ts` 里的。
-  const note = ctl.notes.find((n) => n.startsWith('阅读面 ·')) ?? ''
-  assert.ok(note.includes('（read 那一段）'), `那一句注记该读同一份来源：${note}`)
-  assert.equal(note.includes('Tab 换一面'), false, '写死的那一句不该再留在 stage.ts 里')
-  console.log(`⑪ 读数：三档都问到了（any → gate → read）· 那一句注记「${note}」`)
+  assert.deepEqual(asked(), ['plan'], '当前计划全文开着 → 全文那一档（压过门口）')
+  // ④ 正文与提示行承载当前对象与动作；原按键注记入口不再读。
+  assert.equal(ctl.notes.filter(n => n.startsWith('阅读面')).length, 0, '只写真实批次结论，阅读不追加说明')
+  assert.ok(stage.view().read?.heading?.includes('计划全文'))
+  console.log('⑪ 读数：三档都问到了（input → gate → plan）· 永久阅读注记0')
 })

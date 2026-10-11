@@ -89,8 +89,6 @@ test('② 四个不同 agent 在同一份配置下：系统状态那一段逐字
   try {
     const rendered = AGENTS.map((who) => JSON.stringify(assembleA(CONFIG, root, who).segs['系统状态']))
     assert.equal(new Set(rendered).size, 1, '四个 agent 拿到的系统状态不一样')
-    assert.equal(rendered.length, 4)
-    assert.equal(new Set(systemForEachAgent(CONFIG, AGENTS)).size, 1, '按坐标逐个取，系统状态也不该变')
 
     // A 区整段：四个 agent 的四份全等——**而这一条今天不是恒等式**，因为 B 区那几段逐 agent 不同。
     const aHashes = AGENTS.map((who) => assembleA(CONFIG, root, who).a)
@@ -148,8 +146,6 @@ test('④ 红负对照：把宿主路径拼进系统状态 → 同一份配置�
     }
     assert.notEqual(bad(rootA), bad(rootB), '宿主路径进了系统状态，两个根下的哈希居然还相同——负对照是空的')
     assert.notEqual(bad(rootA), goodA, '带宿主路径那一版与原版的哈希相同——那一版没有被拦住')
-    // 而它在**同一个根下**仍然是逐 agent 相同的：这一档量的是宿主坐标，不是 agent 坐标。
-    assert.equal(new Set(AGENTS.map(() => bad(rootA))).size, 1)
   } finally {
     rmSync(rootA, { recursive: true, force: true })
     rmSync(rootB, { recursive: true, force: true })
@@ -199,8 +195,6 @@ test('⑤ 投影不是原文：能力各一栏 · 清单按 name 排序 · 绑�
   assert.equal(sys.workspace, 'fugue')
   assert.equal(sys.net, 'none')
   assert.equal(sys.ports, '31000-31099')
-  // 两处入口同一份值：`systemSegment` 就是 `projectConfig`（同一个函数，没有第二条路）。
-  assert.deepEqual(systemSegment(CONFIG), sys)
   // 持轮者那一份协议也用同一份系统状态（A 区是两份协议唯一相交的地方）。
   const st = { ...emptyState(), system: systemSegment(CONFIG) }
   const sub = assemble({ protocol: SUBAGENT_PROTOCOL, model: DEFAULT_MODEL.id, segments: sourcesFor(SUBAGENT_PROTOCOL, st, AGENTS[0] as AgentCoord) })

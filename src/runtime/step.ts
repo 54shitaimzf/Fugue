@@ -211,7 +211,7 @@ export interface StepResult {
  * 没人看过的常量。
  */
 
-export interface RuntimeDeps {
+interface RuntimeDeps {
   /**
    * 这个 agent 自己的日志口。**每落一条开一个口、落完就关**（一次命令一个 writer：
    * `hold.ts` 那条禁令要防的是"同一个 writer 的序号被两个进程领到"）。
@@ -540,9 +540,4 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       }
     },
   }
-}
-
-/** `parseStream` 的转发：给要用**原始字节流**驱动的地方（假提供方那一档 · `B5` 起）。 */
-export function eventsFrom(adapter: WireAdapter, chunks: AsyncIterable<Uint8Array>): AsyncIterable<ModelEvent> {
-  return parseStream(adapter, chunks)
 }

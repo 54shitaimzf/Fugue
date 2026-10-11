@@ -24,9 +24,12 @@
 // **diff 不在这儿**（§ 5.19 五说"写路径给 diff"）：diff 要开真源读基线，那是 `T9` 阅读面那一格
 // （"面板与 `fugue diff --json` 读同一份数据"）。这一格给的是**写入面与交付物**，逐字来自契约。
 import type { Contract } from '../contract/types.ts'
+import type { BottomInput } from './frame.ts'
 import { WORDS } from '../words.ts'
 import { GO_LINE } from './run.ts'
 import { wrap } from './glyph.ts'
+import { KEYMAP } from './keymap.ts'
+import type { Keymap } from './keymap.ts'
 
 /** 门口那一档的动作。**三个**（`a` / `p` / 升权档见头注）。 */
 export type GateOption = 'approve' | 'reject'
@@ -110,7 +113,7 @@ export function conclusionOf(batch: GateBatch): GateConclusion {
 export function conclusionLineOf(c: GateConclusion): string {
   return (
     `这一轮打算开 ${c.tasks} 个${WORDS.task} · 覆盖 ${c.paths} 条${WORDS.paths}` +
-    ` · ${WORDS.accepts} ${c.accepts} 条 · ${WORDS.gate}停着等你`
+    ` · ${WORDS.accepts} ${c.accepts} 条 · ${WORDS.gate}`
   )
 }
 
@@ -178,7 +181,7 @@ export interface GateView {
 
 export const GATE_VIEW: GateView = { at: 0, armed: null }
 
-/** 末两行留住：**队列行**（还有几份 · 第几份）与**选项行**（三档 / 举手那一句）。 */
+/** 不折行时的最少保留行数；窄屏的实际行数由 `gateLayoutOf` 计算。 */
 export const GATE_KEEP = 2
 
 /** 第几份那个下标夹回范围里（候选变了 · 批次短了都走它）。 */
@@ -234,28 +237,57 @@ export function lineOf(option: GateOption): string {
 /** 队列行：**还有几份 · 第几份 · 这一份是谁**（`index/total` 就是 § 5.19 那一条）。 */
 export function gateQueueRowOf(face: GateFace, at: number): string {
   const n = face.cards.length
-  if (n === 0) return `门口这一批一份${WORDS.task}都没有（门不会停在这样一批上——报出来）`
+  if (n === 0) return '没有待确认任务'
   const i = clampAt(n, at)
   return `待确认 ${n} 项${WORDS.task} · 当前 ${i + 1}/${n}`
 }
 
 /** 选项行：**三档**；举过手就把那一句"再按一次"说出来（二段确认要对人可见）。 */
-export function optionRowOf(view: GateView): string {
-  if (view.armed === 'approve') return '再按一次 y（或 Enter）就放行这一批 · 别的键换一档 · Esc 中止'
-  if (view.armed === 'reject') return '再按一次 n（或 Enter）就拒这一批 · 别的键换一档 · Esc 中止'
-  return '放行一次(y) · 拒(n) · 中止(Esc)'
+export function optionRowOf(view: GateView, keymap: Keymap = KEYMAP): string {
+  // 此处每个动作只列第一个配置键，给批次范围与选择留地方；帮助仍列全部别名，解码不变。
+  const key = (action: GateOption | 'submit' | 'cancel'): string => keymap.rows.find(b => b.action === action)!.keys[0]!
+  if (view.armed === 'approve') return `再按 ${key('approve')} / ${key('submit')} 执行整批 · ${key('cancel')} 收起`
+  if (view.armed === 'reject') return `再按 ${key('reject')} / ${key('submit')} 暂不执行 · ${key('cancel')} 收起`
+  return `${key('approve')} 执行整批 · ${key('reject')} 暂不执行 · ${key('cancel')} 收起`
 }
 
 /**
- * 门口那一块的那几行（**末两行是队列行与选项行**，见 `GATE_KEEP`）。`columns` 是入参：超宽的那几行
- * 在这一份里折——`frame.ts` 那一层对"横贯整栏"的行只截不折，而这里的一句话被截掉尾巴就没用了。
- *
- * **次序是从下往上定的**：末两行是人要按的那两样（队列行 · 选项行），预览排在它们上面——装不下的
- * 时候先让位的是预览（`frame.ts` 那一头按 `GATE_KEEP` 留行）。
+ * 确认内容按实际宽度折行。队列与选项折出的所有行优先保留，选项的等待色覆盖整句；
+ * 先让位的是卡片前面的补充资料，命令与写入路径仍靠近确认行。
  */
-export function gateRowsOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number }): readonly string[] {
+export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number; readonly keymap?: Keymap; readonly height?: number }): BottomInput & { readonly blocked?: true } {
+  const fold = (one: string): readonly string[] => o.columns > 0 ? wrap(one.trimStart(), o.columns) : [one]
   const card = cardAt(o.face, o.view.at)
-  const head =
-    card === null ? [] : previewLinesOf(card).flatMap((one) => (o.columns > 0 ? [...wrap(one, o.columns)] : [one]))
-  return [...head, gateQueueRowOf(o.face, o.view.at), optionRowOf(o.view)]
+  const head = card === null ? [] : previewLinesOf(card).flatMap(fold)
+  const queue = fold(gateQueueRowOf(o.face, o.view.at))
+  const options = fold(optionRowOf(o.view, o.keymap))
+  // 首次选择与第二次确认都须容纳整句；另外留一行给已有进展，框边仍占两行。
+  const need = queue.length + Math.max(...[null, 'approve', 'reject'].map(armed =>
+    fold(optionRowOf({ ...o.view, armed: armed as GateOption | null }, o.keymap)).length))
+  if (Number.isFinite(o.height) && o.height! > 0 && need + 1 > o.height! - 2) {
+    const warning = fold(WORDS.gateTooSmall), rows = [...warning]
+    const scope = fold(`待确认 ${o.face.cards.length} 项`)
+    const readKey = (o.keymap ?? KEYMAP).rows.find(b => b.action === 'read')!.keys[0]!
+    const read = fold(`${readKey} 看全`), budget = Math.max(0, o.height! - 3)
+    const scopeOn = rows.length + scope.length <= budget
+    if (scopeOn) rows.push(...scope)
+    if (rows.length + read.length <= budget) rows.push(...read)
+    return { confirmationRound: o.face.cards.length > 0 ? o.face.round : undefined, rows, keep: rows.length, waitingAt: 0, waitingCount: warning.length,
+      headingAt: warning.length, headingCount: scopeOn ? scope.length : 0, blocked: true }
+  }
+  return {
+    confirmationRound: o.face.cards.length > 0 ? o.face.round : undefined,
+    rows: [...head, ...queue, ...options],
+    keep: queue.length + options.length,
+    waitingAt: head.length + queue.length,
+    waitingCount: options.length,
+    headingAt: head.length,
+    headingCount: queue.length,
+    overflow: '计划有省略',
+  }
+}
+
+/** 只要原文的调用方沿用这个入口；坐标与保留行数由同一次排版取得。 */
+export function gateRowsOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number; readonly keymap?: Keymap; readonly height?: number }): readonly string[] {
+  return gateLayoutOf(o).rows
 }

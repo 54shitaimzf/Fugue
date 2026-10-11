@@ -49,10 +49,10 @@ export interface PlatformFacts {
 }
 
 /** 退档的次序（§ 8.5 的策略表）。`reflink` 不在里面：本平台不存在（§ 15.7）。 */
-export const LADDER: readonly ForkStrategy[] = ['overlayfs', 'hardlink-ro', 'copy']
+const LADDER: readonly ForkStrategy[] = ['overlayfs', 'hardlink-ro', 'copy']
 
 /** 配置里存平台事实的那个键。 */
-export const FACTS_KEY = 'platform'
+const FACTS_KEY = 'platform'
 
 /** 挂一次试试，试完卸掉——**探针的全部**。 */
 function probeOverlay(scratch: AbsPath): { mode: MountMode | null; note: string } {
@@ -167,7 +167,7 @@ export function probePlatform(realRoot: AbsPath, scratch: AbsPath): PlatformFact
 }
 
 /** 缓存里那份事实。**形状不对就当没有**：它是派生的加速项，不是要拒绝加载的声明。 */
-export async function loadFacts(root: string): Promise<PlatformFacts | null> {
+async function loadFacts(root: string): Promise<PlatformFacts | null> {
   const doc = await readConfig(root)
   const v = doc[FACTS_KEY]
   if (typeof v !== 'object' || v === null) return null

@@ -20,7 +20,7 @@ export type Delta =
 
 /** 模式的两档。**它们是 `Delta.mode` 的全部取值**，也是 git 的全部取值。 */
 export const MODE_FILE = 0o100644
-export const MODE_EXEC = 0o100755
+const MODE_EXEC = 0o100755
 
 /**
  * 归一只有这一处：有执行位就是 `100755`，否则 `100644`。
@@ -35,7 +35,7 @@ export function normMode(mode: number): number {
 }
 
 /** 软链在树上的那一档（盘上 `lstat` 报的是 `0o120777`，树上只记 `0o120000`）。 */
-export const MODE_SYMLINK = 0o120000
+const MODE_SYMLINK = 0o120000
 
 /**
  * **盘上的 `st_mode` → 树上会记的那个数。** 盘与树逐数比模式的地方一律先过它（漂移检 ·

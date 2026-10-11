@@ -42,9 +42,9 @@ import type { AbsPath } from '../terms.ts'
 import type { Policy } from './policy.ts'
 
 /** 工作区里那两处：`<realRoot>/.fugue/bin/`（§ 9.2 的布局里与 `log/` · `snap/` · `mat/` 并列）。 */
-export const LANDLOCK_DIR = join('.fugue', 'bin')
-export const LANDLOCK_SRC = 'landlock-exec.c'
-export const LANDLOCK_BIN = 'landlock-exec'
+const LANDLOCK_DIR = join('.fugue', 'bin')
+const LANDLOCK_SRC = 'landlock-exec.c'
+const LANDLOCK_BIN = 'landlock-exec'
 
 /**
  * 包装器在**沙箱那一侧**的落点：挂载层把它只读挂进来，argv 里写的就是这一条。
@@ -55,7 +55,7 @@ export const LANDLOCK_BIN = 'landlock-exec'
 export const LANDLOCK_SANDBOX_PATH = '/.fugue/landlock-exec'
 
 /** 可写集里那几条设备：不含它们任何一次重定向都翻车（实测见文件头）。 */
-export const DEVICE_FILES: readonly AbsPath[] = [
+const DEVICE_FILES: readonly AbsPath[] = [
   '/dev/null',
   '/dev/zero',
   '/dev/full',
@@ -70,7 +70,7 @@ export const DEVICE_FILES: readonly AbsPath[] = [
  *
  * `String.raw`：C 里那些 `"\n"` 要原样过去，模板串默认会把它们变成真的换行、把字面量截断。
  */
-export const LANDLOCK_C_SRC: string = String.raw`// 第二层那个包装器（架构 § 8.8 · PLAN § 5.5 的 Y6 行）。由 fugue 生成，别手改：
+const LANDLOCK_C_SRC: string = String.raw`// 第二层那个包装器（架构 § 8.8 · PLAN § 5.5 的 Y6 行）。由 fugue 生成，别手改：
 // 源码那一份在 src/boundary/landlock.ts 里，改了它下一次运行会重编这一份。
 //
 // 两件事：探 ABI（"--probe"：用系统调用问内核，不看 /sys）与把 argv 包一层（其余参数）。

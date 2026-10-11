@@ -20,7 +20,7 @@ export const PHRASES = {
 } as const
 
 /** 表里每一句的键（供唯一性检查与外部消费者枚举，不手抄一份键名）。 */
-export const PHRASE_KEYS = Object.keys(PHRASES).sort()
+const PHRASE_KEYS = Object.keys(PHRASES).sort()
 
 /** 表里的全部字面。 */
 export const PHRASE_TEXTS: readonly string[] = PHRASE_KEYS.map(

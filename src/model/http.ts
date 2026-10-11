@@ -50,7 +50,7 @@ export function wireFactsOf(err: unknown): Readonly<Record<string, string | numb
  * 为什么是白名单而不是整份头：头里有 `set-cookie` 一类不该进日志的东西，而"排障要哪几个"是
  * 一个**短名单**——短名单写下来，才不会因为某天多了一个头就把日志长胖。要加就加在这张表里。
  */
-export const KEPT_HEADERS: readonly string[] = [
+const KEPT_HEADERS: readonly string[] = [
   'x-request-id',
   'request-id',
   'retry-after',
@@ -60,7 +60,7 @@ export const KEPT_HEADERS: readonly string[] = [
 ]
 
 /** 一张响应头 → 那一栏（没命中白名单的丢掉；一条都没有时给 `null`）。 */
-export function keptHeaders(h: Headers | Readonly<Record<string, string>>): Record<string, string> | null {
+function keptHeaders(h: Headers | Readonly<Record<string, string>>): Record<string, string> | null {
   const get = (name: string): string | null =>
     typeof (h as Headers).get === 'function' ? (h as Headers).get(name) : ((h as Record<string, string>)[name] ?? null)
   const out: Record<string, string> = {}
@@ -138,7 +138,7 @@ export interface Transport {
  * 一边往下传、一边把原始字节攒起来。**录一份夹具要有原始字节**（回放时喂回去的就是它），
  * 而产品路径不需要多留一份——所以它是一层可选的包装，不是 `Transport` 的第二个方法。
  */
-export function teeBytes(inner: Transport, sink: Uint8Array[]): Transport {
+function teeBytes(inner: Transport, sink: Uint8Array[]): Transport {
   return {
     async *post(t: Target, body: Uint8Array, signal?: AbortSignal): AsyncGenerator<Uint8Array> {
       for await (const chunk of inner.post(t, body, signal)) {
@@ -217,7 +217,7 @@ export const fetchTransport: Transport = {
  * **它不碰网、也不读凭据**：这一层上面已经没有别的东西了——`callModel` 拿到的是"一段回来的
  * 字节"，而它不认识这段字节从哪儿来。
  */
-export class WireInError extends Error {}
+class WireInError extends Error {}
 
 /** `response.sse` → 按事件边界切块（一个空行是一件事的收尾）；末尾没空行的那一段也交出去。 */
 function sseChunks(raw: Uint8Array): Uint8Array[] {

@@ -26,7 +26,7 @@ export interface RefHeadState {
   readonly seq: LogSeq
 }
 
-export const NO_COMMIT: RefHeadState = { value: null, seq: 0 as LogSeq }
+const NO_COMMIT: RefHeadState = { value: null, seq: 0 as LogSeq }
 
 /**
  * 重放一个 writer 的 ref 头。**只读**（`LogReader`）：提交头读日志，不写日志——写的那一处
@@ -42,7 +42,7 @@ export const NO_COMMIT: RefHeadState = { value: null, seq: 0 as LogSeq }
  *
  * 与 `matState` 同一个形状：扫一遍这个 writer 的事件，最后一条 `ckpt/commit` 留下。
  */
-export async function readRefHead(
+async function readRefHead(
   log: LogReader,
   writer: WriterId,
   from: CommitId | null = null,

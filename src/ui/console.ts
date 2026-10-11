@@ -21,15 +21,19 @@ import { actionCommandsOf, actionsTableOf } from '../round/actions.ts'
 import { pendingOf } from '../round/dispatch.ts'
 import { identFor } from '../identity.ts'
 import { openServeSource, rowsReaderOf } from '../serve/source.ts'
+import { openImageSource } from '../serve/image-source.ts'
+import { openCommitSource } from '../serve/commit-source.ts'
 import { emitLine, usageFail } from '../cli/out.ts'
-import { KEYMAP, hintKeysOf, hintLimitOf, hintLineOf, keymapOf, openKeys } from './keymap.ts'
+import { KEYMAP, hintKeysOf, hintLineForWidth, keymapOf, openKeys } from './keymap.ts'
 import type { KeySource, Keymap } from './keymap.ts'
 import { openTui, tuiModeOf } from './follow.ts'
 import type { Tui } from './follow.ts'
 import { openExitHooks } from './exit-hooks.ts'
 import { degradeNote, openTerm } from './term.ts'
 import { themeOf } from './theme.ts'
+import { openCellProbe, openPixelProbe, openAlternateProbe, openCursorProbe } from './cell-probe.ts'
 import { openStage } from './stage.ts'
+import { panelWantOf } from './layout.ts'
 import { gateFaceOf } from './gate.ts'
 import type { GateFace } from './gate.ts'
 import { openRun } from './run.ts'
@@ -201,6 +205,12 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // **读源是事件通道那一份**（`serve/source.ts`）：界面这一侧不开账本口、也不顺着账本口扫
   // ——`log/log.ts` 与 `probe/watch.ts` 那两条直连住在 serve 那一头（架构 § 9.11）。
   const source = await openServeSource({ root })
+  let imageSource: ReturnType<typeof openImageSource> | null = null
+  let commitSource: ReturnType<typeof openCommitSource> | null = null
+  let cellProbe: ReturnType<typeof openCellProbe> | null = null
+  let pixelProbe: ReturnType<typeof openPixelProbe> | null = null
+  let alternateProbe: ReturnType<typeof openAlternateProbe> | null = null
+  let cursorProbe: ReturnType<typeof openCursorProbe> | null = null
   // ── `T6` 的三样输入（与 `round go` 那一趟逐样对上）─────────────────────────────────────
   // 整块住在下面的 `gateSetupOf` 里（轮次号 · 绑好的动作表 · 每条动作的命令行），身份分配
   // 器是同一个（`identFor`——门只认契约集合，而集合里带着身份，两边换一个就发错一批而且不
@@ -245,21 +255,26 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   let keys: KeySource | null = null
   let km: Keymap = KEYMAP
   const stage = openStage({
+    keymap: () => km,
+    graphics: () => imageSource === null ? 'none' : tiers.graphics === 'sixel'
+      ? cellProbe?.cell != null && alternateProbe?.owned === true ? 'sixel' : 'none'
+      : tiers.graphics === 'kitty' && (pixelProbe?.cell == null || (flags.has('full') && alternateProbe?.owned !== true)) ? 'none' : tiers.graphics,
+    readImage: (request, signal) => imageSource?.read(request, signal) ?? Promise.resolve(null),
     note: (line) => ui.tui?.note(line),
+    notes: () => ui.tui?.notes ?? [],
+    readCommit: (request, signal) => commitSource?.read(request, signal) ?? Promise.resolve(null),
     redraw: () => ui.tui?.redraw(),
     // 框下面那一行（第二幕 ④ · 第三幕 ② 按处境分档）：stdin 不是终端时它就是那一句"收不到按键"
-    // ——按屏幕宽度取前几条的那一手在 `hintLimitOf`（整行 438 列会被终端折成五行）；哪一档由舞台
-    // 算（`hintWhenOf`：门口那一块开着先露 `y`/`n`，阅读面开着先露 `Tab`/`↑`/`↓`/`Esc`）。
+    // 当前容量只放完整键与动作，窄窗首项可去抬头和备用键；场景由舞台选择。
     hint: (when) =>
       keys?.raw === true
-        ? hintLineOf(km, hintLimitOf(term.columns, km, when), when)
-        : 'stdin 不是终端：这一档不收按键（输入行与弹层都在等按键，画出来是骗人）',
-    // 同一档下"按什么键干什么"的那一段（第三幕 ②）：写给终端历史的那一句注记（阅读面开的那一下）
-    // 读它。与提示行同一份来源；那一句只在阅读面真开起来时走得到，而阅读面只能由按键开。
-    keysOf: (when) => hintKeysOf(km, when),
-    columns: () => term.columns,
+        ? hintLineForWidth(term.columns, km, when)
+        : '当前输入不可用',
+    // 兼容旧装配的快捷键来源仍与提示行共用 km；Stage 不再读取它或把说明写进历史。
+    keysOf: when => hintKeysOf(km, when),
+    columns: () => process.stdout.columns ?? term.columns,
     // 终端行数（分账面板高度那一档的输入；`rows` 那一只 dep 是「账上的行」，名字各归各）。
-    termRows: () => term.rows,
+    termRows: () => process.stdout.rows ?? term.rows,
     rows: () => ui.tui?.session.rows ?? [],
     pendingFace,
     run: () => ui.go,
@@ -271,7 +286,13 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // **每帧现问的期望高度**（U6：弹层开着舞台要 `OVERLAY_WANT`，关了回到缺省 `K`）都从舞台递进来。
   const term = openTerm({
     out: process.stdout,
+    requestCursor: (rows, accept) => cursorProbe?.schedule(rows, accept),
     full: flags.has('full'),
+    graphics: tiers.graphics,
+    sixelCells: () => cellProbe?.cell ?? null,
+    kittyCells: () => pixelProbe?.cell ?? null,
+    alternateScreenOf: () => alternateProbe?.owned ?? false,
+    onAlternateScreen: () => alternateProbe?.start(),
     // 色档按这一台终端自报的来（四级表住在 `ui/theme.ts`）：`COLORTERM`/`TERM` 认得 256 色才上，
     // 认不得退属性档（不半上色）。真彩那一档不开。
     theme: themeOf({
@@ -279,12 +300,23 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       noColor: process.env.NO_COLOR,
       term: process.env.TERM,
       colorTerm: process.env.COLORTERM,
+      colorFgBg: process.env.COLORFGBG,
     }),
     heightOf: stage.heightWant,
+    // Book only our emitted blank rows up to the physical input bottom.
+    // Frame capacity stays with stage; openTerm limits this first-frame reserve.
+    reserveHeightOf: () => {
+      const rows = process.stdout.rows ?? term.rows
+      return rows === undefined ? panelWantOf(rows, true) : rows - 1
+    },
   })
   // 四条地板收成**一张表**（`ui/follow.ts` 的 `tuiModeOf`）：真终端 → 面板；`--once` / 不是 TTY /
   // `$TERM` 认不出来 → 只印永久行那一档（面板一次都不画，一个字节的 ANSI 都不写）。
   const mode = tuiModeOf({ ansi: term.ansi, once: flags.has('once'), follow: flags.has('follow') })
+  if (mode === 'panel' && process.stdin.isTTY === true && typeof process.stdin.setRawMode === 'function') commitSource = openCommitSource({ root })
+  // Sixel 的普通缓冲区 resize 所有权尚未解决，只在显式 full 内启用原始 PNG 读源。
+  if (mode === 'panel' && process.stdin.isTTY === true &&
+    (tiers.graphics === 'kitty' || (tiers.graphics === 'sixel' && flags.has('full')))) imageSource = openImageSource({ root })
   // **降级说一声**（U10a）：真终端而 `$TERM` 认不出来——面板那一档整个没了，人得知道
   // 为什么。`--once` 不说：那一档本来就不画面板，没有"退"这回事（判据在 `degradeNote`，
   // 与 `ansiOf` 同一张表）。
@@ -300,7 +332,12 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
           onSignal: () => ac.abort(),
           onExit: () => {
             keys?.close()
+            cellProbe?.close()
+            pixelProbe?.close()
+            stage.close()
             term.close()
+            alternateProbe?.close()
+            cursorProbe?.close()
           },
         })
       : null
@@ -310,6 +347,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     term,
     emit: emitLine,
     mode,
+    interactive: mode === 'panel' && process.stdin.isTTY === true && typeof process.stdin.setRawMode === 'function',
     view: stage.view,
     // `--tail N`（U15）：首趟只写尾部 N 条——跳过的前几条按「已写出去」记，前缀检查照走。
     reveal: tail,
@@ -322,10 +360,10 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     signal: ac.signal,
   })
   ui.tui = tui
-  // resize：**只重画**，不重读（宽度变了账没变）；新的那一块落在哪由 `ui/term.ts` 那一档决定。
+  // resize：**只重画**，账不重读（宽度变了账没变）；新的那一块落在哪由 `ui/term.ts` 那一档决定。
   // `SIGWINCH` 走**尾沿**（U7）：拖拽窗口时终端连发一串，逐发重画就是"块叠块"——`resize()` 里
   // 安静 `RESIZE_WAIT_MS` 之后只补一次。
-  const onWin = (): void => tui.resize()
+  const onWin = (): void => { pixelProbe?.start(); stage.onResize(); cellProbe?.start(); tui.resize() }
   if (mode === 'panel') process.on('SIGWINCH', onWin)
 
   // ── `UI4` · 门那儿按一下（只在"面板"那一档）──────────────────────────────────────────
@@ -347,12 +385,30 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
       process.stderr.write(`配置读不出来，按键按缺省表走：${(err as Error).message}
 `)
     }
-    keys = openKeys({ input: process.stdin, out: process.stdout, onAction: stage.onAction, km })
+    keys = openKeys({ input: process.stdin, out: process.stdout, onControl: (sequence) => { cellProbe?.receive(sequence); pixelProbe?.receive(sequence); alternateProbe?.receive(sequence); cursorProbe?.receive(sequence) },
+      onAction: stage.onAction, km })
+    if (keys.raw && !flags.has('full') && tiers.graphics === 'none') cursorProbe = openCursorProbe({write: bytes => process.stdout.write(bytes)})
+    // full 所有权只在进入屏时查询；已确认自有的平面才能在 resize 后重建。
+    if (keys.raw && flags.has('full') && tiers.graphics !== 'none') alternateProbe = openAlternateProbe({ write: bytes => process.stdout.write(bytes),
+      changed: () => { stage.onResize(); tui.redraw() } })
+    // auto Sixel 另需六份图形能力报告，缺失时保留文字。
+    if (keys.raw && tiers.graphics === 'sixel') {
+      cellProbe = openCellProbe({ write: (bytes) => process.stdout.write(bytes),
+        changed: () => { stage.onResize(); tui.redraw() } })
+      cellProbe.start()
+      // 首帧可能先于 raw 输入接好；此处查询补上那一次，后续 ALT_ON 由回调触发。
+    }
+    alternateProbe?.start()
+    if (keys.raw && tiers.graphics === 'kitty') {
+      pixelProbe = openPixelProbe({ write: bytes => process.stdout.write(bytes),
+        changed: () => { stage.onResize(); tui.redraw() } })
+      pixelProbe.start()
+    }
     // 第一件事：把按键那一行印出来（写在面板上方；翻上去了按 `?` 再印一次）。
     // **stdin 不是终端就不印它**（`stdout` 是终端而 `stdin` 不是：面板照画，可按键收不到）——
     // 印一行"按 g 放行"而按下去没反应，是这一档最坏的一种体验。
     stage.setRaw(keys.raw)
-    for (const p of km.problems) tui.note(`键位 ${p.action} 配不了（${JSON.stringify(p.key)}）：${p.why}`)
+    for (const p of km.problems) stage.notify(`键位 ${p.action} 配不了（${JSON.stringify(p.key)}）：${p.why}`)
     // **提示行从前在这里写了第一遍**（`tui.note` 一行永久行）。第二幕 ④ 之后它常驻框下面那一行
     // （`ui/stage.ts` 的 `view()` 每帧现问一次 `deps.hint`），这一处**一个字都不写**——写下去那一行
     // 就留在终端历史里，而它的内容是跟着列宽变的。
@@ -373,7 +429,14 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     }
     // **raw mode 先还原、面板再收走**：两条都幂等，正常退那一路与 `exit` 那一钩都走到这里。
     keys?.close()
+    cellProbe?.close()
+    pixelProbe?.close()
+    stage.close()
     term.close()
+    alternateProbe?.close()
+    cursorProbe?.close()
+    await commitSource?.close()
+    await imageSource?.close()
     await source.close()
   }
 }

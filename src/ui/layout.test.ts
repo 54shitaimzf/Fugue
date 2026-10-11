@@ -21,8 +21,6 @@ import {
   MIN_FRAME_ROWS,
   OVERLAY_WANT,
   PANEL_MIN,
-  PANEL_SHARE,
-  OVERLAY_SHARE,
   REGION_ROWS,
   RULE_ROWS,
   TAIL_ROWS,
@@ -54,31 +52,13 @@ test('① 布局那本行账：K=12 不变 · 框 12→10 · 内容 8→6（交�
   )
 })
 
-test('② 框是框、提示行是提示行：分账收的是框，提示行加在框下面', () => {
-  // 缺省那一档：40 行及以上回到框的上限（10），量不到行数也回它——**不是回 12**（12 是重画区）。
-  assert.deepEqual(
-    [24, 30, 40, 16].map((r) => panelWantOf(r, false)),
-    [9, 10, 10, 8],
-    '缺省档：24 行终端 9 行框 · 40 行及以上回到框的 10 行 · 16 行那一档落到 PANEL_MIN',
-  )
-  assert.deepEqual(
-    [24, 30, 40, 16].map((r) => panelWantOf(r, true)),
-    [13, 17, 23, 12],
-    '弹层档：至多 3/5（上限 24），下限是缺省那档 ＋ 4',
-  )
-  assert.deepEqual(
-    [panelWantOf(undefined, false), panelWantOf(undefined, true)],
-    [FRAME_ROWS, OVERLAY_WANT],
-    '量不到行数：不分账，回框的 10 行 / OVERLAY_WANT（与「量不到就不夹」同一条）',
-  )
-  // 分账那两个比与下限：这里只量"表里写的"与"算出来用的"是同一份。
-  assert.equal(PANEL_SHARE, 2 / 5)
-  assert.equal(OVERLAY_SHARE, 3 / 5)
-  assert.equal(PANEL_MIN, 8, '框与收尾 4 行 ＋ 内容 4 行')
-  assert.ok(panelWantOf(24, false) < FRAME_ROWS, '24 行终端上分账真的压了框（9 < 10）')
-  console.log(
-    `② 读数：24/30/40/16 行终端上框的期望 ${[24, 30, 40, 16].map((r) => panelWantOf(r, false)).join(' · ')} 行；` +
-      `弹层那档 ${[24, 30, 40, 16].map((r) => panelWantOf(r, true)).join(' · ')} 行；` +
-      `24 行终端上整块占 ${regionRowsOf(panelWantOf(24, false))} ＋ 输入行 1 行，显示区 ${24 - regionRowsOf(panelWantOf(24, false)) - 1} 行`,
-  )
+test('② 已知尺寸展开主区，确认与输入同高；未知尺寸沿用原行账', () => {
+  const sizes = [24, 30, 40, 16, 50]
+  assert.deepEqual(sizes.map(r => panelWantOf(r, false)), [19, 25, 35, 11, 45])
+  assert.deepEqual(sizes.map(r => panelWantOf(r, true)), sizes.map(r => panelWantOf(r, false)))
+  assert.deepEqual([panelWantOf(undefined, false), panelWantOf(undefined, true)], [FRAME_ROWS, OVERLAY_WANT])
+  assert.equal(PANEL_MIN, 8)
+  assert.ok(panelWantOf(40, false) > FRAME_ROWS)
+  assert.ok(panelWantOf(50, false) > panelWantOf(40, false))
+  console.log(`layout: 24/30/40/16/50 rows -> ${sizes.map(r => panelWantOf(r, false)).join('/')} frame rows; gate height identical; unknown 10/24`)
 })

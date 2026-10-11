@@ -31,4 +31,4 @@ export function wireHeader(wire: WireName, key: string): Readonly<Record<string,
  * Messages 那条线要的版本号。**它是这条线协议的一个取值，不是我们这边的开关**——
  * 写在这里而不是散在调用处，是为了让它只有一处（改它是一条线协议的事）。
  */
-export const ANTHROPIC_VERSION = '2023-06-01'
+const ANTHROPIC_VERSION = '2023-06-01'

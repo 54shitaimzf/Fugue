@@ -10,7 +10,7 @@
 import { PHRASES } from '../phrases.ts'
 
 /** 视图上那九条无开关的命令共用的底表（`write` · `diff` · `commit` 等各有自己的加项）。 */
-export const VIEW_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help']
+const VIEW_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help']
 
 /**
  * **写组那一份底表**（`remove` · `rename` · `chmod`）：与读组只差一个 `no-clock`。
@@ -18,10 +18,10 @@ export const VIEW_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help']
  * `--no-clock` 是**写面上那道开关**：给了它，这一条命令写进账的行不带信封钟（架构 § 9.11 的方法面
  * 与 § 9.2 的信封表）。读命令不写账，所以它们的表里没有这一格——**表外开关当场退 2，不静默忽略**。
  */
-export const WRITE_FLAGS: readonly string[] = [...VIEW_FLAGS, 'no-clock']
+const WRITE_FLAGS: readonly string[] = [...VIEW_FLAGS, 'no-clock']
 
 /** 一张开关表：`flags` 是这条命令认得的全部开关；`note` 是拒的时候跟在后面那句指路。 */
-export interface FlagTable {
+interface FlagTable {
   readonly flags: readonly string[]
   readonly note?: string
 }

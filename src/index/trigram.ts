@@ -49,7 +49,7 @@ export type Trigram = number
 /** 一个三字组占几个单元。**是单元不是字节**（口径五）。 */
 export const TRIGRAM_UNITS = 3
 /** 一个三字组的键在字典里占几个字节（三个 u16 相接）。 */
-export const GRAM_KEY_BYTES = 6
+const GRAM_KEY_BYTES = 6
 /**
  * 字典一条记录的字节数 = 键 6 + count 3 + offset 4。**定宽**是口径四那条路的前提。
  *
@@ -64,8 +64,6 @@ export const GRAM_KEY_BYTES = 6
  * 已经先抛了（`IndexBudgetExceeded`）。两条上限哪一条动了，这两个宽度都得重新反推一遍。
  */
 export const GRAM_RECORD_BYTES = GRAM_KEY_BYTES + 3 + 4
-/** 键的上界：三个码元全满。 */
-export const GRAM_MAX = 0xff_ffff_ffff_ffff
 const UNIT_BASE = 0x1_0000
 const HIGH_BASE = 0x1_0000_0000
 
@@ -154,7 +152,7 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 /** 一个 blob 集合的 id 宽度。空集合给 20（sha1）——那一份里没有 id，宽度无从谈起也不影响读。 */
-export function idBytesOf(ids: readonly BlobId[]): number {
+function idBytesOf(ids: readonly BlobId[]): number {
   if (ids.length === 0) return 20
   const width = ids[0].length / 2
   if (!Number.isInteger(width) || width === 0) throw new Error(`blob id 的长度不对：${JSON.stringify(ids[0])}`)
@@ -174,7 +172,7 @@ export function encodeBlobTable(ids: readonly BlobId[], idBytes: number): Uint8A
 }
 
 /** 读回 blobs 那一节。**长度除不尽就是形状不对**（当损坏，不硬读）。 */
-export function decodeBlobTable(body: Uint8Array): { idBytes: number; ids: BlobId[] } | null {
+function decodeBlobTable(body: Uint8Array): { idBytes: number; ids: BlobId[] } | null {
   if (body.byteLength < 4) return null
   const idBytes = new DataView(body.buffer, body.byteOffset, body.byteLength).getUint32(0, true)
   if (idBytes === 0 || (body.byteLength - 4) % idBytes !== 0) return null
@@ -275,7 +273,7 @@ function writeOrdinals(out: Uint8Array, at: number, ordinals: readonly number[])
 }
 
 /** 一个差分写成 varint 要几个字节。**算得出来就不必先编一遍再数**（编码那一趟按它排偏移）。 */
-export function varintBytes(delta: number): number {
+function varintBytes(delta: number): number {
   let bytes = 1
   for (let rest = Math.floor(delta / 128); rest > 0; rest = Math.floor(rest / 128)) bytes += 1
   return bytes
@@ -287,7 +285,7 @@ export function varintBytes(delta: number): number {
  * **循环由手里这段字节的长度兜住**（每步至少前进一个字节），所以不需要另一条"读到越界就停"的
  * 判据——那段字节是不是完好，已经由所在那一节的摘要答过了。
  */
-export function decodeOrdinals(slice: Uint8Array): number[] {
+function decodeOrdinals(slice: Uint8Array): number[] {
   const out: number[] = []
   let at = 0
   let value = 0

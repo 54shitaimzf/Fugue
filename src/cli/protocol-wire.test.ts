@@ -215,7 +215,7 @@ test('①g 真驱动那一档：**调查型**契约的「我的任务」装得�
   assert.ok(b.includes('Output paths: evidence/agent-1/现状'), `B 区末尾没有那一行产物路径：${JSON.stringify(b)}`)
   // 调查型没有断言那一栏：那两行都不该出现（空着不是漏了）。
   assert.equal(b.includes('Deliverables:'), false, `调查型不该有"交付物"那一行：${JSON.stringify(b)}`)
-  assert.equal(b.includes('断言：'), false, `调查型不该有"断言"那一行：${JSON.stringify(b)}`)
+  assert.equal(b.includes('Assertions:'), false, `调查型不该有"断言"那一行：${JSON.stringify(b)}`)
   console.log(
     `①g 读数：调查型 B 区 ${b.length} 字节 · 产物路径 ${handle.coord.outputPaths.join(' · ')} · 没有"交付物"与"断言"那两行`,
   )

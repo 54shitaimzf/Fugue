@@ -38,7 +38,7 @@ import type { RoundState } from './machine.ts'
 export class SayError extends Error {}
 
 /** 讨论原文归档那一个保留前缀（架构 § 9.10）。**按轮分文件**。 */
-export const SESSION_DIR = '.fugue/session'
+const SESSION_DIR = '.fugue/session'
 
 /**
  * 这一轮的会话记录住哪儿。

@@ -34,10 +34,6 @@ export function isSpecial(key: string): boolean {
  */
 let valueHook: ValueRunner | null = null
 
-export function setValueHookOf(fn: ValueRunner | null): void {
-  valueHook = fn
-}
-
 /** 跑一条命令，出一份值。**不写任何字节**——写那一半在 `writeValue`。 */
 export async function valueResultOf(key: string, a: ValueArgs): Promise<ValueResult> {
   if (valueHook !== null) return await valueHook(a)

@@ -464,7 +464,7 @@ export type AssertionRun =
   | { readonly kind: 'not-run'; readonly note: string }
 
 /** `expect` 的缺省：期望退出码 0。 */
-export const DEFAULT_EXPECT = 0
+const DEFAULT_EXPECT = 0
 
 /**
  * 一条断言的判决。**三档由"跑没跑成"与"对不对"两问定**，不是由退出码一个数定：
@@ -480,18 +480,6 @@ export function resultOf(a: Assertion, run: AssertionRun): AssertionResult {
 /** 工具那一面用的读法：一条断言是不是过。`unrunnable` 既不是过也不是没过。 */
 export function passing(r: AssertionResult): boolean {
   return r.verdict === 'pass'
-}
-
-/**
- * 这三档各是什么，给报告与走查印的那一栏用（架构 § 8.12 末段那一段话的行内版本）。
- *
- * **第三档在这一份里不进任何计数**：A8 的三个数只数"没通过"那一档。把这句话写成一个常量，
- * 是为了让"仪器故障不进打回率"这件事有一处指得出来——而不是散在报告代码的 if 里。
- */
-export const VERDICTS: Readonly<Record<string, string>> = {
-  pass: '通过——跑成了，退出码等于期望',
-  fail: '没通过——跑成了，但结果不对（进打回计数）',
-  unrunnable: '跑不起来——这条断言根本执行不了（命令不在 · 脚本不在 · 退出码 127 那一类；不进打回计数）',
 }
 
 // ── 第三级：跨字段的关系，加上那份清单本身 ────────────────────────────────────

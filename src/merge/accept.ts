@@ -63,7 +63,7 @@ export interface AssertionRunSpec {
  * **退出码 127 也归 `not-run`**：那是 shell 说"这个命令找不到"，与 `ENOENT` 是同一件事的两种
  * 报法——一个是 `spawnSync` 直接给的，一个是经 shell 走一圈给的。两处都收，判据一处。
  */
-export function runAssertion(root: AbsPath, spec: AssertionRunSpec): AssertionResult {
+function runAssertion(root: AbsPath, spec: AssertionRunSpec): AssertionResult {
   const cwd = join(root, spec.cwd ?? '')
   if (!existsSync(cwd)) {
     return resultOf(spec.assertion, {
@@ -327,11 +327,6 @@ export async function entriesOf(truth: Truth, commit: CommitId): Promise<TreeEnt
   }
   await walk('')
   return out
-}
-
-/** 契约里那几条断言：给验收门算判决用的那一份（`Assertion` 逐条）。 */
-export function assertionsOf(c: Contract): readonly Assertion[] {
-  return c.kind === 'investigate' ? [] : c.assertions
 }
 
 /** 一条断言的判决该不该算进"打回"。**跑不起来不算**（架构 § 8.12 末段）——这一处是那句话的落点。 */

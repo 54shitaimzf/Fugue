@@ -9,38 +9,61 @@
 // 不开一个真终端就能驱动（`stage.test.ts` 五条接线断言）。`FLAGS_OF` 从 cli 那一层读
 // （`../cli/flags.ts`）：菜单候选与分发处读**同一个对象**——「哪些命令存在」仍只有一处真源（那张
 // 表自己不 import 任何东西，不成环）。
-import { PAGE_STEP, fallsToText, helpRowsOf, hintWhenOf } from './keymap.ts'
-import type { Decoded, HintWhen } from './keymap.ts'
+import { KEYMAP, PAGE_STEP, fallsToText, helpRowsOf, keyLabelOf } from './keymap.ts'
+import type { Decoded, HintWhen, Keymap, UiAction } from './keymap.ts'
 import { ctrlCStepOf, escStepOf, quitStepOf, stillArmed } from './cancel.ts'
 import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmit, submitOf } from './input.ts'
 import type { Editor } from './input.ts'
 import { acceptOf, candidatesOf, clampSel, completeOf, moveSel, pathsOf, queryOf, rowsTextOf, specsOf } from './menu.ts'
 import type { MenuRow, MenuSource } from './menu.ts'
-import { GATE_KEEP, GATE_VIEW, conclusionLineOf, gateRowsOf, lineOf, pressGate, stepAt } from './gate.ts'
+import { GATE_VIEW, cardAt, previewLinesOf, conclusionLineOf, gateLayoutOf, lineOf, pressGate, stepAt } from './gate.ts'
 import type { GateFace, GateOption, GateView } from './gate.ts'
-import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowOf, shiftOf } from './queue.ts'
+import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowsOf, shiftOf } from './queue.ts'
 import { altAt, clampNav, navNodesOf, navRowsOf, writerAt } from './nav.ts'
 import type { NavNode } from './nav.ts'
 import { stepView, viewAt } from './views.ts'
-import { EMPTY_READ, faceRowsOf, facesOf, firstFace, readStateOf, stepFace, stepTop } from './read.ts'
+import { EMPTY_READ, readContentOf, facesOf, firstFace, readWrap, readStateOf, readImageAt, stepFace, stepTop, reflowTopOf } from './read.ts'
 import type { ReadFaceName, ReadState } from './read.ts'
 import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
 import type { LineMode, RunLauncher, RunOutcome } from './run.ts'
 import { innerOf } from './frame.ts'
-import { panelWantOf } from './layout.ts'
+import { widthOf } from './glyph.ts'
+import { taskOf } from './task.ts'
+import type { RunIssue } from './task.ts'
+import type { ReadPreview } from './frame.ts'
+import type { ImageRequest } from '../serve/image-source.ts'
+import type { PixelImage } from './image-codec.ts'
+import type { GraphicsTier } from './image.ts'
+import { frameBudgetOf, panelWantOf } from './layout.ts'
 import type { ViewInput } from './term.ts'
 import { FLAGS_OF } from '../cli/flags.ts'
 import { statusOf } from '../probe/status.ts'
 import type { StatusRow } from '../probe/status.ts'
+import { WORDS } from '../words.ts'
+import type { CommitRequest, CommitChanges } from '../serve/commit-source.ts'
+
+// 动作里的那几对：**谁与谁是一对**只在这四行里定义。四条都是"两个方向各配一个键"——
+// 上一条/下一条 · 上一页/下一页 · 跳首/跳尾 · 批准/驳回。后面那些分支读的就是"这一对"，
+// 而不是各自再拼一遍或（从前这一段里那种或写了十六处，加一个动作要一处一处找过去）。
+const isHistory = (a: UiAction): boolean => a === 'historyOlder' || a === 'historyNewer'
+const isPage = (a: UiAction): boolean => a === 'pageUp' || a === 'pageDown'
+const isJump = (a: UiAction): boolean => a === 'jumpFirst' || a === 'jumpLast'
+const isGate = (a: UiAction): boolean => a === 'approve' || a === 'reject'
 
 // 分账那几个数（`panelWantOf` · 份额 · 上下限）住 `ui/layout.ts` 那一份布局常量表（第二幕 ④ 收成
 // 一处）：这一份只管把它们接上 `deps.termRows`（`heightWant`），算式一个字都不留在这里。
 
 /** 舞台要的外面那几样：全是「问一句」的函数（晚绑定——句柄建起来之前舞台先立着）。 */
 export interface StageDeps {
-  /** 写一行界面自己的话（面板上方，只写一次）——`tui.note`。 */
+  /** 与实际解码/提示行共用的配置键表；晚绑定，缺省回原键表。 */
+  readonly keymap?: (() => Keymap) | undefined
+  readonly graphics?: (() => GraphicsTier) | undefined
+  readonly readImage?: ((request: ImageRequest, signal: AbortSignal) => Promise<PixelImage | null>) | undefined
+  /** Record an original UI message; Console routes interactive records into the reader. */
   readonly note: (line: string) => void
+  readonly notes?: (() => readonly string[]) | undefined
+  readonly readCommit?: ((request: CommitRequest, signal: AbortSignal) => Promise<CommitChanges | null>) | undefined
   /**
    * 框下面那一行提示行（第二幕 ④ · 第三幕 ② 按处境分档）的原文——`ui/console.ts` 那一头给的
    * （键表与 stdin 是不是终端都只有那一头知道）。**每帧现问**：列宽变了它就跟着换
@@ -48,12 +71,8 @@ export interface StageDeps {
    * 都不看）——"此刻屏幕上是什么"只有这一头知道。
    */
   readonly hint: (when: HintWhen) => string
-  /**
-   * 同一档下"按什么键干什么"的那一段（第三幕 ②）：**不带 `按键 ` 抬头**——写给终端历史的那一句
-   * 注记（阅读面开的那一下）用它。与提示行**同一份来源**（`ui/keymap.ts` 的 `hintKeysOf`），两处
-   * 不会各说各的。
-   */
-  readonly keysOf: (when: HintWhen) => string
+  /** 兼容旧装配的注记入口；阅读说明已收进正文与hint，此回调不再读取。 */
+  readonly keysOf?: (when: HintWhen) => string
   /** 重画一帧（不重读）——`tui.redraw`。 */
   readonly redraw: () => void
   /** 这一刻的终端列数——`term.columns`。 */
@@ -77,6 +96,12 @@ export interface StageDeps {
 
 /** 舞台的公面：`observe.ts` 那一头递进 openKeys / openTui / openTerm / openRun 的那几个口。 */
 export interface Stage {
+  /** External configuration problems use the same current-feedback and record path. */
+  notify(line: string): void
+  /** 收起界面自己的预览请求；不写账。 */
+  close(): void
+  /** 尺寸变化时取消放不下的预览；账不重读。 */
+  onResize(): void
   /** 按键分派（⓪–⑩，原 `openKeys` 的 `onAction` 那一段整搬）。 */
   onAction(d: Decoded): void
   /** 折一帧的「界面自己那几样」（原 `view` 闭包——`openTui` 每折一帧现问）。 */
@@ -90,12 +115,43 @@ export interface Stage {
   /** 一趟收尾那一下（原 `openRun` 的 `onDone`：说了什么 · 要退就退 · 要接就接下一条）。 */
   onRunDone(r: RunOutcome): void
   /**
-   * 这一刻期望的面板高度（`openTerm` 的 `heightOf`）：按终端行数分账（`panelWantOf`——缺省至多
-   * 2/5 · 弹层开着至多 3/5；量不到行数回框的 10 行 / `OVERLAY_WANT`）。画得下多少仍归终端层夹。
+   * 这一刻期望的面板高度（`openTerm` 的 `heightOf`）：按终端行数分账（`panelWantOf`——
+   * 已知尺寸展开主区；量不到行数回框的 10 行 / `OVERLAY_WANT`）。画得下多少仍归终端层夹。
    */
   heightWant(): number
   /** stdin 是不是终端（`openKeys` 之后才知道——`view` 里输入行画不画看它）。 */
   setRaw(raw: boolean): void
+}
+
+/**
+ * **单槽**：一种派生数据一次只留一个在飞的请求。
+ *
+ * `keep(key)` —— 键与槽里那一个相同就回 `null`（留着，不重发也不重来）；不同就把上一个掐掉、
+ * 槽换成新的，回新控制器。`still(controller)` —— 落地前先问一句"槽里还是不是我"：迟到的回话
+ * 落到别人的槽上就是串台，键换过、被掐过、门关过，三种都答不是。`stop()` —— 掐掉并清空。
+ *
+ * **`planContent` 那一处同步 memo 不在这副骨架里**：它没有在飞态，也没有要掐的东西——键换了
+ * 就地重算，算完就是结果。把它塞进来得先给它编一个"永不 abort 的控制器"，那是给一处纯计算
+ * 加一层异步壳，不是收拢。
+ */
+function openCurrent<K>(): {
+  readonly keep: (key: K) => AbortController | null
+  readonly still: (controller: AbortController) => boolean
+  readonly stop: () => void
+} {
+  let key: K | undefined
+  let controller: AbortController | null = null
+  return {
+    keep(next) {
+      if (controller !== null && next === key) return null
+      controller?.abort()
+      key = next
+      controller = new AbortController()
+      return controller
+    },
+    still(who) { return controller === who && !who.signal.aborted },
+    stop() { controller?.abort(); controller = null },
+  }
 }
 
 /**
@@ -110,13 +166,51 @@ export function openStage(deps: StageDeps): Stage {
   let ed: Editor = emptyEditor()
   /** 弹层（这一格只有一层：菜单/面板/路径）。`null` = 没有弹层。 */
   let panel: { readonly source: MenuSource; readonly sel: number; readonly paths: readonly string[] } | null = null
+  let keyHelpTop: number | null = null
+  let keyHelpText = '', keyHelpCovered = false
   /** 输入行画不画：`stdin` 不是终端就不画（画一个收不到按键的提示符，比不画坏得多）。 */
   let showInput = false
+  let feedback: string[] = []
+  let runStartedAt = 0
+  let runRound: string | null = null
+  let runTask = false, runIssue: RunIssue | null = null
+  let runIssueAction: string | undefined
+  const commitSlot = openCurrent<string | null>()
+  let completedChanges: CommitChanges | undefined
+  const refreshCommit = (): void => {
+    const request = taskOf(deps.rows()).completion
+    const controller = commitSlot.keep(request === undefined ? null : JSON.stringify(request))
+    if (controller === null) return
+    completedChanges = undefined
+    if (request === undefined || deps.readCommit === undefined) return
+    void deps.readCommit(request, controller.signal).then(value => {
+      if (!commitSlot.still(controller)) return
+      completedChanges = value ?? undefined; deps.redraw()
+    }).catch(() => { /* Reading commit details cannot prevent ordinary task/command use. */ })
+  }
+  const startRun = (words: readonly string[]): void => {
+    runStartedAt = deps.rows().length; runRound = taskOf(deps.rows()).round
+    runTask = words[0] === 'round' && ['plan', 'go', 'run', 'work'].includes(words[1] ?? '')
+    if (runIssue !== null) {
+      if (runIssue.feedback === true) feedback = feedback.filter(line => line !== runIssue!.text + WORDS.runWritebackGuide)
+      runIssue = { ...runIssue, feedback: false }
+    }
+    if (runTask) runIssue = null
+  }
+  const note = (line: string, visible = true): void => {
+    if (closed) return
+    if (visible) feedback.push(line)
+    deps.note(line)
+  }
+
   /** 命令面那一张表（**分发处读的是同一份**：`cli/flags.ts` 的 `FLAGS_OF`）。 */
   const specs = specsOf(FLAGS_OF)
   /** 键表那一档的候选：提示行 · 帮助面板 · 这一屏，三处同一张表（`ui/keymap.ts`）。 */
   const keyRows = (): readonly MenuRow[] =>
-    helpRowsOf().map((name) => ({ name, note: '', kind: 'key' as const }))
+    helpRowsOf(deps.keymap?.()).map((name) => ({ name, note: '', kind: 'key' as const }))
+  // 反馈与帮助/解码共用当前配置键表，缺省仍从同一 KEYMAP 读取。
+  const keyOf = (action: 'submit' | 'quit' | 'cancel' | 'interrupt'): string =>
+    keyLabelOf((deps.keymap?.() ?? KEYMAP).rows.find(b => b.action === action)!)
   const rowsOf = (source: MenuSource): readonly MenuRow[] =>
     candidatesOf({ specs, keys: keyRows(), paths: panel?.paths ?? [], line: ed.draft.text, source })
   /** 提示符：`»` 是命令、`>` 是话（模式是从行推出来的，不是另存的一个开关）。 */
@@ -143,6 +237,16 @@ export function openStage(deps: StageDeps): Stage {
   let gateView: GateView = GATE_VIEW
   /** 按过 `Esc` 把那一块收起来了没有（账再动一次它自己回来）。 */
   let gateHidden = false
+  // 确认切换暂存完整编辑器；草稿、光标、撤销与反查一起恢复，不提交这份草稿。
+  let gateDraft: Editor | null = null
+  const suspendDraft = (): void => {
+    if (!showInput || gateDraft !== null) return
+    gateDraft = ed; ed = emptyEditor()
+  }
+  const restoreDraft = (): void => {
+    if (gateDraft === null) return
+    ed = gateDraft; gateDraft = null
+  }
   /**
    * 排队那几条（`T7`）。**界面自己的草稿队列，不是账**：账上只有"这一趟起过什么"，没有"还等着跑
    * 什么"——所以它进程一退就没了，也不该有第二个读者。忙的时候打的那几条进这里，跑完一趟取一条。
@@ -168,6 +272,10 @@ export function openStage(deps: StageDeps): Stage {
    */
   let readState: ReadState = EMPTY_READ
   let reading: { face: ReadFaceName; top: number } | null = null
+  /** 当前待确认整批计划的全文坐标；内容从同一 gate face 取得，不另存计划。 */
+  let planTop: number | null = null
+  // 同一批次与列宽的整批全文只排一次；选择和高度变化复用，仅留当前一份。
+  let planSnap: { face: GateFace; width: number; lines: readonly string[]; value: ReturnType<typeof readContentOf> } | null = null
   /**
    * 跑完一趟要不要**自动**接着起下一条（`T7`）。缺省要；**被 `Esc` / `Ctrl-C` 打断之后不要**——
    * 人刚说了停，排队那几条停在那儿等他（`Enter` 起下一条 · `Esc` 丢掉）。起新的一条时又回到"要"。
@@ -192,11 +300,16 @@ export function openStage(deps: StageDeps): Stage {
     lastGate = key
     gate = next
     gateHidden = false
+    if (next === null) restoreDraft(); else suspendDraft()
+    panel = null; reading = null; keyHelpTop = null
+    planTop = null
+    planSnap = null
     // **批次换了就把选中那一份与举手那一栏都归零**：上一批举过的手不许带到这一批上。
     gateView = GATE_VIEW
     // **结论行进永久行**（第二幕 ⑧）：门口一开就说清这一批「打算开几件事 · 覆盖哪些 · 按什么验收」。
     // **一批只说一次**——上面那道 `key` 已经挡住重复（同一批再算几遍都不说）；换了一批才再说一条。
-    if (next !== null) deps.note(conclusionLineOf(next.conclusion))
+    if (next !== null) note(conclusionLineOf(next.conclusion), false)
+    syncImage()
     deps.redraw()
   }
   /** 这一刻树上选的是哪一格（`null` = 整份账）。阅读面读的就是它。 */
@@ -215,8 +328,107 @@ export function openStage(deps: StageDeps): Stage {
     readState = readStateOf(rows, { agent: focusNow(), prev: readState, snapshot })
   }
 
+  const readFaces = () => {
+    const original = facesOf(readState), task = taskOf(deps.rows(), focusNow(), true, completedChanges)
+    const notes = deps.notes?.()
+    const faces = notes === undefined ? original : { ...original, detail: {
+      title: '详情',
+      lines: [...(original.detail?.lines ?? []),
+        ...(original.stream.lines.length === 0 ? [] : ['历史进展', ...original.stream.lines]),
+        ...(notes.length === 0 ? [] : ['命令记录', ...notes.flatMap(line => line.split('\n'))]),
+      ],
+    } }
+    return task.round === null ? faces : { ...faces, stream: { title: '当前任务记录', lines: [
+      ...task.rows.flatMap(row => row.text.split('\n')),
+      ...(task.plan.length === 0 ? [] : ['完整计划', ...task.plan.map(p => `${p.status === 'completed' ? '[x]' : p.status === 'in_progress' ? '>' : '[ ]'} ${p.text}`)]),
+    ] } }
+  }
+  const heightWant = (): number => {
+    const rows = deps.termRows(), base = panelWantOf(rows, panel !== null || reading !== null || planTop !== null || (showInput && gate !== null && !gateHidden))
+    if (rows === undefined || !showInput || (gateDraft !== null && panel === null)) return base
+    // 矮窗先给单行操作区留位，再按实际折行让出正文；最小期望不能超过宿主。
+    return Math.max(1, Math.min(base, rows - 1) - inputFrameOf({ e: ed, prompt: promptOf(), width: cols() }).rows.length + 1)
+  }
+  const readerContent = (faces: ReturnType<typeof facesOf>, name: ReadFaceName) => {
+    const face = faces[name]
+    return face === null ? { heading: '', rows: [], removedTitleRows: 0 } : readContentOf(face.title, face.lines, cols(), deps.columns())
+  }
+  const planLines = (): readonly string[] => {
+    const face = gate
+    if (face === null) return []
+    return face.cards.flatMap((card, i) => [
+      ...(i === 0 ? [] : ['']),
+      ...previewLinesOf(card).map((line, j) => j === 0 ? `${i + 1}/${face.cards.length} · ${line}` : line),
+    ])
+  }
+  let readingWidth: number | undefined
+  const reflowRead = (): void => {
+    const width = deps.columns(), oldWidth = readingWidth
+    readingWidth = width
+    if (oldWidth === undefined || width === oldWidth) return
+    const before = { width: oldWidth, columns: innerOf(oldWidth) }, after = { width, columns: innerOf(width) }
+    if (planTop !== null && gate !== null) planTop = reflowTopOf({ lines: planSnap?.face === gate ? planSnap.lines : planLines(), title: `计划全文 · ${gate.cards.length} 项任务`, top: planTop, before, after })
+    const graphics = deps.graphics?.()
+    // 图片阅读保原预览坐标与容量地板；本轮只重排文字阅读。
+    if (reading !== null && !(reading.face === 'diff' && (graphics === 'kitty' || graphics === 'sixel'))) {
+      const face = readFaces()[reading.face]
+      if (face !== null) reading = { ...reading, top: reflowTopOf({ lines: face.lines, title: face.title, top: reading.top, before, after }) }
+    }
+    if (keyHelpTop !== null) keyHelpTop = reflowTopOf({ lines: [keyHelpText], top: keyHelpTop, before, after })
+  }
+  const planContent = () => {
+    const face = gate
+    if (face === null || face.cards.length === 0) { planSnap = null; return { heading: '', rows: [], removedTitleRows: 0 } }
+    const width = deps.columns(), columns = innerOf(width)
+    // 键只有两个：这一份脸 ＋ 拿到的宽度。`columns` 由 `width` 推（`innerOf` 是它的纯函数），
+    // 再比一遍是同义重复，不比也一样。
+    if (planSnap !== null && planSnap.face === face && planSnap.width === width) return planSnap.value
+    // 批准的是整批：完整阅读也按原顺序包含每项，选择只决定返回时的预览。
+    const lines = planLines()
+    const value = readContentOf(`计划全文 · ${face.cards.length} 项任务`, lines, columns, width)
+    planSnap = { face, width, lines, value }
+    return value
+  }
+  const planRows = (): readonly string[] => planContent().rows
+  const readPosition = (rows: readonly string[], top: number): string => `${top + 1}/${rows.length} 行 · 只读`
+  let previewJob: { key: string; state: ReadPreview['state']; image?: PixelImage } | null = null
+  const imageSlot = openCurrent<string | null>()
+  let closed = false
+  const imageKey = (r: ImageRequest): string => JSON.stringify([r.agent, r.path, r.blob])
+  const imageAt = () => {
+    if (reading?.face !== 'diff') return null
+    const content = readerContent(readFaces(), 'diff')
+    // 标题移出正文后，仍保留原预览容量地板，不顺带启用更矮窗口的图片。
+    // `- 4` 是给页脚与操作区留的容量。这一格**算出来的余量**今天没有断言固定住：图放不放得下由
+    // `readImageAt` 自己判，而 `preview.test.ts` 那一族断言的是"不出框 · 至少两行"。
+    // 负对照实测：把 4 改成 5，fast 1278/1278、real 144/144 两档全绿——要固定这一格的确切值，
+    // 得有一张正好把余量吃满的图（0.5.x 候选，形状见停点报告）。
+    const at = readImageAt(readState, cols(), reading.top + content.removedTitleRows, stageHeight() - 4 - content.removedTitleRows)
+    return at === null ? null : { request: at.request, after: at.after - content.removedTitleRows }
+  }
+  const syncImage = (): void => {
+    const graphics = deps.graphics?.()
+    const at = !closed && showInput && planTop === null && (graphics === 'kitty' || graphics === 'sixel') && panel === null && queue.items.length === 0 && !(gate !== null && !gateHidden) ? imageAt() : null
+    const key = at === null ? null : imageKey(at.request)
+    const controller = imageSlot.keep(key)
+    if (controller === null) return
+    previewJob = null
+    if (at === null || deps.readImage === undefined) return
+    previewJob = { key: key!, state: 'loading' }
+    // 两条落地路写的是同一个对象：读回来的那张图为 `null` 与被拒都是 `unavailable`、都不带图。
+    const settle = (image: PixelImage | null): void => {
+      if (closed || !imageSlot.still(controller)) return
+      previewJob = { key: key!, state: image === null ? 'unavailable' : 'ready', ...(image === null ? {} : { image }) }
+      deps.redraw()
+    }
+    void deps.readImage(at.request, controller.signal).then(settle, () => settle(null))
+  }
+
   /** 起一次弹层：选中项从头一条起（候选变了以后 `settle` 会把它夹回来）。 */
   const openPanel = (source: MenuSource): void => {
+    // 注意力切到候选层后，返回确认须重新举手；原选中项、草稿与批准协议保持。
+    gateView = { ...gateView, armed: null }
+    keyHelpTop = null; keyHelpText = ''; keyHelpCovered = false
     // 路径那一档的候选**开的时候走一遍**（`@` 不该在每一次重画时把树重读一遍）；命令与键表是
     // 静态的，每次都现推——它们本来就只有一处真源。
     panel = { source, sel: 0, paths: source === 'path' ? pathsOf(process.cwd()) : [] }
@@ -232,6 +444,7 @@ export function openStage(deps: StageDeps): Stage {
           ? null
           : { ...panel, sel: clampSel(rowsOf(panel.source).length, panel.sel) }
     }
+    syncImage()
     deps.redraw()
   }
   /**
@@ -243,21 +456,22 @@ export function openStage(deps: StageDeps): Stage {
     if (deps.run()?.running === true) {
       if (!leaving) {
         leaving = true
-        deps.note('那一趟还在跑：等它收尾就退出（账要完整）。再按一次是硬退，或者 Esc / Ctrl-C 打断它')
+        note(`任务仍在运行；结束后退出。再按 ${keyOf('quit')} 立即关闭界面，任务可能继续运行。`)
         return
       }
-      deps.note('硬退：那一趟的输出接不上了（它自己的账照写，写到哪算哪）')
+      note(`正在关闭界面，任务可能继续运行。${WORDS.runWritebackGuide}`)
     }
     deps.abort()
   }
   /** `Esc` 第二级与 `Ctrl-C` 第一级都走这一下：把信号递给在途的那一趟（同一句话只说一遍）。 */
   const breakRun = (): void => {
-    deps.run()?.stop('SIGINT')
+    const requested = deps.run()?.stop('SIGINT') === true
     // **打断之后不自动接着起下一条**（`T7`）：人刚说了停，排队那几条就停在那儿等人（`Enter`
     // 起下一条 · `Esc` 丢掉）。不这么定的话，`Esc` 链第三级（丢排队草稿）**永远够不着**——
     // 一趟被打断、`onDone` 立刻起下一条，队列那一栏就又回到"跑着"了。
     advanceQueue = false
-    deps.note('打断了那一趟（SIGINT）：它自己那份账照写，写到哪算哪。排队那几条停着等你（Enter 起下一条）')
+    note(requested ? `已请求停止执行，正在等待结束。${WORDS.runWritebackGuide}` : '没有正在运行的任务。')
+    if (queue.items.length > 0) note(`排队任务暂停；按 ${keyOf('submit')} 开始下一条。`, false)
     settle()
   }
   /**
@@ -274,10 +488,11 @@ export function openStage(deps: StageDeps): Stage {
     const next = taken.next
     const cut = go.argvOf(next.line, next.mode)
     if (cut.why !== null) {
-      deps.note(`排队里那条起不了：${cut.why}（跳过它，接着看下一条）`)
+      note(`排队任务无法执行：${cut.why}。已跳过该项，其余排队任务保留。`)
       return false
     }
-    deps.note(`起了排队里的下一条：\`${next.line}\`（${cut.argv.join(' ')}）`)
+    note(`起了排队里的下一条：\`${next.line}\`（${cut.argv.join(' ')}）`, false)
+    startRun(cut.words)
     go.press(next.line, next.mode)
     return true
   }
@@ -289,27 +504,47 @@ export function openStage(deps: StageDeps): Stage {
   const takeGate = (option: GateOption): void => {
     const line = lineOf(option)
     if (line === '') {
-      deps.note(
-        `拒了门口那一批（${gate?.cards.length ?? 0} 份）：一个字节都没落——门照旧停着，要改就 /say 一句再判一次`,
+      note(
+        '本次选择没有启动执行。计划仍等你确认；可补充要求再讨论。',
       )
       settle()
       return
     }
     const go = deps.run()
     if (go === null || go.running) {
-      deps.note('那一趟还在跑：这一下先没发出去（排队是 T7 那一格的事）')
+      note(go === null ? '执行入口不可用，计划仍等你确认。' : '当前任务仍在运行，这批计划尚未开始执行。')
       settle()
       return
     }
-    deps.note(`按了 ${option === 'approve' ? 'y' : 'n'}：起一次 \`${line}\`（${go.argvOf(line).argv.join(' ')}）`)
-    go.press(line)
+    startRun(go.argvOf(line).words)
+    const started = go.press(line)
+    if (started) { gateHidden = true; gateView = { ...gateView, armed: null }; restoreDraft() }
+    note(started ? `已确认执行这批计划（${gate?.cards.length ?? 0} 项任务）` : '未能启动执行，计划仍等你确认。', !started)
     settle()
   }
   /** 一趟收尾那一下（原 `openRun` 的 `onDone`——搬进来之后 observe 那头只剩一行接线）。 */
   const onRunDone = (r: RunOutcome): void => {
     const go = deps.run()
-    if (r.why !== null) deps.note(`这一趟起不来：${r.why}（手敲一遍看看：${go?.last.join(' ') ?? ''}）`)
-    else if (r.code !== 0) deps.note(`那一趟退了 ${r.code ?? '（信号）'}（账照写：写到哪算哪）`)
+    const current = taskOf(deps.rows())
+    // Only a fresh verification failure from this launch can replace generic exit feedback.
+    // An old failure, another round, a signal or a spawn failure still needs its own message.
+    const reported = r.code === 1 && deps.rows().slice(runStartedAt).some(row =>
+      row.e.t === 'round/state' && row.e.round === current.round && row.e.round === runRound
+      && row.e.from === 'Verifying' && row.e.to === 'Working')
+    const freshRound = deps.rows().slice(runStartedAt).some(row => 'round' in row.e && row.e.round === runRound)
+    if (!reported && runTask && freshRound && runRound !== null && current.round === runRound && current.state !== null
+      && r.why === null && (r.code === null || r.code > 0)) {
+      runIssueAction = current.rows[0]?.text
+      runIssue = { round: runRound, state: current.state, feedback: true,
+        text: r.code === null ? '执行因信号结束。' : '执行失败（退出码 ' + r.code + '）。' }
+    }
+    if (r.why !== null) {
+      note(`执行未能启动：${r.why}。检查运行环境与配置后重试。`)
+      if (go !== null && go.last.length > 0) note(`启动命令：${go.last.join(' ')}`)
+    } else if (r.code !== 0) note(
+      (r.code === null ? '执行因信号结束。' : `执行失败（退出码 ${r.code}）。`) + WORDS.runWritebackGuide,
+      !reported,
+    )
     if (leaving) {
       deps.abort()
       return
@@ -326,37 +561,91 @@ export function openStage(deps: StageDeps): Stage {
    *
    * 从前这里是三处各写一遍的 `deps.columns() - 1`（输入行 · 门口那一块 · 树），而框内宽是
    * `columns - 2`：宽出去的那一列画不进框，`cell` 把它截掉——不报错，只少一个字符。收成一处之后
-   * 输入行比它自己的上界（`columns` − 1，`ui/term.ts` 头注写着）还严一列；那个上界仍然满足，
-   * 换来的是全站只有一个数。
+   * 通常输入行也用框内宽度；极窄时至少留一格，双列字簇在实际两列上保全。
+   * 实际一列放不下的字簇由显示投影标记，原草稿仍在；两处都沿用这一把尺。
    */
-  const cols = (): number => innerOf(deps.columns())
+  const cols = (): number => { const width = deps.columns(); readingWidth ??= width; return innerOf(width) }
+  /**
+   * 期望高度夹进宿主容量（留一行）——**五处要**：门口那一块 · 队列余量 · 候选层详情行 ·
+   * 阅读翻页步长（它把已经量到手的那一个数递进来） · diff 那张图的落点。从前是各拼一遍
+   * `Math.min(heightWant(), (deps.termRows() ?? ∞) - 1)`，各带各的 `Math.max`；算式收在这里一处，
+   * 全份 `stage.ts` 里只剩这一个定义。
+   *
+   * **先量再问**：`heightWant` 自己读 `deps.termRows()` 分账，所以这里现读一次就是那一帧的行数。
+   * 量不到行数（`undefined`）时不夹——与从前逐字节相同。已经量到手的那一个数经 `rows` 递进来
+   * （`readPageStep` 那一处原文只读一次，这里不许再读第二遍：`out.rows` 与 `rowsOf` 都是活口子）。
+   */
+  const stageHeight = (rows?: number): number =>
+    Math.min(heightWant(), ((rows ?? deps.termRows()) ?? Number.POSITIVE_INFINITY) - 1)
+  const gateLayout = () => gate === null ? null : gateLayoutOf({ face: gate, view: gateView,
+    columns: cols(), keymap: deps.keymap?.(),
+    height: Math.max(1, stageHeight()) })
+  const clearSmallGate = (): boolean => {
+    if (!showInput || planTop !== null || gateLayout()?.blocked !== true) return false
+    gateView = { ...gateView, armed: null }
+    return true
+  }
+  const selectedKeyRows = (): readonly string[] => {
+    const rows = panel?.source === 'keys' ? rowsOf('keys') : []
+    const picked = rows[clampSel(rows.length, panel?.sel ?? 0)]
+    return picked === undefined ? [] : readWrap(picked.name.replace(/ {2,}/g, ' '), cols())
+  }
+  const keyHelpRows = (): readonly string[] => readWrap(keyHelpText, cols())
+  const keyHelpRead = () => {
+    const rows = keyHelpRows(), top = stepTop(rows.length, keyHelpTop ?? 0, 0)
+    const nextKey = (deps.keymap?.() ?? KEYMAP).rows.find(b => b.action === 'historyNewer')!.keys[0]!
+    return { rows, top, heading: '按键说明', footer: `${top + 1}/${rows.length} · ${nextKey}` }
+  }
+
   const view = (): ViewInput => {
     // 门口那一块开着没有：提示行那一档与最下面那一栏都要它（先算一次，两处读同一个）。
-    const gateOn = gate !== null && !gateHidden
+    const gateOn = gate !== null && !gateHidden && planTop === null
     // 提示行（第二幕 ④ · 第三幕 ② 按处境分档）**与输入行在不在无关**：stdin 不是终端时它就是那一
     // 句"这一档不收按键"——画一个收不到按键的提示符比不画坏得多，而"按键收不到"这件事更得说出来。
     // **阅读面压过门口**（判据在 `hintWhenOf` 那一头）：门口那三个键它自己在屏幕上印着。
-    const when = hintWhenOf({ gate: gateOn, read: reading !== null })
-    const hintPart = { hint: deps.hint(when) }
+    const when: HintWhen = keyHelpTop !== null && !keyHelpCovered ? 'plan' : panel !== null ? (rowsOf(panel.source).length === 0 ? 'menuEmpty' : 'menu') : planTop !== null ? 'plan' : reading !== null ? 'read' : gateOn ? 'gate' :
+      deps.run()?.running === true ? 'run' : ed.search !== null ? 'search' : ed.draft.text !== '' ? 'typing' : queue.items.length > 0 ? 'queue' : gate !== null && gateHidden ? 'pending' :
+      showInput && viewAt(viewIndex) === 'chat' && taskOf(deps.rows()).state === 'Rebuilding' ? 'done' : 'input'
+    // 省略处只许诺打开任务记录的键；确认、菜单与只读层各自承担当前阅读提示。
+    const taskReadKey = showInput && !gateOn && panel === null && reading === null && planTop === null && keyHelpTop === null
+      ? (deps.keymap?.() ?? KEYMAP).rows.find(b => b.action === 'read')?.keys[0] : undefined
+    const hintPart = { hint: deps.hint(when), ...(taskReadKey === undefined ? {} : { taskReadKey }) }
     if (!showInput) return hintPart
-    const frame = inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
+    const frame = gateDraft !== null && panel === null ? { rows: [''], caret: { row: 0, col: 0 } } : inputFrameOf({ e: ed, prompt: promptOf(), width: cols() })
+    // At one terminal column, each oversized row is one indivisible cluster.
+    // Mark that display cell only; draft text, logical rows and zero-column caret stay intact.
+    const physicalWidth = deps.columns()
+    const input = { rows: physicalWidth === 1
+      ? frame.rows.map(row => widthOf(row) > 1 ? '?' : row) : frame.rows, caret: frame.caret }
+    if (keyHelpTop !== null && !keyHelpCovered) return { hint: deps.hint('plan'),
+      read: keyHelpRead(),
+      input, focus: writerAt(navNodes, navAt), view: viewAt(viewIndex) }
+
     // 最下面那一栏：**门口那一块**（`T6`）与**排队那一行**（`T7`），都在面板那一栏的最下面（输入行
     // 还在它们下面）。两样都没有时一个字节都不占。
     const queueOn = queue.items.length > 0
-    const gateRows = gateOn ? gateRowsOf({ face: gate as GateFace, view: gateView, columns: cols() }) : []
-    const bottomRows = [...gateRows, ...(queueOn ? [queueRowOf(queue)] : [])]
-    // **门口那一块的末一行就是选项行**（`ui/gate.ts` 的 `gateRowsOf` 把次序定死：预览… · 排队行 ·
-    // 选项行）——它是"要人此刻按的那一行"，走等待那一格（第三幕 ①）。排队那一行的位置因此不影响
-    // 它：坐标是按门口那一块自己数出来的。
-    const waitingAt = gateRows.length === 0 ? undefined : gateRows.length - 1
+    const gatePart = gateOn ? gateLayout() : null
+    const go = queueOn ? deps.run() : null
+    const allQueueRows = queueOn ? queueRowsOf(queue, cols(), {
+      submit: keyOf('submit'), cancel: keyOf('cancel'),
+      covered: gateOn || panel !== null || reading !== null || planTop !== null || ed.draft.text !== '',
+      state: go === null ? 'unavailable' : go.running ? (advanceQueue ? 'running' : 'stopping') : 'paused',
+    }) : []
+    // Current confirmation scope and its whole next action precede covered queued drafts.
+    // Spare capacity may show the queue summary first; hiding that projection never drops a draft.
+    const queueRoom = Math.max(0, stageHeight() - 3 - (gatePart?.keep ?? 0))
+    // 当前全文与行位置先于被覆盖的队列；返回后仍用同一份完整FIFO。
+    const queueRows = reading !== null || planTop !== null || keyHelpTop !== null
+      ? [] : gatePart === null ? allQueueRows : allQueueRows.slice(0, queueRoom)
+    const bottomRows = [...(gatePart?.rows ?? []), ...queueRows]
     const bottomPart =
       bottomRows.length === 0
         ? {}
         : {
             bottom: {
               rows: bottomRows,
-              keep: (gateOn ? GATE_KEEP : 0) + (queueOn ? 1 : 0),
-              ...(waitingAt === undefined ? {} : { waitingAt }),
+              keep: (gatePart?.keep ?? 0) + queueRows.length,
+              ...(gatePart === null ? {} : { confirmationRound: gatePart.confirmationRound, waitingAt: gatePart.waitingAt, waitingCount: gatePart.waitingCount, headingAt: gatePart.headingAt, headingCount: gatePart.headingCount, overflow: gatePart.overflow }),
             },
           }
     // 树那一栏（`T8`，排在最上面）与"切到哪一格"（`focus`：`null` = 整份账）。
@@ -365,26 +654,67 @@ export function openStage(deps: StageDeps): Stage {
     // 阅读面那一栏（`T9`，排在内容那一栏最下面）：**开着才占地方**。三面是从 `readState` 排的版
     // （`facesOf` 不再折一次），看到第几行由 `reading.top` 说了算。
     const readPart =
-      reading === null
+      keyHelpTop !== null ? { read: keyHelpRead() } : planTop !== null ? (() => { const { rows, heading } = planContent(), top = stepTop(rows.length, planTop, 0); return { read: { rows, top, heading, footer: readPosition(rows, top) } } })() : reading === null
         ? {}
-        : ((): { read: { rows: readonly string[]; top: number } } => {
-            const faces = facesOf(readState)
-            const rows = faceRowsOf(faces, reading.face ?? firstFace(faces), cols())
+        : (() => {
+            const faces = readFaces()
+            const { rows, heading } = readerContent(faces, reading.face ?? firstFace(faces))
             const top = Math.max(0, Math.min(reading.top, Math.max(0, rows.length - 1)))
-            return rows.length === 0 ? {} : { read: { rows, top } }
+            const at = imageAt()
+            const preview = at === null || previewJob?.key !== imageKey(at.request)
+              ? undefined
+              : { after: at.after, state: previewJob.state, ...(previewJob.image === undefined ? {} : { image: previewJob.image }) }
+            return rows.length === 0 ? {} : { read: { rows, top, heading, footer: readPosition(rows, top), ...(preview === undefined ? {} : { preview }) } }
           })()
     return {
       ...hintPart,
+      ...(gate === null || gate.cards.length === 0 ? {} : { pendingRound: gate.round }),
+      ...(feedback.length === 0 ? {} : { feedback }),
+      ...(runIssue === null ? {} : { runIssue }),
+      ...(completedChanges === undefined ? {} : { completedChanges }),
       ...navPart,
-      ...(panel === null ? {} : { menu: { rows: rowsTextOf(rowsOf(panel.source)), sel: panel.sel } }),
+      ...(() => {
+        if (panel === null) return {}
+        const rows = rowsOf(panel.source), picked = rows[clampSel(rows.length, panel.sel)]
+        const detail = panel.source === 'keys' && picked !== undefined ? selectedKeyRows() : undefined
+        const height = stageHeight()
+        const readKey = (deps.keymap?.() ?? KEYMAP).rows.find(b => b.action === 'read')!.keys[0]!
+        return { menu: { source: panel.source, rows: rowsTextOf(rows), sel: panel.sel,
+          ...(panel.source === 'keys' ? { help: true } : {}),
+          ...(detail === undefined ? {} : { detail,
+            ...(detail.length <= height - 4 ? {} : { detailMore: readWrap(`${readKey} 看全`, cols()) }) }) } }
+      })(),
       ...bottomPart,
       ...readPart,
       focus: writerAt(navNodes, navAt),
       view: viewAt(viewIndex),
-      input: { rows: frame.rows, caret: frame.caret },
+      input,
+      inputIdle: when === 'input',
     }
   }
+  // 阅读按当前正文区翻半屏；未知宿主尺寸保持旧四行退化档。
+  const readPageStep = (): number => {
+    const rows = deps.termRows()
+    if (rows === undefined || !Number.isFinite(rows) || rows <= 0) return PAGE_STEP
+    const height = Math.max(1, stageHeight(rows))
+    return Math.max(1, Math.floor(frameBudgetOf(height, view().bottom?.keep ?? 0).rows / 2))
+  }
   const onAdvance = (rows: readonly StatusRow[]): void => {
+    if (closed) return
+    refreshCommit()
+    if (runIssue !== null) {
+      const current = taskOf(deps.rows())
+      if (current.round !== runIssue.round || current.state !== runIssue.state || current.rows[0]?.text !== runIssueAction || rows.some(row => row.e.t === 'round/intent')) {
+        const oldFeedback = runIssue.text + WORDS.runWritebackGuide
+        if (runIssue.feedback === true) feedback = feedback.filter(line => line !== oldFeedback)
+        runIssue = null
+        deps.redraw()
+      }
+    }
+    if (feedback.length > 0 && rows.some(r => r.e.t === 'round/state' || r.e.t === 'round/intent')) {
+      feedback = []
+      deps.redraw()
+    }
     // 树（`T8`）：节点从账推出来，账一动就跟上——**只在集合真的变了的时候重画**（跟随那一趟每条
     // 行都要走这里，白画一次就是白烧一帧）。
     const nodes = navNodesOf(deps.rows())
@@ -397,26 +727,45 @@ export function openStage(deps: StageDeps): Stage {
     // 阅读面（`T9`）：**接着上一次那一份只折尾部**（新来的那几条）——这一趟是每条行都要走的，
     // 从头折整份账就等于把跟随这一档拖垮（`readStateOf` 那一头的前缀判据管着"接得上"）。
     refreshRead()
+    syncImage()
     // 门口那一批（`T6`）：只在 `round/*` 与 `holder/*` 那两族上重算（一趟读全量日志是 O(行数)，
     // 拿它去乘 `llm/call` 那些高频行就等于把跟随这一档拖垮）。
     if (rows.some((r) => r.e.t.startsWith('round/') || r.e.t.startsWith('holder/'))) void refreshGate()
   }
   const onAction = (d: Decoded): void => {
+    feedback = []
+    if (runIssue !== null && runIssue.feedback === true) runIssue = { ...runIssue, feedback: false }
+    // 当前按键的全文只读；返回同一筛选与选中项，背后的计划/阅读坐标原样。
+    if (keyHelpTop !== null && (isGate(d.action) || d.action === 'go' || d.action === 'submit')) return
+    if (keyHelpTop !== null && d.action === 'help') { keyHelpCovered = true; settle(); return }
+    if (keyHelpTop !== null && keyHelpCovered && d.action === 'cancel') { keyHelpCovered = false; settle(); return }
+    if (keyHelpTop !== null && !keyHelpCovered && d.action !== 'quit' && d.action !== 'interrupt') {
+      if (d.action === 'cancel' || d.action === 'read') keyHelpTop = null
+      else if (isHistory(d.action))
+        keyHelpTop = stepTop(keyHelpRows().length, keyHelpTop, d.action === 'historyOlder' ? -1 : 1)
+      else if (isPage(d.action))
+        keyHelpTop = stepTop(keyHelpRows().length, keyHelpTop, d.action === 'pageUp' ? -readPageStep() : readPageStep())
+      else if (d.action === 'jumpFirst') keyHelpTop = 0
+      else if (d.action === 'jumpLast') keyHelpTop = Math.max(0, keyHelpRows().length - 1)
+      else return
+      settle(); return
+    }
+
+    // 全文页只供检查，不能继承举手或起排队命令；返回确认后再重新点头。
+    if (planTop !== null && (isGate(d.action) || (d.action === 'submit' && panel === null))) return
     // ⓪ **门口那一批那两档**（`T6`）：开关是"门口那一块开着没有 **且** 输入行空着没有"——不是
     // `actsOnEmpty` 判的"行里有没有字"（那一条判的是键入的处境，而 `y` / `n` 是可打印的，门口
     // 那一块关着的时候它们就是人打的字）。二段确认的判据只有一处（`ui/gate.ts` 的 `pressGate`）：
     // 按一下只举手，再按同一个键或 `Enter` 才生效。
-    if (d.action === 'approve' || d.action === 'reject') {
+    if (isGate(d.action)) {
+      if (panel !== null || reading !== null) return
       const option: GateOption = d.action === 'approve' ? 'approve' : 'reject'
       if (gate !== null && !gateHidden && ed.draft.text === '') {
+        if (clearSmallGate()) { settle(); return }
         const press = pressGate(gateView, option)
         gateView = press.view
         if (press.t === 'arm') {
-          const label = option === 'approve' ? '放行' : '拒'
-          deps.note(
-            `举了手：再按一次 \`${option === 'approve' ? 'y' : 'n'}\`（或 Enter）就${label}这一批` +
-              `（${gate.cards.length} 份 · 批号 ${gate.fingerprint}）`,
-          )
+          // 举手只更新选项行；临时反馈不追加到永久历史，也不暴露内部批号。
           settle()
           return
         }
@@ -458,9 +807,9 @@ export function openStage(deps: StageDeps): Stage {
       if (d.action === 'cancel') {
         const step = escStepOf({
           // **门口那一块是 `Esc` 链最外那一级**（`T6`）：它开着（且行是空的）就只收它。
-          atGate: gate !== null && !gateHidden,
+          atGate: gate !== null && !gateHidden && planTop === null && reading === null && panel === null,
           // 弹层栈有几层：候选那一层与阅读面（`T9`）各算一层——`Esc` 只关最上面那一层。
-          overlays: (panel === null ? 0 : 1) + (reading === null ? 0 : 1),
+          overlays: (panel === null ? 0 : 1) + (reading === null ? 0 : 1) + (planTop === null ? 0 : 1),
           running: deps.run()?.running === true,
           // 排队那几条（`T7`）：一条都没有时这一级够不着（次序不变——在途那一趟压着它）。
           queued: queue.items.length,
@@ -470,15 +819,16 @@ export function openStage(deps: StageDeps): Stage {
         if (step === 'gate') {
           gateView = { ...gateView, armed: null }
           gateHidden = true
-          deps.note('收起了门口那一块（账再动一次它自己回来；要放行还得按 y）')
+          restoreDraft()
+          note('确认已收起；这批计划仍等你确认', false)
           settle()
           return
         }
         if (step === 'overlay') {
-          // 弹层是一条栈：**最上面那一层先关**（阅读面是"我要看这一份东西"，
-          // 它开着的时候压着候选那一层）。
-          if (reading !== null) reading = null
-          else panel = null
+          // 候选菜单画在阅读面的下部，先关它，返回同一份阅读与滚动位置。
+          if (panel !== null) { panel = null; if (gateDraft !== null) ed = emptyEditor() }
+          else if (planTop !== null) planTop = null
+          else reading = null
           settle()
           return
         }
@@ -491,7 +841,7 @@ export function openStage(deps: StageDeps): Stage {
           const before = queue.items.length
           queue = dropLastOf(queue)
           const done = queue.items.length === 0
-          deps.note(
+          note(
             `丢掉了排队里最后那一条（${before} → ${queue.items.length} 条）` +
               (done ? '；队列空了' : `；下一条：${queue.items[0]?.line ?? ''}`),
           )
@@ -520,26 +870,37 @@ export function openStage(deps: StageDeps): Stage {
           return
         }
         armedAt = deps.now()
-        deps.note('再按一次 Ctrl-C 就退出（3 秒内）')
+        note(`再按一次 ${keyOf('interrupt')} 就退出（3 秒内）`)
         return
       }
       // `Ctrl-D`/`q`/`Q`：**只在输入行空着的时候退**（`quitStepOf`）；行里有字时什么都不做——说
       // 一句为什么，不然按下去看着像没反应（这一句只有 `Ctrl-D` 打得出：`q` 行里有字时让位成人
       // 打的字，上面 ① 那一档就把它收走了）。
       if (quitStepOf({ line: ed.draft.text }) === 'none') {
-        deps.note('输入行里还有字：先清掉它（Esc）或者把它发出去，再按 Ctrl-D 退出')
+        note(`输入行里还有字：先清空（${keyOf('cancel')}）或提交，再按 ${keyOf('quit')} 退出。`)
         settle()
         return
       }
       leave()
       return
     }
-    // ④ `g`：放行门口那一批（起一次 `fugue round go`）。跑着的时候按不起了第二次（同一条命令
-    // 不叠第二个进程）——排队与打断是 `T7` 的事。
+    // ④ `g`：待确认的批次只重新展示，清掉旧举手，仍须 y/Enter 两段确认。
+    // 没有待确认批次时沿用 round go；跑着的时候不叠第二个进程。
     if (d.action === 'go') {
+      if (gate !== null) {
+        gateHidden = false
+        suspendDraft()
+        planTop = null
+        gateView = { ...gateView, armed: null }
+        panel = null
+        reading = null
+        settle()
+        return
+      }
       const go = deps.run()
       if (go === null || go.running) return
-      deps.note(`按了 g：起一次 \`${GO_LINE}\`（${go.argvOf(GO_LINE).argv.join(' ')}）`)
+      note(`按了 g：起一次 \`${GO_LINE}\`（${go.argvOf(GO_LINE).argv.join(' ')}）`, false)
+      startRun(go.argvOf(GO_LINE).words)
       go.press(GO_LINE)
       return
     }
@@ -555,55 +916,86 @@ export function openStage(deps: StageDeps): Stage {
       settle()
       return
     }
-    // ⑥ `Ctrl-R`（`T9`）：**阅读面**——开与关都在这一下上（看一眼就走）。开着的时候 `Tab` 换一面 ·
+    // ⑥ `Ctrl-R`：当前确认卡开计划全文、返回时重新举手；其余处境仍开原有账上阅读面。
+    // 账上阅读面（`T9`）开着的时候 `Tab` 换一面 ·
     // `↑`/`↓` 翻 · `Esc` 收起（走上面取消链那一级）。读的是**账**（`readState` 从行折出来），
     // 界面这一头没有第二份"这一格动过哪些路径"的清单。
     if (d.action === 'read') {
+      if (panel?.source === 'keys' && selectedKeyRows().length > 0) {
+        keyHelpText = rowsOf('keys')[clampSel(rowsOf('keys').length, panel.sel)]!.name.replace(/ {2,}/g, ' ')
+        keyHelpTop = 0; keyHelpCovered = false; gateView = { ...gateView, armed: null }; settle(); return
+      }
+
+      if (planTop !== null) { planTop = null; settle(); return }
+      if (showInput && gate !== null && !gateHidden && cardAt(gate, gateView.at) !== null) {
+        planTop = 0
+        gateView = { ...gateView, armed: null }
+        reading = null; panel = null
+        settle(); return
+      }
       if (reading === null) {
         // 开的那一下就要把详情面折出来（`reading` 还没置上，所以显式要）。
         refreshRead(true)
-        const faces = facesOf(readState)
+        const faces = readFaces()
         reading = { face: firstFace(faces), top: 0 }
-        // 那一句注记里"按什么键干什么"那一段与提示行**同一份来源**（第三幕 ②）：写死在这里就迟早
-        // 与提示行说两样的话（`deps.keysOf('read')` = `hintKeysOf` 的阅读面那一档）。
-        deps.note(`阅读面 · ${faces[reading.face]?.title ?? ''}（${deps.keysOf('read')}）`)
+        // 当前对象与配置按键由正文/提示行显示；切换阅读不追加永久历史。
       } else {
         reading = null
       }
       settle()
       return
     }
+    // 阅读上面的菜单是可见顶层；导航只移它，保留背后的全文/账上阅读坐标。
+    if (panel !== null && (planTop !== null || reading !== null)) {
+      const n = rowsOf(panel.source).length
+      if (isHistory(d.action)) {
+        panel = { ...panel, sel: moveSel(n, panel.sel, d.action === 'historyOlder' ? -1 : 1) }
+        settle(); return
+      }
+      if (isPage(d.action) || isJump(d.action)) {
+        const sel = d.action === 'jumpFirst' ? 0 : d.action === 'jumpLast' ? Math.max(0, n - 1)
+          : clampSel(n, panel.sel + (d.action === 'pageUp' ? -PAGE_STEP : PAGE_STEP))
+        panel = { ...panel, sel }; settle(); return
+      }
+    }
     // ⑥之二 阅读面开着时那三下：`Tab` 换一面 · `↑`/`↓` 翻（一屏一行地翻——这是"读"，
     // 不是"选"）。别的键照旧走它们自己的路（打字还是打字）。
+    if (planTop !== null && isHistory(d.action)) {
+      planTop = stepTop(planRows().length, planTop, d.action === 'historyOlder' ? -1 : 1)
+      settle(); return
+    }
     if (reading !== null) {
       if (d.action === 'complete') {
-        const faces = facesOf(readState)
+        const faces = readFaces()
         reading = { face: stepFace(faces, reading.face, 1), top: 0 }
-        deps.note(`阅读面换一面 · ${faces[reading.face]?.title ?? ''}`)
         settle()
         return
       }
-      if (d.action === 'historyOlder' || d.action === 'historyNewer') {
-        const n = faceRowsOf(facesOf(readState), reading.face, cols()).length
+      if (isHistory(d.action)) {
+        const n = readerContent(readFaces(), reading.face).rows.length
         reading = { ...reading, top: stepTop(n, reading.top, d.action === 'historyOlder' ? -1 : 1) }
         settle()
         return
       }
     }
-    // ⑥之三 翻页（U14）：`PgUp`/`PgDn` 翻半屏（`PAGE_STEP`），`Ctrl-Home`/`Ctrl-End` 跳首尾。
+    // ⑥之三 翻页（U14）：阅读按当前正文区翻半屏，`Ctrl-Home`/`Ctrl-End` 跳首尾。
     // **谁开着翻谁**：阅读面 → `top`；门口那一批 → `at`（半批）；候选 → `sel`（半页）。都没开
     // 就安静丢掉——翻页键不是全局滚动（没有"正在翻的东西"时按它，什么都不要动）。
-    if (d.action === 'pageUp' || d.action === 'pageDown' || d.action === 'jumpFirst' || d.action === 'jumpLast') {
+    if (isPage(d.action) || isJump(d.action)) {
       const back = d.action === 'pageUp' || d.action === 'jumpFirst'
-      if (reading !== null) {
-        const n = faceRowsOf(facesOf(readState), reading.face, cols()).length
+      if (planTop !== null) {
+        const n = planRows().length
+        const delta = isJump(d.action) ? (back ? -n : n) : back ? -readPageStep() : readPageStep()
+        planTop = stepTop(n, planTop, delta)
+      } else if (reading !== null) {
+        const n = readerContent(readFaces(), reading.face).rows.length
         // 跳首尾用一个够大的数一步到头（`stepTop` 夹得住）。
-        const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -PAGE_STEP : PAGE_STEP
+        const delta = isJump(d.action) ? (back ? -n : n) : back ? -readPageStep() : readPageStep()
         reading = { ...reading, top: stepTop(n, reading.top, delta) }
       } else if (gate !== null && !gateHidden && ed.draft.text === '') {
         // 半批：那一批的一半（一批至少翻一格）。
         const n = gate.cards.length
-        const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -Math.max(1, Math.floor(n / 2)) : Math.max(1, Math.floor(n / 2))
+        const delta = isJump(d.action) ? (back ? -n : n) : back ? -Math.max(1, Math.floor(n / 2)) : Math.max(1, Math.floor(n / 2))
         gateView = { ...gateView, at: stepAt(n, gateView.at, delta) }
       } else if (panel !== null) {
         // 候选翻半页（`PAGE_STEP`），跳首尾直接落端点；夹住不环形（翻页不是轮换）。
@@ -617,10 +1009,13 @@ export function openStage(deps: StageDeps): Stage {
     // ⑥ `Enter`：弹层开着就是"认下选中那一条"（**只换掉这一行字，不执行**）；关着就把这一行
     // 发出去（`T3` 那一格：一行字 → argv → 子进程，账由那个子进程写）。
     if (d.action === 'submit') {
+      if (gate !== null && !gateHidden && ed.draft.text === '' && clearSmallGate()) { settle(); return }
       // 门口那一块举着手的时候，`Enter` 是**那一档的确认键**（§ 5.19 五："同一个键或 `Enter`
       // 再按一次才生效"）；没举手时它照旧是提交（`pressGate` 给 'none'，一个副作用都没有）。
-      if (gate !== null && !gateHidden && gateView.armed !== null) {
+      if (panel === null && reading === null && gate !== null && !gateHidden && (gateView.armed !== null || ed.draft.text === '')) {
         const press = pressGate(gateView, 'confirm')
+        // Unarmed confirmation owns Enter too; it must not start a covered queued draft.
+        if (press.t === 'none') return
         gateView = press.view
         if (press.t === 'do') takeGate(press.option)
         return
@@ -628,10 +1023,19 @@ export function openStage(deps: StageDeps): Stage {
       if (panel !== null) {
         const rows = rowsOf(panel.source)
         const picked = rows[clampSel(rows.length, panel.sel)]
-        if (picked !== undefined) {
-          const next = acceptOf(ed.draft.text, panel.source, picked)
-          if (next !== null) ed = applyIntent(ed, { t: 'setLine', text: next })
-        }
+        const next = picked === undefined ? null : acceptOf(ed.draft.text, panel.source, picked)
+        const returnToInput = panel.source !== 'keys' && (next !== null || gateDraft !== null)
+        if (panel.source !== 'keys' && gateDraft !== null) {
+          // 普通候选回到可见输入；先恢复原编辑器，让原草稿与光标留在同一撤销栈。
+          const text = next ?? ed.draft.text
+          restoreDraft()
+          ed = applyIntent(ed, { t: 'setLine', text })
+          gateHidden = true
+        } else if (next !== null) ed = applyIntent(ed, { t: 'setLine', text: next })
+        // 按键筛选只用于阅读；返回待确认区域时不把它当成要提交的新草稿。
+        if (panel.source === 'keys' && gateDraft !== null) ed = emptyEditor()
+        // 选择填回输入后收起阅读层；取消、帮助和普通无匹配查询仍回原阅读位置。
+        if (returnToInput) { planTop = null; reading = null }
         panel = null
         settle()
         return
@@ -660,20 +1064,22 @@ export function openStage(deps: StageDeps): Stage {
           settle()
           return
         }
-        deps.note(
-          `入队（排队 ${queue.items.length} 条，跑完一趟起一条；Enter 起下一条 · Esc 丢掉最后一条）`,
-        )
+        const waiting = go === null ? '执行入口不可用。' : go.running && advanceQueue ? '当前任务结束后逐条执行。' : '排队任务暂停。'
+        const action = go?.running === true ? `按 ${keyOf('cancel')} 请求停止。` :
+          (go === null ? '' : `按 ${keyOf('submit')} 开始下一条，`) + `按 ${keyOf('cancel')} 取消最后一条。`
+        note(`已排队 ${queue.items.length} 条。${waiting}${action}`, false)
         settle()
         return
       }
       const cut = go.argvOf(line, lineMode)
       if (cut.why !== null) {
-        deps.note(`这一行起不了：${cut.why}`)
+        note(`这一行起不了：${cut.why}`)
         settle()
         return
       }
-      deps.note(`发了这一行：\`${line}\`（${cut.argv.join(' ')}）`)
+      note(`发了这一行：\`${line}\`（${cut.argv.join(' ')}）`, false)
       advanceQueue = true
+      startRun(cut.words)
       go.press(line, lineMode)
       settle()
       return
@@ -699,7 +1105,7 @@ export function openStage(deps: StageDeps): Stage {
     // ⑧ `↑`/`↓`：**门口那一块开着且行是空的时候**在那一批里走（`index/total` 就是它）；弹层开着
     // 时是选项（表里那两行的说明写的就是这个）；都没有时是输入历史。
     if (
-      (d.action === 'historyOlder' || d.action === 'historyNewer') &&
+      isHistory(d.action) &&
       gate !== null &&
       !gateHidden &&
       ed.draft.text === ''
@@ -711,7 +1117,7 @@ export function openStage(deps: StageDeps): Stage {
       settle()
       return
     }
-    if ((d.action === 'historyOlder' || d.action === 'historyNewer') && panel !== null) {
+    if (isHistory(d.action) && panel !== null) {
       const n = rowsOf(panel.source).length
       panel = { ...panel, sel: moveSel(n, panel.sel, d.action === 'historyOlder' ? -1 : 1) }
       settle()
@@ -724,12 +1130,14 @@ export function openStage(deps: StageDeps): Stage {
       if (at !== null) {
         navAt = at
         refreshRead()
-        deps.note(`切到 ${navNodes[at]?.label ?? ''}（${at + 1}/${navNodes.length}）`)
+        note(`切到 ${navNodes[at]?.label ?? ''}（${at + 1}/${navNodes.length}）`, false)
         settle()
         return
       }
       return
     }
+    // 确认与全文期间不编辑暂存的草稿；先返回输入区。
+    if (gateDraft !== null && panel === null) return
     // ⑩ 剩下的编辑动作（`ui/input.ts` 认的那些）一律进输入行；别的（认不出来的动作）安静丢掉。
     const it = intentOf(d.action, d.text ?? '')
     if (it === null) return
@@ -737,15 +1145,30 @@ export function openStage(deps: StageDeps): Stage {
     settle()
   }
   return {
+    notify(line: string): void { note(line); if (!closed) deps.redraw() },
     onAction,
     view,
     onAdvance,
     refreshGate,
     startNext,
     onRunDone,
-    heightWant: (): number => panelWantOf(deps.termRows(), panel !== null || reading !== null),
+    heightWant,
+    onResize() { reflowRead(); clearSmallGate(); syncImage() },
+    close(): void {
+      closed = true
+      commitSlot.stop(); completedChanges = undefined
+      planSnap = null
+      imageSlot.stop()
+      previewJob = null
+    },
     setRaw(raw: boolean): void {
+      const changed = showInput !== raw
       showInput = raw
+      if (raw && gate !== null && !gateHidden) suspendDraft()
+      else if (!raw) restoreDraft()
+      syncImage()
+      // 输入可能晚于首批草案接好；视图变化当场可见，不等待账再动。
+      if (changed && !closed) deps.redraw()
     },
   }
 }

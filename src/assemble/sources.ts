@@ -227,7 +227,7 @@ export function stepBudgetLine(maxSteps?: number): readonly string[] {
  * **一个窗口管两格**（持轮者那一格 · 契约那一格）：它是"落产物的最小余量"这个量，不是上界的
  * 比例——上界 4 那一档因此从第 1 步起就说（那一档本来就只剩四步，那是实话）。
  */
-export const STEPS_HINT_AT = 3
+const STEPS_HINT_AT = 3
 
 /**
  * **语言那一句**（谁读谁的语言：这一格是"模型面"那半）。
@@ -332,18 +332,6 @@ function taskText(t: AssembleState['task'], outputs: readonly string[], maxSteps
   lines.push(MODEL_FACING_LANGUAGE_LINE)
   if (outputs.length > 0) lines.push(`Output paths: ${outputs.join(' · ')}`)
   return lines.join('\n')
-}
-
-/**
- * 契约要求的产物路径**机械追加在最后一段的末尾**（架构 § 8.11 · § 8.12）。
- *
- * 「机械」指的是这里没有判断：目录名怎么定是 `M11` 的事，这里只是把它拼进那一段的末尾——
- * 而末尾选得对（同一 agent 跨步不变 · 每步不重付 · 近因最好）是架构那一段的论证，不是这一
- * 份的选择。空清单不追加：不凭空造一个目录名。
- */
-export function appendOutputs(text: string, outputs: readonly string[]): string {
-  if (outputs.length === 0) return text
-  return `${text === '' ? '' : `${text}\n`}Output paths: ${outputs.join(' · ')}`
 }
 
 /**

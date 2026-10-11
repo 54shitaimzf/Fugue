@@ -209,7 +209,7 @@ export interface AskItem {
  * 一次最多问几个。**它是常数，不是"模型看着办"**：答案归人，而人一次能答的是有限的；
  * 问多了不是"更周全"，是让人没法答——所以超过就当场拒，并指得出去处（架构 § 8.4 纪律 2）。
  */
-export const MAX_ASKS = 4
+const MAX_ASKS = 4
 
 /** 一份计划（`exit_plan_mode` 给的那两栏）。`plan` 是正文，`path` 是它写在哪个文件里（可缺）。 */
 export interface PlanAsk {
@@ -645,12 +645,12 @@ export function scopeOf(raw: string | null, fallback: string): string {
 }
 
 /** 这一条路径在不在这个范围里（空串 = 整个视图 · 范围本身那一条也在）。 */
-export function inScope(path: string, dir: string): boolean {
+function inScope(path: string, dir: string): boolean {
   return dir === '' || path === dir || path.startsWith(dir + '/')
 }
 
 /** 在范围里再配一次模式：模式只写文件名那一段时（`*.ts` + 范围 `src`）也要配得上。 */
-export function matchesInScope(re: RegExp, path: string, dir: string): boolean {
+function matchesInScope(re: RegExp, path: string, dir: string): boolean {
   return re.test(path) || (dir !== '' && path.length > dir.length && re.test(path.slice(dir.length + 1)))
 }
 
@@ -1091,7 +1091,7 @@ function globToRe(pattern: string): RegExp {
  * 今天十二条全部接上（视图类六条 · 执行类两条 · 真源层一条 · `log` 层三条）——**公布面与绑定面
  * 的差为 0**：目录里的每一条都跑得起来，"公布了却跑不起来"这条错路构造不出来。
  */
-export const IMPLEMENTED: Readonly<Record<string, ToolFn>> = {
+const IMPLEMENTED: Readonly<Record<string, ToolFn>> = {
   todo_write: todoWriteFace,
   ask_user_question: askUserQuestionFace,
   exit_plan_mode: exitPlanModeFace,

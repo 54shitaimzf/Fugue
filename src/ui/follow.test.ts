@@ -1,7 +1,7 @@
 // TUI 的第四格：**跟随接上**（PLAN § 5.19 第五段 `UI3` 那一行 · `probe/watch.ts` 头上那条"到达序"·
 // PLAN § 5.18 的三面表）。跑法：cd ~/fugue && node --test src/ui/follow.test.ts
 //
-// 这一份量的七样：
+// 这一份量的是这几样：
 //
 //   ① **不许有第二种答案**：同一批事件，跟随那一档的最后一帧与"一次性读齐再折"的那一帧逐字节
 //      相同；写出去的永久行那一串也逐字相同（次序 · 条数 · 正文）。
@@ -21,6 +21,8 @@
 //      N 大过行数全印 · 不给 reveal 与从前逐字节相同。
 //   ⑩ **帧快照记忆**（U16）：同批连问（含 note()×3 · frame/panel 交叉）不新增 fold · 新批恰一次 ·
 //      换焦点重折（注入计数数出来的）。
+//   ⑪ **起跑那一拒有人接**：读账那一趟立刻起跑、调用方晚一步才 await——起跑就拒的读源加让一次
+//      线程，进程活着走到晚 await，拒原样抛给调用方（摘掉那一行时这道窗口里进程当场裸崩）。
 //
 // 这一份不碰真日志、不碰终端：读那一头是**一本会长的假账**（每一趟读放出一片），摆那一头是
 // `ui/term.ts` 那个接口的**记录器**（它用真的 `panelOf` 补到 K 行 × 列数，所以记下来的那几行就是
@@ -38,6 +40,7 @@ import { frameOf, panelOf } from './frame.ts'
 import { widthOf } from './glyph.ts'
 import type { FamilyTable } from './stream.ts'
 import { FAMILY_KIND, conversationOf, permanentLinesOf } from './stream.ts'
+import { taskOf } from './task.ts'
 import { K } from './term.ts'
 import type { Term } from './term.ts'
 import type { Tui, TuiCounts, TuiMode } from './follow.ts'
@@ -257,7 +260,8 @@ async function oneShot(chapters: readonly (readonly StatusRow[])[]): Promise<{ r
   const frame = frameOf({
     ...readingsOf(all.rows),
     permanent: permanentLinesOf(all.rows),
-    conversation: conversationOf(all.rows).slice(-3),
+    conversation: conversationOf(all.rows),
+    task: taskOf(all.rows),
     width: 80,
     height: K,
   })
@@ -269,7 +273,7 @@ const panelOfFrame = (f: Frame): string[] => [...panelOf(f.lines, K, 80)]
 
 /** 折一帧（尺寸与记录器一致）。 */
 function frameAt(rows: readonly StatusRow[]): Frame {
-  return frameOf({ ...readingsOf(rows), permanent: permanentLinesOf(rows), conversation: conversationOf(rows).slice(-3), width: 80, height: K })
+  return frameOf({ ...readingsOf(rows), permanent: permanentLinesOf(rows), conversation: conversationOf(rows), task: taskOf(rows), width: 80, height: K })
 }
 
 /** 跟随那一档画帧的那几步：**一片一帧**（每趟读齐一片、一趟一画，U4）。 */
@@ -640,4 +644,26 @@ test('⑩ 帧快照记忆（U16）：同批连问（含 note()×3）不新增 fo
     `⑩ 读数：3 批账恰折 ${afterRun} 次 · 同批 note()×3 与交叉问零新增 · 新批 +1 · ` +
       `换焦点重折（${f1 + 1 - f1} 次/换）`,
   )
+})
+
+test('⑪ 起跑那一拒有人接：晚一步 await 的调用方原样收到，进程不裸崩', async () => {
+  // 读账那一趟是**立刻起跑**的，而调用方（`ui/console.ts`）要到 `openKeys` 进 raw mode 之后才
+  // await 它，中间正好隔着一次读配置的让步——`follow.ts` 里 `void counts.catch(…)` 那一行就是给
+  // 这道窗口接的手（坏日志那一拒在这道窗口里没人接，Node 会当场结束进程：真档实测 16 跑 1 红，
+  // PTY 里收到的全是崩栈）。这一条把那道窗口钉进套件：起跑就拒的读源 + 让一次线程 + 晚 await。
+  const bad = Error('日志损坏，拒绝加载')
+  const source: LedgerSource = {
+    hello: { protocol: PROTOCOL_VERSION, product: '', methods: [] },
+    pass: () => Promise.reject(bad),
+    close: async () => {},
+  }
+  const rec = recorder()
+  const tui = openTui({ source, term: rec.term, emit: () => {}, mode: 'lines-once', intervalMs: 1 })
+  // 让一次线程：没人接的拒会在这道让步上把进程带走——摘掉产品里那一行时实测如此
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  // 走到这里进程还活着 = 那一拒起跑那一刻就有人接；而且不是吞——同一个 Error 原样抛给调用方
+  await assert.rejects(() => tui.counts, (err: Error) => {
+    assert.equal(err, bad, '拒要原样抛给调用方——同一个 Error，不是吞成别的东西')
+    return true
+  }, '晚一步 await 的调用方该收到起跑那一拒')
 })

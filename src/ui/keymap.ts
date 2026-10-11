@@ -87,17 +87,10 @@ export type UiAction =
 /** 哪一格把这个动作接上（`T2` 就是这一格）。 */
 export type Stage = 'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'T8' | 'T9'
 
-/**
- * 提示行按"此刻屏幕上是什么"分的几档（第三幕 ②）：`any` = 不看处境，照表自己的次序印（也就是
- * 第三幕 ② 之前那个样子，逐字节锁着——`--help` 那一份黄金帧里就有它）；另两档各自点名次序与措辞。
- *
- * **分档只换次序与措辞，不藏东西**：任何一档下印出来的那几条与 `any` 那一档是同一个集合
- * （`keymap.test.ts` ⑦ 量这一条）——宽着的时候人看不出档，窄着的时候**先露出来的那几条**才是这一档
- * 的判断。
- */
-export type HintWhen = 'any' | 'gate' | 'read'
+/** 提示场景从当前界面推导；日常提示精选能用的动作，any保完整命令行帮助。 */
+export type HintWhen = 'any' | 'gate' | 'read' | 'pending' | 'plan' | 'menu' | 'input' | 'typing' | 'run' | 'queue' | 'search' | 'done' | 'menuEmpty'
 
-/** 能换一句话的那两档（`any` 那一档没有"换一句"这回事：它就是表里那一句）。 */
+/** 能按处境换一句话的那几档（`any` 那一档没有"换一句"这回事：它就是表里那一句）。 */
 export type HintSayWhen = Exclude<HintWhen, 'any'>
 
 /** 表里的一行。 */
@@ -129,89 +122,89 @@ export const TABLE: readonly Binding[] = [
     action: 'submit',
     keys: ['Enter'],
     hint: '提交',
-    note: '把这一行交出去：空闲就直接跑，忙就入队（排队项看得见、撤得掉）',
+    note: '发送输入；任务运行中先排队，结束后依次处理',
     by: 'T4',
   },
   {
     action: 'newline',
     keys: ['Ctrl-J', 'Alt-Enter'],
     hint: '换行',
-    note: '在行里换一行，不提交（多行草稿与折叠过的粘贴都从这里来）',
+    note: '在输入中换行，保留草稿，不发送',
     by: 'T4',
   },
   {
     action: 'cancel',
     keys: ['Esc'],
     hint: '取消',
-    note: '取消链第一级：先关一层弹层，再打断、再丢排队草稿、再清空输入，都没有就什么都不做',
+    note: '每次处理一项：收起最上层、停止任务、撤掉最后一条排队内容、退出反查、清空输入',
     // 同一个 `Esc`，两处处在说的是两件事（第三幕 ②）：门口那一块开着是"收起门口"，阅读面开着是
     // "收起"——两处各有自己的一级，措辞照各自那一级写。
-    says: { gate: '收起门口', read: '收起' },
+    says: { read: '收起', plan: '返回' },
     by: 'T5',
   },
   {
     action: 'interrupt',
     keys: ['Ctrl-C'],
     hint: '打断',
-    note: '取消链：有在途的那一趟就打断它；空闲时按一下只举手，3 秒内再按一次才是退出',
+    note: '停止正在运行的任务；空闲时在 3 秒内连按两次退出',
     by: 'T5',
   },
   {
     action: 'quit',
     keys: ['Ctrl-D', 'q', 'Q'],
     hint: '退出',
-    note: '退出面板：只在输入行空着的时候（退出码 0——人喊停不是失败）',
+    note: '输入为空时退出；任务运行中先等结束，再按一次立即退出',
     by: 'T5',
   },
   {
     action: 'historyOlder',
     keys: ['↑'],
     hint: '上一条',
-    note: '输入历史往前翻；有面板开着的时候是往上选',
-    says: { read: '上一行' },
+    note: '查看上一条输入；列表或阅读打开时向上移动',
+    says: { read: '上一行', gate: '上一项', plan: '上一行' },
     by: 'T4',
   },
   {
     action: 'historyNewer',
     keys: ['↓'],
     hint: '下一条',
-    note: '输入历史往后翻；翻到底回到手里原来那一行',
-    says: { read: '下一行' },
+    note: '查看下一条输入；列表或阅读打开时向下移动',
+    says: { read: '下一行', gate: '下一项', plan: '下一行' },
     by: 'T4',
   },
   {
     action: 'search',
     keys: ['Alt-R'],
     hint: '反查',
-    note: '拿行里已经打的那几个字在历史里反查，再按一下找更早的一条',
+    note: '用输入中的文字反查历史；再按一次找更早的一条',
     by: 'T4',
   },
   {
     action: 'pageUp',
     keys: ['PgUp'],
     hint: '上翻半屏',
-    note: '翻页（阅读面 · 门口那一批 · 候选三处，谁开着翻谁）；都没开就什么都不做',
+    note: '当前列表或阅读向上翻半页',
     by: 'T9',
   },
   {
     action: 'pageDown',
     keys: ['PgDn'],
     hint: '下翻半屏',
-    note: '翻页（阅读面 · 门口那一批 · 候选三处，谁开着翻谁）；都没开就什么都不做',
+    note: '当前列表或阅读向下翻半页',
     by: 'T9',
   },
   {
     action: 'jumpFirst',
     keys: ['Ctrl-Home'],
     hint: '跳到头',
-    note: '跳到正在翻的那一份的头一行（阅读面 · 门口那一批 · 候选）',
+    note: '跳到当前列表或阅读的开头',
     by: 'T9',
   },
   {
     action: 'jumpLast',
     keys: ['Ctrl-End'],
     hint: '跳到尾',
-    note: '跳到正在翻的那一份的末一行（阅读面 · 门口那一批 · 候选）',
+    note: '跳到当前列表或阅读的末尾',
     by: 'T9',
   },
   {
@@ -232,112 +225,112 @@ export const TABLE: readonly Binding[] = [
     action: 'backspace',
     keys: ['Backspace'],
     hint: '退格',
-    note: '删掉光标左边那一个簇（汉字与组合符号各算一个）',
+    note: '删除光标左边一个字符，组合符号一起删除',
     by: 'T4',
   },
   {
     action: 'delete',
     keys: ['Delete'],
     hint: '删一格',
-    note: '删掉光标右边那一个簇',
+    note: '删除光标右边一个字符，组合符号一起删除',
     by: 'T4',
   },
   {
     action: 'left',
     keys: ['←'],
     hint: '左移',
-    note: '光标往左一个簇',
+    note: '光标向左一个字符，组合符号一起移动',
     by: 'T4',
   },
   {
     action: 'right',
     keys: ['→'],
     hint: '右移',
-    note: '光标往右一个簇',
+    note: '光标向右一个字符，组合符号一起移动',
     by: 'T4',
   },
   {
     action: 'wordLeft',
     keys: ['Alt-B', 'Ctrl-←'],
     hint: '退一个词',
-    note: '光标往左退一个词（汉字连成一串算一个词）',
+    note: '光标向左一个词，连续汉字一起移动',
     by: 'T4',
   },
   {
     action: 'wordRight',
     keys: ['Alt-F', 'Ctrl-→'],
     hint: '进一个词',
-    note: '光标往右进一个词',
+    note: '光标向右一个词',
     by: 'T4',
   },
   {
     action: 'killToStart',
     keys: ['Ctrl-U'],
     hint: '清行',
-    note: '清到行首（光标已经在行首就清整行）；清掉的那一段在 kill 环里',
+    note: '删除光标前的输入；已在行首时清空整行，可粘回',
     by: 'T4',
   },
   {
     action: 'killWord',
     keys: ['Ctrl-W'],
     hint: '删一个词',
-    note: '砍掉光标左边那一个词（进 kill 环）',
+    note: '删除光标左边一个词，可粘回',
     by: 'T4',
   },
   {
     action: 'killToEnd',
     keys: ['Ctrl-K'],
     hint: '删到行尾',
-    note: '砍掉光标右边那一段（进 kill 环）',
+    note: '删除光标后的输入，可粘回',
     by: 'T4',
   },
   {
     action: 'yank',
     keys: ['Ctrl-Y'],
     hint: '粘回',
-    note: '把 kill 环里最近那一段粘回光标处',
+    note: '把最近删除的一段粘回光标处',
     by: 'T4',
   },
   {
     action: 'undo',
     keys: ['Ctrl-Z'],
     hint: '撤销',
-    note: '退一步（`Esc` 清掉的那一行也从这里回来）',
+    note: '撤销上一步，也能恢复取消时清空的输入',
     by: 'T4',
   },
   {
     action: 'redo',
     keys: ['Alt-Z'],
     hint: '重做',
-    note: '把刚撤掉的那一步再做回来',
+    note: '重做刚撤销的那一步',
     by: 'T4',
   },
   {
     action: 'toggleFold',
     keys: ['Ctrl-O'],
     hint: '展开粘贴',
-    note: '把折起来的那一大段粘贴展开（原文一个字节都不改，只是显示）',
+    note: '展开或收起长段粘贴，输入原文保持完整',
     by: 'T4',
   },
   {
     action: 'menu',
     keys: ['/'],
     hint: '命令菜单',
-    note: '命令行的候选表：本机的那些命令与这些键都在一张单子上',
+    note: '打开命令列表；选择后填入输入，发送才运行',
     by: 'T4',
   },
   {
     action: 'panel',
     keys: ['Ctrl-P'],
     hint: '命令面板',
-    note: '面板：看这一行现在是什么——命令行走命令那张表，别处开键表（30 条，能筛）',
+    note: '打开可筛选的列表；命令输入查命令，其余输入查按键',
     by: 'T4',
   },
   {
     action: 'complete',
     keys: ['Tab'],
     hint: '补全/视图',
-    note: '补全；没有可补的时候换视图（对话 · 进展 · 结果与花费，`Tab` 环形）',
+    note: '补全输入；阅读时换面，其余时候切换对话、进展、结果与花费',
     says: { read: '换一面' },
     by: 'T4',
   },
@@ -345,81 +338,95 @@ export const TABLE: readonly Binding[] = [
     action: 'focus',
     keys: ['Alt-1…9'],
     hint: '切到第 n 格',
-    note: '直接切到第 n 格 agent 或第 n 轮',
+    note: '查看第 1 到 9 个执行者的进展',
     by: 'T8',
   },
   {
     action: 'read',
     keys: ['Ctrl-R'],
     hint: '阅读面',
-    note: '读这一格：diff · 契约正文 · 事件流（`Tab` 换面 · `↑`/`↓` 翻 · `Esc` 收起；读的是账，不是第二份数据）',
-    says: { read: '收起' },
+    note: '查看当前计划全文或文件改动、事件与详情；再按一次收起',
+    says: { gate: '看全', plan: '返回确认' },
     by: 'T9',
   },
   {
     action: 'mention',
     keys: ['@'],
     hint: '引用路径',
-    note: '把工作区里的一条路径引用进这一行',
+    note: '把工作区中的文件路径插入输入',
     by: 'T4',
   },
   {
     action: 'go',
     keys: ['g', 'G'],
-    hint: '放行这一轮',
-    note: '放行：起一次 `fugue round go`（账由那个子进程写，界面一个字节都不写）',
+    hint: '继续这一轮',
+    says: { pending: '查看确认' },
+    note: '有待确认的任务时查看计划；其余时候继续当前任务',
     by: 'T2',
   },
   {
     action: 'approve',
     keys: ['y'],
-    hint: '放行',
-    says: { gate: '放行这一份' },
-    note: '门口那一批：放行它（起一次 `fugue round go`）；**再按一次 `y` 或 Enter 才生效**——只在门口那一块开着、且输入行空着的时候是动作，别处它就是那个字',
+    hint: '执行',
+    note: '执行整批：确认卡开着且输入为空时，按一次选择，再按一次或提交键确认',
     by: 'T6',
   },
   {
     action: 'reject',
     keys: ['n'],
-    hint: '拒',
-    says: { gate: '拒这一份' },
-    note: '门口那一批：拒它——**一个字节都不落**，门照旧停着等人；再按一次 `n` 或 Enter 才生效（同上）',
+    hint: '暂不执行',
+    note: '暂不执行：按一次选择，再确认；计划保留，可补充要求再讨论',
     by: 'T6',
   },
   {
     action: 'help',
     keys: ['?'],
-    hint: '重印这一行',
-    note: '把按键那一行重印一遍（翻上去了再按一下就回来）',
+    hint: '按键帮助',
+    note: '查看全部按键，取消可返回原画面',
     by: 'T2',
   },
 ]
 
-/**
- * 每一档点名哪几条、按什么次序先露（第三幕 ②）：**只点名，措辞不在这里**——印出去的字仍住 `TABLE`
- * 的 `hint` / `says` 里。点过名的排前面，**表里其余那些照旧缀在后面**：分档是"先露谁"，不是"藏谁"
- * ——宽着的时候整行的集合与 `any` 那一档一样。
+/** 场景内精选当前动作；宽屏也不补入其他场景的键。any 供完整命令行帮助沿用原表。
+ * 确认卡自身已有批准、拒绝、返回，常驻提示只补全文与翻项。
  */
 export const HINT_WHEN: Readonly<Record<HintWhen, readonly UiAction[]>> = {
-  // 不看处境：先露这七条（提交 · 菜单 · 补全 · 阅读 · 打断 · 退出 · 键表面板——次序与 `TABLE` 一致），
-  // 表里其余那些照旧缀在后面。**这一档就是 `fugue tui` 起来时那一行**（缺省档），逐字节锁着。
   any: ['submit', 'menu', 'complete', 'read', 'interrupt', 'quit', 'panel'],
-  // 门口那一块开着：此刻要人按的是 `y` / `n`（放行那一份 · 拒那一份），再往下才是收起门口与翻批。
-  gate: ['approve', 'reject', 'cancel', 'pageUp', 'pageDown', 'help'],
-  // 阅读面开着：`Tab` 换一面 · `↑`/`↓` 翻行 · `Esc` 收起（这三样在别处都不是这个意思）。
-  read: ['complete', 'historyOlder', 'historyNewer', 'cancel', 'pageUp', 'pageDown', 'read', 'help'],
+  input: ['submit', 'menu', 'read', 'complete', 'help'],
+  done: ['quit', 'read', 'submit', 'help'],
+  typing: ['submit', 'newline', 'cancel', 'mention'],
+  run: ['cancel', 'submit', 'read', 'help'],
+  queue: ['submit', 'cancel', 'read', 'help'],
+  search: ['cancel', 'historyOlder', 'submit'],
+  pending: ['go', 'read', 'help'],
+  menu: ['cancel', 'historyNewer', 'historyOlder', 'submit', 'read'],
+  menuEmpty: ['cancel', 'killToStart'],
+  plan: ['cancel', 'historyNewer', 'historyOlder', 'pageDown', 'read'],
+  gate: ['read', 'historyOlder', 'historyNewer'],
+  read: ['complete', 'historyOlder', 'historyNewer', 'cancel', 'pageDown'],
+}
+
+const CONTEXT_HINT: Partial<Record<HintWhen, Partial<Record<UiAction, string>>>> = {
+  input: { submit: '发送', menu: '命令', read: '记录', complete: '视图', help: '帮助' },
+  done: { read: '记录', submit: '发送', help: '帮助' },
+  typing: { submit: '发送', newline: '换行', cancel: '清空输入', mention: '文件' },
+  run: { cancel: '停止', submit: '排队', read: '记录', help: '帮助' },
+  queue: { submit: '下一条', cancel: '取消末条', read: '记录', help: '帮助' },
+  search: { cancel: '结束反查', historyOlder: '更早', submit: '发送' },
+  menu: { cancel: '返回', historyNewer: '下一项', historyOlder: '上一项', submit: '选择', read: '看全' },
+  menuEmpty: { cancel: '返回' },
 }
 
 /**
- * 这一刻是哪一档（第三幕 ②）：阅读面开着报 `read`，否则门口那一块开着报 `gate`，都没有报 `any`。
+ * 这一刻是哪一档（第三幕 ②）：阅读面开着报 `read`，门口展开报 `gate`，收起但仍在等待报 `pending`，其余报 `any`。
  *
- * **为什么阅读面压过门口**：门口那一块里**自己就印着**它那三个键（`放行一次(y) · 拒(n) ·
- * 中止(Esc)`——第三幕 ① 那一行还单独染了等待黄），而阅读面那几样（`Tab` · `↑`/`↓` · `Esc`）在屏幕上
+ * **为什么阅读面压过门口**：门口那一块里**自己就印着**它那三个键（`y 放行整批 · n 拒绝 · Esc 收起`——第三幕 ① 那一行还单独染了等待黄），而阅读面那几样（`Tab` · `↑`/`↓` · `Esc`）在屏幕上
  * 只有提示行这一处说得出。两样同时开着的时候，这一行让给"别处查不到的那一份"。
  */
-export function hintWhenOf(o: { readonly gate: boolean; readonly read: boolean }): HintWhen {
+export function hintWhenOf(o: { readonly gate: boolean; readonly read: boolean; readonly pending?: boolean }): HintWhen {
   if (o.read) return 'read'
   if (o.gate) return 'gate'
+  if (o.pending) return 'pending'
   return 'any'
 }
 
@@ -632,7 +639,7 @@ function decodedOf(action: UiAction, bytes: string): Decoded {
 }
 
 /** 字节 → 动作（一张表只在这里建一次；加一条键不会漂）。 */
-export function byteMapOf(km: Keymap = KEYMAP): ReadonlyMap<string, Decoded> {
+function byteMapOf(km: Keymap = KEYMAP): ReadonlyMap<string, Decoded> {
   const out = new Map<string, Decoded>()
   for (const b of km.rows) {
     for (const k of b.keys) {
@@ -649,10 +656,27 @@ export function byteMapOf(km: Keymap = KEYMAP): ReadonlyMap<string, Decoded> {
  * 终端报出来的组合键全落在这一条里；**`ESC` 后面跟一个普通字符是 Alt 那一档**（整两个字符吃掉），
  * 所以 `ESC q` 不是"按了 q"。
  */
+// DCS / OSC / APC / PM / SOS carry text until ST; OSC also accepts BEL.
+// Their payload belongs to the terminal and must never reach the editor/key map.
+const STRING_CONTROLS = new Set(['P', ']', '_', '^', 'X'])
+function stringEndOf(s: string, i: number): number {
+  const st = s.indexOf('\x1b\\', i + 2)
+  const bel = s[i + 1] === ']' ? s.indexOf('\x07', i + 2) : -1
+  // CAN/SUB cancel string mode; bytes after them are ordinary input again.
+  const can = s.indexOf('\x18', i + 2), sub = s.indexOf('\x1a', i + 2)
+  const ends = [st < 0 ? -1 : st + 2, bel < 0 ? -1 : bel + 1,
+    can < 0 ? -1 : can + 1, sub < 0 ? -1 : sub + 1].filter(end => end >= 0)
+  return ends.length === 0 ? -1 : Math.min(...ends)
+}
+
 export function escapeAt(s: string, i: number): number {
   if (s[i] !== '\u001b') return 0
   const next = s[i + 1]
   if (next === undefined) return 1
+  if (STRING_CONTROLS.has(next)) {
+    const end = stringEndOf(s, i)
+    return end < 0 ? s.length - i : end - i
+  }
   if (next !== '[' && next !== 'O') return 2
   let j = i + 2
   while (j < s.length) {
@@ -670,6 +694,7 @@ export function escapeAt(s: string, i: number): number {
 export function escapeTruncatedAt(s: string, i: number): boolean {
   if (s[i] !== '\u001b') return false
   if (s[i + 1] === undefined) return true
+  if (STRING_CONTROLS.has(s[i + 1]!)) return stringEndOf(s, i) < 0
   if (s[i + 1] !== '[' && s[i + 1] !== 'O') return false
   for (let j = i + 2; j < s.length; j += 1) {
     const c = s.charCodeAt(j)
@@ -697,7 +722,7 @@ export function decodeOf(chunk: string, km: Keymap = KEYMAP): readonly Decoded[]
   while (i < chunk.length) {
     const esc = escapeAt(chunk, i)
     if (esc > 0) {
-      if (!escapeTruncatedAt(chunk, i)) {
+      if (!escapeTruncatedAt(chunk, i) || (esc === 2 && STRING_CONTROLS.has(chunk[i + 1]!))) {
         const d = bytes.get(chunk.slice(i, i + esc))
         if (d !== undefined) out.push(d)
       }
@@ -719,7 +744,7 @@ export function decodeOf(chunk: string, km: Keymap = KEYMAP): readonly Decoded[]
 /** 半截 `ESC` 等多久算"人真按了一下 `Esc`"（毫秒）。 */
 export const ESC_WAIT_MS = 40
 
-/** `PgUp`/`PgDn` 一页翻多少行（U14）：内容那一栏约 8 行（PLAN § 5.19「K 取 12」那笔账），半屏就是 4。 */
+/** 未知尺寸的阅读与候选翻页沿用四行；已知正文容量由 stage 按当前半屏计算。 */
 export const PAGE_STEP = 4
 
 /** 粘贴的另一半记号（`ESC[201~`）等多久（毫秒）：到点还没来就退出粘贴态，攒着的照交（U10）。 */
@@ -732,83 +757,68 @@ export interface Decoder {
   /** 粘贴记号开了一半（`ESC[200~` 到了、`ESC[201~` 还没到）。 */
   readonly pasting: boolean
   feed(chunk: string): readonly Decoded[]
-  /** 半截攒不成键了：最前面那一个 `ESC` 当"人按了一下 `Esc`"，**其余整段丢弃**。 */
+  /** 普通半截按 Esc 处理；字符串残包丢弃，共用前缀的完整 Alt 键按绑定处理。 */
   flush(): readonly Decoded[]
   /** 粘贴超时：退出粘贴态，把攒到的那一段当原文交出去（`insert`）。 */
   bailPaste(): readonly Decoded[]
 }
 
-export function decoderOf(km: Keymap = KEYMAP): Decoder {
+export function decoderOf(km: Keymap = KEYMAP, onControl?: (sequence: string) => void): Decoder {
   const bytes = byteMapOf(km)
   let pending = ''
   /** 粘到一半的那一段（`ESC[200~` 到了、`ESC[201~` 还没到）。 */
   let paste: string | null = null
-  const step = (s: string): { readonly out: readonly Decoded[]; readonly rest: string } => {
-    const out: Decoded[] = []
-    let i = 0
-    while (i < s.length) {
-      const esc = escapeAt(s, i)
-      if (esc > 0) {
-        if (escapeTruncatedAt(s, i)) return { out, rest: s.slice(i) }
-        const d = bytes.get(s.slice(i, i + esc))
-        if (d !== undefined) out.push(d)
-        i += esc
-        continue
-      }
-      const size = codepointSize(s.codePointAt(i) as number)
-      const ch = s.slice(i, i + size)
-      const d = bytes.get(ch)
-      // 表里没吃掉的那个字节：**可打印的就是人打的字**（`insert`），别的（认不出来的控制字符）
-      // 丢掉——"认不出来"与"没这个键"在读数上是同一件事。
-      if (d !== undefined) out.push(d)
-      else if (isPrintable(s.codePointAt(i) as number)) out.push({ action: 'insert', text: ch, key: ch })
-      i += size
-    }
-    return { out, rest: '' }
-  }
   return {
-    get pending(): string {
-      return pending
-    },
-    get pasting(): boolean {
-      return paste !== null
-    },
+    get pending(): string { return pending },
+    get pasting(): boolean { return paste !== null },
     feed(chunk: string): readonly Decoded[] {
-      // **大段粘贴**（`ESC[200~` … `ESC[201~`）：记号之间那一整段是**原文**，一个字节都不解释——
-      // 里面的换行不是 `Enter`（不然粘一段代码会在中间把这一行发出去）。记号只到了一半就攒着。
-      const out: Decoded[] = []
       let s = pending + chunk
       pending = ''
-      if (paste !== null) {
-        const end = s.indexOf(PASTE_OFF)
-        if (end < 0) {
-          paste += s
-          return []
+      // A paste delimiter can itself cross chunks; retain its literal prefix.
+      if (paste !== null) { s = paste + s; paste = '' }
+      const out: Decoded[] = []
+      let i = 0
+      while (i < s.length) {
+        // Paste markers are interpreted only outside terminal control strings.
+        if (paste !== null) {
+          const end = s.indexOf(PASTE_OFF, i)
+          if (end < 0) { paste += s.slice(i); return out }
+          out.push({ action: 'insert', text: paste + s.slice(i, end) })
+          paste = null; i = end + PASTE_OFF.length
+          continue
         }
-        out.push({ action: 'insert', text: paste + s.slice(0, end) })
-        paste = null
-        s = s.slice(end + PASTE_OFF.length)
-      }
-      for (;;) {
-        const at = s.indexOf(PASTE_ON)
-        if (at < 0) break
-        out.push(...step(s.slice(0, at)).out)
-        const end = s.indexOf(PASTE_OFF, at + PASTE_ON.length)
-        if (end < 0) {
-          paste = s.slice(at + PASTE_ON.length)
-          return out
+        if (s.startsWith(PASTE_ON, i)) { paste = ''; i += PASTE_ON.length; continue }
+        // An unbound ESC + ESC is two boundaries, not an invented Alt key.
+        // Preserve a real Esc when a terminal report starts before its timeout.
+        const esc = s.startsWith('\u001b\u001b', i) && !bytes.has('\u001b\u001b') ? 1 : escapeAt(s, i)
+        if (esc > 0) {
+          if (escapeTruncatedAt(s, i)) { pending = s.slice(i); break }
+          const sequence = s.slice(i, i + esc)
+          const d = bytes.get(sequence)
+          if (d !== undefined) out.push(d)
+          else onControl?.(sequence)
+          i += esc
+          continue
         }
-        out.push({ action: 'insert', text: s.slice(at + PASTE_ON.length, end) })
-        s = s.slice(end + PASTE_OFF.length)
+        const size = codepointSize(s.codePointAt(i)!)
+        const ch = s.slice(i, i + size), d = bytes.get(ch)
+        if (d !== undefined) out.push(d)
+        else if (isPrintable(s.codePointAt(i)!)) out.push({ action: 'insert', text: ch, key: ch })
+        i += size
       }
-      const r = step(s)
-      pending = r.rest
-      return [...out, ...r.out]
+      return out
     },
     flush(): readonly Decoded[] {
       if (pending === '') return []
+      const rest = pending
       const head = pending[0] as string
       pending = ''
+      if (STRING_CONTROLS.has(rest[1] ?? '')) {
+        // A configured two-byte Alt key can share a string prefix; a partial
+        // report with a payload is never a cancel or a user action.
+        const bound = rest.length === 2 ? bytes.get(rest) : undefined
+        return bound === undefined ? [] : [bound]
+      }
       const one = bytes.get(head)
       // **其余整段丢弃**（U10）：攒在半截里的 `ESC [` 续字节不是人按的键——回灌解一遍会把 `[` 之
       // 类当字打进行里（残包在慢链路上成对出现时，输入行里会多出几个没人打过的字符）。
@@ -825,25 +835,26 @@ export function decoderOf(km: Keymap = KEYMAP): Decoder {
 
 /** 那一条印成什么（第三幕 ②）：键串照旧，那一句话按处境挑（`says[所处那一档]` 没有就用 `hint`）。 */
 const entryOf = (b: Binding, when: HintWhen = 'any'): string =>
-  `${keyLabelOf(b)} ${(when === 'any' ? undefined : b.says?.[when]) ?? b.hint}`
+  `${keyLabelOf(when === 'done' ? { ...b, keys: b.keys.slice(0, 1) } : b)} ${CONTEXT_HINT[when]?.[b.action] ?? (when === 'any' ? undefined : b.says?.[when]) ?? b.hint}`
 
 /**
  * 某一档下该印的那几条：`WIRED` 先过一遍（许诺一个按下去没反应的键，比少印几条坏得多），再看
  * `HINT_WHEN` 点了谁的名。
  *
- * `any` 那一档优先发送、命令、视图与阅读（第三幕 ② 之前的样子）；别的档把点名的那几条按点名的
- * 次序提到前面，**其余照表序缀在后面**——次序只有这一处算，条数三档一样。
+ * `any` 那一档优先发送、命令、视图与阅读（第三幕 ② 之前的样子）；其他场景只
+ * 展示点名的动作——次序与筛选都在这一处算。
  */
 export function hintPicksOf(km: Keymap = KEYMAP, when: HintWhen = 'any'): readonly Binding[] {
   const wired = km.rows.filter((b) => WIRED.includes(b.by))
   const want = HINT_WHEN[when]
-  if (want.length === 0) return wired
+  if (want.length === 0) return when === 'any' ? wired : []
   const byAction = new Map(wired.map((b) => [b.action as string, b]))
   const named: Binding[] = []
   for (const a of want) {
     const b = byAction.get(a)
     if (b !== undefined) named.push(b)
   }
+  if (when !== 'any') return named
   const used = new Set(named.map((b) => b.action))
   return [...named, ...wired.filter((b) => !used.has(b.action))]
 }
@@ -875,14 +886,24 @@ export function hintLineOf(km: Keymap = KEYMAP, limit = 0, when: HintWhen = 'any
 export function hintLimitOf(columns: number, km: Keymap = KEYMAP, when: HintWhen = 'any'): number {
   const total = hintPicksOf(km, when).length
   if (total === 0) return 0
-  for (let n = 1; n < total; n += 1) {
+  for (let n = 1; n <= total; n += 1) {
     if (widthOf(hintLineOf(km, n, when)) > columns) return Math.max(1, n - 1)
   }
   return total
 }
 
+/** 已知容量内只放完整条目；首项也太长时去抬头和备用键，完整帮助照旧。 */
+export function hintLineForWidth(columns: number, km: Keymap = KEYMAP, when: HintWhen = 'input'): string {
+  const line = hintLineOf(km, hintLimitOf(columns, km, when), when)
+  if (!Number.isFinite(columns) || columns < 1 || widthOf(line) <= columns) return line
+  const first = hintPicksOf(km, when)[0]
+  if (first === undefined) return line
+  const compact = entryOf({ ...first, keys: first.keys.slice(0, 1) }, when)
+  return widthOf(compact) <= columns ? compact : line
+}
+
 /** 写进终端历史的那一句注记里放几条（第三幕 ②）：常数收在这里，不在两处各写一个数。 */
-export const NOTE_KEYS = 4
+const NOTE_KEYS = 4
 
 /**
  * 同一档下"按什么键干什么"的那一段——**不带 `按键 ` 抬头，也不带"还有 N 条"那一句尾巴**。给写进
@@ -948,6 +969,8 @@ const realWait: WaitFn = (ms, fn) => {
 export function openKeys(o: {
   readonly input: KeyInput
   readonly onAction: (d: Decoded) => void
+  /** Unbound complete controls, outside bracketed paste; terminal reports only. */
+  readonly onControl?: (sequence: string) => void
   readonly km?: Keymap
   readonly wait?: WaitFn
   /** 写字节的那一头（`process.stdout`）：**只用来开关 bracketed paste**。不给就不开。 */
@@ -956,7 +979,7 @@ export function openKeys(o: {
   const input = o.input
   const raw = input.isTTY === true && typeof input.setRawMode === 'function'
   if (!raw) return { raw: false, close(): void {} }
-  const dec = decoderOf(o.km ?? KEYMAP)
+  const dec = decoderOf(o.km ?? KEYMAP, o.onControl)
   const wait = o.wait ?? realWait
   // **流式解码（U9）**：一个闭包里的 `TextDecoder` 带 `{ stream: true }` 喂到底——多字节字符
   // 被拆在两个 chunk 里时（慢链路上常事）第二个块接着解，不出替换符。此前每个 chunk 新开一个

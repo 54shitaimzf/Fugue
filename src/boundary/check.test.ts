@@ -14,7 +14,7 @@
 // 照跑——查了就是把地板调低）· **`fugue policy` 照旧照报**（它只读策略值，不做启动检查）。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -154,6 +154,15 @@ after(() => {
       spawnSync('sudo', ['-n', 'rm', '-rf', m.root], { encoding: 'utf8' })
     }
   }
+  // 收尾不许静默出仓：dispose 的回执与 sudo rm 的结果从前都没人看——real 档全量并发下实测
+  // 漏过挂载与残留目录出仓（/tmp 里的 fugue-y4-*），单独跑那份不复现。这一条把「自己的根上
+  // 还挂着挂载」与「目录没删掉」都变成当场红：漏了不再靠人事后数 /tmp 才发现。
+  const still = readFileSync('/proc/self/mountinfo', 'utf8').split('\n')
+    .map((line) => line.split(' ')[4] ?? '')
+    .filter((p) => p !== '' && MADE.some((m) => p === m.root || p.startsWith(m.root + '/')))
+  assert.deepEqual(still, [], `收尾后仍挂在这一趟根上的挂载：${still.join(' ')}`)
+  const left = MADE.filter((m) => existsSync(m.root)).map((m) => m.root)
+  assert.deepEqual(left, [], `收尾后没删掉的根目录：${left.join(' ')}`)
 })
 
 /** 日志里所有 `run/*` 事件的类型，按次序。用了它才知道"拒"是不是发生在起进程之前。 */
