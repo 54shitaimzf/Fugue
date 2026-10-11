@@ -92,7 +92,7 @@ export interface ViewReads {
  * `bytes` 只是搭车：内容哈希本来就要把这份字节读出来（写回原样那条判断），落地时不再读第二遍。
  * 它不参与相等判断。
  */
-export type EntryState =
+type EntryState =
   | { readonly kind: 'file'; readonly hash: string; readonly mode: number; readonly bytes?: Uint8Array }
   | { readonly kind: 'symlink'; readonly target: string }
   | { readonly kind: 'dir' }

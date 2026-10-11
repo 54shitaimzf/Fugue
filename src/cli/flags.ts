@@ -21,7 +21,7 @@ const VIEW_FLAGS: readonly string[] = ['root', 'agent', 'json', 'help']
 const WRITE_FLAGS: readonly string[] = [...VIEW_FLAGS, 'no-clock']
 
 /** 一张开关表：`flags` 是这条命令认得的全部开关；`note` 是拒的时候跟在后面那句指路。 */
-export interface FlagTable {
+interface FlagTable {
   readonly flags: readonly string[]
   readonly note?: string
 }
