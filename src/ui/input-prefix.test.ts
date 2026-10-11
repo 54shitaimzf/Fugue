@@ -6,6 +6,7 @@ import {openStage} from './stage.ts'
 import {openSession} from './follow.ts'
 import {openTerm} from './term.ts'
 import {KEYMAP,hintLineOf} from './keymap.ts'
+import {screen} from '../../test/helpers/vt-screen.ts'
 
 test('a scrolled editor never adds a prefix column when its prompt has no reserved cells',()=>{
  let frames=0
@@ -32,35 +33,6 @@ test('a scrolled editor never adds a prefix column when its prompt has no reserv
 
 // Consume renderer bytes with deferred-wrap VT semantics, rather than counting
 // logical rows. All glyphs in this assertion are one cell and physically fit.
-function screen(columns:number,rows:number){
- let cells=Array.from({length:rows},()=>Array(columns).fill('')),x=0,y=0,pending=false,wraps=0,scrolls=0
- const down=()=>{pending=false;if(++y===rows){cells.shift();cells.push(Array(columns).fill(''));y--;scrolls++}}
- const put=(raw:string)=>{for(let i=0;i<raw.length;){
-  const c=raw[i]!
-  if(c==='\x1b'){
-   const m=/^\x1b\[([\d;]*)([A-Za-z])/.exec(raw.slice(i));assert.ok(m,'unhandled terminal control');i+=m[0].length
-   const n=Number(m[1])||1;pending=false
-   if(m[2]==='A')y=Math.max(0,y-n);else if(m[2]==='B')y=Math.min(rows-1,y+n)
-   else if(m[2]==='C')x=Math.min(columns-1,x+n);else if(m[2]==='D')x=Math.max(0,x-n)
-   else if(m[2]==='K')cells[y]=Array(columns).fill('')
-   else if(m[2]==='M'){cells.splice(y,n);while(cells.length<rows)cells.push(Array(columns).fill(''))}
-   else assert.fail('unhandled CSI '+m[2])
-  }else if(c==='\r'){x=0;pending=false;i++}
-  else if(c==='\n'){down();i++}
-  else {
-   const stop=raw.slice(i).search(/[\x1b\r\n]/),end=stop<0?raw.length:i+stop
-   for(const g of clustersOf(raw.slice(i,end))){
-    if(pending){down();x=0;wraps++}
-    if(g.width>columns-x&&x>0){down();x=0;wraps++}
-    assert.ok(g.width<=columns,'each fixture glyph fits the host')
-    cells[y]![x]=g.text;for(let k=1;k<g.width;k++)cells[y]![x+k]=''
-    if(x+g.width===columns){x=columns-1;pending=true}else x+=g.width
-   }
-   i=end
-  }
- }}
- return {put,get lines(){return cells.map(a=>a.join('').trimEnd())},get caret(){return {row:y,col:x}},get wraps(){return wraps},get scrolls(){return scrolls}}
-}
 test('actual one-to-three-column Stage/Session/Term input occupies real rows without hidden wraps or caret drift',()=>{
  let frames=0,idles=0
  const original='ABCDEFGHIJKLMNO'
