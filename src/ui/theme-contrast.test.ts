@@ -105,7 +105,7 @@ test('未知背景的用户、阅读标题和结果依赖宿主前景与字重�
   for(const {role} of labels)assert.equal(theme[role],'\x1b[1m',role+' 不能猜未知背景的颜色')
   assert.equal(theme.model,undefined,'模型原文沿用宿主前景')
   const chunks:string[]=[]
-  const term=openTerm({out:{isTTY:true,columns:40,rows:20,write:s=>chunks.push(s)},height:5,theme})
+  const term=openTerm({out:{isTTY:true,columns:40,rows:20,write:s=>chunks.push(s)},term:'xterm-256color',height:5,theme})
   const rows=labels.map(l=>l.text+' '.repeat(40-widthOf(l.text)))
   rows.push('模型原文'+' '.repeat(40-widthOf('模型原文')))
   term.draw([],()=>({rows,roles:[...labels.map(l=>l.role),'model']}))
