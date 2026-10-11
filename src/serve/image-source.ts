@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import { MAX_PNG_BYTES } from '../ui/png.ts'
-import { imageIsValid } from '../ui/image-codec.ts'
 import type { PixelImage } from '../ui/image-codec.ts'
 
 export interface ImageRequest {
@@ -50,7 +49,7 @@ function decodeAsync(bytes: Buffer, signal: AbortSignal): Promise<PixelImage | n
     let image: PixelImage | null = null, failed = false
     const cancel = (): void => { failed = true; void worker.terminate() }
     signal.addEventListener('abort', cancel, { once: true })
-    worker.on('message', (value: PixelImage | null) => { image = value !== null && imageIsValid(value) ? value : null })
+    worker.on('message', (value: PixelImage | null) => { image = value })
     worker.on('error', () => { failed = true })
     worker.on('exit', code => {
       signal.removeEventListener('abort', cancel)

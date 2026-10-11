@@ -489,7 +489,7 @@ export function openStage(deps: StageDeps): Stage {
       && row.e.from === 'Verifying' && row.e.to === 'Working')
     const freshRound = deps.rows().slice(runStartedAt).some(row => 'round' in row.e && row.e.round === runRound)
     if (!reported && runTask && freshRound && runRound !== null && current.round === runRound && current.state !== null
-      && r.why === null && (r.code === null || (Number.isSafeInteger(r.code) && r.code > 0))) {
+      && r.why === null && (r.code === null || r.code > 0)) {
       runIssueAction = current.rows[0]?.text
       runIssue = { round: runRound, state: current.state, feedback: true,
         text: r.code === null ? '执行因信号结束。' : '执行失败（退出码 ' + r.code + '）。' }
