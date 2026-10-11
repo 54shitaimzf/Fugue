@@ -2,9 +2,14 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {openTerm} from './term.ts'
 
-// The host independently keeps hard-line screen rows and scrollback. Width-only
-// resizing truncates columns, retaining physical row coordinates; unlike Term,
-// it has no previous frame/ownership book. Unhandled controls fail explicitly.
+// 这一份的宿主模型**不并**进 `test/helpers/`，三条都是这一族独有的：
+//   · 它认 `\x1b[<n>;<m>H`（光标**绝对定位**）——共用的那两份只做相对移动；
+//   · 它按**逐行字符串**存，而且**开着滚动史**（`all` = 已经滚上去的 + 现在这一屏）；
+//   · 它的 `resize` **只变窄**：超出的列直接截掉（`grid.map(s => s.slice(0, w))`），行坐标不动。
+// `vt-scrollback.ts` 与它最像，但那一份的前提是"起画之前屏上已经有两行 shell 提示"，
+// 而这一族要空屏起画（`all` 要与那 67 条 FACT 逐条相等）。并过去要为一份夹具给它加三个参数
+// （起画内容 · `H` · 变窄），不划算；所以留在原地，把三条差别写在这里。
+// 认不得的控制序列当场红——这一层最会骗人的一种失败。
 function host(){let cols=40,x=0,y=0,grid=Array<string>(24).fill(''),history:string[]=[],scrolls=0;const writes:string[]=[]
  const put=(raw:string)=>{writes.push(raw);for(let i=0;i<raw.length;){const c=raw[i++]!;if(c==='\x1b'){
   const m=/^\[([\d;]*)([A-Za-z])/.exec(raw.slice(i));assert.ok(m,'unhandled control');i+=m[0].length;const a=m[1]!.split(';').map(Number),n=a[0]||1
