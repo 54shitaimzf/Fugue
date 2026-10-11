@@ -468,7 +468,7 @@ export function openTui(o: TuiOptions): Tui {
   // `openKeys`（进 raw mode）之后才 `await` 它——`ui/console.ts` 那一段，中间正好夹着一次读配置的
   // `await`，让出一次线程。那一小段窗口里这一趟一拒，Node 就把它当成"没人接的拒"当场结束整个进程：
   // `finally` 与退出钩子都来不及知道有什么要还，于是"**崩了也要把终端还原回来**"这条判据时有时无——
-  // 0.4.4 实测（20 核满载）16 跑 1 红，PTY 里收到的那 612 字节**全是 Node 的崩栈**，`\u001b[?2004h`
+  // 实测（20 核满载）16 跑 1 红，PTY 里收到的那 612 字节**全是 Node 的崩栈**，`\u001b[?2004h`
   // 一笔都没有，也就是那一趟压根没进 raw mode，后面三条判据全在量空气。
   // `src/log/log.ts` 的 `opening` 与 `src/serve/image-source.ts` 那一趟都是这么接的（`void … .then(ok, bad)`
   // / `})().catch(…)`），这一处当初漏了。
