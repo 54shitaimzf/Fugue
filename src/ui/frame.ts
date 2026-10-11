@@ -46,7 +46,7 @@ import type { Catalog } from '../model/catalog.ts'
 import type { MetricReading } from '../probe/round.ts'
 import { skipsNote } from '../probe/status.ts'
 import type { RoundUsage, StatusSnapshot } from '../probe/status.ts'
-import { clip, glyphs, widthOf, wrap } from './glyph.ts'
+import { clip, glyphs, hasControl, widthOf, wrap } from './glyph.ts'
 import { iconOf } from './icons.ts'
 import { bytesOfKey } from './keymap.ts'
 import type { IconName } from './icons.ts'
@@ -646,10 +646,10 @@ export function frameOf(o: FrameInput): Frame {
   const confirmationReady = operationStatus && standardPlanning && o.bottom?.confirmationRound === o.task!.round
   const pendingReady = o.operationArea === true && !readingOn && o.menu === undefined && view === 'chat'
     && standardPlanning && typeof o.pendingRound === 'string' && o.pendingRound.trim() !== ''
-    && !/[\x00-\x1f\x7f-\x9f]/.test(o.pendingRound) && o.pendingRound === o.task!.round
+    && !hasControl(o.pendingRound) && o.pendingRound === o.task!.round
 
   const draftKey = typeof o.taskReadKey === 'string' && o.taskReadKey.trim() !== ''
-    && bytesOfKey(o.taskReadKey).length > 0 && !/[\x00-\x1f\x7f-\x9f]/.test(o.taskReadKey) && widthOf(o.taskReadKey + ' 草案原文') <= inner ? o.taskReadKey : ''
+    && bytesOfKey(o.taskReadKey).length > 0 && !hasControl(o.taskReadKey) && widthOf(o.taskReadKey + ' 草案原文') <= inner ? o.taskReadKey : ''
   const compactDraft = taskMatches && o.operationArea === true && !readingOn && !foregroundMenu && o.menu === undefined
     && (confirmationReady || draftKey !== '')
   const projectedTask = o.operationArea === true && taskMatches && !readingOn && !foregroundMenu && o.menu === undefined
@@ -842,7 +842,7 @@ export function frameOf(o: FrameInput): Frame {
   if (dropped > 0) {
     const omission = `${glyphs().mark} ${dropped} 行未展开`
     const key = taskMatches && view === 'chat' && o.menu === undefined && typeof o.taskReadKey === 'string'
-      && o.taskReadKey.trim() !== '' && !/[\x00-\x1f\x7f-\x9f]/.test(o.taskReadKey) ? o.taskReadKey : ''
+      && o.taskReadKey.trim() !== '' && !hasControl(o.taskReadKey) ? o.taskReadKey : ''
     const full = `${omission} · ${key} 看全`, compact = `${key} 看全 · ${dropped} 行`
     const notice = key !== '' && widthOf(compact) <= inner
       ? (widthOf(full) <= inner ? full : compact) : `${omission} · 完整记录可按需阅读`
@@ -902,7 +902,7 @@ export function frameOf(o: FrameInput): Frame {
   const currentTask = taskOn && taskMatches
   const titleRow = currentTask ? o.task!.rows.findLast(r => r.role === 'user') : undefined
   const foldedGoal = titleRow?.text.startsWith('你\n') ? titleRow.text.slice(2).replace(/\s+/g, ' ').trim() : ''
-  const subject = /[\x00-\x1f\x7f-\x9f]/.test(foldedGoal) ? '' : foldedGoal
+  const subject = hasControl(foldedGoal) ? '' : foldedGoal
   const titleRoom = mainWidth - 5 - widthOf('当前任务 · ')
   const taskHead = subject !== '' && titleRoom >= 4 ? `当前任务 · ${clip(subject, titleRoom)}` : '当前任务'
   const head = ordinaryOn ? (o.menu?.source === 'cmd' ? '命令' : '文件路径') : foregroundMenu ? '按键帮助' : readingOn ? (typeof o.read?.heading === 'string' && o.read.heading !== '' ? o.read.heading : '阅读面') : `${taskOn ? taskHead : viewNameOf(view)}${view === 'chat' ? '' : focus}`
@@ -947,8 +947,8 @@ export function frameOf(o: FrameInput): Frame {
   const compactRead = o.operationArea === true && readingOn && o.menu === undefined && o.bottom === undefined
     && o.read!.preview === undefined && withFooter && spare > 0
     && Number.isSafeInteger(o.read!.top) && o.read!.top >= 0 && o.read!.top < readAll.length
-    && typeof o.read!.heading === 'string' && !/[\x00-\x1f\x7f-\x9f]/.test(o.read!.heading)
-    && typeof o.read!.footer === 'string' && o.read!.footer.trim() !== '' && !/[\x00-\x1f\x7f-\x9f]/.test(o.read!.footer)
+    && typeof o.read!.heading === 'string' && !hasControl(o.read!.heading)
+    && typeof o.read!.footer === 'string' && o.read!.footer.trim() !== '' && !hasControl(o.read!.footer)
     && readBody.every(line => typeof line === 'string' && widthOf(line) <= inner)
   if (compactRead) {
     const tail = lines.slice(height - 3), tailRoles = roles.slice(height - 3)

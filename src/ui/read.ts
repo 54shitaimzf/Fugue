@@ -38,7 +38,7 @@
 import type { Delta } from '../delta.ts'
 import { FAMILY_KIND } from './stream.ts'
 import { permanentLinesOf } from './stream.ts'
-import { clip, clustersOf, widthOf } from './glyph.ts'
+import { clip, clustersOf, escapeControl, widthOf } from './glyph.ts'
 import type { Cluster } from './glyph.ts'
 import type { StatusRow, StatusSnapshot } from '../probe/status.ts'
 import { WORDS } from '../words.ts'
@@ -527,18 +527,6 @@ export function firstFace(faces: ReadFaces): ReadFaceName {
 }
 
 /**
- * 控制字节 → **可见形状**（`\uXXXX`）。转义之后它就是几个能读的字符，宽度也照这几个字符算。
- *
- * 为什么要有这一道：终端把 `\x1b` 当**一条序列的开头**——账上一条正文里混进一个不可见字节，
- * 屏幕上从那个字节起整幅错位（`\x1b[2J` 是清屏 · `\x1b[?1049h` 是换一块屏）。不可见字节不许原样
- * 落到终端上。只动 C0 与 C1（`[\x00-\x1f\x7f-\x9f]`），含 `\n`：账上一行正文本来就该是一行
- * （`read.test.ts` ④ 那条"一行里没有换行"钉着它），真混进来了也转义，不许它撕开一帧。
- */
-export function escapeOf(s: string): string {
-  return s.replace(/[\x00-\x1f\x7f-\x9f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
-}
-
-/**
  * 阅读面那一行的折法：**先转义、再按簇量宽折，一个字节都不吃**。
  *
  * 与 `glyph.ts` 那把通用折行**刻意不共用**：`wrap` 折在词尾、还会吃分隔符与空白（`trimEnd` ·
@@ -556,7 +544,10 @@ export function escapeOf(s: string): string {
  * （整簇切——不许原地打转，也不许把它吃掉）。
  */
 export function readWrap(s: string, cols: number): readonly string[] {
-  const text = escapeOf(s)
+  // **先转义再量宽**：终端把 `\x1b` 当一条序列的开头，账上一行正文里混进一个不可见字节，
+  // 屏幕上从它起整幅错位；转义成 `\uXXXX` 之后它就是几个能读的字符，宽度也照这几个算。
+  // 只动 C0 与 C1，含 `\n`——账上一行正文本来就该是一行，真混进来了也不许它撕开一帧。
+  const text = escapeControl(s)
   if (cols <= 0 || text === '') return [text]
   const cs = clustersOf(text)
   let total = 0

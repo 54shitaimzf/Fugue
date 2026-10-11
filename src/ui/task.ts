@@ -5,6 +5,7 @@ import type { ConversationRow } from './frame.ts'
 import { roundLabelOf, roundNoticeOf } from './lifecycle.ts'
 import { WORDS } from '../words.ts'
 import { draftOf } from '../contract/draft.ts'
+import { hasControl } from './glyph.ts'
 import type { CommitRequest, CommitChanges } from '../serve/commit-source.ts'
 
 export interface PlanItem {
@@ -32,7 +33,7 @@ export function issueRowsOf(task: TaskFace, issue: RunIssue | undefined): readon
   const first = task.rows[0]
   if (issue == null || typeof issue.round !== 'string' || issue.round.trim() === ''
     || typeof issue.state !== 'string' || typeof issue.text !== 'string' || issue.text.trim() === ''
-    || /[\x00-\x1f\x7f-\x9f]/.test(issue.round + issue.state + issue.text)
+    || hasControl(issue.round + issue.state + issue.text)
     || issue.round !== task.round || issue.state !== task.state
     || !['Planning', 'Working', 'Collecting', 'Merging', 'Verifying'].includes(issue.state)
     || first === undefined || !['system', 'instruction'].includes(first.role ?? '')
@@ -40,8 +41,10 @@ export function issueRowsOf(task: TaskFace, issue: RunIssue | undefined): readon
       && !(first.role === 'instruction' && first.text.startsWith('正在执行：')))) return task.rows
   return [{ text: issue.text, role: 'refuse' }, { text: WORDS.runWritebackGuide, role: 'system' }, ...task.rows.slice(1)]
 }
+// 这一支**故意**少躲 `\t`（`\x09`）与 `\n`（`\x0a`）两个：下面那一句把它们各自换成能用字符，
+// 所以它与 `hasControl` **不是同一批**，别拿那一句顶替它。
 const clean = (text: string): string => text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`).replace(/\t/g, '  ').trim()
-const pathText = (path: string): string => /[\s\x00-\x1f\x7f-\x9f]/.test(path) ? clean(JSON.stringify(path)) : path
+const pathText = (path: string): string => /\s/.test(path) || hasControl(path) ? clean(JSON.stringify(path)) : path
 function objectOf(body: string): Record<string, unknown> | null {
   try { const value = JSON.parse(body); return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null }
   catch { return null }

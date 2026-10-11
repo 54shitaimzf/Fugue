@@ -358,3 +358,24 @@ export function wrap(s: string, w: number): readonly string[] {
   if (rest !== '') out.push(rest)
   return out
 }
+
+// ---------------------------------------------------------------------------
+// 控制字节：**C0（`\x00`–`\x1f`）与 C1（`\x7f`–`\x9f`）的范围只写这一处。**
+//
+// 终端把 `\x1b` 当**一条序列的开头**：账上一行正文里混进一个不可见字节，屏幕上从那个字节起
+// 整幅错位（`\x1b[2J` 是清屏 · `\x1b[?1049h` 是换一块屏）。于是"这一段能不能原样落到终端"
+// 与"它的宽度怎么算"是同一个问题的两半，都归这一份管。
+//
+// 两份正则从同一个字符类建出来：`.test` 那一份**不带 `g`**——带 `g` 的正则会在两次调用之间
+// 记住上一次的位置，同一个字符串第二次问就答错。
+const CONTROL_CLASS = '\\x00-\\x1f\\x7f-\\x9f'
+const CONTROL = new RegExp('[' + CONTROL_CLASS + ']')
+const CONTROL_ALL = new RegExp('[' + CONTROL_CLASS + ']', 'g')
+
+/** 这一段里有没有 C0/C1 控制字符（含 `\n` 与 `\t`）？ */
+export function hasControl(s: string): boolean { return CONTROL.test(s) }
+
+/** 把 C0/C1 控制字符换成可见形状（`\uXXXX`）——转义之后它就是几个能读的字符，宽度也照它们算。 */
+export function escapeControl(s: string): string {
+  return s.replace(CONTROL_ALL, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+}
