@@ -97,8 +97,7 @@ function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {
       done()
     }
     const t = setTimeout(finish, ms)
-    if (signal?.aborted === true) finish()
-    else signal?.addEventListener('abort', finish)
+    signal?.addEventListener('abort', finish)
   })
 }
 

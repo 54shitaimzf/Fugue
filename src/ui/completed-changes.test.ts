@@ -39,9 +39,17 @@ test('accepted recorded commits supply a short actual change summary and complet
   const r=rows.map(x=>x.e.t==='round/state'?{...x,e:{...x.e,to:phase}}:x) as StatusRow[]
   assert.equal(taskOf(r).completion,undefined);assert.deepEqual(taskOf(r,null,false,changes),taskOf(r))
  }
- for(const r of [rows.filter(x=>x.e.t!=='merge/accept'),rows.map(x=>x.e.t==='round/intent'?{...x,e:{...x.e,base:'bad'}}:x),rows.map(x=>x.e.t==='merge/accept'?{...x,e:{...x.e,assertions:[{verdict:'fail'}]}}:x)]){
+ for(const r of [rows.filter(x=>x.e.t!=='merge/accept'),rows.map(x=>x.e.t==='round/intent'?{...x,e:{...x.e,base:''}}:x),rows.map(x=>x.e.t==='merge/accept'?{...x,e:{...x.e,assertions:[{verdict:'fail'}]}}:x)]){
   assert.equal(taskOf(r as StatusRow[]).completion,undefined)
  }
+ // 对象 id 的**算法是仓库的性质**：sha1 四十位、sha256 六十四位。这一层只问"记下了没有"，
+ // 不问字长——按四十位筛会在 sha256 库里把正常输入判死（提交改动摘要整个消失，一声不响）。
+ const sha256='c'.repeat(64),sha256Rows=rows.map(x=>x.e.t==='round/intent'?{...x,e:{...x.e,base:sha256}}
+  :x.e.t==='merge/accept'?{...x,e:{...x.e,commit:sha256}}:x) as StatusRow[]
+ assert.deepEqual(taskOf(sha256Rows).completion,{round:'r1',base:sha256,commit:sha256},
+  'sha256 库的六十四位对象 id 被当成坏输入，提交改动摘要整个没了')
+ assert.ok(messages(sha256Rows,{round:'r1',base:sha256,commit:sha256,files:changes.files}).includes('提交改动（5）'),
+  'sha256 库下改动摘要该照常出得来')
  assert.deepEqual(taskOf(rows,'agent/r1/1',false,changes),taskOf(rows,'agent/r1/1'),'focus does not pretend to own whole completed commit')
 })
 const tick = async()=>{await Promise.resolve();await Promise.resolve()}

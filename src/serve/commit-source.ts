@@ -14,7 +14,7 @@ export function openCommitSource(o: { readonly root: string; readonly git?: stri
   let closed = false
   return {
     read(request: CommitRequest, signal?: AbortSignal): Promise<CommitChanges | null> {
-      if (closed || signal?.aborted || !/^[a-f0-9]{40}$/.test(request.base) || !/^[a-f0-9]{40}$/.test(request.commit)) return Promise.resolve(null)
+      if (closed || signal?.aborted) return Promise.resolve(null)
       const controller = new AbortController(), cancel = (): void => controller.abort()
       signal?.addEventListener('abort', cancel, { once: true })
       const done = new Promise<CommitChanges | null>(resolve => {

@@ -64,7 +64,7 @@ export function openImageSource(o: ImageSourceOptions) {
   let closed = false
   return {
     read(request: ImageRequest, signal?: AbortSignal): Promise<PixelImage | null> {
-      if (closed || signal?.aborted || !/^[a-f0-9]{40}$/.test(request.blob)) return Promise.resolve(null)
+      if (closed || signal?.aborted) return Promise.resolve(null)
       const controller = new AbortController()
       const cancel = (): void => controller.abort()
       signal?.addEventListener('abort', cancel, { once: true })

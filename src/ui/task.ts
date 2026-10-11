@@ -122,8 +122,13 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
       case 'contract/issue': issued = true; break
     }
   }
+  // 判据是"这一轮真的记下了两个提交"，**不是**它们的字长：对象 id 的算法是仓库的性质
+  // （sha1 四十位、sha256 六十四位，见 view/contract.ts 那次事故），按四十位筛会在 sha256
+  // 库里把正常输入判死——提交改动摘要整个功能静默消失。是不是真提交由 `commit-source.ts`
+  // 那道边界对着 git 说了算，这一层只管有没有。
+  const recorded = (id: string): boolean => typeof id === 'string' && id !== ''
   const completion: CommitRequest | undefined = focus === null && state === 'Rebuilding' && accepted
-    && /^[a-f0-9]{40}$/.test(base) && /^[a-f0-9]{40}$/.test(commit) ? { round, base, commit } : undefined
+    && recorded(base) && recorded(commit) ? { round, base, commit } : undefined
   const exactChanges = completion !== undefined && changes != null && changes.round === round
     && changes.base === base && changes.commit === commit && Array.isArray(changes.files)
     && changes.files.every(f => f !== null && typeof f === 'object' && ['A', 'M', 'D', 'T'].includes(f.kind) && typeof f.path === 'string' && f.path !== '')
