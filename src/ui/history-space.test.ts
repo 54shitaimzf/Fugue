@@ -1,26 +1,7 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {openTerm} from './term.ts'
-
-// Fixed hard-line VT with real scrollback. Initial cursor is after two existing
-// shell rows, not at an imagined empty bottom. The model only accepts the output
-// controls involved in this unit; an unhandled sequence fails rather than vanishes.
-function screen(columns=40,rows=24){
- let lines=Array.from({length:rows},()=>''),history:string[]=[],x=0,y=0,scrolls=0
- const put=(raw:string)=>{for(let i=0;i<raw.length;){
-  const c=raw[i++]!
-  if(c==='\x1b'){
-   const m=/^\[([\d;]*)([A-Za-z])/.exec(raw.slice(i));assert.ok(m,'unhandled control');i+=m[0].length;const n=Number(m[1])||1
-   if(m[2]==='A')y=Math.max(0,y-n);else if(m[2]==='B')y=Math.min(rows-1,y+n);else if(m[2]==='C')x=Math.min(columns-1,x+n);else if(m[2]==='D')x=Math.max(0,x-n)
-   else if(m[2]==='K')lines[y]='';else if(m[2]==='M'){lines.splice(y,n);while(lines.length<rows)lines.push('')}
-   else assert.fail('unhandled CSI '+m[2])
-  }else if(c==='\r')x=0
-  else if(c==='\n'){if(++y===rows){history.push(lines.shift()!);lines.push('');y=rows-1;scrolls++}}
-  else {assert.ok(x<columns,'fixture must not wrap');const s=lines[y]!;lines[y]=s.slice(0,x).padEnd(x,' ')+c+s.slice(x+1);x++}
- }}
- put('SHELL0\r\nSHELL1\r\n')
- return {put,get all(){return [...history,...lines].map(s=>s.trimEnd())},get visible(){return lines.map(s=>s.trimEnd())},get caret(){return [x,y]},get scrolls(){return scrolls}}
-}
+import { screen } from '../../test/helpers/vt-scrollback.ts'
 const panel=(height:number,label:string)=>({rows:Array.from({length:height},(_,n)=>`${label}${n}`),input:{rows:['> hi'],caret:{row:0,col:2}}})
 function retained(vt:ReturnType<typeof screen>,expected:readonly string[]){for(const name of expected)assert.equal(vt.all.filter(s=>s===name).length,1,`${name} remains exactly once in visible screen or scrollback`)}
 test('dynamic normal panel reserves its own blank expansion space, never erases shell history, and leaves no old UI rows',()=>{
