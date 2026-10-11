@@ -15,7 +15,7 @@ function fixture(width: number, height: number): PixelImage {
 }
 
 /** 流式解释六像素列；扩展色定义、换色、重复、回行、换带各自消费一条 token。 */
-export function decodeSixel(raw: string): PixelImage {
+function decodeSixel(raw: string): PixelImage {
   const m = /^\x1bP0;1;0q"1;1;(\d+);(\d+)([\s\S]*)\x1b\\$/.exec(raw)
   assert.ok(m, 'Sixel 外壳与透明背景')
   const width = Number(m[1]), height = Number(m[2]), rgba = new Uint8Array(width * height * 4)

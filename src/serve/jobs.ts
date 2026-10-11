@@ -12,7 +12,7 @@
 //
 // 清点时机（§ 四 的"关闭后清点子进程这条判据不再数早"）：登记在 `run` 返回之后、`run` 里面
 // 那个同步段跑完之后——`jobs` 里那一条一定对应一个真开出来的东西，不会先记一条再开。
-export interface JobRegistry<T> {
+interface JobRegistry<T> {
   /** 记一趟：门已关、或调用方已掐，就直接回 `null` 且**不调** `run`。 */
   readonly add: (signal: AbortSignal | undefined, run: (inner: AbortController) => Promise<T | null>) => Promise<T | null>
   /** 收尾：先拒新的，再掐在飞的，再等它们落地。幂等。 */
