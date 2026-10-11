@@ -46,6 +46,11 @@ test('missing, failed, malformed, non-UTF8, too large, timed out or cancelled so
  const pending=source.read(request,ac.signal);ac.abort();assert.equal(await pending,null)
  const close=source.read(request);await source.close();assert.equal(await close,null)
  assert.equal(await source.read(request),null)
- assert.equal(process._getActiveHandles().filter((h:any)=>h.constructor.name==='ChildProcess'&&h.exitCode===null).length,0)
+ const live=()=>process._getActiveHandles().filter((h:any)=>h.constructor.name==='ChildProcess'&&h.exitCode===null).length
+ // 子进程的 'exit' 与 libuv 摘掉那个 handle 之间隔着一拍，所以先让事件循环转够再数。
+ // 判据没变（关完不许留活着的子进程），去掉的只是"数早了"这一种假红：真漏了转多少拍都还在。
+ let alive=live()
+ for(let i=0;i<100&&alive>0;i++){await new Promise<void>(done=>setImmediate(done));alive=live()}
+ assert.equal(alive,0,'关闭之后不许留下活着的子进程')
  console.log('commit source: exact objects; disk/HEAD unchanged; seven failure classes; cancel/close children0')
 })
