@@ -13,7 +13,7 @@
 import type { RendererId, SegmentValue } from './contract.ts'
 
 /** 渲染不出来：值与渲染器对不上，或者值里带着渲染器表达不了的形状。 */
-export class RenderError extends Error {}
+class RenderError extends Error {}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)

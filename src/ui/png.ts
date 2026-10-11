@@ -5,7 +5,7 @@ import { fitPixels } from './pixels.ts'
 import type { PixelImage } from './image-codec.ts'
 
 export const MAX_PNG_BYTES = 8 * 1024 * 1024
-export const MAX_PNG_PIXELS = 16 * 1024 * 1024
+const MAX_PNG_PIXELS = 16 * 1024 * 1024
 const SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 const CHANNELS: Readonly<Record<number, number>> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }
 const DEPTHS: Readonly<Record<number, readonly number[]>> = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] }

@@ -639,7 +639,7 @@ function decodedOf(action: UiAction, bytes: string): Decoded {
 }
 
 /** 字节 → 动作（一张表只在这里建一次；加一条键不会漂）。 */
-export function byteMapOf(km: Keymap = KEYMAP): ReadonlyMap<string, Decoded> {
+function byteMapOf(km: Keymap = KEYMAP): ReadonlyMap<string, Decoded> {
   const out = new Map<string, Decoded>()
   for (const b of km.rows) {
     for (const k of b.keys) {
@@ -903,7 +903,7 @@ export function hintLineForWidth(columns: number, km: Keymap = KEYMAP, when: Hin
 }
 
 /** 写进终端历史的那一句注记里放几条（第三幕 ②）：常数收在这里，不在两处各写一个数。 */
-export const NOTE_KEYS = 4
+const NOTE_KEYS = 4
 
 /**
  * 同一档下"按什么键干什么"的那一段——**不带 `按键 ` 抬头，也不带"还有 N 条"那一句尾巴**。给写进

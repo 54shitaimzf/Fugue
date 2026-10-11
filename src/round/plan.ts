@@ -300,7 +300,7 @@ export function holderFace(inner: ToolExecutor, opts: HolderFaceOptions = {}): T
  * 步数那一句与 `runtime/step.ts` 停下来用的那个数**同源**：两处读的都是 `wire.maxSteps`
  * （`cli/fugue.ts` 的 `holderWiringOf` 与 `roundPlan`）——一个数的两处用法，不是两个数。
  */
-export function holderClosingRuleLines(maxSteps?: number): readonly string[] {
+function holderClosingRuleLines(maxSteps?: number): readonly string[] {
   return [
     ...stepBudgetLine(maxSteps),
     'This task has no executable tree: the planning phase materializes nothing, so `bash` and `run_action` cannot work here — whatever has to be checked runs in the acceptance step after dispatch.',

@@ -227,7 +227,7 @@ export function stepBudgetLine(maxSteps?: number): readonly string[] {
  * **一个窗口管两格**（持轮者那一格 · 契约那一格）：它是"落产物的最小余量"这个量，不是上界的
  * 比例——上界 4 那一档因此从第 1 步起就说（那一档本来就只剩四步，那是实话）。
  */
-export const STEPS_HINT_AT = 3
+const STEPS_HINT_AT = 3
 
 /**
  * **语言那一句**（谁读谁的语言：这一格是"模型面"那半）。

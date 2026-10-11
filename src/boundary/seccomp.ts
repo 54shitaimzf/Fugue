@@ -19,9 +19,9 @@ import { join } from 'node:path'
 import type { Roots } from '../roots/contract.ts'
 import type { AbsPath } from '../terms.ts'
 
-export const SECCOMP_DIR = join('.fugue', 'bin')
-export const SECCOMP_SRC = 'seccomp-exec.c'
-export const SECCOMP_BIN = 'seccomp-exec'
+const SECCOMP_DIR = join('.fugue', 'bin')
+const SECCOMP_SRC = 'seccomp-exec.c'
+const SECCOMP_BIN = 'seccomp-exec'
 
 /**
  * 沙箱那一侧的落点：与 `landlock-exec` 同款点名挂（`ls /` 那份读数一个字节不变，
@@ -29,7 +29,7 @@ export const SECCOMP_BIN = 'seccomp-exec'
  */
 export const SECCOMP_SANDBOX_PATH = '/.fugue/seccomp-exec'
 
-export const SECCOMP_C_SRC: string = String.raw`// 逃逸面封禁的那个小包装器（计划 § 5.20 的 P1b）。由 fugue 生成，别手改：
+const SECCOMP_C_SRC: string = String.raw`// 逃逸面封禁的那个小包装器（计划 § 5.20 的 P1b）。由 fugue 生成，别手改：
 // 源码那一份在 src/boundary/seccomp.ts 里，改了它下一次运行会重编这一份。
 //
 // 只封一条：socket(AF_VSOCK) -> EPERM，其余一律放行（见那一份的头注：AF_VSOCK 不归

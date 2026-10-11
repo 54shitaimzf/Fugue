@@ -464,7 +464,7 @@ export type AssertionRun =
   | { readonly kind: 'not-run'; readonly note: string }
 
 /** `expect` 的缺省：期望退出码 0。 */
-export const DEFAULT_EXPECT = 0
+const DEFAULT_EXPECT = 0
 
 /**
  * 一条断言的判决。**三档由"跑没跑成"与"对不对"两问定**，不是由退出码一个数定：

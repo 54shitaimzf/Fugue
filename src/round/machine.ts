@@ -46,7 +46,7 @@ export const STATES: readonly RoundState[] = [
 export type BranchState = 'Forked' | 'Working' | 'Done' | 'Failed' | 'Preempted' | 'Merged' | 'Discarded'
 
 /** 这一站停下来的那三档：到了这三档，`Collecting` 的 gc 屏障才开（架构 § 8.13 的第三个关键点）。 */
-export const STOPPED: readonly BranchState[] = ['Done', 'Failed', 'Preempted']
+const STOPPED: readonly BranchState[] = ['Done', 'Failed', 'Preempted']
 
 /** 分支的处境：一个 agent 一条。**它只由 `branch/state` 那一类事件推动**，不在这里推断。 */
 export type Branches = Readonly<Record<AgentId, BranchState>>
@@ -165,7 +165,7 @@ export interface StepContext {
 }
 
 /** 一条边上的守卫现在成立吗。**不成立的报法要指得出是哪一条守卫。** */
-export function guardOk(edge: Edge, ctx: StepContext): boolean {
+function guardOk(edge: Edge, ctx: StepContext): boolean {
   if (edge.guard === undefined) return true
   if (edge.guard === 'intent') return ctx.intent === true
   if (edge.guard === 'all-stopped') {

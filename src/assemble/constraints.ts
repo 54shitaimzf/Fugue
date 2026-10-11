@@ -35,7 +35,7 @@ export interface Violation {
 }
 
 /** 四条约束各自的名字，给人读的输出用。 */
-export const CONSTRAINT_NAMES: Readonly<Record<ConstraintKind, string>> = {
+const CONSTRAINT_NAMES: Readonly<Record<ConstraintKind, string>> = {
   'append-only': 'C 区只追加，绝不修改中部',
   materialized: '物化路径不进入任何区',
   env: '环境标识不进入 A 区',
@@ -56,7 +56,7 @@ export const CONSTRAINT_KINDS: readonly ConstraintKind[] = ['append-only', 'mate
 const ABS_PATH = /(?:^|[ \t"'`(=:,[\]-])(\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+)/
 
 /** Signal 原文的靶子形状：`digest` 那一个键（`signal` 事件独有，合并后的摘要不带它）。 */
-export const SIGNAL_SHAPE = /digest"?[ \t]*[:=]/
+const SIGNAL_SHAPE = /digest"?[ \t]*[:=]/
 
 /** 这一刻这台机器上的环境标识。 */
 export interface EnvFacts {
@@ -197,7 +197,7 @@ export function sharedPrefixLen(a: Uint8Array, b: Uint8Array): number {
 }
 
 /** 四条约束各自的号：给人读的输出里那一个前缀。 */
-export function kindIndex(kind: ConstraintKind): number {
+function kindIndex(kind: ConstraintKind): number {
   return CONSTRAINT_KINDS.indexOf(kind) + 1
 }
 

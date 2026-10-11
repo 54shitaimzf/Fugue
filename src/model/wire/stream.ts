@@ -63,7 +63,7 @@ export interface WireAdapter {
  * 键按字典序的 JSON。**同一份输入两个适配器各自序列化，都必须逐字节稳定**——缓存要求的是字节，
  * 而对象字面量的键序是写下来的顺序，不是保证。
  */
-export function stableJson(v: unknown): string {
+function stableJson(v: unknown): string {
   if (v === null || typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') return JSON.stringify(v)
   if (Array.isArray(v)) return `[${v.map(stableJson).join(',')}]`
   if (typeof v === 'object') {
@@ -82,7 +82,7 @@ export function bodyOf(v: unknown): Uint8Array {
 }
 
 /** 拆开一个块里完整的那些行：留下的尾巴（没有换行的那一段）**一个字都不能丢**。 */
-export function splitLines(buf: Uint8Array): { lines: string[]; tail: Uint8Array } {
+function splitLines(buf: Uint8Array): { lines: string[]; tail: Uint8Array } {
   const lines: string[] = []
   let from = 0
   for (let i = 0; i < buf.length; i++) {

@@ -37,7 +37,7 @@ import { createHash } from 'node:crypto'
 
 /** 魔数：认得出这份文件是什么。**长度写进常数**，读的一侧不数第二遍。 */
 export const INDEX_MAGIC = 'FUGUEIDX'
-export const INDEX_MAGIC_BYTES = 8
+const INDEX_MAGIC_BYTES = 8
 /**
  * 容器格式的版本。**语义一变就跳它**；读的一侧只认这一个值，认不出的一律当损坏。
  *

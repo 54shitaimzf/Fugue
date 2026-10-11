@@ -309,7 +309,7 @@ function tokensOf(u: {
 }
 
 /** 逐条那一份的缺省上限：**库入口与读面共用这一个数**（与 `receipt.ts` 那套常数同一个意思）。 */
-export const LEDGER_MAX_CALLS = 5000
+const LEDGER_MAX_CALLS = 5000
 
 /** 一格的累计（合计与分组都从**全部**调用上累积，与「逐条保留了几条」无关）。 */
 interface GroupAcc {

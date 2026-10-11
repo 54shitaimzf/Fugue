@@ -152,7 +152,7 @@ export const OTHER_AGENT: AgentId = 'agent/r1/2'
 export const PROBE_FILES = { a: 'src/a.c', b: 'src/b.ts' } as const
 
 /** 树里那条软链的名字（指向工作区之外）。 */
-export const OUT_LINK = 'out-link'
+const OUT_LINK = 'out-link'
 
 /**
  * 这一档声明的目录（架构 § 8.6 第 1 步：声明目录绑到本 agent 的缓存上）。跑器按它挂，

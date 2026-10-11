@@ -55,7 +55,7 @@ function parseEntry(raw: unknown): SnapEntry | null {
 }
 
 /** 形状与信封都对，才是一份能用的快照。`seq` 从文件名来，两边互相校对。 */
-export function parseSnapshot(text: string, seq: LogSeq): ViewSnapshot | null {
+function parseSnapshot(text: string, seq: LogSeq): ViewSnapshot | null {
   let raw: unknown
   try {
     raw = JSON.parse(text)

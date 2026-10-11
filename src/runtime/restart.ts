@@ -104,7 +104,7 @@ export function digestOf(body: string): string {
  * ——换线就等于把前面的产物丢在另一条分支上，而"同一分支上一个新 `AgentId`"那句话说的正是
  * 这件事。
  */
-export async function recordHandoff(
+async function recordHandoff(
   log: Log,
   writer: WriterId,
   i: {

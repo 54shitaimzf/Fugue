@@ -80,7 +80,7 @@ export const MIN_HEIGHT = MIN_FRAME_ROWS
  * **U2 之后的那句老话不成立了**：`innerOf` 把 `width - 2` 夹成 0 之后，"负数进了 `repeat` 当场
  * RangeError"这条已经不存在。守的东西因此收窄成一条——别印一个空框；出处与可达性一字未改。
  */
-export const MIN_WIDTH = 3
+const MIN_WIDTH = 3
 
 /**
  * **框内那一栏**占几列（左右两根竖线各一列）。**这是它的唯一出处**——面板自己那一栏与舞台那几处
@@ -239,7 +239,7 @@ function usageText(t: { readonly total: number; readonly missing: number }): str
  * 是越花越多还是收住了"，再长一行里也读不出更多。改主意的条件＝人嫌短——改这一个数，那一行别处
  * 一个字节都不动。
  */
-export const SPARK_ROUNDS = 8
+const SPARK_ROUNDS = 8
 
 /**
  * 近几轮用量那条小条形（可读性三件 ② 的 sparkline）。**每轮一格**，四档从字形档取

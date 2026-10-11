@@ -36,7 +36,7 @@ export const GO_LINE = 'round go'
  * 不理它，而界面那一头已经跟人说了"打断了"。有界的那一刀让那句话兑现（`T7` 那一行："`SIGINT` 起、
  * 有界升级 `SIGKILL`（进程组）"）。**常数写在一处**：觉得长或短改它，不动结构。
  */
-export const KILL_AFTER_MS = 2000
+const KILL_AFTER_MS = 2000
 
 /** 输入模式那一轴（PLAN § 5.19 三）：行首是 `/` 就是命令，否则是话。 */
 export type LineMode = 'Command' | 'Say'
@@ -64,7 +64,7 @@ export function selfArgvOf(argv: readonly string[] = process.argv): readonly str
  * 认不出来的三档都说出为什么：空行 · 引号没闭合 · 行首 `!`（任意 shell 是架构 § 9.8 不许的旁路，
  * 这一档明确拒绝——安静丢掉会让人以为"按下去没反应"）。
  */
-export function wordsOf(line: string): { readonly words: readonly string[]; readonly why: string | null } {
+function wordsOf(line: string): { readonly words: readonly string[]; readonly why: string | null } {
   const text = line.trim()
   if (text === '') return { words: [], why: '这一行是空的（没有命令可起）' }
   if (text.startsWith('!')) return { words: [], why: '`!` 那一档不做：界面不过 shell（架构 § 9.8 不许那条旁路）' }
@@ -145,7 +145,7 @@ export type SpawnFn = (file: string, args: readonly string[]) => Spawned
  * 命令），而"打断这一趟"要打断的是**整棵子树**——只杀父进程会留下举着那几条命令的孤儿（`T7` 那条
  * 断言量的就是它）。`detached` 在这里**不是**为了脱离终端（stdio 全是管道），是为了拿到自己的组号。
  */
-export const spawnChild: SpawnFn = (file, args) => {
+const spawnChild: SpawnFn = (file, args) => {
   const c = spawn(file, [...args], { stdio: ['ignore', 'pipe', 'pipe'], detached: true })
   return {
     out: (c.stdout ?? null) as unknown as AsyncIterable<Uint8Array> | null,

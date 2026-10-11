@@ -1,6 +1,6 @@
 // 图片能力按显式 auto 选择；不明能力、控制台与复用器退文字。
 // 实际像素由阅读面按可见事件请求，终端层独立摆放与清理。
-export const GRAPHICS_TIERS = ['none', 'sixel', 'kitty'] as const
+const GRAPHICS_TIERS = ['none', 'sixel', 'kitty'] as const
 
 /** 探到的那一档（`none` = 这一台画不了图，或这一档被关了）。 */
 export type GraphicsTier = (typeof GRAPHICS_TIERS)[number]

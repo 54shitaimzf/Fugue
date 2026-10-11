@@ -63,7 +63,7 @@ export function eventLine(pos: LogPos, e: LogEvent): string {
 }
 
 /** 一行事件的 `--json` 那一面。 */
-export function eventJson(pos: LogPos, e: LogEvent): string {
+function eventJson(pos: LogPos, e: LogEvent): string {
   return JSON.stringify({ pos, e })
 }
 
@@ -114,10 +114,10 @@ async function statusOnce(
 
 /** 轮询的间隔（毫秒）——**纯轮询**，不引守护进程（施工单 § 五 ④）。取值依据：折一遍账是毫秒
  * 级，500 ms 是「人眨眼」的一档，而它也不会把 CPU 咬住。 */
-export const WAIT_POLL_MS = 500
+const WAIT_POLL_MS = 500
 
 /** `--timeout <秒>` 的缺省：30 秒（与 `serve` 的闲时阈值同一档——都是「人看着等」的尺度）。 */
-export const WAIT_TIMEOUT_S = 30
+const WAIT_TIMEOUT_S = 30
 
 /** `--timeout <秒>` 的解析（不给就是 `WAIT_TIMEOUT_S`；读不动是用法错）。 */
 function timeoutOf(a: ValueArgs): number {

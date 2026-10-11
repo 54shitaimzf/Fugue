@@ -73,7 +73,7 @@ export interface Fixture {
   readonly record: CallRecord | null
 }
 
-export const FIXTURE_VERSION = 1
+const FIXTURE_VERSION = 1
 
 const decoder = new TextDecoder()
 const encoder = new TextEncoder()

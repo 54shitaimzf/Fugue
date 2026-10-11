@@ -170,7 +170,7 @@ export function isMounted(p: AbsPath): boolean {
 }
 
 /** mountinfo 的转义：空格 · 制表 · 换行 · 反斜杠写成 `\040` 这样的三位八进制。 */
-export function unescapeMountField(s: string): string {
+function unescapeMountField(s: string): string {
   return s.replace(/\\([0-7]{3})/g, (_m, oct: string) => String.fromCharCode(parseInt(oct, 8)))
 }
 

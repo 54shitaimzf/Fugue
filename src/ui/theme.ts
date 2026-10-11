@@ -136,7 +136,7 @@ export type Background = 'light' | 'dark' | 'default'
 /** COLORFGBG 的最后一格是宿主背景。只认明确的浅/深基础色；缺失或其他色保持中性。
  * 不向终端发背景探针，也不假设所有 256 色终端都用暗底。
  */
-export function backgroundOf(colorFgBg?: string): Background {
+function backgroundOf(colorFgBg?: string): Background {
   const last = colorFgBg?.split(';').at(-1)
   return last === '15' || last === '7' ? 'light' : last === '0' || last === '8' ? 'dark' : 'default'
 }

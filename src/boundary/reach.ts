@@ -37,7 +37,7 @@ export interface ReachSpec {
 }
 
 /** 改 `roRoots` 的那一个键（点分键，架构 § 15.3.a）。 */
-export const REACH_KEY = 'boundary.reach'
+const REACH_KEY = 'boundary.reach'
 
 /**
  * 缺省清单 = S5 站前那次探针量出来的那几项（`f9ff1b7`）：`/usr` 与 `/opt`（node 在那儿）·

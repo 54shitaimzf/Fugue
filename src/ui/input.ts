@@ -27,23 +27,23 @@ import type { UiAction } from './keymap.ts'
 import { clustersOf, widthOf } from './glyph.ts'
 
 /** 折叠阈值：粘进来的东西超过其中任意一条就折起来（显示成一块牌子，`Ctrl-O` 展开）。 */
-export const FOLD_LINES = 4
-export const FOLD_COLS = 240
+const FOLD_LINES = 4
+const FOLD_COLS = 240
 
 /** 撤销栈有几层（再多也不给人退到半小时前）。 */
 export const UNDO_DEPTH = 64
 
 /** kill 环有几格（`Ctrl-Y` 只粘最近那一格）。 */
-export const KILL_DEPTH = 8
+const KILL_DEPTH = 8
 
 /** 输入行最多长到几行（第 1 行是主体，其余是续行）；再多就按光标滚。 */
 export const INPUT_ROWS = 3
 
 /** 换行在显示里的记号（一列）。原文里那个字节照旧是 `\n`。 */
-export const NEWLINE_MARK = '↵'
+const NEWLINE_MARK = '↵'
 
 /** 制表符在显示里占几列（真 tab stop 是每八列一格；输入行里按光标起算更乱，先按四列）。 */
-export const TAB_COLS = 4
+const TAB_COLS = 4
 
 /** 一段折起来的粘贴：`[start, end)` 是它在 `text` 上的位置。 */
 export interface Fold {
@@ -128,7 +128,7 @@ export type Intent =
   | { readonly t: 'setLine'; readonly text: string }
 
 /** 折叠块在显示里的样子。 */
-export function chipOf(f: Fold): string {
+function chipOf(f: Fold): string {
   return `[粘贴 ${f.lines} 行 · ${f.chars} 字]`
 }
 
@@ -464,7 +464,7 @@ interface Piece {
  * 找到的那一条），否则**清空这一行**。清掉的那一份在撤销栈上（表里 `Ctrl-Z` 那一格说的
  * "恢复刚清掉的草稿"就是它），也在 kill 环里。
  */
-export function cancelAt(e: Editor): Editor {
+function cancelAt(e: Editor): Editor {
   if (e.search !== null) return { ...e, search: null }
   if (e.draft.text === '') return e
   return withDraft(e, killRange(e.draft, 0, e.draft.text.length))

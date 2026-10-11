@@ -20,7 +20,7 @@ export interface ImagePlace {
   readonly colors?: number
 }
 
-export const IMAGE_CHUNK_BYTES = 4096
+const IMAGE_CHUNK_BYTES = 4096
 export const MAX_IMAGE_PIXELS = 262_144
 
 function positive(n: number): boolean { return Number.isSafeInteger(n) && n > 0 }

@@ -98,7 +98,7 @@ export function selfTiers(): readonly AskTier[] {
  * 回复的形状是**两行、键是英文**（模型面英文 · 人面中文）：`tier:` 与 `ruling:`。解析那一侧
  * （`verdictOf`）认的就是这两行——多一行少一行都算判不出来，走退化路。
  */
-export function askRulerText(): string {
+function askRulerText(): string {
   const self = selfTiers()
   const lines = [
     `Ask ruler (${ASK_RULER_VERSION}). You are the round holder judging a question that a contract cell carried back. ` +
