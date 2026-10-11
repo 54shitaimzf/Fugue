@@ -391,7 +391,11 @@ export function openStage(deps: StageDeps): Stage {
     if (reading?.face !== 'diff') return null
     const content = readerContent(readFaces(), 'diff')
     // 标题移出正文后，仍保留原预览容量地板，不顺带启用更矮窗口的图片。
-    const at = readImageAt(readState, cols(), reading.top + content.removedTitleRows, Math.min(heightWant(), (deps.termRows() ?? Number.POSITIVE_INFINITY) - 1) - 4 - content.removedTitleRows)
+    // `- 4` 是给页脚与操作区留的容量。这一格**算出来的余量**今天没有断言固定住：图放不放得下由
+    // `readImageAt` 自己判，而 `preview.test.ts` 那一族断言的是"不出框 · 至少两行"。
+    // 负对照实测：把 4 改成 5，fast 1278/1278、real 144/144 两档全绿——要固定这一格的确切值，
+    // 得有一张正好把余量吃满的图（0.5.x 候选，形状见停点报告）。
+    const at = readImageAt(readState, cols(), reading.top + content.removedTitleRows, stageHeight() - 4 - content.removedTitleRows)
     return at === null ? null : { request: at.request, after: at.after - content.removedTitleRows }
   }
   const syncImage = (): void => {
@@ -554,9 +558,10 @@ export function openStage(deps: StageDeps): Stage {
    */
   const cols = (): number => { const width = deps.columns(); readingWidth ??= width; return innerOf(width) }
   /**
-   * 期望高度夹进宿主容量（留一行）——**这一个数有四处要**：门口那一块 · 队列余量 · 候选层详情行 ·
-   * 阅读翻页步长。从前是四处各拼一遍 `Math.min(heightWant(), (deps.termRows() ?? ∞) - 1)`，
-   * 各带各的 `Math.max`；算式收在这里一处。
+   * 期望高度夹进宿主容量（留一行）——**五处要**：门口那一块 · 队列余量 · 候选层详情行 ·
+   * 阅读翻页步长（它把已经量到手的那一个数递进来） · diff 那张图的落点。从前是各拼一遍
+   * `Math.min(heightWant(), (deps.termRows() ?? ∞) - 1)`，各带各的 `Math.max`；算式收在这里一处，
+   * 全份 `stage.ts` 里只剩这一个定义。
    *
    * **先量再问**：`heightWant` 自己读 `deps.termRows()` 分账，所以这里现读一次就是那一帧的行数。
    * 量不到行数（`undefined`）时不夹——与从前逐字节相同。已经量到手的那一个数经 `rows` 递进来
