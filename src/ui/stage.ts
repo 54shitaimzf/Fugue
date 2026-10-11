@@ -116,6 +116,37 @@ export interface Stage {
 }
 
 /**
+ * **单槽**：一种派生数据一次只留一个在飞的请求。
+ *
+ * `keep(key)` —— 键与槽里那一个相同就回 `null`（留着，不重发也不重来）；不同就把上一个掐掉、
+ * 槽换成新的，回新控制器。`still(controller)` —— 落地前先问一句"槽里还是不是我"：迟到的回话
+ * 落到别人的槽上就是串台，键换过、被掐过、门关过，三种都答不是。`stop()` —— 掐掉并清空。
+ *
+ * **`planContent` 那一处同步 memo 不在这副骨架里**：它没有在飞态，也没有要掐的东西——键换了
+ * 就地重算，算完就是结果。把它塞进来得先给它编一个"永不 abort 的控制器"，那是给一处纯计算
+ * 加一层异步壳，不是收拢。
+ */
+function openCurrent<K>(): {
+  readonly keep: (key: K) => AbortController | null
+  readonly still: (controller: AbortController) => boolean
+  readonly stop: () => void
+} {
+  let key: K | undefined
+  let controller: AbortController | null = null
+  return {
+    keep(next) {
+      if (controller !== null && next === key) return null
+      controller?.abort()
+      key = next
+      controller = new AbortController()
+      return controller
+    },
+    still(who) { return controller === who && !who.signal.aborted },
+    stop() { controller?.abort(); controller = null },
+  }
+}
+
+/**
  * 舞台：一份**纯视图状态**（焦点 · 输入行 · 弹层 · 排队草稿 · 门口那块的视图位），加上围绕它的
  * 那一整套纯分派。**它不注册信号、不碰 `process`、不持写句柄**——那三样都是调用方的
  * （`cli/cmd/observe.ts` 的 `tuiCmd`）。
@@ -136,16 +167,16 @@ export function openStage(deps: StageDeps): Stage {
   let runRound: string | null = null
   let runTask = false, runIssue: RunIssue | null = null
   let runIssueAction: string | undefined
-  let commitKey = '', commitController: AbortController | null = null, completedChanges: CommitChanges | undefined
+  const commitSlot = openCurrent<string | null>()
+  let completedChanges: CommitChanges | undefined
   const refreshCommit = (): void => {
     const request = taskOf(deps.rows()).completion
-    const key = request === undefined ? '' : JSON.stringify(request)
-    if (key === commitKey) return
-    commitController?.abort(); commitController = null; completedChanges = undefined; commitKey = key
+    const controller = commitSlot.keep(request === undefined ? null : JSON.stringify(request))
+    if (controller === null) return
+    completedChanges = undefined
     if (request === undefined || deps.readCommit === undefined) return
-    const controller = new AbortController(); commitController = controller
     void deps.readCommit(request, controller.signal).then(value => {
-      if (controller.signal.aborted || commitController !== controller) return
+      if (!commitSlot.still(controller)) return
       completedChanges = value ?? undefined; deps.redraw()
     }).catch(() => { /* Reading commit details cannot prevent ordinary task/command use. */ })
   }
@@ -350,7 +381,8 @@ export function openStage(deps: StageDeps): Stage {
   }
   const planRows = (): readonly string[] => planContent().rows
   const readPosition = (rows: readonly string[], top: number): string => `${top + 1}/${rows.length} 行 · 只读`
-  let previewJob: { key: string; controller: AbortController; state: ReadPreview['state']; image?: PixelImage } | null = null
+  let previewJob: { key: string; state: ReadPreview['state']; image?: PixelImage } | null = null
+  const imageSlot = openCurrent<string | null>()
   let closed = false
   const imageKey = (r: ImageRequest): string => JSON.stringify([r.agent, r.path, r.blob])
   const imageAt = () => {
@@ -364,20 +396,18 @@ export function openStage(deps: StageDeps): Stage {
     const graphics = deps.graphics?.()
     const at = !closed && showInput && planTop === null && (graphics === 'kitty' || graphics === 'sixel') && panel === null && queue.items.length === 0 && !(gate !== null && !gateHidden) ? imageAt() : null
     const key = at === null ? null : imageKey(at.request)
-    if (key !== null && key === previewJob?.key) return
-    previewJob?.controller.abort()
+    const controller = imageSlot.keep(key)
+    if (controller === null) return
     previewJob = null
     if (at === null || deps.readImage === undefined) return
-    const controller = new AbortController()
-    previewJob = { key: key!, controller, state: 'loading' }
-    void deps.readImage(at.request, controller.signal).then(image => {
-      if (closed || controller.signal.aborted || previewJob?.controller !== controller) return
-      previewJob = { key: key!, controller, state: image === null ? 'unavailable' : 'ready', ...(image === null ? {} : { image }) }
+    previewJob = { key: key!, state: 'loading' }
+    // 两条落地路写的是同一个对象：读回来的那张图为 `null` 与被拒都是 `unavailable`、都不带图。
+    const settle = (image: PixelImage | null): void => {
+      if (closed || !imageSlot.still(controller)) return
+      previewJob = { key: key!, state: image === null ? 'unavailable' : 'ready', ...(image === null ? {} : { image }) }
       deps.redraw()
-    }, () => {
-      if (closed || controller.signal.aborted || previewJob?.controller !== controller) return
-      previewJob = { key: key!, controller, state: 'unavailable' }; deps.redraw()
-    })
+    }
+    void deps.readImage(at.request, controller.signal).then(settle, () => settle(null))
   }
 
   /** 起一次弹层：选中项从头一条起（候选变了以后 `settle` 会把它夹回来）。 */
@@ -1111,9 +1141,9 @@ export function openStage(deps: StageDeps): Stage {
     onResize() { reflowRead(); clearSmallGate(); syncImage() },
     close(): void {
       closed = true
-      commitController?.abort(); commitController = null; completedChanges = undefined
+      commitSlot.stop(); completedChanges = undefined
       planSnap = null
-      previewJob?.controller.abort()
+      imageSlot.stop()
       previewJob = null
     },
     setRaw(raw: boolean): void {
