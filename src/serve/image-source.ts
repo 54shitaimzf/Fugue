@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import { MAX_PNG_BYTES } from '../ui/png.ts'
+import { openJobs } from './jobs.ts'
 import type { PixelImage } from '../ui/image-codec.ts'
 
 export interface ImageRequest {
@@ -60,32 +61,21 @@ function decodeAsync(bytes: Buffer, signal: AbortSignal): Promise<PixelImage | n
 
 /** 请求与客户端同命；失败只退预览，保留路径，不影响事件通道。 */
 export function openImageSource(o: ImageSourceOptions) {
-  const jobs = new Map<AbortController, Promise<PixelImage | null>>()
-  let closed = false
+  const jobs = openJobs<PixelImage>()
   return {
     read(request: ImageRequest, signal?: AbortSignal): Promise<PixelImage | null> {
-      if (closed || signal?.aborted) return Promise.resolve(null)
-      const controller = new AbortController()
-      const cancel = (): void => controller.abort()
-      signal?.addEventListener('abort', cancel, { once: true })
-      const timer = setTimeout(cancel, o.timeoutMs ?? 3_000)
-      timer.unref()
-      const done = (async (): Promise<PixelImage | null> => {
-        const bytes = await readBytes(o, request, controller.signal)
-        if (bytes === null || controller.signal.aborted) return null
-        const blob = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')
-        if (blob !== request.blob) return null
-        return await decodeAsync(bytes, controller.signal)
-      })().catch(() => null).finally(() => {
-        clearTimeout(timer); signal?.removeEventListener('abort', cancel); jobs.delete(controller)
+      return jobs.add(signal, inner => {
+        const timer = setTimeout(() => inner.abort(), o.timeoutMs ?? 3_000)
+        timer.unref()
+        return (async (): Promise<PixelImage | null> => {
+          const bytes = await readBytes(o, request, inner.signal)
+          if (bytes === null || inner.signal.aborted) return null
+          const blob = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')
+          if (blob !== request.blob) return null
+          return await decodeAsync(bytes, inner.signal)
+        })().catch(() => null).finally(() => clearTimeout(timer))
       })
-      jobs.set(controller, done)
-      return done
     },
-    async close(): Promise<void> {
-      closed = true
-      for (const controller of jobs.keys()) controller.abort()
-      await Promise.allSettled(jobs.values())
-    },
+    close: (): Promise<void> => jobs.close(),
   }
 }
