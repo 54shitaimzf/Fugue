@@ -145,11 +145,6 @@ export function setGlyphTier(tier: GlyphTier): GlyphTier {
   return was
 }
 
-/** 当前那一档。 */
-export function glyphTier(): GlyphTier {
-  return CURRENT
-}
-
 /** 当前那一档的字形。 */
 export function glyphs(): GlyphSet {
   return GLYPHS[CURRENT]

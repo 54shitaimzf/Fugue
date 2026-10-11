@@ -11,7 +11,6 @@
 // 长的**：迁一条加一行，别的什么都不动。表里的键必须都在 `FLAGS_OF` 里（`registry.test.ts` 量
 // 这一条）——命令面单一真源那条纪律在值层这一头也成立。
 import { FLAGS_OF } from '../cli/flags.ts'
-import type { FlagTable } from '../cli/flags.ts'
 import { logValue, statusValue, watchValue } from './observe.ts'
 import {
   branchValue,
@@ -67,11 +66,6 @@ export function valueRunnerOf(key: string): ValueRunner | null {
   return VALUE_LAYER[key] ?? null
 }
 
-/** 值层迁到哪儿了——一条命令的键（`log` · `round new` 那种）。 */
-export function isMigrated(key: string): boolean {
-  return VALUE_LAYER[key] !== undefined
-}
-
 /**
  * **方法名从 § 9.6 派生**（§ 9.11 那句话的可执行形态）：命令与子命令各占一段，段与段之间用 `.`
  * 连。`FLAGS_OF` 的键就是那条命令（`round new`），所以 `<a> <b>` → `<a>.<b>`。
@@ -94,9 +88,4 @@ export function keyOfMethod(method: string): string {
 /** `FLAGS_OF` 里每一条动词命令的键（入口那一档减掉）。 */
 export function verbKeys(): readonly string[] {
   return Object.keys(FLAGS_OF).filter((k) => !ENTRY_KEYS.includes(k))
-}
-
-/** 一张表的开关名单（serve 解析参数时要它：方法收的 `params` 就是这些名字）。 */
-export function flagsFor(key: string): FlagTable | undefined {
-  return FLAGS_OF[key]
 }

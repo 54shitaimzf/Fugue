@@ -103,11 +103,6 @@ int main(int argc, char **argv) {
 }
 `
 
-/** 包装器在宿主上那一份：`<realRoot>/.fugue/bin/seccomp-exec`（与 landlock-exec 同目录）。 */
-export function seccompHelperPath(roots: Roots): AbsPath {
-  return join(roots.realRoot, SECCOMP_DIR, SECCOMP_BIN)
-}
-
 export interface SeccompMade {
   readonly ok: boolean
   readonly bin: AbsPath
@@ -168,12 +163,4 @@ export function ensureSeccompHelper(roots: Roots): SeccompMade {
   } catch (err) {
     return { ok: false, bin, note: `这一层落不下来：${String((err as Error).message)}` }
   }
-}
-
-/**
- * argv 外面加一层：先装过滤器、再 `execvp` 原命令行。包装器自己不认策略——它只封那一条
- * （沙箱那一侧用 `SECCOMP_SANDBOX_PATH` 当这一格的 bin，宿主那一侧用 `bin` 本身）。
- */
-export function seccompArgv(bin: string, argv: readonly string[]): string[] {
-  return [bin, ...argv]
 }

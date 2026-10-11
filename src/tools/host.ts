@@ -758,26 +758,3 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     deny,
   }
 }
-
-/** 从 `<root>` 起一份真源与一份日志（模型侧那一面**不经过命令行**的一条路：`B5` 的断言 ⑤ 用它）。 */
-export async function openHostParts(
-  root: string,
-  writer: WriterId,
-): Promise<{
-  readonly truth: Truth
-  readonly log: Log & { readonly close: () => Promise<void> }
-  readonly close: () => Promise<void>
-}> {
-  const { openLog } = await import('../log/log.ts')
-  const { openTruth } = await import('../truth/truth.ts')
-  const truth = openTruth(root)
-  const log = openLog(root, { write: writer, sync: 'each' })
-  return {
-    truth,
-    log,
-    close: async () => {
-      await log.close()
-      await truth.close()
-    },
-  }
-}

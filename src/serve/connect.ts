@@ -352,11 +352,3 @@ export async function serveConnection(io: ConnIo): Promise<void> {
   io.onClose?.()
 }
 
-
-/** 方法面上那些**动词**的键（给测试与文档对账用）。 */
-export const METHOD_KEYS: readonly string[] = verbKeys()
-
-/** 值层里有、方法面上也有的那几条（`tui` 是入口，两边都不出方法名）。 */
-export const MIGRATED_METHODS: readonly string[] = Object.keys(FLAGS_OF)
-  .filter((k) => migrated(k))
-  .map(methodOf)

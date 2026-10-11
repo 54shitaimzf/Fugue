@@ -541,8 +541,3 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     },
   }
 }
-
-/** `parseStream` 的转发：给要用**原始字节流**驱动的地方（假提供方那一档 · `B5` 起）。 */
-export function eventsFrom(adapter: WireAdapter, chunks: AsyncIterable<Uint8Array>): AsyncIterable<ModelEvent> {
-  return parseStream(adapter, chunks)
-}

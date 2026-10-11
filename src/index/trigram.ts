@@ -64,8 +64,6 @@ export const GRAM_KEY_BYTES = 6
  * 已经先抛了（`IndexBudgetExceeded`）。两条上限哪一条动了，这两个宽度都得重新反推一遍。
  */
 export const GRAM_RECORD_BYTES = GRAM_KEY_BYTES + 3 + 4
-/** 键的上界：三个码元全满。 */
-export const GRAM_MAX = 0xff_ffff_ffff_ffff
 const UNIT_BASE = 0x1_0000
 const HIGH_BASE = 0x1_0000_0000
 

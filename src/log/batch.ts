@@ -79,6 +79,3 @@ export function batchOf(root: string): ReadBatch {
     },
   }
 }
-
-/** 只读批次的形状：**它只读**——这一份里没有任何写路径。 */
-export const READ_BATCH_IS_READ_ONLY = true

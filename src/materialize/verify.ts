@@ -40,7 +40,7 @@ import type { Roots } from '../roots/contract.ts'
 import type { AbsPath, AgentId, CommitId, ForkStrategy, RelPath, ViewRev } from '../terms.ts'
 import { diskEntry, hashOfState, portEntry, sameEntry } from './land.ts'
 import { WORKSPACE_STATE, scanTree } from './diffstat.ts'
-import type { EntryState, ViewReads } from './land.ts'
+import type { ViewReads } from './land.ts'
 import { manifestMap, manifestPayload, matState } from './manifest.ts'
 import type { MatState } from './manifest.ts'
 
@@ -199,9 +199,4 @@ export async function verifyMat(deps: VerifyDeps, agent: AgentId): Promise<Verif
     ok,
     ms: Math.round(performance.now() - started),
   }
-}
-
-/** 落地根里那一条此刻的样子（`--json` 与测试要看，读盘不猜）。 */
-export function entryAt(root: AbsPath, rel: RelPath): EntryState | null {
-  return diskEntry(join(root, rel), rel)
 }

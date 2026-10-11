@@ -329,11 +329,6 @@ export async function entriesOf(truth: Truth, commit: CommitId): Promise<TreeEnt
   return out
 }
 
-/** 契约里那几条断言：给验收门算判决用的那一份（`Assertion` 逐条）。 */
-export function assertionsOf(c: Contract): readonly Assertion[] {
-  return c.kind === 'investigate' ? [] : c.assertions
-}
-
 /** 一条断言的判决该不该算进"打回"。**跑不起来不算**（架构 § 8.12 末段）——这一处是那句话的落点。 */
 export function countsAsReject(r: AssertionResult): boolean {
   return r.verdict === 'fail'

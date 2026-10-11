@@ -335,18 +335,6 @@ function taskText(t: AssembleState['task'], outputs: readonly string[], maxSteps
 }
 
 /**
- * 契约要求的产物路径**机械追加在最后一段的末尾**（架构 § 8.11 · § 8.12）。
- *
- * 「机械」指的是这里没有判断：目录名怎么定是 `M11` 的事，这里只是把它拼进那一段的末尾——
- * 而末尾选得对（同一 agent 跨步不变 · 每步不重付 · 近因最好）是架构那一段的论证，不是这一
- * 份的选择。空清单不追加：不凭空造一个目录名。
- */
-export function appendOutputs(text: string, outputs: readonly string[]): string {
-  if (outputs.length === 0) return text
-  return `${text === '' ? '' : `${text}\n`}Output paths: ${outputs.join(' · ')}`
-}
-
-/**
  * 一个 `Turn` → 它那一段文本。**这是结构化那一面唯一的文本投影**（两处不许各写一份）。
  *
  * 里面只有两样：模型说的话，与每一条工具回了什么。**不带修订号、不带执行序号**——那些是架构
