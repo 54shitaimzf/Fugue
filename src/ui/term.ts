@@ -392,6 +392,54 @@ function historyRows(line: string, columns: number): readonly string[] {
   return rows
 }
 
+/**
+ * 普通屏上那三条恢复路共用的骨架：只在**普通屏 · 文本档 · 画过 · 没有新永久行 · 行数量到了 ·
+ * 有输入行 · 锚点与落笔时的几何逐项相同 · 光标停在区域末行**时才可能成立——差一项就说明屏幕
+ * 被别的东西动过，三条路都不许走。三条各自在骨架上再加自己的那几项：
+ *
+ *   · `shrink` —— 终端**变矮**：旧顶边留住，多出来的几行在下面擦空；
+ *   · `width`  —— 终端**变窄**：只有下方完整回报证明的底部硬行才原位替换；
+ *   · `ret`    —— 终端**长回来**，而出去时那一块还在自己的空行里。
+ *
+ * `steady` 不在这副骨架里：它读的是同一位置上的 `h` / `drawnHeight`，而 `shrink` / `width`
+ * 这两条正是因为高度或宽度变过才成立——两者互不取反。把它一并搬进来会改掉变宽 / 变矮那一帧
+ * 走全量还是走行级 diff。
+ */
+function normalPaths(o: {
+  readonly drawn: boolean
+  readonly wantAlt: boolean
+  readonly textOnly: boolean
+  readonly lastIsInput: boolean
+  readonly columns: number
+  readonly drawnColumns: number
+  readonly rowsSeen: number | undefined
+  readonly drawnRows: number | undefined
+  readonly permanentRows: number
+  readonly regionLength: number
+  readonly regionRows: number
+  readonly cursorRow: number
+  readonly recovery: { readonly columns: number; readonly rows: number } | null
+  readonly anchor: { readonly columns: number; readonly rows: number; readonly top: number } | null
+}): { readonly shrink: boolean; readonly width: boolean; readonly ret: boolean } {
+  const rows = o.rowsSeen
+  const drawnRows = o.drawnRows
+  const anchor = o.anchor
+  const rowsKnown = typeof rows === 'number' && rows > 0
+  const base = !o.wantAlt && o.textOnly && o.drawn && o.permanentRows === 0 && o.lastIsInput &&
+    rowsKnown && typeof drawnRows === 'number' && anchor !== null && anchor.columns === o.drawnColumns &&
+    anchor.rows === drawnRows && o.cursorRow === o.regionRows - 1
+  const shrink = base && o.columns <= o.drawnColumns && Number.isSafeInteger(rows) &&
+    (rows as number) < (drawnRows as number) && o.regionLength <= (rows as number) &&
+    (anchor as { top: number }).top < (rows as number) &&
+    (anchor as { top: number }).top + o.regionRows === drawnRows
+  const width = base && o.columns < o.drawnColumns && rows === drawnRows &&
+    (anchor as { top: number }).top + o.regionRows === (rows as number) && o.regionLength <= o.regionRows
+  const ret = !o.wantAlt && o.drawn && rowsKnown && typeof drawnRows === 'number' &&
+    (rows as number) > drawnRows && o.recovery !== null && o.columns <= o.recovery.columns &&
+    (rows as number) <= o.recovery.rows && o.lastIsInput && o.regionLength <= (rows as number)
+  return { shrink, width, ret }
+}
+
 export function openTerm(o: TermOptions): Term {
   const out = o.out
   const height = o.height ?? FRAME_ROWS
@@ -558,19 +606,10 @@ export function openTerm(o: TermOptions): Term {
       const textOnly = o.graphics === undefined || o.graphics === 'none'
       if (columns > (normalRecovery?.columns ?? drawnColumns) || permanent.length > 0 || !rowsKnown || !textOnly ||
         (normalRecovery !== null && (rowsSeen as number) > normalRecovery.rows)) normalRecovery = null
-      const normalShrink = !wantAlt && textOnly && drawn && columns <= drawnColumns && permanent.length === 0 && rowsKnown &&
-        Number.isSafeInteger(rowsSeen) && typeof drawnRows === 'number' && (rowsSeen as number) < drawnRows && lastIsInput && region.length <= (rowsSeen as number) &&
-        normalAnchor !== null && normalAnchor.columns === drawnColumns && normalAnchor.rows === drawnRows &&
-        normalAnchor.top < (rowsSeen as number) && normalAnchor.top + regionRows === drawnRows && cursorRow === regionRows - 1
-      // Bottom hard lines retain row coordinates when only columns shrink.
-      // A complete old frame report and a contained new region permit replacing
-      // that exact rectangle; unknown reports keep the original append path.
-      const normalWidth = !wantAlt && textOnly && drawn && widthShrank && permanent.length === 0 && rowsKnown && rowsSeen === drawnRows &&
-        lastIsInput && normalAnchor !== null && normalAnchor.columns === drawnColumns && normalAnchor.rows === drawnRows &&
-        normalAnchor.top + regionRows === (rowsSeen as number) && cursorRow === regionRows - 1 && region.length <= regionRows
-      const normalReturn = !wantAlt && drawn && rowsKnown && typeof drawnRows === 'number' &&
-        (rowsSeen as number) > drawnRows && normalRecovery !== null && columns <= normalRecovery.columns &&
-        (rowsSeen as number) <= normalRecovery.rows && lastIsInput && region.length <= (rowsSeen as number)
+      const paths = normalPaths({ drawn, wantAlt, textOnly, lastIsInput, columns, drawnColumns, rowsSeen, drawnRows,
+        permanentRows: permanent.length, regionLength: region.length, regionRows, cursorRow,
+        recovery: normalRecovery, anchor: normalAnchor })
+      const normalShrink = paths.shrink, normalWidth = paths.width, normalReturn = paths.ret
       if (normalShrink) normalRecovery = { columns: Math.max(drawnColumns, normalRecovery?.columns ?? 0), rows: Math.max(drawnRows as number, normalRecovery?.rows ?? 0) }
       const normalOwnedPrefix = normalShrink && normalAnchor!.top <= ownedAbove
       const steady = drawn && !widthChanged && h === drawnHeight && !normalShrink && !normalReturn
