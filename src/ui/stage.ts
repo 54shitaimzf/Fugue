@@ -267,7 +267,7 @@ export function openStage(deps: StageDeps): Stage {
   /** 当前待确认整批计划的全文坐标；内容从同一 gate face 取得，不另存计划。 */
   let planTop: number | null = null
   // 同一批次与列宽的整批全文只排一次；选择和高度变化复用，仅留当前一份。
-  let planSnap: { face: GateFace; columns: number; width: number; lines: readonly string[]; value: ReturnType<typeof readContentOf> } | null = null
+  let planSnap: { face: GateFace; width: number; lines: readonly string[]; value: ReturnType<typeof readContentOf> } | null = null
   /**
    * 跑完一趟要不要**自动**接着起下一条（`T7`）。缺省要；**被 `Esc` / `Ctrl-C` 打断之后不要**——
    * 人刚说了停，排队那几条停在那儿等他（`Enter` 起下一条 · `Esc` 丢掉）。起新的一条时又回到"要"。
@@ -372,11 +372,13 @@ export function openStage(deps: StageDeps): Stage {
     const face = gate
     if (face === null || face.cards.length === 0) { planSnap = null; return { heading: '', rows: [], removedTitleRows: 0 } }
     const width = deps.columns(), columns = innerOf(width)
-    if (planSnap !== null && planSnap.face === face && planSnap.columns === columns && planSnap.width === width) return planSnap.value
+    // 键只有两个：这一份脸 ＋ 拿到的宽度。`columns` 由 `width` 推（`innerOf` 是它的纯函数），
+    // 再比一遍是同义重复，不比也一样。
+    if (planSnap !== null && planSnap.face === face && planSnap.width === width) return planSnap.value
     // 批准的是整批：完整阅读也按原顺序包含每项，选择只决定返回时的预览。
     const lines = planLines()
     const value = readContentOf(`计划全文 · ${face.cards.length} 项任务`, lines, columns, width)
-    planSnap = { face, columns, width, lines, value }
+    planSnap = { face, width, lines, value }
     return value
   }
   const planRows = (): readonly string[] => planContent().rows
