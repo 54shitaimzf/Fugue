@@ -253,6 +253,7 @@ export interface ViewInput {
   readonly inputIdle?: boolean | undefined
   /** 舞台从同一待确认整批取得的事实，仅供主面状态投影。 */
   readonly runIssue?: FrameInput['runIssue']
+  readonly completedChanges?: import('../serve/commit-source.ts').CommitChanges | undefined
   readonly pendingRound?: FrameInput['pendingRound']
   /** 任务记录的实际阅读键，供省略处就近显示。 */
   readonly taskReadKey?: string | undefined

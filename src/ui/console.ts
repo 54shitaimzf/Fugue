@@ -22,6 +22,7 @@ import { pendingOf } from '../round/dispatch.ts'
 import { identFor } from '../identity.ts'
 import { openServeSource, rowsReaderOf } from '../serve/source.ts'
 import { openImageSource } from '../serve/image-source.ts'
+import { openCommitSource } from '../serve/commit-source.ts'
 import { emitLine, usageFail } from '../cli/out.ts'
 import { KEYMAP, hintKeysOf, hintLineForWidth, keymapOf, openKeys } from './keymap.ts'
 import type { KeySource, Keymap } from './keymap.ts'
@@ -205,6 +206,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // ——`log/log.ts` 与 `probe/watch.ts` 那两条直连住在 serve 那一头（架构 § 9.11）。
   const source = await openServeSource({ root })
   let imageSource: ReturnType<typeof openImageSource> | null = null
+  let commitSource: ReturnType<typeof openCommitSource> | null = null
   let cellProbe: ReturnType<typeof openCellProbe> | null = null
   let pixelProbe: ReturnType<typeof openPixelProbe> | null = null
   let alternateProbe: ReturnType<typeof openAlternateProbe> | null = null
@@ -260,6 +262,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     readImage: (request, signal) => imageSource?.read(request, signal) ?? Promise.resolve(null),
     note: (line) => ui.tui?.note(line),
     notes: () => ui.tui?.notes ?? [],
+    readCommit: (request, signal) => commitSource?.read(request, signal) ?? Promise.resolve(null),
     redraw: () => ui.tui?.redraw(),
     // 框下面那一行（第二幕 ④ · 第三幕 ② 按处境分档）：stdin 不是终端时它就是那一句"收不到按键"
     // 当前容量只放完整键与动作，窄窗首项可去抬头和备用键；场景由舞台选择。
@@ -310,6 +313,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
   // 四条地板收成**一张表**（`ui/follow.ts` 的 `tuiModeOf`）：真终端 → 面板；`--once` / 不是 TTY /
   // `$TERM` 认不出来 → 只印永久行那一档（面板一次都不画，一个字节的 ANSI 都不写）。
   const mode = tuiModeOf({ ansi: term.ansi, once: flags.has('once'), follow: flags.has('follow') })
+  if (mode === 'panel' && process.stdin.isTTY === true && typeof process.stdin.setRawMode === 'function') commitSource = openCommitSource({ root })
   // Sixel 的普通缓冲区 resize 所有权尚未解决，只在显式 full 内启用原始 PNG 读源。
   if (mode === 'panel' && process.stdin.isTTY === true &&
     (tiers.graphics === 'kitty' || (tiers.graphics === 'sixel' && flags.has('full')))) imageSource = openImageSource({ root })
@@ -431,6 +435,7 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
     term.close()
     alternateProbe?.close()
     cursorProbe?.close()
+    await commitSource?.close()
     await imageSource?.close()
     await source.close()
   }

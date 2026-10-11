@@ -41,6 +41,7 @@ import { FLAGS_OF } from '../cli/flags.ts'
 import { statusOf } from '../probe/status.ts'
 import type { StatusRow } from '../probe/status.ts'
 import { WORDS } from '../words.ts'
+import type { CommitRequest, CommitChanges } from '../serve/commit-source.ts'
 
 // 分账那几个数（`panelWantOf` · 份额 · 上下限）住 `ui/layout.ts` 那一份布局常量表（第二幕 ④ 收成
 // 一处）：这一份只管把它们接上 `deps.termRows`（`heightWant`），算式一个字都不留在这里。
@@ -54,6 +55,7 @@ export interface StageDeps {
   /** Record an original UI message; Console routes interactive records into the reader. */
   readonly note: (line: string) => void
   readonly notes?: (() => readonly string[]) | undefined
+  readonly readCommit?: ((request: CommitRequest, signal: AbortSignal) => Promise<CommitChanges | null>) | undefined
   /**
    * 框下面那一行提示行（第二幕 ④ · 第三幕 ② 按处境分档）的原文——`ui/console.ts` 那一头给的
    * （键表与 stdin 是不是终端都只有那一头知道）。**每帧现问**：列宽变了它就跟着换
@@ -134,6 +136,19 @@ export function openStage(deps: StageDeps): Stage {
   let runRound: string | null = null
   let runTask = false, runIssue: RunIssue | null = null
   let runIssueAction: string | undefined
+  let commitKey = '', commitController: AbortController | null = null, completedChanges: CommitChanges | undefined
+  const refreshCommit = (): void => {
+    const request = taskOf(deps.rows()).completion
+    const key = request === undefined ? '' : JSON.stringify(request)
+    if (key === commitKey) return
+    commitController?.abort(); commitController = null; completedChanges = undefined; commitKey = key
+    if (request === undefined || deps.readCommit === undefined) return
+    const controller = new AbortController(); commitController = controller
+    void deps.readCommit(request, controller.signal).then(value => {
+      if (controller.signal.aborted || commitController !== controller) return
+      completedChanges = value ?? undefined; deps.redraw()
+    }).catch(() => { /* Reading commit details cannot prevent ordinary task/command use. */ })
+  }
   const startRun = (words: readonly string[]): void => {
     runStartedAt = deps.rows().length; runRound = taskOf(deps.rows()).round
     runTask = words[0] === 'round' && ['plan', 'go', 'run', 'work'].includes(words[1] ?? '')
@@ -275,7 +290,7 @@ export function openStage(deps: StageDeps): Stage {
   }
 
   const readFaces = () => {
-    const original = facesOf(readState), task = taskOf(deps.rows(), focusNow(), true)
+    const original = facesOf(readState), task = taskOf(deps.rows(), focusNow(), true, completedChanges)
     const notes = deps.notes?.()
     const faces = notes === undefined ? original : { ...original, detail: {
       title: '详情',
@@ -600,6 +615,7 @@ export function openStage(deps: StageDeps): Stage {
       ...(gate === null || gate.cards.length === 0 ? {} : { pendingRound: gate.round }),
       ...(feedback.length === 0 ? {} : { feedback }),
       ...(runIssue === null ? {} : { runIssue }),
+      ...(completedChanges === undefined ? {} : { completedChanges }),
       ...navPart,
       ...(() => {
         if (panel === null) return {}
@@ -628,6 +644,8 @@ export function openStage(deps: StageDeps): Stage {
     return Math.max(1, Math.floor(frameBudgetOf(height, view().bottom?.keep ?? 0).rows / 2))
   }
   const onAdvance = (rows: readonly StatusRow[]): void => {
+    if (closed) return
+    refreshCommit()
     if (runIssue !== null) {
       const current = taskOf(deps.rows())
       if (current.round !== runIssue.round || current.state !== runIssue.state || current.rows[0]?.text !== runIssueAction || rows.some(row => row.e.t === 'round/intent')) {
@@ -1082,6 +1100,7 @@ export function openStage(deps: StageDeps): Stage {
     onResize() { reflowRead(); clearSmallGate(); syncImage() },
     close(): void {
       closed = true
+      commitController?.abort(); commitController = null; completedChanges = undefined
       planSnap = null
       previewJob?.controller.abort()
       previewJob = null

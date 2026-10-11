@@ -165,7 +165,23 @@ if(scenario==='failure'||scenario==='exception'){
  assert.ok(acceptance);assert.notEqual(git('rev-parse','HEAD'),base)
  for(const p of paths)assert.equal(readFileSync(join(root,p),'utf8'),git('show','HEAD:'+p)+'\n')
  assert.ok(visible().includes('2')&&visible().includes('验收'))
+ await until(()=>visible().includes('提交改动（2）')&&paths.every(p=>visible().includes(p)),'actual accepted git paths reach completion summary')
+ assert.ok(!visible().includes('keep.txt'),'unchanged seed is absent from actual commit summary')
+ await snap('changes')
+ process.stdin.emit('data',Buffer.from('下一轮草稿'))
+ process.stdin.emit('data',Buffer.from('\x12'))
+ await until(()=>visible().includes('当前任务记录')&&visible().includes('本次提交改动'),'completed record opens via original Ctrl-R')
+ const full=r=>r.includes('新增：alpha.txt')&&r.includes('新增：beta.txt')
+ assert.ok(full(visible()),'all actual accepted paths and operations reachable')
+ await snap('changes-read')
+ await resize(80,24);await snap('changes-read-narrow')
+ await resize(initialCols,initialRows);await snap('changes-read-wide')
+ process.stdin.emit('data',Buffer.from('\x1b'))
+ await until(()=>visible().includes('下一轮草稿')&&visible().includes('提交改动（2）'),'return keeps complete draft and accepted summary')
+ await snap('changes-return')
+
 }
+if(scenario==='success')await send('\x15') // The restored draft must be cleared before the original empty-input exit.
 process.stdin.emit('data',Buffer.from('\x04'));assert.equal(await done,0)
 if(native)raw=process.stdin.isRaw
 assert.equal(raw,false);assert.equal(paste,false);assert.deepEqual(signals.map(s=>process.listenerCount(s)),before)
@@ -185,7 +201,7 @@ for(const scenario of ['success','failure','exception'])test('actual Console mix
   encoding:'utf8',env:{...process.env,TERM:'xterm',FUGUE_SYSTEM_DIR:join(root,'system'),FUGUE_FLOW_NATIVE:'0'},timeout:90000,
  })
  assert.equal(run.status,0,run.stderr||String(run.error));const report=JSON.parse(run.stdout)
- assert.equal(report.approvals,1);assert.equal(report.contracts,3);assert.equal(report.resizes,7)
+ assert.equal(report.approvals,1);assert.equal(report.contracts,3);assert.equal(report.resizes,scenario==='success'?9:7)
  assert.deepEqual(report.kinds,['investigate','implement','implement'])
  assert.deepEqual(report.ownedPaths,[['alpha.txt'],['beta.txt']])
  assert.equal(report.queueStarts.length,2)

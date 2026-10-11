@@ -5,6 +5,7 @@ import type { ConversationRow } from './frame.ts'
 import { roundLabelOf, roundNoticeOf } from './lifecycle.ts'
 import { WORDS } from '../words.ts'
 import { draftOf } from '../contract/draft.ts'
+import type { CommitRequest, CommitChanges } from '../serve/commit-source.ts'
 
 export interface PlanItem {
   readonly text: string
@@ -15,6 +16,7 @@ export interface TaskFace {
   readonly state: string | null
   readonly rows: readonly ConversationRow[]
   readonly plan: readonly PlanItem[]
+  readonly completion?: CommitRequest | undefined
 }
 export interface RunIssue {
   /** True only for the feedback produced by this same observed command. */
@@ -39,6 +41,7 @@ export function issueRowsOf(task: TaskFace, issue: RunIssue | undefined): readon
   return [{ text: issue.text, role: 'refuse' }, { text: WORDS.runWritebackGuide, role: 'system' }, ...task.rows.slice(1)]
 }
 const clean = (text: string): string => text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`).replace(/\t/g, '  ').trim()
+const pathText = (path: string): string => /[\s\x00-\x1f\x7f-\x9f]/.test(path) ? clean(JSON.stringify(path)) : path
 function objectOf(body: string): Record<string, unknown> | null {
   try { const value = JSON.parse(body); return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null }
   catch { return null }
@@ -61,7 +64,7 @@ function draftPreview(body: string): string | undefined {
     return at === draft.sections.length ? '模型 · 任务草案\n' + clean(shown) : undefined
   } catch { return undefined }
 }
-export function taskOf(rows: readonly StatusRow[], focus: string | null = null, full = false): TaskFace {
+export function taskOf(rows: readonly StatusRow[], focus: string | null = null, full = false, changes?: CommitChanges): TaskFace {
   let round: string | null = null
   const owners = new Map<string, string>()
   for (const { e } of rows) {
@@ -79,12 +82,12 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
   let state: string | null = null, from: string | undefined
   let plan: PlanItem[] = [], planInvalid = false
   const messages: ConversationRow[] = [], changed = new Set<string>()
-  let action = '', problem = '', verification = '', commit = '', issued = false
+  let action = '', problem = '', verification = '', commit = '', base = '', accepted = false, issued = false
   for (const { e } of current) {
     switch (e.t) {
       // A phase edge expires the previous action; a same-phase record does not.
       case 'round/state': if (e.from !== e.to) action = ''; state = e.to; from = e.from; break
-      case 'round/intent': messages.push({ text: `你\n${goalOf(e.body)}`, role: 'user' }); break
+      case 'round/intent': base = e.base; messages.push({ text: `你\n${goalOf(e.body)}`, role: 'user' }); break
       case 'holder/distill': {
         const preview = full ? undefined : draftPreview(e.body)
         messages.push({ text: `模型 · 当前理解\n${clean(e.body)}`, role: 'model', ...(preview === undefined ? {} : { preview }) }); break
@@ -111,7 +114,7 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
         const failed = e.assertions.length - passed
         verification = `验收：${passed} 项通过${failed > 0 ? `，${failed} 项未通过或无法运行` : ''}。`
         if (failed > 0) problem = verification
-        commit = e.commit; break
+        commit = e.commit; accepted = failed === 0; break
       }
       case 'view/write': case 'view/remove': case 'view/symlink': case 'view/chmod': changed.add(clean(e.path)); break
       case 'view/rename': changed.add(clean(e.from)); changed.add(clean(e.to)); break
@@ -119,20 +122,35 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
       case 'contract/issue': issued = true; break
     }
   }
+  const completion: CommitRequest | undefined = focus === null && state === 'Rebuilding' && accepted
+    && /^[a-f0-9]{40}$/.test(base) && /^[a-f0-9]{40}$/.test(commit) ? { round, base, commit } : undefined
+  const exactChanges = completion !== undefined && changes != null && changes.round === round
+    && changes.base === base && changes.commit === commit && Array.isArray(changes.files)
+    && changes.files.every(f => f !== null && typeof f === 'object' && ['A', 'M', 'D', 'T'].includes(f.kind) && typeof f.path === 'string' && f.path !== '')
+    ? changes.files : undefined
+  const changeRows: ConversationRow[] = exactChanges === undefined ? [] : [{
+    text: full
+      ? `本次提交改动（${exactChanges.length}）\n` + exactChanges.map(f => `${({ A: '新增', M: '修改', D: '删除', T: '类型变更' })[f.kind]}：${pathText(f.path)}`).join('\n')
+      : exactChanges.length === 0 ? '本次提交没有文件改动。'
+      : `提交改动（${exactChanges.length}）：${exactChanges.slice(0, 3).map(f => pathText(f.path)).join(' · ')}${exactChanges.length > 3 ? ' · …' : ''}`,
+    role: 'system',
+  }]
   const notice = state === null ? null : roundNoticeOf(from, state)
   const result: ConversationRow[] = []
   if (state === 'Rebuilding' && !full) {
     result.push({ text: notice!.text, role: 'ok' })
-    if (changed.size > 0) result.push({ text: `改动：${[...changed].join(' · ')}`, role: 'system' })
+    result.push(...changeRows)
+    if (exactChanges === undefined && changed.size > 0) result.push({ text: `改动：${[...changed].join(' · ')}`, role: 'system' })
     if (verification !== '') result.push({ text: verification, role: 'system' })
     else result.push({ text: '验收结果详见记录。', role: 'system' })
     result.push({ text: WORDS.nextTaskGuide, role: 'system' })
-    return { round, state, rows: result, plan: [] }
+    return { round, state, rows: result, plan: [], ...(completion === undefined ? {} : { completion }) }
   }
   // 实际动作已经说明当前进展；失败、验收与写回结论仍优先。
   const actionStatus = notice === null && state === 'Working' && action !== '' && action !== problem
   const status = notice?.text ?? (actionStatus ? action : state === null ? '当前任务记录' : state === 'Planning' ? WORDS.planPreparing : state === 'Working' && issued ? '这批任务已确认，结果尚未写回。' : roundLabelOf(state, from))
   result.push({ text: status, role: notice?.role ?? (actionStatus ? 'instruction' : state === 'Aborted' ? 'refuse' : 'system') })
+  result.push(...changeRows)
   if (notice?.text === WORDS.verifyNotWritten) result.push({ text: WORDS.verifyFailedGuide, role: 'instruction' })
   if (state === 'Committed') result.push({ text: '验收已通过 · 待写回', role: 'instruction' })
   else if (!actionStatus && state === 'Working' && action !== '' && action !== problem) result.push({ text: action, role: 'instruction' })
@@ -141,5 +159,5 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
   if (verification !== '' && state !== 'Committed') result.push({ text: verification, role: 'system' })
   if (commit !== '') result.push({ text: '已合并结果；文件与验收记录可在阅读面查看。', role: 'system' })
   if (planInvalid) result.push({ text: '计划记录无法展开；原文可用 /log 查看。', role: 'system' })
-  return { round, state, rows: result, plan: full || (plan.some(p => p.status !== 'completed') && state !== 'Aborted') ? plan : [] }
+  return { round, state, rows: result, plan: full || (plan.some(p => p.status !== 'completed') && state !== 'Aborted') ? plan : [], ...(completion === undefined ? {} : { completion }) }
 }

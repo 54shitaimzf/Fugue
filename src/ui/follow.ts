@@ -241,11 +241,11 @@ export function openSession(o: SessionOptions = {}): TuiSession {
     sparkSnap = { rows, value }
     return value
   }
-  let taskSnap: { rows: readonly StatusRow[]; focus: string | null; value: ReturnType<typeof taskOf> } | null = null
-  const taskAt = (focus: string | null) => {
-    if (taskSnap !== null && taskSnap.rows === rows && taskSnap.focus === focus) return taskSnap.value
-    const value = taskOf(rows, focus)
-    taskSnap = { rows, focus, value }; return value
+  let taskSnap: { rows: readonly StatusRow[]; focus: string | null; changes: ViewInput['completedChanges']; value: ReturnType<typeof taskOf> } | null = null
+  const taskAt = (focus: string | null, changes: ViewInput['completedChanges']) => {
+    if (taskSnap !== null && taskSnap.rows === rows && taskSnap.focus === focus && taskSnap.changes === changes) return taskSnap.value
+    const value = taskOf(rows, focus, false, changes)
+    taskSnap = { rows, focus, changes, value }; return value
   }
   const frameFullAt = (size: { readonly columns: number; readonly height: number }) => {
     const v = o.view?.()
@@ -272,7 +272,7 @@ export function openSession(o: SessionOptions = {}): TuiSession {
       ...(v?.focus === undefined ? {} : { focus: v.focus }),
       permanent: permanent(),
       conversation,
-      task: taskAt(v?.focus ?? null),
+      task: taskAt(v?.focus ?? null, v?.completedChanges),
       ...(v?.input === undefined ? {} : { operationArea: true }),
       ...(transition === undefined ? {} : { transition }),
       width: size.columns,
