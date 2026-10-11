@@ -10,7 +10,7 @@
 // （`../cli/flags.ts`）：菜单候选与分发处读**同一个对象**——「哪些命令存在」仍只有一处真源（那张
 // 表自己不 import 任何东西，不成环）。
 import { KEYMAP, PAGE_STEP, fallsToText, helpRowsOf, keyLabelOf } from './keymap.ts'
-import type { Decoded, HintWhen, Keymap } from './keymap.ts'
+import type { Decoded, HintWhen, Keymap, UiAction } from './keymap.ts'
 import { ctrlCStepOf, escStepOf, quitStepOf, stillArmed } from './cancel.ts'
 import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmit, submitOf } from './input.ts'
 import type { Editor } from './input.ts'
@@ -42,6 +42,14 @@ import { statusOf } from '../probe/status.ts'
 import type { StatusRow } from '../probe/status.ts'
 import { WORDS } from '../words.ts'
 import type { CommitRequest, CommitChanges } from '../serve/commit-source.ts'
+
+// 动作里的那几对：**谁与谁是一对**只在这四行里定义。四条都是"两个方向各配一个键"——
+// 上一条/下一条 · 上一页/下一页 · 跳首/跳尾 · 批准/驳回。后面那些分支读的就是"这一对"，
+// 而不是各自再拼一遍或（从前这一段里那种或写了十六处，加一个动作要一处一处找过去）。
+const isHistory = (a: UiAction): boolean => a === 'historyOlder' || a === 'historyNewer'
+const isPage = (a: UiAction): boolean => a === 'pageUp' || a === 'pageDown'
+const isJump = (a: UiAction): boolean => a === 'jumpFirst' || a === 'jumpLast'
+const isGate = (a: UiAction): boolean => a === 'approve' || a === 'reject'
 
 // 分账那几个数（`panelWantOf` · 份额 · 上下限）住 `ui/layout.ts` 那一份布局常量表（第二幕 ④ 收成
 // 一处）：这一份只管把它们接上 `deps.termRows`（`heightWant`），算式一个字都不留在这里。
@@ -728,14 +736,14 @@ export function openStage(deps: StageDeps): Stage {
     feedback = []
     if (runIssue !== null && runIssue.feedback === true) runIssue = { ...runIssue, feedback: false }
     // 当前按键的全文只读；返回同一筛选与选中项，背后的计划/阅读坐标原样。
-    if (keyHelpTop !== null && (d.action === 'approve' || d.action === 'reject' || d.action === 'go' || d.action === 'submit')) return
+    if (keyHelpTop !== null && (isGate(d.action) || d.action === 'go' || d.action === 'submit')) return
     if (keyHelpTop !== null && d.action === 'help') { keyHelpCovered = true; settle(); return }
     if (keyHelpTop !== null && keyHelpCovered && d.action === 'cancel') { keyHelpCovered = false; settle(); return }
     if (keyHelpTop !== null && !keyHelpCovered && d.action !== 'quit' && d.action !== 'interrupt') {
       if (d.action === 'cancel' || d.action === 'read') keyHelpTop = null
-      else if (d.action === 'historyOlder' || d.action === 'historyNewer')
+      else if (isHistory(d.action))
         keyHelpTop = stepTop(keyHelpRows().length, keyHelpTop, d.action === 'historyOlder' ? -1 : 1)
-      else if (d.action === 'pageUp' || d.action === 'pageDown')
+      else if (isPage(d.action))
         keyHelpTop = stepTop(keyHelpRows().length, keyHelpTop, d.action === 'pageUp' ? -readPageStep() : readPageStep())
       else if (d.action === 'jumpFirst') keyHelpTop = 0
       else if (d.action === 'jumpLast') keyHelpTop = Math.max(0, keyHelpRows().length - 1)
@@ -744,12 +752,12 @@ export function openStage(deps: StageDeps): Stage {
     }
 
     // 全文页只供检查，不能继承举手或起排队命令；返回确认后再重新点头。
-    if (planTop !== null && (d.action === 'approve' || d.action === 'reject' || (d.action === 'submit' && panel === null))) return
+    if (planTop !== null && (isGate(d.action) || (d.action === 'submit' && panel === null))) return
     // ⓪ **门口那一批那两档**（`T6`）：开关是"门口那一块开着没有 **且** 输入行空着没有"——不是
     // `actsOnEmpty` 判的"行里有没有字"（那一条判的是键入的处境，而 `y` / `n` 是可打印的，门口
     // 那一块关着的时候它们就是人打的字）。二段确认的判据只有一处（`ui/gate.ts` 的 `pressGate`）：
     // 按一下只举手，再按同一个键或 `Enter` 才生效。
-    if (d.action === 'approve' || d.action === 'reject') {
+    if (isGate(d.action)) {
       if (panel !== null || reading !== null) return
       const option: GateOption = d.action === 'approve' ? 'approve' : 'reject'
       if (gate !== null && !gateHidden && ed.draft.text === '') {
@@ -940,11 +948,11 @@ export function openStage(deps: StageDeps): Stage {
     // 阅读上面的菜单是可见顶层；导航只移它，保留背后的全文/账上阅读坐标。
     if (panel !== null && (planTop !== null || reading !== null)) {
       const n = rowsOf(panel.source).length
-      if (d.action === 'historyOlder' || d.action === 'historyNewer') {
+      if (isHistory(d.action)) {
         panel = { ...panel, sel: moveSel(n, panel.sel, d.action === 'historyOlder' ? -1 : 1) }
         settle(); return
       }
-      if (d.action === 'pageUp' || d.action === 'pageDown' || d.action === 'jumpFirst' || d.action === 'jumpLast') {
+      if (isPage(d.action) || isJump(d.action)) {
         const sel = d.action === 'jumpFirst' ? 0 : d.action === 'jumpLast' ? Math.max(0, n - 1)
           : clampSel(n, panel.sel + (d.action === 'pageUp' ? -PAGE_STEP : PAGE_STEP))
         panel = { ...panel, sel }; settle(); return
@@ -952,7 +960,7 @@ export function openStage(deps: StageDeps): Stage {
     }
     // ⑥之二 阅读面开着时那三下：`Tab` 换一面 · `↑`/`↓` 翻（一屏一行地翻——这是"读"，
     // 不是"选"）。别的键照旧走它们自己的路（打字还是打字）。
-    if (planTop !== null && (d.action === 'historyOlder' || d.action === 'historyNewer')) {
+    if (planTop !== null && isHistory(d.action)) {
       planTop = stepTop(planRows().length, planTop, d.action === 'historyOlder' ? -1 : 1)
       settle(); return
     }
@@ -963,7 +971,7 @@ export function openStage(deps: StageDeps): Stage {
         settle()
         return
       }
-      if (d.action === 'historyOlder' || d.action === 'historyNewer') {
+      if (isHistory(d.action)) {
         const n = readerContent(readFaces(), reading.face).rows.length
         reading = { ...reading, top: stepTop(n, reading.top, d.action === 'historyOlder' ? -1 : 1) }
         settle()
@@ -973,21 +981,21 @@ export function openStage(deps: StageDeps): Stage {
     // ⑥之三 翻页（U14）：阅读按当前正文区翻半屏，`Ctrl-Home`/`Ctrl-End` 跳首尾。
     // **谁开着翻谁**：阅读面 → `top`；门口那一批 → `at`（半批）；候选 → `sel`（半页）。都没开
     // 就安静丢掉——翻页键不是全局滚动（没有"正在翻的东西"时按它，什么都不要动）。
-    if (d.action === 'pageUp' || d.action === 'pageDown' || d.action === 'jumpFirst' || d.action === 'jumpLast') {
+    if (isPage(d.action) || isJump(d.action)) {
       const back = d.action === 'pageUp' || d.action === 'jumpFirst'
       if (planTop !== null) {
         const n = planRows().length
-        const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -readPageStep() : readPageStep()
+        const delta = isJump(d.action) ? (back ? -n : n) : back ? -readPageStep() : readPageStep()
         planTop = stepTop(n, planTop, delta)
       } else if (reading !== null) {
         const n = readerContent(readFaces(), reading.face).rows.length
         // 跳首尾用一个够大的数一步到头（`stepTop` 夹得住）。
-        const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -readPageStep() : readPageStep()
+        const delta = isJump(d.action) ? (back ? -n : n) : back ? -readPageStep() : readPageStep()
         reading = { ...reading, top: stepTop(n, reading.top, delta) }
       } else if (gate !== null && !gateHidden && ed.draft.text === '') {
         // 半批：那一批的一半（一批至少翻一格）。
         const n = gate.cards.length
-        const delta = d.action === 'jumpFirst' || d.action === 'jumpLast' ? (back ? -n : n) : back ? -Math.max(1, Math.floor(n / 2)) : Math.max(1, Math.floor(n / 2))
+        const delta = isJump(d.action) ? (back ? -n : n) : back ? -Math.max(1, Math.floor(n / 2)) : Math.max(1, Math.floor(n / 2))
         gateView = { ...gateView, at: stepAt(n, gateView.at, delta) }
       } else if (panel !== null) {
         // 候选翻半页（`PAGE_STEP`），跳首尾直接落端点；夹住不环形（翻页不是轮换）。
@@ -1097,7 +1105,7 @@ export function openStage(deps: StageDeps): Stage {
     // ⑧ `↑`/`↓`：**门口那一块开着且行是空的时候**在那一批里走（`index/total` 就是它）；弹层开着
     // 时是选项（表里那两行的说明写的就是这个）；都没有时是输入历史。
     if (
-      (d.action === 'historyOlder' || d.action === 'historyNewer') &&
+      isHistory(d.action) &&
       gate !== null &&
       !gateHidden &&
       ed.draft.text === ''
@@ -1109,7 +1117,7 @@ export function openStage(deps: StageDeps): Stage {
       settle()
       return
     }
-    if ((d.action === 'historyOlder' || d.action === 'historyNewer') && panel !== null) {
+    if (isHistory(d.action) && panel !== null) {
       const n = rowsOf(panel.source).length
       panel = { ...panel, sel: moveSel(n, panel.sel, d.action === 'historyOlder' ? -1 : 1) }
       settle()
