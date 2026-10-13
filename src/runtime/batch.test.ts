@@ -19,6 +19,8 @@
 //      而日志里没有半截的一对起止事件（只读那四条本来就不落 `run/*`）
 //   ⑤ 包装层转发那一栏：`holderFace` 与驱动那一份"还剩几步"的包装**不许吃掉批次**——
 //      不转发就是只读并行唯一那个静默的漏斗（运行时看不见差别，只有墙钟看得出来）
+//   ⑥ 失败之后没开始的不再开始：`[read(抛), write]` 那一趟里，**批档与"一次一条"那一档同形**
+//      ——后面那条写不跑 · 在飞的那一批收束 · 按原调用序抛第一条（两档的收尾逐项相同）
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -412,6 +414,90 @@ test('⑤ 包装层转发那一栏：`holderFace` 与"还剩几步"那一层都�
     console.log(
       `⑤ 读数：holderFace 之后最多 ${b.maxActive()} 条 · withStepsLeft 之后 ${b2.maxActive()} 条` +
         ` · 不转发那一档 ${b3.maxActive()} 条（负对照）· 那一句 ${JSON.stringify((got?.[0]?.output ?? '').slice(-40))}`,
+    )
+  })
+})
+
+// ── ⑥ 失败之后没开始的不再开始（批档与"一次一条"那一档同形）──────────────────────────
+//
+// 判据一句话：**同一个输入在两档上读出来的收尾逐项相同**。两档的门路与 ① 的负对照同一个——有
+// 批次那一栏的是批档，只有 `execute` 的是"一次一条"那一档。原先批档在一条读抛了之后**继续往下
+// 走**（后面那条写照样开始），而串行档当场停在抛出那一条上——同一个输入两种行为，而注释里写着
+// "逐字相同"。
+
+/** 一个输入在两档上各跑一遍，读出来的那几样（`z.txt` 是那条写在不在盘上的凭据）。 */
+interface StepReading {
+  readonly why: string
+  readonly message: string
+  readonly wrote: boolean
+  readonly wall: number
+  readonly started: readonly string[]
+}
+
+async function twoTiersOf(
+  log: LogHandle,
+  calls: readonly { readonly id: string; readonly name: string; readonly args: string }[],
+  boom: string,
+): Promise<{ readonly batch: StepReading; readonly serial: StepReading }> {
+  const readings: StepReading[] = []
+  for (const batched of [true, false]) {
+    const b = bench({ 'a.txt': 'A', 'b.txt': 'B' }, { 'a.txt': 20, 'b.txt': 60 })
+    b.throwOn(boom)
+    const plain = executorOf(b, log)
+    const exec: ToolExecutor = batched ? plain : { execute: (c, hh) => plain.execute(c, hh) }
+    const t0 = Date.now()
+    const r = await oneStep(log, scriptsOf(calls), exec)
+    const wall = Date.now() - t0
+    assert.equal(r.outcome.kind, 'failed', `该收成 failed，实际 ${r.outcome.kind}`)
+    const err = (r.outcome as { error: HarnessError }).error
+    readings.push({ why: err.why, message: err.message, wrote: b.files.has('z.txt'), wall, started: [...b.started] })
+  }
+  const [batch, serial] = readings as [StepReading, StepReading]
+  assert.equal(batch.why, serial.why, '两档的收尾分类不同')
+  assert.equal(batch.message, serial.message, '两档抛出来的错话不同')
+  assert.equal(batch.wrote, serial.wrote, '两档在盘上留下的东西不同')
+  return { batch, serial }
+}
+
+test('⑥ 失败之后没开始的不再开始：`[read(抛), write]` 在批档与"一次一条"那一档上同形', async () => {
+  await withRoot(async (log) => {
+    // 一 · 抛的那一条在只读那一段里：后面那条写**根本不许开始**。
+    const one = await twoTiersOf(
+      log,
+      [
+        { id: 'c1', name: 'read', args: '{"path":"a.txt"}' },
+        { id: 'c2', name: 'write', args: '{"path":"z.txt","content":"不该写"}' },
+      ],
+      'a.txt',
+    )
+    assert.equal(one.batch.wrote, false, '读抛了，后面那条写照跑了——批档在失败之后没有停下来')
+    assert.match(one.batch.message, /这一条读炸了：a\.txt/)
+    assert.deepEqual(one.batch.started, ['a.txt'], `那条写不该被发起：${one.batch.started.join(' · ')}`)
+
+    // 二 · **已发出的收束 + 未开始的不再开始**：批里那条慢的（60 ms）落定之后这一步才返回，
+    //      而它后面那条写照旧一步都不迈。
+    const two = await twoTiersOf(
+      log,
+      [
+        { id: 'c1', name: 'read', args: '{"path":"b.txt"}' },
+        { id: 'c2', name: 'read', args: '{"path":"a.txt"}' },
+        { id: 'c3', name: 'write', args: '{"path":"z.txt","content":"不该写"}' },
+      ],
+      'a.txt',
+    )
+    assert.equal(two.batch.wrote, false, '在飞的落定之后，那条写照跑了')
+    assert.deepEqual(
+      [...one.batch.started, ...two.batch.started],
+      ['a.txt', 'b.txt', 'a.txt'],
+      '只读那几条的发起次序与原调用序对不上',
+    )
+    assert.ok(
+      two.batch.wall >= 60,
+      `没等到在飞的那一条（${two.batch.wall} ms）——有活儿被丢在半路（串行档 ${two.serial.wall} ms）`,
+    )
+    console.log(
+      `⑥ 读数：两档同形（${one.batch.why} ·「${one.batch.message}」）· 读抛之后那条写 ${one.batch.wrote ? '跑' : '没跑'}` +
+        ` · 在飞的落定用了 ${two.batch.wall} ms（串行 ${two.serial.wall} ms）· 两档盘上都没有 z.txt`,
     )
   })
 })

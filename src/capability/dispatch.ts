@@ -482,7 +482,9 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
      *
      * **失败的口径与一次一条那一档逐字相同**：抛就走 `tool-threw`（运行时那一层收成
      * `failed`），而**按原序取第一条抛出来的**——并行时几条同时抛，"哪一条"要由下标定，不能由
-     * 完成先后定（否则同一次调用两次跑出来的错话不一样）。
+     * 完成先后定（否则同一次调用两次跑出来的错话不一样）。**抛了就到此为止**：失败之后没开始的那
+     * 几条不再开始（在飞的那一批已经在 `Promise.all` 里落定），两档于是在同一个输入上给出同一个
+     * 行为——`src/runtime/batch.test.ts` ⑥ 拿 `[read(抛), write]` 量与"一次一条"那一档逐项相同。
      */
     async executeAll(calls: readonly ToolCallRequest[], h: AgentHandle): Promise<readonly ToolResult[]> {
       const look = deps.lookupOf ?? lookup
@@ -501,7 +503,10 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
       }
 
       let at = 0
-      while (at < calls.length) {
+      // **抛了就到此为止**（上面那一句）：没开始的不再开始，而在飞的那一批在 `Promise.all` 里
+      // 已经落定——"已发出的收束"。原先这条只写那一条路走得到，一条读抛了之后后面那几条写照跑；
+      // 同一个输入在两档上于是给出两种行为（`src/runtime/batch.test.ts` ⑥ 量的就是它）。
+      while (at < calls.length && first === null) {
         const one = calls[at] as ToolCallRequest
         if (!overlappable(one)) {
           // 写（或者"不许叠着跑"的那几条）：**一次一条，轮到它才跑**——它同时是前后两段读的界。
