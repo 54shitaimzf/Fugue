@@ -272,35 +272,57 @@ export interface HolderFaceOptions {
  * 全部来自目录——没有一处现编一个名字。
  */
 export function holderFace(inner: ToolExecutor, opts: HolderFaceOptions = {}): ToolExecutor {
-  /** 一条调用在这一格里走完那一趟（两条入口共用它，见 `driver.ts` 那一份的同一条理由）。 */
-  async function one(call: ToolCallRequest, h: AgentHandle): Promise<ToolResult> {
-    const why = holderRefusalOf(call.name, opts.planPath)
-    if (why !== undefined) return { ok: false, output: why }
-    const r = await inner.execute(call, h)
+  /**
+   * **这一格的权限边界只有这一处**（`HOLDER_REFUSAL` 那三条）：两条入口都问它，于是被禁的那条在
+   * 哪一条路上都进不到里面那一层、回的都是同一句话。批次那一栏原先直接转发给内层——被禁的工具
+   * 于是从批入口绕了过去：单条那条路拒，同一批里那条照跑。
+   */
+  const refusalOf = (call: ToolCallRequest): string | undefined => holderRefusalOf(call.name, opts.planPath)
+  /**
+   * 一条回执出这一格之前要过的两件事（**两条入口共用**）：那一下"交卷"照旧记下来（与 `execute`
+   * 同一个判据），以及**每条回执都补**"还剩几步"——那一句说的是这一格还剩多少步，与这一趟调的
+   * 是哪条工具无关。**拒的那一条不走这里**：它一次都没执行，回执就是那一句话本身。
+   */
+  const finish = (call: ToolCallRequest, r: ToolResult, h: AgentHandle): ToolResult => {
     if (call.name === 'exit_plan_mode' && r.ok && r.halt === true) opts.onDeclare?.()
     const tail = stepsLeftTail(Number(h.state.step), opts.maxSteps, HOLDER_LAND_NOW)
     return tail === '' ? r : { ...r, output: capReceipt(r.output + tail) }
   }
+  /** 一条调用在这一格里走完那一趟（见 `driver.ts` 那一份的同一条理由）。 */
+  async function one(call: ToolCallRequest, h: AgentHandle): Promise<ToolResult> {
+    const why = refusalOf(call)
+    if (why !== undefined) return { ok: false, output: why }
+    return finish(call, await inner.execute(call, h), h)
+  }
   return {
     execute: one,
-    // **批次那一栏原样转发**：这一格与子 agent 那一格共用同一份 `runtime`，两边都要能并行只读。
-    // 不转发就是这条包装层后面静默退回串行——运行时看不见差别，只有墙钟看得出来。
+    /**
+     * **批次那一栏照原样转发**（这一格与子 agent 那一格共用同一份 `runtime`，两边都要能并行只读；
+     * 不转发就是这条包装层后面静默退回串行——运行时看不见差别，只有墙钟看得出来）。
+     *
+     * **被禁的那几条不参与转发**：它们在这里就换成那一句实话，内层看见的那一批里没有它们——
+     * 于是"它伸手拿了个这一格没有的东西"在批入口与单条入口上是同一件事、同一句话。
+     */
     async executeAll(calls: readonly ToolCallRequest[], h: AgentHandle): Promise<readonly ToolResult[]> {
       if (inner.executeAll === undefined) {
         const out: ToolResult[] = []
         for (const call of calls) out.push(await one(call, h))
         return out
       }
-      const got = await inner.executeAll(calls, h)
-      const tail = stepsLeftTail(Number(h.state.step), opts.maxSteps, HOLDER_LAND_NOW)
+      const why = calls.map(refusalOf)
+      const pass = calls.filter((_, at) => why[at] === undefined)
+      const got = pass.length === 0 ? [] : await inner.executeAll(pass, h)
       const out: ToolResult[] = []
+      let k = 0
       for (let at = 0; at < calls.length; at += 1) {
         const call = calls[at] as ToolCallRequest
-        const r = got[at] as ToolResult
-        // **那一下"交卷"照旧记下来**（与 `execute` 同一个判据），而"还剩几步"是**每条回执都补**
-        // ——那一句说的是这一格还剩多少步，与这一趟调的是哪条工具无关。
-        if (call.name === 'exit_plan_mode' && r.ok && r.halt === true) opts.onDeclare?.()
-        out.push(tail === '' ? r : { ...r, output: capReceipt(r.output + tail) })
+        const refused = why[at]
+        if (refused !== undefined) {
+          out.push({ ok: false, output: refused })
+          continue
+        }
+        out.push(finish(call, got[k] as ToolResult, h))
+        k += 1
       }
       return out
     },
