@@ -19,7 +19,7 @@ import { sourcesFor } from '../assemble/sources.ts'
 import { readConfig } from '../config.ts'
 import type { ConfigDoc } from '../config.ts'
 import type { Contract } from '../contract/types.ts'
-import { driverSupport } from './fugue.ts'
+import { driverSupport } from './cmd/round.ts'
 import { BUILTIN_CATALOG } from '../model/catalog.ts'
 
 /**
