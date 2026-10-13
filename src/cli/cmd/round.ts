@@ -32,6 +32,9 @@ import { dispatchRound } from '../../round/dispatch.ts'
 import { lastOf, latestFaceOf, roundFactsOf, withVersion } from '../../round/versions.ts'
 import type { VersionFace } from '../../round/versions.ts'
 import { fingerprintOf } from '../../contract/gate.ts'
+import { writeSetPaths } from '../../contract/precheck.ts'
+import type { PrecheckResult } from '../../contract/precheck.ts'
+import { compactLinesOf, compactOf } from '../../round/compact.ts'
 import { PlanError, holderGoalText, planRound, pinnedBase } from '../../round/plan.ts'
 import { RECENT_COUNT, SayError, recentOf, sayRound, sessionPathOf } from '../../round/say.ts'
 import { estimateTokensOfText } from '../../runtime/budget.ts'
@@ -875,6 +878,24 @@ export async function roundPlan(
     // 读数——它换不来放行，新的一批照样停在门口。
     const earlier = fingerprint === null ? [] : facts.approvals
     const same = earlier.find((x) => x.fingerprint === fingerprint) ?? null
+    // **浓缩件**（0.5.0 · 验收锚 ①）：门口那一批 + 这一份账进去，几行可核对的东西出来——它是
+    // 纯函数（不认识真源 · 不认识视图 · 不认识时刻），于是"同一个账跨进程重算一致"查得出来。
+    const compact =
+      r.held && built !== null && fingerprint !== null
+        ? compactOf(
+            {
+              round: r.round,
+              base: r.base as CommitId,
+              goal,
+              built,
+              precheck: r.gate.precheck as PrecheckResult,
+              fingerprint,
+              seedRead: r.seedRead,
+              same: earlier.filter((x) => x.fingerprint === fingerprint).map((x) => x.round),
+            },
+            facts,
+          )
+        : null
     // **版本那一栏：一次读，两个渲染器**（PLAN § 5.12 的 C5.b「与 `--json` 那两栏同源」）——下面
     // 机器面那几栏与人面那几行出自同一张 `VersionFace`。**这一趟没写出草案时那一栏是空的**
     // （`landing` 为空；判据与人面印那一处逐字相同：人面不印的处境，机器面也不该报一个旧的号）。
@@ -902,6 +923,9 @@ export async function roundPlan(
         intersections: r.gate.precheck?.lines ?? [],
         fingerprint,
         sameAs: same === null ? null : same.round,
+        // **浓缩件那一栏**：与下面人面那几行同一份（一处算 · 两个渲染器）——`--json` 消费者
+        // 拿得到同一批的件数 · 覆盖 · 验收 · 比出来的档与逐处差异 · 以及它的指纹。
+        compact: compact === null ? null : { ...compact, diff: [...compact.diff], ids: [...compact.ids] },
         seedRead: r.seedRead,
         occupancy: [...r.occupancy],
         // **版本那一栏**（`versionJsonOf`：`VersionFace` 逐字段投影）——与人面那几行同源。
@@ -944,6 +968,8 @@ export async function roundPlan(
         emitLine(`  预检：${writeSetPaths(built.contracts).length} 条路径 · ${r.gate.precheck.intersections.length} 对相交`)
         for (const line of r.gate.precheck.lines) emitLine(`    ${line}（照发：这一站的口径是报出来、照发）`)
         emitLine(`  批号：${fingerprint}（这一批的编号——拆分的形状，不含轮次与身份）`)
+        // **人面那几行**（浓缩件的唯一渲染器）：件数 · 覆盖 · 验收 · 与上一批的比 · 逐处差异。
+        if (compact !== null) for (const line of compactLinesOf(compact)) emitLine(line)
         if (same !== null) {
           emitLine(`    与你在 ${same.round} 放过的那一批同号：编号只是一个名字，不作放行的凭证——新的一批照样停在这里等人点头`)
         }
@@ -1592,15 +1618,6 @@ function outputsOf(c: Contract): readonly string[] {
   // 原先给的是 `deliver/<agent>/`——那是证据前缀那一次改写之前的旧约定，而这一行是 B 区的
   // 最后一行（近因那一处）：模型照它走，就会写到一个**既不在契约写入面、验收也不看**的地方。
   return c.evidenceRequired.map((e) => e.artifact)
-}
-
-function writeSetPaths(contracts: readonly Contract[]): string[] {
-  const all = new Set<string>()
-  for (const c of contracts) {
-    const paths = c.kind === 'implement' ? c.ownedPaths : c.kind === 'resolve' ? c.conflictPaths : []
-    for (const p of paths) all.add(p)
-  }
-  return [...all]
 }
 
 /**

@@ -53,6 +53,8 @@ export interface DistillVersion {
 }
 
 /** 这一轮在日志里的几样读数：**一次读出来的一份自洽快照**。 */
+import type { Contract } from '../contract/types.ts'
+
 export interface RoundFacts {
   readonly round: RoundId
   /** `round/state` 那条链的终点。一条都没有 = 这一轮还没落地 → `Idle`。 */
@@ -72,10 +74,18 @@ export interface RoundFacts {
   readonly approvals: readonly ApprovedBatch[]
 }
 
-/** 日志里放过的一批：属于哪一轮 + 批号（拆分的形状）。 */
+/**
+ * 日志里放过的一批：属于哪一轮 + 批号（拆分的形状）+ **那一批的契约面**。
+ *
+ * 契约面为什么在这里：放行那一笔（`round/approve`）只记 id，而契约的正文住在 `contract/issue` 的
+ * `body` 里（架构 § 8.12）。0.5.0 的浓缩件要按批号把"上一批长什么样"取回来，于是这一份读数把
+ * 同一条链上的 `contract/issue` 一并收着——**从账上重算**，不是从当下工作区里猜。
+ */
 export interface ApprovedBatch {
   readonly round: RoundId
   readonly fingerprint: string
+  /** 这一批逐条发出去的那几份契约值（按构造次序）。**取不回来就是空的**（老账里没有那一笔）。 */
+  readonly contracts: readonly Contract[]
 }
 
 /**
@@ -89,6 +99,8 @@ export async function roundFactsOf(log: LogReader, round: RoundId): Promise<Roun
   let base: CommitId | null = null
   let goal = ''
   const versions: DistillVersion[] = []
+  /** 账上发过的契约正文（`contract/issue` 的 `body`），按 `contract` 那一个 id 记最后一次。 */
+  const issued = new Map<string, Contract>()
   const approvals: ApprovedBatch[] = []
   for await (const e of log.readByWriter('round' as WriterId)) {
     if (e.t === 'round/state') {
@@ -105,8 +117,24 @@ export async function roundFactsOf(log: LogReader, round: RoundId): Promise<Roun
       versions.push({ at: versions.length + 1, digest: e.digest, against: e.against ?? null, body: e.body })
       continue
     }
+    // 契约的正文（发出去那一条事件的 `body` 里就是那一份契约值）。
+    if (e.t === 'contract/issue') {
+      try {
+        issued.set(e.contract, JSON.parse(e.body) as Contract)
+      } catch {
+        // 正文读不成一份契约：那不是这一份读数的事（`round/work.ts` 会在它自己那一趟当场拒）。
+        // 这里只把这一条记成"取不回来"——浓缩件那一栏于是少了这一件，而不是整趟读不出来。
+      }
+      continue
+    }
     // 放过的那几批照收（**不按轮次筛**：同号的那一批可能在别的轮里）。
-    if (e.t === 'round/approve') approvals.push({ round: e.round, fingerprint: e.fingerprint })
+    if (e.t === 'round/approve') {
+      approvals.push({
+        round: e.round,
+        fingerprint: e.fingerprint,
+        contracts: e.contracts.map((id) => issued.get(id)).filter((c): c is Contract => c !== undefined),
+      })
+    }
   }
   return { round, state, base, goal, versions, approvals }
 }
