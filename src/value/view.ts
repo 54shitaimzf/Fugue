@@ -21,7 +21,7 @@ import { saveSnapshot, snapshotOf } from '../view/snapshot.ts'
 import type { Roots } from '../roots/contract.ts'
 import { createRoots } from '../roots/roots.ts'
 import { deltaFrom, deltaLine, deltaJson } from '../cli/cmd/view.ts'
-import { UsageError as CliUsageError, fence, openCtx, writerOf } from '../cli/shared.ts'
+import { UsageError as CliUsageError, fence, openCtx, verifyBatch, writerOf } from '../cli/shared.ts'
 import type { Ctx } from '../cli/shared.ts'
 import { CommandError, UsageError, ok, unit } from './types.ts'
 import type { ValueArgs, ValueResult } from './types.ts'
@@ -40,8 +40,11 @@ async function withCtx<T>(
   opts: { write?: boolean; history?: boolean },
   fn: (ctx: Ctx) => Promise<T>,
 ): Promise<T> {
-  const extra =
-    opts.write === true ? { write: true } : opts.history === true ? { history: true } : {}
+  const extra = {
+    ...(opts.write === true ? { write: true } : opts.history === true ? { history: true } : {}),
+    // **这一趟只读批次**（架构 § 9.11）：壳给了根就绑代——开视图与命令那一段都盖在里面。
+    ...(a.batchRoot === undefined ? {} : { batch: a.batchRoot }),
+  }
   let ctx: Ctx
   try {
     ctx = await openCtx(a.root, a.flags, extra)
@@ -50,7 +53,10 @@ async function withCtx<T>(
     throw err
   }
   try {
-    return await fn(ctx)
+    const out = await fn(ctx)
+    // **读完再验一次代**：期间落了写入就整批作废（`ctx.batch` 是 `openCtx` 绑的那一份）。
+    await verifyBatch(ctx.batch)
+    return out
   } finally {
     await ctx.close()
   }

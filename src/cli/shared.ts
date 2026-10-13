@@ -6,6 +6,8 @@ import { resolve } from 'node:path'
 import { openLog } from '../log/log.ts'
 import type { LogHandle, SyncLevel } from '../log/log.ts'
 import { openTruth } from '../truth/truth.ts'
+import type { ReadBatch } from '../log/batch.ts'
+import { BatchStaleError, batchOf } from '../log/batch.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import type { Roots } from '../roots/contract.ts'
 import { createRoots } from '../roots/roots.ts'
@@ -173,6 +175,8 @@ export interface Ctx {
   truth: TruthHandle
   view: View
   writer: WriterId
+  /** 这一趟只读批次绑定的那一份代（没绑就是 `null`：这条命令不是一批的一趟）。 */
+  readonly batch: ReadBatch | null
   close(): Promise<void>
 }
 
@@ -197,6 +201,14 @@ export interface OpenOptions {
    * 给 `true`；读命令一律不给——架构 § 9.7 把加锁与预取并列，观察不得影响状态。
    */
   write?: boolean
+  /**
+   * **这一趟是"一批只读批次"的一趟**（架构 § 9.11 的第一句）：给了它，`openCtx` 在开视图的
+   * 那一刻把这一批的**代**绑住（`log/batch.ts` 的 `batchOf`）。代有两种变，都算"整批作废"：
+   * 开视图**期间**就有写入（当场抛），或者命令跑完之后代变了（`verifyBatch` 抛）。
+   *
+   * 不给就是"这条命令自己就是一趟"——CLI 那一侧永远不给。
+   */
+  batch?: string
 }
 
 /**
@@ -229,15 +241,27 @@ export async function openCtx(
     // 有快照就从快照起（§ 9.4 的第一步）：这一步只影响快慢，影响不到读出来的东西——
     // `diff` 那种要历史的命令在上面的 `history` 里被排除掉了。
     const ceiling = opts.snapUpTo ?? opts.upToRev
+    // **这一批的代：开视图之前绑**（架构 § 9.11）。开视图这一趟自己也要同代——它读的是日志，
+    // 而期间落了一条就是"这一批读的是两代"。所以 `read()` 把 `loadView` 包在里面：期间有写入
+    // 当场抛 `BatchStaleError`，而不是把一份拼了两代的视图交下去。
+    const batch = opts.batch === undefined ? null : batchOf(opts.batch)
     const snap =
       opts.history === true
         ? null
         : await readSnapshot(root, writer, ceiling === undefined ? {} : { upToRev: ceiling })
-    const view = await loadView(
-      log,
-      writer,
-      snap === null ? { lower, upToRev: opts.upToRev } : { lower, upToRev: opts.upToRev, snap },
-    )
+    const view = await (batch === null
+      ? loadView(
+          log,
+          writer,
+          snap === null ? { lower, upToRev: opts.upToRev } : { lower, upToRev: opts.upToRev, snap },
+        )
+      : batch.read(() =>
+          loadView(
+            log,
+            writer,
+            snap === null ? { lower, upToRev: opts.upToRev } : { lower, upToRev: opts.upToRev, snap },
+          ),
+        ))
     const t = truth
     return {
       root,
@@ -246,6 +270,7 @@ export async function openCtx(
       truth: t,
       view,
       writer,
+      batch,
       close: async () => {
         await log.close()
         await t.close()
@@ -301,3 +326,29 @@ export function parseOctal(raw: string): number {
   if (!/^[0-7]{3,4}$/.test(text)) throw new UsageError(`模式要八进制三位或四位：${raw}`)
   return parseInt(text, 8)
 }
+
+
+/**
+ * **把这一趟绑成"一批只读批次"**（架构 § 9.11 的第一句）。`a.batchRoot` 没给就是 `null`
+ * ——CLI 那一侧因此走的是与从前逐字节相同的那条路（一次都不调 `generationOf`）。
+ *
+ * 判据本身住 `log/batch.ts`（代是每个 writer 日志文件的 `(size, mtimeMs)`），这一份只把它接到
+ * 命令那一趟的首尾；值层那一格（`value/invoke.ts`）在两个地方各调一次。
+ */
+export function bindReadBatch(a: { readonly batchRoot?: string }): ReadBatch | null {
+  return a.batchRoot === undefined ? null : batchOf(a.batchRoot)
+}
+
+/**
+ * **这一趟读完再验一次代**（架构 § 9.11：期间有写入就整批作废，两代不拼接）。
+ *
+ * 代变了就抛——那句错话是 `log/batch.ts` 给的（它把两个代都印在里面）。**不静默重读**：重读
+ * 是调用方的事（重开一批），而"悄悄再来一遍"会把一次作废变成一次更长的等待，人却看不出发生过。
+ */
+export async function verifyBatch(batch: ReadBatch | null): Promise<void> {
+  if (batch === null) return
+  await batch.read(() => undefined)
+}
+
+/** 那一批作废了（`verifyBatch` 抛的就是它）——壳按"做不成"（退出码 1）那一档认它。 */
+export { BatchStaleError }

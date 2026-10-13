@@ -60,7 +60,13 @@ export interface ServeResult {
   readonly subject?: string
 }
 
-/** 从 `params` 里认出开关与位置参数（命令面单一真源：认得的开关就是 `FLAGS_OF` 那一张表）。 */
+/**
+ * 从 `params` 里认出开关与位置参数（命令面单一真源：认得的开关就是 `FLAGS_OF` 那一张表）。
+ *
+ * **`batchRoot` 不是一条开关**：它不住 `params`（客户端送不上来，`FLAGS_OF` 里也没有它），
+ * 由这一层按连接的那个根填进去——一条请求就是一趟，而"这一趟读的东西同代"归服务端保证
+ * （架构 § 9.11 的第一句：服务端可以记住派生物，派生物可弃、重算读出来逐字节不变）。
+ */
 function argsOf(method: string, params: Record<string, unknown>, root: string): ValueArgs {
   const key = keyOfMethod(method)
   const table = FLAGS_OF[key]
@@ -83,7 +89,7 @@ function argsOf(method: string, params: Record<string, unknown>, root: string): 
     }
     flags.set(k, v === true || v === null ? true : String(v))
   }
-  return { root, flags, args, rest }
+  return { root, flags, args, rest, batchRoot: root }
 }
 
 /** 把一份值层结果编成一次回答的 `result`。**`stdout` 的字节来自值层那两条脸**，serve 不另排版。 */
