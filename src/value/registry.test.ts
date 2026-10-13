@@ -1,4 +1,4 @@
-// **只读那一份名单**（0.5.0）。跑法：cd ~/fugue && node --test src/value/registry.test.ts
+// **只读那一份名单**（本版）。跑法：cd ~/fugue && node --test src/value/registry.test.ts
 //
 // 出处：架构 § 9.7（观察不得影响状态）· § 9.11 的第一句（服务端可以记住派生物，而其第一条
 // 就是"一次只读批次固定在一个代上"）。

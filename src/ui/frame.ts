@@ -117,7 +117,7 @@ export interface Frame {
   /**
    * 内容那一栏占多少列。第二幕 ⑦ 之后没有第二栏了（`right` 恒 0）——留着那一格是为了不动
    * 这一份形状：读者与测试都按 `left + right + 3 = width` 读它。改主意的条件：再没有第二个
-   * 读者时（0.5.0 那一档看）就把 `right` 收掉，那时 `columns` 直接是一个数。
+   * 读者时（本版那一档看）就把 `right` 收掉，那时 `columns` 直接是一个数。
    */
   readonly columns: { readonly left: number; readonly right: number }
   /** 账尾那一行（已经是把 `footerOf` 折进框宽之后的样子）。 */

@@ -878,7 +878,7 @@ export async function roundPlan(
     // 读数——它换不来放行，新的一批照样停在门口。
     const earlier = fingerprint === null ? [] : facts.approvals
     const same = earlier.find((x) => x.fingerprint === fingerprint) ?? null
-    // **浓缩件**（0.5.0 · 验收锚 ①）：门口那一批 + 这一份账进去，几行可核对的东西出来——它是
+    // **浓缩件**（本版· 验收锚 ①）：门口那一批 + 这一份账进去，几行可核对的东西出来——它是
     // 纯函数（不认识真源 · 不认识视图 · 不认识时刻），于是"同一个账跨进程重算一致"查得出来。
     const compact =
       r.held && built !== null && fingerprint !== null

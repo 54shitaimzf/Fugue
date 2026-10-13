@@ -9,7 +9,7 @@
 //     与 `serve/source.ts`（事件通道那一份）——闭包要是空的，下面"零直连"当然成立；
 //   · **负对照一 · 塞一条直连 import 当场红**（`src/log/log.ts` 进闭包）；
 //   · **负对照二 · 塞一条 `.fugue/session` 直读当场红**，而把它点名进 `LEGACY_READERS` 就放行
-//     ——这一条演示的正是 0.5.0 那个"删点名即自动加严"的开关。
+//     ——这一条演示的正是本版那个"删点名即自动加严"的开关。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -59,7 +59,7 @@ test('② 负对照 · 塞一条直连 import：闭包里多出 `log/log.ts`，�
   assert.deepEqual(problemsIn(mods, entries), [])
 })
 
-test('③ 负对照 · 塞一条 `.fugue/session` 直读：当场红；点名进放行表就放行（0.5.0 那个开关）', () => {
+test('③ 负对照 · 塞一条 `.fugue/session` 直读：当场红；点名进放行表就放行（本版那个开关）', () => {
   const mods = readRepo()
   const entries = uiModules(mods)
   const here = 'src/ui/console.ts'
@@ -67,7 +67,7 @@ test('③ 负对照 · 塞一条 `.fugue/session` 直读：当场红；点名进
   const broken = withText(mods, here, `const p = '.fugue/session/r1.jsonl'\n` + source)
   const red = problemsIn(broken, entries)
   assert.ok(red.some((b) => b.includes('.fugue/session')), `该报出那条遗留直读：${JSON.stringify(red)}`)
-  // **点名即放行**：`LEGACY_READERS` 是那条读源唯一合法的住处；0.5.0 把它收进 serve 的读口之后
+  // **点名即放行**：`LEGACY_READERS` 是那条读源唯一合法的住处；本版把它收进 serve 的读口之后
   // 删掉这一行，判据自动回到"一处都不许"。
   assert.deepEqual(problemsIn(broken, entries, { legacyReaders: [here] }), [])
   assert.deepEqual(LEGACY_READERS, [], '这一版不新开这条直连，所以放行表今天是空的')

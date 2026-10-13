@@ -470,7 +470,7 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
   return {
     execute: runOne,
     /**
-     * **这一趟的这几条一起跑**（0.5.0）：只读那几条叠着跑，写串行，回执按原调用序归位。
+     * **这一趟的这几条一起跑**（本版）：只读那几条叠着跑，写串行，回执按原调用序归位。
      *
      * 两半都从能力表读出来的那一格推（`lookup` 的 `readOnly`）：**没有一处按工具名分岔**——
      * 加一条只读工具，能力表那一份名单里多一个名字，这里一个字不动。

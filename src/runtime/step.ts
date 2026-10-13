@@ -114,7 +114,7 @@ export interface ToolResult {
 export interface ToolExecutor {
   execute(call: ToolCallRequest, h: AgentHandle): Promise<ToolResult>
   /**
-   * **这一趟的这几条一起跑**，结果**按传进来的次序**交回来（0.5.0）。
+   * **这一趟的这几条一起跑**，结果**按传进来的次序**交回来（本版）。
    *
    * 为什么它在这一道缝上而不是在运行时里：哪几条能叠着跑是**工具面**的事（"这条工具跑一次会不会
    * 动东西"住在能力表那一处），而运行时那一层按定义不认识工具。所以运行时只问一句"你能不能一

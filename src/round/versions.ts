@@ -78,7 +78,7 @@ export interface RoundFacts {
  * 日志里放过的一批：属于哪一轮 + 批号（拆分的形状）+ **那一批的契约面**。
  *
  * 契约面为什么在这里：放行那一笔（`round/approve`）只记 id，而契约的正文住在 `contract/issue` 的
- * `body` 里（架构 § 8.12）。0.5.0 的浓缩件要按批号把"上一批长什么样"取回来，于是这一份读数把
+ * `body` 里（架构 § 8.12）。本版的浓缩件要按批号把"上一批长什么样"取回来，于是这一份读数把
  * 同一条链上的 `contract/issue` 一并收着——**从账上重算**，不是从当下工作区里猜。
  */
 export interface ApprovedBatch {

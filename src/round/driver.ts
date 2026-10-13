@@ -248,7 +248,7 @@ export const AGENT_LAND_NOW =
  * **不给上界就原样交回去**（不包一层）：没有上界就没有"还剩几步"可言，而空壳只会让 `ToolExecutor`
  * 那张脸多一层看不出差别的东西。
  *
- * **它是导出的**（0.5.0）：只读并行那一站要指着**产品本体**量一句"这一层不许把批次吃掉"
+ * **它是导出的**（本版）：只读并行那一站要指着**产品本体**量一句"这一层不许把批次吃掉"
  * （`src/runtime/batch.test.ts` ⑤）——按形状抄一份来量，量到的是抄的那一份。
  */
 export function withStepsLeft(inner: ToolExecutor, maxSteps?: number): ToolExecutor {
@@ -261,7 +261,7 @@ export function withStepsLeft(inner: ToolExecutor, maxSteps?: number): ToolExecu
   }
   return {
     execute: one,
-    // **批次那一栏原样转发**（0.5.0）：这一层只是往回执尾巴上加一句"还剩几步"，与"一次收一批"
+    // **批次那一栏原样转发**（本版）：这一层只是往回执尾巴上加一句"还剩几步"，与"一次收一批"
     // 无关。不转发的话，它就成了只读并行唯一那个静默的漏斗——运行时看见的执行器没有那一栏，
     // 退回一次一条，而墙钟上只表现为"这一轮慢"。断言在 `src/runtime/batch.test.ts` ⑤。
     async executeAll(calls: readonly ToolCallRequest[], h: AgentHandle): Promise<readonly ToolResult[]> {

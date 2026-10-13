@@ -130,7 +130,7 @@ async function run(argv: readonly string[]): Promise<number> {
     if (isSpecial(valueKey)) return await watchAndWrite(valueArgs, json)
     return writeValue(await valueResultOf(valueKey, valueArgs), json)
   }
-  // **观察那三条（`log` · `status` · `watch`）在上面值层那一支就出去了**：0.5.0 收口把它们的
+  // **观察那三条（`log` · `status` · `watch`）在上面值层那一支就出去了**：本版收口把它们的
   // 三个老出口与 `cli/cmd/observe.ts` 一起收掉（那三个在值层登记之后一条都走不到这儿）。
   // 三条都是**纯读**：不建视图、不取锁、不追加（§ 9.7）——所以它们排在建视图那一组之前。
   if (cmd === 'tui') return await tuiCmd(root, flags)
