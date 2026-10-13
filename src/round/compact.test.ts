@@ -52,9 +52,17 @@ function resolve(id: string, conflictPaths: string[], assertions: string[] = [])
   } as unknown as Contract
 }
 
-/** 一份放行过的批（账上那一条 `round/approve` 的读数）。 */
-function approved(round: string, fingerprint: string, contracts: readonly Contract[]): ApprovedBatch {
-  return { round, fingerprint, contracts }
+/**
+ * 一份放行过的批（账上那一条 `round/approve` 的读数 + **它后面那几条 `contract/issue` 收回来的正文**）。
+ * `missing` 是"账上点了名、而正文取不回来"的那几个 id——缺证那一档的输入。
+ */
+function approved(
+  round: string,
+  fingerprint: string,
+  contracts: readonly Contract[],
+  missing: readonly string[] = [],
+): ApprovedBatch {
+  return { round, fingerprint, contracts, missing }
 }
 
 /** 一份账的读数（这一份只读那几栏）。 */
@@ -175,4 +183,56 @@ test('⑤ 差异的行序不看输入的次序：多 · 少 · 逐面，各按 i
   assert.ok(back.includes('多了一件 r1.resolve.9'), back.join(' | '))
   assert.ok(back.includes('少了 r1.implement.9'), back.join(' | '))
   console.log('⑤ 读数：行序固定（先多后少再按 id）· 反向算得出反向的三条')
+})
+
+// ── ⑥ 跨轮对齐：按"拆分的形状那一格"比，不按整个 id 比 ─────────────────────────────
+//
+// 判据一句话：**换一轮（id 里那一段轮次号变了）不许被报成内容差**。同一格（第 n 节 · 同一变体）在
+// 两轮里是两个不同的 id，按整个 id 对齐时它会被算成「多了一件 + 少了一件」——真正的目标 · 写入面 ·
+// 验收差别就被那两行埋掉。负对照是另一半：**真的多了一格 / 少了一格照旧报得出来**（对齐不等于抹平）。
+test('⑥ 跨轮同一格按形状对齐：身份差（轮次号）不冒充内容差；真多真少照旧报', () => {
+  const before = [implement('r2.implement.1', '写一份 a.ts')]
+  const after = [implement('r3.implement.1', '写一份 b.ts', ['b.ts'])]
+  const diff = diffOf(before, after)
+  assert.equal(
+    diff.some((d) => d.includes('多了一件') || d.includes('少了')),
+    false,
+    `换一轮被报成了身份差（多/少）：${diff.join(' | ')}`,
+  )
+  assert.ok(
+    diff.some((d) => d.startsWith('r3.implement.1\t目标变了')),
+    `同一格的那条内容差没报出来：${diff.join(' | ')}`,
+  )
+  assert.ok(diff.some((d) => d.includes('写入面变了')), `写入面那一处没报出来：${diff.join(' | ')}`)
+  // **负对照**：真多一格 · 真少一格。
+  const added = diffOf(before, [...after, implement('r3.implement.2', '第二格')])
+  assert.ok(added.includes('多了一件 r3.implement.2'), `真多了一格没报出来：${added.join(' | ')}`)
+  const removed = diffOf([...before, implement('r2.implement.2', '第二格')], after)
+  assert.ok(removed.includes('少了 r2.implement.2'), `真少了一格没报出来：${removed.join(' | ')}`)
+  console.log(`⑥ 读数：跨轮同一格 → ${diff.length} 处（${diff[0] ?? ''}）· 真多/真少各一条`)
+})
+
+// ── ⑦ 缺证那一档：正文取不回来 → 差额算不出来 ─────────────────────────────────────
+//
+// 判据一句话：**取不回正文是一个显式的档**——不补齐（不猜正文）、不跳批（那一条批准照旧在）、
+// 也不冒充同号（编号相同只说形状相同，而"差在哪"要的是正文）。
+test('⑦ 缺证那一档：同号而正文取不回来 → 差额算不出来，人面逐条说是哪几件', () => {
+  const now = implement('r3.implement.1', '写一份 a.ts')
+  const p = pendingOfContracts([now], 'fp-x')
+  const unproven = compactOf(p, factsOf({ approvals: [approved('r2', 'fp-x', [], ['r2.implement.1'])] }))
+  assert.equal(unproven.compare, 'unproven', '缺证那一档没分出来（同号把它盖过去了）')
+  assert.deepEqual(unproven.diff, [], '缺证时差额算不出来，就不该给一份差额')
+  assert.deepEqual([...unproven.missing], ['r2.implement.1'])
+  const lines = compactLinesOf(unproven).join('\n')
+  assert.match(lines, /缺证，不补齐/, lines)
+  assert.match(lines, /取不回来：r2\.implement\.1/, lines)
+  assert.match(lines, /同号/, lines)
+  // **缺证与否是两份不同的件**：它进指纹，"同一个账跨进程重算一致"那句话罩得住它。
+  const fine = compactOf(p, factsOf({ approvals: [approved('r2', 'fp-x', [now])] }))
+  assert.equal(fine.compare, 'same', '正文在手上、编号又相同 → 同号')
+  assert.notEqual(unproven.digest, fine.digest, '缺证与不缺证出了同一个指纹——那一栏没进指纹')
+  console.log(
+    `⑦ 读数：同号而缺证 → compare=${unproven.compare} · 取不回来 ${unproven.missing.join(' · ')} · ` +
+      `指纹 ${unproven.digest} ≠ 不缺证的 ${fine.digest}`,
+  )
 })

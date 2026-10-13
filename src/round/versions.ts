@@ -25,7 +25,7 @@
 // **只读 `round` 那一个写者**：轮级事件只有一个口（架构 § 9.2 的栅栏按 writer 分文件）。
 import type { LogReader } from '../log/events.ts'
 import type { WriterId } from '../terms.ts'
-import type { CommitId, RoundId } from '../terms.ts'
+import type { CommitId, ContractId, RoundId } from '../terms.ts'
 import type { Draft, DraftSection } from '../contract/draft.ts'
 import { DraftError, draftOf } from '../contract/draft.ts'
 import type { RoundState } from './machine.ts'
@@ -79,13 +79,30 @@ export interface RoundFacts {
  *
  * 契约面为什么在这里：放行那一笔（`round/approve`）只记 id，而契约的正文住在 `contract/issue` 的
  * `body` 里（架构 § 8.12）。本版的浓缩件要按批号把"上一批长什么样"取回来，于是这一份读数把
- * 同一条链上的 `contract/issue` 一并收着——**从账上重算**，不是从当下工作区里猜。
+ * **每一条批准后面**那几条 `contract/issue` 一并收着——**从账上重算**，不是从当下工作区里猜。
  */
 export interface ApprovedBatch {
   readonly round: RoundId
   readonly fingerprint: string
-  /** 这一批逐条发出去的那几份契约值（按构造次序）。**取不回来就是空的**（老账里没有那一笔）。 */
+  /** 这一批逐条发出去的那几份契约值（**按构造次序**；取不回来的那几件不在这里）。 */
   readonly contracts: readonly Contract[]
+  /**
+   * **账上点了名、而正文取不回来的那几个 id**（按 `round/approve` 那一栏的次序）。
+   *
+   * 它不是"这一批没有契约"：账上那条 `contract/issue` 不在（或者它的 `body` 读不成一份契约）时
+   * 就是这个形状。**缺证要说出来**——空数组 = 全取回来了。浓缩件据此分出「缺证」那一档，而不是
+   * 拿一个空集合去算差额（那会把"不知道"印成"这一批什么都没有 · 这一批全是新增"）。
+   */
+  readonly missing: readonly ContractId[]
+}
+
+/** 扫描途中正在收正文的那一批放行（收满就是一条 `ApprovedBatch`）。**只在扫描里活着。** */
+interface OpenBatch {
+  readonly round: RoundId
+  readonly fingerprint: string
+  /** `round/approve` 点名的那几条 id（构造次序）——**只有它们认得出自己的正文**。 */
+  readonly want: readonly ContractId[]
+  readonly got: Map<string, Contract>
 }
 
 /**
@@ -99,9 +116,12 @@ export async function roundFactsOf(log: LogReader, round: RoundId): Promise<Roun
   let base: CommitId | null = null
   let goal = ''
   const versions: DistillVersion[] = []
-  /** 账上发过的契约正文（`contract/issue` 的 `body`），按 `contract` 那一个 id 记最后一次。 */
-  const issued = new Map<string, Contract>()
-  const approvals: ApprovedBatch[] = []
+  /**
+   * 放过的那几批，**按发生次序**。正文不在 `round/approve` 那一处收——**那一条写在 `contract/issue`
+   * 之前**（`dispatchRound` 的四步：先记"谁批的"，再逐条发），当场去 `issued` 里查只会查到空集。
+   * 所以每一条批准收的是**它后面**那几条 `contract/issue`，收满就是一条 `ApprovedBatch`。
+   */
+  const approvals: OpenBatch[] = []
   for await (const e of log.readByWriter('round' as WriterId)) {
     if (e.t === 'round/state') {
       if (e.round === round) state = e.to
@@ -117,26 +137,40 @@ export async function roundFactsOf(log: LogReader, round: RoundId): Promise<Roun
       versions.push({ at: versions.length + 1, digest: e.digest, against: e.against ?? null, body: e.body })
       continue
     }
-    // 契约的正文（发出去那一条事件的 `body` 里就是那一份契约值）。
-    if (e.t === 'contract/issue') {
-      try {
-        issued.set(e.contract, JSON.parse(e.body) as Contract)
-      } catch {
-        // 正文读不成一份契约：那不是这一份读数的事（`round/work.ts` 会在它自己那一趟当场拒）。
-        // 这里只把这一条记成"取不回来"——浓缩件那一栏于是少了这一件，而不是整趟读不出来。
-      }
+    // 放过的那几批照收（**不按轮次筛**：同号的那一批可能在别的轮里）。**它开一批**：从这一条起，
+    // 后面那几条 `contract/issue` 归它——账上就是那个次序，读的人跟着那个次序走。
+    if (e.t === 'round/approve') {
+      approvals.push({ round: e.round, fingerprint: e.fingerprint, want: [...e.contracts], got: new Map() })
       continue
     }
-    // 放过的那几批照收（**不按轮次筛**：同号的那一批可能在别的轮里）。
-    if (e.t === 'round/approve') {
-      approvals.push({
-        round: e.round,
-        fingerprint: e.fingerprint,
-        contracts: e.contracts.map((id) => issued.get(id)).filter((c): c is Contract => c !== undefined),
-      })
+    // 契约的正文（发出去那一条事件的 `body` 里就是那一份契约值）。**认得它的只有"当前那一批"**：
+    // 账上同一个 id 后来又发过一次（同一轮重拆）时，那一条正文归新的那一批——**先前那一批的快照
+    // 照旧是当时的正文**，不被后来那一次改写（按 id 记"最后一次"的读法错就错在这里）。
+    if (e.t === 'contract/issue') {
+      const open = approvals[approvals.length - 1]
+      if (open === undefined || !open.want.includes(e.contract)) continue
+      try {
+        open.got.set(e.contract, JSON.parse(e.body) as Contract)
+      } catch {
+        // 正文读不成一份契约：那不是这一份读数的事（`round/work.ts` 会在它自己那一趟当场拒）。
+        // 这里只把它记成"取不回来"——那一件进 `missing`，而不是整趟读不出来、也不是补齐一个假的。
+      }
     }
   }
-  return { round, state, base, goal, versions, approvals }
+  return {
+    round,
+    state,
+    base,
+    goal,
+    versions,
+    approvals: approvals.map((a) => ({
+      round: a.round,
+      fingerprint: a.fingerprint,
+      // **按构造次序**：`round/approve` 那一栏就是构造次序，`contract/issue` 逐条照它发。
+      contracts: a.want.map((id) => a.got.get(id)).filter((c): c is Contract => c !== undefined),
+      missing: a.want.filter((id) => !a.got.has(id)),
+    })),
+  }
 }
 
 /**

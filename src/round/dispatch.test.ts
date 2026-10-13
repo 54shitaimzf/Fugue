@@ -36,6 +36,7 @@ import { identFor } from '../identity.ts'
 import { fingerprintOf } from '../contract/gate.ts'
 import { dispatchRound, issueAndStart, pendingOf, roundStateOf } from './dispatch.ts'
 import { roundFactsOf } from './versions.ts'
+import { compactOf } from './compact.ts'
 import { acquireFences } from '../cli/cmd/fences.ts'
 import { holdWriter } from '../log/hold.ts'
 import { DEFAULT_MATERIALIZE } from '../materialize/contract.ts'
@@ -66,6 +67,7 @@ const A = 'src/parse.ts'
 const GOAL = '把解析器拆出来'
 const ROUND = 'r1' as RoundId
 const ROUND2 = 'r2' as RoundId
+const ROUND3 = 'r3' as RoundId
 /** 第 0 个身份（构造次序里的第一格）——名字与分支一处给（架构 § 14.1 第 1 步）。 */
 const AGENT = identFor(ROUND, 0).agent
 
@@ -499,6 +501,57 @@ test('⑦ `--materialize` 那一趟全程持着 N 把栅栏：中途同一把 wr
       `⑦ 读数：${agents.length} 格 · 跑到第 2 格开口时第 1 把仍在手上（同 writer 的 holdWriter 被拒）· ` +
         `铺了 ${forks} 次 · 收尾之后 ${agents.length} 把都拿得回来`,
     )
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ⑧ 门槛上那一批对上一批：**真内容差**（不是身份差）────────────────────────────────
+//
+// 判据一句话：C 对 B 报出来的差额是**内容**上的——`id` 里那一段轮次号（身份）不许冒充内容差。
+// 三批都走真路：A 放行 · B 放行（同一份草案 → 同号）· C 改一句 `goal` 停在门口，然后拿真账算
+// 浓缩件。B 那一批的正文必须先取得回来——取不回来时那一栏会拿空集去算，于是每一件都被报成
+// "多了一件"（那是这一版修掉的第二种面孔）。
+test('⑧ 跨轮停门：C 对 B 报出真内容差额（id 里的轮次号不冒充内容差）', async () => {
+  const b = await bench()
+  try {
+    await atGate(b, ROUND, draftText())
+    await dispatchRound(goDeps(b, ROUND))
+    await atGate(b, ROUND2, draftText())
+    await dispatchRound(goDeps(b, ROUND2))
+    await atGate(b, ROUND3, draftText(section({ goal: '拆成独立模块（第二版）' })))
+
+    const facts = await roundFactsOf(b.log, ROUND3)
+    const last = facts.approvals[facts.approvals.length - 1]
+    assert.equal(last?.round, ROUND2, '账上最后一条放行该是 B 轮')
+    assert.deepEqual(
+      last?.contracts.map((c) => c.goal),
+      ['拆成独立模块'],
+      'B 那一批的正文没取回来（差额会拿空集去算：每一件都成了"多了一件"）',
+    )
+    assert.deepEqual([...(last?.missing ?? [])], [], '正文在账上，不该报缺证')
+
+    const verdict = await pendingOf({
+      log: b.log,
+      round: ROUND3,
+      identityFor: (n) => identFor(ROUND3, n),
+      actions: { test: [] as readonly RelPath[] },
+    })
+    assert.equal(verdict.kind, 'held', `C 该停在门口：${verdict.kind === 'none' ? verdict.why : verdict.kind}`)
+    if (verdict.kind !== 'held') return
+    const c = compactOf(verdict.pending, facts)
+    assert.equal(c.compare, 'changed', '改了一句 goal 的下一批该是 changed')
+    assert.deepEqual(
+      [...c.diff],
+      ['r3.implement.1\t目标变了：拆成独立模块 → 拆成独立模块（第二版）'],
+      `差额不是真内容差：${c.diff.join(' | ')}`,
+    )
+    assert.equal(
+      c.diff.some((d) => d.includes('多了一件') || d.includes('少了')),
+      false,
+      '轮次号带来的身份差冒充了内容差',
+    )
+    console.log(`⑧ 读数：C 对 B（${String(last?.round)}）报出 ${c.diff.length} 处真内容差：${c.diff.join(' | ')}`)
   } finally {
     await b.close()
   }

@@ -21,12 +21,19 @@
 // 那时 `changed` 配一个空的 `diff`，人读得出来"编号变了，面没变"。两种读法都在，人自己挑信哪个。
 import { createHash } from 'node:crypto'
 import type { Contract } from '../contract/types.ts'
+import { idShapeOf } from '../contract/types.ts'
 import { WORDS } from '../words.ts'
 import type { ApprovedBatch, RoundFacts } from './versions.ts'
 import type { Pending } from './dispatch.ts'
 
-/** 与上一批已批准的那一批比出来的三种档。 */
-export type CompactCompare = 'first' | 'same' | 'changed'
+/**
+ * 与上一批已批准的那一批比出来的**四种档**。
+ *
+ * **「缺证」单独一档**（`unproven`）：上一批账上点了名的正文取不回来时，差额**算不出来**——那时
+ * 既不把上一批当空集（那会把"不知道"印成"这一批全是新增"，正是"身份差冒充内容差"的第二种面孔），
+ * 也不冒充同号。其余三档都要求"上一批的正文在手上"。
+ */
+export type CompactCompare = 'first' | 'same' | 'changed' | 'unproven'
 
 /** 浓缩件。**几行**：一批一段 + 与前一批的比。 */
 export interface Compact {
@@ -46,8 +53,15 @@ export interface Compact {
   /** 上一批已批准的那一批（账上最后一条放行）；一条都没有就是 `null`。 */
   readonly lastApproved: { readonly round: string; readonly fingerprint: string } | null
   readonly compare: CompactCompare
-  /** 与上一批的逐处差异（`first` 那一档没有可比的，给空）。 */
+  /** 与上一批的逐处差异（**只有 `changed` 那一档有**；其余三种给空）。 */
   readonly diff: readonly string[]
+  /**
+   * **上一批账上点名、而正文取不回来**的那几个 id（只有 `unproven` 那一档非空）。
+   *
+   * 它是"缺证"这件事本身：不补齐（不猜正文）、不跳批（那一条批准照旧在这里）、也不拿它当空集去
+   * 算差额。**它进指纹**（`canonicalOf`），于是"同一个账跨进程重算一致"那句话把它也罩住。
+   */
+  readonly missing: readonly string[]
   /**
    * **这一份浓缩件的指纹**（那几行原文的 sha256 前十六位）。
    *
@@ -103,22 +117,36 @@ export function countsOf(contracts: readonly Contract[]): { readonly paths: numb
 }
 
 /**
- * 两批契约的**逐处差异**（各一行人话）。**按契约 id 对齐**：
+ * **一条契约在"拆分的形状"里的那一格**：`<变体>.<序号>`（形状归 `idShapeOf` 一处判）。
  *
- *   · 只有这一边有的 id → `多了一件 <id>` / `少了 <id>`；
- *   · 两边都有 → 逐面比（目标 · 写入面 · 验收 · 交付物），差一面出一行。
+ * **对齐用的是它，不是整个 `id`。** `id` 的形状是 `<轮次>.<变体>.<序号>`，前一段是轮次号——而两批
+ * 要对照的常常不是同一个轮次（第二轮的草案改了再停一次门）。按整个 `id` 对齐时，换一轮就把同一格
+ * 报成「多了一件 + 少了一件」两行，真正的目标 · 写入面 · 验收的差别被那两行埋掉：**身份差冒充内容差**。
+ * 认不出形状的（不该有）退回整个 `id`，那是"对不上"而不是"对上了同一格"。
+ */
+function slotOf(id: string): string {
+  const shape = idShapeOf(id)
+  return shape === null ? id : `${shape.kind}.${shape.n}`
+}
+
+/**
+ * 两批契约的**逐处差异**（各一行人话）。**按"拆分的形状里那一格"对齐**（`slotOf`）：
  *
- * 行序是**先多后少、再按 id 排**（不看输入的次序）——于是同一份差异在哪一个进程里算都是同样的行序。
+ *   · 只有这一边有的那一格 → `多了一件 <id>` / `少了 <id>`（印的是它自己那一边的 id）；
+ *   · 两边都有 → 逐面比（目标 · 写入面 · 验收 · 交付物），差一面出一行（印**这一批**那个 id）。
+ *
+ * 行序是**先多后少、再按格排**（不看输入的次序）——于是同一份差异在哪一个进程里算都是同样的行序。
  */
 export function diffOf(before: readonly Contract[], after: readonly Contract[]): readonly string[] {
-  const a = new Map(before.map((c) => [c.id, c]))
-  const b = new Map(after.map((c) => [c.id, c]))
+  const a = new Map(before.map((c) => [slotOf(c.id), c]))
+  const b = new Map(after.map((c) => [slotOf(c.id), c]))
   const out: string[] = []
-  for (const id of [...b.keys()].filter((x) => !a.has(x)).sort()) out.push(`多了一件 ${id}`)
-  for (const id of [...a.keys()].filter((x) => !b.has(x)).sort()) out.push(`少了 ${id}`)
-  for (const id of [...a.keys()].filter((x) => b.has(x)).sort()) {
-    const left = a.get(id) as Contract
-    const right = b.get(id) as Contract
+  for (const slot of [...b.keys()].filter((x) => !a.has(x)).sort()) out.push(`多了一件 ${(b.get(slot) as Contract).id}`)
+  for (const slot of [...a.keys()].filter((x) => !b.has(x)).sort()) out.push(`少了 ${(a.get(slot) as Contract).id}`)
+  for (const slot of [...a.keys()].filter((x) => b.has(x)).sort()) {
+    const left = a.get(slot) as Contract
+    const right = b.get(slot) as Contract
+    const id = right.id
     if (left.kind !== right.kind) {
       out.push(`${id}\t类型变了：${left.kind} → ${right.kind}`)
       continue
@@ -155,6 +183,7 @@ export function canonicalOf(a: Omit<Compact, 'digest'>): string {
     `paths\t${a.paths}`,
     `accepts\t${a.accepts}`,
     `last\t${a.lastApproved === null ? '（一条都没有）' : `${a.lastApproved.round}\t${a.lastApproved.fingerprint}`}`,
+    `missing\t${a.missing.join(' · ')}`,
     `compare\t${a.compare}`,
     ...a.diff.map((d) => `diff\t${d}`),
   ].join('\n')
@@ -177,9 +206,17 @@ export function compactOf(pending: Pending, facts: RoundFacts): Compact {
   const counts = countsOf(contracts)
   const last: ApprovedBatch | null =
     facts.approvals.length === 0 ? null : (facts.approvals[facts.approvals.length - 1] ?? null)
+  // **缺证排在"同号"之前**：编号相同只说拆分的形状相同，而"这一批与那一批差在哪"要的是正文——
+  // 正文取不回来时差额算不出来，那时**不许**印"同号"（那正是"没读就批"想要的那句话）。
   const compare: CompactCompare =
-    last === null ? 'first' : last.fingerprint === pending.fingerprint ? 'same' : 'changed'
-  const diff = last === null || compare === 'same' ? [] : diffOf(last.contracts, contracts)
+    last === null
+      ? 'first'
+      : last.missing.length > 0
+        ? 'unproven'
+        : last.fingerprint === pending.fingerprint
+          ? 'same'
+          : 'changed'
+  const diff = compare === 'changed' && last !== null ? diffOf(last.contracts, contracts) : []
   const body: Omit<Compact, 'digest'> = {
     round: pending.round,
     base: facts.base,
@@ -191,6 +228,7 @@ export function compactOf(pending: Pending, facts: RoundFacts): Compact {
     lastApproved: last === null ? null : { round: last.round, fingerprint: last.fingerprint },
     compare,
     diff,
+    missing: last === null ? [] : [...last.missing],
   }
   return { ...body, digest: digestOf(canonicalOf(body)) }
 }
@@ -198,7 +236,8 @@ export function compactOf(pending: Pending, facts: RoundFacts): Compact {
 /**
  * 浓缩件的人读那几行（**一处渲染**：命令行印的与将来别的壳印的是同一份）。
  *
- * 三行封顶 + 差异逐条跟在后面——**差异是要人核的东西，不折**（它有几条就几行）。
+ * 三行封顶 + 差异逐条跟在后面——**差异是要人核的东西，不折**（它有几条就几行）；缺证那一档把
+ * "取不回来的是哪几件"逐条列出来，那同样是给人核的东西。
  */
 export function compactLinesOf(a: Compact): readonly string[] {
   const out = [
@@ -210,6 +249,17 @@ export function compactLinesOf(a: Compact): readonly string[] {
     return out
   }
   const last = a.lastApproved as { readonly round: string; readonly fingerprint: string }
+  // **缺证那一档**：上一批账上点了名的正文取不回来——差额算不出来。**不补齐、不跳批、也不冒充
+  // 同号**：编号同不同照说，而"差在哪"这一栏说的是"算不出来"，取不回来的 id 逐条列出来给人核。
+  if (a.compare === 'unproven') {
+    out.push(
+      `\t与上一批：与 ${last.round} 放过的那一批（${last.fingerprint}）` +
+        `${last.fingerprint === a.fingerprint ? '同号' : '不同号'}，而它的正文有 ${a.missing.length} 件取不回来` +
+        '——差额算不出来（缺证，不补齐）',
+    )
+    out.push(`\t  取不回来：${a.missing.join(' · ')}`)
+    return out
+  }
   if (a.compare === 'same') {
     out.push(
       `\t与上一批：与 ${last.round} 放过的那一批同号（${last.fingerprint}）——编号只是一个名字，不作放行的凭证`,
