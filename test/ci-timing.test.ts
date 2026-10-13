@@ -18,9 +18,13 @@ const KEYS = ['exitCode', 'files', 'finishedAt', 'lane', 'run', 'runner', 'schem
 function fixture(fastBody: string): string {
   const dir = tmpDir('fugue-ci-timing-')
   mkdirSync(join(dir, 'tools'), { recursive: true })
-  mkdirSync(join(dir, 'src'), { recursive: true })
+  mkdirSync(join(dir, 'src', 'cli'), { recursive: true })
   cpSync(join(REPO, 'tools', 'test-entry.js'), join(dir, 'tools', 'test-entry.js'))
   cpSync(join(REPO, 'tools', 'ci-timing.js'), join(dir, 'tools', 'ci-timing.js'))
+  // 入口那一份（`tools/test-entry.js`）现在会装编译缓存：夹具里也放一份 `src/cli/boot.ts`，
+  // 不然那一档在夹具里直接起不来（实测：ERR_MODULE_NOT_FOUND，退出码从 2 变 1）。夹具是
+  // "把验收入口拷一份进去"，所以它得跟着真仓的形状走。
+  cpSync(join(REPO, 'src', 'cli', 'boot.ts'), join(dir, 'src', 'cli', 'boot.ts'))
   writeFileSync(join(dir, 'src', 'a.test.ts'), fastBody)
   writeFileSync(join(dir, 'src', 'b.test.ts'), '// tier: real —— 夹具不碰真依赖，只为分档读数在场\n')
   return dir

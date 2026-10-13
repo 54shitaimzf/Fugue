@@ -12,7 +12,7 @@
 //      ——地板自己漏一个符号，而且不报错。改坏的样子：给两份模块各加一个同名导出。
 //   ④ **短名拼对**：入口里每一个 `load('…')` 都在表里。改坏的样子：把 `load('round')` 写成
 //      `load('rond')` → 静默落到地板上，只变慢（这条断言就是抓它的）。
-//   ⑤ **入口的静态闭包**：入口的静态 import 只有 `./load.ts` 与 `node:` 内建。
+//   ⑤ **入口的静态闭包**：入口的静态 import 只有 `./boot.ts` · `./load.ts` 与 `node:` 内建。
 //      改坏的样子：往 `fugue.ts` 顶上再加一条 `import ... from './cmd/round.ts'`。
 //   ⑥ **装载读数**（运行时那一趟，口径在 `tools/bench-startup.mjs` ——只有那一处）：`--version`
 //      的闭包里没有那几份重模块，而且比 `doctor` 少——"按命令装载"这件事真的发生了。
@@ -96,9 +96,9 @@ test('④ 入口里每一个 load(…) 的短名都在表里', () => {
   }
 })
 
-test('⑤ 入口的静态 import 只有 ./load.ts 与 node: 内建', () => {
+test('⑤ 入口的静态 import 只有 ./boot.ts · ./load.ts 与 node: 内建', () => {
   const entry = readFileSync(join(HERE, 'fugue.ts'), 'utf8')
-  const allowed = ['./load.ts']
+  const allowed = ['./boot.ts', './load.ts']
   const specs: string[] = []
   for (const m of entry.matchAll(/(^|\n)import\s+(?:type\s+)?[^'\n]*?from\s+'([^']+)'/g)) specs.push(m[2] as string)
   for (const m of entry.matchAll(/(^|\n)import\s+'([^']+)'/g)) specs.push(m[2] as string)

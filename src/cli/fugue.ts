@@ -12,22 +12,29 @@
 // assemble · round），共用的解析 · 发射 · 围栏 · 命令上下文住在 `./shared.ts`；这一文件只剩
 // 分发与出口，出口面逐字未动。
 //
-// **本批：装载按命令切分。** 从前这一份是十四条静态 import，于是每条命令都在为整个命令族的
-// 并集付装载钱——`--version` 与 `round run` 装的是同一棵 349 份模块的树。现在这一份的**静态
-// 闭包里只剩三个 `node:` 内建与 `./load.ts`**：解析那一层（`./argv.ts`）· 出口那一层
-// （`./out.ts`）· 各命令组，统统走 `./load.ts` 那一张短名表，**走到哪一条命令才装哪一份**。
-// 装载那一层的地板在 `./load.ts` 的注释里（映射丢了就全量装载，是变慢不是跑不起来）。
+// **本批：装载按命令切分 + 编译缓存。** 从前这一份是十四条静态 import，于是每条命令都在为整个
+// 命令族的并集付装载钱——`--version` 与 `round run` 装的是同一棵 349 份模块的树。现在这一份的
+// **静态闭包里只剩三个 `node:` 内建与 `./boot.ts` · `./load.ts`**：解析那一层（`./argv.ts`）·
+// 出口那一层（`./out.ts`）· 各命令组，统统走 `./load.ts` 那一张短名表，**走到哪一条命令才装
+// 哪一份**；而这一份模块体的第一句是 `armCompileCache()`，剩下那些模块的编译结果落一份可弃
+// 派生体，下一个进程直接取来用。两处地板都在各自的文件里（映射丢了就全量装载 · 缓存目录建不
+// 出来就没有缓存），两处都是变慢，不是跑不起来。
 //
 // 三件事照旧：出口面（`USAGE` 仍从这里再导出，《`--help` 那张表》的消费者一处不改）· 分发次序
 // （值层那一支仍排在老路之前）· 一条命令的字节（人面与 `--json` 面，黄金帧逐字节盯着）。
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
+import { armCompileCache } from './boot.ts'
 import { load } from './load.ts'
 
-// **这一份的模块体就是第一句能跑的话**，所以连解析与出口那两层也走动态装载：`node:` 内建与
-// `./load.ts` 之外，静态闭包里一个字节都不装。这一条由 `./load.test.ts` ⑤ 盯着（静态说明符
-// 的白名单），而不是靠自觉——它是"`--version` 不碰工作区"这件事的装载那一半。
+// **这一份模块体的第一句**：编译缓存要在任何重模块被**编译**之前打开——ESM 整张静态图在求值
+// 之前就编译完了，所以它必须排在所有动态装载的前面（`src/cli/boot.test.ts` ① 静态盯着这个次序）。
+armCompileCache()
+
+// 解析与出口那两层也走动态装载：上面那两条静态 import 之外，静态闭包里一个字节都不装。这一条
+// 由 `./load.test.ts` ⑤ 盯着（静态说明符的白名单），而不是靠自觉——它是"`--version` 不碰工作区"
+// 这件事的装载那一半。
 const { parseArgv, unknownFlagsOf } = await import('./argv.ts')
 const { USAGE, emitFail, emitJson, emitLine, fail, usageFail } = await import('./out.ts')
 const { PROTOCOL_VERSION } = await import('../protocol.ts')
