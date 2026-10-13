@@ -258,6 +258,14 @@ export interface Dispatched extends Issued {
   readonly seedRead: SeedReading
   /** 这一批的编号（拆分的形状）。**一个名字，不是放行的凭证**——见这一份开头那一段。 */
   readonly fingerprint: string
+  /**
+   * **门上那一批本身**（`pendingOf` 的产出，就是人点头的那一个对象）。
+   *
+   * 它不是"再拼一份"：上面那几栏都是它的投影，而命令行那一层要用它重算门口那份浓缩件
+   *（`compactOf` 的入参）。从投影拼回去的话，拼出来的底 · 件数 · 编号迟早与门那一趟差一处，
+   * 而"人批的就是发出去的"这句话正是靠同一个对象成立的。
+   */
+  readonly pending: Pending
 }
 
 /**
@@ -428,5 +436,6 @@ export async function dispatchRound(deps: DispatchDeps): Promise<Dispatched> {
     precheck: pending.precheck,
     seedRead: pending.seedRead,
     fingerprint,
+    pending,
   }
 }

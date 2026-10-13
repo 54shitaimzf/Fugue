@@ -1428,6 +1428,11 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
       logForAgent: (a) => logOf(a),
     })
     const same = earlier.find((x) => x.fingerprint === r.fingerprint) ?? null
+    // **门口那一份浓缩件在这里重算**（`T14`）：这一趟手上是**门判出来的那一个对象**（`r.pending`）
+    // 与开跑时读的那一份账（`facts`——这一笔放行还没落进去）。同一个纯函数 · 同一个批 · 同一份账，
+    // 于是它与门那一趟印的那几行逐字节相同（判据：`chain.test.ts` 的 C4.b）。**它上人面，不上机器面**
+    //（`--json` 那一份与 0.4.4 逐字节同形，见 `ccd1723`）。
+    const compact = compactOf(r.pending, facts)
     if (json) {
       emitJson({
         round: r.round,
@@ -1449,6 +1454,7 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
       emitLine(`${r.round}\t${r.base}\t放行：${r.built.contracts.length} 份${WORDS.task}\t${owners.length} 条分支`)
       for (const c of r.built.contracts) emitLine(`  ${c.id}\t${c.agent}\t${c.kind}\t${writeSetLine(c)}`)
       emitLine(`  批号：${r.fingerprint}（这一批的编号——拆分的形状，不含轮次与身份）`)
+      for (const line of compactLinesOf(compact)) emitLine(line)
       if (same !== null) {
         emitLine(`    与你在 ${same.round} 放过的那一批同号：编号只是一个名字，不作放行的凭证`)
       }

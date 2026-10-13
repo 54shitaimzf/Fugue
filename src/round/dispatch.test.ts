@@ -556,3 +556,26 @@ test('⑧ 跨轮停门：C 对 B 报出真内容差额（id 里的轮次号不�
     await b.close()
   }
 })
+
+// ── ⑨ 放行那一趟带出来的就是门上那一批（**同一个对象**，不是在命令行重拼一份）──────────────
+//
+// 判据一句话：`Dispatched.pending` 与门那一趟判出来的是同一个对象——其余那几栏是它的投影，所以
+// `pending.built === built` 是**同一性**，不是等值。命令行那一层用它重算门口那份浓缩件（`round go`
+// 人面那几行），于是"人批的就是发出去的"这句话在形状上也成立：没有第二处装配一批契约的地方。
+test('⑨ 放行带出来的批就是门上那一批：字段是投影、对象是同一个', async () => {
+  const b = await bench()
+  try {
+    await atGate(b, ROUND, draftText())
+    const issued = await dispatchRound(goDeps(b, ROUND))
+    assert.equal(issued.pending.built, issued.built, '放行那一趟的批是另拼的一份——不是门上那一个对象')
+    assert.equal(issued.pending.base, issued.base, '底那一栏不是投影')
+    assert.equal(issued.pending.fingerprint, issued.fingerprint, '批号那一栏不是投影')
+    assert.equal(issued.pending.round, issued.round, '轮次那一栏不是投影')
+    console.log(
+      `⑨ 读数：pending.built === built（同一个对象）· 底 ${issued.base.slice(0, 8)} · 批号 ${issued.fingerprint} · ` +
+        `轮次 ${issued.round} 四栏都是它的投影`,
+    )
+  } finally {
+    await b.close()
+  }
+})
