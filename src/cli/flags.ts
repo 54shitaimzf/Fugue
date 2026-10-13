@@ -3,9 +3,9 @@
 // PLAN § 5.19 第二版「二 · 按键」（"这张表就是分发器的输入"）· 第九节 `T4` 那一行。
 //
 // **为什么它单独一份文件**：`T4` 那条断言是"菜单里列出的命令集合与 `FLAGS_OF` 的键集合逐字相同"，
-// 而界面那一侧（`cli/cmd/observe.ts`）要读同一份——这里的"同一份"是字面意思：不是抄一份、不是
-// 导出个同名的东西，是两个消费者读同一个对象。原先它住在 `fugue.ts` 里，界面要读它就绕出一条
-// `fugue.ts → cmd/observe.ts → fugue.ts` 的环；搬出来环就没了，"哪些命令存在"这件事也只剩一处。
+// 而界面那一侧（`ui/menu.ts`）要读同一份——这里的"同一份"是字面意思：不是抄一份、不是导出个同名
+// 的东西，是两个消费者读同一个对象。原先它住在 `fugue.ts` 里，界面要读它就绕出一条
+// `fugue.ts → ui/console.ts → fugue.ts` 的环；搬出来环就没了，"哪些命令存在"这件事也只剩一处。
 
 import { PHRASES } from '../phrases.ts'
 
@@ -82,7 +82,7 @@ export const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
 /**
  * `--interval <毫秒>`：跟随那一趟睡多久。给一个数，或者给一句用法错的话。
  *
- * **一处读法**：`watch`（`cli/cmd/observe.ts`）与 `tui`（`ui/console.ts`）说的是同一件事，值层
+ * **一处读法**：`watch`（`value/observe.ts`）与 `tui`（`ui/console.ts`）说的是同一件事，值层
  * 那一份（`value/observe.ts`）也读它——三处各写一遍的话，"多少算合法"这件事就漂了。
  */
 export function intervalOf(flags: Map<string, string | true>): number | string {

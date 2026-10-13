@@ -26,7 +26,7 @@ export function actionsTableOf(doc: ConfigDoc): Readonly<Record<string, readonly
 
 /**
  * 绑好的动作**跑什么**：名字 → `argv` 拼起来。**与 `actionsTableOf` 同一个来源**（`readBinding`
- * 一处读）。P3b2 起它的消费方只剩**门停给人看的那张表**（`observe.ts`）——模型那一侧的清单
+ * 一处读）。P3b2 起它的消费方只剩**门停给人看的那张表**（`ui/console.ts`）——模型那一侧的清单
  * 住在 A 区系统状态的 `actions` 栏（名字 + argv，同一份来源），不再由提示词内联。
  *
  * 那张表为什么留着：`assertions.action` 只能从这几个里挑，而"只给名字"那一版真档烧掉过一整趟的

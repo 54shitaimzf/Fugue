@@ -24,7 +24,6 @@ import { PROTOCOL_VERSION } from '../protocol.ts'
 export { USAGE } from './shared.ts'
 export { driverSupport } from './cmd/round.ts'
 import { branchCmd, commitCmd, replay, viewCmd } from './cmd/view.ts'
-import { emit, statusCmd, watchCmd } from './cmd/observe.ts'
 import { tuiCmd } from '../ui/console.ts'
 import { config, policyCmd } from './cmd/config.ts'
 import { doctorCmd } from './cmd/doctor.ts'
@@ -131,24 +130,9 @@ async function run(argv: readonly string[]): Promise<number> {
     if (isSpecial(valueKey)) return await watchAndWrite(valueArgs, json)
     return writeValue(await valueResultOf(valueKey, valueArgs), json)
   }
-  if (cmd === 'log') {
-    const only = flags.get('agent')
-    const log = openLog(root)
-    try {
-      for await (const { pos, e } of log.readMerged()) {
-        if (typeof only === 'string' && pos.writer !== (only as WriterId)) continue
-        emit(pos, e, json)
-      }
-    } finally {
-      await log.close()
-    }
-    return 0
-  }
-
-  // 观察命令（`status` · `watch`）是**纯读**：不建视图、不开账本、不取锁——所以它们排在建视图
-  // 那一组之前。读面与写面在命令面上分开之后，"看一眼会不会改日志"这个问题就答完了（§ 5.18）。
-  if (cmd === 'status') return await statusCmd(root, flags, json)
-  if (cmd === 'watch') return await watchCmd(root, flags, json)
+  // **观察那三条（`log` · `status` · `watch`）在上面值层那一支就出去了**：0.5.0 收口把它们的
+  // 三个老出口与 `cli/cmd/observe.ts` 一起收掉（那三个在值层登记之后一条都走不到这儿）。
+  // 三条都是**纯读**：不建视图、不取锁、不追加（§ 9.7）——所以它们排在建视图那一组之前。
   if (cmd === 'tui') return await tuiCmd(root, flags)
   if (cmd === 'serve') return await serveCmd(root, flags, json)
 

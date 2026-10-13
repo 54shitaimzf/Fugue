@@ -13,8 +13,8 @@
 // 用法：node tools/check-ui-direct.ts（快档里由 `src/ui/direct.test.ts` 跑同一份判据）
 //
 // **界面那一侧的定义**：`src/ui/` 下每一个非测试模块，加它们的闭包。`ui/console.ts` 是
-// `fugue tui` 的接线（0.4.3 从 `cli/cmd/observe.ts` 搬出来）——那个文件里另外三条命令
-// （`log` · `status` · `watch`）开账本口是对的，所以它不当这个断言的一个根。
+// `fugue tui` 的接线（0.4.3 从 `cli/cmd/observe.ts` 搬出来，0.5.0 随它剩下那三个被遮的出口
+// 一起收掉）。界面那一侧一个账本口都不开——下面那张直连表量这一条。
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
