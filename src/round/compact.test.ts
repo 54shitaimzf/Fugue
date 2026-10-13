@@ -11,7 +11,8 @@
 //      `diff` 逐条相同（空）——两句话都印得出来。
 //   ③ **可重算**：同一份账算两遍，规范化原文与 `digest` 逐字节相同；**换一个进程**算一遍
 //      （`spawnSync` 跑同一段）也逐字节相同——这一条是"跨进程"那半句的判据。
-//   ④ **纯**：浓缩件只从入参那两份值来——把账上的底改掉，出来的底跟着改；不看当下工作区。
+//   ④ **一处真相**：底从这一批那一头来（`pending.base`）——两批的底不同就两个指纹，而账那一份
+//      读数里的底不再是一个来源（第一趟判完印「（没有）」的那条路就是从它取的）。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
@@ -159,15 +160,26 @@ test('③ 可重算：同账两遍逐字节相同；**换一个进程**算一遍
   console.log(`③ 读数：两遍同串 · 换进程同串（${a.digest}）· 覆盖 3 条路径 / 验收 2 条`)
 })
 
-test('④ 纯：底与件数只从入参来（同一批换一份账，出来的底跟着账走）', () => {
+// ── ④ 一处真相：底从这一批那一头来 ──────────────────────────────────────────────
+//
+// 判据一句话：**"这一批钉在哪个底上"只有一个来源**（`round/intent` 那一栏，经 `pending.base`）。
+// 从账那一份读数取的话，门那一趟读账早于自己落那一条——第一趟判完人面印的是 `底 （没有）`
+//（实测：`浓缩 第 r1 轮 底 （没有）`，而同一批在界面上、在放行那一行都印着 `9b9b8720…`）。
+test('④ 一处真相：底从这一批那一头来（账那一份额外读数不再决定它）', () => {
   const contracts = [implement('r1.implement.1', '写一份 a.ts')]
   const p = pendingOfContracts(contracts, 'fp-p')
-  const one = compactOf(p, factsOf({ base: 'a'.repeat(40) as RoundFacts['base'] }))
-  const two = compactOf(p, factsOf({ base: 'b'.repeat(40) as RoundFacts['base'] }))
-  assert.notEqual(one.base, two.base, '账上的底不同，浓缩件那一栏就该不同')
-  assert.notEqual(one.digest, two.digest, '不同的账该出不同的指纹')
+  const one = compactOf(p, factsOf())
+  assert.equal(one.base, 'a'.repeat(40), '底该是这一批钉住的那一个值')
+  assert.match(compactLinesOf(one)[0] ?? '', /底 aaaaaaaa\t批号 fp-p/, '人面那一行的底该是这一批的底')
+  // 换一个底（同一批的形状没变）：浓缩件与指纹跟着换。
+  const two = compactOf({ ...p, base: 'b'.repeat(40) as Pending['base'] }, factsOf())
+  assert.notEqual(two.base, one.base, '这一批的底不同，浓缩件那一栏就该不同')
+  assert.notEqual(two.digest, one.digest, '不同的底该出不同的指纹')
+  // **一处真相**：账那一份读数里的底不再是一个来源——同一批配两份"底不同"的账，浓缩件逐字节相同。
+  const other = compactOf(p, factsOf({ base: 'b'.repeat(40) as RoundFacts['base'] }))
+  assert.equal(other.digest, one.digest, '底还是从账那一头读的——同一件事有两个来源')
   assert.equal(one.tasks, 1)
-  console.log(`④ 读数：同一批 · 两份账 → 两个底与两个指纹（${one.digest} ≠ ${two.digest}）`)
+  console.log(`④ 读数：这一批的底 ${one.base.slice(0, 8)} → 指纹 ${one.digest}；换底 → ${two.digest}；换账上的底 → 仍是 ${other.digest}`)
 })
 
 test('⑤ 差异的行序不看输入的次序：多 · 少 · 逐面，各按 id 排', () => {

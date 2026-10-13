@@ -39,8 +39,11 @@ export type CompactCompare = 'first' | 'same' | 'changed' | 'unproven'
 /** 浓缩件。**几行**：一批一段 + 与前一批的比。 */
 export interface Compact {
   readonly round: string
-  /** 钉住的底（`round/intent` 那一栏）。**它是账上那一个值**，不是当下 HEAD。 */
-  readonly base: string | null
+  /**
+   * 这一批钉住的底（`round/intent` 那一栏）。**它是账上那一个值**，不是当下 HEAD——从门口那一批
+   * 那一头来（`pending.base`），门那一趟与放行那一趟拿到的是同一个值，见 `compactOf`。
+   */
+  readonly base: string
   /** 这一批的编号（拆分的形状）。 */
   readonly fingerprint: string
   /** 这一批几份契约。 */
@@ -177,7 +180,7 @@ export function diffOf(before: readonly Contract[], after: readonly Contract[]):
 export function canonicalOf(a: Omit<Compact, 'digest'>): string {
   return [
     `round\t${a.round}`,
-    `base\t${a.base ?? '（没有）'}`,
+    `base\t${a.base}`,
     `fingerprint\t${a.fingerprint}`,
     `tasks\t${a.tasks}`,
     `ids\t${a.ids.join(' · ')}`,
@@ -198,9 +201,13 @@ function digestOf(text: string): string {
 /**
  * **一批 → 浓缩件**。纯函数：只读入参里的那两份值（门口那一批 + 这一份账）。
  *
- * `facts` 给的是**这一份账上的读数**（`roundFactsOf`）：钉住的底 · 放过的那几批（含各自的契约面）。
- * 于是"与上一批差在哪"是从账上重算的，不是从当下工作区里猜的——换一个进程读同一份账，这几行
- * 逐字节相同。
+ * `facts` 给的是**这一份账上的读数**（`roundFactsOf`）：放过的那几批（含各自的契约面）。于是
+ * "与上一批差在哪"是从账上重算的，不是从当下工作区里猜的——换一个进程读同一份账，这几行逐字节
+ * 相同。
+ *
+ * **底从这一批那一头来**（`pending.base`）——它就是 `round/intent` 那一栏。从 `facts` 取的话，
+ * 门那一趟读账早于自己落那一条：**第一趟**判完印出来的底是「（没有）」，而同一个批在界面上与放行
+ * 那一趟都印着真底，同一件事三个说法。批那一头是同一个账户值，少一跳，也少一处能漂的地方。
  */
 export function compactOf(pending: Pending, facts: RoundFacts): Compact {
   const contracts = pending.built.contracts
@@ -220,7 +227,7 @@ export function compactOf(pending: Pending, facts: RoundFacts): Compact {
   const diff = compare === 'changed' && last !== null ? diffOf(last.contracts, contracts) : []
   const body: Omit<Compact, 'digest'> = {
     round: pending.round,
-    base: facts.base,
+    base: pending.base,
     fingerprint: pending.fingerprint,
     tasks: contracts.length,
     paths: counts.paths,
@@ -242,7 +249,7 @@ export function compactOf(pending: Pending, facts: RoundFacts): Compact {
  */
 export function compactLinesOf(a: Compact): readonly string[] {
   const out = [
-    `  浓缩\t第 ${a.round} 轮\t底 ${a.base === null ? '（没有）' : a.base.slice(0, 8)}\t批号 ${a.fingerprint}`,
+    `  浓缩\t第 ${a.round} 轮\t底 ${a.base.slice(0, 8)}\t批号 ${a.fingerprint}`,
     `\t${a.tasks} 份${WORDS.task}：${a.ids.join(' · ') || '（空）'}\t覆盖 ${a.paths} 条${WORDS.paths}\t${WORDS.accepts} ${a.accepts} 条\t指纹 ${a.digest}`,
   ]
   if (a.compare === 'first') {
