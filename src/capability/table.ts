@@ -44,9 +44,9 @@ import { TOOL_NAMES } from '../tools/catalog.ts'
 export type CapabilityId = string
 
 /** 四条推论的名字，架构 § 8.9 那张表逐字。 */
-export type InferenceId = 'materialize' | 'fence' | 'confine' | 'writeBack'
+export type InferenceId = 'materialize' | 'fence' | 'confine' | 'writeBack' | 'readOnly'
 
-const INFERENCE_IDS: readonly InferenceId[] = ['materialize', 'fence', 'confine', 'writeBack']
+const INFERENCE_IDS: readonly InferenceId[] = ['materialize', 'fence', 'confine', 'writeBack', 'readOnly']
 
 /** 表里的一行：层 · 身份 · 有没有声明集。四条推论由这三样算出来，不写第二遍。 */
 export interface CapabilityRow {
@@ -70,6 +70,14 @@ export interface Capability {
   readonly fence: boolean
   readonly confine: boolean
   readonly writeBack: boolean
+  /**
+   * **跑一次一个字节都不落**（见 `READ_ONLY`）。一趟里只有它为真的那几条可以并发跑。
+   *
+   * 为什么它是一条**推论**而不是一个开关：它的判据是"这条工具会不会动东西"，而那是按工具名
+   * 定的——调用点按名字各判一遍，就是「一处真相」破在并发这一格上（两个写者踩同一份视图时，
+   * 日志里两条 `view/write` 都合法，合起来是一份谁都没打算写的树）。
+   */
+  readonly readOnly: boolean
 }
 
 /**
@@ -104,6 +112,23 @@ const LAYER_TABLE: Readonly<Record<Layer, readonly string[]>> = {
 const WITH_DECL: readonly string[] = ['run_action']
 
 /**
+ * **一个字节都不落的那几个**：一趟里只有它们可以并发跑。
+ *
+ * 为什么它必须单列：**层名不是只读判据**。视图层里 `read` `read_image` `glob` `grep` 只读，而
+ * `write` `edit` 与它们同层；执行层那两格起子进程，`run_action` 还能经声明集回写。拿层当只读
+ * 判据，一次并发就会让两个写者踩同一份视图。
+ *
+ * 它的判据是**这条工具跑一次会不会动任何东西**（视图 · 真源 · 账）：
+ *
+ *   · 四条为真的只读字节与目录清单，路径参数全在 `fence` 那一条推论下（那些参数是**读的方向**）；
+ *   · `checkpoint` 写真源 · `todo_write` / `ask_user_question` / `exit_plan_mode` 写账 ·
+ *     `bash` 起子进程（它能改盘上任何东西）——**一条都不在**这份名单里。
+ *
+ * 保守那一头是有意的：少一条工具进并发只是慢一点，多一条进去是真源上的静默损坏。
+ */
+const READ_ONLY: readonly string[] = ['read', 'read_image', 'glob', 'grep']
+
+/**
  * 能力表：工具名 → 层 · 身份 · 声明集。**它就是架构 § 8.9 那张表本身。**
  *
  * 它从 `LAYER_TABLE` 长出来而不是手写十二行：手写一份的话，「哪个工具落在哪一层」就有两处可改，
@@ -121,18 +146,31 @@ export const CAPABILITY_TABLE: Readonly<Record<string, CapabilityRow>> = Object.
  * 前三条由层定（架构 § 8.9 的「成立条件」那一列），第四条由声明集再收一道：落在执行层**且**
  * 声明了产出集，才谈得上回写。收这一道不是装饰——`bash` 也在执行层，而它没有回写通道
  * （§ 8.7 · D7：反向通道限声明集，否则子进程的隐性改动会进视图，冲突来源不可枚举）。
+ *
+ * 第五条（只读）**不由层定**，由那份名单定：它与层正交，所以它是这一格第二条输入。默认 `false`
+ * ——不在这份名单里的工具一律按"会动东西"处理。
  */
-export function inferences(layer: Layer, decl: boolean): Omit<Capability, 'tool' | 'layer' | 'capability'> {
+export function inferences(
+  layer: Layer,
+  decl: boolean,
+  readOnly = false,
+): Omit<Capability, 'tool' | 'layer' | 'capability'> {
   return {
     materialize: layer === 'execute',
     fence: layer === 'view' || layer === 'execute',
     confine: layer === 'execute',
     writeBack: layer === 'execute' && decl,
+    readOnly,
   }
 }
 
+/** 这一格是不是只读的。**它是那份名单唯一被读的地方**（`inferences` 与 `checkInvariant` 各一次）。 */
+export function isReadOnlyTool(tool: string): boolean {
+  return READ_ONLY.includes(tool)
+}
+
 function sentence(tool: string, row: CapabilityRow): Capability {
-  return { tool, layer: row.layer, capability: row.capability, ...inferences(row.layer, row.decl) }
+  return { tool, layer: row.layer, capability: row.capability, ...inferences(row.layer, row.decl, isReadOnlyTool(tool)) }
 }
 
 /**
@@ -176,6 +214,11 @@ export function checkInvariant(table: Readonly<Record<string, CapabilityRow>>, n
     ...Object.entries(table)
       .filter(([, row]) => row.decl && row.layer !== 'execute')
       .map(([t]) => `只有执行层能有声明集，而这一格不在执行层：${t}`),
+    // **只读名单里的每一个都得真在表里**：名单按工具名写，写错一个字就是一条工具静默地少了
+    // 那条推论（它照旧串行跑，只是慢一点——看不见）。这一条让它当场现形。
+    ...[...READ_ONLY]
+      .filter((t) => table[t] === undefined)
+      .map((t) => `只读名单里有这个工具，表里没有它：${t}`),
   ]
 }
 

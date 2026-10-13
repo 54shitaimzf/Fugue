@@ -13,17 +13,29 @@
 //      「少了这一层都编译不过」在这个仓库里的样子）
 //   ⑥ **红负对照**：把 `bash` 挪到视图层，③ 那一对当场红——「先物化」与「关进沙箱」两条同时
 //      不成立。它是 `tools/neg-z2.sh` 里那一档的断言面
+//   ⑦ **只读那一格就是那一份名单**（0.5.0）：可并发的四条恰好是那四条，而层名不是判据——
+//      `write` 与 `read` 同层而只有 `read` 只读（拿层当判据，一次并发就有两个写者踩同一份视图）
+//   ⑧ **只读名单里写错一个名字当场炸**：名单按工具名写，写错一个字就是那一条工具静默地少一条
+//      推论（照旧串行跑，只是慢一点——看不见），所以有一条核对把它逼出来
 //
 // **③ 为什么读 `lookup()` 而不读表**：消费方读的是推论（`M4` 的 `ensure` · `M3` 的
 // `resolveVirtual` · `M7.confine()` · `M6` 反向通道），所以断言要落在它们读的那条路上。只读表
-// 的话，「表改了而推论没跟着改」这一类错量不出来。
+// 的话，「表改了而推论没跟着改」这一类错量不出来。⑦ 同理：并发那一头读的也是 `lookup()`。
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Capability, CapabilityRow, Layer } from './table.ts'
-import { CAPABILITY_TABLE, checkInvariant, lookup, namesOn } from './table.ts'
+import { CAPABILITY_TABLE, checkInvariant, inferences, lookup, namesOn } from './table.ts'
 
 /** 架构 § 8.9 那五行，逐字。 */
 const LAYERS: readonly Layer[] = ['view', 'execute', 'truth', 'log']
+
+/**
+ * 只读那四条，逐字（与 `table.ts` 的 `READ_ONLY` 是同一份名单的两处写法——**这一处是断言**：
+ * 名单要说话就得跟一句话比，不能自己跟自己比）。
+ *
+ * 改动它会红的那一档：把 `write` 加进去，或从里面摘掉 `grep`（⑦ 同时红）。
+ */
+const READ_ONLY_TOOLS: readonly string[] = ['glob', 'grep', 'read', 'read_image']
 
 /** 那份名字表：Z0 的协议值里那一栏就是它（`Protocol.toolCatalog`），不在这里抄第二遍。 */
 const { TOOL_NAMES } = await import('../assemble/protocol.ts')
@@ -164,7 +176,7 @@ test('⑥ 红负对照：把 bash 挪到视图层，③ 那一对当场红', () 
   const wrong = (tool: string): Capability => {
     const row = WRONG_LAYER[tool]
     assert.ok(row !== undefined)
-    return { tool, layer: row.layer, capability: row.capability, ...INFERENCES_OF(row.layer, row.decl) }
+    return { tool, layer: row.layer, capability: row.capability, ...inferences(row.layer, row.decl) }
   }
 
   const laid = namesOn('execute')
@@ -180,12 +192,42 @@ test('⑥ 红负对照：把 bash 挪到视图层，③ 那一对当场红', () 
   assert.deepEqual([cap('bash').materialize, cap('bash').confine], [true, true])
 })
 
-/** 替身表那一格的四条推论：与产品同一条算法（`table.ts` 的 `inferences()` 一层，只差输入）。 */
-function INFERENCES_OF(layer: Layer, decl: boolean): Omit<Capability, 'tool' | 'layer' | 'capability'> {
-  return {
-    materialize: layer === 'execute',
-    fence: layer === 'view' || layer === 'execute',
-    confine: layer === 'execute',
-    writeBack: layer === 'execute' && decl,
+test('⑦ 只读那一格就是那一份名单：可并发的恰好四条，而层名不是判据', () => {
+  const marked = TOOL_NAMES.filter((t) => cap(t).readOnly)
+  assert.deepEqual(sorted(marked), READ_ONLY_TOOLS, `只读的那几条不是这四条：${marked.join(' · ')}`)
+
+  // **层名不是判据**（这一条是这一格的存在理由）：视图层里只读的与写东西的**同层**。
+  const viewLayer = namesOn('view')
+  assert.ok(viewLayer.includes('read') && viewLayer.includes('write'), '视图层里读与写同层')
+  assert.equal(cap('write').layer, cap('read').layer, 'read 与 write 落在同一层——层分不开它们')
+  assert.notEqual(cap('write').readOnly, cap('read').readOnly, '同层而只读不同：层名当判据就会把 write 也放进去')
+  assert.deepEqual(sorted(marked.filter((t) => cap(t).layer === 'view')), ['glob', 'grep', 'read', 'read_image'])
+
+  // 会动东西的那几条一个都不在名单里（每一格各是一类"动"）：写视图 · 写真源 · 写账 · 起子进程。
+  for (const tool of ['write', 'edit', 'checkpoint', 'todo_write', 'ask_user_question', 'exit_plan_mode', 'bash', 'run_action']) {
+    assert.equal(cap(tool).readOnly, false, `${tool} 会动东西，不该在只读名单里`)
   }
-}
+  // 只读那几条**不动任何推论的另外四条**：它们照旧过围栏，不物化、不关沙箱、不回写。
+  for (const tool of READ_ONLY_TOOLS) {
+    const got = cap(tool)
+    assert.equal(got.fence, true, `${tool} 的路径参数还要过围栏（数据流方向反过来）`)
+    assert.equal(got.materialize, false)
+    assert.equal(got.confine, false)
+    assert.equal(got.writeBack, false)
+  }
+})
+
+test('⑧ 只读名单里写错一个名字当场炸（那一条工具会静默地少一条推论）', () => {
+  // 名单里写一个表里没有的名字：它是"漏一格"的另一种形状，而症状同样是静默的（那一条照旧串行）。
+  // 这里指着 `checkInvariant` 的第四条分支量它——用一份**改过的名字表**把它逼出来。
+  const bad = checkInvariant(CAPABILITY_TABLE, [...TOOL_NAMES, 'read_only_typo'])
+  assert.equal(bad.length, 1, `应当恰好一处：${bad.join(' · ')}`)
+  assert.ok(bad[0]?.includes('read_only_typo'), `报出来的应当是多的那一格：${bad[0]}`)
+
+  // 正对照：真名单（`TOOL_NAMES`）一处都不报——上面那一条不是恒真的。
+  assert.deepEqual(checkInvariant(CAPABILITY_TABLE, TOOL_NAMES), [])
+  // 而"名单里写错"这件事**不是**靠这一条抓的：名单与表是两份名字域，写错的名字在表里查不到，
+  // 于是它只会表现在"少了一条工具进并发"。判据因此是 ⑦ 那一句（名单与那四条逐字相等），
+  // 不是这一条——这里如实说明，免得把 ⑧ 当成比 ⑦ 更强的东西。
+  assert.ok(READ_ONLY_TOOLS.every((t) => TOOL_NAMES.includes(t)), '⑦ 那份名单里的每条都得真在工具目录里')
+})
