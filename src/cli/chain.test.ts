@@ -1058,6 +1058,21 @@ test('C5.b · `--json` 那一栏与人面印的是同一张读数：号 · 落�
   assert.equal(j2.version.same, true)
   assert.deepEqual(j2.version.lines, [], '重落那一档不该有差异那一栏')
   assert.equal(j2.version.againstVersion, null, '重落那一档没有差异，也就没有"比的是哪一版"')
+
+  // **浓缩件只上人面，机器面一个键都不多**（本版修正）：`--json` 那一份原先多了一栏 `compact`，
+  // 而那与"界面与命令的输出形状一个字节没动"这句声明对不上。本版取**机器面真不变**这一条路：
+  // 浓缩件在进程内由同一个纯函数重算（命令行印 `compactLinesOf`，TUI 印同一份），谁要把它搬进
+  // 协议就按"协议改一次"那条规矩走——那时这一条与黄金帧一起改，而不是在这里悄悄加一栏。
+  const raw = JSON.parse(asJson.stdout) as Record<string, unknown>
+  assert.equal('compact' in raw, false, `\`--json\` 那一面多了 compact 一栏：${Object.keys(raw).join(' · ')}`)
+  assert.equal(
+    'compact' in (JSON.parse(jsonSame.stdout) as Record<string, unknown>),
+    false,
+    '`--json` 那一面多了 compact 一栏',
+  )
+  // 而人面那几行**在**（浓缩件那一处渲染）：门口那一批 + 这一份账 → 件数 · 覆盖 · 验收 · 比出来的档。
+  assert.match(human.stdout, /浓缩\t第 r1 轮\t底 [0-9a-f]{8}\t批号 [0-9a-f]{16}/, human.stdout.slice(0, 1200))
+  assert.match(human.stdout, /与上一批：账上一条放行都没有/, human.stdout.slice(0, 1200))
   console.log(
     `C5.b 同源读数：人面「第 ${face[1]} 版（这一轮第 ${face[2]} 次落地）· 与第 ${face[3]} 版比：${face[4]} 处」` +
       ` ↔ --json version=${j.version.version} landing=${j.version.landing} same=${String(j.version.same)}` +

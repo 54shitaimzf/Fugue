@@ -880,6 +880,8 @@ export async function roundPlan(
     const same = earlier.find((x) => x.fingerprint === fingerprint) ?? null
     // **浓缩件**（本版· 验收锚 ①）：门口那一批 + 这一份账进去，几行可核对的东西出来——它是
     // 纯函数（不认识真源 · 不认识视图 · 不认识时刻），于是"同一个账跨进程重算一致"查得出来。
+    // **它不上 `--json` 那一面**：机器面今天没有第二个消费者，而"输出形状一个字节没动"那句声明
+    // 要么当真、要么连黄金帧一起改——本版取前者（人面与 TUI 各自在进程内从同一个纯函数重算）。
     const compact =
       r.held && built !== null && fingerprint !== null
         ? compactOf(
@@ -923,9 +925,6 @@ export async function roundPlan(
         intersections: r.gate.precheck?.lines ?? [],
         fingerprint,
         sameAs: same === null ? null : same.round,
-        // **浓缩件那一栏**：与下面人面那几行同一份（一处算 · 两个渲染器）——`--json` 消费者
-        // 拿得到同一批的件数 · 覆盖 · 验收 · 比出来的档与逐处差异 · 以及它的指纹。
-        compact: compact === null ? null : { ...compact, diff: [...compact.diff], ids: [...compact.ids] },
         seedRead: r.seedRead,
         occupancy: [...r.occupancy],
         // **版本那一栏**（`versionJsonOf`：`VersionFace` 逐字段投影）——与人面那几行同源。
