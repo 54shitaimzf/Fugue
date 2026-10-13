@@ -152,18 +152,18 @@ export async function issueAndStart(
       throw new RoundStartError('要铺物化却没有给 logForAgent：那一步没地方落 `mat/fork`')
     }
     for (const a of agents) {
+      // **口是调用方的，这里不关。** `logForAgent` 给的那一份由 `fenceSet` 拿着（`round new/run/go/work`
+      // 各在收尾那一步统一关：先关句柄、再放锁）。这里原先顺手 `close()` 了一次，而 `openLog` 那条
+      // 句柄带着调用方那一把**外置栅栏**（`LogOptions.hold`），`close()` 连它一起放掉——于是命令还在
+      // 跑，锁已经没了，后续执行的口照旧从缓存里追加（中途第二把 `holdWriter` 因此拿得进来）。
       const agentLog = deps.logForAgent(a)
-      try {
-        const opts = deps.forkOpt ?? DEFAULT_MATERIALIZE
-        const r = await fork({ roots: deps.roots, log: agentLog, root: deps.roots.realRoot }, a, base, opts)
-        // **这里原先还有一句"fork 回来的底不是钉住的那一个"就 throw——它是恒真的**（清障批 ③）：
-        // `fork()` 把它收到的 `base` **原样**写进 `ForkResult.base`（`materialize/fork.ts:139-149`），
-        // 所以两个值永远是同一个。承重的那条性质现在由 `materialize/fork.test.ts` ② 里
-        // `res.base === f.commit` 那一句量——它才是会红的（谁把 `base` 归一化，它就红）。
-        forks.push(r)
-      } finally {
-        await (agentLog as { close?: () => Promise<void> }).close?.()
-      }
+      const opts = deps.forkOpt ?? DEFAULT_MATERIALIZE
+      const r = await fork({ roots: deps.roots, log: agentLog, root: deps.roots.realRoot }, a, base, opts)
+      // **这里原先还有一句"fork 回来的底不是钉住的那一个"就 throw——它是恒真的**（清障批 ③）：
+      // `fork()` 把它收到的 `base` **原样**写进 `ForkResult.base`（`materialize/fork.ts:139-149`），
+      // 所以两个值永远是同一个。承重的那条性质现在由 `materialize/fork.test.ts` ② 里
+      // `res.base === f.commit` 那一句量——它才是会红的（谁把 `base` 归一化，它就红）。
+      forks.push(r)
     }
   }
 
