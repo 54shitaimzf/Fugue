@@ -24,6 +24,7 @@ import type { Contract } from '../contract/types.ts'
 import { idShapeOf } from '../contract/types.ts'
 import { WORDS } from '../words.ts'
 import type { ApprovedBatch, RoundFacts } from './versions.ts'
+import { asDraft, lastOf } from './versions.ts'
 import type { Pending } from './dispatch.ts'
 
 /**
@@ -267,10 +268,68 @@ export function compactLinesOf(a: Compact): readonly string[] {
     return out
   }
   out.push(
-    `\t与上一批：与 ${last.round} 放过的那一批（${last.fingerprint}）**不同**，${a.diff.length} 处` +
+    `\t与上一批：与 ${last.round} 放过的那一批（${last.fingerprint}）不同，${a.diff.length} 处` +
       (a.diff.length === 0 ? '（零 diff——契约的面逐条相同，只有编号变了）' : ''),
   )
   for (const d of a.diff) out.push(`\t  ${d}`)
   return out
+}
+
+// ── 进预备态那一下的那一份（`T14` 的前半）────────────────────────────────────────────
+//
+// **它与门停那一份是两种粒度**：门停那一份答"这一批要开几件事 · 盖哪些路径 · 按什么验收 · 与上一
+// 批差哪几条"；这一份答"它把要求理解成了什么 · 打算从哪儿下手"。两份都从**既有真源**重算
+// （`round/intent` 那一句 + 链尾那一版正文）——纯函数、不新存一份状态、不多花一次模型调用。
+
+/**
+ * **进预备态那一下的浓缩件**：**理解**（轮级意图那一句）+ **下手方向**（草案每一节）。
+ *
+ * 人不必读完整份草案就能决定信不信：这一份就是"它以为你要什么、它准备怎么做"的几行。
+ */
+export interface EntryCompact {
+  readonly round: string
+  /** 轮级意图那一句（`round/intent` 的正文里 `goal` 那一栏）。 */
+  readonly goal: string
+  /** 下手方向：草案每一节一行（`第 n 节\t<变体>\t<目标或问题>`）。 */
+  readonly direction: readonly string[]
+  /** 这一份的指纹（那几行原文的 sha256 前十六位）——与门停那一份同一个口径。 */
+  readonly digest: string
+}
+
+/** 进预备态那一份的规范化原文：`digest` 的输入，也是「同一个账重算一致」量的东西。 */
+export function canonicalEntryOf(a: Omit<EntryCompact, 'digest'>): string {
+  return [`round\t${a.round}`, `goal\t${a.goal}`, ...a.direction.map((d) => `direction\t${d}`)].join('\n')
+}
+
+/**
+ * **这一轮的账 → 进预备态那一份浓缩件。** 链尾那一版读不成一份草案（讨论态落的是话 · 这一轮还
+ * 没落地）就是 `null`：那时"下手方向"没有东西可说——印一行空的会让人以为它打算什么都不做。
+ */
+export function entryCompactOf(facts: RoundFacts): EntryCompact | null {
+  const v = lastOf(facts)
+  if (v === null) return null
+  const draft = asDraft(v.body)
+  if (draft === null) return null
+  const body: Omit<EntryCompact, 'digest'> = {
+    round: facts.round,
+    goal: facts.goal,
+    direction: draft.sections.map(
+      (s, i) => `第 ${i + 1} 节\t${s.kind}\t${s.kind === 'implement' ? s.goal : s.question}`,
+    ),
+  }
+  return { ...body, digest: digestOf(canonicalEntryOf(body)) }
+}
+
+/**
+ * 进预备态那一份的人读那几行（**一处渲染**：命令行印它，将来别的壳也印同一份）。
+ * 最后那一行是它的指纹——与门停那一份同一个用途：同一个账跨进程重算，这几行逐字节相同。
+ */
+export function entryLinesOf(a: EntryCompact): readonly string[] {
+  return [
+    `  进预备态\t第 ${a.round} 轮\t理解：${a.goal}`,
+    `\t下手方向：${a.direction.length} 个${WORDS.task}`,
+    ...a.direction.map((d) => `\t  ${d}`),
+    `\t指纹 ${a.digest}`,
+  ]
 }
 

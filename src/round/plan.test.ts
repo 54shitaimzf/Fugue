@@ -719,3 +719,33 @@ test('⑩ 一趟预备态只读一遍轮次日志；给了那一份读数就一�
     await b.truth.close()
   }
 })
+
+// ── ⑫ 进预备态那一下的浓缩件（`T14` 的前半）────────────────────────────────────────
+//
+// 判据一句话：**这一趟交出来的那一份里，理解与下手方向都在**——而"理解"那一句是**这一趟刚落下的**
+// 轮级意图（开跑时那份读数里还没有 `round/intent`）。人喊停那一档也走它（那是这一站的地板）。
+test('⑫ 进预备态：这一趟带出「理解 + 下手方向」', async () => {
+  const b = await bench()
+  try {
+    const r = await plan(b, [section()], { judge: true })
+    assert.equal(r.held, true, `这一趟该停在门口：${r.gate.problems.join(' / ')}`)
+    assert.ok(r.entry !== null, '停在门口的那一趟该带出一份浓缩件')
+    assert.equal(
+      r.entry.goal,
+      '把解析器拆出来',
+      '理解那一栏是这一趟钉住的轮级意图（开跑时那份读数里还没有它）',
+    )
+    assert.deepEqual(
+      [...r.entry.direction],
+      ['第 1 节\timplement\t把解析器拆成独立模块'],
+      '下手方向该逐节一行（变体与目标/问题都取自草稿那一节）',
+    )
+    assert.match(r.entry.digest, /^[0-9a-f]{16}$/, `指纹该是十六位十六进制：${r.entry.digest}`)
+    console.log(
+      `⑫ 读数：理解「${r.entry.goal}」· 下手方向 ${r.entry.direction.length} 节 · 指纹 ${r.entry.digest}`,
+    )
+  } finally {
+    await b.log.close()
+    await b.truth.close()
+  }
+})

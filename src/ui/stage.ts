@@ -308,6 +308,9 @@ export function openStage(deps: StageDeps): Stage {
     gateView = GATE_VIEW
     // **结论行进永久行**（第二幕 ⑧）：门口一开就说清这一批「打算开几件事 · 覆盖哪些 · 按什么验收」。
     // **一批只说一次**——上面那道 `key` 已经挡住重复（同一批再算几遍都不说）；换了一批才再说一条。
+    // **浓缩件那几行不走这儿**（`T14` / `T17`）：它是门视图自己那一栏，排在预览上面（`ui/gate.ts`
+    // 的 `gateLayoutOf`）——交互档里 `note()` 那几行只到阅读面的「命令记录」，而门口停着的人要的是
+    // "不用按任何键就看得到"，那一栏才满足它。
     if (next !== null) note(conclusionLineOf(next.conclusion), false)
     syncImage()
     deps.redraw()

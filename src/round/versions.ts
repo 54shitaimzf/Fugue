@@ -358,8 +358,13 @@ export function sectionDiffOf(before: string | null, after: string): readonly st
   return lines
 }
 
-/** 读成一份草案；读不成是 `null`（**只吞 `DraftError`**：别的错照旧抛——那是真的坏了）。 */
-function asDraft(text: string): Draft | null {
+/**
+ * 读成一份草案；读不成是 `null`（**只吞 `DraftError`**：别的错照旧抛——那是真的坏了）。
+ *
+ * **导出给 `round/compact.ts`**（进预备态那一份浓缩件要读链尾那一版的正文）：两处各写一遍
+ * try/catch 的话，"读不成一份草案"这件事迟早有一处判得不一样。
+ */
+export function asDraft(text: string): Draft | null {
   try {
     return draftOf(text)
   } catch (err) {

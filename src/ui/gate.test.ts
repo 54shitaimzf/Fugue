@@ -19,8 +19,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Contract } from '../contract/types.ts'
-import { GATE_KEEP, GATE_VIEW, clampAt, conclusionLineOf, conclusionOf, gateFaceOf, gateLayoutOf, gateRowsOf, lineOf, optionRowOf, pressGate, previewLinesOf, gateQueueRowOf, stepAt } from './gate.ts'
+import { GATE_KEEP, GATE_VIEW, clampAt, conclusionLineOf, conclusionOf, gateCompactLinesOf, gateFaceOf, gateLayoutOf, gateRowsOf, lineOf, optionRowOf, pressGate, previewLinesOf, gateQueueRowOf, stepAt } from './gate.ts'
 import type { GateBatch, GateCard } from './gate.ts'
+import type { Compact } from '../round/compact.ts'
+import { compactLinesOf } from '../round/compact.ts'
 import { widthOf } from './glyph.ts'
 import { GO_LINE } from './run.ts'
 import { WORDS } from '../words.ts'
@@ -246,4 +248,52 @@ test('缺省十行框中，执行命令与写入路径靠近确认选项保留',
   assert.ok(text.includes('写路径：src/parse.ts'))
   assert.ok(text.includes('y 执行整批'))
   assert.ok(!text.includes('agent/r1/'))
+})
+
+// ── ⑦ 门视图的**缺省呈现**就是浓缩件（`T14` / `T17`）────────────────────────────────
+//
+// 判据一句话：门口一开、**不用按任何键**，那几行就在门块那一栏里（头几行，排在当前契约的预览
+// 上面）；而"没算那一份"时一行都不印，门块那一栏与从前逐行相同。
+test('⑦ 门视图缺省呈现浓缩件：与命令行同一份句子（单栏化），排在预览上面', () => {
+  const compact: Compact = {
+    round: 'r1',
+    base: 'a'.repeat(40),
+    fingerprint: 'fp-1',
+    tasks: 3,
+    paths: 2,
+    accepts: 2,
+    ids: ['r1.implement.1', 'r1.investigate.1', 'r1.resolve.1'],
+    lastApproved: null,
+    compare: 'first',
+    diff: [],
+    missing: [],
+    digest: '0123456789abcdef',
+  }
+  const face = gateFaceOf(BATCH, CMDS, compact)
+  assert.equal(face.compact, compact, '那一份浓缩件该原样挂在门上（界面不重算它）')
+  const lines = gateCompactLinesOf(face)
+  assert.deepEqual(
+    [...lines],
+    compactLinesOf(compact).map((l) => l.replace(/^\s+/, '').replace(/\t+/g, '  ')),
+    '界面那几行不是命令行那一份句子（"一处句子"那句话就没地方量了）',
+  )
+  assert.ok((lines[0] ?? '').startsWith('浓缩  第 r1 轮  '), `第一行该是那一行抬头：${lines[0] ?? ''}`)
+  assert.ok(lines.every((l) => !l.includes('\t')), '门块是一栏一行的正文：那几行里不许留制表符')
+  assert.ok(
+    lines.some((l) => l.includes('第一确认')),
+    `与上一批的比那一行该在：${lines.join(' | ')}`,
+  )
+  const rows = gateRowsOf({ face, view: GATE_VIEW, columns: 200 })
+  assert.deepEqual([...rows.slice(0, lines.length)], [...lines], '门块的头几行该就是那几行（排在预览上面）')
+  assert.ok(rows.length > lines.length, `浓缩件之后还有这一份契约的预览，实际一共 ${rows.length} 行`)
+  // **负对照**：没算那一份（别的调用点 / 门口还没算出那一批）→ 一行都不印，门块与从前逐行相同。
+  const bare = gateFaceOf(BATCH, CMDS)
+  assert.equal(bare.compact, null, '不给就不该有')
+  assert.deepEqual([...gateCompactLinesOf(bare)], [], '没算那一份时门视图上不该多出任何一行')
+  assert.deepEqual(
+    [...gateRowsOf({ face: bare, view: GATE_VIEW, columns: 200 })],
+    [...rows.slice(lines.length)],
+    '没算那一份时门块那一栏与从前逐行相同（只是头上少了那几行）',
+  )
+  console.log(`⑦ 读数：门块头 ${lines.length} 行是浓缩件（与命令行同一份句子 · 单栏化）· 之下 ${rows.length - lines.length} 行是预览与队列 · 没算那一份 → 0 行`)
 })

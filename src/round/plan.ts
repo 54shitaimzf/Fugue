@@ -45,8 +45,10 @@ import type { GateVerdict } from '../contract/gate.ts'
 import { gateOf } from '../contract/gate.ts'
 import type { SeedReading } from './seed.ts'
 import { seedRulerOf } from './seed.ts'
-import { landingOf, lastOf, roundFactsOf } from './versions.ts'
+import { landingOf, lastOf, roundFactsOf, withVersion } from './versions.ts'
 import type { DistillVersion, RoundFacts } from './versions.ts'
+import { entryCompactOf } from './compact.ts'
+import type { EntryCompact } from './compact.ts'
 
 /** 这一层自己的失败：底钉不住 · 视图打不开。**草案不成立不是它**——那是门的一份读数（`gate.problems`）。 */
 export class PlanError extends Error {}
@@ -196,6 +198,12 @@ export interface PlanResult {
   /** 种子那一份的读数：取到几份内容 · 哪几条在这一棵树上没有（读数，不参与判断）。 */
   readonly seedRead: SeedReading
   readonly occupancy: readonly OccupancyRow[]
+  /**
+   * **进预备态那一下的浓缩件**（`T14` 的前一份）：理解（这一趟钉住的轮级意图）+ 下手方向（这一趟
+   * 落下的那一版草案）。**这一份在 `planRound` 里算**，不在命令行那一层：`round/intent` 是这一趟
+   * 落的，开跑时那份读数里还没有它。没写出草案就是 `null`。
+   */
+  readonly entry: EntryCompact | null
   /** 停在门口（键域完整）。**它不派发**——派发是 `round go`（架构 § 15.1.a：门仍由人开）。 */
   readonly held: boolean
   readonly seqs: readonly LogSeq[]
@@ -644,6 +652,11 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
   const occupancy =
     gate.draft === null ? [] : occupancyOf(gate.draft.sections, { ...deps.occupancy, seedText: ruler.textOf })
 
+  // **进预备态那一下的浓缩件**（`T14` 的前一份）：**在这里算**——`round/intent` 是这一趟落的，开跑
+  // 时那份读数里还没有它（从那一份取"理解"会取到上一轮的、或者空串）。而这一句意图与刚落下的那一
+  // 版草案正是它的全部输入；门停那一份由命令行那一层算（它要的是那一批契约值）。
+  const entry = landing === null ? null : entryCompactOf(withVersion({ ...facts, goal }, landing))
+
   return {
     round,
     base,
@@ -655,6 +668,7 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
     gate,
     seedRead: ruler.reading,
     occupancy,
+    entry,
     held: gate.held,
     seqs,
   }

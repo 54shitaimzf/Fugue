@@ -1073,6 +1073,11 @@ test('C5.b · `--json` 那一栏与人面印的是同一张读数：号 · 落�
   // 而人面那几行**在**（浓缩件那一处渲染）：门口那一批 + 这一份账 → 件数 · 覆盖 · 验收 · 比出来的档。
   assert.match(human.stdout, /浓缩\t第 r1 轮\t底 [0-9a-f]{8}\t批号 [0-9a-f]{16}/, human.stdout.slice(0, 1200))
   assert.match(human.stdout, /与上一批：账上一条放行都没有/, human.stdout.slice(0, 1200))
+  // **进预备态那几行**（`T14` 的前一份）：理解（轮级意图那一句）+ 下手方向（草案每一节）——与浓缩件
+  // 同一档，也**只上人面**（机器面那一份键集在上面量过，一个都没多）。
+  assert.match(human.stdout, /进预备态\t第 r1 轮\t理解：写一份 a\.ts/, human.stdout.slice(0, 1200))
+  assert.match(human.stdout, /\t下手方向：1 个任务/, human.stdout.slice(0, 1200))
+  assert.match(human.stdout, /\t  第 1 节\timplement\t写一份 a\.ts/, human.stdout.slice(0, 1200))
   console.log(
     `C5.b 同源读数：人面「第 ${face[1]} 版（这一轮第 ${face[2]} 次落地）· 与第 ${face[3]} 版比：${face[4]} 处」` +
       ` ↔ --json version=${j.version.version} landing=${j.version.landing} same=${String(j.version.same)}` +

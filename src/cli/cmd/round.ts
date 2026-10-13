@@ -34,7 +34,7 @@ import type { VersionFace } from '../../round/versions.ts'
 import { fingerprintOf } from '../../contract/gate.ts'
 import { writeSetPaths } from '../../contract/precheck.ts'
 import type { PrecheckResult } from '../../contract/precheck.ts'
-import { compactLinesOf, compactOf } from '../../round/compact.ts'
+import { compactLinesOf, compactOf, entryLinesOf } from '../../round/compact.ts'
 import { PlanError, holderGoalText, planRound, pinnedBase } from '../../round/plan.ts'
 import { RECENT_COUNT, SayError, recentOf, sayRound, sessionPathOf } from '../../round/say.ts'
 import { estimateTokensOfText } from '../../runtime/budget.ts'
@@ -943,6 +943,9 @@ export async function roundPlan(
       if (r.draftText !== null) {
         for (const line of versionLinesOf(version, '预备态')) emitLine(line)
       }
+      // **进预备态那几行**（`T14` 的前一份）：理解（轮级意图）与下手方向（草案每一节）。它与下面
+      // "要开 N 个任务"那一段是两种粒度：这里是"打算从哪儿下手"，那里是逐节的写入面与验收。
+      if (r.entry !== null) for (const line of entryLinesOf(r.entry)) emitLine(line)
       if (draft !== null) {
         emitLine(`  要开 ${draft.sections.length} 个任务：`)
         for (const [k, s0] of draft.sections.entries()) {

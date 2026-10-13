@@ -27,6 +27,8 @@ import { DEFAULT_GRAPHICS_TIER, graphicsFor, setGraphics } from './image.ts'
 import type { GraphicsTier } from './image.ts'
 import { actionCommandsOf, actionsTableOf } from '../round/actions.ts'
 import { pendingOf } from '../round/dispatch.ts'
+import { roundFactsOf } from '../round/versions.ts'
+import { compactOf } from '../round/compact.ts'
 import { identFor } from '../identity.ts'
 import { openServeSource, rowsReaderOf } from '../serve/source.ts'
 import { openImageSource } from '../serve/image-source.ts'
@@ -232,11 +234,16 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
    */
   const pendingFace = async (): Promise<GateFace | null> => {
     if (configWhy !== null) return null
+    const reader = rowsReaderOf(ui.tui?.session.rows ?? [])
+    // **一趟读一遍**：门口那一批与它那几行浓缩件读的是**同一份读数**（`RoundFacts`）——各读一遍的话，
+    // 两者之间可以插进一条账，"看见的那批"与"浓缩的那批"就不是同一批了。
+    const facts = await roundFactsOf(reader, round)
     const v = await pendingOf({
-      log: rowsReaderOf(ui.tui?.session.rows ?? []),
+      log: reader,
       round,
       identityFor: (n: number) => identFor(round, n),
       actions: actionsTable,
+      facts,
     })
     if (v.kind !== 'held') return null
     return gateFaceOf(
@@ -247,6 +254,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
         contracts: [...v.pending.built.contracts],
       },
       commands,
+      // **门视图的缺省呈现就是它**（`T17` 那一句）：与命令行印的那几行出自同一个纯函数、同一份账。
+      compactOf(v.pending, facts),
     )
   }
   const ac = new AbortController()

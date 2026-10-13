@@ -18,7 +18,8 @@ import { test } from 'node:test'
 import type { Contract } from '../contract/types.ts'
 import type { Pending } from './dispatch.ts'
 import type { ApprovedBatch, RoundFacts } from './versions.ts'
-import { canonicalOf, compactLinesOf, compactOf, countsOf, diffOf } from './compact.ts'
+import { canonicalOf, compactLinesOf, compactOf, countsOf, diffOf, entryCompactOf, entryLinesOf } from './compact.ts'
+import { WORDS } from '../words.ts'
 
 /** 一份 implement 契约（只要这一份用得到的几栏）。 */
 function implement(id: string, goal: string, owned: string[] = ['a.ts'], assertions = ['总是过']): Contract {
@@ -235,4 +236,66 @@ test('⑦ 缺证那一档：同号而正文取不回来 → 差额算不出来�
     `⑦ 读数：同号而缺证 → compare=${unproven.compare} · 取不回来 ${unproven.missing.join(' · ')} · ` +
       `指纹 ${unproven.digest} ≠ 不缺证的 ${fine.digest}`,
   )
+})
+
+// ── ⑧ 进预备态那一份：理解 + 下手方向（`T14` 的前半）────────────────────────────────
+//
+// 判据一句话：**从这一份账重算得出"它理解成了什么 · 打算从哪儿下手"**——纯函数（只读入参那一份
+// 读数）、与门停那一份同一个口径（指纹进得来断言）、读不成草案就给 `null`（不印一行空的）。
+test('⑧ 进预备态那一份：理解 + 下手方向从账重算；读不成草案就是 null', () => {
+  /** 一份两节的草案（一节实现 · 一节调查）：下手方向那一栏该逐节一行。 */
+  const draft = [
+    '为什么这么拆：两格可以并行。',
+    '',
+    '```json',
+    JSON.stringify({
+      kind: 'investigate',
+      question: '现状怎么写的',
+      evidenceRequired: [{ artifact: 'notes/a.md', note: 'a' }],
+      seed: [],
+    }),
+    '```',
+    '',
+    '```json',
+    JSON.stringify({
+      kind: 'implement',
+      goal: '写解析器',
+      ownedPaths: ['src/parse.ts'],
+      deliverables: [],
+      assertions: [{ action: 'ok', name: '过' }],
+      seed: [],
+    }),
+    '```',
+  ].join('\n')
+  const facts = factsOf({
+    round: 'r1' as RoundFacts['round'],
+    goal: '把解析器拆出来',
+    versions: [{ at: 1, digest: 'd1', against: null, body: draft }],
+  })
+  const a = entryCompactOf(facts)
+  assert.ok(a !== null, '链尾那一版读得成草案，该出一份')
+  assert.equal(a.goal, '把解析器拆出来', '理解那一栏就是轮级意图')
+  assert.deepEqual(
+    [...a.direction],
+    ['第 1 节\tinvestigate\t现状怎么写的', '第 2 节\timplement\t写解析器'],
+    '下手方向该逐节一行（目标或问题按变体取）',
+  )
+  const lines = entryLinesOf(a).join('\n')
+  assert.match(lines, /进预备态\t第 r1 轮\t理解：把解析器拆出来/, lines)
+  assert.match(lines, new RegExp(`下手方向：2 个${WORDS.task}`), lines)
+  assert.match(lines, /指纹 [0-9a-f]{16}/, lines)
+  // **纯**：只从入参来（换一句意图，理解那一栏与指纹跟着走）。
+  const b = entryCompactOf({ ...facts, goal: '换了一句' })
+  assert.equal(b?.goal, '换了一句')
+  assert.notEqual(a.digest, b?.digest, '意向不同该出不同的指纹')
+  // **读出"还没有"**：这一轮还没落地 · 链尾是讨论态那一段话 → `null`（不印一行空的）。
+  assert.equal(entryCompactOf(factsOf({ versions: [] })), null, '还没落地就不该有一份')
+  assert.equal(
+    entryCompactOf(
+      factsOf({ versions: [{ at: 1, digest: 'x', against: null, body: '这一趟说的是话，不是草案。' }] }),
+    ),
+    null,
+    '链尾读不成草案就没有下手方向可说',
+  )
+  console.log(`⑧ 读数：理解「${a.goal}」· 下手方向 ${a.direction.length} 节 · 指纹 ${a.digest}`)
 })
