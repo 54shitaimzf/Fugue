@@ -272,14 +272,37 @@ export interface HolderFaceOptions {
  * 全部来自目录——没有一处现编一个名字。
  */
 export function holderFace(inner: ToolExecutor, opts: HolderFaceOptions = {}): ToolExecutor {
+  /** 一条调用在这一格里走完那一趟（两条入口共用它，见 `driver.ts` 那一份的同一条理由）。 */
+  async function one(call: ToolCallRequest, h: AgentHandle): Promise<ToolResult> {
+    const why = holderRefusalOf(call.name, opts.planPath)
+    if (why !== undefined) return { ok: false, output: why }
+    const r = await inner.execute(call, h)
+    if (call.name === 'exit_plan_mode' && r.ok && r.halt === true) opts.onDeclare?.()
+    const tail = stepsLeftTail(Number(h.state.step), opts.maxSteps, HOLDER_LAND_NOW)
+    return tail === '' ? r : { ...r, output: capReceipt(r.output + tail) }
+  }
   return {
-    async execute(call: ToolCallRequest, h: AgentHandle): Promise<ToolResult> {
-      const why = holderRefusalOf(call.name, opts.planPath)
-      if (why !== undefined) return { ok: false, output: why }
-      const r = await inner.execute(call, h)
-      if (call.name === 'exit_plan_mode' && r.ok && r.halt === true) opts.onDeclare?.()
+    execute: one,
+    // **批次那一栏原样转发**：这一格与子 agent 那一格共用同一份 `runtime`，两边都要能并行只读。
+    // 不转发就是这条包装层后面静默退回串行——运行时看不见差别，只有墙钟看得出来。
+    async executeAll(calls: readonly ToolCallRequest[], h: AgentHandle): Promise<readonly ToolResult[]> {
+      if (inner.executeAll === undefined) {
+        const out: ToolResult[] = []
+        for (const call of calls) out.push(await one(call, h))
+        return out
+      }
+      const got = await inner.executeAll(calls, h)
       const tail = stepsLeftTail(Number(h.state.step), opts.maxSteps, HOLDER_LAND_NOW)
-      return tail === '' ? r : { ...r, output: capReceipt(r.output + tail) }
+      const out: ToolResult[] = []
+      for (let at = 0; at < calls.length; at += 1) {
+        const call = calls[at] as ToolCallRequest
+        const r = got[at] as ToolResult
+        // **那一下"交卷"照旧记下来**（与 `execute` 同一个判据），而"还剩几步"是**每条回执都补**
+        // ——那一句说的是这一格还剩多少步，与这一趟调的是哪条工具无关。
+        if (call.name === 'exit_plan_mode' && r.ok && r.halt === true) opts.onDeclare?.()
+        out.push(tail === '' ? r : { ...r, output: capReceipt(r.output + tail) })
+      }
+      return out
     },
   }
 }
