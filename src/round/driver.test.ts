@@ -243,6 +243,7 @@ function depsOf(
     log: b.log,
     logOf,
     logForAgent: logOf,
+    atGate: () => undefined,
     // 一个 agent 一个口、由调用方持有：台子把开过的口记着，跑完一起关（`Bench.close`）。
     closeAgentLogs: async () => undefined,
     round: round as never,

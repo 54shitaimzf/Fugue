@@ -55,12 +55,16 @@ export interface TrailStep {
  *
  * `logForAgent` 只在物化那一档要：`mat/fork` 落在**那个 agent 自己的日志**里，而 `round/state` ·
  * `contract/issue` 落在持轮者那一份（§ 9.2 的栅栏按 writer 分文件）——两个写者，两个口。
+ *
+ * `atGate` 是**先拿全再开口**那一步的点（§ 9.11）：这一批几个 agent 算出来之后、第一个
+ * `contract/issue` 落笔之前交一次手。拿不全就在那儿抛，于是这一个字节都还没落。
  */
 export interface IssueDeps {
   readonly roots: Roots
   readonly truth: Truth
   readonly log: Log
   readonly round: RoundId
+  readonly atGate?: (at: { readonly agents: readonly AgentId[] }) => void
   readonly logForAgent?: (a: AgentId) => Log
   /** 要不要在这一步就把物化铺出来（架构 § 14.1 的 `deferMaterialize`）。**缺省不铺。** */
   readonly materialize?: boolean
@@ -94,6 +98,10 @@ export async function issueAndStart(
   if (agents.length === 0) {
     throw new RoundStartError('这一批一份契约都没有：轮次至少要有一份契约与一条分支')
   }
+
+  // **拿手在落第一个字节之前**（§ 9.11）：撞上 busy 的那一趟连 `contract/issue` 都还没写，
+  // "不留半份日志"于是不是靠事后回滚，是靠次序。
+  deps.atGate?.({ agents })
 
   const trail: TrailStep[] = []
   let state: RoundState = from
@@ -227,6 +235,7 @@ export interface DispatchDeps {
   readonly seedLimit?: number
   /** **声明的模型上限**（`ModelDecl.contextLimit`）：`seed` 那条算式按它算，不按这一份的缺省。 */
   readonly modelLimit?: number
+  readonly atGate?: (at: { readonly agents: readonly AgentId[] }) => void
   readonly logForAgent?: (a: AgentId) => Log
   readonly materialize?: boolean
   readonly forkOpt?: typeof DEFAULT_MATERIALIZE
@@ -397,6 +406,10 @@ export async function dispatchRound(deps: DispatchDeps): Promise<Dispatched> {
   const { pending } = verdict
   const built = pending.built
   const fingerprint = pending.fingerprint
+
+  // **拿手在这一步**（§ 9.11）：这一批算出来了，而 `round/approve` 与 `contract/issue` 都还没落。
+  // 撞上 busy 的那一趟于是与"还没放行"在盘上完全一样（`round go` 那一侧靠的就是这一句）。
+  deps.atGate?.({ agents: [...new Set(built.contracts.map((c) => c.agent as AgentId))] })
 
   // 四 · 落那一笔放行，然后发。**顺序反了的话，读日志的人会先看见契约、后看见谁批的。**
   await log.append('round', {

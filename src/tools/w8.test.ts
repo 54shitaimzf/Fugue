@@ -163,6 +163,9 @@ function depsOf(b: Bench, call: CallModel, owned: readonly string[] = ['a.ts']):
     log: b.log,
     logOf,
     logForAgent: logOf,
+    // **要 N 把先拿全**（§ 9.11）那一栏这一份夹具不走（它自己按 agent 记忆口），但形状要对上：
+    // 收尾那一步在这里是空的——口由台子（`Bench`）收。
+    atGate: () => undefined,
     closeAgentLogs: async () => undefined,
     round: 'r1' as never,
     intent: { goal: '把一件事做完' },

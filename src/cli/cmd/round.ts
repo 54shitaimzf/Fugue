@@ -12,8 +12,8 @@ import { ConfigError, getConfig, readConfig } from '../../config.ts'
 import type { ConfigDoc } from '../../config.ts'
 import { identFor } from '../../identity.ts'
 import type { Log } from '../../log/events.ts'
-import { openLog } from '../../log/log.ts'
-import type { LogHandle } from '../../log/log.ts'
+import { acquireFences } from './fences.ts'
+import type { FenceSet } from './fences.ts'
 import type { AgentId, BranchId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../../terms.ts'
 import type { TruthHandle } from '../../truth/truth.ts'
 import type { View } from '../../view/contract.ts'
@@ -188,6 +188,11 @@ export async function roundCmd(
   const identityFor = (n: number): { agent: AgentId; branch: BranchId } => identFor(round, n)
   const materialize = flags.has('materialize')
 
+  // **这一批要几个 agent 是配置那一栏说了算的**（拆分草案一份一个）——拿手于是做得了在开口之前。
+  const fenceSet = acquireFences(root, split.map((_, n) => identFor(round, n).agent as WriterId), {
+    sync: 'each',
+    ...clockOption(flags),
+  })
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   try {
     const started = await startRound({
@@ -200,8 +205,12 @@ export async function roundCmd(
       identityFor,
       // 这一档（人拆）没有种子：那一栏由调用方给（架构 § 8.12）。
       seeds: [] as readonly RelPath[],
-      // 物化那一档：每一条分支一个口，那个 agent 自己的日志。
-      logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each', ...clockOption(flags) }),
+      // **门口那一趟的点在 `startRound` 里**（契约算出来之后、`round/intent` 落笔之前）：
+      // 撞上 busy 的那一趟于是一个字节都不落，与 `round go` 那一趟同一句话。
+      atGate: ({ agents }) => {
+        for (const a of agents) fenceSet.open(a as WriterId)
+      },
+      logForAgent: (a) => fenceSet.open(a as WriterId),
       // **声明的上限接进 `seed` 那一条**：这一档没有种子（`seeds: []`），但读数那一行印的就是它。
       modelLimit: modelLimitOf(doc, readCatalog()),
       materialize,
@@ -254,6 +263,7 @@ export async function roundCmd(
     if (err instanceof RoundStartError) return fail(err.message, json)
     throw err
   } finally {
+    await fenceSet.closeAll()
     await ctx.close()
   }
 }
@@ -341,13 +351,14 @@ export async function roundRun(
   const modelChoice = wire.model
   const real = live || wireIn !== undefined
   const handoff = flags.has('no-handoff') ? false : undefined
-  // **一个 agent 一个日志口、由调用方持有**（`hold.ts` 那道栅栏：同一个 writer 开第二个口就是
-  // "已经有写者"）。这一份记着开过的口，轮次跑完一起关（`closeAgentLogs`）。
+  // **要 N 把栅栏就先拿全 N 把，再开第一个口**（架构 § 9.11 那一句 · `fences.ts`）：拿不全就
+  // 一把不剩地放掉，这一趟于是留不下那个 writer 的任何东西（连它顺手建的空目录一起收）。
+  // 这一份记着开过的口，轮次跑完一起关（`closeAgentLogs`）。
   const agentLogs = new Map<AgentId, LogHandle>()
   const agentLogOf = (a: AgentId): Log => {
     const hit = agentLogs.get(a)
     if (hit !== undefined) return hit
-    const made = openLog(root, { write: a as WriterId, sync: 'each', ...clockOption(flags) })
+    const made = fenceSet.open(a as WriterId)
     agentLogs.set(a, made)
     return made
   }
@@ -356,7 +367,13 @@ export async function roundRun(
       agentLogs.delete(a)
       await l.close()
     }
+    // 手上余下那几把（这一趟没开过口的）在这里放掉——**口全关完之后**（§ 9.11「先关句柄、再放锁」）。
+    await fenceSet.closeAll()
   }
+  const fenceSet = acquireFences(root, split.map((_, n) => identFor(round, n).agent as WriterId), {
+    sync: 'each',
+    ...clockOption(flags),
+  })
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   /**
    * **每一格为什么停**（第 5 批 · 疑点 2）：`realDriver` 的 `onResult` 是这句话唯一的出口，
@@ -1177,12 +1194,13 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
   const real = wire.live || wire.wireIn !== undefined
   const handoff = flags.has('no-handoff') ? false : undefined
   const retriesLeft = numberOf(flags.get('retry'), 0) ?? RETRY_DEFAULT
-  // **一个 agent 一个日志口、由调用方持有**（与 `round run` 同一条：`hold.ts` 那道栅栏）。
+  // **要 N 把栅栏就先拿全 N 把，再开第一个口**（与 `round run` 同一条 · `fences.ts`）：拿不全
+  // 就一把不剩地放掉。这一趟要几个 agent 得先读到那一批（见下面那一步）。
   const agentLogs = new Map<AgentId, LogHandle>()
   const agentLogOf = (a: AgentId): Log => {
     const hit = agentLogs.get(a)
     if (hit !== undefined) return hit
-    const made = openLog(root, { write: a as WriterId, sync: 'each', ...clockOption(flags) })
+    const made = fenceSet.open(a as WriterId)
     agentLogs.set(a, made)
     return made
   }
@@ -1191,13 +1209,19 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
       agentLogs.delete(a)
       await l.close()
     }
+    // 手上余下那几把（这一趟没开过口的）在这里放掉——**口全关完之后**（§ 9.11「先关句柄、再放锁」）。
+    await fenceSet.closeAll()
   }
 
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   const stops: AgentStop[] = []
+  // 口在读到那一批之后开（几份契约就是几个 agent），收在 `finally`。
+  let fenceSet: FenceSet | null = null
   try {
     // 一 · **这一批从日志来**（这一条与 `round run` 的全部差别就在这一行）。
     const batch = await issuedBatchOf(ctx.log, round)
+    // 拿全了再开第一个口——**在读回那一批之后、写任何一个字节之前**。
+    fenceSet = acquireFences(root, agentsOfContracts(batch.contracts), { sync: 'each', ...clockOption(flags) })
     // 二 · 接上那条尾巴（与 `round run` 同一个函数）。
     const run = await runIssued(
       {
@@ -1257,7 +1281,7 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
     if (err instanceof BindingError) return fail(err.message, json)
     throw err
   } finally {
-    await closeAgentLogs()
+    await fenceSet?.closeAll()
     await ctx.close()
   }
 }
@@ -1282,6 +1306,15 @@ function specsOfContract(doc: ConfigDoc): (c: Contract, agent: AgentId) => reado
       }
     })
   }
+}
+
+/**
+ * **这一批几个 agent**（`acquireFences` 的名单从这一处来）：一份契约一个持有者，去重之后的
+ * 次序就是构造次序——与 `issueAndStart` 里那句 `new Set(built.contracts.map(c => c.agent))`
+ * 同一个来源，于是「拿了几把」与「真会用到几个 writer」不可能错开一格。
+ */
+function agentsOfContracts(contracts: readonly Contract[]): readonly WriterId[] {
+  return [...new Set(contracts.map((c) => c.agent))] as readonly WriterId[]
 }
 
 /**
@@ -1332,6 +1365,15 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
   const round = typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1'
   const materialize = flags.has('materialize')
 
+  // 口在门口那一趟开（`atGate`），收在 `finally`——**声明在 try 之外**，收尾才看得到它。
+  let fenceSet: FenceSet | null = null
+  // **门那一趟给名单**（`atGate`），拿手于是排在 `round/approve` 与 `contract/issue` 之前。
+  // 而这一份也是**驱动自己那一趟**（界面走 `dispatchRound`，不经过门那一趟）：那一趟没有人先
+  // 打招呼，所以 `open` 时按名单兜一次底——两条来路拿到的是同一份（`acquireFences` 幂等）。
+  const take = (agents: readonly AgentId[]): FenceSet =>
+    (fenceSet ??= acquireFences(root, agents, { sync: 'each', ...clockOption(flags) }))
+  /** 拿全之后按 agent 开（`round new` / `round run` 那两处同一句话）。 */
+  const logOf = (a: AgentId): Log => take([a]).open(a as WriterId)
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   try {
     // **这一趟的那份读数：一遍**（含放过的那几批——这一笔写进去之后它就与这一批混在一起了）。
@@ -1349,7 +1391,13 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
       // **声明的上限接进 `seed` 那一条**：判那一趟（`round plan`）读的是同一份声明。
       modelLimit: modelLimitOf(doc, readCatalog()),
       materialize,
-      logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each', ...clockOption(flags) }),
+      // **拿手在门口那一趟做**：那一批算出来之后、`round/approve` 落笔之前——契约还没发、
+      // 一个字节都还没落，此时撞上 busy 就是「什么都没发生」（§ 9.11）。为什么不能更早：
+      // 这一批几个 agent 是**算出来的**（从草案重算），放行那一趟之前没有人知道。
+      atGate: ({ agents }) => {
+        take(agents)
+      },
+      logForAgent: (a) => logOf(a),
     })
     const same = earlier.find((x) => x.fingerprint === r.fingerprint) ?? null
     if (json) {
@@ -1405,6 +1453,7 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
     if (err instanceof RoundStartError) return fail(err.message, json)
     throw err
   } finally {
+    await fenceSet?.closeAll()
     await ctx.close()
   }
 }
