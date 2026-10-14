@@ -60,8 +60,8 @@ import { declaredSetOf } from '../../contract/types.ts'
 import type { AssertionRunSpec } from '../../merge/accept.ts'
 import type { DriftVerdict } from '../../merge/drift.ts'
 import { entriesOf } from '../../merge/accept.ts'
-import { computeAll, reportOf } from '../../probe/round.ts'
-import { computeAllMetrics, computeAttribution, lineOf, lineOfAttribution } from '../../probe/metrics.ts'
+import { countsOf, reportOf } from '../../probe/round.ts'
+import { attributionOf, lineOf, lineOfAttribution, metricsOf } from '../../probe/metrics.ts'
 import { METRICS_HEAD, REPORT_HEAD, callLinesOf, rowsOf } from '../../probe/status.ts'
 import { phaseOf } from '../../model/price.ts'
 import type { Ctx } from '../shared.ts'
@@ -542,19 +542,8 @@ export async function roundRun(
       })
     }
 
-    // 打回那三个数：**从日志重算**（架构 § 8.15）。同一份日志算两次同值——所以 `--report` 印的
-    // 就是刚才那一趟跑出来的那份日志。
-    const readings = await computeAll(() => ctx.log.readMerged(), { round })
-    // **归因三处对照**（闸四的另一半 · PLAN § 5.12 序 3）：也是从日志重算——与上面那三个数、
-    // 与八元指标同一个源（同一份日志 · 同样不采集）。三行恒在，缺的写「没有读数」。
-    const attribution = await computeAttribution(() => ctx.log.readMerged())
-    // **逐趟账**（PLAN § 5.9 的 `G5`）：每一条 `llm/call` 一行 + 合计。它也是从同一份日志重算，
-    // 钱的档按读这一次的钟算（账上没有时刻）。
-    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()), cat })
-    const report = reportOf({ round }, readings, attribution.map(lineOfAttribution), callLines)
-    // 八元指标（架构 § 8.15）：**与上面那三个数同一个来源**（同一份日志 · 同样重算）。
-    // 那一趟的日志就是刚才跑出来的那一份——所以 `--metrics` 印的就是这一趟。
-    const metrics = flags.has('metrics') ? await computeAllMetrics(() => ctx.log.readMerged(), { round }) : null
+    // 那一趟刚落的账就是这一份日志：**读一遍，折四遍**（`runFoldsOf` 那一处收着这四份的口径）。
+    const { report, attribution, metrics } = await runFoldsOf({ log: ctx.log, round, cat, wantMetrics: flags.has('metrics') })
 
     return emitRunFace({ json, flags, run: started, stops, deniedAction, report, attribution: [...attribution], metrics })
   } catch (err) {
@@ -565,6 +554,43 @@ export async function roundRun(
     // **agent 那几个口由调用方关**（`runRound` 只借不还）。
     await closeAgentLogs()
     await ctx.close()
+  }
+}
+
+/**
+ * 跑完那一档要印的那几份读数：**读一遍，折四遍**。
+ *
+ * 四份读数读的是同一串事件（架构 § 8.15：都是「从日志重算」，没有一处采集原始数据）：
+ *
+ *   一 · **打回那三个数**（`countsOf`）：`--report` 印的那三行。
+ *   二 · **归因三处对照**（`attributionOf` · 闸四的另一半 · PLAN § 5.12 序 3）：三行恒在，位置不
+ *        存在的那一行写「没有读数」。
+ *   三 · **逐趟账**（`callLinesOf` · PLAN § 5.9 的 `G5`）：每一条 `llm/call` 一行 + 合计；钱的档
+ *        按读这一次的钟算（账上没有时刻）。
+ *   四 · **八元指标**（`metricsOf` · 架构 § 8.15）：给了 `--metrics` 才折。
+ *
+ * **原先 `round run` 与 `round work` 各读四趟**（三个数一趟 · 归因一趟 · 逐趟账一趟 · 指标一趟），
+ * 四趟读的是同一份日志——那既白付四遍读的钱，也让「四份读数同源」这句话靠四处自觉。这里读一次
+ * 收成一份行，四份都从这一份行折出来（`readings()` 与 `readingsOf()` 是同一个形状的先例）。
+ *
+ * **地板是各读各的**：三份折法都还留着收「再来一遍」函数的出入口（`computeAll` ·
+ * `computeAttribution` · `computeAllMetrics`），读一遍那一档不成立时退回各读各的，读数一个字节
+ * 不变——`status.test.ts` ⑩ 那条断言把两档摆在同一个数上。
+ */
+async function runFoldsOf(o: {
+  readonly log: Ctx['log']
+  readonly round: string
+  readonly cat: Catalog
+  readonly wantMetrics: boolean
+}) {
+  const rows = await rowsOf(() => o.log.readMerged())
+  const readings = countsOf(rows, { round: o.round })
+  const attribution = attributionOf(rows)
+  const callLines = callLinesOf(rows, { phase: phaseOf(new Date()), cat: o.cat })
+  return {
+    report: reportOf({ round: o.round }, readings, attribution.map(lineOfAttribution), callLines),
+    attribution,
+    metrics: o.wantMetrics ? metricsOf(rows, { round: o.round }) : null,
   }
 }
 
@@ -584,7 +610,7 @@ function emitRunFace(o: {
   readonly deniedAction: { readonly agent: AgentId; readonly exit: number; readonly denied: boolean; readonly note: string } | null
   readonly report: Awaited<ReturnType<typeof reportOf>>
   readonly attribution: readonly string[]
-  readonly metrics: Awaited<ReturnType<typeof computeAllMetrics>> | null
+  readonly metrics: Awaited<ReturnType<typeof metricsOf>> | null
 }): number {
   const { json, flags, run, stops, deniedAction, report, attribution, metrics } = o
   if (json) {
@@ -1289,12 +1315,8 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
       },
       batch,
     )
-    // 三 · 打回那三个数与八元指标（**与 `round run` 同一份读法**：同一份日志上的重算，不采集）。
-    const readings = await computeAll(() => ctx.log.readMerged(), { round })
-    const attribution = await computeAttribution(() => ctx.log.readMerged())
-    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()), cat })
-    const report = reportOf({ round }, readings, attribution.map(lineOfAttribution), callLines)
-    const metrics = flags.has('metrics') ? await computeAllMetrics(() => ctx.log.readMerged(), { round }) : null
+    // 三 · 打回那三个数与八元指标：**与 `round run` 同一处读法**（`runFoldsOf`：读一遍，折四遍）。
+    const { report, attribution, metrics } = await runFoldsOf({ log: ctx.log, round, cat, wantMetrics: flags.has('metrics') })
     // **复用了哪几格**印在 stderr：它是"这一趟只补了没交卷的那几格"的读数（重跑不重复烧钱）。
     if (run.reused.length > 0) {
       process.stderr.write(

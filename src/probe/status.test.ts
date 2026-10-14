@@ -39,9 +39,9 @@ import { join } from 'node:path'
 import type { LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import type { AgentId, RoundId } from '../terms.ts'
-import { computeAll, computeMerged, linesOfReadings } from './round.ts'
+import { computeAll, computeMerged, countsOf, linesOfReadings } from './round.ts'
 import type { MetricReading } from './round.ts'
-import { computeAllMetrics, lineOf } from './metrics.ts'
+import { attributionOf, computeAllMetrics, computeAttribution, lineOf, metricsOf } from './metrics.ts'
 import {
   METRICS_HEAD,
   REPORT_HEAD,
@@ -479,8 +479,10 @@ test('⑨ 逐趟账：每一条 `llm/call` 一行 + 合计；半截的流与"没
 // `ui/frame.ts` 的 `FrameInput`——命令面与渲染器的输入契约是同一份。
 //
 // 四条：前两条是主张，后两条是负对照。
-//   一 · **两处读法同一个数**：跑完那一档走 `computeAll` / `computeAllMetrics`，读账那一档走
-//        `readings()`，逐项相同；而快照那一份就是 `statusOf` 折出来的那一份（形状一个字段没动）。
+//   一 · **三处读法同一个数**：跑完那一档的**地板**（各读各的：`computeAll` / `computeAllMetrics` /
+//        `computeAttribution`）· 跑完那一档现在走的那条路（**读一份行、折四遍**：`countsOf` /
+//        `metricsOf` / `attributionOf`）· 读账那一档（`readings()`）——逐项相同；而快照那一份就是
+//        `statusOf` 折出来的那一份（形状一个字段没动）。
 //   二 · **文字面逐字相同**：`readingsLines()` 那两块，就是跑完那一档印的那两块——表头是同一个
 //        常数（`REPORT_HEAD` / `METRICS_HEAD`），行是同一个 `linesOfReadings` / `lineOf`。
 //   三 · **没要的那一栏不出现**（不是空数组）："没算"与"算出来是空"要分得开（`B1` 那条）。
@@ -521,7 +523,19 @@ test('⑩ 出口：`status` 那两栏与 `round run` 那两栏同一个数、同
     const viaRun = {
       report: await computeAll(() => log.readMerged(), {}),
       metrics: await computeAllMetrics(() => log.readMerged(), {}),
+      attribution: await computeAttribution(() => log.readMerged()),
     }
+    // **读一遍那一档**（`round run` / `round work` 走的就是它：读一份行，四份读数都从这一份行折
+    // 出来）。它与上面那一档写的是一件事的两条路——两档不同源的话，这三条断言当场红。
+    const rows = await rowsOf(() => log.readMerged())
+    const viaRows = {
+      report: countsOf(rows, {}),
+      metrics: metricsOf(rows, {}),
+      attribution: attributionOf(rows),
+    }
+    assert.deepEqual(viaRows.report, viaRun.report, '读一遍那一档 ⇄ 各读各的那一档：打回那三个数')
+    assert.deepEqual(viaRows.metrics, viaRun.metrics, '读一遍那一档 ⇄ 各读各的那一档：八元指标')
+    assert.deepEqual(viaRows.attribution, viaRun.attribution, '读一遍那一档 ⇄ 各读各的那一档：归因三处')
     const viaStatus = await readings(log, { metrics: true, report: true })
     const rep = viaStatus.report ?? []
     const met = viaStatus.metrics ?? []
