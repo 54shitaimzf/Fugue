@@ -5,26 +5,21 @@
 // 一秒内跑完，又不会在快档测试里递归跑整套快档（那是 `node tools/test-entry.js fast` 自己的活）。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { SCHEMA, timeLane, timingRecord, writeRecord } from '../tools/ci-timing.js'
+import { copyEntryClosure } from './helpers/entry-closure.ts'
 import { tmpDir } from './helpers/tmp.ts'
 
 const REPO = join(import.meta.dirname, '..')
 const KEYS = ['exitCode', 'files', 'finishedAt', 'lane', 'run', 'runner', 'schema', 'startedAt', 'wallMs']
 
-/** 一个真能跑的夹具仓：入口 + 计时器两份拷贝，一个快档文件、一个真档文件。 */
+/** 一个真能跑的夹具仓：计时器，加它 import 的入口与入口那份静态闭包；一个快档文件、一个真档文件。 */
 function fixture(fastBody: string): string {
   const dir = tmpDir('fugue-ci-timing-')
-  mkdirSync(join(dir, 'tools'), { recursive: true })
-  mkdirSync(join(dir, 'src', 'cli'), { recursive: true })
-  cpSync(join(REPO, 'tools', 'test-entry.js'), join(dir, 'tools', 'test-entry.js'))
-  cpSync(join(REPO, 'tools', 'ci-timing.js'), join(dir, 'tools', 'ci-timing.js'))
-  // 入口那一份（`tools/test-entry.js`）现在会装编译缓存：夹具里也放一份 `src/cli/boot.ts`，
-  // 不然那一档在夹具里直接起不来（实测：ERR_MODULE_NOT_FOUND，退出码从 2 变 1）。夹具是
-  // "把验收入口拷一份进去"，所以它得跟着真仓的形状走。
-  cpSync(join(REPO, 'src', 'cli', 'boot.ts'), join(dir, 'src', 'cli', 'boot.ts'))
+  // 计时器与它 import 的入口（含入口的静态闭包）一起进夹具——清单跟着入口走。
+  copyEntryClosure(join(REPO, 'tools', 'ci-timing.js'), dir, REPO)
   writeFileSync(join(dir, 'src', 'a.test.ts'), fastBody)
   writeFileSync(join(dir, 'src', 'b.test.ts'), '// tier: real —— 夹具不碰真依赖，只为分档读数在场\n')
   return dir

@@ -1,13 +1,12 @@
 // 命令行**解析那一层**：参数怎么切 · 哪几个开关取值 · 表外的开关当场怎么拒。
 //
-// U4a 起它住在 `cli/shared.ts` 里，本批搬出来单开一份。**为什么**：`--version` 与 `--help` 是
-// 两条不碰工作区的命令，它们要的全部就是这一份与 `cli/out.ts`；而 `cli/shared.ts` 还带着开视图
-// 那一串（`log/log.ts` · `truth/truth.ts` · `view/` 那一族 · `roots/` · `config.ts`）。
-// 入口那一层从前把整个命令族十四条静态 import 装齐，于是这两条命令也在为整个命令族的并集付装载
-// 钱。搬到这一份之后它们只装这一份与出口那一份——"按命令装载"那一层见 `cli/load.ts`。
+// **它为什么单开一份**：`--version` 与 `--help` 是两条不碰工作区的命令，它们要的全部就是这一份与
+// `cli/out.ts`；而 `cli/shared.ts` 还带着开视图那一串（`log/log.ts` · `truth/truth.ts` · `view/`
+// 那一族 · `roots/` · `config.ts`）。入口按命令装载（`cli/load.ts`），所以切出这一份就等于让那两条
+// 命令不必为整个命令族的并集付装载钱。
 //
-// `cli/shared.ts` 原样再导出这一份的四个出口，所以三十来处 `import { parseArgv } from './shared.ts'`
-// 一处不改、字节一个不动（与出口那一份搬进 `cli/out.ts` 是同一次做法的第二遍）。
+// 出口只有三样：`Parsed` · `parseArgv` · `unknownFlagsOf`——要就来这里拿。`cli/shared.ts` 不转一手：
+// 同一个名字两条路，正是这一份最想避免的那种东西。
 
 export interface Parsed {
   flags: Map<string, string | true>
@@ -46,7 +45,6 @@ const VALUED: ReadonlySet<string> = new Set([
   // `--idle-ms <毫秒>`（`serve` 的闲时阈值，走查与测试要一个短的）：同一条纪律。
   'idle-ms',
 ])
-export { VALUED }
 
 export function parseArgv(argv: readonly string[]): Parsed {
   const flags = new Map<string, string | true>()

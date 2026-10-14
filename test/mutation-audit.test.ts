@@ -8,10 +8,11 @@
 // killed）。只断"跑过了"是不够的：两个方向各要一条。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { audit, changedSinceLastTag, daySeed, plan, resolveSource, resolveSpecifier, specifiers } from '../tools/mutation-audit.js'
+import { copyEntryClosure } from './helpers/entry-closure.ts'
 import { tmpDir } from './helpers/tmp.ts'
 
 const REPO = join(import.meta.dirname, '..')
@@ -46,13 +47,9 @@ function git(dir: string, args: string[]): string {
  *  `package.json` 也在场——真仓都有一份，而 `node --check` 认不认 TS 就看它（见下面那两条）。 */
 function fixture(): string {
   const dir = tmpDir('fugue-mut-')
-  mkdirSync(join(dir, 'tools'), { recursive: true })
-  mkdirSync(join(dir, 'src', 'cli'), { recursive: true })
-  cpSync(join(REPO, 'tools', 'test-entry.js'), join(dir, 'tools', 'test-entry.js'))
-  // 入口那一份（`tools/test-entry.js`）现在会装编译缓存：夹具里也放一份 `src/cli/boot.ts`，
-  // 不然那一档在夹具里直接起不来（实测：ERR_MODULE_NOT_FOUND，退出码从 2 变 1）。夹具是
-  // "把验收入口拷一份进去"，所以它得跟着真仓的形状走。
-  cpSync(join(REPO, 'src', 'cli', 'boot.ts'), join(dir, 'src', 'cli', 'boot.ts'))
+  // 入口与它的静态闭包一起进夹具（清单跟着入口走，见 `copyEntryClosure`）。
+  copyEntryClosure(join(REPO, 'tools', 'test-entry.js'), dir, REPO)
+  mkdirSync(join(dir, 'src'), { recursive: true })
   writeFileSync(join(dir, 'src', 'foo.ts'), FOO)
   writeFileSync(join(dir, 'src', 'foo.test.ts'), FOO_TEST)
   writeFileSync(join(dir, 'package.json'), '{"type":"module"}\n')

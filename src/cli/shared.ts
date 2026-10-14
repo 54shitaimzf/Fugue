@@ -30,12 +30,6 @@ export { UsageError }
 // 但不必把这一份（它 import 了账本与视图那一串）拖进界面的 import 闭包。名字原样再导出。
 export { USAGE, emitJson, emitLine, fail, usageFail, emitFail } from './out.ts'
 
-// 解析那一层（参数怎么切 · 哪几个开关取值 · 表外开关怎么拒）本批搬到 `cli/argv.ts`：入口那两条
-// 不碰工作区的命令（`--version` · `--help`）只要它，而这一份还带着开视图那一串。名字原样再导出。
-export { VALUED, parseArgv, unknownFlagsOf } from './argv.ts'
-export type { Parsed } from './argv.ts'
-
-
 /**
  * 命令行上那一档（架构 § 8.8 的 `Policy.mode`）：不给就是缺省档 `read-only`。
  * **`null` 是"敲错了"**（退出码 2），与"这一趟跑不成"（1）分开。

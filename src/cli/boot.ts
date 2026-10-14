@@ -67,24 +67,17 @@ export function armCompileCache(): CompileCache {
     return armed
   }
   const asked = compileCacheDir()
-  let status = constants.compileCacheStatus.FAILED
-  let message: string | undefined
-  try {
-    const r = enableCompileCache(asked)
-    status = r.status
-    message = r.message
-  } catch (err) {
-    // 连"报个状态"都没做到：照样是地板那一档——不抛。
-    armed = { enabled: false, dir: null, why: err instanceof Error ? err.message : String(err) }
-    return armed
-  }
+  // **建不出来不是错误**：`enableCompileCache` 不抛，它把结果报成一个状态——`FAILED` 就是"这一档
+  // 没有缓存"，进程照跑（地板）。所以这里没有 try：能抛的东西这里不存在，包一层只会把真错换个
+  // 样子报出去。
+  const r = enableCompileCache(asked)
   const enabled =
-    status === constants.compileCacheStatus.ENABLED || status === constants.compileCacheStatus.ALREADY_ENABLED
+    r.status === constants.compileCacheStatus.ENABLED || r.status === constants.compileCacheStatus.ALREADY_ENABLED
   armed = {
     enabled,
     // 环境里另指了一处时，真正生效的是它——报出来的是实际那一处（`getCompileCacheDir`）。
     dir: enabled ? (getCompileCacheDir() ?? asked) : null,
-    why: enabled ? null : (message ?? `状态 ${status}`),
+    why: enabled ? null : (r.message ?? `状态 ${r.status}`),
   }
   return armed
 }
