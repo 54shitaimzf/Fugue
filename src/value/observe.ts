@@ -3,7 +3,8 @@
 //
 // **三条都是纯读**：不开写句柄、不取栅栏、不新增事件（§ 9.7「观察不得影响状态」）。
 //
-// 两条脸的字节与 `src/cli/cmd/observe.ts` 那一份逐字节相同（黄金帧锁着）：`status` 是「一个
+// 两条脸的字节由黄金帧锁着；本版起这一份是唯一一处（`cli/cmd/observe.ts` 那三个被遮的老出口
+// 随它一起收掉了）：`status` 是「一个
 // 对象 + 几行字」· `log` 与 `watch` 是 NDJSON（`--json` 一行一个 `{pos,e}`，人读一行一个制表符
 // 分隔的摘要）。
 //
@@ -50,7 +51,7 @@ export function headerWanted(a: ValueArgs): boolean {
   return true
 }
 
-/** 一行事件的**人读那一面**（与 `cmd/observe.ts` 的 `emit` 逐字节相同）。 */
+/** 一行事件的**人读那一面**（`cli/cmd/observe.ts` 那一份的 `emit` 本版起并进了这里）。 */
 export function eventLine(pos: LogPos, e: LogEvent): string {
   const { t, ...payload } = e as { t: string } & Record<string, unknown>
   const brief = Object.keys(payload)

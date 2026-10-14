@@ -22,7 +22,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import type { AgentId, CommitId, RoundId, WriterId } from '../terms.ts'
+import type { AgentId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../terms.ts'
 import type { LogReader } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import { loggedOf, roundStateOf } from './dispatch.ts'
@@ -373,6 +373,92 @@ test('⑦ 回退那一档（A→B→A）：比的是上一趟落地的那一版�
     console.log(
       `⑦ 读数：回退（A→B→A）→ 第 ${face.version} 版 / 第 ${face.landing} 次落地 · 与第 ${String(face.againstVersion)} 版比 ${face.lines.length} 处` +
         ` · 一段话落在草案之后 → why「${String(face2.why)}」`,
+    )
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ⑨ 放过的那几批：正文按**真日志次序**取回（本版修正）──────────────────────────────
+//
+// 判据三句话：① 批准 → 签发那一趟取回**该次批准对应的完整正文集合**；② 同一个 id 后来又发过一次
+// （同一轮重拆）时，**先前那一批的快照仍是当时的正文**；④ 取不回正文是**显式的缺证**——不补齐、
+// 不跳批、不拿一个空集顶上。
+//
+// **为什么走真日志**：这一条量的是"读的人跟不跟得上写的人的次序"——`round/approve` 落在
+// `contract/issue` **之前**（`dispatchRound` 的四步），所以任何"在批准那一处往回查"的读法都只能
+// 查到空集。事件经真写者口（`log.append` → 真信封 → 真编码）落盘再读回来，不是手工拼一份读数。
+// ① 与 ④ 两段就是 `dispatchRound` 真落的次序；② 那一段产品今天到不了（同一轮只派发一次——状态机
+// 过了 `Planning` 就不再回头），而读侧是**账的读者**：账上出现那个次序时必须读得对，否则"先前批
+// 过的那一批"这句话在跨轮对照里就是假的。
+test('⑨ 放过的那几批：正文按真日志次序取回 · 同 id 重发不改先前那一份 · 缺证说出来', async () => {
+  const b = await bench()
+  try {
+    const one = {
+      kind: 'implement',
+      goal: '甲',
+      ownedPaths: ['a.ts'],
+      deliverables: [{ path: 'a.ts', form: '一份' }],
+      assertions: [{ action: 'ok', name: '过' }],
+      seed: [],
+      actionOutputs: {},
+    }
+    const two = { ...one, goal: '乙（重拆）' }
+    /** 一条 `contract/issue`（`body` 就是那一份契约值——与 `dispatchRound` 落的逐字段相同）。 */
+    const issue = async (id: string, c: unknown): Promise<void> => {
+      await b.log.append('round', {
+        t: 'contract/issue',
+        round: R,
+        contract: id as ContractId,
+        owner: HOLDER,
+        paths: ['a.ts'] as readonly RelPath[],
+        body: JSON.stringify(c),
+      })
+    }
+    const approve = async (fingerprint: string, ids: readonly string[]): Promise<void> => {
+      await b.log.append('round', {
+        t: 'round/approve',
+        round: R,
+        fingerprint,
+        contracts: ids.map((x) => x as ContractId),
+      })
+    }
+
+    // ① 批准 → 签发。
+    await approve('fp-1', ['r1.implement.1'])
+    await issue('r1.implement.1', one)
+    const f1 = await roundFactsOf(b.log, R)
+    assert.equal(f1.approvals.length, 1)
+    assert.deepEqual(
+      f1.approvals[0]?.contracts.map((c) => c.goal),
+      ['甲'],
+      '批准之后那一条 contract/issue 没被收进这一批（读数在批准那一处往回查了）',
+    )
+    assert.deepEqual([...(f1.approvals[0]?.missing ?? [])], [], '正文在账上，不该报缺证')
+
+    // ② 同 id 重发：第二条批准之后同一个 id 又落了一次，正文不同。
+    await approve('fp-2', ['r1.implement.1'])
+    await issue('r1.implement.1', two)
+    const f2 = await roundFactsOf(b.log, R)
+    assert.equal(f2.approvals.length, 2)
+    assert.deepEqual(
+      f2.approvals[0]?.contracts.map((c) => c.goal),
+      ['甲'],
+      '早先那一批的快照被后来那一次改写（按 id 记"最后一次"的读法）',
+    )
+    assert.deepEqual(f2.approvals[1]?.contracts.map((c) => c.goal), ['乙（重拆）'], '新的那一批该收新那一条正文')
+
+    // ④ 缺证：第三条批准点了名，而它后面没有正文。
+    await approve('fp-3', ['r1.implement.2'])
+    const f3 = await roundFactsOf(b.log, R)
+    assert.equal(f3.approvals.length, 3, '缺证那一批被跳过了')
+    const last = f3.approvals[2]
+    assert.deepEqual([...(last?.contracts ?? [])], [], '取不回来就不该出现在正文那一栏')
+    assert.deepEqual([...(last?.missing ?? [])], ['r1.implement.2'], '缺证没说出来（不补齐、不跳批）')
+    console.log(
+      `⑨ 读数：三条批准 · 各批取回正文 ${f3.approvals.map((a) => a.contracts.length).join('/')} 件 · ` +
+        `同 id 重发之后先前那一份仍是「${f3.approvals[0]?.contracts[0]?.goal ?? ''}」· ` +
+        `缺证 ${f3.approvals[2]?.missing.join(' · ')}`,
     )
   } finally {
     await b.close()

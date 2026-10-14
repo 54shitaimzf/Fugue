@@ -24,6 +24,8 @@
 // **diff 不在这儿**（§ 5.19 五说"写路径给 diff"）：diff 要开真源读基线，那是 `T9` 阅读面那一格
 // （"面板与 `fugue diff --json` 读同一份数据"）。这一格给的是**写入面与交付物**，逐字来自契约。
 import type { Contract } from '../contract/types.ts'
+import type { Compact } from '../round/compact.ts'
+import { compactLinesOf } from '../round/compact.ts'
 import type { BottomInput } from './frame.ts'
 import { WORDS } from '../words.ts'
 import { GO_LINE } from './run.ts'
@@ -65,6 +67,14 @@ export interface GateFace {
   readonly cards: readonly GateCard[]
   /** 这一批的结论（第二幕 ⑧）：结论行印的就是它。 */
   readonly conclusion: GateConclusion
+  /**
+   * **这一批的浓缩件**（`T14` / `T17`：门视图的**缺省呈现**就是它）。`null` = 这一趟没算它
+   * （别的调用点、或者门口还没算出那一批）——那时门视图上那几行一个都不印，而不是印几行空的。
+   *
+   * 它是**算出来的值**（`round/compact.ts` 那个纯函数），不是界面自己攒的一份：命令行印的、
+   * 界面印的、将来别的壳印的都是同一个函数在同一个账上算出来的那一份。
+   */
+  readonly compact: Compact | null
 }
 
 /**
@@ -122,13 +132,18 @@ export function conclusionLineOf(c: GateConclusion): string {
  * `round/actions.ts` 的 `actionCommandsOf` 一处读）。**认不出来就说出来**：不猜、不补（§ 5.10 的
  * `C1` ⑦ 同一条——那一条说的是模型给的动作名，这一条说的是配置里有没有它）。
  */
-export function gateFaceOf(batch: GateBatch, commands: Readonly<Record<string, string>> = {}): GateFace {
+export function gateFaceOf(
+  batch: GateBatch,
+  commands: Readonly<Record<string, string>> = {},
+  compact: Compact | null = null,
+): GateFace {
   return {
     round: batch.round,
     fingerprint: batch.fingerprint,
     same: [...batch.same],
     cards: batch.contracts.map((c) => cardOf(c, commands)),
     conclusion: conclusionOf(batch),
+    compact,
   }
 }
 
@@ -169,6 +184,20 @@ function cardOf(c: Contract, commands: Readonly<Record<string, string>>): GateCa
 /** 一张卡的预览那几行（第一行 + 按类型分派的那几行）。 */
 export function previewLinesOf(card: GateCard): readonly string[] {
   return [card.head, ...card.detail]
+}
+
+/**
+ * 门视图上那几行浓缩件（`T14` / `T17`：门口那一批的**缺省呈现**就是它）。
+ *
+ * **一处句子**：与命令行印的是同一份 `compactLinesOf`——这里只做**单栏化**：去掉行首那两格缩进
+ * （门块里的行从第一列起），把制表符换成两个空格（命令行那一面靠它对齐，而门块里一栏一行，它
+ * 没有对齐的对象）。**句子本身一个字不改**——各写一份渲染的话，"界面印的那几行与命令行印的那几
+ * 行是同一件事"这句话就没有地方量了。
+ */
+export function gateCompactLinesOf(face: GateFace): readonly string[] {
+  return face.compact === null
+    ? []
+    : compactLinesOf(face.compact).map((line) => line.replace(/^\s+/, '').replace(/\t+/g, '  '))
 }
 
 /** 界面自己在这一块里的那两样。**纯视图状态**（进程一退就没了，也不进账）。 */
@@ -253,11 +282,15 @@ export function optionRowOf(view: GateView, keymap: Keymap = KEYMAP): string {
 
 /**
  * 确认内容按实际宽度折行。队列与选项折出的所有行优先保留，选项的等待色覆盖整句；
- * 先让位的是卡片前面的补充资料，命令与写入路径仍靠近确认行。
+ * 先让位的是浓缩件与卡片前面的补充资料，命令与写入路径仍靠近确认行。
  */
 export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number; readonly keymap?: Keymap; readonly height?: number }): BottomInput & { readonly blocked?: true } {
   const fold = (one: string): readonly string[] => o.columns > 0 ? wrap(one.trimStart(), o.columns) : [one]
   const card = cardAt(o.face, o.view.at)
+  // **浓缩件那一栏排在预览上面**（`T14` / `T17`）：它是这一批的话，下面那几行是当前这一份契约的话。
+  // 排在最上头也就是**矮屏上第一个让位**（`ui/frame.ts` 从前往后裁掉行首、末 `keep` 行留住）——那一头
+  // 保住的是架构 § 15.1.a 那份清单（每个任务写哪些路径 · 验收标准各是什么），浓缩件是它之下的补充。
+  const compact = o.face.cards.length === 0 ? [] : gateCompactLinesOf(o.face).flatMap(fold)
   const head = card === null ? [] : previewLinesOf(card).flatMap(fold)
   const queue = fold(gateQueueRowOf(o.face, o.view.at))
   const options = fold(optionRowOf(o.view, o.keymap))
@@ -277,11 +310,11 @@ export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateVi
   }
   return {
     confirmationRound: o.face.cards.length > 0 ? o.face.round : undefined,
-    rows: [...head, ...queue, ...options],
+    rows: [...compact, ...head, ...queue, ...options],
     keep: queue.length + options.length,
-    waitingAt: head.length + queue.length,
+    waitingAt: compact.length + head.length + queue.length,
     waitingCount: options.length,
-    headingAt: head.length,
+    headingAt: compact.length + head.length,
     headingCount: queue.length,
     overflow: '计划有省略',
   }

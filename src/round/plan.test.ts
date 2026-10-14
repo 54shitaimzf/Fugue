@@ -9,7 +9,8 @@
 //   ④ **每一格的预估占用印得出来，且落在甜点区间**；负对照：`ownedPaths` 铺到整棵树 → 那一条变红
 //   ⑤ **持轮者那一格的作用域**：`bash` 与 `checkpoint` 回一句指路的话（不抛），而那一句要
 //      **指得出两截路**——换成哪几条工具，以及这一趟欠着什么（后者只在有产物那一趟拼）；
-//      而**工具目录与子 agent 逐条相同**（不给持轮者加工具——架构 § 15.4 那一句）
+//      而**工具目录与子 agent 逐条相同**（不给持轮者加工具——架构 § 15.4 那一句）·
+//      **批入口（`executeAll`）与单条入口是同一道边界**：被禁的那条不进内层，拒话逐字相同
 //   ⑥ **同一轮里再跑一趟不造第二条 `Idle → Planning`**，意图只写一次（纪律 2/3）
 //   ⑪ **收工口径的第三面**：预算快用完时，回执末尾多一句"还剩几步"（上界前那三步各一次）；
 //      离上界还远 · 没给上界那两档一个字节都不加；而那一句在"单条回执 8 KiB"那一刀之后还在尾上
@@ -465,10 +466,53 @@ test('⑤ 持轮者那一格的作用域：那三条回实话、不抛；工具�
   const refusedPlanned = await planned.execute({ id: 'c4', name: 'bash', arguments: '{"command":"ls"}' }, h)
   assert.match(refusedPlanned.output, /\.fugue\/plan\/r1\.md/, '拒的话里点不出这一趟要交的那份草案')
   assert.match(refusedPlanned.output, /write it now/, '拒的话说了产物，却没说下一步做什么')
+
+  // **批入口与单条入口同一权限边界**（本版修正）：内层**有**批次那一栏时也不许把被禁的那条
+  // 转发进去——原先批入口整批直转，于是同一个测试里出现两句话（单条那条路拒、一批里那条照跑）。
+  const through: string[] = []
+  const withBatch: ToolExecutor = {
+    async execute(call: ToolCallRequest): Promise<ToolResult> {
+      through.push(`单条 ${call.name}`)
+      return { ok: true, output: '单条跑了' }
+    },
+    async executeAll(calls: readonly ToolCallRequest[]): Promise<readonly ToolResult[]> {
+      for (const c of calls) through.push(`批量 ${c.name}`)
+      return calls.map((c) =>
+        c.name === 'exit_plan_mode'
+          ? { ok: true, halt: true, output: '交了' }
+          : { ok: true, output: '批量跑了' },
+      )
+    },
+  }
+  let declaredBatch = 0
+  const face2 = holderFace(withBatch, { onDeclare: () => (declaredBatch += 1) })
+  const mixed = await face2.executeAll?.(
+    [
+      { id: 'c5', name: 'read', arguments: '{}' },
+      { id: 'c6', name: 'checkpoint', arguments: '{}' },
+      { id: 'c7', name: 'exit_plan_mode', arguments: '{"plan":"x"}' },
+    ],
+    h,
+  )
+  assert.deepEqual(
+    through,
+    ['批量 read', '批量 exit_plan_mode'],
+    `被禁的那条被转发进了内层：${through.join(' · ')}`,
+  )
+  assert.equal(mixed?.[0]?.ok, true, '许可的那条该照跑')
+  assert.equal(mixed?.[1]?.ok, false, '批入口把 checkpoint 跑成了')
+  assert.equal(mixed?.[2]?.halt, true, '批里那一下"交卷"该照旧记下来')
+  assert.equal(declaredBatch, 1, '批入口没记下"交卷"那一下')
+  assert.equal(
+    mixed?.[1]?.output,
+    (await face2.execute({ id: 'c8', name: 'checkpoint', arguments: '{}' }, h)).output,
+    '两条入口的拒话不是同一句',
+  )
   console.log(
     `⑤ 读数：bash/run_action/checkpoint 各一句实话 · exit_plan_mode 记下 ${declared} 次 · ` +
       `工具目录 ${HOLDER_PROTOCOL.toolCatalog.length} 条（与子 agent 同一份）· ` +
-      `拒的话里带产物：${refusedPlanned.output.includes('.fugue/plan/r1.md') ? '是' : '否'}`,
+      `拒的话里带产物：${refusedPlanned.output.includes('.fugue/plan/r1.md') ? '是' : '否'} · ` +
+      `批入口内层只见 [${through.join(' · ')}]`,
   )
 })
 
@@ -670,6 +714,36 @@ test('⑩ 一趟预备态只读一遍轮次日志；给了那一份读数就一�
     assert.equal(r2.draftText, r1.draftText, '给了读数读出来的草案与不给时不同')
     assert.equal(r2.landing?.at, 2, `这一趟落下的该是链上第 2 格，实际 ${String(r2.landing?.at)}`)
     console.log(`⑩ 读数：一趟预备态读 ${c1.n} 遍轮次日志（不给读数）· ${c2.n} 遍（给了那一份读数）`)
+  } finally {
+    await b.log.close()
+    await b.truth.close()
+  }
+})
+
+// ── ⑫ 进预备态那一下的浓缩件（`T14` 的前半）────────────────────────────────────────
+//
+// 判据一句话：**这一趟交出来的那一份里，理解与下手方向都在**——而"理解"那一句是**这一趟刚落下的**
+// 轮级意图（开跑时那份读数里还没有 `round/intent`）。人喊停那一档也走它（那是这一站的地板）。
+test('⑫ 进预备态：这一趟带出「理解 + 下手方向」', async () => {
+  const b = await bench()
+  try {
+    const r = await plan(b, [section()], { judge: true })
+    assert.equal(r.held, true, `这一趟该停在门口：${r.gate.problems.join(' / ')}`)
+    assert.ok(r.entry !== null, '停在门口的那一趟该带出一份浓缩件')
+    assert.equal(
+      r.entry.goal,
+      '把解析器拆出来',
+      '理解那一栏是这一趟钉住的轮级意图（开跑时那份读数里还没有它）',
+    )
+    assert.deepEqual(
+      [...r.entry.direction],
+      ['第 1 节\timplement\t把解析器拆成独立模块'],
+      '下手方向该逐节一行（变体与目标/问题都取自草稿那一节）',
+    )
+    assert.match(r.entry.digest, /^[0-9a-f]{16}$/, `指纹该是十六位十六进制：${r.entry.digest}`)
+    console.log(
+      `⑫ 读数：理解「${r.entry.goal}」· 下手方向 ${r.entry.direction.length} 节 · 指纹 ${r.entry.digest}`,
+    )
   } finally {
     await b.log.close()
     await b.truth.close()

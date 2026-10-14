@@ -6,6 +6,14 @@
 // 里另外三条命令（`log` · `status` · `watch`）开账本口是对的。两件事住在一个文件里，断言就
 // 说不清"哪一侧直连了"。搬出来之后：这一份的闭包 = 界面那一套 + 协议客户端 + 折法，
 // 里面一份账本直连都没有。
+// **界面这一侧没有「讨论原文那一份」这个消费者**（本版收口的口径，人批的那一档）：讨论原文
+// 归档在视图里那个保留前缀底下（按轮分文件），它今天只有一处消费者——持轮者那一趟的接线
+// （`cli/cmd/round.ts` 的 `holderWiringOf`，经视图读它），而那是**进程内**的一条路，不是 serve
+// 的客户端。界面上与"会话"同名的那个东西是**事件通道送来的那些行**（`serve/source.ts` 的
+// `rowsReaderOf`），它已经是经 serve 来的。所以本版不动协议（§ 9.11 的方法面与协议形状一个
+// 字节没动）。**改主意的条件**：出现第二个消费者——界面要显示讨论原文，或者外部客户端要读那
+// 一份归档。那时按"字节走带外"那一条的形状立方法（内容寻址的引用），并走一次改协议的报批；
+// 在那之前立一条没人读的方法就是第二份真相。
 import type { RelPath } from '../terms.ts'
 import { phaseOf } from '../model/price.ts'
 import { readCatalog } from '../model/catalog.ts'
@@ -19,6 +27,8 @@ import { DEFAULT_GRAPHICS_TIER, graphicsFor, setGraphics } from './image.ts'
 import type { GraphicsTier } from './image.ts'
 import { actionCommandsOf, actionsTableOf } from '../round/actions.ts'
 import { pendingOf } from '../round/dispatch.ts'
+import { roundFactsOf } from '../round/versions.ts'
+import { compactOf } from '../round/compact.ts'
 import { identFor } from '../identity.ts'
 import { openServeSource, rowsReaderOf } from '../serve/source.ts'
 import { openImageSource } from '../serve/image-source.ts'
@@ -224,11 +234,16 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
    */
   const pendingFace = async (): Promise<GateFace | null> => {
     if (configWhy !== null) return null
+    const reader = rowsReaderOf(ui.tui?.session.rows ?? [])
+    // **一趟读一遍**：门口那一批与它那几行浓缩件读的是**同一份读数**（`RoundFacts`）——各读一遍的话，
+    // 两者之间可以插进一条账，"看见的那批"与"浓缩的那批"就不是同一批了。
+    const facts = await roundFactsOf(reader, round)
     const v = await pendingOf({
-      log: rowsReaderOf(ui.tui?.session.rows ?? []),
+      log: reader,
       round,
       identityFor: (n: number) => identFor(round, n),
       actions: actionsTable,
+      facts,
     })
     if (v.kind !== 'held') return null
     return gateFaceOf(
@@ -239,6 +254,8 @@ export async function tuiCmd(root: string, flags: Map<string, string | true>): P
         contracts: [...v.pending.built.contracts],
       },
       commands,
+      // **门视图的缺省呈现就是它**（`T17` 那一句）：与命令行印的那几行出自同一个纯函数、同一份账。
+      compactOf(v.pending, facts),
     )
   }
   const ac = new AbortController()

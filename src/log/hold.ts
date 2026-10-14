@@ -29,7 +29,7 @@
 // 时就已就位。不把路径那半抄一份过来：身份这条规矩今天已经有两份实现（W3 要收掉它们），
 // 第三份不是这一站该添的东西。
 import { existsSync, linkSync, mkdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { bootId, clockOf } from '../clock.ts'
 import { logFileOf } from './log.ts'
 import type { WriterId } from '../terms.ts'
@@ -95,7 +95,12 @@ function heldMessage(writer: WriterId, path: string, holder: Holder | null): str
  * 因此不必自己再检查一次）。
  */
 export function lockFileOf(root: string, w: WriterId): string {
-  return join(dirname(logFileOf(root, w)), w + '.lock')
+  // **同一层、同一个名字，只换后缀**（见上面那一段）：`w` 自己带层（`agent/r1/1` 那种多写者的
+  // 名字），所以这里拼的是它的**末一段**，不是整个 `w`——拼整个 `w` 会把锁放到 `agent/r1/agent/r1/1.lock`
+  // 那一层去，与它守的那份日志（`agent/r1/1.jsonl`）不在同一个目录里。两种拼法各自的取值都自洽
+  // （取与放都在同一处算），所以它不会当场红；错开的那一半是**读盘的人**：按 `§ 9.2` 那张布局表
+  // 去 `log/<writer>.lock` 找锁的人什么也找不到。
+  return join(dirname(logFileOf(root, w)), basename(w) + '.lock')
 }
 
 /** 锁文件里的那条记录。**人读得出来**是它有这些字段的理由之一：出问题时要能直接 `cat` 它。 */

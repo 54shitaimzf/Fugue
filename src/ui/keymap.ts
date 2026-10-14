@@ -75,7 +75,7 @@ export type UiAction =
   /**
    * 门口那一批那两档（`T6`）：**开关是"门口那一块开着没有"，不是"行里有没有字"**——而后者才是
    * `actsOnEmpty` 那一份判的东西。所以这两条不进那一份的名单：分发处那一头先问"门口那一块开着
-   * 没有"（`cli/cmd/observe.ts` 的 ⓪），关着的时候它们就是人打的字（`y` / `n` 是可打印的）。
+   * 没有"（`ui/console.ts` 的 ⓪），关着的时候它们就是人打的字（`y` / `n` 是可打印的）。
    */
   | 'approve'
   | 'reject'
@@ -468,7 +468,7 @@ function isPrintable(cp: number): boolean {
  * **只在行里没字的地方算动作**的那几条。两种：`q`/`Q` · `g`/`G` · `?` · `/` · `@` 是**可打印
  * 字符**，`Ctrl-D`（`quit`）是**控制字符**。
  *
- * 判据（`cli/cmd/observe.ts` 分发处那一条闸是它唯一的用处）：
+ * 判据（`ui/console.ts` 分发处那一条闸是它唯一的用处）：
  *   · `/`：行是空的（这一下按下去了，这一行才成为一条命令行）；
  *   · `@`：光标在行首，或者前一个字是空格（**词首**——夹在一句话中间的那个 `@` 就是个 `@`）；
  *   · `q`/`g`/`?`/`Ctrl-D`：行是空的。
@@ -494,7 +494,7 @@ export function actsOnEmpty(a: UiAction, text: string, caret: number): boolean {
  *     前提恰好被它自己毁掉——`T5` 的 `quitStepOf` 于是永远够不着（`cancel.test.ts` ③ 的负对照
  *     量的就是它）。
  *
- * 判据收在一处：`cli/cmd/observe.ts` 分发处那一条闸读它，别处谁都不许再写一遍。
+ * 判据收在一处：`ui/console.ts` 分发处那一条闸读它，别处谁都不许再写一遍。
  */
 export function fallsToText(a: UiAction, key: string | undefined, text: string, caret: number): boolean {
   if (key === undefined || actsOnEmpty(a, text, caret)) return false
@@ -961,7 +961,7 @@ const realWait: WaitFn = (ms, fn) => {
 
 /**
  * 收下 stdin。**它不注册信号、不碰 `process`、不认识 `UiAction` 之外的东西**——动作交出去，
- * 拨哪一下由调用方决定（`cli/cmd/observe.ts` 的 `tui`）。
+ * 拨哪一下由调用方决定（`ui/console.ts` 的 `tui`）。
  *
  * 不是 TTY → 返回一个空句柄（`raw: false` · `close()` 什么也不做），**一个字节都不读**：这一条与
  * `ui/term.ts` 那一档是同一条地板，写在两处各说各的那一半。

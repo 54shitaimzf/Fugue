@@ -107,6 +107,15 @@ export interface RoundStartDeps {
    */
   readonly modelLimit?: number
   /**
+   * **门口那一趟的点**：这一批几个 agent 算出来之后、**任何一个字节落下去之前**在这里交一次手。
+   * 多写者那一族用它拿全 N 把栅栏（架构 § 9.11「要 N 把栅栏的请求先拿全再开口」）——拿不全就
+   * 在这儿抛出去，这一趟于是与「还没开始」在盘上分不开。`logForAgent` 只开、不再取。
+   *
+   * 为什么点是"契约算出来之后"而不是"命令开头"：这一批几个 agent 是**算出来的**（草案 → 契约），
+   * 在那之前没有人知道要拿几把。
+   */
+  readonly atGate?: (at: { readonly agents: readonly AgentId[] }) => void
+  /**
    * 第 `n` 个 agent 的日志口。
 **`mat/fork` 落在那个 agent 自己的日志里**，所以物化那一步要它。
    * 不给就是“这一轮不物化”（`materialize` 也就无从谈起）。
@@ -199,6 +208,13 @@ export async function startRound(deps: RoundStartDeps): Promise<RoundStart> {
     throw new RoundStartError(`这一轮派不出去（构造器不猜、不补）：\n  ${gate.problems.join('\n  ')}`)
   }
   const built = gate.built
+
+  // 零之后 · **拿手与开口分成两步**（架构 § 9.11）：这一批几个 agent 在这一步算得出来，栅栏
+  // 于是能"先拿全再开口"；拿不全的那一趟**还没落过任何字节**（下面那些 `log.append` 都在它之后）。
+  // 名单与 `issueAndStart` 里那两句同一个来源（契约的持有者，去重后按构造次序）。
+  if (deps.atGate !== undefined) {
+    deps.atGate({ agents: [...new Set(built.contracts.map((c) => c.agent as AgentId))] })
+  }
 
   // 三 · `Idle → Planning`：**守卫是意图快照已建立**（架构 § 8.13 的第一个关键点）。意图进日志，
   // 与交接提示词 · 凝聚理解同一形状（`digest` + 正文）——重启之后"这一轮要干什么"重放得出。

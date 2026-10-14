@@ -85,7 +85,33 @@ export function keyOfMethod(method: string): string {
   return method.split('.').join(' ')
 }
 
+/**
+ * **只读那几条**（架构 § 9.7「观察不得影响状态」那一族的名单）。
+ *
+ * 为什么它在登记表里：一、它是命令面的一条事实（"这条命令会不会改状态"），与"这一格在不在
+ * 值层"同一个地方管；二、serve 那一侧的只读批次要它（`value/invoke.ts` 按它决定绑不绑那一份
+ * 代）——按命令名在别处各写一遍，两处迟早不一致，而不一致只会表现成"某一条命令的批次从不作废"。
+ *
+ * 名单里的每一条都要真在 `FLAGS_OF` 里（`registry.test.ts` 量这一条），而写组那九条不许进来
+ * ——写命令自己就是一趟，绑了批等于一写就作废（把纪律用反了）。
+ */
+export const READ_ONLY_KEYS: readonly string[] = [
+  'read',
+  'list',
+  'stat',
+  'diff',
+  'revs',
+  'log',
+  'status',
+  'watch',
+]
+
 /** `FLAGS_OF` 里每一条动词命令的键（入口那一档减掉）。 */
 export function verbKeys(): readonly string[] {
   return Object.keys(FLAGS_OF).filter((k) => !ENTRY_KEYS.includes(k))
+}
+
+/** 只读那一份名单（给壳与值层读；**返回副本**，免得调用方改到那一处）。 */
+export function readOnlyKeys(): readonly string[] {
+  return [...READ_ONLY_KEYS]
 }

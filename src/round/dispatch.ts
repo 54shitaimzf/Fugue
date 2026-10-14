@@ -55,12 +55,16 @@ export interface TrailStep {
  *
  * `logForAgent` 只在物化那一档要：`mat/fork` 落在**那个 agent 自己的日志**里，而 `round/state` ·
  * `contract/issue` 落在持轮者那一份（§ 9.2 的栅栏按 writer 分文件）——两个写者，两个口。
+ *
+ * `atGate` 是**先拿全再开口**那一步的点（§ 9.11）：这一批几个 agent 算出来之后、第一个
+ * `contract/issue` 落笔之前交一次手。拿不全就在那儿抛，于是这一个字节都还没落。
  */
 export interface IssueDeps {
   readonly roots: Roots
   readonly truth: Truth
   readonly log: Log
   readonly round: RoundId
+  readonly atGate?: (at: { readonly agents: readonly AgentId[] }) => void
   readonly logForAgent?: (a: AgentId) => Log
   /** 要不要在这一步就把物化铺出来（架构 § 14.1 的 `deferMaterialize`）。**缺省不铺。** */
   readonly materialize?: boolean
@@ -94,6 +98,10 @@ export async function issueAndStart(
   if (agents.length === 0) {
     throw new RoundStartError('这一批一份契约都没有：轮次至少要有一份契约与一条分支')
   }
+
+  // **拿手在落第一个字节之前**（§ 9.11）：撞上 busy 的那一趟连 `contract/issue` 都还没写，
+  // "不留半份日志"于是不是靠事后回滚，是靠次序。
+  deps.atGate?.({ agents })
 
   const trail: TrailStep[] = []
   let state: RoundState = from
@@ -144,18 +152,18 @@ export async function issueAndStart(
       throw new RoundStartError('要铺物化却没有给 logForAgent：那一步没地方落 `mat/fork`')
     }
     for (const a of agents) {
+      // **口是调用方的，这里不关。** `logForAgent` 给的那一份由 `fenceSet` 拿着（`round new/run/go/work`
+      // 各在收尾那一步统一关：先关句柄、再放锁）。这里原先顺手 `close()` 了一次，而 `openLog` 那条
+      // 句柄带着调用方那一把**外置栅栏**（`LogOptions.hold`），`close()` 连它一起放掉——于是命令还在
+      // 跑，锁已经没了，后续执行的口照旧从缓存里追加（中途第二把 `holdWriter` 因此拿得进来）。
       const agentLog = deps.logForAgent(a)
-      try {
-        const opts = deps.forkOpt ?? DEFAULT_MATERIALIZE
-        const r = await fork({ roots: deps.roots, log: agentLog, root: deps.roots.realRoot }, a, base, opts)
-        // **这里原先还有一句"fork 回来的底不是钉住的那一个"就 throw——它是恒真的**（清障批 ③）：
-        // `fork()` 把它收到的 `base` **原样**写进 `ForkResult.base`（`materialize/fork.ts:139-149`），
-        // 所以两个值永远是同一个。承重的那条性质现在由 `materialize/fork.test.ts` ② 里
-        // `res.base === f.commit` 那一句量——它才是会红的（谁把 `base` 归一化，它就红）。
-        forks.push(r)
-      } finally {
-        await (agentLog as { close?: () => Promise<void> }).close?.()
-      }
+      const opts = deps.forkOpt ?? DEFAULT_MATERIALIZE
+      const r = await fork({ roots: deps.roots, log: agentLog, root: deps.roots.realRoot }, a, base, opts)
+      // **这里原先还有一句"fork 回来的底不是钉住的那一个"就 throw——它是恒真的**（清障批 ③）：
+      // `fork()` 把它收到的 `base` **原样**写进 `ForkResult.base`（`materialize/fork.ts:139-149`），
+      // 所以两个值永远是同一个。承重的那条性质现在由 `materialize/fork.test.ts` ② 里
+      // `res.base === f.commit` 那一句量——它才是会红的（谁把 `base` 归一化，它就红）。
+      forks.push(r)
     }
   }
 
@@ -227,6 +235,7 @@ export interface DispatchDeps {
   readonly seedLimit?: number
   /** **声明的模型上限**（`ModelDecl.contextLimit`）：`seed` 那条算式按它算，不按这一份的缺省。 */
   readonly modelLimit?: number
+  readonly atGate?: (at: { readonly agents: readonly AgentId[] }) => void
   readonly logForAgent?: (a: AgentId) => Log
   readonly materialize?: boolean
   readonly forkOpt?: typeof DEFAULT_MATERIALIZE
@@ -249,6 +258,14 @@ export interface Dispatched extends Issued {
   readonly seedRead: SeedReading
   /** 这一批的编号（拆分的形状）。**一个名字，不是放行的凭证**——见这一份开头那一段。 */
   readonly fingerprint: string
+  /**
+   * **门上那一批本身**（`pendingOf` 的产出，就是人点头的那一个对象）。
+   *
+   * 它不是"再拼一份"：上面那几栏都是它的投影，而命令行那一层要用它重算门口那份浓缩件
+   *（`compactOf` 的入参）。从投影拼回去的话，拼出来的底 · 件数 · 编号迟早与门那一趟差一处，
+   * 而"人批的就是发出去的"这句话正是靠同一个对象成立的。
+   */
+  readonly pending: Pending
 }
 
 /**
@@ -398,6 +415,10 @@ export async function dispatchRound(deps: DispatchDeps): Promise<Dispatched> {
   const built = pending.built
   const fingerprint = pending.fingerprint
 
+  // **拿手在这一步**（§ 9.11）：这一批算出来了，而 `round/approve` 与 `contract/issue` 都还没落。
+  // 撞上 busy 的那一趟于是与"还没放行"在盘上完全一样（`round go` 那一侧靠的就是这一句）。
+  deps.atGate?.({ agents: [...new Set(built.contracts.map((c) => c.agent as AgentId))] })
+
   // 四 · 落那一笔放行，然后发。**顺序反了的话，读日志的人会先看见契约、后看见谁批的。**
   await log.append('round', {
     t: 'round/approve',
@@ -415,5 +436,6 @@ export async function dispatchRound(deps: DispatchDeps): Promise<Dispatched> {
     precheck: pending.precheck,
     seedRead: pending.seedRead,
     fingerprint,
+    pending,
   }
 }

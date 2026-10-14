@@ -113,6 +113,20 @@ export interface ToolResult {
 /** 怎么执行一次工具调用。**这一层不认识沙箱**：策略 · 围栏 · 视图都在实现那一侧（`B5`）。 */
 export interface ToolExecutor {
   execute(call: ToolCallRequest, h: AgentHandle): Promise<ToolResult>
+  /**
+   * **这一趟的这几条一起跑**，结果**按传进来的次序**交回来（本版）。
+   *
+   * 为什么它在这一道缝上而不是在运行时里：哪几条能叠着跑是**工具面**的事（"这条工具跑一次会不会
+   * 动东西"住在能力表那一处），而运行时那一层按定义不认识工具。所以运行时只问一句"你能不能一
+   * 次收一批"，收不收、怎么收，由执行器答。
+   *
+   * **不给这一栏就是"一次一条"**：运行时照旧一条一条调 `execute`（旧串行档一个字不动）。给了它，
+   * 结果的下标必须与 `calls` 的下标一一对应——**模型回执按原调用序**这一条是它的契约，不是调用方
+   * 的自觉（对应的断言在 `src/runtime/batch.test.ts`）。
+   *
+   * **抛就是这一趟失败**（与 `execute` 同一条）：抛哪一条不影响判决，而运行时只看见"这一步失败"。
+   */
+  executeAll?(calls: readonly ToolCallRequest[], h: AgentHandle): Promise<readonly ToolResult[]>
 }
 
 /** 一次调用的输入：装配出来的那一份 + 这一次用哪条路 + 公布哪些工具。 */
@@ -281,11 +295,20 @@ export function recordingExecutor(
   make: (call: ToolCallRequest, at: number) => ToolResult,
 ): ToolExecutor & { readonly seen: ToolCallRequest[] } {
   const seen: ToolCallRequest[] = []
+  /** 一条：记下来再交给那份脚本。两条入口共用它（与产品那两份包装层同一个形状）。 */
+  const one = async (call: ToolCallRequest): Promise<ToolResult> => {
+    seen.push(call)
+    return make(call, seen.length - 1)
+  }
   return {
     seen,
-    async execute(call: ToolCallRequest): Promise<ToolResult> {
-      seen.push(call)
-      return make(call, seen.length - 1)
+    execute: one,
+    // **一批也记下来**（`at` 照旧是一次一条的次序）：假执行器不出现在批量那一档的话，
+    // "运行时把那几条一起交下去"这句话在单测里就量不到（`src/runtime/batch.test.ts` 用它）。
+    executeAll: async (calls: readonly ToolCallRequest[]): Promise<readonly ToolResult[]> => {
+      const out: ToolResult[] = []
+      for (const call of calls) out.push(await one(call))
+      return out
     },
   }
 }
@@ -465,6 +488,33 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     }
 
     // ── 4. 执行那几条工具调用。**这一层不认识沙箱**：执行器是注入的。
+    //
+    // **这一趟的调用一起交下去**（`executeAll`）：哪几条能叠着跑是工具面的事（只读那四条并行、
+    // 写串行），运行时只问一句"你能不能一次收一批"。**不给这一栏就是一次一条**——旧串行档。
+    // **次序照原样**：结果按下标对位（`calls[i]` 的回执就是 `results[i]`），这一条是回执按原调用
+    // 序归位的机制侧兑现。
+    let results: readonly ToolResult[]
+    try {
+      results =
+        calls.length === 0
+          ? []
+          : deps.execute.executeAll !== undefined
+            ? await deps.execute.executeAll(calls, h)
+            : await serialExecute(deps.execute, calls, h)
+    } catch (err) {
+      return {
+        outcome: {
+          kind: 'failed',
+          error: new HarnessError(
+            'tool-threw',
+            `执行工具的时候抛了：${err instanceof Error ? err.message : String(err)}`,
+          ),
+        },
+        next: h.state,
+        seqs,
+      }
+    }
+
     /** 这一趟里有没有工具叫停（停在门口那一档）。 */
     let halted = false
     /** 这一趟里那几条工具带回来的问题（U18 甲案）。 */
@@ -473,18 +523,16 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     const done: { readonly id: string | null; readonly name: string; readonly arguments: string; readonly output: string; readonly isError: boolean }[] =
       []
     const said = call.text
-    for (const one of calls) {
-      let r: ToolResult
-      try {
-        r = await deps.execute.execute(one, h)
-      } catch (err) {
+    for (let at = 0; at < calls.length; at += 1) {
+      const one = calls[at] as ToolCallRequest
+      const r = results[at]
+      // **一条都不能少**：少一条就是"那一次调用没有回执"，而 C 区那一侧会把这一步读成"它没伸手"
+      // ——静默地少一件事。执行器那一侧有对应的断言（`src/runtime/batch.test.ts`）。
+      if (r === undefined) {
         return {
           outcome: {
             kind: 'failed',
-            error: new HarnessError(
-              'tool-threw',
-              `执行 ${one.name} 的时候抛了：${err instanceof Error ? err.message : String(err)}`,
-            ),
+            error: new HarnessError('tool-threw', `执行 ${one.name} 之后没有拿到回执：这一批回执比调用少了一条`),
           },
           next: h.state,
           seqs,
@@ -540,4 +588,18 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       }
     },
   }
+}
+
+/**
+ * 退化档：执行器没给 `executeAll` 就一条一条来。**它与从前那一份逐字节同形**（同一个
+ * `for` 循环 · 同一条"抛了就到这儿"的口径）——"并行缺席退串行"这句话就落在这一处。
+ */
+async function serialExecute(
+  execute: ToolExecutor,
+  calls: readonly ToolCallRequest[],
+  h: AgentHandle,
+): Promise<readonly ToolResult[]> {
+  const out: ToolResult[] = []
+  for (const one of calls) out.push(await execute.execute(one, h))
+  return out
 }

@@ -302,8 +302,9 @@ test('② 十二格各自的层推出四个开关：一层都不靠工具名分�
       `${name} 那一格推出来的四个开关不对`,
     )
   }
-  // 四条推论的名字就是那四个（读表的人按它分组）。
-  assert.deepEqual([...INFERENCE_LIST], ['materialize', 'fence', 'confine', 'writeBack'])
+  // 推论的名字就是那一串（读表的人按它分组）。**只读那一格也在这张单子上**（本版）：它与层
+  // 正交，所以它不是由层推出来的——那一格的判据在 table.test.ts 的 ⑦。
+  assert.deepEqual([...INFERENCE_LIST], ['materialize', 'fence', 'confine', 'writeBack', 'readOnly'])
 
   // **只有执行层有声明集**：`writeBack` 只在一格上为真，而它在执行层。
   const wb = TOOL_NAMES.filter((n) => (lookup(n) as Capability).writeBack)

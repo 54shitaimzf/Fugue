@@ -5,7 +5,7 @@
 // 里的 `ALT_ON` / `ALT_OFF` 与 `ui/keymap.ts` 里的 `?2004h` / `?2004l` 只被断言过"这些序列
 // 该写出来"，没有一条测试真的开一个终端、跑起来、退出、再问一次"参数回来了没有"。
 //
-// 路径（`cli/cmd/observe.ts` 的 `tuiCmd`，收尾全靠 `close()` 被调到）：
+// 路径（`ui/console.ts` 的 `tuiCmd`，收尾全靠 `close()` 被调到）：
 //
 //   · `q`（键表里的 `quit`，只在输入行空着时算数）→ 正常退那一趟，走 `finally`；
 //   · `Ctrl-C`（raw mode 下 `SIGINT` 不再由终端发出来，所以 `\u0003` 是**键表里的一条**：

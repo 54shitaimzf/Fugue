@@ -6,6 +6,8 @@ import { resolve } from 'node:path'
 import { openLog } from '../log/log.ts'
 import type { LogHandle, SyncLevel } from '../log/log.ts'
 import { openTruth } from '../truth/truth.ts'
+import type { ReadBatch } from '../log/batch.ts'
+import { BatchStaleError, batchOf } from '../log/batch.ts'
 import type { TruthHandle } from '../truth/truth.ts'
 import type { Roots } from '../roots/contract.ts'
 import { createRoots } from '../roots/roots.ts'
@@ -27,80 +29,6 @@ export { UsageError }
 // 出口那一层（USAGE · 两列发射 · 失败与用法错）本幕搬到 `cli/out.ts`：界面那一侧要它，
 // 但不必把这一份（它 import 了账本与视图那一串）拖进界面的 import 闭包。名字原样再导出。
 export { USAGE, emitJson, emitLine, fail, usageFail, emitFail } from './out.ts'
-
-
-interface Parsed {
-  flags: Map<string, string | true>
-  positional: string[]
-  /** `--` 之后那几段的原文。**只有 `run` 收它**（`-- k=v…` 的注入，§ 9.6 的执行行）。 */
-  rest: string[]
-}
-export type { Parsed }
-
-/**
- * 取值的选项。其余 `--x` 一律是开关——因为 § 9.6 的规范形是
- * `fugue [--root <dir>] [--agent <id>] [--json] <command>`，开关排在命令**前面**，
- * 一个贪心的解析器会把命令当成开关的值吃掉。
- */
-const VALUED: ReadonlySet<string> = new Set([
-  'root', 'agent', 'm', 'from', 'since', 'to', 'baseline', 'save', 'strategy', 'ro', 'step', 'mode', 'against',
-  'split', 'fail', 'retry', 'poke', 'poke-exact',
-  // `--dump-wire <目录>`：**它取一个值**。不列在这里的话 `--dump-wire /tmp/x` 里的 `/tmp/x`
-  // 会被当成位置参数，而开关本身成了 `true`——于是要么误报用法错，要么把目录名当成轮次目标。
-  'dump-wire', 'credential',
-  // `--max-steps <n>`：同一条纪律——它取一个值，不列在这里那个数会被当成位置参数。
-  'max-steps',
-  // `--interval <毫秒>`（`watch --follow` 的轮询间隔）：同一条纪律。
-  'interval',
-  // `--tail <n>`（tui 首趟只写尾部 n 条，U15）：同一条纪律——不列在这里那个数会被当成位置参数。
-  'tail',
-  // `--wire-in <目录>`：**回放档**（PLAN § 5.12 序 1）。它也取一个值，同一条纪律；而它是**内部档**
-  // ——不进用法说明：它要的是"录下来的那一趟"，只有取证与走查用得上。
-  'wire-in',
-  // `--model <id>`：模型选择（`round.model` 的旗标那一档，P2b）。同一条纪律——它取一个值。
-  'model',
-  // `--resume <游标串>`（watch 接着读，架构 § 9.11 的事件通道）：同一条纪律——它取一个值。
-  // 不列在这里的话游标串会被当成位置参数，而 `--resume` 成了 `true`：接着读变成从零读。
-  'resume',
-  // `--wait <状态>` 与 `--timeout <秒>`（`status` 的等待糖）：同一条纪律——两个都取值。
-  'wait', 'timeout',
-  // `--idle-ms <毫秒>`（`serve` 的闲时阈值，走查与测试要一个短的）：同一条纪律。
-  'idle-ms',
-])
-export { VALUED }
-
-export function parseArgv(argv: readonly string[]): Parsed {
-  const flags = new Map<string, string | true>()
-  const positional: string[] = []
-  const rest: string[] = []
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]
-    // `--` 之后一律是原文：`k=v` 的值里可能有 `-`、有 `=`，再解析下去就是替人猜。
-    if (a === '--') {
-      rest.push(...argv.slice(i + 1))
-      break
-    }
-    if (!a.startsWith('-') || a === '-') {
-      positional.push(a)
-      continue
-    }
-    const long = a.startsWith('--')
-    const eq = a.indexOf('=')
-    if (eq !== -1) {
-      flags.set(a.slice(long ? 2 : 1, eq), a.slice(eq + 1))
-      continue
-    }
-    const key = a.slice(long ? 2 : 1)
-    const next = argv[i + 1]
-    if (VALUED.has(key) && next !== undefined && !next.startsWith('-')) {
-      flags.set(key, next)
-      i++
-    } else {
-      flags.set(key, true)
-    }
-  }
-  return { flags, positional, rest }
-}
 
 /**
  * 命令行上那一档（架构 § 8.8 的 `Policy.mode`）：不给就是缺省档 `read-only`。
@@ -173,6 +101,8 @@ export interface Ctx {
   truth: TruthHandle
   view: View
   writer: WriterId
+  /** 这一趟只读批次绑定的那一份代（没绑就是 `null`：这条命令不是一批的一趟）。 */
+  readonly batch: ReadBatch | null
   close(): Promise<void>
 }
 
@@ -197,6 +127,14 @@ export interface OpenOptions {
    * 给 `true`；读命令一律不给——架构 § 9.7 把加锁与预取并列，观察不得影响状态。
    */
   write?: boolean
+  /**
+   * **这一趟是"一批只读批次"的一趟**（架构 § 9.11 的第一句）：给了它，`openCtx` 在开视图的
+   * 那一刻把这一批的**代**绑住（`log/batch.ts` 的 `batchOf`）。代有两种变，都算"整批作废"：
+   * 开视图**期间**就有写入（当场抛），或者命令跑完之后代变了（`verifyBatch` 抛）。
+   *
+   * 不给就是"这条命令自己就是一趟"——CLI 那一侧永远不给。
+   */
+  batch?: string
 }
 
 /**
@@ -229,15 +167,27 @@ export async function openCtx(
     // 有快照就从快照起（§ 9.4 的第一步）：这一步只影响快慢，影响不到读出来的东西——
     // `diff` 那种要历史的命令在上面的 `history` 里被排除掉了。
     const ceiling = opts.snapUpTo ?? opts.upToRev
+    // **这一批的代：开视图之前绑**（架构 § 9.11）。开视图这一趟自己也要同代——它读的是日志，
+    // 而期间落了一条就是"这一批读的是两代"。所以 `read()` 把 `loadView` 包在里面：期间有写入
+    // 当场抛 `BatchStaleError`，而不是把一份拼了两代的视图交下去。
+    const batch = opts.batch === undefined ? null : batchOf(opts.batch)
     const snap =
       opts.history === true
         ? null
         : await readSnapshot(root, writer, ceiling === undefined ? {} : { upToRev: ceiling })
-    const view = await loadView(
-      log,
-      writer,
-      snap === null ? { lower, upToRev: opts.upToRev } : { lower, upToRev: opts.upToRev, snap },
-    )
+    const view = await (batch === null
+      ? loadView(
+          log,
+          writer,
+          snap === null ? { lower, upToRev: opts.upToRev } : { lower, upToRev: opts.upToRev, snap },
+        )
+      : batch.read(() =>
+          loadView(
+            log,
+            writer,
+            snap === null ? { lower, upToRev: opts.upToRev } : { lower, upToRev: opts.upToRev, snap },
+          ),
+        ))
     const t = truth
     return {
       root,
@@ -246,6 +196,7 @@ export async function openCtx(
       truth: t,
       view,
       writer,
+      batch,
       close: async () => {
         await log.close()
         await t.close()
@@ -264,27 +215,6 @@ export async function readStdin(): Promise<Uint8Array> {
   return Buffer.concat(chunks)
 }
 
-/**
- * **认不得的开关当场拒**（退 2），不静默收下（§ 9.8「认得的开关才收」）。
- *
- * 为什么这一族要拒：写错的开关被咽下去之后，人看到的是"命令跑了、什么都没变"——那与"这个开关
- * 今天没用"在读数上分不开（`log --grep x` 找不到东西，与"日志里没有匹配"也是同一张脸）。用法
- * 错是 2，做不成是 1，两者不许混（架构 § 9.8）：收下一个不认识的开关属于**命令行不成立**。
- *
- * 报的话里把**这一条命令认的那几个**印出来：拒一条命令时，人要知道的是"那该怎么办"。
- */
-export function unknownFlagsOf(
-  cmd: string,
-  flags: Map<string, string | true>,
-  allowed: readonly string[],
-): string | null {
-  const bad = [...flags.keys()].filter((k) => !allowed.includes(k))
-  if (bad.length === 0) return null
-  return (
-    `${cmd} 不认这几个开关：${bad.map((k) => '--' + k).join(' · ')}——这一条命令认的是 ` +
-    allowed.map((k) => '--' + k).join(' · ')
-  )
-}
 
 /**
  * `--no-clock`（写面上那道开关）：给了它，这一条命令写进账的行**不带信封钟**——那一档与这三栏
@@ -301,3 +231,29 @@ export function parseOctal(raw: string): number {
   if (!/^[0-7]{3,4}$/.test(text)) throw new UsageError(`模式要八进制三位或四位：${raw}`)
   return parseInt(text, 8)
 }
+
+
+/**
+ * **把这一趟绑成"一批只读批次"**（架构 § 9.11 的第一句）。`a.batchRoot` 没给就是 `null`
+ * ——CLI 那一侧因此走的是与从前逐字节相同的那条路（一次都不调 `generationOf`）。
+ *
+ * 判据本身住 `log/batch.ts`（代是每个 writer 日志文件的 `(size, mtimeMs)`），这一份只把它接到
+ * 命令那一趟的首尾；值层那一格（`value/invoke.ts`）在两个地方各调一次。
+ */
+export function bindReadBatch(a: { readonly batchRoot?: string }): ReadBatch | null {
+  return a.batchRoot === undefined ? null : batchOf(a.batchRoot)
+}
+
+/**
+ * **这一趟读完再验一次代**（架构 § 9.11：期间有写入就整批作废，两代不拼接）。
+ *
+ * 代变了就抛——那句错话是 `log/batch.ts` 给的（它把两个代都印在里面）。**不静默重读**：重读
+ * 是调用方的事（重开一批），而"悄悄再来一遍"会把一次作废变成一次更长的等待，人却看不出发生过。
+ */
+export async function verifyBatch(batch: ReadBatch | null): Promise<void> {
+  if (batch === null) return
+  await batch.read(() => undefined)
+}
+
+/** 那一批作废了（`verifyBatch` 抛的就是它）——壳按"做不成"（退出码 1）那一档认它。 */
+export { BatchStaleError }

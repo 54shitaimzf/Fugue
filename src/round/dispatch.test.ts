@@ -16,6 +16,8 @@
 //   ⑤ **一趟放行读几遍轮次日志**（给了那一份读数就不读）· **⑥ 门口那一批只有一处读法**：界面上
 //      那一行队列（不给树那一档）与放行那一趟读的是同一个函数——两处算出来的契约逐字节相同，
 //      而换一个身份分配器就当场不同（门只认契约集合，而集合里带着身份）。
+//   ⑦ **派发那一趟全程持着 N 把栅栏**（`--materialize`）：口是调用方的（`fenceSet.open`），
+//      跑到第 n 格的时候前 n−1 把锁一把都不许少——中途同一把 writer 的 `holdWriter` 拿不进来
 //
 // 板子与 `round/start.test.ts` 同一套（真 git 仓库 · 真对象库 · 真日志）；不联网。
 import assert from 'node:assert/strict'
@@ -32,8 +34,12 @@ import { createRoots } from '../roots/roots.ts'
 import { openTruth } from '../truth/truth.ts'
 import { identFor } from '../identity.ts'
 import { fingerprintOf } from '../contract/gate.ts'
-import { dispatchRound, pendingOf, roundStateOf } from './dispatch.ts'
+import { dispatchRound, issueAndStart, pendingOf, roundStateOf } from './dispatch.ts'
 import { roundFactsOf } from './versions.ts'
+import { compactOf } from './compact.ts'
+import { acquireFences } from '../cli/cmd/fences.ts'
+import { holdWriter } from '../log/hold.ts'
+import { DEFAULT_MATERIALIZE } from '../materialize/contract.ts'
 
 /** 计数版的读侧：`readByWriter` 被调几次就是「读了几遍日志」（其余几栏照旧）。 */
 function countingLog(log: LogHandle, counter: { n: number }): LogHandle {
@@ -61,6 +67,7 @@ const A = 'src/parse.ts'
 const GOAL = '把解析器拆出来'
 const ROUND = 'r1' as RoundId
 const ROUND2 = 'r2' as RoundId
+const ROUND3 = 'r3' as RoundId
 /** 第 0 个身份（构造次序里的第一格）——名字与分支一处给（架构 § 14.1 第 1 步）。 */
 const AGENT = identFor(ROUND, 0).agent
 
@@ -406,6 +413,167 @@ test('⑥ 队列行印的那批契约与 `round go` 真发出去的是同一批�
         `与放行落下的 ${ids.length} 份逐字节相同 · 给树与不给树两份契约一字不差（种子读数 given → tree）· ` +
         `换分配器那份 agent ${wrong.pending.built.contracts.map((c) => c.agent).join(' · ')} 与它不同 · ` +
         '发过之后门口是空的',
+    )
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ⑦ 派发那一趟不许中途放锁（`--materialize` 那一档）──────────────────────────────────
+//
+// 判据一句话：**命令还在跑的时候，它拿着的 N 把栅栏一把都不许少**。派发那一趟要 N 个 agent 的口
+// （`logForAgent`），而那些口是从调用方那份预取的栅栏里开的（`fenceSet.open`——架构 § 9.11 的
+// "要 N 把先拿全再开口"）。**口是调用方的**：这里顺手 `close()` 一次就会连**外置的那把锁**一起
+// 放掉（`openLog` 的 `hold`），后面那几个口于是都在没锁的状态下追加——中途进来的第二个写者谁也
+// 拦不住。`logForAgent` 按 agent 逐个回调，那正好是"跑到一半"的那个观察点。
+
+/** 两节的草案（两个 agent——这一条断言要"跑完第 1 格再进第 2 格"才观察得到）。 */
+function draftTwo(): string {
+  const box = (title: string, one: Record<string, unknown>): string =>
+    [`## ${title}`, '', '为什么这么拆：一句话。', '', '```json', JSON.stringify(one, null, 2), '```'].join('\n')
+  const second = section({
+    goal: '第二格：渲染器',
+    ownedPaths: ['src/render.ts'],
+    deliverables: [{ path: 'src/render.ts', form: '模块' }],
+  })
+  return `${box('一 · 解析器', section())}\n\n${box('二 · 渲染器', second)}`
+}
+
+test('⑦ `--materialize` 那一趟全程持着 N 把栅栏：中途同一把 writer 的 holdWriter 拿不进来', async () => {
+  const b = await bench()
+  try {
+    await atGate(b, ROUND, draftTwo())
+    const alloc = (n: number): ReturnType<typeof identFor> => identFor(ROUND, n)
+    const verdict = await pendingOf({
+      log: b.log,
+      round: ROUND,
+      identityFor: alloc,
+      actions: { test: [] as readonly RelPath[] },
+    })
+    assert.equal(verdict.kind, 'held', `门该停着：${verdict.kind === 'none' ? verdict.why : verdict.kind}`)
+    if (verdict.kind !== 'held') return
+    const agents = [...new Set(verdict.pending.built.contracts.map((c) => c.agent as AgentId))]
+    assert.equal(agents.length, 2, `这一份夹具要两格，实际 ${agents.length}`)
+
+    const set = acquireFences(b.root, agents as readonly WriterId[], { sync: 'each' })
+    const seen: string[] = []
+    let forks = 0
+    try {
+      const issued = await issueAndStart(verdict.pending.built, b.base, 'Planning', {
+        roots: createRoots(b.root as never),
+        truth: b.truth,
+        log: b.log,
+        round: ROUND,
+        materialize: true,
+        // **铺法点成 copy**：这一条量的是"口与锁归谁"，与铺法无关——不点名就按平台探一档，
+        // 探到 overlayfs 需要挂载权限（那是铺法自己那一份单的活）。copy 那一档在这台机器上
+        // 不挂任何东西，于是同一条断言在没有挂载权限的机器上也跑得动。
+        forkOpt: { ...DEFAULT_MATERIALIZE, preferredStrategy: 'copy' },
+        logForAgent: (a) => {
+          // **这一下就是"跑到一半"**：第 2 格开口的时候，第 1 把栅栏必须还在手上。
+          if (seen.length > 0) {
+            const first = seen[0] as string
+            assert.throws(
+              () => holdWriter(b.root, first as WriterId).release(),
+              /已经有写者/,
+              `跑到第 ${seen.length + 1} 格时，第 ${first} 把栅栏已经被放掉了`,
+            )
+          }
+          seen.push(String(a))
+          // **同一个口**：`open` 幂等，池里存的就是这一份（不许留一个已经关掉的口）。
+          assert.equal(set.open(a as WriterId), set.open(a as WriterId), '同一个 writer 的口该是同一个')
+          return set.open(a as WriterId)
+        },
+      })
+      forks = issued.forks.length
+      assert.deepEqual(seen, agents.map(String), '`logForAgent` 的次序与这一批的 agent 对不上')
+      assert.equal(forks, 2, `两格该各铺一次，实际 ${forks}`)
+    } finally {
+      // **收尾恰好放一次**：口先关、锁后放（`fenceSet.closeAll` 那一份的次序）。
+      await set.closeAll()
+    }
+    // 钥匙还回来之后 N 把都拿得回来——"放一次"的另一半：没漏（还扣着），也没多（放了两遍）。
+    for (const a of agents) {
+      const again = holdWriter(b.root, a as WriterId)
+      again.release()
+    }
+    console.log(
+      `⑦ 读数：${agents.length} 格 · 跑到第 2 格开口时第 1 把仍在手上（同 writer 的 holdWriter 被拒）· ` +
+        `铺了 ${forks} 次 · 收尾之后 ${agents.length} 把都拿得回来`,
+    )
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ⑧ 门槛上那一批对上一批：**真内容差**（不是身份差）────────────────────────────────
+//
+// 判据一句话：C 对 B 报出来的差额是**内容**上的——`id` 里那一段轮次号（身份）不许冒充内容差。
+// 三批都走真路：A 放行 · B 放行（同一份草案 → 同号）· C 改一句 `goal` 停在门口，然后拿真账算
+// 浓缩件。B 那一批的正文必须先取得回来——取不回来时那一栏会拿空集去算，于是每一件都被报成
+// "多了一件"（那是这一版修掉的第二种面孔）。
+test('⑧ 跨轮停门：C 对 B 报出真内容差额（id 里的轮次号不冒充内容差）', async () => {
+  const b = await bench()
+  try {
+    await atGate(b, ROUND, draftText())
+    await dispatchRound(goDeps(b, ROUND))
+    await atGate(b, ROUND2, draftText())
+    await dispatchRound(goDeps(b, ROUND2))
+    await atGate(b, ROUND3, draftText(section({ goal: '拆成独立模块（第二版）' })))
+
+    const facts = await roundFactsOf(b.log, ROUND3)
+    const last = facts.approvals[facts.approvals.length - 1]
+    assert.equal(last?.round, ROUND2, '账上最后一条放行该是 B 轮')
+    assert.deepEqual(
+      last?.contracts.map((c) => c.goal),
+      ['拆成独立模块'],
+      'B 那一批的正文没取回来（差额会拿空集去算：每一件都成了"多了一件"）',
+    )
+    assert.deepEqual([...(last?.missing ?? [])], [], '正文在账上，不该报缺证')
+
+    const verdict = await pendingOf({
+      log: b.log,
+      round: ROUND3,
+      identityFor: (n) => identFor(ROUND3, n),
+      actions: { test: [] as readonly RelPath[] },
+    })
+    assert.equal(verdict.kind, 'held', `C 该停在门口：${verdict.kind === 'none' ? verdict.why : verdict.kind}`)
+    if (verdict.kind !== 'held') return
+    const c = compactOf(verdict.pending, facts)
+    assert.equal(c.compare, 'changed', '改了一句 goal 的下一批该是 changed')
+    assert.deepEqual(
+      [...c.diff],
+      ['r3.implement.1\t目标变了：拆成独立模块 → 拆成独立模块（第二版）'],
+      `差额不是真内容差：${c.diff.join(' | ')}`,
+    )
+    assert.equal(
+      c.diff.some((d) => d.includes('多了一件') || d.includes('少了')),
+      false,
+      '轮次号带来的身份差冒充了内容差',
+    )
+    console.log(`⑧ 读数：C 对 B（${String(last?.round)}）报出 ${c.diff.length} 处真内容差：${c.diff.join(' | ')}`)
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ⑨ 放行那一趟带出来的就是门上那一批（**同一个对象**，不是在命令行重拼一份）──────────────
+//
+// 判据一句话：`Dispatched.pending` 与门那一趟判出来的是同一个对象——其余那几栏是它的投影，所以
+// `pending.built === built` 是**同一性**，不是等值。命令行那一层用它重算门口那份浓缩件（`round go`
+// 人面那几行），于是"人批的就是发出去的"这句话在形状上也成立：没有第二处装配一批契约的地方。
+test('⑨ 放行带出来的批就是门上那一批：字段是投影、对象是同一个', async () => {
+  const b = await bench()
+  try {
+    await atGate(b, ROUND, draftText())
+    const issued = await dispatchRound(goDeps(b, ROUND))
+    assert.equal(issued.pending.built, issued.built, '放行那一趟的批是另拼的一份——不是门上那一个对象')
+    assert.equal(issued.pending.base, issued.base, '底那一栏不是投影')
+    assert.equal(issued.pending.fingerprint, issued.fingerprint, '批号那一栏不是投影')
+    assert.equal(issued.pending.round, issued.round, '轮次那一栏不是投影')
+    console.log(
+      `⑨ 读数：pending.built === built（同一个对象）· 底 ${issued.base.slice(0, 8)} · 批号 ${issued.fingerprint} · ` +
+        `轮次 ${issued.round} 四栏都是它的投影`,
     )
   } finally {
     await b.close()

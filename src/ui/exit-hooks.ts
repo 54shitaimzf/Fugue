@@ -6,7 +6,7 @@
 // `SIGTERM`，进程走缺省的杀进程路径，那台终端被留在另一块屏上（`--full`）或 raw mode 里，得人
 // `reset`——而首帧之前那一下恰恰是最容易发生的（面板刚起来、人正在切窗口）。
 //
-// 顺序因此**在源码里量**（`exit-hooks.test.ts` ② 拿 `observe.ts` 两个符号的行号钉着它）：主进程上
+// 顺序因此**在源码里量**（`exit-hooks.test.ts` ② 拿 `console.ts` 里两个符号的行号钉着它）：主进程上
 // 那几条真信号要开一个真终端才量得到，而那是路线图 0.2.8 行说的"视觉验收归实现者"那一档。
 //
 // 这一份只做三件事：挂 `SIGTERM` · 挂 `SIGHUP` · 挂 `exit`；`close()` 把前两条摘掉（`exit` 是
@@ -22,7 +22,7 @@ export interface HookHost {
 
 /** 收尾要接的两条路：一路递给在途那一趟（`abort`），一路把终端还原回去（`close`）。 */
 export interface ExitHooks {
-  /** 挂上的信号。**唯一一处**（`observe.ts` 不再自己列一遍）。 */
+  /** 挂上的信号。**唯一一处**（`ui/console.ts` 不再自己列一遍）。 */
   readonly signals: readonly string[]
   /** 摘掉信号那两个。**幂等**——收尾那一路正常退与 `finally` 都会走到它。 */
   close(): void

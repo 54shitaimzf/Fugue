@@ -135,6 +135,23 @@ function selfHits(s: WriteSet): PathHit[] {
 }
 
 /** 一次预检的答案：那几对相交，加一句能直接印出来的话。 */
+/**
+ * 一批契约**覆盖的那几条路径**（去重，按首次出现的次序）。
+ *
+ * 与 `writeSetOf` 是同一件事的两个投影：那一份给一条契约的写入面（带 `from` 那一栏，预检与
+ * 打回读它），这一份给一批的**并集**（报告里那句"写入集预检：N 条路径"读它）。本版起两者都在
+ * 这一处——**原先这个并集住在 `cli/cmd/round.ts` 里**（一个私有函数），浓缩件要同一句话，
+ * 于是它搬回来与它的兄弟并排（否则两处各写一遍"哪些契约有哪几种写入面"）。
+ */
+export function writeSetPaths(contracts: readonly Contract[]): string[] {
+  const all = new Set<string>()
+  for (const c of contracts) {
+    const paths = c.kind === 'implement' ? c.ownedPaths : c.kind === 'resolve' ? c.conflictPaths : []
+    for (const p of paths) all.add(p)
+  }
+  return [...all]
+}
+
 export interface PrecheckResult {
   readonly intersections: readonly Intersection[]
   /** 空数组 = 一份都不相交。 */

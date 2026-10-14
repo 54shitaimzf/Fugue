@@ -17,6 +17,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { withCompileCache } from '../src/cli/boot.ts'
 
 const ROOTS = ['src', 'test']
 const PATTERN = /\.test\.ts$/
@@ -144,8 +145,15 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   // `FUGUE_SYSTEM_DIR`（或 readConfig 的 systemDir 参数）指到它准备的目录。
   const sys = mkdtempSync(join(tmpdir(), 'fugue-test-sys-'))
   process.env.FUGUE_SYSTEM_DIR = sys
+  // **编译缓存也递给这一棵树**（本批）：`node --test` 的每个子进程、以及它们起的命令行，都在把
+  // 同一批源码重新编译一遍。落点与开关只有一处（`src/cli/boot.ts`），这里只把它接到环境上；
+  // 建不出来就是没有缓存（地板），照跑。`FUGUE_COMPILE_CACHE=off` 或环境里已有的
+  // `NODE_COMPILE_CACHE` 由那一处说了算。
   // `--` 之后都是文件名——以 `-` 开头的测试文件名不会被 node 吃成选项。
-  const r = spawnSync(process.execPath, ['--test', '--', ...chosen], { stdio: 'inherit' })
+  const r = spawnSync(process.execPath, ['--test', '--', ...chosen], {
+    stdio: 'inherit',
+    env: withCompileCache(process.env),
+  })
   // 跑完就删：这个目录是入口自己建的（P2a 的隔离），不删就每跑一趟漏一个进 /tmp。
   rmSync(sys, { recursive: true, force: true })
   process.exit(r.status ?? 1)

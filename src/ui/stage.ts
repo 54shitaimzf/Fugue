@@ -1,4 +1,4 @@
-// TUI 的**舞台**（U21）：`observe.ts` 的 `tuiCmd` 里那一份「纯视图状态 + ⓪–⑩ 键表分派」整个
+// TUI 的**舞台**（U21）：`ui/console.ts` 的 `tuiCmd` 里那一份「纯视图状态 + ⓪–⑩ 键表分派」整个
 // 搬到这里——那一边缩回「读配置 · 组 deps · 起进程 · 接信号」。出处：PLAN § 5.19 U21（stage
 // 抽取）· 架构 § 9.8（「界面只持纯视图状态」那一句）。
 //
@@ -94,7 +94,7 @@ export interface StageDeps {
   readonly abort: () => void
 }
 
-/** 舞台的公面：`observe.ts` 那一头递进 openKeys / openTui / openTerm / openRun 的那几个口。 */
+/** 舞台的公面：`ui/console.ts` 那一头递进 openKeys / openTui / openTerm / openRun 的那几个口。 */
 export interface Stage {
   /** External configuration problems use the same current-feedback and record path. */
   notify(line: string): void
@@ -157,7 +157,7 @@ function openCurrent<K>(): {
 /**
  * 舞台：一份**纯视图状态**（焦点 · 输入行 · 弹层 · 排队草稿 · 门口那块的视图位），加上围绕它的
  * 那一整套纯分派。**它不注册信号、不碰 `process`、不持写句柄**——那三样都是调用方的
- * （`cli/cmd/observe.ts` 的 `tuiCmd`）。
+ * （`ui/console.ts` 的 `tuiCmd`）。
  */
 export function openStage(deps: StageDeps): Stage {
   // ── `T4` · 界面自己那几样（**纯视图状态**：进程一退就没了）──────────────────────────────
@@ -308,6 +308,9 @@ export function openStage(deps: StageDeps): Stage {
     gateView = GATE_VIEW
     // **结论行进永久行**（第二幕 ⑧）：门口一开就说清这一批「打算开几件事 · 覆盖哪些 · 按什么验收」。
     // **一批只说一次**——上面那道 `key` 已经挡住重复（同一批再算几遍都不说）；换了一批才再说一条。
+    // **浓缩件那几行不走这儿**（`T14` / `T17`）：它是门视图自己那一栏，排在预览上面（`ui/gate.ts`
+    // 的 `gateLayoutOf`）——交互档里 `note()` 那几行只到阅读面的「命令记录」，而门口停着的人要的是
+    // "不用按任何键就看得到"，那一栏才满足它。
     if (next !== null) note(conclusionLineOf(next.conclusion), false)
     syncImage()
     deps.redraw()

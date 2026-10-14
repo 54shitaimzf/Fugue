@@ -354,112 +354,193 @@ function fenceDenied(d: FenceDenied): DenyAsk {
  * （只有执行类那两个有），`cwd` 是这一趟的工作目录。
  */
 export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
+  /**
+   * 一条工具调用走完那一趟。**这一份就是"一次调用 = 一对起止事件"的唯一实现。**
+   *
+   * 它从原来的 `execute` 提出来是为了第二条入口（`executeAll`）：两处各写一遍的话，"一次
+   * 调用落一对事件"这句话就有两处要维护，而两处不一致只会表现成某一条路少了一对事件。
+   */
+  async function runOne(call: ToolCallRequest, h: AgentHandle): Promise<ToolResult> {
+    const look = deps.lookupOf ?? lookup
+    const c = look(call.name)
+    const running = !('denied' in c) && c.layer === 'execute'
+    const parsed = running ? parseArgs(call.arguments) : null
+    const asked = parsed !== null && parsed.ok ? parsed.value : {}
+    const cwd = typeof asked['cwd'] === 'string' ? asked['cwd'] : (h.cwd ?? '')
+
+    // **执行面先兑现**（W8）：这一格第一次要跑子进程时 fork 一棵、把视图铺过去——`bash` 与
+    // `read` 因此是同一个视野。它抛（物化铺不起来）时**照落那一对事件**：`run/start` 是
+    // "这一步要起进程"的凭据，而这一趟确实要起、只是没起起来——与围栏拦住那一趟同一个形状
+    // （`denied: true`、`exit: 1`），不静默吞掉。
+    let execNote: string | null = null
+    if (running) {
+      try {
+        await deps.host.execCwd()
+      } catch (err) {
+        execNote = (err as Error).message
+      }
+    }
+
+    // **先过围栏、再落 `run/start`**：那条事件读的就是归一后的 `cwd`（与执行侧同一把尺）。
+    // 这里过一次之后，`dispatch` 那边就不再过了（`fenced = true`）——一次调用一道围栏。
+    let fenceNote: string | null = null
+    let fencedArgs: Record<string, unknown> = asked
+    // **这一趟到底过没过围栏**（过了没拦住也算过）：下面那一对事件的口径读它，不读
+    // `fenceNote === null`。两件事不一样——`fenceNote === null` 说的是"没被拒"，而
+    // 表里 `fence: false` 那一格是"这一格压根不过围栏"。
+    // 它同时是"**那一份归一后的参数能不能用**"那一栏：视图层那些格子（`c.layer !== 'execute'`）
+    // 上面这一支整个不走，`fencedArgs` 停在空壳上——把它当"已过围栏的那一份"递给 `dispatch`，
+    // 参数就当场丢了（实测：模型写 `a.ts`，摊到工具面变成"missing required argument path"）。
+    let fenced = false
+    if (running && !('denied' in c) && c.fence && parsed !== null && parsed.ok) {
+      fenced = true
+      fencedArgs = { ...parsed.value }
+      // **fence 的 `cwd` 用格子的那个**（`h.cwd`：它已经是一条规整的 `RelPath`）。
+      // 不能把上面算出来的 `cwd` 再送进去：那一份已经是参数里的原文，
+      // 而它会被当成 `cwd` 又拼一次（`./src/../note` 变成 `note/note`）。
+      const got = await fenceArgs(call.name, fencedArgs, h.cwd ?? '', deps)
+      if (!got.ok) fenceNote = got.message
+    }
+    // **事件与执行侧读同一份**（W8 冻结点第 2 句：归一值写回参数，两处都从参数里读）。
+    const runCwd = typeof fencedArgs['cwd'] === 'string' ? (fencedArgs['cwd'] as string) : cwd
+    const command = typeof fencedArgs['command'] === 'string' ? (fencedArgs['command'] as string) : null
+    const action = typeof fencedArgs['action'] === 'string' ? (fencedArgs['action'] as string) : null
+    const line = command ?? action ?? call.name
+    // **命令行问过调用方再定**（P3b1）：`run_action` 那一格的 argv 是绑定解析出来的（`argvOf`），
+    // 账上那一行与实际要 spawn 的是同一条；没接那一道、或名字没绑（null），退回 shell 那句。
+    const planned = running && deps.argvOf !== undefined ? await deps.argvOf(call.name, fencedArgs) : null
+    const argv = running ? (planned?.argv ?? shellArgv(line)) : []
+    const argvCwd = planned?.cwd ?? runCwd
+    const log = deps.logOf(h.agent)
+    const t0 = Date.now()
+    // **先落 `run/start`**：它是"这一步要起一个进程"的凭据。**只有围栏拦下的那一趟不落**
+    // （`fenced && fenceNote !== null`）：它一次进程都没起，而 `run/start` 是"这一步要起一个
+    // 进程"的凭据——落了它，日志里就多出一趟没发生过的执行；拒的那一趟在 `bound/deny` 里
+    // （与断言 ④ 同一句话）。**表里 `fence: false` 那一格照样落**：它是"这一格不过围栏"，
+    // 不是"被围栏拦下"，两者混起来看就再也分不清"没拦"和"拦住了"（⑤ 负对照读的就是这个差）。
+    if (running && !(fenced && fenceNote !== null)) {
+      await log.append(h.agent as WriterId, {
+        t: 'run/start',
+        agent: h.agent,
+        step: String(h.state.step) as StepId,
+        action: call.name,
+        argv0: argv[0] ?? call.name,
+        argv,
+        cwd: argvCwd,
+      })
+    }
+
+    const out =
+      fenceNote !== null
+        ? {
+            result: { ok: false, output: fenceNote },
+            capability: c,
+            applied: ['materialize', 'fence'],
+            denied: true,
+          }
+        : execNote === null
+        ? await dispatch(call, h, deps, true, fenced ? fencedArgs : undefined)
+        : {
+            result: { ok: false, output: `${call.name} has to be materialised first (the first corollary in § 8.9), and this pass did not lay the tree: ${execNote}` },
+            capability: c,
+            applied: ['materialize'],
+            denied: true,
+          }
+
+    if (running && !(fenced && fenceNote !== null)) {
+      await log.append(h.agent as WriterId, {
+        t: 'run/end',
+        agent: h.agent,
+        step: String(h.state.step) as StepId,
+        // `run/end` 的 `exit` 是**子进程的退出码**，而拒在起进程之前：被拒时它不是"跑完失败"，
+        // 所以给 1 并在 `denied` 那一栏说清（架构 § 8.1 那两栏的分工）。
+        exit: out.result.ok ? 0 : 1,
+        ms: Date.now() - t0,
+        denied: out.denied,
+      })
+    }
+    // **回执的上界**（PLAN § 5.17 处一）：截在**回执那一层**，一次调用只有一个出口——
+    // 视图层的读 · `grep` 的命中 · `bash` 的 stdout/stderr 都从这儿出去（`read_image`
+    // 那条取字节的路不受影响：它的回执本来就只有一行尺寸）。
+    // 上限与切法是架构的常量（`MAX_RECEIPT_BYTES` 那三个数），不给模型选。
+    // **预算那一句拼在截断之前**：尾留那 4 KiB 保证它切不掉，而 8 KiB 那条上界照旧。
+    return { ...out.result, output: capReceipt(out.result.output) }
+  }
+
   return {
-    async execute(call: ToolCallRequest, h: AgentHandle): Promise<ToolResult> {
+    execute: runOne,
+    /**
+     * **这一趟的这几条一起跑**（本版）：只读那几条叠着跑，写串行，回执按原调用序归位。
+     *
+     * 两半都从能力表读出来的那一格推（`lookup` 的 `readOnly`）：**没有一处按工具名分岔**——
+     * 加一条只读工具，能力表那一份名单里多一个名字，这里一个字不动。
+     *
+     * **为什么是"连续的只读"成一批，而不是"整批只读才算一批"**：一趟里读 · 写 · 读这样的次序，
+     * 前后两段读之间隔着一个写，而**写之后那些读必须看见写的结果**（`write` 紧接着 `read` 是
+     * 模型最常用的一对：写完读回来核）。整批一起跑就会让后面那一段读看见旧的字节——那是静默
+     * 地返回过期内容。所以批的边界就是写的边界：读不越过写，写与写之间也不叠。
+     *
+     * **失败的口径与一次一条那一档逐字相同**：抛就走 `tool-threw`（运行时那一层收成
+     * `failed`），而**按原序取第一条抛出来的**——并行时几条同时抛，"哪一条"要由下标定，不能由
+     * 完成先后定（否则同一次调用两次跑出来的错话不一样）。**抛了就到此为止**：失败之后没开始的那
+     * 几条不再开始（在飞的那一批已经在 `Promise.all` 里落定），两档于是在同一个输入上给出同一个
+     * 行为——`src/runtime/batch.test.ts` ⑥ 拿 `[read(抛), write]` 量与"一次一条"那一档逐项相同。
+     */
+    async executeAll(calls: readonly ToolCallRequest[], h: AgentHandle): Promise<readonly ToolResult[]> {
       const look = deps.lookupOf ?? lookup
-      const c = look(call.name)
-      const running = !('denied' in c) && c.layer === 'execute'
-      const parsed = running ? parseArgs(call.arguments) : null
-      const asked = parsed !== null && parsed.ok ? parsed.value : {}
-      const cwd = typeof asked['cwd'] === 'string' ? asked['cwd'] : (h.cwd ?? '')
+      /** 这一条能不能跟旁边那几条叠着跑：**只读那几条才算**（`readOnly` 是推论，不是层名）。 */
+      const overlappable = (call: ToolCallRequest): boolean => {
+        const c = look(call.name)
+        return !('denied' in c) && c.readOnly
+      }
 
-      // **执行面先兑现**（W8）：这一格第一次要跑子进程时 fork 一棵、把视图铺过去——`bash` 与
-      // `read` 因此是同一个视野。它抛（物化铺不起来）时**照落那一对事件**：`run/start` 是
-      // "这一步要起进程"的凭据，而这一趟确实要起、只是没起起来——与围栏拦住那一趟同一个形状
-      // （`denied: true`、`exit: 1`），不静默吞掉。
-      let execNote: string | null = null
-      if (running) {
-        try {
-          await deps.host.execCwd()
-        } catch (err) {
-          execNote = (err as Error).message
+      const out: (ToolResult | undefined)[] = new Array<ToolResult | undefined>(calls.length)
+      /** 第一条抛出来的那个错（按原序留一个下标）——全部跑完之后才抛。 */
+      let first: { readonly at: number; readonly err: unknown } | null = null
+      const failed = (at: number, err: unknown): void => {
+        // **按原序取第一条**：完成先后不定，取它会让同一次调用两次跑出不同的错话。
+        if (first === null || at < first.at) first = { at, err }
+      }
+
+      let at = 0
+      // **抛了就到此为止**（上面那一句）：没开始的不再开始，而在飞的那一批在 `Promise.all` 里
+      // 已经落定——"已发出的收束"。原先这条只写那一条路走得到，一条读抛了之后后面那几条写照跑；
+      // 同一个输入在两档上于是给出两种行为（`src/runtime/batch.test.ts` ⑥ 量的就是它）。
+      while (at < calls.length && first === null) {
+        const one = calls[at] as ToolCallRequest
+        if (!overlappable(one)) {
+          // 写（或者"不许叠着跑"的那几条）：**一次一条，轮到它才跑**——它同时是前后两段读的界。
+          try {
+            out[at] = await runOne(one, h)
+          } catch (err) {
+            failed(at, err)
+          }
+          at += 1
+          continue
         }
-      }
-
-      // **先过围栏、再落 `run/start`**：那条事件读的就是归一后的 `cwd`（与执行侧同一把尺）。
-      // 这里过一次之后，`dispatch` 那边就不再过了（`fenced = true`）——一次调用一道围栏。
-      let fenceNote: string | null = null
-      let fencedArgs: Record<string, unknown> = asked
-      // **这一趟到底过没过围栏**（过了没拦住也算过）：下面那一对事件的口径读它，不读
-      // `fenceNote === null`。两件事不一样——`fenceNote === null` 说的是"没被拒"，而
-      // 表里 `fence: false` 那一格是"这一格压根不过围栏"。
-      // 它同时是"**那一份归一后的参数能不能用**"那一栏：视图层那些格子（`c.layer !== 'execute'`）
-      // 上面这一支整个不走，`fencedArgs` 停在空壳上——把它当"已过围栏的那一份"递给 `dispatch`，
-      // 参数就当场丢了（实测：模型写 `a.ts`，摊到工具面变成"missing required argument path"）。
-      let fenced = false
-      if (running && !('denied' in c) && c.fence && parsed !== null && parsed.ok) {
-        fenced = true
-        fencedArgs = { ...parsed.value }
-        // **fence 的 `cwd` 用格子的那个**（`h.cwd`：它已经是一条规整的 `RelPath`）。
-        // 不能把上面算出来的 `cwd` 再送进去：那一份已经是参数里的原文，
-        // 而它会被当成 `cwd` 又拼一次（`./src/../note` 变成 `note/note`）。
-        const got = await fenceArgs(call.name, fencedArgs, h.cwd ?? '', deps)
-        if (!got.ok) fenceNote = got.message
-      }
-      // **事件与执行侧读同一份**（W8 冻结点第 2 句：归一值写回参数，两处都从参数里读）。
-      const runCwd = typeof fencedArgs['cwd'] === 'string' ? (fencedArgs['cwd'] as string) : cwd
-      const command = typeof fencedArgs['command'] === 'string' ? (fencedArgs['command'] as string) : null
-      const action = typeof fencedArgs['action'] === 'string' ? (fencedArgs['action'] as string) : null
-      const line = command ?? action ?? call.name
-      // **命令行问过调用方再定**（P3b1）：`run_action` 那一格的 argv 是绑定解析出来的（`argvOf`），
-      // 账上那一行与实际要 spawn 的是同一条；没接那一道、或名字没绑（null），退回 shell 那句。
-      const planned = running && deps.argvOf !== undefined ? await deps.argvOf(call.name, fencedArgs) : null
-      const argv = running ? (planned?.argv ?? shellArgv(line)) : []
-      const argvCwd = planned?.cwd ?? runCwd
-      const log = deps.logOf(h.agent)
-      const t0 = Date.now()
-      // **先落 `run/start`**：它是"这一步要起一个进程"的凭据。**只有围栏拦下的那一趟不落**
-      // （`fenced && fenceNote !== null`）：它一次进程都没起，而 `run/start` 是"这一步要起一个
-      // 进程"的凭据——落了它，日志里就多出一趟没发生过的执行；拒的那一趟在 `bound/deny` 里
-      // （与断言 ④ 同一句话）。**表里 `fence: false` 那一格照样落**：它是"这一格不过围栏"，
-      // 不是"被围栏拦下"，两者混起来看就再也分不清"没拦"和"拦住了"（⑤ 负对照读的就是这个差）。
-      if (running && !(fenced && fenceNote !== null)) {
-        await log.append(h.agent as WriterId, {
-          t: 'run/start',
-          agent: h.agent,
-          step: String(h.state.step) as StepId,
-          action: call.name,
-          argv0: argv[0] ?? call.name,
-          argv,
-          cwd: argvCwd,
-        })
-      }
-
-      const out =
-        fenceNote !== null
-          ? {
-              result: { ok: false, output: fenceNote },
-              capability: c,
-              applied: ['materialize', 'fence'],
-              denied: true,
+        // 连续的只读：**一段一批**，批内并发，批与批之间按原序。
+        let end = at
+        while (end < calls.length && overlappable(calls[end] as ToolCallRequest)) end += 1
+        const got = await Promise.all(
+          calls.slice(at, end).map(async (c, i) => {
+            try {
+              return { ok: true as const, at: at + i, r: await runOne(c, h) }
+            } catch (err) {
+              return { ok: false as const, at: at + i, err }
             }
-          : execNote === null
-          ? await dispatch(call, h, deps, true, fenced ? fencedArgs : undefined)
-          : {
-              result: { ok: false, output: `${call.name} has to be materialised first (the first corollary in § 8.9), and this pass did not lay the tree: ${execNote}` },
-              capability: c,
-              applied: ['materialize'],
-              denied: true,
-            }
-
-      if (running && !(fenced && fenceNote !== null)) {
-        await log.append(h.agent as WriterId, {
-          t: 'run/end',
-          agent: h.agent,
-          step: String(h.state.step) as StepId,
-          // `run/end` 的 `exit` 是**子进程的退出码**，而拒在起进程之前：被拒时它不是"跑完失败"，
-          // 所以给 1 并在 `denied` 那一栏说清（架构 § 8.1 那两栏的分工）。
-          exit: out.result.ok ? 0 : 1,
-          ms: Date.now() - t0,
-          denied: out.denied,
-        })
+          }),
+        )
+        for (const g of got) {
+          if (g.ok) out[g.at] = g.r
+          else failed(g.at, g.err)
+        }
+        at = end
       }
-      // **回执的上界**（PLAN § 5.17 处一）：截在**回执那一层**，一次调用只有一个出口——
-      // 视图层的读 · `grep` 的命中 · `bash` 的 stdout/stderr 都从这儿出去（`read_image`
-      // 那条取字节的路不受影响：它的回执本来就只有一行尺寸）。
-      // 上限与切法是架构的常量（`MAX_RECEIPT_BYTES` 那三个数），不给模型选。
-      // **预算那一句拼在截断之前**：尾留那 4 KiB 保证它切不掉，而 8 KiB 那条上界照旧。
-      return { ...out.result, output: capReceipt(out.result.output) }
+
+      // **一条都不许少**：少了的那一条由运行时那一层收成 `failed`（"这一批回执比调用少了一条"），
+      // 而这里先按同一个口径把它说出来——两个入口（`execute` 与 `executeAll`）的回执形状因此同源。
+      if (first !== null) throw first.err
+      return out as readonly ToolResult[]
     },
   }
 }

@@ -11,7 +11,8 @@
 import { HostError } from '../roots/host.ts'
 import { LogCorruptError, logDir, openLog } from '../log/log.ts'
 import { LogHeldError } from '../log/hold.ts'
-import { valueRunnerOf } from './registry.ts'
+import { readOnlyKeys, valueRunnerOf } from './registry.ts'
+import { bindReadBatch, verifyBatch } from '../cli/shared.ts'
 import { CommandError, UsageError } from './types.ts'
 import type { ValueArgs, ValueResult } from './types.ts'
 
@@ -75,8 +76,15 @@ export async function invoke(
 ): Promise<ValueResult> {
   const run = valueRunnerOf(key)
   if (run === null) throw new Error(`值层里没有这一格：${key}`)
+  // **只读那几条绑一批的代**（架构 § 9.11）。判据是命令自己的那一份名单（`registry.ts` 的
+  // `readOnlyKeys`）——它不是"这条命令慢不慢"，是"这条命令会不会改状态"。写命令不绑：它自己
+  // 就是一趟，绑了之后它一写就把自己的批作废（那是把纪律用反了）。
+  const batch = readOnlyKeys().includes(key) ? bindReadBatch(a) : null
   try {
-    return await run(a)
+    const out = await run(a)
+    // **跑完再验一次代**：期间落了写入就整批作废，不把两代拼在一起（`log/batch.ts` 那份判据）。
+    await verifyBatch(batch)
+    return out
   } catch (err) {
     const handled = failureOf(err, a, onError)
     if (handled !== null) return handled

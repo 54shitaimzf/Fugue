@@ -12,8 +12,8 @@ import { ConfigError, getConfig, readConfig } from '../../config.ts'
 import type { ConfigDoc } from '../../config.ts'
 import { identFor } from '../../identity.ts'
 import type { Log } from '../../log/events.ts'
-import { openLog } from '../../log/log.ts'
-import type { LogHandle } from '../../log/log.ts'
+import { acquireFences } from './fences.ts'
+import type { FenceSet } from './fences.ts'
 import type { AgentId, BranchId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../../terms.ts'
 import type { TruthHandle } from '../../truth/truth.ts'
 import type { View } from '../../view/contract.ts'
@@ -32,6 +32,9 @@ import { dispatchRound } from '../../round/dispatch.ts'
 import { lastOf, latestFaceOf, roundFactsOf, withVersion } from '../../round/versions.ts'
 import type { VersionFace } from '../../round/versions.ts'
 import { fingerprintOf } from '../../contract/gate.ts'
+import { writeSetPaths } from '../../contract/precheck.ts'
+import type { PrecheckResult } from '../../contract/precheck.ts'
+import { compactLinesOf, compactOf, entryLinesOf } from '../../round/compact.ts'
 import { PlanError, holderGoalText, planRound, pinnedBase } from '../../round/plan.ts'
 import { RECENT_COUNT, SayError, recentOf, sayRound, sessionPathOf } from '../../round/say.ts'
 import { estimateTokensOfText } from '../../runtime/budget.ts'
@@ -57,8 +60,8 @@ import { declaredSetOf } from '../../contract/types.ts'
 import type { AssertionRunSpec } from '../../merge/accept.ts'
 import type { DriftVerdict } from '../../merge/drift.ts'
 import { entriesOf } from '../../merge/accept.ts'
-import { computeAll, reportOf } from '../../probe/round.ts'
-import { computeAllMetrics, computeAttribution, lineOf, lineOfAttribution } from '../../probe/metrics.ts'
+import { countsOf, reportOf } from '../../probe/round.ts'
+import { attributionOf, lineOf, lineOfAttribution, metricsOf } from '../../probe/metrics.ts'
 import { METRICS_HEAD, REPORT_HEAD, callLinesOf, rowsOf } from '../../probe/status.ts'
 import { phaseOf } from '../../model/price.ts'
 import type { Ctx } from '../shared.ts'
@@ -188,6 +191,11 @@ export async function roundCmd(
   const identityFor = (n: number): { agent: AgentId; branch: BranchId } => identFor(round, n)
   const materialize = flags.has('materialize')
 
+  // **这一批要几个 agent 是配置那一栏说了算的**（拆分草案一份一个）——拿手于是做得了在开口之前。
+  const fenceSet = acquireFences(root, split.map((_, n) => identFor(round, n).agent as WriterId), {
+    sync: 'each',
+    ...clockOption(flags),
+  })
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   try {
     const started = await startRound({
@@ -200,8 +208,12 @@ export async function roundCmd(
       identityFor,
       // 这一档（人拆）没有种子：那一栏由调用方给（架构 § 8.12）。
       seeds: [] as readonly RelPath[],
-      // 物化那一档：每一条分支一个口，那个 agent 自己的日志。
-      logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each', ...clockOption(flags) }),
+      // **门口那一趟的点在 `startRound` 里**（契约算出来之后、`round/intent` 落笔之前）：
+      // 撞上 busy 的那一趟于是一个字节都不落，与 `round go` 那一趟同一句话。
+      atGate: ({ agents }) => {
+        for (const a of agents) fenceSet.open(a as WriterId)
+      },
+      logForAgent: (a) => fenceSet.open(a as WriterId),
       // **声明的上限接进 `seed` 那一条**：这一档没有种子（`seeds: []`），但读数那一行印的就是它。
       modelLimit: modelLimitOf(doc, readCatalog()),
       materialize,
@@ -254,6 +266,7 @@ export async function roundCmd(
     if (err instanceof RoundStartError) return fail(err.message, json)
     throw err
   } finally {
+    await fenceSet.closeAll()
     await ctx.close()
   }
 }
@@ -341,13 +354,14 @@ export async function roundRun(
   const modelChoice = wire.model
   const real = live || wireIn !== undefined
   const handoff = flags.has('no-handoff') ? false : undefined
-  // **一个 agent 一个日志口、由调用方持有**（`hold.ts` 那道栅栏：同一个 writer 开第二个口就是
-  // "已经有写者"）。这一份记着开过的口，轮次跑完一起关（`closeAgentLogs`）。
+  // **要 N 把栅栏就先拿全 N 把，再开第一个口**（架构 § 9.11 那一句 · `fences.ts`）：拿不全就
+  // 一把不剩地放掉，这一趟于是留不下那个 writer 的任何东西（连它顺手建的空目录一起收）。
+  // 这一份记着开过的口，轮次跑完一起关（`closeAgentLogs`）。
   const agentLogs = new Map<AgentId, LogHandle>()
   const agentLogOf = (a: AgentId): Log => {
     const hit = agentLogs.get(a)
     if (hit !== undefined) return hit
-    const made = openLog(root, { write: a as WriterId, sync: 'each', ...clockOption(flags) })
+    const made = fenceSet.open(a as WriterId)
     agentLogs.set(a, made)
     return made
   }
@@ -356,7 +370,13 @@ export async function roundRun(
       agentLogs.delete(a)
       await l.close()
     }
+    // 手上余下那几把（这一趟没开过口的）在这里放掉——**口全关完之后**（§ 9.11「先关句柄、再放锁」）。
+    await fenceSet.closeAll()
   }
+  const fenceSet = acquireFences(root, split.map((_, n) => identFor(round, n).agent as WriterId), {
+    sync: 'each',
+    ...clockOption(flags),
+  })
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   /**
    * **每一格为什么停**（第 5 批 · 疑点 2）：`realDriver` 的 `onResult` 是这句话唯一的出口，
@@ -522,19 +542,8 @@ export async function roundRun(
       })
     }
 
-    // 打回那三个数：**从日志重算**（架构 § 8.15）。同一份日志算两次同值——所以 `--report` 印的
-    // 就是刚才那一趟跑出来的那份日志。
-    const readings = await computeAll(() => ctx.log.readMerged(), { round })
-    // **归因三处对照**（闸四的另一半 · PLAN § 5.12 序 3）：也是从日志重算——与上面那三个数、
-    // 与八元指标同一个源（同一份日志 · 同样不采集）。三行恒在，缺的写「没有读数」。
-    const attribution = await computeAttribution(() => ctx.log.readMerged())
-    // **逐趟账**（PLAN § 5.9 的 `G5`）：每一条 `llm/call` 一行 + 合计。它也是从同一份日志重算，
-    // 钱的档按读这一次的钟算（账上没有时刻）。
-    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()), cat })
-    const report = reportOf({ round }, readings, attribution.map(lineOfAttribution), callLines)
-    // 八元指标（架构 § 8.15）：**与上面那三个数同一个来源**（同一份日志 · 同样重算）。
-    // 那一趟的日志就是刚才跑出来的那一份——所以 `--metrics` 印的就是这一趟。
-    const metrics = flags.has('metrics') ? await computeAllMetrics(() => ctx.log.readMerged(), { round }) : null
+    // 那一趟刚落的账就是这一份日志：**读一遍，折四遍**（`runFoldsOf` 那一处收着这四份的口径）。
+    const { report, attribution, metrics } = await runFoldsOf({ log: ctx.log, round, cat, wantMetrics: flags.has('metrics') })
 
     return emitRunFace({ json, flags, run: started, stops, deniedAction, report, attribution: [...attribution], metrics })
   } catch (err) {
@@ -545,6 +554,43 @@ export async function roundRun(
     // **agent 那几个口由调用方关**（`runRound` 只借不还）。
     await closeAgentLogs()
     await ctx.close()
+  }
+}
+
+/**
+ * 跑完那一档要印的那几份读数：**读一遍，折四遍**。
+ *
+ * 四份读数读的是同一串事件（架构 § 8.15：都是「从日志重算」，没有一处采集原始数据）：
+ *
+ *   一 · **打回那三个数**（`countsOf`）：`--report` 印的那三行。
+ *   二 · **归因三处对照**（`attributionOf` · 闸四的另一半 · PLAN § 5.12 序 3）：三行恒在，位置不
+ *        存在的那一行写「没有读数」。
+ *   三 · **逐趟账**（`callLinesOf` · PLAN § 5.9 的 `G5`）：每一条 `llm/call` 一行 + 合计；钱的档
+ *        按读这一次的钟算（账上没有时刻）。
+ *   四 · **八元指标**（`metricsOf` · 架构 § 8.15）：给了 `--metrics` 才折。
+ *
+ * **读一遍、折四遍**：各读各的会把同一份日志读四趟（三个数一趟 · 归因一趟 · 逐趟账一趟 · 指标
+ * 一趟）——那既白付四遍读的钱，也让「四份读数同源」这句话靠四处自觉。这里读一次收成一份行，
+ * 四份都从这一份行折出来（`readings()` 与 `readingsOf()` 是同一个形状的先例）。
+ *
+ * **地板是各读各的**：三份折法都还留着收「再来一遍」函数的出入口（`computeAll` ·
+ * `computeAttribution` · `computeAllMetrics`），读一遍那一档不成立时退回各读各的，读数一个字节
+ * 不变——`status.test.ts` ⑩ 那条断言把两档摆在同一个数上。
+ */
+async function runFoldsOf(o: {
+  readonly log: Ctx['log']
+  readonly round: string
+  readonly cat: Catalog
+  readonly wantMetrics: boolean
+}) {
+  const rows = await rowsOf(() => o.log.readMerged())
+  const readings = countsOf(rows, { round: o.round })
+  const attribution = attributionOf(rows)
+  const callLines = callLinesOf(rows, { phase: phaseOf(new Date()), cat: o.cat })
+  return {
+    report: reportOf({ round: o.round }, readings, attribution.map(lineOfAttribution), callLines),
+    attribution,
+    metrics: o.wantMetrics ? metricsOf(rows, { round: o.round }) : null,
   }
 }
 
@@ -564,7 +610,7 @@ function emitRunFace(o: {
   readonly deniedAction: { readonly agent: AgentId; readonly exit: number; readonly denied: boolean; readonly note: string } | null
   readonly report: Awaited<ReturnType<typeof reportOf>>
   readonly attribution: readonly string[]
-  readonly metrics: Awaited<ReturnType<typeof computeAllMetrics>> | null
+  readonly metrics: Awaited<ReturnType<typeof metricsOf>> | null
 }): number {
   const { json, flags, run, stops, deniedAction, report, attribution, metrics } = o
   if (json) {
@@ -858,6 +904,26 @@ export async function roundPlan(
     // 读数——它换不来放行，新的一批照样停在门口。
     const earlier = fingerprint === null ? [] : facts.approvals
     const same = earlier.find((x) => x.fingerprint === fingerprint) ?? null
+    // **浓缩件**（本版· 验收锚 ①）：门口那一批 + 这一份账进去，几行可核对的东西出来——它是
+    // 纯函数（不认识真源 · 不认识视图 · 不认识时刻），于是"同一个账跨进程重算一致"查得出来。
+    // **它不上 `--json` 那一面**：机器面今天没有第二个消费者，而"输出形状一个字节没动"那句声明
+    // 要么当真、要么连黄金帧一起改——本版取前者（人面与 TUI 各自在进程内从同一个纯函数重算）。
+    const compact =
+      r.held && built !== null && fingerprint !== null
+        ? compactOf(
+            {
+              round: r.round,
+              base: r.base as CommitId,
+              goal,
+              built,
+              precheck: r.gate.precheck as PrecheckResult,
+              fingerprint,
+              seedRead: r.seedRead,
+              same: earlier.filter((x) => x.fingerprint === fingerprint).map((x) => x.round),
+            },
+            facts,
+          )
+        : null
     // **版本那一栏：一次读，两个渲染器**（PLAN § 5.12 的 C5.b「与 `--json` 那两栏同源」）——下面
     // 机器面那几栏与人面那几行出自同一张 `VersionFace`。**这一趟没写出草案时那一栏是空的**
     // （`landing` 为空；判据与人面印那一处逐字相同：人面不印的处境，机器面也不该报一个旧的号）。
@@ -903,6 +969,9 @@ export async function roundPlan(
       if (r.draftText !== null) {
         for (const line of versionLinesOf(version, '预备态')) emitLine(line)
       }
+      // **进预备态那几行**（`T14` 的前一份）：理解（轮级意图）与下手方向（草案每一节）。它与下面
+      // "要开 N 个任务"那一段是两种粒度：这里是"打算从哪儿下手"，那里是逐节的写入面与验收。
+      if (r.entry !== null) for (const line of entryLinesOf(r.entry)) emitLine(line)
       if (draft !== null) {
         emitLine(`  要开 ${draft.sections.length} 个任务：`)
         for (const [k, s0] of draft.sections.entries()) {
@@ -927,6 +996,8 @@ export async function roundPlan(
         emitLine(`  预检：${writeSetPaths(built.contracts).length} 条路径 · ${r.gate.precheck.intersections.length} 对相交`)
         for (const line of r.gate.precheck.lines) emitLine(`    ${line}（照发：这一站的口径是报出来、照发）`)
         emitLine(`  批号：${fingerprint}（这一批的编号——拆分的形状，不含轮次与身份）`)
+        // **人面那几行**（浓缩件的唯一渲染器）：件数 · 覆盖 · 验收 · 与上一批的比 · 逐处差异。
+        if (compact !== null) for (const line of compactLinesOf(compact)) emitLine(line)
         if (same !== null) {
           emitLine(`    与你在 ${same.round} 放过的那一批同号：编号只是一个名字，不作放行的凭证——新的一批照样停在这里等人点头`)
         }
@@ -1177,12 +1248,13 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
   const real = wire.live || wire.wireIn !== undefined
   const handoff = flags.has('no-handoff') ? false : undefined
   const retriesLeft = numberOf(flags.get('retry'), 0) ?? RETRY_DEFAULT
-  // **一个 agent 一个日志口、由调用方持有**（与 `round run` 同一条：`hold.ts` 那道栅栏）。
+  // **要 N 把栅栏就先拿全 N 把，再开第一个口**（与 `round run` 同一条 · `fences.ts`）：拿不全
+  // 就一把不剩地放掉。这一趟要几个 agent 得先读到那一批（见下面那一步）。
   const agentLogs = new Map<AgentId, LogHandle>()
   const agentLogOf = (a: AgentId): Log => {
     const hit = agentLogs.get(a)
     if (hit !== undefined) return hit
-    const made = openLog(root, { write: a as WriterId, sync: 'each', ...clockOption(flags) })
+    const made = fenceSet.open(a as WriterId)
     agentLogs.set(a, made)
     return made
   }
@@ -1191,13 +1263,19 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
       agentLogs.delete(a)
       await l.close()
     }
+    // 手上余下那几把（这一趟没开过口的）在这里放掉——**口全关完之后**（§ 9.11「先关句柄、再放锁」）。
+    await fenceSet.closeAll()
   }
 
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   const stops: AgentStop[] = []
+  // 口在读到那一批之后开（几份契约就是几个 agent），收在 `finally`。
+  let fenceSet: FenceSet | null = null
   try {
     // 一 · **这一批从日志来**（这一条与 `round run` 的全部差别就在这一行）。
     const batch = await issuedBatchOf(ctx.log, round)
+    // 拿全了再开第一个口——**在读回那一批之后、写任何一个字节之前**。
+    fenceSet = acquireFences(root, agentsOfContracts(batch.contracts), { sync: 'each', ...clockOption(flags) })
     // 二 · 接上那条尾巴（与 `round run` 同一个函数）。
     const run = await runIssued(
       {
@@ -1237,12 +1315,8 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
       },
       batch,
     )
-    // 三 · 打回那三个数与八元指标（**与 `round run` 同一份读法**：同一份日志上的重算，不采集）。
-    const readings = await computeAll(() => ctx.log.readMerged(), { round })
-    const attribution = await computeAttribution(() => ctx.log.readMerged())
-    const callLines = callLinesOf(await rowsOf(() => ctx.log.readMerged()), { phase: phaseOf(new Date()), cat })
-    const report = reportOf({ round }, readings, attribution.map(lineOfAttribution), callLines)
-    const metrics = flags.has('metrics') ? await computeAllMetrics(() => ctx.log.readMerged(), { round }) : null
+    // 三 · 打回那三个数与八元指标：**与 `round run` 同一处读法**（`runFoldsOf`：读一遍，折四遍）。
+    const { report, attribution, metrics } = await runFoldsOf({ log: ctx.log, round, cat, wantMetrics: flags.has('metrics') })
     // **复用了哪几格**印在 stderr：它是"这一趟只补了没交卷的那几格"的读数（重跑不重复烧钱）。
     if (run.reused.length > 0) {
       process.stderr.write(
@@ -1257,7 +1331,7 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
     if (err instanceof BindingError) return fail(err.message, json)
     throw err
   } finally {
-    await closeAgentLogs()
+    await fenceSet?.closeAll()
     await ctx.close()
   }
 }
@@ -1282,6 +1356,15 @@ function specsOfContract(doc: ConfigDoc): (c: Contract, agent: AgentId) => reado
       }
     })
   }
+}
+
+/**
+ * **这一批几个 agent**（`acquireFences` 的名单从这一处来）：一份契约一个持有者，去重之后的
+ * 次序就是构造次序——与 `issueAndStart` 里那句 `new Set(built.contracts.map(c => c.agent))`
+ * 同一个来源，于是「拿了几把」与「真会用到几个 writer」不可能错开一格。
+ */
+function agentsOfContracts(contracts: readonly Contract[]): readonly WriterId[] {
+  return [...new Set(contracts.map((c) => c.agent))] as readonly WriterId[]
 }
 
 /**
@@ -1332,6 +1415,15 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
   const round = typeof rawRound === 'string' && rawRound !== '' ? rawRound : 'r1'
   const materialize = flags.has('materialize')
 
+  // 口在门口那一趟开（`atGate`），收在 `finally`——**声明在 try 之外**，收尾才看得到它。
+  let fenceSet: FenceSet | null = null
+  // **门那一趟给名单**（`atGate`），拿手于是排在 `round/approve` 与 `contract/issue` 之前。
+  // 而这一份也是**驱动自己那一趟**（界面走 `dispatchRound`，不经过门那一趟）：那一趟没有人先
+  // 打招呼，所以 `open` 时按名单兜一次底——两条来路拿到的是同一份（`acquireFences` 幂等）。
+  const take = (agents: readonly AgentId[]): FenceSet =>
+    (fenceSet ??= acquireFences(root, agents, { sync: 'each', ...clockOption(flags) }))
+  /** 拿全之后按 agent 开（`round new` / `round run` 那两处同一句话）。 */
+  const logOf = (a: AgentId): Log => take([a]).open(a as WriterId)
   const ctx = await openCtx(root, flags, { sync: 'each', write: true })
   try {
     // **这一趟的那份读数：一遍**（含放过的那几批——这一笔写进去之后它就与这一批混在一起了）。
@@ -1349,9 +1441,20 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
       // **声明的上限接进 `seed` 那一条**：判那一趟（`round plan`）读的是同一份声明。
       modelLimit: modelLimitOf(doc, readCatalog()),
       materialize,
-      logForAgent: (a) => openLog(root, { write: a as WriterId, sync: 'each', ...clockOption(flags) }),
+      // **拿手在门口那一趟做**：那一批算出来之后、`round/approve` 落笔之前——契约还没发、
+      // 一个字节都还没落，此时撞上 busy 就是「什么都没发生」（§ 9.11）。为什么不能更早：
+      // 这一批几个 agent 是**算出来的**（从草案重算），放行那一趟之前没有人知道。
+      atGate: ({ agents }) => {
+        take(agents)
+      },
+      logForAgent: (a) => logOf(a),
     })
     const same = earlier.find((x) => x.fingerprint === r.fingerprint) ?? null
+    // **门口那一份浓缩件在这里重算**（`T14`）：这一趟手上是**门判出来的那一个对象**（`r.pending`）
+    // 与开跑时读的那一份账（`facts`——这一笔放行还没落进去）。同一个纯函数 · 同一个批 · 同一份账，
+    // 于是它与门那一趟印的那几行逐字节相同（判据：`chain.test.ts` 的 C4.b）。**它上人面，不上机器面**
+    //（`--json` 那一份与 0.4.4 逐字节同形，见 `ccd1723`）。
+    const compact = compactOf(r.pending, facts)
     if (json) {
       emitJson({
         round: r.round,
@@ -1373,6 +1476,7 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
       emitLine(`${r.round}\t${r.base}\t放行：${r.built.contracts.length} 份${WORDS.task}\t${owners.length} 条分支`)
       for (const c of r.built.contracts) emitLine(`  ${c.id}\t${c.agent}\t${c.kind}\t${writeSetLine(c)}`)
       emitLine(`  批号：${r.fingerprint}（这一批的编号——拆分的形状，不含轮次与身份）`)
+      for (const line of compactLinesOf(compact)) emitLine(line)
       if (same !== null) {
         emitLine(`    与你在 ${same.round} 放过的那一批同号：编号只是一个名字，不作放行的凭证`)
       }
@@ -1405,6 +1509,7 @@ export async function roundGo(root: string, flags: Map<string, string | true>, a
     if (err instanceof RoundStartError) return fail(err.message, json)
     throw err
   } finally {
+    await fenceSet?.closeAll()
     await ctx.close()
   }
 }
@@ -1543,15 +1648,6 @@ function outputsOf(c: Contract): readonly string[] {
   // 原先给的是 `deliver/<agent>/`——那是证据前缀那一次改写之前的旧约定，而这一行是 B 区的
   // 最后一行（近因那一处）：模型照它走，就会写到一个**既不在契约写入面、验收也不看**的地方。
   return c.evidenceRequired.map((e) => e.artifact)
-}
-
-function writeSetPaths(contracts: readonly Contract[]): string[] {
-  const all = new Set<string>()
-  for (const c of contracts) {
-    const paths = c.kind === 'implement' ? c.ownedPaths : c.kind === 'resolve' ? c.conflictPaths : []
-    for (const p of paths) all.add(p)
-  }
-  return [...all]
 }
 
 /**

@@ -13,8 +13,8 @@
 // 用法：node tools/check-ui-direct.ts（快档里由 `src/ui/direct.test.ts` 跑同一份判据）
 //
 // **界面那一侧的定义**：`src/ui/` 下每一个非测试模块，加它们的闭包。`ui/console.ts` 是
-// `fugue tui` 的接线（0.4.3 从 `cli/cmd/observe.ts` 搬出来）——那个文件里另外三条命令
-// （`log` · `status` · `watch`）开账本口是对的，所以它不当这个断言的一个根。
+// `fugue tui` 的接线（0.4.3 从 `cli/cmd/observe.ts` 搬出来，0.5.0 随它剩下那三个被遮的出口
+// 一起收掉）。界面那一侧一个账本口都不开——下面那张直连表量这一条。
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -61,8 +61,14 @@ export interface Spec {
 }
 
 /**
- * 一个模块里的相对 `import`。**只认静态的 `from '…'`**——动态 `import()` 与 `require` 在这一份
- * 代码里一处都没有（`src/` 全扫过），真出现了也走不通那条路：这一份是 lint，不是打包器。
+ * 一个模块里的 `import` 边：静态 `from '…'` · 副作用 `import '…'` · **动态 `import('…')`**。
+ *
+ * 动态那一档是后加的：入口那一层（`cli/fugue.ts` → `cli/load.ts`）从那时起用 `import()` 按命令
+ * 装模块，所以"`src/` 里一处都没有"这句话不再成立。而这一份是 lint——**看不见的边就是静默放行**：
+ * 一个界面模块若用 `import('../log/log.ts')` 绕过静态闭包，上面两条判据都会绿。所以补上它。
+ * 口径：说明符**字面**写在调用里（本仓就是这么写的：`cli/load.ts` 那张短名表一格一个字面量）；
+ * 算出来的路径这一份看不见——那是这一份的边界，写在这里，不打补丁。`typeof import('…')` 是类型
+ * 位置（`.ts` 直跑是 strip-only，运行时没有那条边），不算。
  */
 export function importsOf(text: string): readonly Spec[] {
   const out: Spec[] = []
@@ -74,6 +80,13 @@ export function importsOf(text: string): readonly Spec[] {
   // 实测过的那一发：`src/ui/console.ts` 顶上塞 `import '../log/log.ts'`，补这一条之前 lint 退 0。
   const side = /(^|\n)import\s+'([^']+)'/g
   while ((m = side.exec(text)) !== null) out.push({ spec: m[2] as string, typeOnly: false })
+  // **动态 `import()`**（`import('./x.ts')` · `await import('./x.ts')`）：同一条边，运行时真接上。
+  const dyn = /(^|\n)([^\n]*?)\bimport\s*\(\s*'([^']+)'/g
+  while ((m = dyn.exec(text)) !== null) {
+    // `typeof import('…')` 只借类型，运行时没有那条边——上面那段说明里写着。
+    if (/(^|\s)typeof\s*$/.test(m[2] as string)) continue
+    out.push({ spec: m[3] as string, typeOnly: false })
+  }
   return out
 }
 

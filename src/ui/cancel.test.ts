@@ -106,7 +106,7 @@ test('② `Ctrl-C` 四档：有在途就打断 · 空闲第一次只举手 · �
 test('③ `Ctrl-D`/`q` 只在输入行空着的时候退；行里有字时不许往行里塞看不见的字节', () => {
   assert.equal(quitStepOf({ line: '' }), 'quit', '行空着 → 退')
   assert.equal(quitStepOf({ line: 'x' }), 'none', '行里有字 → 什么都不做')
-  // 行里有字时那两条键的去处是 `fallsToText`（`observe.ts` 分发处那一条闸读它）：
+  // 行里有字时那两条键的去处是 `fallsToText`（`ui/console.ts` 分发处那一条闸读它）：
   //   · `q`（可打印）→ 让位成那个字；
   //   · `Ctrl-D`（控制字符 0x04）→ **丢掉**。
   // **这一条就是负对照**：要是让位，输入行里会多出一个看不见的字节，而"行里没字"这个前提恰好被它

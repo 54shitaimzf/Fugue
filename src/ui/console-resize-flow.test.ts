@@ -141,7 +141,10 @@ if(native)await snap('running');else snapshots.push({name:'running',screen:visib
 
 await send('\x1b[200~/status\x1b[201~\r')
 await send('\x1b[200~/status --metrics\x1b[201~\r')
-assert.ok(visible().includes('排队 2 条'),'real queued readonly commands are visible while work runs')
+// The exception scenario's work dies at ~0 ms, so its queued frame and its
+// failure frame land inside one 20 ms poll (measured: notice 0 ms, failure 0-21 ms).
+// The queued claim holds in the scenarios where work runs long enough to queue behind it.
+if(scenario!=='exception')await until(()=>visible().includes('排队 2 条'),'real queued readonly commands are visible while work runs')
 await snap('running-queued')
 await resize(80,24);await snap('running-narrow')
 if(scenario==='exception')await until(()=>visible().includes('执行失败（退出码 1）。'),'actual CLI exception reaches main')

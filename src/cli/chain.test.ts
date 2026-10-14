@@ -718,6 +718,9 @@ test('C4 · round go：不放行一个契约都不发 · 放行逐条发 · 同�
   // **轮次那一栏**：人面那一行的第一栏就是它（`--json` 漏了它的时候那一栏印的是 `undefined`）。
   assert.equal(gj.round, 'r1', `round go --json 没给出轮次号：${go.stdout.slice(0, 200)}`)
   assert.equal(gj.fingerprint, pj.fingerprint, '放行那一趟算出来的批号与判那一趟不同——那不是同一批')
+  // **机器面一个键都不多**（本版口径：浓缩件只上人面）：放行那一趟的 `--json` 与从前同形。
+  const gjRaw = JSON.parse(go.stdout) as Record<string, unknown>
+  assert.equal('compact' in gjRaw, false, `round go --json 那一面多了 compact 一栏：${Object.keys(gjRaw).join(' · ')}`)
   assert.deepEqual(
     gj.trail.map((t) => `${t.from} ──${t.on}──> ${t.to}`),
     ['Planning ──contracts-issued──> Delegated', 'Delegated ──branches-started──> Working'],
@@ -759,6 +762,57 @@ test('C4 · round go：不放行一个契约都不发 · 放行逐条发 · 同�
       `分支 ${refsOf(root).filter((r) => r.includes('agent/')).join(' ')} · 第二次放行退 ${again.code}（日志一条不增）· ` +
       `第二轮同一批号 ${m[1]} 照样停在门口`,
   )
+})
+
+// ── C4.b · 浓缩件在门那一趟与放行那一趟是同一份（同一个批 · 同一份账）──────────────────────
+//
+// 由头：放行那一趟原先不印门口那一份浓缩件——人点头时核过的那几行，在他按下放行的输出里一个字
+// 都没有（"我批的是不是它发的"只能再读一遍账）。两条判据都落在**第一趟**这个处境上：
+//
+//   ① **底**：第一趟判完时账上还没有 `round/intent`（那一条正是这一趟落的），从账那一头取的底
+//      于是印成「（没有）」，而同一批在界面上、在放行那一行都印着真底。它必须就是这一批的底。
+//   ② **逐字**：两趟印的是同一份——同一个纯函数 · 同一个批（`pending`）· 同一份账。
+test('C4.b · 第一趟判的那一份浓缩件：底就是这一批钉住的底，且与放行那一趟逐字相同', () => {
+  const root = tmpRoot()
+  const outside = tmpDir('fugue-go-compact-')
+  const bottom = join(outside, 'bottom.txt')
+  writeFileSync(bottom, '底。\n')
+  assert.equal(fugue(root, 'write', 'README.md', '--from', bottom).code, 0)
+  assert.equal(fugue(root, 'commit', '-m', '底').code, 0)
+  assert.equal(fugue(root, 'config', 'set', 'actions.ok', JSON.stringify({ argv: ['/bin/sh', '-c', 'true'], outputs: [] })).code, 0)
+  const draftAt = join(outside, 'r1.md')
+  writeFileSync(draftAt, draftMd())
+  assert.equal(fugue(root, 'write', '.fugue/plan/r1.md', '--from', draftAt).code, 0, '草案写进视图')
+
+  /** 一份输出里的浓缩件那几行：抬头那一行 + 紧跟的续行（续行以制表符起，收在第一个不起制表符的行）。 */
+  const block = (s: string): string[] => {
+    const lines = s.split('\n')
+    const at = lines.findIndex((l) => l.startsWith('  浓缩'))
+    if (at < 0) return []
+    const out = [lines[at] as string]
+    for (const l of lines.slice(at + 1)) {
+      if (!l.startsWith('\t')) break
+      out.push(l)
+    }
+    return out
+  }
+
+  // **第一趟**：账上还没有这一轮的 `round/intent`。
+  const plan = fugue(root, 'round', 'plan', '写一份 a.ts', '--judge')
+  assert.equal(plan.code, 0, `round plan 退了 ${plan.code}：${plan.stderr}`)
+  const atGate = block(plan.stdout)
+  assert.equal(atGate.length, 3, `门那一趟该印三行浓缩件，实际 ${atGate.length}：${plan.stdout.slice(0, 600)}`)
+  const head = /  浓缩\t第 r1 轮\t底 ([0-9a-f]{8})\t批号 ([0-9a-f]{16})/.exec(plan.stdout)
+  assert.ok(head !== null, `门那一趟没印出底：${plan.stdout.slice(0, 600)}`)
+
+  const go = fugue(root, 'round', 'go')
+  assert.equal(go.code, 0, `round go 退了 ${go.code}：${go.stderr}`)
+  // ① 底：放行那一行的第一栏印的是整条 oid——它的前八位就是门那一份印的底。
+  const first = go.stdout.split('\n')[0] ?? ''
+  assert.match(first, new RegExp(`^r1\\t${head[1]}[0-9a-f]{32}\\t放行：`), `放行那一行印的底与门那一份对不上：${first}`)
+  // ② 逐字：两趟印的是同一份。
+  assert.deepEqual(block(go.stdout), atGate, `放行那一趟印的浓缩件与门那一趟不是同一份：${go.stdout.slice(0, 800)}`)
+  console.log(`C4.b 读数：门那一趟 ${atGate.length} 行 · 底 ${head[1]} · 批号 ${head[2]} · 放行那一趟逐字相同`)
 })
 
 // ── 序 15 · 打回缺省回一次：不给 `--retry` 走 1（回边）· `--retry 0` 才"一遍都不重来" ──────────
@@ -1058,6 +1112,26 @@ test('C5.b · `--json` 那一栏与人面印的是同一张读数：号 · 落�
   assert.equal(j2.version.same, true)
   assert.deepEqual(j2.version.lines, [], '重落那一档不该有差异那一栏')
   assert.equal(j2.version.againstVersion, null, '重落那一档没有差异，也就没有"比的是哪一版"')
+
+  // **浓缩件只上人面，机器面一个键都不多**（本版修正）：`--json` 那一份原先多了一栏 `compact`，
+  // 而那与"界面与命令的输出形状一个字节没动"这句声明对不上。本版取**机器面真不变**这一条路：
+  // 浓缩件在进程内由同一个纯函数重算（命令行印 `compactLinesOf`，TUI 印同一份），谁要把它搬进
+  // 协议就按"协议改一次"那条规矩走——那时这一条与黄金帧一起改，而不是在这里悄悄加一栏。
+  const raw = JSON.parse(asJson.stdout) as Record<string, unknown>
+  assert.equal('compact' in raw, false, `\`--json\` 那一面多了 compact 一栏：${Object.keys(raw).join(' · ')}`)
+  assert.equal(
+    'compact' in (JSON.parse(jsonSame.stdout) as Record<string, unknown>),
+    false,
+    '`--json` 那一面多了 compact 一栏',
+  )
+  // 而人面那几行**在**（浓缩件那一处渲染）：门口那一批 + 这一份账 → 件数 · 覆盖 · 验收 · 比出来的档。
+  assert.match(human.stdout, /浓缩\t第 r1 轮\t底 [0-9a-f]{8}\t批号 [0-9a-f]{16}/, human.stdout.slice(0, 1200))
+  assert.match(human.stdout, /与上一批：账上一条放行都没有/, human.stdout.slice(0, 1200))
+  // **进预备态那几行**（`T14` 的前一份）：理解（轮级意图那一句）+ 下手方向（草案每一节）——与浓缩件
+  // 同一档，也**只上人面**（机器面那一份键集在上面量过，一个都没多）。
+  assert.match(human.stdout, /进预备态\t第 r1 轮\t理解：写一份 a\.ts/, human.stdout.slice(0, 1200))
+  assert.match(human.stdout, /\t下手方向：1 个任务/, human.stdout.slice(0, 1200))
+  assert.match(human.stdout, /\t  第 1 节\timplement\t写一份 a\.ts/, human.stdout.slice(0, 1200))
   console.log(
     `C5.b 同源读数：人面「第 ${face[1]} 版（这一轮第 ${face[2]} 次落地）· 与第 ${face[3]} 版比：${face[4]} 处」` +
       ` ↔ --json version=${j.version.version} landing=${j.version.landing} same=${String(j.version.same)}` +
@@ -1065,29 +1139,6 @@ test('C5.b · `--json` 那一栏与人面印的是同一张读数：号 · 落�
       ` · 重落那一档两边都是第 ${j2.version.version} 版 / 第 ${j2.version.landing} 次落地 / 逐字节相同`,
   )
 })
-
-test('一趟命令读一遍：命令行那一层只有三处 `roundFactsOf`（`round plan` · `say` · `round go` 各一处）', () => {
-  // **为什么量这一条结构**：轮次那一层的三个入口收了 `facts` 就不再读日志（`plan.test.ts` ⑩ ·
-  // `say.test.ts` ⑥ · `dispatch.test.ts` ⑤ 量的是它），而"命令行读了几遍"这一头**没有注入缝**
-  // ——每条命令一个真进程、一次真加载。所以量它的来源：三处读，一处一条命令，每一处都是
-  // 「读一次、递下去」。**多出来的那一处就是又一趟读**：那时要么把读数递下去，要么把这一条改掉。
-  // U4d 起 round 那一组住在 `./cmd/round.ts`（fugue.ts 只剩分发），扫描对象跟着搬。
-  const source = readFileSync(fileURLToPath(new URL('./cmd/round.ts', import.meta.url)), 'utf8')
-  const sites = source
-    .split('\n')
-    .map((line, i) => [i + 1, line] as const)
-    .filter(([, line]) => line.includes('roundFactsOf('))
-  assert.equal(sites.length, 3, `命令行那一层读了 ${sites.length} 遍轮次日志（该是三处：round plan · say · round go）`)
-  for (const [at, line] of sites) {
-    assert.match(
-      line,
-      /const facts = await roundFactsOf\(ctx\.log, round\)/,
-      `第 ${at} 行那一处不是「读一次、递下去」的形状：${line.trim()}`,
-    )
-  }
-  console.log(`读数：命令行那一层 roundFactsOf( 共 ${sites.length} 处（第 ${sites.map(([at]) => at).join(' · ')} 行），一处一条命令`)
-})
-
 
 // ── S9 那条缺口的封口：持轮者拿到的**请求字节**里说得出草案写哪儿 · 什么形状 ──────────────
 //
@@ -1098,6 +1149,7 @@ test('一趟命令读一遍：命令行那一层只有三处 `roundFactsOf`（`r
 //
 // **不出网**：传输换成空回放目录（当场拒），而拒之前那一份请求已经落盘（`--dump-wire` 落的
 // 就是真发出去的那一份）——与 C5 那两条同一个手法。
+
 test('S9 · 持轮者的前缀里说得出草案写哪儿 · 什么形状（在「工作总目标」的末尾）', () => {
   const root = tmpRoot()
   assert.equal(fugue(root, 'write', 'README.md', '--from', srcOf()).code, 0)

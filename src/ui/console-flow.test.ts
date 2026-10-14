@@ -80,6 +80,7 @@ const snap=async(name)=>{
 const signals=['SIGINT','SIGTERM','SIGHUP','SIGWINCH'],before=signals.map(s=>process.listenerCount(s))
 const done=tuiCmd(root,new Map([['interval','25'],...(native&&process.env.FUGUE_FLOW_STYLE==='style'?[]:[['no-style',true]])]))
 await until(()=>visible().includes('待确认 3 项任务')&&raw,'mixed gate arrives through actual serve')
+await until(()=>visible().includes('与上一批：账上一条放行都没有'),'gate view presents the compact without a keypress')
 await snap('pending');assert.ok(visible().includes('模型 · 任务草案'));assert.ok(!visible().includes('ownedPaths'))
 assert.equal(count('round/approve'),0);assert.ok(!existsSync(join(root,paths[0])))
 // Ordinary selection returns to the existing visible editor, not a hidden query.

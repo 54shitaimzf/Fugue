@@ -10,31 +10,36 @@
 //
 // U4 拆分之后，各命令组住在 `./cmd/` 下（view · observe · config · materialize · execute ·
 // assemble · round），共用的解析 · 发射 · 围栏 · 命令上下文住在 `./shared.ts`；这一文件只剩
-// 分发与三个出口（`USAGE` · `driverSupport` · `main`），出口面逐字未动。
+// 分发与出口，出口面逐字未动。
+//
+// **装载按命令切分 + 编译缓存。** 这一份的静态闭包里只有三个 `node:` 内建与 `./boot.ts` ·
+// `./load.ts`：解析那一层（`./argv.ts`）· 出口那一层（`./out.ts`）· 各命令组，统统走 `./load.ts`
+// 那一张短名表，**走到哪一条命令才装哪一份**——`--version` 与 `round run` 装的不再是同一棵树。
+// 模块体的第一句是 `armCompileCache()`：剩下那些模块的编译结果落一份可弃派生体，下一个进程直接
+// 取来用。两处地板都在各自的文件里（映射丢了就全量装载 · 缓存目录建不出来就没有缓存），两处都是
+// 变慢，不是跑不起来。
+//
+// 三件事照旧：出口面（`USAGE` 仍从这里再导出，《`--help` 那张表》的消费者一处不改）· 分发次序
+// （值层那一支仍排在老路之前）· 一条命令的字节（人面与 `--json` 面，黄金帧逐字节盯着）。
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
-import { LogHeldError } from '../log/hold.ts'
-import { LogCorruptError, logDir, openLog } from '../log/log.ts'
-import type { WriterId } from '../terms.ts'
-import { HostError, assertHost } from '../roots/host.ts'
-import { USAGE, UsageError, emitFail, emitJson, emitLine, fail, parseArgv, unknownFlagsOf, usageFail } from './shared.ts'
-import { FLAGS_OF } from './flags.ts'
-import { PROTOCOL_VERSION } from '../protocol.ts'
-export { USAGE } from './shared.ts'
-export { driverSupport } from './cmd/round.ts'
-import { branchCmd, commitCmd, replay, viewCmd } from './cmd/view.ts'
-import { emit, statusCmd, watchCmd } from './cmd/observe.ts'
-import { tuiCmd } from '../ui/console.ts'
-import { config, policyCmd } from './cmd/config.ts'
-import { doctorCmd } from './cmd/doctor.ts'
-import { diffStatCmd, disposeCmd, ensureCmd, forkCmd, verifyMatCmd } from './cmd/materialize.ts'
-import { runCmd } from './cmd/execute.ts'
-import { assembleCmd } from './cmd/assemble.ts'
-import { serveCmd } from './cmd/serve.ts'
-import { isSpecial, migrated, valueResultOf, watchAndWrite } from '../value/cli.ts'
-import { writeValue } from '../value/shell.ts'
-import { roundCmd, roundGo, roundPlan, roundRun, roundWork, sayCommand } from './cmd/round.ts'
+import { armCompileCache } from './boot.ts'
+import { load } from './load.ts'
+
+// **这一份模块体的第一句**：编译缓存要在任何重模块被**编译**之前打开——ESM 整张静态图在求值
+// 之前就编译完了，所以它必须排在所有动态装载的前面（`src/cli/boot.test.ts` ① 静态盯着这个次序）。
+armCompileCache()
+
+// 解析与出口那两层也走动态装载：上面那两条静态 import 之外，静态闭包里一个字节都不装。这一条
+// 由 `./load.test.ts` ⑤ 盯着（静态说明符的白名单），而不是靠自觉——它是"`--version` 不碰工作区"
+// 这件事的装载那一半。
+const { parseArgv, unknownFlagsOf } = await import('./argv.ts')
+const { USAGE, emitFail, emitJson, emitLine, fail, usageFail } = await import('./out.ts')
+const { PROTOCOL_VERSION } = await import('../protocol.ts')
+const { UsageError } = await import('../value/types.ts')
+
+export { USAGE }
 
 /**
  * 最外面那一层只做一件事：**把用法错翻成退出码 2**（§ 9.8 的退出码行）。
@@ -51,7 +56,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   } catch (err) {
     if (err instanceof UsageError) return usageFail(err.message, json)
     // 同一个 agent 的另一个写者正写着：这是「做不成」（1），不是「敲错了」（2）。
-    if (err instanceof LogHeldError) return fail(err.message, json)
+    if (err instanceof (await load('hold')).LogHeldError) return fail(err.message, json)
     throw err
   }
 }
@@ -98,6 +103,7 @@ async function run(argv: readonly string[]): Promise<number> {
   // `--help` 与 `--version` 在上面，不受影响。
   // 只在入口按调用者 cwd 解析一次；git 子进程也以 root 为 cwd，不能再解释一遍相对路径。
   const root = resolve(typeof rootFlag === 'string' ? rootFlag : process.cwd())
+  const { HostError, assertHost } = await load('host')
   try {
     assertHost(root)
   } catch (err) {
@@ -110,6 +116,7 @@ async function run(argv: readonly string[]): Promise<number> {
   // "这个开关今天没用"是同一张脸。`round` 按子命令一张；表里没有的键（未知命令 · round
   // 的未知子命令）落到下面的分发去说它自己的话。
   const flagKey = cmd === 'round' ? `round ${positional[1] ?? ''}` : cmd
+  const { FLAGS_OF } = await load('flags')
   const table = FLAGS_OF[flagKey]
   if (table !== undefined) {
     const bad = unknownFlagsOf(flagKey, flags, table.flags)
@@ -126,72 +133,65 @@ async function run(argv: readonly string[]): Promise<number> {
   // 放在开关表检查**之后**：表外开关当场退 2 那条纪律（§ 9.8）对值层这一档同样成立，而它比
   // 值层更靠前——两条脸不该因为出口换了就少一道门。
   const valueKey = cmd === 'round' ? `round ${positional[1] ?? ''}` : cmd === undefined ? '' : cmd
-  if (valueKey !== '' && migrated(valueKey)) {
-    const valueArgs = { root, flags, args: positional.slice(1), rest }
-    if (isSpecial(valueKey)) return await watchAndWrite(valueArgs, json)
-    return writeValue(await valueResultOf(valueKey, valueArgs), json)
-  }
-  if (cmd === 'log') {
-    const only = flags.get('agent')
-    const log = openLog(root)
-    try {
-      for await (const { pos, e } of log.readMerged()) {
-        if (typeof only === 'string' && pos.writer !== (only as WriterId)) continue
-        emit(pos, e, json)
-      }
-    } finally {
-      await log.close()
+  if (valueKey !== '') {
+    // 值层那一份要装：`migrated` 就是"这条命令迁过来了吗"，它只有从登记表里问得出来。**这一份
+    // 因此每条真实命令都要装**（实测 123 份）——这是"一处真相"的价钱：名单只在
+    // `value/registry.ts` 一处，入口不另抄一条键的表。读数记在停点报告的疑点清单里。
+    const { isSpecial, migrated, valueResultOf, watchAndWrite } = await load('value')
+    if (migrated(valueKey)) {
+      const valueArgs = { root, flags, args: positional.slice(1), rest }
+      if (isSpecial(valueKey)) return await watchAndWrite(valueArgs, json)
+      const { writeValue } = await load('shell')
+      return writeValue(await valueResultOf(valueKey, valueArgs), json)
     }
-    return 0
   }
+  // **观察那三条（`log` · `status` · `watch`）在上面值层那一支就出去了**：本版收口把它们的
+  // 三个老出口与 `cli/cmd/observe.ts` 一起收掉（那三个在值层登记之后一条都走不到这儿）。
+  // 三条都是**纯读**：不建视图、不取锁、不追加（§ 9.7）——所以它们排在建视图那一组之前。
+  if (cmd === 'tui') return await (await load('console')).tuiCmd(root, flags)
+  if (cmd === 'serve') return await (await load('serve')).serveCmd(root, flags, json)
 
-  // 观察命令（`status` · `watch`）是**纯读**：不建视图、不开账本、不取锁——所以它们排在建视图
-  // 那一组之前。读面与写面在命令面上分开之后，"看一眼会不会改日志"这个问题就答完了（§ 5.18）。
-  if (cmd === 'status') return await statusCmd(root, flags, json)
-  if (cmd === 'watch') return await watchCmd(root, flags, json)
-  if (cmd === 'tui') return await tuiCmd(root, flags)
-  if (cmd === 'serve') return await serveCmd(root, flags, json)
+  if (cmd === 'replay') return await (await load('view')).replay(root, flags, json)
 
-  if (cmd === 'replay') return await replay(root, flags, json)
-
-  if (cmd === 'commit') return await commitCmd(root, flags, json)
+  if (cmd === 'commit') return await (await load('view')).commitCmd(root, flags, json)
 
   // 分出去改的是 ref（真源那一侧），不建视图、不读日志——所以它排在建视图的命令之前。
-  if (cmd === 'branch') return await branchCmd(root, flags, positional.slice(1), json)
+  if (cmd === 'branch') return await (await load('view')).branchCmd(root, flags, positional.slice(1), json)
 
   // 轮次那一组自己开上下文（它要 truth 与 log 两个句柄、还要写日志），排在通用视图之前：
   // 它的参数与其他命令不共用。
   if (cmd === 'round') {
     const sub = positional[1]
-    if (sub === 'run') return await roundRun(root, flags, positional.slice(2), json)
-    if (sub === 'plan') return await roundPlan(root, flags, positional.slice(2), json)
-    if (sub === 'go') return await roundGo(root, flags, positional.slice(2), json)
-    if (sub === 'work') return await roundWork(root, flags, positional.slice(2), json)
-    return await roundCmd(root, flags, positional.slice(1), json)
+    const m = await load('round')
+    if (sub === 'run') return await m.roundRun(root, flags, positional.slice(2), json)
+    if (sub === 'plan') return await m.roundPlan(root, flags, positional.slice(2), json)
+    if (sub === 'go') return await m.roundGo(root, flags, positional.slice(2), json)
+    if (sub === 'work') return await m.roundWork(root, flags, positional.slice(2), json)
+    return await m.roundCmd(root, flags, positional.slice(1), json)
   }
 
   // 说话那一趟与轮次那一组同一档：它要 log 与 truth 两个句柄（会话记录走 view/write 那条路），
   // 还要跑一趟持轮者——所以它也自己开上下文。
-  if (cmd === 'say') return await sayCommand(root, flags, positional.slice(1), json)
+  if (cmd === 'say') return await (await load('round')).sayCommand(root, flags, positional.slice(1), json)
 
   // 配置不建视图、不读日志：它是工作区的输入，不是它的状态（§ 15.3.a 末段）。
-  if (cmd === 'config') return await config(root, flags, positional.slice(1), json)
+  if (cmd === 'config') return await (await load('config')).config(root, flags, positional.slice(1), json)
 
   // 策略值读的也是配置与探针，不是工作区的状态——所以它也排在视图之前（架构 § 8.8）。
-  if (cmd === 'policy') return await policyCmd(root, flags, positional.slice(1), json)
+  if (cmd === 'policy') return await (await load('config')).policyCmd(root, flags, positional.slice(1), json)
 
   // 自检纯读（U9）：读数各有归属（§ 15.7 的探针 · engines · PATH），不建视图、不读日志、不落盘。
-  if (cmd === 'doctor') return await doctorCmd(root, flags, json)
+  if (cmd === 'doctor') return await (await load('doctor')).doctorCmd(root, flags, json)
 
   // 尺子只读，也不进那份"状态"——所以它排在视图之前（§ 8.5 把 diff-stat 与 verify-mat 并列只读）。
-  if (cmd === 'diff-stat') return diffStatCmd(root, flags, positional.slice(1), json)
-  if (cmd === 'fork') return await forkCmd(root, flags, positional.slice(1), json)
-  if (cmd === 'ensure') return await ensureCmd(root, flags, positional.slice(1), json)
+  if (cmd === 'diff-stat') return (await load('materialize')).diffStatCmd(root, flags, positional.slice(1), json)
+  if (cmd === 'fork') return await (await load('materialize')).forkCmd(root, flags, positional.slice(1), json)
+  if (cmd === 'ensure') return await (await load('materialize')).ensureCmd(root, flags, positional.slice(1), json)
   // 执行排在物化那一组之后：它先兑现一次 `ensure`（D3），再起进程。
-  if (cmd === 'run') return await runCmd(root, flags, positional.slice(1), rest, json)
-  if (cmd === 'verify-mat') return await verifyMatCmd(root, flags, json)
-  if (cmd === 'dispose') return await disposeCmd(root, flags, json)
-  if (cmd === 'assemble') return await assembleCmd(root, flags, positional.slice(1), json)
+  if (cmd === 'run') return await (await load('execute')).runCmd(root, flags, positional.slice(1), rest, json)
+  if (cmd === 'verify-mat') return await (await load('materialize')).verifyMatCmd(root, flags, json)
+  if (cmd === 'dispose') return await (await load('materialize')).disposeCmd(root, flags, json)
+  if (cmd === 'assemble') return await (await load('assemble')).assembleCmd(root, flags, positional.slice(1), json)
 
   const args = positional.slice(1)
 
@@ -207,7 +207,7 @@ async function run(argv: readonly string[]): Promise<number> {
     case 'remove':
     case 'rename':
     case 'chmod':
-      return await viewCmd(cmd, root, flags, args, json)
+      return await (await load('view')).viewCmd(cmd, root, flags, args, json)
 
     default:
       return usageFail(`未知命令：${cmd}`, json)
@@ -225,11 +225,12 @@ const isMain =
 if (isMain) {
   main(process.argv.slice(2))
     .then((code) => process.exit(code))
-    .catch((err: unknown) => {
+    .catch(async (err: unknown) => {
       // 兜底那一层的脸也跟着 `--json` 走（§ 9.8「错误」行）：走到这里的错（日志损坏 · 意外
       // 抛出）此前只有人读的那一面。日志目录那一行人面上照旧两行；`--json` 那一面一行，
       // 目录并进 message 的第二段（`subject` 那一栏留给「说到的那个东西」，不装路径拼接）。
       const json = parseArgv(process.argv.slice(2)).flags.has('json')
+      const { LogCorruptError, logDir } = await load('log')
       if (err instanceof LogCorruptError) {
         // 日志在哪，由 `--root` 说了算——壳让人在任何目录里敲这条命令，而"我在哪"与
         // "它的日志在哪"是两件事。默认值仍是 cwd（`run` 里那一句）。
