@@ -2,18 +2,18 @@
 // 且下一次照探 ④没声明 → 工作区配置一个字节不动（地板）。探针全用 `node -e`：输出确定、
 // 不碰网、不碰盘外。红侧在提交信息里：改动之前，带 `toolchain` 的配置整份被顶层键域拒掉。
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
+import { tmpDir } from '../../test/helpers/tmp.ts'
 import { readConfig } from '../config.ts'
 import { ensureToolchain } from './toolchain.ts'
 
 // 系统根钉到空目录：读数不取决于这台机器配没配过系统级。
-process.env.FUGUE_SYSTEM_DIR = mkdtempSync(join(tmpdir(), 'p3a-sys-'))
+process.env.FUGUE_SYSTEM_DIR = tmpDir('p3a-sys-')
 
 function makeWs(): string {
-  const root = mkdtempSync(join(tmpdir(), 'p3a-ws-'))
+  const root = tmpDir('p3a-ws-')
   mkdirSync(join(root, '.fugue'), { recursive: true })
   return root
 }
