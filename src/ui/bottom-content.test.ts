@@ -20,7 +20,11 @@ const face=gateFaceOf({round:'r1',fingerprint:'top-content',same:[],contracts:[{
 const contents=(f:ReturnType<typeof frameOf>)=>f.lines.flatMap((l,i)=>!['border','footer'].includes(f.roles[i]!)&&l.slice(1,-1).trim()!==''?[{text:l,role:f.roles[i]}]:[])
 const base=(rows:StatusRow[],width=192,height=45)=>({snapshot:statusOf(rows),task:taskOf(rows),width,height,operationArea:true})
 
-test('当前任务标题与交流从上方展开，框外留白分开下方确认；完整正文与固定操作位置保持',()=>{
+// 这一份原先是「标题在第 0 行、确认在框外下方」的顶部阅读面（`top-content.test.ts`）。对话式界面
+// 把重点挪到了输入上方：对话块从下往上长，确认块紧接在它下面，余量留在上面。旧判据（标题必须在
+// 第 0 行、两区之间要大段留白）与现在的观感相反，因此随实现改名并改写；容量、正文逐字节、输入锚
+// 与旧批准不执行这几条承诺原样保留。
+test('当前任务与交流贴着输入往上长，决定块紧接在对话框下面；完整正文与固定操作位置保持',()=>{
  let cases=0
  try{for(const glyph of ['ascii','box','rich'] as const){setGlyphTier(glyph)
   for(const [width,height] of [[192,45],[160,35],[80,35],[24,35]])for(const state of ['Working','Planning','Aborted','Rebuilding']){
@@ -28,40 +32,41 @@ test('当前任务标题与交流从上方展开，框外留白分开下方确�
    for(const gate of [false,true]){
     const bottom=gate?gateLayoutOf({face,view:{at:0,armed:null},columns:innerOf(width),height}):undefined
     const input={...o,bottom},f=frameOf(input),legacy=frameOf({...input,operationArea:false})
-    assert.ok(f.lines[0]!.startsWith(glyphs().tl)&&f.lines[0]!.includes('当前任务'),'任务身份在第一行')
-    assert.notEqual(f.lines[1]!.slice(1,-1).trim(),'','正文从标题下一行开始')
-    const closed=f.lines.findIndex((l,i)=>i>0&&l.startsWith(glyphs().bl));assert.ok(closed>1&&closed<height-2,'只围住实际当前内容')
+    const at=f.lines.findIndex(l=>l.startsWith(glyphs().tl))
+    assert.ok(at>=0&&f.lines[at]!.includes('当前任务'),'任务身份在框顶')
+    assert.notEqual(f.lines[at+1]!.slice(1,-1).trim(),'','正文从标题下一行开始')
+    assert.equal(f.roles.at(-1),'border','框底始终画出来')
     assert.deepEqual(contents(f),contents(legacy),'所有非框线正文、角色与顺序保留')
     if(bottom){
-     const at=height-bottom.rows.length-1
-     assert.ok(f.lines[at-1]!.startsWith(glyphs().tl),'确认有独立低权重框线')
-     assert.ok(at-1>closed+1,'框外有留白分开阅读与决定')
-     assert.deepEqual(f.lines.slice(at,-1).map(l=>l.slice(1,-1).trim()),bottom.rows.map(l=>l.trim()),'确认仍在原固定位置，逐行完整')
+     const firstCard=f.lines.length-bottom.rows.length-1
+     assert.equal(f.roles[firstCard-3],'border','对话框在决定块上方收口')
+     assert.equal(f.lines[firstCard-2]!.trim(),'','两块之间只空一行')
+     assert.equal(f.roles[firstCard-1],'border','决定块有自己的顶边')
+     assert.ok(firstCard-at>3,'对话块与决定块都贴着输入')
+     assert.deepEqual(f.lines.slice(firstCard,-1).map(l=>l.slice(1,-1).trim()),bottom.rows.map(l=>l.trim()),'确认仍在原固定位置，逐行完整')
     }
-    const until=bottom?height-bottom.rows.length-2:height
-    assert.ok(f.lines.slice(closed+1,until).every(l=>l===' '.repeat(width)),'留白没有空框')
-    assert.ok(f.roles.slice(closed+1,until).every(r=>r==='body'),'空余行不承担等待或消息样式')
+    assert.ok(f.lines.slice(0,at).every(l=>l.trim()===''),'留白在框上方')
+    assert.ok(f.roles.slice(0,at).every(r=>r==='body'),'空余行不承担等待或消息样式')
     assert.equal(f.lines.length,height);assert.equal(f.roles.length,height);assert.ok(f.lines.every(l=>widthOf(l)===width))
     assert.deepEqual(frameOf(input),f);cases++
    }
   }
  }}finally{setGlyphTier('box')}
- console.log('top content:'+cases+' text/role/order comparisons;title row0/body row1;separate lower confirmation;full capacity;spare outside outlines')
+ console.log('bottom content:'+cases+' text/role/order comparisons;title frame top/body next;adjacent lower confirmation;full capacity;spare above outlines')
 })
 
-test('辅助计划从同一顶部展开，空白中不延伸分隔线；长计划保有全高度与省略入口',()=>{
+test('辅助计划从同一框顶展开，框上方不延伸分隔线；长计划保有全高度与省略入口',()=>{
  for(const glyph of ['ascii','box','rich'] as const){setGlyphTier(glyph)
   const o=base(events()),plan=[{text:'核对登录',status:'in_progress' as const},{text:'保留账号',status:'pending' as const}]
-  const f=frameOf({...o,task:{...o.task,plan}}),s=f.segments!
-  assert.equal(s[0]![2]!.text.trim(),'计划');assert.ok(s[0]![0]!.text.includes('当前任务'));assert.notEqual(s[1]![0]!.text.slice(1,-1).trim(),'')
-  const close=s.findIndex((row,i)=>i>0&&row[0]!.text.startsWith(glyphs().bl));assert.ok(close>1)
-  for(let i=close+8;i<s.length;i++){assert.equal(s[i]![0]!.text.trim(),'');assert.equal(s[i]![1]!.text,'   ');assert.equal(s[i]![2]!.text.trim(),'')}
+  const f=frameOf({...o,task:{...o.task,plan}}),s=f.segments!,at=f.lines.findIndex(l=>l.startsWith(glyphs().tl))
+  assert.equal(s[at]![2]!.text.trim(),'计划');assert.ok(s[at]![0]!.text.includes('当前任务'));assert.notEqual(s[at+1]![0]!.text.slice(1,-1).trim(),'')
+  for(let i=0;i<at;i++){assert.equal(s[i]![0]!.text.trim(),'');assert.equal(s[i]![1]!.text,'   ');assert.equal(s[i]![2]!.text.trim(),'')}
   const many=Array.from({length:60},(_,i)=>({text:'步骤'+i,status:'pending' as const}))
   const tall=frameOf({...o,task:{...o.task,plan:many}})
   assert.equal(tall.segments![0]![2]!.text.trim(),'计划');assert.ok(tall.segments!.at(-1)![2]!.text.includes('还有计划未展开'));assert.equal(tall.lines.length,45)
  }
  setGlyphTier('box')
- console.log('top plan:3glyph;primary/plan top0;short separator ends with route;60steps use all45rows and omission')
+ console.log('bottom plan:3glyph;primary/plan share frame top;short separator ends with route;60steps use all45rows and omission')
 })
 
 test('密集、只读、未知任务与操作、阅读帮助和二级面保留原字节；稀少余量不增加框线或挤正文',()=>{
@@ -77,7 +82,7 @@ test('密集、只读、未知任务与操作、阅读帮助和二级面保留�
  const small={...o,width:80,height:9},f=frameOf(small)
  assert.ok(f.lines.filter(l=>l.startsWith(glyphs().tl)).length<=(glyphs().tl===glyphs().bl?2:1),'余量少时不加第二个框头')
  assert.deepEqual(contents(f),contents(frameOf({...small,operationArea:false})))
- console.log('top content floor:11contexts+20dense geometries byte exact;small capacity spends no new rows')
+ console.log('bottom content floor:11contexts+20dense geometries byte exact;small capacity spends no new rows')
 })
 
 test('实际Stage/Session/Term多帧增长、确认和阅读返回：输入锚、草稿/光标、旧批准与停留保持',async()=>{
@@ -100,5 +105,5 @@ test('实际Stage/Session/Term多帧增长、确认和阅读返回：输入锚�
   }
  }
  assert.equal(paints,324);assert.equal(idles,126)
- setGlyphTier('box');console.log('top content sequence:'+paints+' paints/'+idles+' idle bytes0;3glyph x6themes;sparse/dense/confirmation/read return;input anchor/draft/caret exact;old approval executes0;component not native resize')
+ setGlyphTier('box');console.log('bottom content sequence:'+paints+' paints/'+idles+' idle bytes0;3glyph x6themes;sparse/dense/confirmation/read return;input anchor/draft/caret exact;old approval executes0;component not native resize')
 })

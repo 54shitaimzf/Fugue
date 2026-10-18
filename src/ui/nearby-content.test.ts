@@ -5,7 +5,7 @@ import {statusOf} from '../probe/status.ts'
 import type {StatusRow} from '../probe/status.ts'
 import {taskOf} from './task.ts'
 import {gateFaceOf,gateLayoutOf} from './gate.ts'
-import {setGlyphTier,widthOf} from './glyph.ts'
+import {glyphs,setGlyphTier,widthOf} from './glyph.ts'
 import {openStage} from './stage.ts'
 import {openSession} from './follow.ts'
 import {openTerm} from './term.ts'
@@ -21,13 +21,14 @@ const meaningful=(f:ReturnType<typeof frameOf>)=>f.lines.flatMap((l,i)=>i>0&&!['
 const trailing=(f:ReturnType<typeof frameOf>)=>{const last=meaningful(f).at(-1)!;let n=0;for(let i=last+1;i<f.lines.length&&!['border','footer'].includes(f.roles[i]!);i++)n++;return n}
 function base(rows:StatusRow[],width=120,height=35){return {snapshot:statusOf(rows),task:taskOf(rows),width,height,operationArea:true}}
 
-test('current sparse conversation begins at the top and first-open invitation stays near input without reducing capacity',()=>{
+test('current sparse conversation hangs above the input and first-open invitation stays near input without reducing capacity',()=>{
  let cases=0
  try{for(const glyph of ['ascii','box','rich'] as const){setGlyphTier(glyph)
   for(const [width,height] of [[120,35],[160,45],[80,35],[24,35]])for(const rows of [[],make(),make('Aborted'),make('Rebuilding')]){
    const o=base(rows,width,height),f=frameOf(o),positions=meaningful(f)
+   const head=f.lines.findIndex(l=>l.startsWith(glyphs().tl))
    assert.equal(trailing(f),0,'no unused rows between current content and its footer/frame bottom')
-   assert.equal(positions[0],rows.length===0?height-1:1,'task body follows its title; empty invitation stays next to input')
+   assert.equal(positions[0],rows.length===0?height-1:head+1,'task body follows its title; empty invitation stays next to input')
    assert.equal(f.lines.length,height);assert.equal(f.roles.length,height);for(const l of f.lines)assert.equal(widthOf(l),width)
    assert.deepEqual(frameOf(o),f,'pure render retains exact idle frame')
    if(rows.length&&o.task.state!=='Rebuilding'){assert.ok(at(f,'你')<at(f,'保留账号'));assert.ok(f.roles.includes('user')&&f.roles.includes('model'))}
@@ -37,21 +38,26 @@ test('current sparse conversation begins at the top and first-open invitation st
  console.log(`nearby content: ${cases} cases; first/work/failure/written;3 glyphs x4 desktop/narrow sizes;trailing blank0;full geometry/order/pure idle exact`)
 })
 
-test('sparse current explanation starts at the top and the unchanged complete confirmation stays below, separated by spare capacity; dense content keeps all original capacity',()=>{
+test('sparse current explanation hangs above the input and the unchanged complete confirmation sits right below it; dense content keeps all original capacity',()=>{
  const rows=make('Planning'),face=gateFaceOf({round:'r1',fingerprint:'nearby',same:[],contracts:[{id:'r1.implement.1',agent:'agent/r1/1',kind:'implement',goal:'修复登录提示',ownedPaths:['src/login.ts'],seed:[],deliverables:[],assertions:[{name:'登录行为',action:'test'}]}]} as never,{test:'node tools/test-entry.js'})
  for(const height of [35,45]){
   const o=base(rows,120,height),bottom=gateLayoutOf({face,view:{at:0,armed:null},columns:innerOf(120),height}),f=frameOf({...o,bottom})
   const firstCard=f.lines.length-bottom.rows.length-1,lastModel=at(f,'保留账号')
-  assert.ok(firstCard-lastModel>3,'separate current reading and the fixed complete decision')
+  const head=f.lines.findIndex(l=>l.startsWith(glyphs().tl))
+  assert.ok(head>0,'the conversation box hangs above the input')
+  assert.equal(lastModel+4,firstCard,'one blank row and a drawn top edge, then the decision rows')
   assert.equal(f.roles[lastModel+1],'border','current content has a closing outline')
-  assert.ok(f.lines.slice(lastModel+2,firstCard-1).every(l=>l.trim()===''),'spare capacity has no empty outline')
+  assert.equal(f.lines[lastModel+2]!.trim(),'','the only row between the boxes is blank')
+  assert.equal(f.roles[lastModel+3],'border','the decision box has its own top edge')
+  assert.ok(f.lines.slice(0,head).every(l=>l.trim()===''),'spare capacity stays above both boxes')
+  assert.ok(f.roles.slice(0,head).every(r=>r==='body'),'spare rows above the box carry no outline role')
   assert.equal(f.roles[firstCard-1],'border');assert.equal(f.lines.length,height)
   assert.deepEqual(f.lines.slice(firstCard,-1).map(l=>l.slice(1,-1).trim()),bottom.rows.map(l=>l.trim()))
   const dense=frameOf({...o,bottom,task:{...o.task,rows:[...o.task.rows,{text:'模型\n'+Array.from({length:80},(_,i)=>`进展${i}`).join('\n'),role:'model'}]}})
   assert.equal(dense.lines.length,height);assert.equal(dense.roles[1],f.roles[meaningful(f)[0]!]);assert.ok(dense.lines.join('').includes('行未展开'))
   assert.deepEqual(dense.lines.slice(-bottom.rows.length-1,-1).map(l=>l.slice(1,-1).trim()),bottom.rows.map(l=>l.trim()))
  }
- console.log('top/bottom confirmation:35/45rows;current body top;complete card at original row;spare outside outlines;dense original body/omission/actions capacity')
+ console.log('bottom confirmation:35/45rows;two adjacent boxes above input;complete card rows exact;spare above;dense original body/omission/actions capacity')
 })
 
 test('legacy, unmatched or bad task metadata, unknown operations, readers, menus and secondary views keep top-led layout; full or short current content spends no extra rows',()=>{

@@ -46,7 +46,7 @@ test('首次输入只展示当前邀请，就近且没有空框或重复等待�
  const original=frameOf({...empty(),conversation:[{text:'模型原文仍有用途',role:'model'}]})
  assert.ok(text(original).includes('模型原文仍有用途'));assert.ok(!text(original).includes(prompt))
  const task=frameOf({...empty(),snapshot:statusOf(events),task:taskOf(events)})
- assert.ok(text(task).includes('核对输入引导'));assert.ok(!text(task).includes(prompt));assert.ok(task.lines[0]!.includes('当前任务'))
+ assert.ok(text(task).includes('核对输入引导'));assert.ok(!text(task).includes(prompt));assert.ok(task.lines.some(l=>l.includes('当前任务')),'current task keeps its frame heading')
  const short=frameOf({...empty(3,4)});assert.equal(short.lines.length,1);assert.ok(short.roles.includes('body'),'画不出框的原下限仍有说明')
  }finally{setGlyphTier('box')}
  console.log('empty input:84 scene geometries;invitation and feedback adjacent to input;outlines/footer0;full allocated height;read-only/unknown/records/menu/card floor retained')
@@ -68,7 +68,7 @@ test('实际Stage/Session/Term多帧空态、输入、阅读、确认、变宽�
     stage.onAction({action:'insert',text:'保留草稿'});const draft=stage.view().input;const typing=draw();assert.equal(typing.rows.length,opening.rows.length);assert.ok(!typing.rows.some(s=>s.includes(prompt)));idle()
     stage.onAction({action:'read'});assert.ok(draw().rows.some(s=>s.includes('事件流')));idle();stage.onAction({action:'cancel'});draw();idle();assert.deepEqual(stage.view().input,draft)
     for(const next of [24,80,192]){width=next;stage.onResize();const p=draw();assert.ok(!p.rows.some(s=>s.includes(prompt)));assert.ok(p.rows.length+(p.input?.rows.length??0)+2<=height);idle();resizes++}
-    rows=events;stage.onAdvance(rows);session.push(rows);const working=draw();assert.ok(working.rows[0]!.includes('当前任务'));assert.ok(!working.rows.some(s=>s.includes(prompt)));assert.equal(working.rows.length,opening.rows.length);idle()
+    rows=events;stage.onAdvance(rows);session.push(rows);const working=draw();assert.ok(working.rows.some(s=>s.includes('当前任务')));assert.ok(!working.rows.some(s=>s.includes(prompt)));assert.equal(working.rows.length,opening.rows.length);idle()
     pending=face;await stage.refreshGate();const gate=draw();assert.ok(gate.rows.some(s=>s.includes('核对输入引导')));assert.ok(!gate.rows.some(s=>s.includes(prompt)));idle()
     stage.onAction({action:'approve',key:'y'});draw();stage.onAction({action:'read'});draw();stage.onAction({action:'cancel'});draw();stage.onAction({action:'submit'});draw();assert.deepEqual(presses,[],'全文返回清旧批准')
     stage.onAction({action:'cancel'});draw();idle();assert.deepEqual(stage.view().input,draft)

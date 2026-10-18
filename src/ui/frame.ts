@@ -901,16 +901,21 @@ export function frameOf(o: FrameInput): Frame {
   const spare = Math.max(0, height - fixed)
   // 真实交互候选块的余量留在框外；不限制正文容量，输入仍在原位置。
   const menuNearby = o.operationArea === true && (o.menu?.help === true || ordinaryOn) && spare > 0
-  // 有足够的现成留白时，任务从顶部读，固定操作留在下方；两区只围实际内容。
+  // 余量够时对话块贴着输入往上长：下段（决定/账尾）固定在下，上段贴着它，框外留白留在上面。
   // 两条框线与至少一行框外留白都从余量取，短帧或未知上下文保留原布局。
-  const separate = nearby && spare >= 3
   const contentRows = shown.length
   const lowerRows = gateBody.length + gateNotice.length
+  // 分开的两段只在**下面真有东西**时才成立：没有门口那一块、也没有账尾时，那两段之间只是空白，
+  // 却会把框底那条边擦掉（`separate` 那一段用整行空白填中间，末行边被一起填掉）。
+  const separate = nearby && lowerRows > 0 && spare >= 3
   const gap = nearby && gateBody.length + gateNotice.length > 0 ? Math.min(1, spare) : 0
   if (menuNearby || (nearby && !separate)) shown.unshift(...Array.from({ length: menuNearby ? spare : spare - gap }, () => ({ l: '', role: 'body' as const })))
-  for (let i = 0; i < (menuNearby ? 0 : nearby && !separate ? gap : spare); i += 1) shown.push({ l: '', role: 'body' })
+  // 两段式：内容与下段之间留三行（上段的底边、一行空、下段的顶边），其余留白由 `lowerShift` 挪到框外；
+  // 多铺一行就会把下段顶出框外。
+  for (let i = 0; i < (menuNearby ? 0 : separate ? 3 : nearby ? gap : spare); i += 1) shown.push({ l: '', role: 'body' })
   // 确认与对话用已有的最后一行留白分隔；满容量时不另占正文或操作行。
-  if (operationStatus && fixed < height) shown[shown.length - 1] = { l: glyphs().div.repeat(inner), role: 'border' }
+  // 分成两段时那条线由下段自己的顶边承担，不再拿正文的末行去换。
+  if (operationStatus && !separate && fixed < height) shown[shown.length - 1] = { l: glyphs().div.repeat(inner), role: 'border' }
   for (const one of menuBody) shown.push({ l: one, role: 'overlay' })
   for (const one of gateNotice) shown.push({ l: one, role: 'overlayBody' })
   // 按切掉的头部行数还原坐标：选项折成几行，就给几行同一种等待反馈。
@@ -923,6 +928,11 @@ export function frameOf(o: FrameInput): Frame {
     shown.push({ l: one, role: waitAt >= 0 && originalAt >= waitAt && originalAt < waitEnd ? 'waiting'
       : !headingOn || (originalAt >= headingAt && originalAt < headingAt + headingCount) ? 'overlay' : 'overlayBody' })
   }
+  // 下段（门口那一块 · 账尾）贴着输入，上段贴着它往下长：两段相邻、上面留白。
+  // 从下段顶边倒推上段该落多低；内容比地方还多时不挪（留白为 0，照旧从顶上截）。
+  const lowerHead = lowerRows > 0 ? height - (withFooter ? 2 : 0) - lowerRows - 2 : withFooter ? height - 3 : height
+  const lowerShift = separate ? Math.max(0, lowerHead - 2 - (1 + contentRows)) : 0
+  if (lowerShift > 0) shown.unshift(...Array.from({ length: lowerShift }, () => ({ l: '', role: 'body' as const })))
 
   const lines: string[] = []
   const roles: LineRole[] = []
@@ -959,15 +969,14 @@ export function frameOf(o: FrameInput): Frame {
   lines.push(`${g.bl}${g.h.repeat(edge)}${g.br}`)
   roles.push('border')
   // 标题紧邻正文；余量不足时沿用相邻操作区的紧凑摆法。
-  const headerAt = menuNearby ? spare : nearby && !separate ? spare - gap : 0
+  const headerAt = menuNearby ? spare : separate ? lowerShift : nearby ? spare - gap : 0
   if (headerAt > 0) {
     lines.fill(' '.repeat(width), 0, headerAt)
     roles.fill('body', 0, headerAt)
     lines[headerAt] = `${g.tl}${bar(edge, head)}${g.tr}`
     roles[headerAt] = foregroundMenu ? 'readHeading' : 'border'
   }
-  const contentEnd = 1 + contentRows
-  const lowerHead = lowerRows > 0 ? height - (withFooter ? 2 : 0) - lowerRows - 2 : withFooter ? height - 3 : height
+  const contentEnd = 1 + contentRows + lowerShift
   if (separate) {
     lines[contentEnd] = `${g.bl}${g.h.repeat(edge)}${g.br}`
     roles[contentEnd] = 'border'
