@@ -562,7 +562,7 @@ function modelHeadings(lines: readonly string[]): readonly boolean[] {
       fence = { mark: marker[1]![0]!, count: marker[1]!.length }
       continue
     }
-    if (i === 0 && /^模型 · /.test(line)) { headings[i] = true; continue }
+    if (i === 0 && /^(?:任务草案|需要你决定)$/.test(line)) { headings[i] = true; continue }
     if (/^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)) { headings[i] = true; continue }
     if (/^ {0,3}(?:=+|-+)[ \t]*$/.test(line) && prose[i - 1]) {
       for (let at = i - 1; at >= 0 && prose[at]; at -= 1) headings[at] = true
@@ -688,12 +688,14 @@ export function frameOf(o: FrameInput): Frame {
   ]
   let rowAt = 0
   const rows = bodyRows.flatMap((one) => {
+    // 用户那句话的 `> ` 是行首标记，不能自己占一行：先摘下来，按剩余宽度折行，再贴回第一行。
+    const userMark = one.role === 'user' && one.l.startsWith('> ')
     const paragraphs = o.task === undefined ? [one.l] : one.l.split('\n')
-    const parts = paragraphs.map((p, i) => wrap(p, Math.max(1, inner - (i === 0 ? 0 : 2))))
+    const parts = paragraphs.map((p, i) => wrap(userMark && i === 0 ? p.slice(2) : p, Math.max(1, inner - (userMark && i === 0 ? 2 : i === 0 ? 0 : 2))))
     const identified = o.task !== undefined && ['user', 'model'].includes(one.role) && paragraphs.length > 1
     const headingAt = rowAt, headingCount = parts[0]?.length ?? 0
     const headings = one.role === 'model' ? modelHeadings(paragraphs) : []
-    const physical = parts.flatMap((part, i) => part.map(x => ({ l: i === 0 ? x : `  ${x}`, role: headings[i] ? 'modelHeading' as const : one.role,
+    const physical = parts.flatMap((part, i) => part.map(x => ({ l: i === 0 ? (userMark ? `> ${x}` : x) : `  ${x}`, role: headings[i] ? 'modelHeading' as const : one.role,
       ...(identified ? { headingAt, headingCount } : {}) })))
     rowAt += physical.length
     return physical
@@ -838,6 +840,24 @@ export function frameOf(o: FrameInput): Frame {
           const end = groupEnd(edge.headingAt)
           head = end <= limit - 2 ? rows.slice(0, end) : rows.slice(0, edge.headingAt)
         }
+        // 当前目标不能被截在身后：头里没装下用户那句话时，把它那一段一起带回来（放得下才带）；
+        // 后面那条空行能带就带，让目标与模型的回答之间留出呼吸。
+        const goalAt = rows.findLastIndex(one => one.role === 'user')
+        if (goalAt >= head.length) {
+          const goalEnd = groupEnd(goalAt)
+          const roomy = goalEnd < rows.length && rows[goalEnd]?.l.trim() === '' ? goalEnd + 1 : goalEnd
+          if (roomy <= limit - 2) head = rows.slice(0, roomy)
+          else if (goalEnd <= limit - 1) head = rows.slice(0, goalEnd)
+          else {
+            // 矮到装不下前面那几行时：失败/结果那几行与目标一起优先，前面那些状态与空行让位；
+            // 两者都装不下时保失败/结果（它比目标更急），再不行才只保目标。
+            const urgent = rows.slice(0, goalAt).filter(one => one.role === 'refuse' || one.role === 'ok')
+            const combined = [...urgent, ...rows.slice(goalAt, goalEnd)]
+            if (combined.length <= limit - 1) head = combined
+            else if (urgent.length > 0 && urgent.length <= limit - 1) head = urgent
+            else if (goalEnd - goalAt <= limit - 1) head = rows.slice(goalAt, goalEnd)
+          }
+        }
         const tailBudget = limit - head.length
         const start = Math.max(head.length, rows.length - tailBudget)
         let tail: typeof rows = []
@@ -945,12 +965,9 @@ export function frameOf(o: FrameInput): Frame {
   // 只采用匹配当前轮次的最后一条用户目标；缺失或旧投影保留原框名。
   const taskOn = o.task !== undefined && o.task.round !== null && view === 'chat'
   const currentTask = taskOn && taskMatches
-  const titleRow = currentTask ? o.task!.rows.findLast(r => r.role === 'user') : undefined
-  const foldedGoal = titleRow?.text.startsWith('你\n') ? titleRow.text.slice(2).replace(/\s+/g, ' ').trim() : ''
-  const subject = hasControl(foldedGoal) ? '' : foldedGoal
-  const titleRoom = mainWidth - 5 - widthOf('当前任务 · ')
-  const taskHead = subject !== '' && titleRoom >= 4 ? `当前任务 · ${clip(subject, titleRoom)}` : '当前任务'
-  const head = ordinaryOn ? (o.menu?.source === 'cmd' ? '命令' : '文件路径') : foregroundMenu ? '按键帮助' : readingOn ? (typeof o.read?.heading === 'string' && o.read.heading !== '' ? o.read.heading : '阅读面') : `${taskOn ? taskHead : viewNameOf(view)}${view === 'chat' ? '' : focus}`
+  // 框名只说“这是什么”，不再把用户刚说的话重复一遍：目标就在下面那块强调里，
+  // 标题再抄一次只会让同一句话占两处注意力。
+  const head = ordinaryOn ? (o.menu?.source === 'cmd' ? '命令' : '文件路径') : foregroundMenu ? '按键帮助' : readingOn ? (typeof o.read?.heading === 'string' && o.read.heading !== '' ? o.read.heading : '阅读面') : `${taskOn ? '当前任务' : viewNameOf(view)}${view === 'chat' ? '' : focus}`
   lines.push(`${g.tl}${bar(edge, head)}${g.tr}`)
   roles.push(foregroundMenu || readingOn ? 'readHeading' : 'border')
   for (const one of shown) {
@@ -1034,7 +1051,7 @@ export function frameOf(o: FrameInput): Frame {
   }
   if (sideWidth > 0) {
     const sideInner = sideWidth - 2
-    const labels = ['计划', '', ...plan.flatMap(p => wrap(`${p.status === 'completed' ? '[x]' : p.status === 'in_progress' ? '>' : '[ ]'} ${p.text}`, sideInner)), '', '完整计划可按需阅读']
+    const labels = ['计划', '', ...plan.flatMap(p => wrap(`${p.status === 'completed' ? '[x]' : p.status === 'in_progress' ? '>' : '[ ]'} ${p.text}`, sideInner))]
     if (labels.length > height) labels.splice(height - 1, labels.length, `${g.mark} 还有计划未展开`)
     // 短计划跟当前内容对齐；长计划仍使用全部高度，不因主区稀疏而少印。
     const sideAt = Math.min(nearby ? headerAt : 0, Math.max(0, height - labels.length))

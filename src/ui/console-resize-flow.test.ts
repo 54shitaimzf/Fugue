@@ -103,7 +103,7 @@ await until(()=>visible().includes('按键 Enter 发送')&&raw,'initial actual e
 await snap('empty')
 await seedPlan()
 await until(()=>visible().includes('待确认 3 项任务')&&raw,'mixed gate arrives through actual serve')
-await snap('pending');assert.ok(visible().includes('模型 · 任务草案'));assert.ok(!visible().includes('ownedPaths'))
+await snap('pending');assert.ok(visible().includes('任务草案'));assert.ok(!visible().includes('ownedPaths'))
 assert.equal(count('round/approve'),0);assert.ok(!existsSync(join(root,paths[0])))
 const directBefore=visible();process.stdin.emit('data',Buffer.from('abc'));process.stdin.emit('data',Buffer.from('\x1b[200~DIRECT PASTE\x1b[201~'));await wait(80);
 assert.equal(visible(),directBefore,'ordinary typing and bracketed paste cannot edit the covered confirmation area');assert.equal(count('round/approve'),0);
@@ -128,12 +128,12 @@ await until(()=>count('contract/issue')===3&&events().at(-1).to==='Working','act
 await until(()=>visible().includes('按键 Enter 发送'),'input returns after actual round go')
 const issued=events().filter(e=>e.t==='contract/issue').map(e=>JSON.parse(e.body));assert.deepEqual(issued.map(c=>c.kind),['investigate','implement','implement']);assert.deepEqual(issued.slice(1).map(c=>c.ownedPaths),paths.map(p=>[p]));assert.equal(count('round/approve'),1);assert.ok(paths.every(p=>!existsSync(join(root,p))),'dispatch has not written project files')
 await snap('dispatched');assert.ok(visible().includes('这批任务已确认，结果尚未写回。'));assert.ok(!visible().includes('正在处理已确认的任务。'))
-assert.ok(visible().includes('模型 · 任务草案'));assert.ok(!visible().includes('ownedPaths'))
+assert.ok(visible().includes('任务草案'));assert.ok(!visible().includes('ownedPaths'))
 process.stdin.emit('data',Buffer.from('\x12'))
 await until(()=>visible().includes('当前任务记录')&&(initialCols>=120?visible().includes('ownedPaths'):visible().includes('evidenceRequired')),'raw draft opens through actual Console keys')
 if(initialCols>=120)assert.ok(visible().includes('evidenceRequired')&&visible().includes('alpha.txt')&&visible().includes('beta.txt'));else{let all=visible();for(let i=0;i<4;i++){process.stdin.emit('data',Buffer.from('\x1b[6~'));await wait(80);all+='\n'+visible()}assert.ok(['evidenceRequired','ownedPaths','alpha.txt','beta.txt'].every(s=>all.includes(s)),'narrow full draft is reachable with original page keys');process.stdin.emit('data',Buffer.from('\x1b[1;5H'));await wait(80)};await snap('record')
 process.stdin.emit('data',Buffer.from('\x1b'))
-await until(()=>visible().includes('按键 Enter 发送')&&visible().includes('模型 · 任务草案'),'return restores compact current main')
+await until(()=>visible().includes('按键 Enter 发送')&&visible().includes('任务草案'),'return restores compact current main')
 assert.equal(count('round/approve'),1,'reading raw draft never adds approval');await snap('recordreturn')
 process.stdin.emit('data',Buffer.from('\x1b[200~/round work\x1b[201~\r'))
 await until(()=>visible().includes('Esc 停止')||visible().includes('正在验收'),'execution is visible')

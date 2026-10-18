@@ -19,7 +19,7 @@ test('issued contracts do not prove execution; only observed action supplies a c
  assert.equal(texts([...base,run])[0],'正在执行：node check.js')
  for(const to of ['Collecting','Merging','Verifying','Aborted'])assert.ok(!texts([...base,run,state('Working',to)]).some(s=>s.includes('node check.js')),'a new phase invalidates the previous action')
  assert.equal(texts([...base,run,state('Working','Working')])[0],'正在执行：node check.js','same-phase event does not pretend an observed action ended')
- assert.ok(t.includes('你\n核查后改动两个文件'));assert.ok(t.includes('模型 · 当前理解\n原模型理解必须保留'))
+ assert.ok(t.includes('> 核查后改动两个文件'));assert.ok(t.includes('原模型理解必须保留'))
 })
 test('verification outcome never retains the prior merging caption, including full record projection',()=>{
  const merging=[...base,merge]
@@ -41,7 +41,7 @@ test('missing ownership/state metadata keeps the original status floor and origi
  const bad=[...base,run,row({t:'run/end',agent:'agent/r1/1',exit:7}),state('Working','Collecting')]
  assert.equal(texts(bad).filter(s=>s==='命令失败（退出码 7）。').length,1,'problem stays once after prior action is cleared')
  const unknown=[...base,run,state('Working','future-state')]
- assert.ok(!texts(unknown).some(s=>s.includes('node check.js')));assert.ok(texts(unknown).includes('模型 · 当前理解\n原模型理解必须保留'))
+ assert.ok(!texts(unknown).some(s=>s.includes('node check.js')));assert.ok(texts(unknown).includes('原模型理解必须保留'))
  const machine=statusOf(base);taskOf(base);assert.deepEqual(statusOf(base),machine,'read-only human projection leaves machine snapshot exact')
 })
 test('multi-frame task progress, retries and narrow geometry keep idle bytes zero and permanent history unchanged',()=>{

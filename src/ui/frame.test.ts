@@ -641,27 +641,27 @@ test('对话只显示最近汇报；内部编号与调用计数留在进展视�
 })
 
 
-test('⑰ 矮屏截断不拆消息：标题留下时，话也一起留下', () => {
-  // 80×12 上正文放不下，旧逻辑只把“你”那一行拿回来、正文留在被截掉的中段——
-  // 屏上于是是“你”紧挨着下一条消息的标题。截断现在只停在消息边界上：标题在，话就在下一行。
+test('⑰ 矮屏截断不拆消息：用户那句话留下时，下一行是它自己的后半句', () => {
+  // 80×12 上正文放不下，旧逻辑只把消息标题拿回来、正文留在被截掉的中段——
+  // 屏上于是标题紧挨着下一条消息。截断现在只停在消息边界上：那句话在，它的后半句就在下一行。
   const task = {
     round: 'r1',
     state: 'Rebuilding' as const,
     plan: [],
     rows: [
       { text: '正在合并结果，尚待验收与写回。', role: 'system' as const },
-      { text: '你\n修复登录失败时的提示，保留已经输入的账号。', role: 'user' as const },
-      { text: '模型 · 当前理解\n先定位失败路径，再改提示与输入状态。', role: 'model' as const },
-      { text: '模型 · 交接说明\n提示已经就近显示，账号内容保留。', role: 'model' as const },
-      { text: '模型 · 交接说明\n再补一条：重试与成功路径都验过。', role: 'model' as const },
+      { text: '> 修复登录失败时的提示，\n保留已经输入的账号。', role: 'user' as const },
+      { text: '先定位失败路径，再改提示与输入状态。', role: 'model' as const },
+      { text: '提示已经就近显示，账号内容保留。', role: 'model' as const },
+      { text: '再补一条：重试与成功路径都验过。', role: 'model' as const },
     ],
   }
   const f = frameOf({ snapshot: snapshotOf(), task, width: 80, height: 12, operationArea: true })
   assert.equal(f.lines.length, 12, '截断不动整窗容量')
-  const at = f.lines.findIndex(l => l.includes('你'))
-  assert.ok(at > 0, `身份标题要在：\n${f.lines.join('\n')}`)
-  assert.ok(f.lines[at + 1]!.includes('修复登录失败时的提示'), `标题在、话没了：\n${f.lines.join('\n')}`)
-  console.log('⑰ 读数：80×12 截断停在消息边界——“你”的下一行就是那句话，不是下一条标题')
+  const at = f.lines.findIndex(l => l.includes('> 修复登录失败时的提示'))
+  assert.ok(at > 0, `那句话要在：\n${f.lines.join('\n')}`)
+  assert.ok(f.lines[at + 1]!.includes('保留已经输入的账号。'), `后半句被拆走了：\n${f.lines.join('\n')}`)
+  console.log('⑰ 读数：80×12 截断停在消息边界——那句话的下一行是它自己的后半句，不是下一条消息')
 })
 
 test('持轮者的计划记录不计作运行中的子任务', () => {

@@ -72,7 +72,7 @@ function draftPreview(body: string): string | undefined {
         return `${at}. ${purpose}`
       })
     return at === draft.sections.length
-      ? '模型 · 任务草案\n' + clean(shown.replace(/\n{2,}(?=\d+\. )/g, '\n').replace(/(\d+\. [^\n]*)\n{2,}/g, '$1\n'))
+      ? '任务草案\n' + clean(shown.replace(/\n{2,}(?=\d+\. )/g, '\n').replace(/(\d+\. [^\n]*)\n{2,}/g, '$1\n'))
       : undefined
   } catch { return undefined }
 }
@@ -99,16 +99,16 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
     switch (e.t) {
       // A phase edge expires the previous action; a same-phase record does not.
       case 'round/state': if (e.from !== e.to) action = ''; state = e.to; from = e.from; break
-      case 'round/intent': base = e.base; messages.push({ text: `你\n${goalOf(e.body)}`, role: 'user' }); break
+      case 'round/intent': base = e.base; messages.push({ text: `> ${goalOf(e.body)}`, role: 'user' }); break
       case 'holder/distill': {
         const preview = full ? undefined : draftPreview(e.body)
-        messages.push({ text: `模型 · 当前理解\n${clean(e.body)}`, role: 'model', ...(preview === undefined ? {} : { preview }) }); break
+        messages.push({ text: clean(e.body), role: 'model', ...(preview === undefined ? {} : { preview }) }); break
       }
-      case 'agent/handoff': messages.push({ text: `模型 · 交接说明\n${clean(e.body)}`, role: 'model' }); break
+      case 'agent/handoff': messages.push({ text: clean(e.body), role: 'model' }); break
       case 'holder/ask': {
         const questions = objectOf(e.body)?.questions
         const texts = Array.isArray(questions) ? questions.flatMap(q => q !== null && typeof q === 'object' && typeof q.question === 'string' ? [q.question, ...(Array.isArray(q.options) ? q.options.flatMap(o => o !== null && typeof o === 'object' && typeof o.label === 'string' ? [`${o.label}${typeof o.description === 'string' ? `：${o.description}` : ''}`] : []) : [])] : []) : [e.body]
-        messages.push({ text: `模型 · 需要你决定\n${clean(texts.join('\n'))}`, role: 'model' }); break
+        messages.push({ text: `需要你决定\n${clean(texts.join('\n'))}`, role: 'model' }); break
       }
       case 'holder/todos': {
         const todos = objectOf(e.body)?.todos

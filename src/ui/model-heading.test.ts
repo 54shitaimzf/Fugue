@@ -24,12 +24,12 @@ const events=(body=paragraphs.join('\n')):StatusRow[]=>[
  {pos:{writer:'round',seq:3},e:{t:'holder/distill',round:'r1',agent:'round',body}},
 ] as StatusRow[]
 const textOf=(frame:ReturnType<typeof frameOf>)=>frame.lines.map(l=>l.slice(1,-1).trim())
-test('模型身份与ATX/Setext标题独立，代码块与正文不误强调，原文仍完整',()=>{
+test('模型正文里的ATX/Setext标题单独强调，代码块与正文不误强调，原文仍完整',()=>{
  const rows=events(),task=taskOf(rows),frame=frameOf({snapshot:statusOf(rows),task,width:120,height:45})
- const text=textOf(frame),header=['模型 · 当前理解',...paragraphs.slice(0,1),...paragraphs.slice(2,7),'Setext标题','另一标题']
+ const text=textOf(frame),header=[...paragraphs.slice(0,1),...paragraphs.slice(2,7),'Setext标题','另一标题']
  for(const line of header){const at=text.indexOf(line);assert.ok(at>=0,line+' 保留');assert.equal(frame.roles[at],'modelHeading',line+' 是标题')}
  for(const line of paragraphs.filter(l=>l.trim()!==''&&!header.includes(l))){const at=text.indexOf(line.trim());assert.ok(at>=0,line);assert.equal(frame.roles[at],'model',line+' 保持正文')}
- assert.equal(task.rows.find(r=>r.role==='model')!.text,'模型 · 当前理解\n'+paragraphs.join('\n'))
+ assert.equal(task.rows.find(r=>r.role==='model')!.text,paragraphs.join('\n'))
  assert.deepEqual(taskOf(rows,null,true).rows.find(r=>r.role==='model'),task.rows.find(r=>r.role==='model'),'原文阅读不提取或删改标题')
  const read=frameOf({snapshot:statusOf(rows),task,width:120,height:45,read:{rows:paragraphs,top:0,heading:'完整记录',footer:'原文'}})
  assert.ok(!read.roles.includes('modelHeading'),'原文阅读正文不解析标题')
@@ -37,25 +37,25 @@ test('模型身份与ATX/Setext标题独立，代码块与正文不误强调，�
  for(const view of ['progress','spending'] as const)assert.ok(!frameOf({snapshot:statusOf(rows),task,width:120,height:45,view}).roles.includes('modelHeading'))
  console.log('model headings:identity+ATX1..6+Setext; two fence types, short close, unclosed and indented code remain model; raw and secondary views unchanged')
 })
-test('长标题折行、尾部身份恢复、计划侧栏仍保留标题角色，用户原文不作Markdown解释',()=>{
+test('长标题折行、尾部标题恢复、计划侧栏仍保留标题角色，用户原文不作Markdown解释',()=>{
  for(const glyph of ['ascii','box','rich'] as const){
   setGlyphTier(glyph)
   for(const width of [192,80,24])for(const height of [45,19,8]){
-   const body='## 需要核查的模型标题需要核查的模型标题\n'+Array.from({length:60},(_,i)=>'原文 '+i+' 逐句保留').join('\n')
+   const body='## 核查标题\n'+Array.from({length:60},(_,i)=>'原文 '+i+' 逐句保留').join('\n')
    const rows=events(body),task=taskOf(rows),snapshot=statusOf(rows)
    const frame=frameOf({snapshot,task,width,height})
    assert.equal(frame.lines.length,height);assert.ok(frame.lines.every(l=>widthOf(l)===width))
-   const identity=textOf(frame).indexOf('模型 · 当前理解');assert.ok(identity>=0);assert.equal(frame.roles[identity],'modelHeading','截尾恢复的身份仍有标题角色')
+   const heading=textOf(frame).findIndex(l=>l.includes('核查标题'));assert.ok(heading>=0);assert.equal(frame.roles[heading],'modelHeading','截尾恢复的标题仍有标题角色')
    assert.ok(frame.lines.some(l=>l.includes('原文 59')))
-   const user=frameOf({snapshot,task:{...task,rows:[{role:'user',text:'你\n## 用户原文'}]},width,height})
+   const user=frameOf({snapshot,task:{...task,rows:[{role:'user',text:'> ## 用户原文'}]},width,height})
    assert.ok(!user.roles.includes('modelHeading'))
   }
   for(const width of [192,80,24]){
    const title='## '+'需要检查标题'.repeat(10),rows=events(title+'\n正文')
    const frame=frameOf({snapshot:statusOf(rows),task:taskOf(rows),width,height:45})
    const headings=frame.lines.filter((_,i)=>frame.roles[i]==='modelHeading').map(l=>l.slice(1,-1).trim())
-   assert.ok(headings.length>=(width===24?4:2),'长标题的每条折行都有标题角色')
-   assert.equal(headings.slice(1).join('').replace(/\s/g,''),title.replace(/\s/g,''),'折行保留标题全部文字')
+   assert.ok(headings.length>=(width===24?4:1),'长标题的每条折行都有标题角色')
+   assert.equal(headings.join('').replace(/\s/g,''),title.replace(/\s/g,''),'折行保留标题全部文字')
   }
   const rows=events('## 一条很长的标题'.repeat(5)+'\n正文')
   const task={...taskOf(rows),plan:[{text:'核查消息',status:'in_progress' as const}]}
@@ -64,7 +64,7 @@ test('长标题折行、尾部身份恢复、计划侧栏仍保留标题角色�
   assert.ok(frame.lines.every(l=>widthOf(l)===192))
  }
  setGlyphTier('box')
- console.log('model heading geometry:3 glyphs x3 widths x3 heights; tail identity27/27; user Markdown0; plan segments3/3; full wrapped title9/9; text retained')
+ console.log('model heading geometry:3 glyphs x3 widths x3 heights; tail heading27/27; user Markdown0; plan segments3/3; full wrapped title9/9; text retained')
 })
 test('16色与256色标题宿主加粗，正文复位；属性与两道全关门保持原样，非TTY纯原文',()=>{
  const rows=events('## 标题\n正文段落'),snapshot=statusOf(rows),task=taskOf(rows)
@@ -120,7 +120,7 @@ test('多行Setext完整强调，分隔线不构成标题，围栏只允许ASCII
   const rows=events(c.body),task=taskOf(rows),frame=frameOf({snapshot:statusOf(rows),task,width:120,height:45}),text=textOf(frame)
   for(const line of c.headings){const at=text.indexOf(line);assert.ok(at>=0);assert.equal(frame.roles[at],'modelHeading',line)}
   for(const line of c.plain)for(const [at,value] of text.entries())if(value===line)assert.equal(frame.roles[at],'model',line)
-  assert.equal(task.rows.find(r=>r.role==='model')!.text,'模型 · 当前理解\n'+c.body)
+  assert.equal(task.rows.find(r=>r.role==='model')!.text,c.body)
  }
  console.log('model heading grammar:multiline Setext all lines; thematic breaks plain; NBSP fence tail stays code until exact ASCII close; cases4/4 raw exact')
 })
