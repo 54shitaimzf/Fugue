@@ -260,7 +260,7 @@ function detailLinesOf(s: StatusSnapshot | undefined, agent: string | null): rea
   if (s === undefined) return []
   const out: string[] = []
   for (const r of s.rounds) {
-    out.push(`${WORDS.round} ${r.round} · ${WORDS.transitions} ${r.transitions} 条 · 图上走了 ${r.hops} 步`)
+    out.push(`${WORDS.round} ${r.round} · 状态变化 ${r.transitions} 次 · 跳 ${r.hops} 步`)
   }
   for (const a of s.agents) {
     if (agent !== null && a.agent !== agent) continue
@@ -546,8 +546,9 @@ export function firstFace(faces: ReadFaces): ReadFaceName {
 export function readWrap(s: string, cols: number): readonly string[] {
   // **先转义再量宽**：终端把 `\x1b` 当一条序列的开头，账上一行正文里混进一个不可见字节，
   // 屏幕上从它起整幅错位；转义成 `\uXXXX` 之后它就是几个能读的字符，宽度也照这几个算。
-  // 只动 C0 与 C1，含 `\n`——账上一行正文本来就该是一行，真混进来了也不许它撕开一帧。
-  const text = escapeControl(s)
+  // 制表符是命令行回执的列分隔，不当不可见字节转义成 `\u0009`（那样一屏都是六个字符的记号），
+  // 换成两个空格——只动显示，回执原文与 `--json` 一个字节不改。其余 C0 与 C1（含 `\n`）照旧。
+  const text = escapeControl(s.replace(/\t/g, '  '))
   if (cols <= 0 || text === '') return [text]
   const cs = clustersOf(text)
   let total = 0
