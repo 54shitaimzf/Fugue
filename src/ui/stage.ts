@@ -532,6 +532,9 @@ export function openStage(deps: StageDeps): Stage {
   const onRunDone = (r: RunOutcome): void => {
     const go = deps.run()
     const current = taskOf(deps.rows())
+    // 收尾到了，“正在等待结束”就不再是当前事实：它由这一趟的结局那句话接替。
+    // 历史记录（notes）里两条都留着；屏上的当前反馈只留一条。
+    if (feedback.length > 0) feedback = feedback.filter(line => line !== `已请求停止执行，正在等待结束。${WORDS.runWritebackGuide}`)
     // Only a fresh verification failure from this launch can replace generic exit feedback.
     // An old failure, another round, a signal or a spawn failure still needs its own message.
     const reported = r.code === 1 && deps.rows().slice(runStartedAt).some(row =>
