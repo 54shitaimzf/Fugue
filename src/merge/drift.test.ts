@@ -134,6 +134,22 @@ test('B03 判据的边界：整棵树一条底路径都不在盘上时按“还�
   }
 })
 
+test('B03 树里的工作区本子不算用户删除：盘上跳过它时，锁文件不被判成“删了又要重建”', async () => {
+  // 真实现场：`git add -A` 可能把 `.fugue/log/round.lock` 一并落进底；盘上那一份由日志自己
+  // 持有、`scanTree` 又跳过 `.fugue`。三方比对若照收树里的本子，就会把自己的锁当成用户删除。
+  const { real, t, base } = await scene({ 'a.txt': '底\n', '.fugue/log/round.lock': '{"pid":1}\n' })
+  try {
+    const target = await commitOf(t, { 'a.txt': '合并的新内容\n', '.fugue/log/round.lock': '{"pid":1}\n' }, '目标树')
+    const verdict = await mergeDrift({ truth: t, realRoot: real, base, target })
+    assert.equal(verdict.ok, true, '工作区本子不参与漂移，合并照常放行')
+    assert.deepEqual(verdict.drift.userDeleted, [])
+    assert.deepEqual(verdict.drift.colliding, [])
+    assert.deepEqual(verdict.drift.touched, ['a.txt'], '动到的只有用户文件')
+  } finally {
+    await t.close()
+  }
+})
+
 test('① 盘上 == 底（用户没碰过）→ 放行：合并的正常样子', async () => {
   const { real, t, base } = await scene({ 'src/a.ts': '底那一份\n', 'README.md': '# 项目\n' })
   try {

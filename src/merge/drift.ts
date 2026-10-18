@@ -60,6 +60,15 @@ export interface TreeLeaves {
   readonly leaves: ReadonlyMap<RelPath, { readonly mode: number; readonly hash: string }>
 }
 
+/**
+ * 工作区自己的本子（`.git` · `.fugue`）**不进漂移**：盘上那一份 `scanTree` 已经跳过它们，
+ * 树里那一侧要是照收，日志锁这类路径就会被判成“用户删了、合并又要重建”——那不是用户的改动，
+ * 是工作区在跑自己的账。三处树遍历用同一个判据。
+ */
+function workspaceState(p: RelPath): boolean {
+  return WORKSPACE_STATE.some((s) => p === s || p.startsWith(`${s}/`))
+}
+
 /** 每个 `Truth` 一份 blob 哈希缓存。**按对象标识缓存**：同一份内容在树里出现几次就只读一次。 */
 const hashCacheOf = new WeakMap<Truth, Map<BlobId, string>>()
 
@@ -93,6 +102,7 @@ export async function leavesOf(truth: Truth, commit: CommitId, want?: ReadonlySe
         await walk(p)
         continue
       }
+      if (workspaceState(p)) continue
       if (want !== undefined && !want.has(p)) continue
       leaves.set(p, { mode: e.mode, hash: await hashOfBlob(truth, e.id as BlobId) })
     }
@@ -250,7 +260,7 @@ async function pathsOf(truth: Truth, commit: CommitId): Promise<Map<RelPath, { r
     for (const e of await truth.listAt(commit, dir)) {
       const p = dir === '' ? e.name : `${dir}/${e.name}`
       if (e.kind === 'dir') await walk(p)
-      else out.set(p, { mode: e.mode, id: e.id })
+      else if (!workspaceState(p)) out.set(p, { mode: e.mode, id: e.id })
     }
   }
   await walk('')
@@ -268,7 +278,7 @@ async function touchedPaths(truth: Truth, base: CommitId, target: CommitId): Pro
       for (const e of await truth.listAt(commit, dir)) {
         const p = dir === '' ? e.name : `${dir}/${e.name}`
         if (e.kind === 'dir') await walk(p)
-        else out.set(p, { mode: e.mode, id: e.id })
+        else if (!workspaceState(p)) out.set(p, { mode: e.mode, id: e.id })
       }
     }
     await walk('')
