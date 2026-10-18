@@ -1,0 +1,17 @@
+{
+  "id": "recover-json面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "--json",
+        "recover"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "null\n",
+    "stderr": ""
+  }
+}

@@ -41,6 +41,7 @@ import { entriesOf } from '../merge/accept.ts'
 import type { AgentId, BranchId, CommitId, ContractId, RelPath, WriterId } from '../terms.ts'
 import { realDriver } from '../round/driver.ts'
 import { runRound } from '../round/execute.ts'
+import { RoundRunError } from '../round/execute.ts'
 import type { RoundRunDeps } from '../round/execute.ts'
 
 const AGENT = 'agent-1' as AgentId
@@ -491,6 +492,40 @@ test('⑩ 正常链路上 `ensure` 前那次 `collect` 是空的（一条 spurio
     assert.equal(reclaims.length, 0, `正常链路上不该有 mat/reclaim，实际 ${reclaims.length} 条`)
     // 而两条命令都真跑到了（不是"一条都没起进程"被当成"没东西要收"）。
     assert.equal(rows.filter((e) => e.t === 'run/start').length, 2, '两条 bash 各起过一次')
+  } finally {
+    await b.close()
+  }
+})
+
+test('B10 验收期间盘上被改：写回前复核当场拒，不落发布事实', async () => {
+  const b = await bench()
+  try {
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      oneCall('write', { path: 'a.ts', content: '合并结果\n' }),
+      DONE,
+    ]
+    // 验收那一条直接改真实工作树（夹具里不走沙箱）：模拟“验收跑着，人改了文件”。
+    await assert.rejects(
+      () =>
+        runRound({
+          ...depsOf(b, scriptedModel(scripts)),
+          specsOf: () => [
+            {
+              assertion: { action: 'ok', name: '改盘', expect: 0 } as never,
+              argv: ['/bin/sh', '-c', `printf 'user\n' >> '${b.root}/a.ts'`],
+              env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+            },
+          ],
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof RoundRunError, `该是 RoundRunError，实得 ${String(err)}`)
+        assert.equal(err.at, 'drift')
+        return true
+      },
+    )
+    const rows = await eventsOf(b.root)
+    assert.equal(rows.filter((e) => e.t === 'merge/publish').length, 0, '拒在写回之前：一条发布事实都不该落')
+    assert.equal(rows.filter((e) => e.t === 'merge/accept').length, 0)
   } finally {
     await b.close()
   }

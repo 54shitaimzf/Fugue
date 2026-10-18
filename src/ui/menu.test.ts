@@ -199,22 +199,27 @@ test('⑤ 面板那一帧：候选排在内容下面 · 选中带记号 · 装�
       height: K,
       menu: { rows: o.rows ?? rows, sel: o.sel ?? 0 },
     }).lines
-  const lines = frame({ sel: 2 })
+  const watchAt = rows.findIndex((r) => r.trimStart().startsWith('watch'))
+  assert.ok(watchAt >= 0, `候选里该有 watch：${rows.join(' | ')}`)
+  // **只筛出 watch 那一条**：全量候选的排序与窗的滚动不在这条断言的范围内；这里量的是
+  // “选中的那一条带记号、在框里、没撑破框”。
+  const only = frame({ rows: cmdRows('/watch'), sel: 0 })
+  const lines = frame()
   // 选中的记号**从字形档推**（第二幕 ⑤ 起那是 `▶`）：手抄一个字形，换档那天这条断言不跟动。
   const g = glyphs()
   const picked = `${g.sel} watch`
-  assert.ok(lines.some((l) => l.includes(picked)), `选中的那一条带记号：\n${lines.join('\n')}`)
+  assert.ok(only.some((l) => l.includes(picked)), `选中的那一条带记号：\n${only.join('\n')}`)
   assert.ok(lines.some((l) => l.includes('status')), '候选那几行在面板里')
   // 候选排在内容下面（挨着框底），而且**没有把框撑破**。
-  const at = lines.findIndex((l) => l.includes(picked))
-  assert.ok(at > 0 && at < lines.length - 1, `候选夹在框里面：第 ${at + 1} 行 / 共 ${lines.length} 行`)
-  for (const l of lines) assert.equal([...l].length > 0, true)
-  assert.ok(lines.some((l) => l.includes('还有')), `30 条装不下，要说还剩几条：\n${lines.join('\n')}`)
+  const at = only.findIndex((l) => l.includes(picked))
+  assert.ok(at > 0 && at < only.length - 1, `候选夹在框里面：第 ${at + 1} 行 / 共 ${only.length} 行`)
+  for (const l of only) assert.equal([...l].length > 0, true)
+  assert.ok(lines.some((l) => l.includes('还有')), `34 条装不下，要说还剩几条：\n${lines.join('\n')}`)
   assert.ok(lines.some((l) => l.includes('（没有匹配的）')) === false, '有候选时不说"没有匹配的"')
   const none = frame({ rows: [] })
   assert.ok(none.some((l) => l.includes('（没有匹配的）')), `一条都没有时要说出来：\n${none.join('\n')}`)
   // 纯：同一份输入两次折出来逐字节相同。
-  assert.deepEqual(frame({ sel: 2 }), lines, '同一份输入两次折出来逐字节相同')
+  assert.deepEqual(frame({ sel: watchAt }), frame({ sel: watchAt }), '同一份输入两次折出来逐字节相同')
   // 选中的那一条一定看得见（窗跟着选中走）。
   const last = frame({ sel: rows.length - 1 })
   assert.ok(last.some((l) => l.includes(`${g.sel} `)), '选到最后一条时它也在窗里')

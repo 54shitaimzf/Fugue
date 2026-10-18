@@ -272,16 +272,20 @@ export async function recoverOf(deps: RecoveryDeps): Promise<RecoveryReport | nu
   // 一份"推进不能盖掉"的内容。
   const userChanged: RelPath[] = []
   if (base !== null) {
+    const seen = new Set<RelPath>()
     for (const [p, l] of disk) {
       const b = base.get(p)
       const t = target.get(p)
       const sameB = b !== undefined && b.hash === l.hash && b.mode === l.mode
       const sameT = t !== undefined && t.hash === l.hash && t.mode === l.mode
-      if (!sameB && !sameT) userChanged.push(p)
+      if (!sameB && !sameT) {
+        userChanged.push(p)
+        seen.add(p)
+      }
     }
     // 盘上被删掉、而发布前与目标都还留着的路径：也是用户的删除，不能当"没写回"。
     for (const p of base.keys()) {
-      if (!disk.has(p) && target.has(p)) userChanged.push(p)
+      if (!disk.has(p) && target.has(p) && !seen.has(p)) userChanged.push(p)
     }
   }
   userChanged.sort()
