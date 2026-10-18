@@ -661,7 +661,9 @@ export function openStage(deps: StageDeps): Stage {
     // 当前反馈里（与 `round work` 的守卫读同一份发布事实）。收尾之后这一行自然消失。
     const openPublish = openPublishOf(deps.rows().map(r => r.e))
     const recovery = openPublish === null ? [] : [
-      `上一次发布没收尾（${openPublish.phase === 'begin' ? '写回中途' : '写回已落、接受未落'}）：跑 fugue recover 看实际状态；不会自动重放写。`,
+      openPublish.phase === 'begin'
+        ? '上一次发布没收尾（写回中途）：写回可能停在半路，不会自动重放。跑 fugue recover 看实际状态。'
+        : '上一次发布没收尾（写回已落、接受未落）：不会自动重放。跑 fugue recover 看实际状态。',
     ]
     const feedbackRows = [...feedback, ...recovery.filter(line => !feedback.includes(line))]
     // 阅读面那一栏（`T9`，排在内容那一栏最下面）：**开着才占地方**。三面是从 `readState` 排的版

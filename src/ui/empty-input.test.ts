@@ -37,7 +37,7 @@ test('首次输入只展示当前邀请，就近且没有空框或重复等待�
  }
  setGlyphTier('box')
  const f=frameOf({...empty(),feedback:['执行入口不可用。']})
- assert.deepEqual(f.lines.filter(s=>s.trim()!=='').map(s=>s.trim()),[prompt,'系统 · 执行入口不可用。'])
+ assert.deepEqual(f.lines.filter(s=>s.trim()!=='').map(s=>s.trim()),[prompt,'! 执行入口不可用。'])
  assert.ok(f.roles.slice(-2).every(r=>r==='instruction'),'当前问题必须在输入附近可见')
  for(const operationArea of [false,undefined]){const o={...empty(),operationArea};assert.deepEqual(frameOf(o),frameOf({...o,operationArea:false}));assert.ok(text(frameOf(o)).includes('先查看计划'))}
  for(const extra of [{task:undefined},{snapshot:{...statusOf([]),events:1}},{read:{rows:['完整原文'],top:0,heading:'当前记录'}},{menu:{rows:['帮助'],sel:0}},{bottom:{rows:['未知操作'],keep:1}},{nav:{rows:['已有执行者'],sel:0}}]){

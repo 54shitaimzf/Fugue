@@ -41,7 +41,12 @@ test('发布没收尾时 Stage 把事实与下一步放进当前反馈；收尾�
     assert.ok(begin.some(l => l.includes('fugue recover')), '要给出下一步（诊断入口）')
     assert.ok(!begin.some(l => l.includes('已自动') || l.includes('重放完成')), '不许声称自动补齐')
     assert.ok(shown().includes(notice), '这一行要真的印到屏上')
-    assert.ok(shown().includes('系统'), '反馈沿用既有角色，不另加一层说明')
+    assert.ok(shown().includes('! 上一次发布'), '反馈带注意力标记，不另加“系统”身份词')
+    assert.ok(!shown().includes('系统 · '), '身份词不上屏')
+    const tall = session.panel({ columns: 120, height: 40 }).rows
+    assert.ok(tall.findIndex((l) => l.startsWith('┌')) >= 20, '启动反馈贴着输入，不在顶上留一屏空白')
+    const narrow = session.panel({ columns: 40, height: 40 }).rows.join('\n')
+    assert.ok(narrow.includes('! 上一次发布') && narrow.includes('不会自动重放') && narrow.includes('recover 看实际状态'), '窄屏折行后事实仍在')
 
     // 写回已落、接受未落：状态词要跟着事实走，不能仍说“写回中途”。
     const done = publish('done', 2)

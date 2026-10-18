@@ -684,7 +684,12 @@ export function frameOf(o: FrameInput): Frame {
       : (view === 'progress' ? body.left : body.right).map((l) => ({ l, role: 'body' as const }))
   const bodyRows = [...taskBodyRows,
     ...(o.operationArea === true && view === 'chat' && !readingOn && !foregroundMenu && o.menu === undefined
-      ? (o.feedback ?? []).filter(l => !issueOn || o.runIssue!.feedback !== true || l !== o.runIssue!.text + WORDS.runWritebackGuide).map(l => ({ l: `系统 · ${l}`, role: 'instruction' as const })) : []),
+      ? (o.feedback ?? []).filter(l => !issueOn || o.runIssue!.feedback !== true || l !== o.runIssue!.text + WORDS.runWritebackGuide)
+        .flatMap(l => {
+          // `! ` 是行首标记：先按文字折行，再贴回第一行；续行缩进两格。
+          const parts = wrap(l, Math.max(1, inner - 2))
+          return parts.map((line, i) => ({ l: i === 0 ? `! ${line}` : `  ${line}`, role: 'instruction' as const }))
+        }) : []),
   ]
   let rowAt = 0
   const rows = bodyRows.flatMap((one) => {
@@ -916,7 +921,10 @@ export function frameOf(o: FrameInput): Frame {
   const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length + gateNotice.length
   // 保留整窗容量与固定操作区；有余量时让当前任务从顶部展开。
   // 已知空会话和可信任务可移动留白；阅读、菜单、二级面及坏操作元数据沿用原排法。
-  const nearby = o.operationArea === true && !readingOn && dropped === 0 && o.menu === undefined && view === 'chat' && (taskStatus || emptyContext)
+  // 已有记录、但当前没有任务时（例如启动时就看见一条没收尾的发布）：反馈也贴着输入，
+  // 不在顶上留一整屏空白；阅读、菜单、坏操作元数据仍沿用原排法。
+  const noTask = o.task !== undefined && o.task.round === null && o.task.state === null && o.task.rows.length === 0
+  const nearby = o.operationArea === true && !readingOn && dropped === 0 && o.menu === undefined && view === 'chat' && (taskStatus || emptyContext || noTask)
     && (o.bottom === undefined || operationStatus)
   const spare = Math.max(0, height - fixed)
   // 真实交互候选块的余量留在框外；不限制正文容量，输入仍在原位置。
