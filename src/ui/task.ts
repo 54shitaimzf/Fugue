@@ -54,17 +54,26 @@ function goalOf(body: string): string {
   return clean(typeof value === 'string' ? value : body)
 }
 // JSON tasks use the canonical draft validator; prose and non-JSON fences stay intact.
+// The section scaffolding (`## 第 N 项`) is a machine skeleton: on the human face it becomes a
+// numbered purpose line, so a first-time reader sees what the batch will do instead of raw markdown.
 function draftPreview(body: string): string | undefined {
   if (!body.includes('\x60\x60\x60')) return undefined
   try {
     const draft = draftOf(body)
     let at = 0
-    const shown = body.replace(/\x60{3}([A-Za-z0-9_-]*)[ \t]*\r?\n[\s\S]*?\x60{3}/g, (block, language: string) => {
-      if (language.toLowerCase() !== 'json') return block
-      const section = draft.sections[at++]
-      return section === undefined ? block : (section.kind === 'investigate' ? '调查：' + section.question : '实现：' + section.goal)
-    })
-    return at === draft.sections.length ? '模型 · 任务草案\n' + clean(shown) : undefined
+    const shown = body
+      .replace(/^[ \t]*#{1,6}[^\n]*\r?\n+(?=\x60{3}json\b)/gm, '')
+      .replace(/\x60{3}([A-Za-z0-9_-]*)[ \t]*\r?\n[\s\S]*?\x60{3}/g, (block, language: string) => {
+        if (language.toLowerCase() !== 'json') return block
+        const section = draft.sections[at]
+        if (section === undefined) return block
+        at += 1
+        const purpose = section.kind === 'investigate' ? '调查：' + section.question : '实现：' + section.goal
+        return `${at}. ${purpose}`
+      })
+    return at === draft.sections.length
+      ? '模型 · 任务草案\n' + clean(shown.replace(/\n{2,}(?=\d+\. )/g, '\n').replace(/(\d+\. [^\n]*)\n{2,}/g, '$1\n'))
+      : undefined
   } catch { return undefined }
 }
 export function taskOf(rows: readonly StatusRow[], focus: string | null = null, full = false, changes?: CommitChanges): TaskFace {

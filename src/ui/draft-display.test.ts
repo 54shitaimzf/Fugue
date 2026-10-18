@@ -31,6 +31,9 @@ test('canonical valid draft has all human purposes while original prose, other c
   assert.ok(model.preview!.includes('# 原说明标题'));assert.ok(model.preview!.includes('最后的解释不删。'))
   assert.ok(model.preview!.includes(fence+'python\nprint("示例仍在")\n'+fence))
   assert.ok(model.preview!.includes('调查：确认保留范围'))
+  assert.ok(model.preview!.includes('1. 调查：确认保留范围'),'purposes are numbered in batch order')
+  assert.ok(!model.preview!.includes('## 第'),'the markdown section skeleton stays off the human face')
+  assert.ok(!model.preview!.includes('r1.implement'),'contract ids stay off the human face')
   for(let i=0;i<count-1;i++)assert.ok(model.preview!.includes('实现：更新文件'+i),'all purposes remain; no three-item cap')
   assert.ok(!model.preview!.includes('ownedPaths'))
   const full=taskOf(rows,null,true).rows.find(r=>r.role==='model')!
