@@ -11,6 +11,7 @@
 // 一步，也是唯一需要保证顺序的一步；另外两步归 M1 与 M2。
 import type { FileHandle } from 'node:fs/promises'
 import { mkdir, open, readFile, readdir, stat } from 'node:fs/promises'
+import { readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { assertIdent } from '../identity.ts'
 import { clockOf } from '../clock.ts'
@@ -169,24 +170,34 @@ async function readWriterUncached(root: string, w: WriterId): Promise<Row[]> {
   return parseWriterText(w, text)
 }
 
-/** 枚举全部 writer。**排序**，好让 (seq, writer) 的合并序不依赖目录的枚举顺序。 */
-async function listWriters(root: string): Promise<WriterId[]> {
+/** 递归枚举日志目录里的全部 writer（日志文件名去掉 `.jsonl`）。**排序**。
+ *
+ * `log/agent/r1/1.jsonl` 这种嵌套 writer 与第一层的 `round.jsonl` 走同一份清单——
+ * 日志枚举只有这一处（批次的代、`writers()`、读侧合并都读它），不另猜目录结构。
+ * 目录不存在 = 空账；**读不动（权限 · I/O）照旧抛**，不冒充空账。
+ */
+export function logFileNamesOf(root: string): WriterId[] {
   const out: string[] = []
-  const walk = async (dir: string, prefix: string): Promise<void> => {
+  const walk = (dir: string, prefix: string): void => {
     let entries
     try {
-      entries = await readdir(dir, { withFileTypes: true })
+      entries = readdirSync(dir, { withFileTypes: true })
     } catch (err) {
       if ((err as { code?: string }).code === 'ENOENT') return
       throw err
     }
     for (const e of entries) {
-      if (e.isDirectory()) await walk(join(dir, e.name), prefix + e.name + '/')
+      if (e.isDirectory()) walk(join(dir, e.name), prefix + e.name + '/')
       else if (e.name.endsWith('.jsonl')) out.push(prefix + e.name.slice(0, -'.jsonl'.length))
     }
   }
-  await walk(logDir(root), '')
-  return out.sort()
+  walk(logDir(root), '')
+  return out.sort() as WriterId[]
+}
+
+/** 枚举全部 writer。**排序**，好让 (seq, writer) 的合并序不依赖目录的枚举顺序。 */
+async function listWriters(root: string): Promise<WriterId[]> {
+  return logFileNamesOf(root)
 }
 
 /**

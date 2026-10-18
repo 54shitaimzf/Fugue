@@ -12,9 +12,8 @@
 //   · **append-only 的文件只增**：`size` 变了一定是有人写过；同一毫秒里两次写入由 `size` 分开。
 //   · **可弃可重算**：它不落盘、不进视图、不进事件、不写账——换一个进程重算，读出来的东西
 //     逐字节不变（§ 9.11 派生物那一段的共同性质）。
-import { readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
-import { logDir } from './log.ts'
+import { statSync } from 'node:fs'
+import { logFileNamesOf, logFileOf } from './log.ts'
 
 /** 一批只读批次的失败：**期间有写入**——整批作废，重开一批。 */
 export class BatchStaleError extends Error {
@@ -37,20 +36,18 @@ export class BatchStaleError extends Error {
  * 空账（一条日志都没有）给空串——**空串是一个代**，不是「没有代」。
  */
 export function generationOf(root: string): string {
-  let names: string[]
-  try {
-    names = readdirSync(logDir(root))
-  } catch {
-    return ''
-  }
+  // **共用真正的日志枚举**（B07）：批次原先只看第一层 `.jsonl`，`agent/r1/1.jsonl` 这种嵌套
+  // writer 增长时代不变，批次于是接受前后跨代的结果。这里不再抄一遍目录规则。
+  const names = logFileNamesOf(root)
   const rows: string[] = []
-  for (const name of names.filter((n) => n.endsWith('.jsonl')).sort()) {
+  for (const name of names) {
     try {
-      const st = statSync(join(logDir(root), name))
-      rows.push(`${name}:${st.size}:${st.mtimeMs}`)
-    } catch {
-      // 中途被删（`dispose` 那种）：**这一份的代就算「刚变过」**，整批照旧作废。
-      rows.push(`${name}:gone`)
+      const st = statSync(logFileOf(root, name))
+      rows.push(`${name}.jsonl:${st.size}:${st.mtimeMs}`)
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'ENOENT') throw err
+      // 枚举与 stat 之间被删（`dispose` 那种）：**这一份的代就算“刚变过”**，整批照旧作废。
+      rows.push(`${name}.jsonl:gone`)
     }
   }
   return rows.join(',')
