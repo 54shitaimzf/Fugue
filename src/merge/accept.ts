@@ -308,7 +308,6 @@ export async function advance(deps: AdvanceDeps, commit: CommitId): Promise<Adva
         // **用 rmdirSync**：`rmSync(child, {force:true})` 对目录不是正确的“删空目录”操作。
         try {
           rmdirSync(child)
-          removed.push(rel)
         } catch (err) {
           const code = (err as { code?: string }).code
           // 并发下被别的进程删掉（ENOENT）或这一层刚长出内容（ENOTEMPTY）都不是错；
