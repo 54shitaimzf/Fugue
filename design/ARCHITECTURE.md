@@ -2627,7 +2627,7 @@ round.goal      用户要什么（一句话）
 
 | 模块 | 当前 | **演进触发条件（可观测）** | 演进方式 | 前提 |
 |---|---|---|---|---|
-| `M1 truth` | TS + git CLI | 每轮 git 调用次数 × 单次开销超过 1 s——**实测基线 1.0–1.5 ms/次，故约 700–1000 次/轮** | `gix`（gitoxide）经 napi-rs | `RefName` / `BlobId` / `TreeId` 冻结 |
+| `M1 truth` | TS + git CLI | 每轮 git 调用次数 × 单次开销超过 1 s——**实测基线 1.0–1.5 ms/次，故约 700–1000 次/轮** | `gix`（gitoxide）经 `fugue-core` sidecar（子进程 · 不走 napi-rs） | `RefName` / `BlobId` / `TreeId` 冻结 |
 | `M4 materialize` | TS `fs` + overlayfs | **不演进**：fork 已 O(1)（3–5 ms），delta 落地 1.67 ms/文件，两项都已低于可见延迟 | — | — |
 | `M2 view` | TS Map | `grep` 走视图侧的单次耗时进入可见延迟 | Rust + `ignore` crate | `Delta` 冻结 |
 | `M3 roots` | TS 路径运算 | fs 调用次数 × 单次耗时可见 | Rust（纯函数，迁移最轻） | `Roots` 冻结 |
@@ -2636,7 +2636,7 @@ round.goal      用户要什么（一句话）
 | `M7 policy` | TS + 原生 runner | 沙箱部分已原生 | — | — |
 | `M10 assemble` | **TS** | **不演进**（冷路径） | — | — |
 
-**演进顺序**：`M1 → M2 → M3 → M5`。**`M1` 排第一**——它的收益最确定，也不依赖其他模块。
+**演进顺序**：`M1 → M2 → M3 → M5`。**`M1` 排第一**——它的收益最确定，也不依赖其他模块。**`M1` 的载体是 `fugue-core` sidecar（子进程），不走 napi-rs；QuickJS PTC 工作进程与有 Git 写权限的服务分开（不同进程/权限/寿命），TS 前处理继续留 Node。**
 
 实测：ext4 上单次 plumbing 调用 **1.0–1.5 ms**（§ 8.2 的同一组基线），其中绝大部分是进程创建——**`rev-parse` 与 `cat-file blob` 的耗时几乎相同（0.99 ms 对 1.06 ms）**：前者只解析一个 ref，后者要把一个对象真正读出来，工作量差得远，耗时却一致。代价因此不在做的工作上，而在**启动一个进程**。一个 agent 一轮写数百个文件，纯 spawn 开销即达秒级，正好压在触发条件上。**这不是 CPU 问题，是进程创建问题**——在 Node 内只能靠批量化绕开（§ 8.2），在 `gix` 中是函数调用。
 
