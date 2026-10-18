@@ -16,7 +16,7 @@ function rig(keymap?:()=>Keymap){
  return {stage,notes,presses,signals,running:(v:boolean)=>{running=v},runAvailable:(v:boolean)=>{available=v},stopReply:(v:boolean)=>{acceptStop=v},last:(v:readonly string[])=>{last=v},aborts:()=>aborts,redraws:()=>redraws}
 }
 const unknownWriteback=(notes:readonly string[])=>{
- const body=notes.join('\n');assert.match(body,/文件是否已写回，请查看进展与记录/)
+ const body=notes.join('\n');assert.match(body,/文件写没写回，以记录里的写回结果为准/)
  assert.doesNotMatch(body,/本次.*未写回|结果已写回|没有改动.*文件|账照写|写到哪算哪/)
 }
 test('startup failures retain the original reason and actual command, offer a next step, and never claim execution succeeded',()=>{

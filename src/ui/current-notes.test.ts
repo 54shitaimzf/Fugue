@@ -63,7 +63,7 @@ test('necessary current feedback has its own role, persists while merely redrawi
  r.tui.note('r1: go Planning→Working\nCLI原文结束')
  r.stage.onRunDone({code:7,why:null})
  const panel=r.tui.session.panel({columns:192,height:45}),text=panel.rows.join('\n')
- assert.match(text,/执行失败（退出码 7）/);assert.match(text,/文件是否已写回/);assert.ok(panel.roles!.includes('instruction'))
+ assert.match(text,/执行失败（退出码 7）/);assert.match(text,/以记录里的写回结果为准/);assert.ok(panel.roles!.includes('instruction'))
  const pending=r.stage.view().feedback;assert.ok(pending?.length)
  r.tui.redraw();assert.deepEqual(r.stage.view().feedback,pending,'painting does not silently consume feedback')
  r.stage.onAction({action:'read'})

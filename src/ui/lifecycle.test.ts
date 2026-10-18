@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { statusOf } from '../probe/status.ts'
 import type { StatusRow } from '../probe/status.ts'
 import { chatOf, footerOf, frameOf } from './frame.ts'
+import { taskOf } from './task.ts'
 import { permanentLinesOf } from './stream.ts'
 import { openSession } from './follow.ts'
 
@@ -50,7 +51,7 @@ test('verification retry and exhausted retry both report that this result was no
     const session=openSession();session.push(rows)
     const shown=text(session.frame({columns:40,height:10}))
     assert.ok(shown.includes('验收未通过'));assert.ok(shown.includes('本次结果未写回工作区'))
-    assert.ok(shown.includes('查看进展与记录'))
+    assert.ok(shown.includes('说一句想怎么改'))
     assert.ok(!shown.includes('工作区已更新'))
     assert.ok(permanentLinesOf(rows)[0]!.includes('本次结果未写回工作区'))
   }
@@ -59,7 +60,9 @@ test('verification retry and exhausted retry both report that this result was no
 test('an abort outside verification never claims that all existing files were unchanged',()=>{
   const rows=[transition('Working','Aborted')]
   const shown=text(frameOf({snapshot:statusOf(rows),width:40,height:10}).lines)
-  assert.ok(shown.includes('中止'))
+  assert.ok(shown.includes('中止'));assert.ok(shown.includes('部分改动'))
+  const withTask=text(frameOf({snapshot:statusOf(rows),task:taskOf(rows),width:40,height:10}).lines)
+  assert.ok(withTask.includes('部分改动')&&withTask.includes('以记录为准'),'the task face carries the same partial-change warning')
   assert.ok(!shown.includes('文件未改'));assert.ok(!shown.includes('本次结果未写回'))
 })
 

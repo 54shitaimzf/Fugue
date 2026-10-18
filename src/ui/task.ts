@@ -165,7 +165,7 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
   }
   // 实际动作已经说明当前进展；失败、验收与写回结论仍优先。
   const actionStatus = notice === null && state === 'Working' && action !== '' && action !== problem
-  const status = notice?.text ?? (actionStatus ? action : state === null ? '当前任务记录' : state === 'Planning' ? WORDS.planPreparing : state === 'Working' && issued ? '这批任务已确认，结果尚未写回。' : roundLabelOf(state, from))
+  const status = notice?.text ?? (actionStatus ? action : state === null ? '当前任务记录' : state === 'Planning' ? WORDS.planPreparing : state === 'Aborted' ? WORDS.abortGuide : state === 'Working' && issued ? '这批任务已确认，结果尚未写回。' : roundLabelOf(state, from))
   result.push({ text: status, role: notice?.role ?? (actionStatus ? 'instruction' : state === 'Aborted' ? 'refuse' : 'system') })
   result.push(...changeRows)
   if (notice?.text === WORDS.verifyNotWritten) result.push({ text: WORDS.verifyFailedGuide, role: 'instruction' })
