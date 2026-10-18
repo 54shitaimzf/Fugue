@@ -907,6 +907,41 @@
       }
     },
     {
+      "title": "merge/publish",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "round",
+        "commit",
+        "phase"
+      ],
+      "properties": {
+        "t": {
+          "const": "merge/publish"
+        },
+        "round": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "begin",
+            "done"
+          ]
+        },
+        "ref": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "string"
+        }
+      }
+    },
+    {
       "title": "merge/accept",
       "type": "object",
       "additionalProperties": false,

@@ -72,6 +72,9 @@ export const FAMILY_KIND: Readonly<Record<EventFamily, FamilyKind>> = {
   'agent/handoff': 'permanent',
   'merge/attempt': 'permanent',
   'merge/accept': 'permanent',
+  // **发布那一条只进瞬态区**：它是写回过程的读数，收尾之后由 `merge/accept` 说结果；
+  // 中断时由 TUI 的恢复提示单独读（`recovery/state.ts` 的 `openPublishOf`）。
+  'merge/publish': 'transient',
   'bound/deny': 'permanent',
   signal: 'permanent',
   // 二 · 一步一条：调用与前缀装配。

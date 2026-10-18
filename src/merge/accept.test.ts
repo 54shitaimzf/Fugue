@@ -246,9 +246,9 @@ test('跑不起来那一档：命令不在 → unrunnable，不进"没通过"的
     assert.match(out.report.results[1].note, /127/)
 
     // `verify` 单独用（它收不到 `realRoot`）：只读那一半也能跑。
-    const only = verify(mat, [PASS_SPEC('过', ['/bin/sh', '-c', 'exit 0'])])
+    const only = await verify(mat, [PASS_SPEC('过', ['/bin/sh', '-c', 'exit 0'])])
     assert.equal(only.ok, true)
-    const none = verify(mat, [])
+    const none = await verify(mat, [])
     assert.equal(none.ok, false, '一条断言都没有 = 没量到，不算通过')
   } finally {
     await t.close()
@@ -308,6 +308,55 @@ test('④ 目录换成软链：移除旧目录、不跟随其中的软链，重�
   }
 })
 
+
+test('B02 祖先转换：文件/链接换成目录，旧链接不把写带出树', async () => {
+  const { real, store } = scratch()
+  const t = openTruth(store)
+  try {
+    // 一 · 普通文件挡在祖先上：目标里它变成目录。
+    writeFileSync(join(real, 'plain'), '旧文件\n')
+    // 二 · 软链挡在祖先上，且指向树外：目标里它变成目录，写不能落到树外。
+    const outside = join(real, '..', 'outside-b02')
+    mkdirSync(outside, { recursive: true })
+    writeFileSync(join(outside, 'sentinel.txt'), '树外哨兵：一个字节都不能变\n')
+    symlinkSync(outside, join(real, 'linkdir'))
+    // 三 · 软链叶子换成普通文件：旧链自己要被移除，被指向的那份不动。
+    writeFileSync(join(outside, 'target.txt'), '树外目标：一个字节都不能变\n')
+    symlinkSync(join(outside, 'target.txt'), join(real, 'linkfile'))
+
+    const commit = await commitOf(
+      t,
+      {
+        'plain/x.txt': '文件换成目录之后的 x\n',
+        'linkdir/y.txt': '链接换成目录之后的 y\n',
+        linkfile: '普通文件内容\n',
+      },
+      [],
+      '祖先类型转换',
+    )
+    const out = await advance({ truth: t, realRoot: real }, commit)
+
+    assert.equal(lstatSync(join(real, 'plain')).isDirectory(), true)
+    assert.equal(readFileSync(join(real, 'plain', 'x.txt'), 'utf8'), '文件换成目录之后的 x\n')
+    assert.equal(lstatSync(join(real, 'linkdir')).isDirectory(), true)
+    assert.equal(lstatSync(join(real, 'linkdir')).isSymbolicLink(), false)
+    assert.equal(readFileSync(join(real, 'linkdir', 'y.txt'), 'utf8'), '链接换成目录之后的 y\n')
+    assert.equal(lstatSync(join(real, 'linkfile')).isFile(), true)
+    assert.equal(readFileSync(join(real, 'linkfile'), 'utf8'), '普通文件内容\n')
+    // **树外哨兵不变**：旧软链不被跟随，也不被用它当祖先写出去。
+    assert.equal(readFileSync(join(outside, 'sentinel.txt'), 'utf8'), '树外哨兵：一个字节都不能变\n')
+    assert.equal(readFileSync(join(outside, 'target.txt'), 'utf8'), '树外目标：一个字节都不能变\n')
+    assert.deepEqual(out.written.sort(), ['linkdir/y.txt', 'linkfile', 'plain/x.txt'])
+
+    // 第二趟：全部一致，不重写、不改 mtime。
+    const before = fingerprintAll(real)
+    const again = await advance({ truth: t, realRoot: real }, commit)
+    assert.deepEqual(again.written, [])
+    assert.equal(fingerprintAll(real), before)
+  } finally {
+    await t.close()
+  }
+})
 
 test('保留前缀的祖先不能换成叶子：软链与普通文件都在任何写入之前拒绝', async () => {
   for (const mode of [0o120000, 0o100644]) {

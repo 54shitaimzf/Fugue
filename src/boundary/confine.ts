@@ -132,12 +132,17 @@ export interface ConfineInput {
    * 一处解析（`resolvePolicy`），命令行与日志两处读的是同一份；这里不另算一遍。
    */
   readonly policy: Policy
+  /**
+   * **挂哪一棵树**（缺省本 agent 的物化树）。验收门跑在另铺的一棵树上，它必须自己说出来；
+   * 不说就是 `roots.mergedRoot(agent)`——agent 执行那条路的既有形状。
+   */
+  readonly tree?: string
 }
 
 export function confine(i: ConfineInput): ConfinedArgv {
   const c = i.policy.coords
   const reach = i.policy.reach
-  const merged = i.roots.mergedRoot(i.agent)
+  const merged = i.tree ?? i.roots.mergedRoot(i.agent)
   const temp = i.roots.tempRoot(i.agent)
   const cache = cacheLayoutOf(i.roots, i.agent)
   const writable = i.policy.mode === 'workspace-write'

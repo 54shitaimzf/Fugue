@@ -16,7 +16,7 @@
 //
 // 板子与 `round/driver.test.ts` 同一套（真 git 仓库 · 真日志 · 真视图 · 真 fork）；模型是脚本化的，不联网。
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -478,7 +478,7 @@ test('⑩ 正常链路上 `ensure` 前那次 `collect` 是空的（一条 spurio
   const b = await bench()
   try {
     // 两条命令都只读：既不改视图（⑥ 量过），也不落 `mat/reclaim`（这一条量它）。
-    // 若那一次 collect 会"顺手报一条"，两趟之后这里就会多出两条。
+    // 若那一次 collect 会“顺手报一条”，两趟之后这里就会多出两条。
     const scripts: readonly (readonly ModelEvent[])[] = [
       oneCall('bash', { command: '/bin/cat README.md' }),
       oneCall('bash', { command: '/bin/cat a.ts' }),
@@ -492,6 +492,40 @@ test('⑩ 正常链路上 `ensure` 前那次 `collect` 是空的（一条 spurio
     // 而两条命令都真跑到了（不是"一条都没起进程"被当成"没东西要收"）。
     assert.equal(rows.filter((e) => e.t === 'run/start').length, 2, '两条 bash 各起过一次')
   } finally {
+    await b.close()
+  }
+})
+
+test('B09 最终验收只跑一遍：断言执行一次 · 发布事实两条 · 接受事件一条', async () => {
+  const b = await bench()
+  const dir = mkdtempSync(join(tmpdir(), 'fugue-b09-'))
+  const counter = join(dir, 'count')
+  try {
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      oneCall('write', { path: 'a.ts', content: '改过的一份\n' }),
+      DONE,
+    ]
+    const run = await runRound({
+      ...depsOf(b, scriptedModel(scripts)),
+      checkDrift: false,
+      // 一条会留下次数痕迹的断言。只在**最终验收**那一遍跑，不在别处跑。
+      specsOf: () => [
+        {
+          assertion: { action: 'ok', name: '只跑一遍', expect: 0 } as never,
+          argv: ['/bin/sh', '-c', `echo x >> '${counter}'`],
+          env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+        },
+      ],
+    })
+    assert.equal(run.report.ok, true, `验收该过：${JSON.stringify(run.report)}`)
+    assert.equal(readFileSync(counter, 'utf8').trim().split('\n').length, 1, '最终验收被执行了两遍（B09）')
+    const rows = await eventsOf(b.root)
+    assert.equal(rows.filter((e) => e.t === 'merge/publish').length, 2, '发布事实该是 begin + done 各一条')
+    assert.equal(rows.filter((e) => e.t === 'merge/accept').length, 1, '接受事件一条')
+    const phases = rows.filter((e) => e.t === 'merge/publish').map((e) => (e as { phase: string }).phase)
+    assert.deepEqual(phases, ['begin', 'done'], '发布事实的次序就是真发生的次序')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
     await b.close()
   }
 })

@@ -49,6 +49,7 @@ export function createExecutor(opts: ExecOptions = {}): Executor {
         let out = ''
         let err = ''
         let settled = false
+        let spawnError: string | undefined
         let timer: NodeJS.Timeout | null = null
 
         const finish = (exit: number): void => {
@@ -63,6 +64,7 @@ export function createExecutor(opts: ExecOptions = {}): Executor {
             enforcement: spec.confined.enforcement,
             stdout: out,
             stderr: err,
+            ...(spawnError === undefined ? {} : { spawnError }),
           })
         }
         function kill(): void {
@@ -80,7 +82,10 @@ export function createExecutor(opts: ExecOptions = {}): Executor {
           opts.onChunk?.('stderr', s)
         })
         // 起不来（比如 bwrap 不在）也走同一条收尾：退出码非 0，那几句话进 stderr。
+        // **`spawnError` 把「没起来」单列一档**：验收门靠它把「跑不起来」与「跑过但没过」
+        // 分开（§ 8.12 末段的三档）；不给这一栏，命令不在会被读成一次失败的验收。
         child.on('error', (e: Error) => {
+          spawnError = e.message
           err += `${e.message}\n`
           finish(1)
         })

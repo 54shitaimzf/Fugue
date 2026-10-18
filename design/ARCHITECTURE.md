@@ -268,6 +268,8 @@ type LogEvent =
   | { t: 'contract/issue'; round: RoundId; contract: ContractId; owner: AgentId; paths: RelPath[]
                           digest: string; body: string }
   | { t: 'merge/attempt';  round: RoundId; branches: BranchId[]; conflicts: number }
+  | { t: 'merge/publish';  round: RoundId; commit: CommitId; phase: 'begin' | 'done'
+                          ref?: RefName; expected?: CommitId }
   | { t: 'merge/accept';   round: RoundId; commit: CommitId; assertions: AssertionResult[] }
   | { t: 'prefix/assemble'; agent: AgentId; zoneAHash: string; zoneBHash: string; zoneCHash: string }
   | { t: 'llm/call';     agent: AgentId; step: StepId; model: ModelId; wire: string

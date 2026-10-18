@@ -6,7 +6,9 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, 
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { BindingError, readBinding } from '../../boundary/binding.ts'
+import { BindingError } from '../../boundary/binding.ts'
+import { probeLayers } from '../../boundary/policy.ts'
+import { assertionSpecsOf } from '../../round/assertions.ts'
 import { actionsTableOf } from '../../round/actions.ts'
 import { ConfigError, getConfig, readConfig } from '../../config.ts'
 import type { ConfigDoc } from '../../config.ts'
@@ -14,7 +16,7 @@ import { identFor } from '../../identity.ts'
 import type { Log } from '../../log/events.ts'
 import { acquireFences } from './fences.ts'
 import type { FenceSet } from './fences.ts'
-import type { AgentId, BranchId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../../terms.ts'
+import type { AgentId, AbsPath, BranchId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../../terms.ts'
 import type { TruthHandle } from '../../truth/truth.ts'
 import type { View } from '../../view/contract.ts'
 import { lowerAt } from '../../view/lower.ts'
@@ -419,9 +421,8 @@ export async function roundRun(
       },
     }
 
-    const specsOf = (c: Contract, agent: AgentId): readonly AssertionRunSpec[] => {
+    const specsOf = (c: Contract, _agent: AgentId, _tree: string): readonly AssertionRunSpec[] => {
       void c
-      void agent
       return assertions.map((a) => {
         const fail = failTarget !== undefined && a.name === failTarget
         return {
@@ -1276,6 +1277,15 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
     const batch = await issuedBatchOf(ctx.log, round)
     // 拿全了再开第一个口——**在读回那一批之后、写任何一个字节之前**。
     fenceSet = acquireFences(root, agentsOfContracts(batch.contracts), { sync: 'each', ...clockOption(flags) })
+    // **验收与 agent 执行同一条路**（B01）：动作声明 · 策略 · 环境 · 沙箱都在
+    // `assertionSpecsOf` 里解析；这里只给它的输入。端口片按日志里 writer 的次序切
+    // （`acquireFences` 已经把每个 agent 的日志口开出来了，名单是齐的）。
+    const writers = (await ctx.log.writers()).slice().sort()
+    const probed = probeLayers(ctx.roots)
+    const portIndexOf = (a: AgentId): number => {
+      const i = writers.indexOf(a)
+      return i < 0 ? writers.length : i
+    }
     // 二 · 接上那条尾巴（与 `round run` 同一个函数）。
     const run = await runIssued(
       {
@@ -1292,7 +1302,14 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
               },
             })
           : stubDriver(stubOfIssued(ctx)),
-        specsOf: specsOfContract(doc),
+        specsOf: (c, _agent, tree) =>
+          assertionSpecsOf([c], {
+            roots: ctx.roots,
+            doc,
+            probed,
+            tree: tree as AbsPath,
+            portIndexOf,
+          }),
         retriesLeft,
         strictMergeGate: flags.has('strict-merge-gate'),
         ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
@@ -1333,28 +1350,6 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
   } finally {
     await fenceSet?.closeAll()
     await ctx.close()
-  }
-}
-
-/**
- * 契约里的断言 → 真起的命令行。**契约只带动作名，argv 从工作区配置来**（架构 § 8.12：
- * "契约不认识命令行"——`Assertion` 只带 `action`，起进程那几样归 `M7` 与 `M5`）。
- *
- * 绑不上就当场拒（`readBinding` 报出那个名字与现有的那几个）：不猜、不补、不拿一条空命令顶。
- * 调查型契约没有断言（它的产物是证据），所以那一档给空数组——不是"少跑了一条"。
- */
-function specsOfContract(doc: ConfigDoc): (c: Contract, agent: AgentId) => readonly AssertionRunSpec[] {
-  return (c) => {
-    const list = c.kind === 'investigate' ? [] : c.assertions
-    return list.map((a) => {
-      const b = readBinding(doc, a.action)
-      return {
-        assertion: a,
-        argv: b.argv,
-        env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/tmp' },
-        ...(b.cwd === '' ? {} : { cwd: b.cwd }),
-      }
-    })
   }
 }
 
