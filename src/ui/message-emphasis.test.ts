@@ -70,9 +70,12 @@ test('current short user messages form a content-sized consistent emphasis block
   assert.equal(dark.replace(/\x1b\[[\d;]*m/g,''),painted(f,undefined));assert.equal(light.replace(/\x1b\[[\d;]*m/g,''),painted(f,undefined));assert.equal(linux.replace(/\x1b\[[\d;]*m/g,''),painted(f,undefined))
   count++
  }}finally{setGlyphTier('box')}
- assert.equal(geometry.digest('hex'),'7e5579adf257272c856223a776d2a1f852d3b5fca6282443aabf3214f35079a6','all six scenes retain every original plain frame field')
- assert.equal(none.digest('hex'),'5148f7dd01a87ede432c3b46335ef15fff328aeb9ac08a0854b555f18ac56988','no-style output is byte-exact with the parent across all scenes')
- assert.equal(attribute.digest('hex'),'030566f3f60b6a9f21ada134dc31dbc6e7ee6e60e2903983c85a5454e26d1f54','the original attribute tier is byte-exact across all scenes')
+ // 字节基线重录（0.5.1）：12 行高的截断不再只把标题拿回来、正文留在中段——同一消息的物理行现在整条回到屏上
+ //（`frame.test.ts` ⑰ 锁住这条）。1260 例里只有 height=12 的 36 例变了；上面那些分配、角色、宽度与强调断言一条没动，
+ // 所以这份基线换的是“截断时印什么”，不是“容量与角色怎么分”。
+ assert.equal(geometry.digest('hex'),'90baac4729348d0f87b2a77828378d34215054067655c49384167431c9d7c4a7','all six scenes retain every original plain frame field')
+ assert.equal(none.digest('hex'),'332cdf85e4b3e1892ef12f5470bf23abb33b01627a5a6b3d3bbdbaa6ad08a5dd','no-style output is byte-exact with the parent across all scenes')
+ assert.equal(attribute.digest('hex'),'efd8ed9229e9f03674d4f1e1fa047fae477f2e9d503a9270d3e887140927dc7f','the original attribute tier is byte-exact across all scenes')
  console.log('message emphasis:cases'+count+';boundedBlocks'+bounded+';oldCells'+pixelCellsOld+';newCells'+pixelCellsNew+';3glyph/7width/5height/plan+plain/6scenes;plain geometry exact;no-style+attribute parent bytes exact;content/roles/capacity exact;dark/light/16 visible bytes exact;all repeated paints0')
 })
 test('unsupported foreground and dense or empty user contexts keep the complete original frame metadata and style bytes',()=>{
@@ -80,6 +83,6 @@ test('unsupported foreground and dense or empty user contexts keep the complete 
  try{for(const c of cases())for(const o of floors(c.base)){
   const f=frameOf(o);legacy.update(JSON.stringify(f));legacy.update(painted(f,undefined));legacy.update(painted(f,themeOf({term:'unknown'})));count++
  }}finally{setGlyphTier('box')}
- assert.equal(legacy.digest('hex'),'e776038cc90d988e62a016d201458c6e92d51f4bdd8289a358c2da3e7edbc61d','readonly/bad operation/secondary/reader/menu/foreign/dense/blank cases preserve complete parent frames and byte floors')
+ assert.equal(legacy.digest('hex'),'03f84135c38e3e0bd612145a77599aef031df21bb4b89b3f53e6699064abb189','readonly/bad operation/secondary/reader/menu/foreign/dense/blank cases preserve complete parent frames and byte floors')
  console.log('message emphasis floors:cases'+count+';complete original frames+none/attribute bytes exact;repeated paints0')
 })

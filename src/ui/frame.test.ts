@@ -641,6 +641,27 @@ test('对话只显示最近汇报；内部编号与调用计数留在进展视�
 })
 
 
+test('⑰ 矮屏截断不拆消息：恢复标题也恢复话本身', () => {
+  // 40×20 上正文放不下，旧逻辑只把“你”那一行拿回来、正文留在被截掉的中段——
+  // 屏上于是是“你” + 一行空白。消息的物理行共享 `headingAt`，整段随标题一起回来。
+  const task = {
+    round: 'r1',
+    state: 'Rebuilding' as const,
+    plan: [],
+    rows: [
+      { text: '正在合并结果，尚待验收与写回。', role: 'system' as const },
+      { text: '你\n修复登录失败时的提示，保留已经输入的账号。', role: 'user' as const },
+      { text: '模型 · 当前理解\n先定位失败路径，再改提示与输入状态。', role: 'model' as const },
+      { text: '模型 · 交接说明\n提示已经就近显示，账号内容保留。', role: 'model' as const },
+    ],
+  }
+  const f = frameOf({ snapshot: snapshotOf(), task, width: 40, height: 20, operationArea: true })
+  const text = f.lines.join('\n')
+  assert.ok(text.includes('你'), '身份标题要在')
+  assert.ok(text.includes('修复登录失败时的提示'), `标题在、话没了：\n${text}`)
+  console.log('⑰ 读数：40×20 截断把整条你消息带回来（标题 + 正文）')
+})
+
 test('持轮者的计划记录不计作运行中的子任务', () => {
   const snapshot = statusOf([{pos:{writer:'round',seq:1},e:{t:'holder/distill',round:'r1',agent:'round',digest:'d',body:'计划'}}] as unknown as StatusRow[])
   assert.equal(footerOf(snapshot), '等待输入')

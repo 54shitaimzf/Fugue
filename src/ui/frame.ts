@@ -824,10 +824,22 @@ export function frameOf(o: FrameInput): Frame {
         const tail = bodyBudget > 3 ? rows.slice(-(bodyBudget - 3)) : []
         const first = tail[0], tailAt = rows.length - tail.length
         // 尾部从消息中间开始时，原有身份标题随正文进入视窗；不改消息原文。
+        // **整条消息一起回来**（B 型观感修正）：只补标题会让“你”后面剩一行空白——
+        // 标题在、话没了，比丢标题更难读。同一 task 行的物理行共享 `headingAt`，按它扫到消息尾。
         if (first?.headingAt !== undefined && first.headingAt < tailAt
           && first.headingAt + first.headingCount! > head.length) {
+          const at = first.headingAt
+          let end = at
+          while (end < rows.length && rows[end]?.headingAt === at) end += 1
+          const message = rows.slice(at, end)
+          // 省一行给下面那条「还有 N 行没印 · 看全」：它始终跟着截断一起出现。
+          const room = bodyBudget - head.length - 1
+          if (message.length <= room) {
+            const rest = rows.slice(Math.max(end, rows.length - (room - message.length)))
+            return [...head, ...message, ...rest]
+          }
           const count = Math.min(first.headingCount!, tail.length)
-          return [...head, ...rows.slice(first.headingAt, first.headingAt + count), ...tail.slice(count)]
+          return [...head, ...rows.slice(at, at + count), ...tail.slice(count)]
         }
         return [...head, ...tail]
       })()

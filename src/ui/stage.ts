@@ -27,10 +27,11 @@ import type { ReadFaceName, ReadState } from './read.ts'
 import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
 import type { LineMode, RunLauncher, RunOutcome } from './run.ts'
-import { innerOf } from './frame.ts'
+import { openPublishOf } from '../recovery/facts.ts'
 import { widthOf } from './glyph.ts'
 import { taskOf } from './task.ts'
 import type { RunIssue } from './task.ts'
+import { innerOf } from './frame.ts'
 import type { ReadPreview } from './frame.ts'
 import type { ImageRequest } from '../serve/image-source.ts'
 import type { PixelImage } from './image-codec.ts'
@@ -654,6 +655,13 @@ export function openStage(deps: StageDeps): Stage {
     // 树那一栏（`T8`，排在最上面）与"切到哪一格"（`focus`：`null` = 整份账）。
     const navRows = navRowsOf(navNodes, navAt, cols())
     const navPart = navRows.length === 0 ? {} : { nav: { rows: navRows, sel: navAt } }
+    // **发布没收尾就先说**（D8 B）：TUI 不自动重放、不假装还在写；只把事实与下一步放到
+    // 当前反馈里（与 `round work` 的守卫读同一份发布事实）。收尾之后这一行自然消失。
+    const openPublish = openPublishOf(deps.rows().map(r => r.e))
+    const recovery = openPublish === null ? [] : [
+      `上一次发布没收尾（${openPublish.phase === 'begin' ? '写回中途' : '写回已落、接受未落'}）：跑 fugue recover 看实际状态；不会自动重放写。`,
+    ]
+    const feedbackRows = [...feedback, ...recovery.filter(line => !feedback.includes(line))]
     // 阅读面那一栏（`T9`，排在内容那一栏最下面）：**开着才占地方**。三面是从 `readState` 排的版
     // （`facesOf` 不再折一次），看到第几行由 `reading.top` 说了算。
     const readPart =
@@ -672,7 +680,7 @@ export function openStage(deps: StageDeps): Stage {
     return {
       ...hintPart,
       ...(gate === null || gate.cards.length === 0 ? {} : { pendingRound: gate.round }),
-      ...(feedback.length === 0 ? {} : { feedback }),
+      ...(feedbackRows.length === 0 ? {} : { feedback: feedbackRows }),
       ...(runIssue === null ? {} : { runIssue }),
       ...(completedChanges === undefined ? {} : { completedChanges }),
       ...navPart,
