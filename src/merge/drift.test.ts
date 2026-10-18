@@ -111,6 +111,29 @@ test('B03 用户删除也是修改：目标还留着就拒，两边都删才放�
   }
 })
 
+test('B03 判据的边界：整棵树一条底路径都不在盘上时按“还没铺”处理，不判用户删除', async () => {
+  const { real, t, base } = await scene({ 'only.txt': '底里唯一的一条\n' })
+  try {
+    rmSync(join(real, 'only.txt'))
+    const target = await commitOf(t, { 'only.txt': '合并要写的那一版\n' }, '目标树')
+    const verdict = await mergeDrift({ truth: t, realRoot: real, base, target })
+    assert.equal(verdict.ok, true, '整棵树还没铺到盘上时，缺文件不是“用户删除”')
+    assert.deepEqual(verdict.drift.userDeleted, [])
+    // 负对照：盘上还有一条底里的路径时，缺的那一条就算用户的删除。
+    writeFileSync(join(real, 'only.txt'), '底里唯一的一条\n')
+    rmSync(join(real, 'only.txt'))
+    mkdirSync(join(real, 'other'), { recursive: true })
+    writeFileSync(join(real, 'other', 'keep.txt'), '另一条在盘上\n')
+    const base2 = await commitOf(t, { 'only.txt': '底里唯一的一条\n', 'other/keep.txt': '另一条在盘上\n' }, '底 2')
+    const target2 = await commitOf(t, { 'only.txt': '合并要写的那一版\n', 'other/keep.txt': '另一条在盘上\n' }, '目标 2')
+    const again = await mergeDrift({ truth: t, realRoot: real, base: base2, target: target2 })
+    assert.equal(again.ok, false, '盘上确实铺过（至少一条底路径在），缺的那一条是删除')
+    assert.deepEqual(again.drift.userDeleted, ['only.txt'])
+  } finally {
+    await t.close()
+  }
+})
+
 test('① 盘上 == 底（用户没碰过）→ 放行：合并的正常样子', async () => {
   const { real, t, base } = await scene({ 'src/a.ts': '底那一份\n', 'README.md': '# 项目\n' })
   try {

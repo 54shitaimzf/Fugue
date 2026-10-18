@@ -185,6 +185,11 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
     const want = new Set<RelPath>([...onDisk.keys(), ...basePaths.keys(), ...targetPaths.keys()])
     const target = await leavesOf(deps.truth, deps.target, want)
     const base = await leavesOf(deps.truth, deps.base, want)
+    // **“盘上缺一条、底里有”什么时候算用户的删除**（B03 的口径）：只有**这棵树确实铺到盘上**
+    // 时才判——判据是底里至少有一条路径在盘上。整棵树一条都不在时，那是“视图有、盘上还没铺”
+    // （延迟物化那一档，`round run` 的夹具就是它），不是用户删掉了每一条；那时照旧写上去。
+    // 代价说清：用户把整棵树删光时这里不判删除（会照常推进）；部分删除照旧判。
+    const baseOnDisk = [...base.leaves.keys()].some((p) => onDisk.has(p))
     touched = await touchedPaths(deps.truth, deps.base, deps.target)
 
     for (const p of [...want].sort()) {
@@ -195,6 +200,8 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
       // 一条目标树还留着的路径（B03：推进会把它重建，那是覆盖用户意图）。两边都删才不管。
       if (l === undefined) {
         if (t === undefined || b === undefined) continue
+        // 盘上一条底里的路径都不在：整棵树还没铺，不判“用户删除”。
+        if (!baseOnDisk) continue
         divergent.push(p)
         handTouched.push(p)
         userDeleted.push(p)
