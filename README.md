@@ -158,6 +158,7 @@ fugue round work --live --max-steps 8
 | 原始的工作记录（每行一条，不做任何处理） | `fugue log` |
 | 实时跟踪进度（只读，不会影响正在运行的任务） | `fugue watch --follow` |
 | 一边看一边用快捷键操作 | `fugue tui` |
+| 上一次写回有没有收尾、现在该做什么 | `fugue recover` |
 | 清理它创建的临时工作目录 | `fugue dispose` |
 
 任务完成后，`git status` 可能会显示很多文件有改动，这是正常的。你项目里的文件已经和它生成的提交完全一致了，只是 git 的暂存区（index）还停在旧版本。运行一次 `git reset` 就好了。它故意不去动你的暂存区。
@@ -171,6 +172,16 @@ fugue status --wait Working --timeout 60
 ```
 
 它每半秒看一次，等到了就印那一刻的状态、退 0；到点还没到就如实说一句、退 1——不会把超时当成成功。`--timeout` 不给就是 30 秒。状态名用 `round/state` 那一族：`Idle` · `Planning` · `Delegated` · `Working` · `Collecting` · `Merging` · `Verifying` · `Committed` · `Rebuilding` · `Aborted`。
+
+### 写回中断以后
+
+如果上一次写回没有收尾（进程被杀、机器断电），运行：
+
+```sh
+fugue recover
+```
+
+它只读，按账上与盘上的实际状态报“未写回 / 全写回 / 部分写回 / 冲突 / 未验证”，并给出下一步；不会自动重放写，也不会替你挪 ref。`--json` 给脚本读同一份报告。没有未收尾的发布时，它会直说没有。
 
 ### 接到别的程序里
 
@@ -193,7 +204,7 @@ fugue status --wait Working --timeout 60
 
 ## 更多资料
 
-- `fugue --help`：命令速查表，每条都有一两句话说明。命令面一共 29 条（`round` 有 5 条子命令、`config` 有 4 条）；命令全表在架构 § 9.6。
+- `fugue --help`：命令速查表，每条都有一两句话说明。命令面一共 30 条（`round` 有 5 条子命令、`config` 有 4 条）；命令全表在架构 § 9.6。
 - 每个版本的改动：[CHANGELOG.md](CHANGELOG.md)。
 - 想修改或测试赋格本身：先看 [AGENTS.md](AGENTS.md)（开发环境、怎么跑测试、演示脚本），再看 [tools/](tools/)（演示脚本、测量工具和性能测试，它们只用于开发，不属于产品）。
 - 设计文档在 [design/](design/)：架构（这一版**是**什么）· 路线图（按什么次序收口）· 目标（第一版之后做什么）· 随笔（为什么这么设计）。落地计划（正在做的那一站）与归档（已经落地的那一份）随施工走，不在这个仓库里。
