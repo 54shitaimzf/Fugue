@@ -271,12 +271,13 @@ export function holdWriter(root: string, w: WriterId): Hold {
       if (madeUp) dropDir(up)
     }
   }
+  const makeHold = (): Hold => ({ writer: w, path, pid: rec.pid, since, release })
 
   for (let round = 0; round < TAKEOVER_ROUNDS; round++) {
     try {
       linkSync(tmp, path) // 原子：建得上就是我的；EEXIST 说明有人
       drop(tmp)
-      return { writer: w, path, pid: rec.pid, since, release }
+      return makeHold()
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code
       if (code === 'ENOENT') {
@@ -305,10 +306,82 @@ export function holdWriter(root: string, w: WriterId): Hold {
         verdict.why,
       )
     }
-    // 死的：把它请走，再抢一次。**删之前按记录比对一次**——这中间可能已经换人了。
-    const again = readRecord(path)
-    if (again !== null && 'rec' in again && again.rec.pid === cur.rec.pid && again.rec.start === cur.rec.start) {
+    // 死的：**先拿“接管锁”，再删旧锁、建自己的**（B05）。
+    //
+    // 原先这里只有“再读一次、比对、unlink、下一轮 link”：两个申请者都读到同一份死锁，
+    // A 删掉并建了自己的锁，B 随后执行之前决定的 unlink——删掉 A 的锁，再建自己的，
+    // 两个人都认为自己持锁。原子 hardlink 只保证一次“路径不存在时创建”的竞争只有一个成功，
+    // 挡不住前面的检查与删除。
+    //
+    // 现在接管本身要先占一份 `.takeover` 的锁（同一个 atomic link 手法）；占不到就**明确拒绝**，
+    // 不等待、不猜。接管锁的持有者自己崩掉时也**不自动删**：那不叫恢复，叫把同一个歧义再玩
+    // 一次；错误话里给出确认之后可以手敲的那一条 rm。
+    const takeover = `${path}.takeover`
+    const claim = `${takeover}.tmp-${process.pid}`
+    writeFileSync(claim, JSON.stringify(rec) + '\n', { mode: 0o644 })
+    let ownsTakeover = false
+    try {
+      try {
+        linkSync(claim, takeover)
+        ownsTakeover = true
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code === 'ENOENT') {
+          mkdirSync(dir, { recursive: true })
+          continue
+        }
+        if (code !== 'EEXIST') throw new Error(`接管锁建不出来（${takeover}）：${code ?? (err as Error).message}`)
+        const held = readRecord(takeover)
+        if (held === null) continue
+        if ('bad' in held) {
+          throw new LogHeldError(
+            w,
+            path,
+            null,
+            `接管锁读不动（${takeover}）：${held.bad}——先确认没有别的接管者，再删掉它重试`,
+          )
+        }
+        const v = judge(held.rec)
+        if (v.alive) {
+          throw new LogHeldError(
+            w,
+            path,
+            { pid: held.rec.pid, since: sinceOf(held.rec.start) },
+            `另一个进程正在接管这份日志（${v.why}）；等它结束再试`,
+          )
+        }
+        throw new LogHeldError(
+          w,
+          path,
+          null,
+          `接管锁的持有者已经不在了（${v.why}），但这一层不自动删它：确认之后 rm '${takeover}'，再重试`,
+        )
+      }
+
+      // **拿到接管权之后重新判一次**：这中间原锁可能已经换人了。
+      const again = readRecord(path)
+      if (again === null || ('rec' in again && (again.rec.pid !== cur.rec.pid || again.rec.start !== cur.rec.start))) {
+        continue
+      }
       drop(path)
+      // **在同一次接管里马上建自己的**：不把“路径不存在”的那一刻交回外层循环。
+      try {
+        linkSync(claim, path)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code === 'EEXIST') continue // 别人抢先建了：下一轮按活锁判，不这里猜
+        throw new Error(`锁建不出来（${path}）：${code ?? (err as Error).message}`)
+      }
+      drop(tmp)
+      drop(takeover)
+      ownsTakeover = false
+      return makeHold()
+    } finally {
+      drop(claim)
+      if (ownsTakeover) {
+        const own = readRecord(takeover)
+        if (own !== null && 'rec' in own && own.rec.pid === rec.pid && own.rec.start === rec.start) drop(takeover)
+      }
     }
   }
   drop(tmp)
