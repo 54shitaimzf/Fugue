@@ -120,6 +120,59 @@ test('整份文件就是一条半行：当作 0 条，序号从 1 重新起', as
   rmSync(root, { recursive: true, force: true })
 })
 
+test('B04 半行之后续写：持锁写者先截到完整行边界，序号连续；只读路径不改盘', async () => {
+  const root = tmp()
+  const log = openLog(root, { sync: 'never' })
+  await log.append('round', ev(1, A('round')))
+  await log.close()
+  const file = logFile(root, 'round')
+  const before = readFileSync(file)
+  // 崩溃落在第二次追加的中间：没有换行、也不是合法 JSON。
+  writeFileSync(file, Buffer.concat([before, Buffer.from('{"half":')]))
+  const dirtySize = readFileSync(file).length
+
+  // **只读路径不改盘**：读得到前一条完整事件，尾部仍是那一截。
+  assert.equal(await countRows(root, 'round'), 1)
+  assert.equal(readFileSync(file).length, dirtySize, '只读句柄不该截盘上的字节')
+
+  const again = openLog(root, { sync: 'never' })
+  assert.equal(await again.append('round', ev(2, A('round'))), 2)
+  assert.equal(await again.append('round', ev(3, A('round'))), 3)
+  await again.close()
+  const rows: number[] = []
+  for await (const { pos } of openLog(root, { sync: 'never' }).readMerged()) rows.push(pos.seq)
+  assert.deepEqual(rows, [1, 2, 3], '半行被截掉之后，新事件仍是一条一行、序号连续')
+
+  // **重复恢复结果不变**：再一次打开、追加，仍是接在完整行后面。
+  const third = openLog(root, { sync: 'never' })
+  assert.equal(await third.append('round', ev(4, A('round'))), 4)
+  await third.close()
+  assert.equal(await countRows(root, 'round'), 4)
+  rmSync(root, { recursive: true, force: true })
+})
+
+test('B04 最后一条合法事件比尾部窗口还长：向后扩窗口取序号，不截短契约', async () => {
+  const root = tmp()
+  const log = openLog(root, { sync: 'never' })
+  const body = '长正文'.repeat(30_000) // 约 270 KiB，远超 64 KiB 的起始窗口
+  const big: LogEvent = { t: 'round/intent', round: 'r1' as never, base: C('c0'), digest: 'd', body }
+  assert.equal(await log.append('round', big), 1)
+  await log.close()
+  const file = logFile(root, 'round')
+  const bytes = readFileSync(file)
+  assert.ok(bytes.length > 64 * 1024, '样本要比窗口长')
+  writeFileSync(file, Buffer.concat([bytes, Buffer.from('{"tail":')]))
+
+  const again = openLog(root, { sync: 'never' })
+  assert.equal(await again.append('round', ev(2, A('round'))), 2)
+  await again.close()
+  const got: LogEvent[] = []
+  for await (const e of openLog(root, { sync: 'never' }).readByWriter('round')) got.push(e)
+  assert.equal(got.length, 2)
+  assert.equal((got[0] as Extract<LogEvent, { t: 'round/intent' }>).body.length, body.length, '长事件一个字符都不许被截')
+  rmSync(root, { recursive: true, force: true })
+})
+
 // ────────────────────────────────── 断言 ③ 中段损坏必须拒绝
 
 test('中段一字节损坏 → 拒绝加载并指出行号', async () => {
