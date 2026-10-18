@@ -128,6 +128,40 @@ test('② 弃掉重建逐字节相同：同一个游标，增量那条路与从�
   }
 })
 
+test('B06 晚出现的 writer 序号更小：热缓存与重建给出同一个合并序', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'fugue-tail-order-'))
+  try {
+    const log = await seeded(root)
+    const hot = createRootTail(root)
+    const first = await hot.pass({})
+    assert.equal(bytesOf(first), 'agent/r1/1:1,agent/r1/1:2,agent/r1/1:3,agent/r1/1:4,agent/r1/1:5', '先读到的是第一条 writer')
+
+    // 晚出现的 writer 名字排在前面，第一条序号是 1：合并序里它该排在 1..5 之前。
+    const late = A('agent/r0/1')
+    await log.append(late, ev(1, late))
+    const warm = await hot.pass({})
+    const rebuilt = createRootTail(root)
+    const cold = await rebuilt.pass({})
+    assert.equal(bytesOf(warm), bytesOf(cold), '热读与重建读出了两种次序')
+    assert.deepEqual(warm.map((r) => posKey(r.pos)), [
+      'agent/r0/1:1',
+      'agent/r1/1:1',
+      'agent/r1/1:2',
+      'agent/r1/1:3',
+      'agent/r1/1:4',
+      'agent/r1/1:5',
+    ])
+    // 同一游标下也逐字节相同（客户端带自己的下界问）。
+    const from: Cursors = { 'agent/r1/1': 2 }
+    assert.equal(bytesOf(await hot.pass(from)), bytesOf(await rebuilt.pass(from)))
+    await hot.dispose()
+    await rebuilt.dispose()
+    await log.close()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('③ 晚出现的 writer：第二条的第一条就是 seq = 1，增量推进不会把它整段漏掉', async () => {
   const root = mkdtempSync(join(tmpdir(), 'fugue-tail-late-'))
   try {
