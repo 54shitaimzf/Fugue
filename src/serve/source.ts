@@ -83,8 +83,14 @@ export async function openServeSource(o: ServeSourceOptions): Promise<LedgerSour
   const waiting = new Map<number, (r: Reply) => void>()
   let nextId = 1
   let died: string | null = null
-  child.stdout?.on('data', (chunk: Buffer) => {
-    buf += chunk.toString('utf8')
+  let closing = false
+  let closingDone: Promise<void> | null = null
+  // **一行一帧，解码在流上完成**（B13）：逐块 `Buffer.toString('utf8')` 会在任意字节边界
+  // 把中文/emoji 切成替换符，JSON 仍可能合法，于是悄悄改掉 id 或正文。
+  child.stdout?.setEncoding('utf8')
+  child.stderr?.setEncoding('utf8')
+  child.stdout?.on('data', (chunk: string) => {
+    buf += chunk
     const parts = buf.split('\n')
     buf = parts.pop() ?? ''
     for (const raw of parts) {
@@ -96,16 +102,27 @@ export async function openServeSource(o: ServeSourceOptions): Promise<LedgerSour
       done(msg)
     }
   })
-  child.stderr?.on('data', (chunk: Buffer) => {
-    errBuf += chunk.toString('utf8')
+  child.stderr?.on('data', (chunk: string) => {
+    errBuf += chunk
   })
+  /** 把还挂着的请求一次性结算（终止原因只保存一次）。 */
+  const settleAll = (reason: string): void => {
+    if (died === null) died = reason
+    for (const [id, done] of waiting) {
+      waiting.delete(id)
+      done({ error: { code: -32000, message: died } })
+    }
+  }
   child.on('close', (code) => {
-    died = `serve 那一头退了（退出码 ${code ?? '?'}）${errBuf === '' ? '' : `：${errBuf.trim()}`}`
-    for (const [, done] of waiting) done({ error: { code: -32000, message: died } })
-    waiting.clear()
+    settleAll(`serve 那一头退了（退出码 ${code ?? '?'}）${errBuf === '' ? '' : `：${errBuf.trim()}`}`)
   })
-  const ask = (method: string, params: Record<string, unknown> = {}): Promise<Reply> =>
-    new Promise((done) => {
+  child.stdin?.on('error', (err: Error) => {
+    settleAll(`serve 的 stdin 断了：${err.message}`)
+  })
+  const ask = (method: string, params: Record<string, unknown> = {}): Promise<Reply> => {
+    if (died !== null) return Promise.reject(new Error(died))
+    if (closing) return Promise.reject(new Error('这一条已经收尾了'))
+    return new Promise((done) => {
       const id = nextId
       nextId += 1
       waiting.set(id, done)
@@ -113,6 +130,7 @@ export async function openServeSource(o: ServeSourceOptions): Promise<LedgerSour
         JSON.stringify({ jsonrpc: JSONRPC, id, method, params: { [PROTOCOL_PARAM]: PROTOCOL_VERSION, ...params } }) + '\n',
       )
     })
+  }
 
   const init = await ask('initialize')
   if (init.error !== undefined) throw new Error(`serve 握手失败：${init.error.message}`)
@@ -123,6 +141,7 @@ export async function openServeSource(o: ServeSourceOptions): Promise<LedgerSour
     hello,
     async pass(resume: string): Promise<SourcePass> {
       if (closed) throw new Error('这一条已经收尾了')
+      if (died !== null) throw new Error(died)
       const r = await ask('watch', resume === '' ? {} : { resume })
       if (r.error !== undefined) throw new Error(`事件通道那一趟没成：${r.error.message}`)
       const result = r.result as { stdout: string; result?: { resume?: string } }
@@ -134,33 +153,38 @@ export async function openServeSource(o: ServeSourceOptions): Promise<LedgerSour
       return { rows, resume: result.result?.resume ?? resume }
     },
     async close(): Promise<void> {
+      if (closingDone !== null) return await closingDone
       if (closed) return
       closed = true
-      // **收尾**：`shutdown` 只停止接受新请求（§ 9.11）；真正结束靠关掉 stdin——命绑客户端。
-      try {
-        await ask('shutdown')
-      } catch {
-        /* 那一头已经不在了：下面照收 */
+      // **已经退出就不再发 shutdown**：它的回执永远不会来，而 pending 已经在 close 里结算。
+      // 这一句要排在 `closing = true` 之前——`ask` 在收尾开始之后拒绝新请求。
+      if (died === null) {
+        ask('shutdown').catch(() => undefined)
+        try {
+          child.stdin?.end()
+        } catch {
+          /* 已经关了 */
+        }
       }
-      try {
-        child.stdin?.end()
-      } catch {
-        /* 已经关了 */
-      }
-      await new Promise<void>((done) => {
+      closing = true
+      // **收尾从“开始关”就计时**（B12）：原先先 await shutdown、再启动强杀计时器，
+      // 已经死了的子进程会让 shutdown 永远等不到回执，计时器根本没机会到点。
+      closingDone = new Promise<void>((done) => {
         let settled = false
         const finish = (): void => {
           if (settled) return
           settled = true
           done()
         }
-        child.on('close', finish)
+        child.once('close', finish)
         const t = setTimeout(() => {
           child.kill('SIGKILL')
           finish()
         }, o.killAfterMs ?? CLOSE_WAIT_MS)
         t.unref()
+        if (died !== null) finish()
       })
+      return await closingDone
     },
   }
 }

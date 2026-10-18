@@ -14,6 +14,7 @@
 // **serve 不持有跨越命令的写句柄**（§ 9.11）：读命令不取栅栏，写命令按请求开、按请求关——与 CLI
 // 一模一样，因为跑的是同一个值层入口。
 import { spawn } from 'node:child_process'
+import { StringDecoder } from 'node:string_decoder'
 import { PROTOCOL_VERSION } from '../protocol.ts'
 import { FLAGS_OF } from '../cli/flags.ts'
 import { commandErrorOf } from '../value/invoke.ts'
@@ -134,8 +135,11 @@ async function runSubprocess(
     const child = spawn(process.execPath, argv, { cwd: root })
     let out = ''
     let err = ''
-    child.stdout.on('data', (c: Buffer) => (out += c.toString('utf8')))
-    child.stderr.on('data', (c: Buffer) => (err += c.toString('utf8')))
+    // **流上解码**（B13）：逐块 `toString('utf8')` 会把中文/emoji 切在任意字节边界。
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (c: string) => (out += c))
+    child.stderr.on('data', (c: string) => (err += c))
     child.on('close', (code) => done({ code: code ?? 1, stdout: out, stderr: err }))
   })
   return { code: r.code, stdout: r.stdout, notes: r.stderr.split('\n').filter((l) => l !== ''), via: 'subprocess' }
@@ -318,6 +322,8 @@ export async function serveConnection(io: ConnIo): Promise<void> {
   }
 
   // **一行一调用**：读进来的那一股按 `\n` 切，最后一段留到下一次（半行不算一行）。
+  // 解码器跨块保存半个码点（B13）：分块边界不再改变中文 · emoji 或请求 id。
+  const decoder = new StringDecoder('utf8')
   let buf = ''
   // **收尾的时候读口是被壳收掉的**（闲时自退那一档）：`for await` 会抛一个「提前关闭」——
   // 那是收尾的信号，不是这一趟的失败（不接住它，进程以 1 退出）。别的错照旧往上抛。
@@ -331,7 +337,7 @@ export async function serveConnection(io: ConnIo): Promise<void> {
     },
   }
   for await (const chunk of chunks) {
-    buf += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
+    buf += Buffer.isBuffer(chunk) ? decoder.write(chunk) : String(chunk)
     const parts = buf.split('\n')
     buf = parts.pop() ?? ''
     for (const raw of parts) {

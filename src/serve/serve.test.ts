@@ -485,6 +485,37 @@ test('半行不算一行：回执一行一条', async () => {
   console.log('读数：半行不算一行；一条回执一行')
 })
 
+test('B13 stdio 在任意字节边界分块：中文与请求 id 不被拆坏', async () => {
+  const root = await makeRoot()
+  const id = '请求🙂'
+  const line = JSON.stringify({ jsonrpc: '2.0', id, method: 'initialize', params: { _protocol: PROTOCOL_VERSION } }) + '\n'
+  const bytes = Buffer.from(line, 'utf8')
+  const emoji = bytes.indexOf(Buffer.from('🙂'))
+  const firstHan = bytes.indexOf(Buffer.from('请'))
+  assert.ok(emoji > 0 && firstHan > 0, '样本里要有中文与 emoji')
+  // 每一个可能切在码点中间的边界：单个汉字的第一字节之后 · emoji 的四个字节之间。
+  const cuts = [firstHan + 1, emoji + 1, emoji + 2, emoji + 3]
+  for (const cut of cuts) {
+    const input = new PassThrough()
+    const out: string[] = []
+    const done = serveConnection({
+      input,
+      output: { write: (s: string) => out.push(s) },
+      cli: CLI,
+      root: root.dir,
+      idleMs: 0,
+      product: PRODUCT,
+    })
+    input.write(bytes.subarray(0, cut))
+    input.write(bytes.subarray(cut))
+    input.end()
+    await done
+    const reply = parse(out[0] ?? '{}')
+    assert.equal(reply.id, id, `切在第 ${cut} 字节时请求 id 被拆坏了：${JSON.stringify(reply.id)}`)
+  }
+  console.log(`B13 读数：${cuts.length} 个字节边界分块，回执 id 仍是「${id}」`)
+})
+
 test('⑥ `--wait` 糖：等到了报等到了 · 到点如实报超时（不静默成功）', async () => {
   const root = await makeRoot()
   // `--wait` 认的是**轮次那条链**上的状态（`round/state`）：先给它落一条（`round new` 的
