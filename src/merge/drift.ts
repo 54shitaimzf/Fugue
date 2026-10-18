@@ -123,10 +123,14 @@ export interface Drift {
    */
   readonly deleted: readonly RelPath[]
   /**
-   * **该拒的那些**：盘上那一份既不是底、也不是目标树（两两都不同），外加"目标树里没有、而盘上
-   * 那一份**不是底**"的那些（推进会把它删掉，而那条上手里的改会丢）。**空 = 放行。**
+   * **盘上被用户删掉、而目标树还留着的那些**（B03）：推进会重新创建它们。这一栏与 `deleted`
+   * 刚好相反——`deleted` 是“目标树删、盘上还有”，这一栏是“盘上删、目标树还有”。
    */
-  readonly colliding: readonly RelPath[]
+  readonly userDeleted: readonly RelPath[]
+  /**
+   * **该拒的那些**：盘上那一份既不是底、也不是目标树（两两都不同），外加“目标树里没有、而盘上
+   * 那一份**不是底**”的那些（推进会把它删掉，而那条上手里的改会丢）。**空 = 放行。**
+   */
   readonly colliding: readonly RelPath[]
 }
 
@@ -167,23 +171,36 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
   const divergent: RelPath[] = []
   const handTouched: RelPath[] = []
   const deleted: RelPath[] = []
+  const userDeleted: RelPath[] = []
   const colliding: RelPath[] = []
   if (deps.target !== undefined && deps.base !== null) {
     // 盘上那一份（**跳 `WORKSPACE_STATE`**：工作区自己的本子不是"用户改了什么"）。
     const disk = scanTree(deps.realRoot, { skip: WORKSPACE_STATE })
     const onDisk = new Map(disk.leaves.map((l) => [l.path, l]))
-
-    // 再看树上那两份：**三方比法逐条路径比的就是盘上真有的那些**（目标树里多出来的盘上没有，
-    // 推进时只是新写上去，没有谁的字节可丢），所以只把那几条的内容取出来。`touched` 是另一条
-    // 读数（这次合并动到哪些路径），它要整棵树比，单独走一遍、不取内容。
-    const want = new Set<RelPath>(onDisk.keys())
+    // **路径全集是三方并集**（B03）：只在盘上建集合的话，用户删掉的路径根本不在里面，推进会
+    // 把它们静默重建——删除也是用户的修改。底与目标树的路径只需条目（按 id 比内容是否相同），
+    // 盘上真有的那些才取 blob 内容。
+    const basePaths = await pathsOf(deps.truth, deps.base)
+    const targetPaths = await pathsOf(deps.truth, deps.target)
+    const want = new Set<RelPath>([...onDisk.keys(), ...basePaths.keys(), ...targetPaths.keys()])
     const target = await leavesOf(deps.truth, deps.target, want)
     const base = await leavesOf(deps.truth, deps.base, want)
     touched = await touchedPaths(deps.truth, deps.base, deps.target)
 
-    for (const [p, l] of onDisk) {
+    for (const p of [...want].sort()) {
+      const l = onDisk.get(p)
       const t = target.leaves.get(p)
       const b = base.leaves.get(p)
+      // **盘上没有它**：要么目标新增一条（推进只是新建，没谁的字节可丢），要么用户删掉了
+      // 一条目标树还留着的路径（B03：推进会把它重建，那是覆盖用户意图）。两边都删才不管。
+      if (l === undefined) {
+        if (t === undefined || b === undefined) continue
+        divergent.push(p)
+        handTouched.push(p)
+        userDeleted.push(p)
+        colliding.push(p)
+        continue
+      }
       // 盘上的整模式先归到树上那一档（`gitModeOf`）：umask 给的组写位 · 软链的 0777 都不是
       // "用户碰过"。执行位翻了照旧是不同——git 也把它当一次改动。
       const same = (x: { readonly mode: number; readonly hash: string } | undefined): boolean =>
@@ -211,8 +228,26 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
   divergent.sort()
   handTouched.sort()
   deleted.sort()
+  userDeleted.sort()
   colliding.sort()
-  return { head, headMoved, touched, divergent, handTouched, deleted, colliding }
+  return { head, headMoved, touched, divergent, handTouched, deleted, userDeleted, colliding }
+}
+
+/**
+ * 一棵树里有哪些叶子（路径 → 模式与对象 id）。**只读条目、不取内容**：B03 要的是“目标树里
+ * 还有没有这一条”，不是它写了什么。
+ */
+async function pathsOf(truth: Truth, commit: CommitId): Promise<Map<RelPath, { readonly mode: number; readonly id: string }>> {
+  const out = new Map<RelPath, { readonly mode: number; readonly id: string }>()
+  const walk = async (dir: RelPath): Promise<void> => {
+    for (const e of await truth.listAt(commit, dir)) {
+      const p = dir === '' ? e.name : `${dir}/${e.name}`
+      if (e.kind === 'dir') await walk(p)
+      else out.set(p, { mode: e.mode, id: e.id })
+    }
+  }
+  await walk('')
+  return out
 }
 
 /**
@@ -284,12 +319,14 @@ export async function mergeDrift(deps: DriftDeps): Promise<DriftVerdict> {
     }
   }
   if (drift.colliding.length > 0) {
-    // **按"目标树里有没有它"分**，不按"用户碰过没有"：这两类的后果不一样（改写的那条上手里的
+    // **按“目标树里有没有它”分**，不按“用户碰过没有”：这两类的后果不一样（改写的那条上手里的
     // 改会被写回去一份新的；删掉的那条直接从盘上没了）。收窄之后 `handTouched` 把两类都算进来
     // 了，那一刀分不动——所以分的是 `deleted`。
     const gone = new Set(drift.deleted)
-    const rewritten = drift.colliding.filter((p) => !gone.has(p))
+    const revived = new Set(drift.userDeleted)
+    const rewritten = drift.colliding.filter((p) => !gone.has(p) && !revived.has(p))
     const removed = drift.colliding.filter((p) => gone.has(p))
+    const recreated = drift.colliding.filter((p) => revived.has(p))
     return {
       ok: false,
       drift,
@@ -297,8 +334,9 @@ export async function mergeDrift(deps: DriftDeps): Promise<DriftVerdict> {
         `物化前拒：有 ${drift.colliding.length} 条路径上，盘上那一份既不是底、也不是这次合并算出来的：\n  ` +
         drift.colliding.join('\n  ') +
         `\n  其中 ${rewritten.length} 条会被这次合并改写${rewritten.length === 0 ? '' : `（${rewritten.join(' · ')}）`}，` +
-        `${removed.length} 条推进时会被删掉（目标树里没有它：${removed.join(' · ') || '（一条都没有）'}）。` +
-        '\n  推进之后盘上会与目标树不同——那几条上手里的改会被覆盖掉。要保住就先提交或挪走它们，再来合并。',
+        `${removed.length} 条推进时会被删掉（目标树里没有它：${removed.join(' · ') || '（一条都没有）'}），` +
+        `${recreated.length} 条是你删了、而这次合并仍要保留（推进会重新创建：${recreated.join(' · ') || '（一条都没有）'}）。` +
+        '\n  推进之后盘上会与目标树不同——那几条上手里的改（或删除）会被覆盖掉。要保住就先恢复/挪走它们，再来合并。',
     }
   }
   return {

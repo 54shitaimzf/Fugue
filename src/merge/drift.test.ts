@@ -70,6 +70,47 @@ async function scene(files: Readonly<Record<string, string>>): Promise<{ real: s
   return { real, t, base }
 }
 
+test('B03 用户删除也是修改：目标还留着就拒，两边都删才放行', async () => {
+  const { real, t, base } = await scene({
+    'a.txt': '底\n',
+    'keep.txt': '这次合并不动它\n',
+    'both.txt': '两边都删\n',
+    'gone.txt': '目标删、用户没碰\n',
+  })
+  try {
+    // 用户删了三条：a（目标改它）· keep（目标原样留着）· both（目标也删了）。
+    rmSync(join(real, 'a.txt'))
+    rmSync(join(real, 'keep.txt'))
+    rmSync(join(real, 'both.txt'))
+    const target = await commitOf(t, { 'a.txt': '合并的新内容\n', 'keep.txt': '这次合并不动它\n' }, '目标树')
+    const verdict = await mergeDrift({ truth: t, realRoot: real, base, target })
+    assert.equal(verdict.ok, false, '用户删掉的路径不能未经判定就重建')
+    assert.deepEqual(verdict.drift.userDeleted, ['a.txt', 'keep.txt'])
+    assert.deepEqual(verdict.drift.colliding, ['a.txt', 'keep.txt'])
+    assert.match(verdict.say, /你删了、而这次合并仍要保留/)
+    assert.match(verdict.say, /a\.txt/)
+    assert.match(verdict.say, /keep\.txt/)
+
+    // **两边都删**（both）与**目标删、用户没碰**（gone）都不进拒。
+    assert.equal(verdict.drift.userDeleted.includes('both.txt' as RelPath), false)
+    assert.deepEqual(verdict.drift.deleted, ['gone.txt'], '目标删、用户没碰：推进就是把它删掉')
+
+    // 目标新增一条盘上没有的路径：推进只是新建，不是覆盖用户意图。
+    const added = await commitOf(t, { 'a.txt': '合并的新内容\n', 'keep.txt': '这次合并不动它\n', 'new.txt': '新来的\n' }, '目标树 + 新增')
+    const withAdded = await mergeDrift({ truth: t, realRoot: real, base, target: added })
+    assert.equal(withAdded.drift.userDeleted.includes('new.txt' as RelPath), false)
+
+    // **用户把删除“提交”了**（目标里也没有 a、keep）：两边都删 → 不拒。
+    const bothGone = await commitOf(t, {}, '目标把三条都删了')
+    const goneVerdict = await mergeDrift({ truth: t, realRoot: real, base, target: bothGone })
+    assert.deepEqual(goneVerdict.drift.userDeleted, [], '两边都没了不是“用户删除未判定”')
+    assert.deepEqual(goneVerdict.drift.colliding, [])
+    assert.equal(goneVerdict.ok, true)
+  } finally {
+    await t.close()
+  }
+})
+
 test('① 盘上 == 底（用户没碰过）→ 放行：合并的正常样子', async () => {
   const { real, t, base } = await scene({ 'src/a.ts': '底那一份\n', 'README.md': '# 项目\n' })
   try {
