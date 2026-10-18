@@ -40,7 +40,7 @@
 - **工作记录**：新增 `merge/publish` 事件（`round` · `commit` · `phase` · 可选 `ref`/`expected`），事件族 31；写回按 `begin` → 落文件 → ref 比较交换 → `done` 记录，`merge/accept` 才算接受落账。
 - **恢复判断**：发布事实抽成 `src/recovery/facts.ts` 的纯函数，命令面与界面读同一份；五态由“账上发布事实 + 实际 ref + 盘上内容”比出来，判不了就是 `unverified`，不猜成未写回。
 - **命令面**：顶层命令 30 条（`round` 5 条子命令、`config` 4 条），`fugue --help` 已含 `recover`。
-- **测试**：`node tools/test-entry.js` 共 **1493** 个测试全部通过，退出 0，本机耗时 74.1 s（Ubuntu noble · ext4 · Node v24.21.0）。新增恢复五态、验收边界、写回边界、锁接管、UTF-8 分块与矮屏截断的反例断言。
+- **测试**：`node tools/test-entry.js` 共 **1493** 个测试全部通过，退出 0，本机耗时 74.7 s（Ubuntu noble · ext4 · Node v24.21.0）。新增恢复五态、验收边界、写回边界、锁接管、UTF-8 分块与矮屏截断的反例断言。
 - **版本号**：`package.json` 从 `0.5.0` 升到 `0.5.1`。维护位：不改变既有用法，没有迁移步骤。
 
 **完整对比**：[v0.5.0...v0.5.1](https://github.com/54shitaimzf/Fugue/compare/v0.5.0...v0.5.1)
