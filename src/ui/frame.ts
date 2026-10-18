@@ -820,26 +820,49 @@ export function frameOf(o: FrameInput): Frame {
   const content = readingOn || foregroundMenu ? [] : rows.length <= bodyBudget ? rows : o.task === undefined
     ? rows.slice(0, Math.max(0, bodyBudget - 1))
     : (() => {
-        const head = rows.slice(0, Math.min(2, Math.max(0, bodyBudget - 2)))
-        const tail = bodyBudget > 3 ? rows.slice(-(bodyBudget - 3)) : []
-        const first = tail[0], tailAt = rows.length - tail.length
-        // 尾部从消息中间开始时，原有身份标题随正文进入视窗；不改消息原文。
-        // **整条消息一起回来**（B 型观感修正）：只补标题会让“你”后面剩一行空白——
-        // 标题在、话没了，比丢标题更难读。同一 task 行的物理行共享 `headingAt`，按它扫到消息尾。
-        if (first?.headingAt !== undefined && first.headingAt < tailAt
-          && first.headingAt + first.headingCount! > head.length) {
-          const at = first.headingAt
+        // **截断不拆消息**（B 型观感）：先按消息边界取头，再从消息边界取尾，中间省掉的交给
+        // 下面那一行「N 行未展开」说清。标题留在屏上、正文被截在中段，比丢标题更难读。
+        // 一行最多给「未展开」留出那一行；头尾都只停在消息边界上（首行 / 一条消息的标题行 / 空行）。
+        const limit = Math.max(0, bodyBudget - 1)
+        const groupEnd = (at: number): number => {
+          const h = rows[at]?.headingAt
+          if (h === undefined) return at + 1
           let end = at
-          while (end < rows.length && rows[end]?.headingAt === at) end += 1
-          const message = rows.slice(at, end)
-          // 省一行给下面那条「还有 N 行没印 · 看全」：它始终跟着截断一起出现。
-          const room = bodyBudget - head.length - 1
-          if (message.length <= room) {
-            const rest = rows.slice(Math.max(end, rows.length - (room - message.length)))
-            return [...head, ...message, ...rest]
-          }
-          const count = Math.min(first.headingCount!, tail.length)
-          return [...head, ...rows.slice(at, at + count), ...tail.slice(count)]
+          while (end < rows.length && rows[end]?.headingAt === h) end += 1
+          return end
+        }
+        let head = rows.slice(0, Math.min(2, Math.max(0, limit - 1)))
+        const edge = head.length > 0 ? rows[head.length - 1] : undefined
+        if (edge?.headingAt !== undefined && edge.headingAt < head.length) {
+          // 头停在一条消息的标题上：能整条放下就放下，放不下就退到标题之前（别留孤标题）。
+          const end = groupEnd(edge.headingAt)
+          head = end <= limit - 2 ? rows.slice(0, end) : rows.slice(0, edge.headingAt)
+        }
+        const tailBudget = limit - head.length
+        const start = Math.max(head.length, rows.length - tailBudget)
+        let tail: typeof rows = []
+        let clean = start
+        // 尾巴从消息中间开始时，先往后退到下一条消息的标题或一个空行。
+        while (clean < rows.length) {
+          const row = rows[clean]
+          if (row === undefined) break
+          const midMessage = row.headingAt !== undefined && row.headingAt !== clean
+          if (!midMessage && row.l.trim() !== '') break
+          clean += 1
+        }
+        if (clean < rows.length && rows.length - clean >= 2) tail = rows.slice(clean)
+        else if (start < rows.length) {
+          // 截点之后没有干净的边界（一整条长消息比尾巴预算还长）：把这条消息的标题一起带回来，
+          // 再接最新的那几行正文。标题和正文至少还在同一屏上。
+          const row = rows[start]!
+          const at = row.headingAt, count = row.headingCount ?? 0
+          if (at !== undefined && count > 0 && at >= head.length) {
+            // 连“标题 + 一行正文”都放不下时不印半条消息：宁可整条留到看全里。
+            if (tailBudget > count) {
+              const heading = rows.slice(at, at + count)
+              tail = [...heading, ...rows.slice(-(tailBudget - count))]
+            }
+          } else tail = rows.slice(rows.length - tailBudget)
         }
         return [...head, ...tail]
       })()
