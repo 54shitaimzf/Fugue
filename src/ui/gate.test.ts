@@ -19,7 +19,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Contract } from '../contract/types.ts'
-import { GATE_KEEP, GATE_VIEW, clampAt, conclusionLineOf, conclusionOf, gateCompactLinesOf, gateFaceOf, gateLayoutOf, gateRowsOf, lineOf, optionRowOf, pressGate, previewLinesOf, gateQueueRowOf, stepAt } from './gate.ts'
+import { GATE_KEEP, GATE_VIEW, clampAt, conclusionLineOf, conclusionOf, gateCompactLinesOf, gateFaceOf, gateLayoutOf, gateRowsOf, gateSummaryOf, lineOf, optionRowOf, pressGate, previewLinesOf, gateQueueRowOf, stepAt } from './gate.ts'
 import type { GateBatch, GateCard } from './gate.ts'
 import type { Compact } from '../round/compact.ts'
 import { compactLinesOf } from '../round/compact.ts'
@@ -250,11 +250,11 @@ test('缺省十行框中，执行命令与写入路径靠近确认选项保留',
   assert.ok(!text.includes('agent/r1/'))
 })
 
-// ── ⑦ 门视图的**缺省呈现**就是浓缩件（`T14` / `T17`）────────────────────────────────
+// ── ⑦ 门块先给人话摘要；浓缩件收进阅读面（`T14` / `T17`）────────────────
 //
-// 判据一句话：门口一开、**不用按任何键**，那几行就在门块那一栏里（头几行，排在当前契约的预览
-// 上面）；而"没算那一份"时一行都不印，门块那一栏与从前逐行相同。
-test('⑦ 门视图缺省呈现浓缩件：与命令行同一份句子（单栏化），排在预览上面', () => {
+// 判据一句话：门口一开、**不用按任何键**，门块头几行就是判断要用的数（不在决定当口铺编号与
+// 指纹）；命令行那份浓缩件一个字不改，仍在阅读面的「本批标记」里可读。
+test('⑦ 门块先给人话摘要，浓缩件收进阅读面：与命令行同一份句子仍可达', () => {
   const compact: Compact = {
     round: 'r1',
     base: 'a'.repeat(40),
@@ -271,29 +271,33 @@ test('⑦ 门视图缺省呈现浓缩件：与命令行同一份句子（单栏�
   }
   const face = gateFaceOf(BATCH, CMDS, compact)
   assert.equal(face.compact, compact, '那一份浓缩件该原样挂在门上（界面不重算它）')
-  const lines = gateCompactLinesOf(face)
+  const receipt = gateCompactLinesOf(face)
   assert.deepEqual(
-    [...lines],
+    [...receipt],
     compactLinesOf(compact).map((l) => l.replace(/^\s+/, '').replace(/\t+/g, '  ')),
-    '界面那几行不是命令行那一份句子（"一处句子"那句话就没地方量了）',
+    '命令行那一份句子没变（“一处句子”仍可量）',
   )
-  assert.ok((lines[0] ?? '').startsWith('浓缩  第 r1 轮  '), `第一行该是那一行抬头：${lines[0] ?? ''}`)
-  assert.ok(lines.every((l) => !l.includes('\t')), '门块是一栏一行的正文：那几行里不许留制表符')
-  assert.ok(
-    lines.some((l) => l.includes('第一确认')),
-    `与上一批的比那一行该在：${lines.join(' | ')}`,
+  assert.ok((receipt[0] ?? '').startsWith('浓缩  第 r1 轮  '), `命令行抬头照旧：${receipt[0] ?? ''}`)
+  assert.ok(receipt.some((l) => l.includes('第一确认')), `命令行比较那一行照旧：${receipt.join(' | ')}`)
+  const summary = gateSummaryOf(face)
+  assert.deepEqual(
+    [...summary],
+    ['1 项调查 · 1 项实现 · 1 项解决冲突 · 覆盖 2 条路径 · 验收 2 条', '第一次确认：上一批没有放行记录'],
+    `门块摘要该是这两行：${summary.join(' | ')}`,
   )
   const rows = gateRowsOf({ face, view: GATE_VIEW, columns: 200 })
-  assert.deepEqual([...rows.slice(0, lines.length)], [...lines], '门块的头几行该就是那几行（排在预览上面）')
-  assert.ok(rows.length > lines.length, `浓缩件之后还有这一份契约的预览，实际一共 ${rows.length} 行`)
-  // **负对照**：没算那一份（别的调用点 / 门口还没算出那一批）→ 一行都不印，门块与从前逐行相同。
+  assert.deepEqual([...rows.slice(0, summary.length)], [...summary], '门块的头几行该就是摘要（排在预览上面）')
+  assert.ok(!rows.some((l) => l.includes('浓缩') || l.includes('指纹') || l.includes('r1.implement')), '编号 · 底 · 批号 · 指纹不上决定面')
+  assert.ok(rows.length > summary.length, `摘要之后还有这一份契约的预览，实际一共 ${rows.length} 行`)
+  // **负对照**：没算那一份（别的调用点 / 门口还没算出那一批）→ 比较那一行没有；摘要那行照旧
+  // （结论三个数从卡片来，不从浓缩件来）。
   const bare = gateFaceOf(BATCH, CMDS)
   assert.equal(bare.compact, null, '不给就不该有')
-  assert.deepEqual([...gateCompactLinesOf(bare)], [], '没算那一份时门视图上不该多出任何一行')
+  assert.deepEqual([...gateSummaryOf(bare)], summary.slice(0, 1), '没算那一份时只剩批次范围那一行')
   assert.deepEqual(
     [...gateRowsOf({ face: bare, view: GATE_VIEW, columns: 200 })],
-    [...rows.slice(lines.length)],
-    '没算那一份时门块那一栏与从前逐行相同（只是头上少了那几行）',
+    [...rows.filter((l) => l !== summary[1])],
+    '没算那一份时只少比较那一行',
   )
-  console.log(`⑦ 读数：门块头 ${lines.length} 行是浓缩件（与命令行同一份句子 · 单栏化）· 之下 ${rows.length - lines.length} 行是预览与队列 · 没算那一份 → 0 行`)
+  console.log(`⑦ 读数：门块头 ${summary.length} 行是摘要；浓缩件 ${receipt.length} 行收进阅读面；没算那一份只少比较一行`)
 })

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import type {Contract} from '../contract/types.ts'
 import {statusOf} from '../probe/status.ts'
-import {gateFaceOf,gateLayoutOf,gateQueueRowOf,optionRowOf,previewLinesOf} from './gate.ts'
+import {gateFaceOf,gateLayoutOf,gateQueueRowOf,gateSummaryOf,optionRowOf,previewLinesOf} from './gate.ts'
 import {frameOf} from './frame.ts'
 import {wrap} from './glyph.ts'
 import {KEYMAP,hintLineOf,hintPicksOf,keymapOf} from './keymap.ts'
@@ -21,11 +21,12 @@ test('approval title and action retain emphasis while colorful body is regular; 
  for(const columns of [16,36,76])for(const armed of [null,'approve','reject'] as const){
   const view={at:0,armed},layout=gateLayoutOf({face,view,columns}),queue=wrap(gateQueueRowOf(face,0),columns),options=wrap(optionRowOf(view),columns)
   const body=previewLinesOf(face.cards[0]!).flatMap(s=>wrap(s.trimStart(),columns))
-  assert.deepEqual(layout.rows,[...body,...queue,...options],'the style mechanism adds zero rows and changes zero content')
+  const summary=gateSummaryOf(face).flatMap(s=>wrap(s.trimStart(),columns))
+  assert.deepEqual(layout.rows,[...summary,...body,...queue,...options],'the style mechanism adds zero rows and changes zero content')
   const frame=frameOf({width:columns+4,height:40,snapshot:statusOf([]),bottom:layout})
   assert.equal(frame.roles.filter(r=>r==='overlay').length,queue.length,'only the entire batch heading keeps modal emphasis')
   assert.deepEqual(frame.roles.flatMap((r,i)=>r==='overlay'?[frame.lines[i]!.slice(1,-1).trim()]:[]),queue.map(s=>s.trim()),'emphasis belongs to the actual batch heading text, not another equally sized range')
-  assert.equal(frame.roles.filter(r=>r==='overlayBody').length,body.length,'all visible plan content receives the regular-body role')
+  assert.equal(frame.roles.filter(r=>r==='overlayBody').length,summary.length+body.length,'all visible plan content receives the regular-body role')
   assert.equal(frame.roles.filter(r=>r==='waiting').length,options.length,'every wrapped confirmation action remains waiting')
   const legacy=frameOf({width:columns+4,height:40,snapshot:statusOf([]),bottom:{rows:layout.rows,keep:layout.keep,waitingAt:layout.waitingAt,waitingCount:layout.waitingCount}})
   for(const invalid of [{headingAt:999,headingCount:1},{headingAt:NaN,headingCount:1},{headingAt:0,headingCount:999},{headingAt:0,headingCount:0}])assert.deepEqual(frameOf({width:columns+4,height:40,snapshot:statusOf([]),bottom:{...layout,...invalid}}),legacy,'bad metadata falls back to the old complete modal style')

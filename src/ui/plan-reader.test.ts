@@ -58,8 +58,8 @@ test('opening the plan clears an earlier arm, menu escape retains reading positi
 })
 test('a truncated card reports its own omission while preserving all batch and action rows; missing disclosure keeps the old layout',()=>{
  for(const width of [16,40])for(const armed of [null,'approve','reject'] as const){
-  // 去掉重复页脚后，40列卡片在13行已完整；用11行继续验证真实裁切。
-  const height=width===40?11:13
+  // 门块先多一行摘要：40列卡片在14行已完整；用12行继续验证真实裁切。
+  const height=width===40?12:13
   const bottom=gateLayoutOf({face,view:{at:0,armed},columns:innerOf(width)}),frame=frameOf({snapshot:statusOf([]),width,height,bottom})
   assert.ok(frame.lines.some(l=>l.includes('计划有省略')),'the omitted plan does not silently turn into only its tail paths')
   assert.ok(frame.roles.includes('waiting'));assert.ok(frame.lines.length<=height)
@@ -70,7 +70,7 @@ test('a truncated card reports its own omission while preserving all batch and a
   assert.equal(frame.roles.filter(r=>r==='waiting').length,bottom.waitingCount,'disclosure never consumes an action row')
  }
  const complete=gateLayoutOf({face,view:{at:0,armed:null},columns:innerOf(40)})
- const full=frameOf({snapshot:statusOf([]),width:40,height:13,bottom:complete})
+ const full=frameOf({snapshot:statusOf([]),width:40,height:14,bottom:complete})
  assert.ok(!full.roles.includes('footer'),'complete confirmation owns the operation status')
  assert.ok(!full.lines.some(l=>l.includes('计划有省略')),'a complete card must not claim omission')
  assert.deepEqual(full.lines.slice(1,-1).map(l=>l.slice(1,-1).trim()),complete.rows,'reclaimed rows show the entire card')

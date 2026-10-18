@@ -16,7 +16,7 @@ import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmi
 import type { Editor } from './input.ts'
 import { acceptOf, candidatesOf, clampSel, completeOf, moveSel, pathsOf, queryOf, rowsTextOf, specsOf } from './menu.ts'
 import type { MenuRow, MenuSource } from './menu.ts'
-import { GATE_VIEW, cardAt, previewLinesOf, conclusionLineOf, gateLayoutOf, lineOf, pressGate, stepAt } from './gate.ts'
+import { GATE_VIEW, cardAt, previewLinesOf, conclusionLineOf, gateCompactLinesOf, gateLayoutOf, lineOf, pressGate, stepAt } from './gate.ts'
 import type { GateFace, GateOption, GateView } from './gate.ts'
 import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowsOf, shiftOf } from './queue.ts'
 import { altAt, clampNav, navNodesOf, navRowsOf, writerAt } from './nav.ts'
@@ -360,10 +360,12 @@ export function openStage(deps: StageDeps): Stage {
   const planLines = (): readonly string[] => {
     const face = gate
     if (face === null) return []
-    return face.cards.flatMap((card, i) => [
+    const lines = face.cards.flatMap((card, i) => [
       ...(i === 0 ? [] : ['']),
       ...previewLinesOf(card).map((line, j) => j === 0 ? `${i + 1}/${face.cards.length} · ${line}` : line),
     ])
+    // 命令行那份浓缩件不进决定面；完整阅读的末尾留一块「本批标记」，编号 · 底 · 批号 · 指纹在那里可达。
+    return face.compact === null ? lines : [...lines, '', '本批标记', ...gateCompactLinesOf(face)]
   }
   let readingWidth: number | undefined
   const reflowRead = (): void => {
