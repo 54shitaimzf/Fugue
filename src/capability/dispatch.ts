@@ -439,7 +439,7 @@ export function createToolExecutor(deps: DispatchDeps): ToolExecutor {
             denied: true,
           }
         : execNote === null
-        ? await dispatch(call, h, deps, true, fenced ? fencedArgs : undefined)
+        ? await dispatch(call, h, deps, fenced, fenced ? fencedArgs : undefined)
         : {
             result: { ok: false, output: `${call.name} has to be materialised first (the first corollary in § 8.9), and this pass did not lay the tree: ${execNote}` },
             capability: c,
