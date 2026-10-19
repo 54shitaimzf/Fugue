@@ -697,10 +697,14 @@ export function frameOf(o: FrameInput): Frame {
     const userMark = one.role === 'user' && one.l.startsWith('> ')
     const paragraphs = o.task === undefined ? [one.l] : one.l.split('\n')
     const parts = paragraphs.map((p, i) => wrap(userMark && i === 0 ? p.slice(2) : p, Math.max(1, inner - (userMark && i === 0 ? 2 : i === 0 ? 0 : 2))))
-    const identified = o.task !== undefined && ['user', 'model'].includes(one.role) && paragraphs.length > 1
+    const identified = o.task !== undefined && ['user', 'model'].includes(one.role)
     const headingAt = rowAt, headingCount = parts[0]?.length ?? 0
     const headings = one.role === 'model' ? modelHeadings(paragraphs) : []
-    const physical = parts.flatMap((part, i) => part.map(x => ({ l: i === 0 ? (userMark ? `> ${x}` : x) : `  ${x}`, role: headings[i] ? 'modelHeading' as const : one.role,
+    const physical = parts.flatMap((part, i) => part.map((x, j) => ({
+      // `> ` 只贴在这条消息的**第一行**：续行缩进两格。原先按「段」贴，第一段折成几行就
+      // 每个续行都带一个 `> `，一条长单段看起来像一串引用块，行首标记也就不再指向消息开头。
+      l: userMark ? (i === 0 && j === 0 ? `> ${x}` : `  ${x}`) : i === 0 ? x : `  ${x}`,
+      role: headings[i] ? 'modelHeading' as const : one.role,
       ...(identified ? { headingAt, headingCount } : {}) })))
     rowAt += physical.length
     return physical
@@ -848,19 +852,22 @@ export function frameOf(o: FrameInput): Frame {
         // 当前目标不能被截在身后：头里没装下用户那句话时，把它那一段一起带回来（放得下才带）；
         // 后面那条空行能带就带，让目标与模型的回答之间留出呼吸。
         const goalAt = rows.findLastIndex(one => one.role === 'user')
+        // 目标那一条消息的**开头**（不是最后一行）：一条长单段整条都是 user，按最后一行取会把
+        // 开头丢掉、只剩尾行。
+        const goalStart = goalAt < 0 ? -1 : (rows[goalAt]?.headingAt ?? goalAt)
         if (goalAt >= head.length) {
-          const goalEnd = groupEnd(goalAt)
+          const goalEnd = groupEnd(goalStart)
           const roomy = goalEnd < rows.length && rows[goalEnd]?.l.trim() === '' ? goalEnd + 1 : goalEnd
           if (roomy <= limit - 2) head = rows.slice(0, roomy)
           else if (goalEnd <= limit - 1) head = rows.slice(0, goalEnd)
           else {
             // 矮到装不下前面那几行时：失败/结果那几行与目标一起优先，前面那些状态与空行让位；
             // 两者都装不下时保失败/结果（它比目标更急），再不行才只保目标。
-            const urgent = rows.slice(0, goalAt).filter(one => one.role === 'refuse' || one.role === 'ok')
-            const combined = [...urgent, ...rows.slice(goalAt, goalEnd)]
+            const urgent = rows.slice(0, goalStart).filter(one => one.role === 'refuse' || one.role === 'ok')
+            const combined = [...urgent, ...rows.slice(goalStart, goalEnd)]
             if (combined.length <= limit - 1) head = combined
             else if (urgent.length > 0 && urgent.length <= limit - 1) head = urgent
-            else if (goalEnd - goalAt <= limit - 1) head = rows.slice(goalAt, goalEnd)
+            else if (goalEnd - goalStart <= limit - 1) head = rows.slice(goalStart, goalEnd)
           }
         }
         const tailBudget = limit - head.length
@@ -877,8 +884,9 @@ export function frameOf(o: FrameInput): Frame {
         }
         if (clean < rows.length && rows.length - clean >= 2) tail = rows.slice(clean)
         else if (start < rows.length) {
-          // 截点之后没有干净的边界（一整条长消息比尾巴预算还长）：把这条消息的标题一起带回来，
-          // 再接最新的那几行正文。标题和正文至少还在同一屏上。
+          // 截点之后没有干净的边界（一整条长消息比尾巴预算还长）：把这条消息的**开头**一起
+          // 带回来，再接最新的那几行正文。标题整块放得下就放标题；放不下时退到这条消息的
+          // 第一行——行首标记在那一行上，首行可识别，标记只出现在一处。
           const row = rows[start]!
           const at = row.headingAt, count = row.headingCount ?? 0
           if (at !== undefined && count > 0 && at >= head.length) {
@@ -886,7 +894,7 @@ export function frameOf(o: FrameInput): Frame {
             if (tailBudget > count) {
               const heading = rows.slice(at, at + count)
               tail = [...heading, ...rows.slice(-(tailBudget - count))]
-            }
+            } else if (tailBudget > 1) tail = [rows[at]!, ...rows.slice(-(tailBudget - 1))]
           } else tail = rows.slice(rows.length - tailBudget)
         }
         return [...head, ...tail]

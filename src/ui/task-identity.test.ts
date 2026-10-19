@@ -67,6 +67,25 @@ test('裁切长用户或模型消息仍把消息首行与尾巴一起留下；�
   console.log('identity: model/user x ascii/box/rich x120/80/24 x35/19/8/7; message first line + latest body + omission; 16x5/6 exact')
 })
 
+// R5：一条**长单段**（没有换行，折成很多行）在矮屏上截断时，开头不能被尾巴挤掉；
+// `> ` 是这条消息的行首标记，只能出现在第一行——续行缩进两格。
+test('R5 · 40×12 长单段：首行带 `> ` 可识别 · 标记只一处 · 省略可见', () => {
+  const rows=events(), snapshot=statusOf(rows)
+  const body='修复登录提示、保留账号、检查重试与失败回执，'.repeat(12)
+  const text='> '+body
+  for(const glyph of ['ascii','box','rich'] as const){
+    setGlyphTier(glyph)
+    const task={...taskOf(rows),rows:[{text:'正在执行',role:'system' as const},{text,role:'user' as const}]}
+    const f=frameOf({snapshot,task,width:40,height:12}), lines=plain(f)
+    assert.ok(lines.some(l=>l.startsWith('> 修复登录提示')),`${glyph}: 消息首行不能只剩尾行`)
+    assert.equal(lines.filter(l=>l.trimStart().startsWith('> ')).length,1,`${glyph}: \`> \` 只贴第一行`)
+    assert.ok(lines.some(l=>/未展开|看全/.test(l)),`${glyph}: 省略必须可见`)
+    assert.equal(f.lines.length,12);assert.ok(f.lines.every(l=>widthOf(l)===40))
+  }
+  setGlyphTier('box')
+  console.log('R5: long single paragraph 40x12 x3 glyphs; first line with one marker; omission visible')
+})
+
 test('确认区域已有当前指示时收起等待输入页脚；坏范围、阅读与二级视图保留地板',()=>{
   const snapshot=statusOf([]), bottom=gateLayoutOf({face,view:{at:0,armed:null},columns:114,height:35})
   const base={snapshot,width:120,height:35}
