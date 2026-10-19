@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { BindingError } from '../../boundary/binding.ts'
 import { probeLayers } from '../../boundary/policy.ts'
-import { assertionSpecsOf } from '../../round/assertions.ts'
+import { assertionSpecsOf, newAssertionPlanMemo } from '../../round/assertions.ts'
 import { actionsTableOf } from '../../round/actions.ts'
 import { ConfigError, getConfig, readConfig } from '../../config.ts'
 import type { ConfigDoc } from '../../config.ts'
@@ -1282,6 +1282,9 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
     // （`acquireFences` 已经把每个 agent 的日志口开出来了，名单是齐的）。
     const writers = (await ctx.log.writers()).slice().sort()
     const probed = probeLayers(ctx.roots)
+    // **一批一份**（A/B）：这一轮的验收只落在一棵物化树上，`specsOf` 会被逐份契约叫，
+    // 同一份 `(action, agent)` 的准备只做一次。
+    const specMemo = newAssertionPlanMemo()
     const portIndexOf = (a: AgentId): number => {
       const i = writers.indexOf(a)
       return i < 0 ? writers.length : i
@@ -1309,6 +1312,7 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
             probed,
             tree: tree as AbsPath,
             portIndexOf,
+            memo: specMemo,
           }),
         retriesLeft,
         strictMergeGate: flags.has('strict-merge-gate'),

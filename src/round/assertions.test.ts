@@ -18,17 +18,18 @@ import { probeLayers } from '../boundary/policy.ts'
 import type { ConfigDoc } from '../config.ts'
 import { createRoots } from '../roots/roots.ts'
 import { verify } from '../merge/accept.ts'
-import { assertionSpecsOf } from './assertions.ts'
+import { assertionSpecsOf, newAssertionPlanMemo } from './assertions.ts'
 import type { Contract } from '../contract/types.ts'
 import type { AgentId, RelPath } from '../terms.ts'
 
 const AGENT = 'agent/r1/1' as AgentId
+const AGENT2 = 'agent/r1/2' as AgentId
 
-function contractOf(action: string, where?: RelPath): Contract {
+function contractOf(action: string, where?: RelPath, agent: AgentId = AGENT): Contract {
   return {
     kind: 'implement',
     id: 'r1.implement.1',
-    agent: AGENT,
+    agent,
     branch: 'refs/heads/agent/r1/1',
     goal: '把这一格做完',
     ownedPaths: ['out.txt'],
@@ -99,6 +100,102 @@ test('B01 验收走同一条执行路：真沙箱 · 树外哨兵不变 · where
     assert.equal(missing.fail, 0)
     assert.match(String(missing.results[0]?.note), /没有这个动作/)
     assert.equal(existsSync(join(root, 'hacked')), false)
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+// A ①：**检查在宿主写之前**。声明落到视图外的那一条，缓存目录与声明目录一个都不该建，
+// 验收进程一次都不该起。改前三处 `mkdirSync` 排在 `checkReach` 之前，树外那一段会先被建出来。
+test('A ① · 声明落到树外：树外一个目录都不建 · 验收一次都不起', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'fugue-a1-'))
+  const root = join(base, 'root')
+  const mat = join(base, 'mat')
+  const outside = join(base, 'outside')
+  mkdirSync(join(root, '.fugue'), { recursive: true })
+  mkdirSync(mat, { recursive: true })
+  mkdirSync(outside, { recursive: true })
+  const sentinel = join(outside, 'ran.txt')
+  const doc: ConfigDoc = {
+    actions: {
+      escape: { argv: ['/bin/sh', '-c', `echo ran > '${sentinel}'`], cache: ['../outside/created'] },
+    },
+  }
+  const roots = createRoots(root)
+  try {
+    const specs = assertionSpecsOf([contractOf('escape')], {
+      roots,
+      doc,
+      probed: probeLayers(roots),
+      tree: mat,
+      portIndexOf: () => 0,
+    })
+    assert.equal(specs.length, 1)
+    assert.match(String(specs[0]?.notRun), /落不到视图里/)
+    assert.equal(existsSync(join(outside, 'created')), false, '树外目录一个都不该建')
+    const report = await verify(mat, specs)
+    assert.equal(report.unrunnable, 1)
+    assert.equal(report.fail, 0)
+    assert.equal(existsSync(sentinel), false, '验收进程一次都不该起')
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+// A ②：**声明目录的创建排在检查之后**。树里同名的已经是文件时，该报 not-a-mount-point；
+// 改前 `mkdirSync(dist, {recursive:true})` 先撞 EEXIST，报出来的是 mkdir 的话。
+test('A ② · 树里同名的是文件：报 not-a-mount-point，不是 EEXIST', () => {
+  const base = mkdtempSync(join(tmpdir(), 'fugue-a2-'))
+  const root = join(base, 'root')
+  const mat = join(base, 'mat')
+  mkdirSync(join(root, '.fugue'), { recursive: true })
+  mkdirSync(mat, { recursive: true })
+  writeFileSync(join(mat, 'dist'), '不是目录\n')
+  const doc: ConfigDoc = { actions: { build: { argv: ['/bin/true'], cache: ['dist'] } } }
+  const roots = createRoots(root)
+  try {
+    const specs = assertionSpecsOf([contractOf('build')], {
+      roots,
+      doc,
+      probed: probeLayers(roots),
+      tree: mat,
+      portIndexOf: () => 0,
+    })
+    assert.equal(specs.length, 1)
+    const why = String(specs[0]?.notRun)
+    assert.match(why, /不是一个目录/)
+    assert.doesNotMatch(why, /EEXIST/)
+    assert.equal(readFileSync(join(mat, 'dist'), 'utf8'), '不是目录\n')
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+// B（并进 A）：memo 的键是 `(action, agent)`。同一批里用同一份 memo 分两次算出来的 specs，
+// 要与不用 memo 一次算出来的**逐字段相等**；两个 agent 共用一个动作时，端口片不串味。
+test('B · (action, agent) memo：有 memo 与没 memo 的 specs 逐字段相等', () => {
+  const base = mkdtempSync(join(tmpdir(), 'fugue-b-'))
+  const root = join(base, 'root')
+  const mat = join(base, 'mat')
+  mkdirSync(join(root, '.fugue'), { recursive: true })
+  mkdirSync(mat, { recursive: true })
+  const doc: ConfigDoc = { actions: { build: { argv: ['/bin/true'], cache: ['dist'] } } }
+  const roots = createRoots(root)
+  const probed = probeLayers(roots)
+  const portIndexOf = (a: AgentId): number => (a === AGENT ? 0 : 1)
+  try {
+    const c1 = contractOf('build')
+    const c2 = contractOf('build', undefined, AGENT2)
+    const deps = { roots, doc, probed, tree: mat, portIndexOf }
+    const without = assertionSpecsOf([c1, c2], deps)
+    const memo = newAssertionPlanMemo()
+    const withMemo = [
+      ...assertionSpecsOf([c1], { ...deps, memo }),
+      ...assertionSpecsOf([c2], { ...deps, memo }),
+    ]
+    assert.deepEqual(withMemo, without)
+    assert.equal(withMemo.length, 2)
+    assert.notEqual(withMemo[0]?.env.PORT, withMemo[1]?.env.PORT, '不同 agent 的端口片不该被 memo 串成一片')
   } finally {
     rmSync(base, { recursive: true, force: true })
   }

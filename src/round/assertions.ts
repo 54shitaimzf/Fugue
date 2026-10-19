@@ -11,22 +11,26 @@
 //     → `checkReach` / `checkMountPoints`（启动前一致性）→ `envFor`（环境基线 + 坐标 + 端口片）
 //     → `confine` / `degradedArgv`（怎么包）→ `Executor`（起进程 · 收输出）
 //
+// **检查在所有宿主写之前**（A）：声明落到视图外 · 树里同名的不是目录，这两条一拒，缓存目录与
+// 声明目录一个都不建、验收进程一次都不起。声明目录的 `mkdir` 排在那两条检查**之后**。
+//
 // **一处解析，两处读**：`assertionSpecsOf` 只把「这一趟怎么起」算出来；起进程在
 // `merge/accept.ts` 的 `runAssertion`（同一个 `createExecutor`）。`round run` 那条打桩/走查
 // 路径仍可给直连 argv——它不是产品轮次，见 `runIssued` 的 `specsOf` 栏。
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { declaredDirs, envFor, portRangeOf, readBinding } from '../boundary/binding.ts'
+import type { ActionBinding } from '../boundary/binding.ts'
 import { checkMountPoints, checkReach } from '../boundary/check.ts'
 import { confine, degradedArgv } from '../boundary/confine.ts'
 import { resolvePolicy } from '../boundary/policy.ts'
-import type { LayersProbe } from '../boundary/policy.ts'
+import type { LayersProbe, Policy } from '../boundary/policy.ts'
 import { cacheLayoutOf } from '../roots/coords.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { ConfigDoc } from '../config.ts'
 import type { AssertionRunSpec } from '../merge/accept.ts'
 import type { Assertion, Contract } from '../contract/types.ts'
-import type { AbsPath, AgentId } from '../terms.ts'
+import type { AbsPath, AgentId, RelPath } from '../terms.ts'
 
 /** 这一批断言跑在哪：工作区 · 配置 · 探到的层 · 那棵树（验收自己铺的那一棵）。 */
 export interface AssertionPlanDeps {
@@ -37,6 +41,37 @@ export interface AssertionPlanDeps {
   readonly tree: AbsPath
   /** 本 agent 的端口片序号（与 `fugue run`/驱动同一算法：日志里 writer 的次序）。 */
   readonly portIndexOf: (agent: AgentId) => number
+  /**
+   * **一批一份**（B）：键是 `(action, agent)`，值是一次准备的结果（绑定 · 声明 · 策略 · 环境）。
+   * 给了就在这一批里复用——同一批的每条断言不再各自读配置、探策略、检查、建目录。
+   * 它按**一棵树**算（调用方在一轮里只给一棵验收树）。
+   */
+  readonly memo?: AssertionPlanMemo
+}
+
+/** 一次准备的两种结果：能起（连同那一趟的输入）或不能起（为什么）。 */
+interface ReadyPlan {
+  readonly ok: true
+  readonly binding: ActionBinding
+  readonly declared: readonly RelPath[]
+  readonly policy: Policy
+  readonly env: Record<string, string>
+}
+
+interface RefusedPlan {
+  readonly ok: false
+  readonly why: string
+}
+
+type AssertionPlan = ReadyPlan | RefusedPlan
+
+/** `(action, agent)` 的准备结果缓存。一批一份，见 `AssertionPlanDeps.memo`。 */
+export interface AssertionPlanMemo {
+  readonly plans: Map<string, AssertionPlan>
+}
+
+export function newAssertionPlanMemo(): AssertionPlanMemo {
+  return { plans: new Map() }
 }
 
 /**
@@ -47,19 +82,36 @@ export interface AssertionPlanDeps {
  * 是哪一条断言的哪一步；整轮抛出去会把「哪一条」丢掉。
  */
 export function assertionSpecsOf(contracts: readonly Contract[], deps: AssertionPlanDeps): AssertionRunSpec[] {
+  const memo = deps.memo ?? newAssertionPlanMemo()
   const out: AssertionRunSpec[] = []
   for (const c of contracts) {
     if (c.kind === 'investigate') continue
     const agent = c.agent as AgentId
-    for (const a of c.assertions) out.push(specOf(a, agent, deps))
+    for (const a of c.assertions) {
+      const key = JSON.stringify([agent, a.action])
+      let plan = memo.plans.get(key)
+      if (plan === undefined) {
+        plan = planOf(a.action, agent, deps)
+        memo.plans.set(key, plan)
+      }
+      out.push(plan.ok ? specOf(a, agent, plan, deps) : notRun(a, agent, plan.why))
+    }
   }
   return out
 }
 
-function specOf(a: Assertion, agent: AgentId, deps: AssertionPlanDeps): AssertionRunSpec {
+/**
+ * 一条断言那一趟的输入：绑定 · 声明目录 · 策略 · 环境。**检查在前、宿主写在後**（A）：
+ *
+ *   1. `checkReach`：声明落不落在视图里 · 清单在宿主上成不成立。它不碰工作区。
+ *   2. `checkMountPoints`：树里那个位置已经是**文件或软链**的那一条，在创建之前就拒
+ *      （原先 `mkdirSync` 排在前面，报的是 `EEXIST`，指错了地方）。
+ *   3. 这之后才建缓存落点与缺失的声明目录（`mkdir` 只补不存在的；存在又不是目录的，第 2 步已拒）。
+ */
+function planOf(action: Assertion['action'], agent: AgentId, deps: AssertionPlanDeps): AssertionPlan {
   try {
-    const b = readBinding(deps.doc, a.action)
-    const declared = declaredDirs(b)
+    const b = readBinding(deps.doc, action)
+    const declared = declaredDirs(b) as readonly RelPath[]
     // **档与 agent 执行那条路一致**（`round/driver.ts` 的 `policyNow` 也是 workspace-write）：
     // 验收跑在另铺的一棵树上，树可写不会碰到真实工作树；写不动的话，那些要落产物的断言会
     // 在验收门里换一个失败原因——那不是同一条判据。
@@ -72,6 +124,10 @@ function specOf(a: Assertion, agent: AgentId, deps: AssertionPlanDeps): Assertio
       probed: deps.probed,
       tree: deps.tree,
     })
+    const reach = checkReach({ roots: deps.roots, policy, declared })
+    if (!reach.ok) return { ok: false, why: reach.error.message }
+    const mounts = checkMountPoints(deps.tree, declared)
+    if (!mounts.ok) return { ok: false, why: mounts.error.message }
     // 声明目录的挂载点：树里那一侧要有目录（`--bind` 的落点），缓存那一侧要有源。
     const cache = cacheLayoutOf(deps.roots, agent)
     mkdirSync(cache.home, { recursive: true })
@@ -82,10 +138,6 @@ function specOf(a: Assertion, agent: AgentId, deps: AssertionPlanDeps): Assertio
       mkdirSync(join(deps.tree, rel), { recursive: true })
       mkdirSync(cache.bound(rel), { recursive: true })
     }
-    const reach = checkReach({ roots: deps.roots, policy, declared })
-    if (!reach.ok) return notRun(a, agent, reach.error.message)
-    const mounts = checkMountPoints(deps.tree, declared)
-    if (!mounts.ok) return notRun(a, agent, mounts.error.message)
     const env = envFor({
       agent,
       binding: b,
@@ -94,24 +146,28 @@ function specOf(a: Assertion, agent: AgentId, deps: AssertionPlanDeps): Assertio
       range: portRangeOf(deps.doc),
       policy,
     })
-    // `where` 比动作自己的 `cwd` 更具体：断言说「在哪跑」时以它为准（架构 § 8.12 那条
-    // 字段表的 `where` 一栏）；没给才退回动作绑定的 cwd。
-    const cwd = a.where ?? b.cwd
-    const sandboxed = policy.layers.includes('bwrap')
-    const confined = sandboxed
-      ? confine({ roots: deps.roots, agent, argv: b.argv, cwd, declared, env, policy, tree: deps.tree })
-      : degradedArgv(b.argv, { roots: deps.roots, policy })
-    return {
-      assertion: a,
-      agent,
-      argv: confined.argv,
-      env,
-      ...(cwd === '' ? {} : { cwd: cwd as AssertionRunSpec['cwd'] }),
-      enforcement: policy.enforcement,
-      mechanism: confined.mechanism,
-    }
+    return { ok: true, binding: b, declared, policy, env }
   } catch (err) {
-    return notRun(a, agent, (err as Error).message)
+    return { ok: false, why: (err as Error).message }
+  }
+}
+
+function specOf(a: Assertion, agent: AgentId, plan: ReadyPlan, deps: AssertionPlanDeps): AssertionRunSpec {
+  // `where` 比动作自己的 `cwd` 更具体：断言说「在哪跑」时以它为准（架构 § 8.12 那条
+  // 字段表的 `where` 一栏）；没给才退回动作绑定的 cwd。
+  const cwd = a.where ?? plan.binding.cwd
+  const sandboxed = plan.policy.layers.includes('bwrap')
+  const confined = sandboxed
+    ? confine({ roots: deps.roots, agent, argv: plan.binding.argv, cwd, declared: plan.declared, env: plan.env, policy: plan.policy, tree: deps.tree })
+    : degradedArgv(plan.binding.argv, { roots: deps.roots, policy: plan.policy })
+  return {
+    assertion: a,
+    agent,
+    argv: confined.argv,
+    env: plan.env,
+    ...(cwd === '' ? {} : { cwd: cwd as AssertionRunSpec['cwd'] }),
+    enforcement: plan.policy.enforcement,
+    mechanism: confined.mechanism,
   }
 }
 
