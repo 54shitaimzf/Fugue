@@ -111,6 +111,46 @@ export async function leavesOf(truth: Truth, commit: CommitId, want?: ReadonlySe
   return { leaves }
 }
 
+/** 一棵树里一条叶子的条目：模式与对象 id。**只读条目、不取内容**。 */
+export interface PathEntry {
+  readonly mode: number
+  readonly id: string
+}
+
+/**
+ * 树侧事实（C/D）：两棵树的路径集 · 盘上那几条路径的叶（blob 哈希）· touched。
+ * 第一次算，第二次（验收之后那一次复核）只付 ref 与盘上。
+ */
+export interface DriftFacts {
+  readonly basePaths: ReadonlyMap<RelPath, PathEntry>
+  readonly targetPaths: ReadonlyMap<RelPath, PathEntry>
+  readonly baseLeaves: ReadonlyMap<RelPath, { readonly mode: number; readonly hash: string }>
+  readonly targetLeaves: ReadonlyMap<RelPath, { readonly mode: number; readonly hash: string }>
+  readonly touched: readonly RelPath[]
+}
+
+/**
+ * 把树侧事实算一次。`want` 是**盘上真有的那些路径**（D1）：只有它们要取 blob 哈希；
+ * 存在性由两份路径集回答，所以底与目标树里其余路径不必读内容。
+ */
+export async function driftFactsOf(
+  truth: Truth,
+  base: CommitId,
+  target: CommitId,
+  want: Iterable<RelPath>,
+): Promise<DriftFacts> {
+  const [basePaths, targetPaths] = await Promise.all([pathsOf(truth, base), pathsOf(truth, target)])
+  const w = new Set<RelPath>(want)
+  const [bl, tl] = await Promise.all([leavesOf(truth, base, w), leavesOf(truth, target, w)])
+  return {
+    basePaths,
+    targetPaths,
+    baseLeaves: bl.leaves,
+    targetLeaves: tl.leaves,
+    touched: diffPaths(basePaths, targetPaths),
+  }
+}
+
 /** 三条读数。**三者各自独立**：哪一条不成立，拒绝的话里都要指得出来。 */
 export interface Drift {
   /** HEAD 现在指着谁。 */
@@ -142,6 +182,11 @@ export interface Drift {
    * 那一份**不是底**”的那些（推进会把它删掉，而那条上手里的改会丢）。**空 = 放行。**
    */
   readonly colliding: readonly RelPath[]
+  /**
+   * **树侧事实**（C/D）：第一次算完随判决一起交给下一次复核；第二次只重取 ref 与盘上。
+   * `base` 拿不到或没给目标树时没有这一栏（那两档本来就判不了）。
+   */
+  readonly facts?: DriftFacts
 }
 
 export interface DriftDeps {
@@ -159,6 +204,11 @@ export interface DriftDeps {
   readonly target?: CommitId
   /** 钉住的 base 在哪条 ref 上（缺省主线 `refs/heads/main`）。 */
   readonly ref?: RefName
+  /**
+   * 上一次已经算过的树侧事实（C）：给了就不再重走两棵树；只重取 ref 与盘上。
+   * **它按一棵验收树算**（同一轮两次复核之间树不变）。
+   */
+  readonly facts?: DriftFacts
 }
 
 /**
@@ -166,6 +216,10 @@ export interface DriftDeps {
  *
  * 三方各取一次盘上/树上的样子，逐条路径比。**先取盘上那一份**：判据只需要盘上真有的那几条
  * ——底与目标树里其余路径不必读出来（大树上这是"只读会撞车的那些"，不是整棵树）。
+ *
+ * **树侧事实可以传进来**（C）：同一轮两次核对之间 base/target 不变，第一次算完随判决带出，
+ * 第二次只重取 ref 与盘上。取哈希的全集也只有盘上那几条（D1）；存在性由路径集回答。
+ * `touched` 从两份路径集差分出来（D2），不再为它多走一遍树。
  */
 export async function driftOf(deps: DriftDeps): Promise<Drift> {
   const ref = deps.ref ?? 'refs/heads/main'
@@ -178,6 +232,7 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
   const headMoved = deps.base === null || head !== deps.base
 
   let touched: RelPath[] = []
+  let facts: DriftFacts | undefined
   const divergent: RelPath[] = []
   const handTouched: RelPath[] = []
   const deleted: RelPath[] = []
@@ -187,14 +242,30 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
     // 盘上那一份（**跳 `WORKSPACE_STATE`**：工作区自己的本子不是"用户改了什么"）。
     const disk = scanTree(deps.realRoot, { skip: WORKSPACE_STATE })
     const onDisk = new Map(disk.leaves.map((l) => [l.path, l]))
+    // **树侧事实只算一次**（C）：第一次由这里算，随判决交给验收之后那一次复核。
+    facts = deps.facts ?? (await driftFactsOf(deps.truth, deps.base, deps.target, onDisk.keys()))
     // **路径全集是三方并集**（B03）：只在盘上建集合的话，用户删掉的路径根本不在里面，推进会
-    // 把它们静默重建——删除也是用户的修改。底与目标树的路径只需条目（按 id 比内容是否相同），
-    // 盘上真有的那些才取 blob 内容。
-    const basePaths = await pathsOf(deps.truth, deps.base)
-    const targetPaths = await pathsOf(deps.truth, deps.target)
+    // 把它们静默重建——删除也是用户的修改。**存在性**由两份路径集回答（D1）；只有盘上真有的
+    // 那些路径才去取 blob 哈希。
+    const basePaths = facts.basePaths
+    const targetPaths = facts.targetPaths
     const want = new Set<RelPath>([...onDisk.keys(), ...basePaths.keys(), ...targetPaths.keys()])
-    const target = await leavesOf(deps.truth, deps.target, want)
-    const base = await leavesOf(deps.truth, deps.base, want)
+    const baseLeaves = new Map(facts.baseLeaves)
+    const targetLeaves = new Map(facts.targetLeaves)
+    // 第二次复核时盘上可能冒出第一次没见过的路径：按需补一条（`hashOfBlob` 按对象 id 缓存）。
+    const leafIn = async (
+      into: Map<RelPath, { readonly mode: number; readonly hash: string }>,
+      paths: ReadonlyMap<RelPath, PathEntry>,
+      p: RelPath,
+    ): Promise<{ readonly mode: number; readonly hash: string } | undefined> => {
+      const hit = into.get(p)
+      if (hit !== undefined) return hit
+      const e = paths.get(p)
+      if (e === undefined) return undefined
+      const leaf = { mode: e.mode, hash: await hashOfBlob(deps.truth, e.id as BlobId) }
+      into.set(p, leaf)
+      return leaf
+    }
     // **“盘上缺一条、底里有”什么时候算用户的删除**（B03 的口径）：判据是**盘上还有没有内容**
     // ——盘上一条文件都没有（只看工作区文件，`.git` / `.fugue` 已跳过）时，那是“视图有、盘上
     // 还没铺”（延迟物化那一档，`round run` 的夹具就是它），不是用户删掉了每一条；那时照旧写上去。
@@ -204,16 +275,15 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
     // “铺过又删光”（两者在盘上是同一幅样子，而这里不新建持久层去记历史）——按“还没铺”处理，
     // 照常推进。单文件仓库删掉那唯一一条也落在这一档；代价是已知的、不是漏掉的。
     const baseOnDisk = onDisk.size > 0
-    touched = await touchedPaths(deps.truth, deps.base, deps.target)
+    touched = facts.touched
 
     for (const p of [...want].sort()) {
       const l = onDisk.get(p)
-      const t = target.leaves.get(p)
-      const b = base.leaves.get(p)
       // **盘上没有它**：要么目标新增一条（推进只是新建，没谁的字节可丢），要么用户删掉了
       // 一条目标树还留着的路径（B03：推进会把它重建，那是覆盖用户意图）。两边都删才不管。
+      // **存在性用路径集回答**（D1）：这两支不需要内容哈希。
       if (l === undefined) {
-        if (t === undefined || b === undefined) continue
+        if (!targetPaths.has(p) || !basePaths.has(p)) continue
         // 盘上一条文件都没有：整棵树还没铺，不判“用户删除”（见上面那一段的边界）。
         if (!baseOnDisk) continue
         divergent.push(p)
@@ -222,6 +292,8 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
         colliding.push(p)
         continue
       }
+      const t = await leafIn(targetLeaves, targetPaths, p)
+      const b = await leafIn(baseLeaves, basePaths, p)
       // 盘上的整模式先归到树上那一档（`gitModeOf`）：umask 给的组写位 · 软链的 0777 都不是
       // "用户碰过"。执行位翻了照旧是不同——git 也把它当一次改动。
       const same = (x: { readonly mode: number; readonly hash: string } | undefined): boolean =>
@@ -251,15 +323,25 @@ export async function driftOf(deps: DriftDeps): Promise<Drift> {
   deleted.sort()
   userDeleted.sort()
   colliding.sort()
-  return { head, headMoved, touched, divergent, handTouched, deleted, userDeleted, colliding }
+  return {
+    head,
+    headMoved,
+    touched,
+    divergent,
+    handTouched,
+    deleted,
+    userDeleted,
+    colliding,
+    ...(facts === undefined ? {} : { facts }),
+  }
 }
 
 /**
  * 一棵树里有哪些叶子（路径 → 模式与对象 id）。**只读条目、不取内容**：B03 要的是“目标树里
  * 还有没有这一条”，不是它写了什么。
  */
-async function pathsOf(truth: Truth, commit: CommitId): Promise<Map<RelPath, { readonly mode: number; readonly id: string }>> {
-  const out = new Map<RelPath, { readonly mode: number; readonly id: string }>()
+async function pathsOf(truth: Truth, commit: CommitId): Promise<Map<RelPath, PathEntry>> {
+  const out = new Map<RelPath, PathEntry>()
   const walk = async (dir: RelPath): Promise<void> => {
     for (const e of await truth.listAt(commit, dir)) {
       const p = dir === '' ? e.name : `${dir}/${e.name}`
@@ -273,23 +355,10 @@ async function pathsOf(truth: Truth, commit: CommitId): Promise<Map<RelPath, { r
 
 /**
  * 这次合并**动到**哪些路径：目标树相对底不同的那些（写 · 改 · 删）。**只比条目，不取内容**
- * ——两边的 `id` 不同就是内容不同，够用了；它是读数，不是判据。
+ * ——两边的 `id` 不同就是内容不同，够用了；它是读数，不是判据。**直接用两份路径集差分**
+ * （D2）：`pathsOf` 已经把两边都走过了，不再为它多走一遍树。
  */
-async function touchedPaths(truth: Truth, base: CommitId, target: CommitId): Promise<RelPath[]> {
-  const at = async (commit: CommitId): Promise<Map<RelPath, { mode: number; id: string }>> => {
-    const out = new Map<RelPath, { mode: number; id: string }>()
-    const walk = async (dir: RelPath): Promise<void> => {
-      for (const e of await truth.listAt(commit, dir)) {
-        const p = dir === '' ? e.name : `${dir}/${e.name}`
-        if (e.kind === 'dir') await walk(p)
-        else if (!workspaceState(p)) out.set(p, { mode: e.mode, id: e.id })
-      }
-    }
-    await walk('')
-    return out
-  }
-  const b = await at(base)
-  const t = await at(target)
+function diffPaths(b: ReadonlyMap<RelPath, PathEntry>, t: ReadonlyMap<RelPath, PathEntry>): RelPath[] {
   const out: RelPath[] = []
   for (const [p, e] of t) {
     const was = b.get(p)

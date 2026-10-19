@@ -486,7 +486,14 @@ export async function runIssued(deps: RunTailDeps, batch: IssuedBatch): Promise<
     let advanced: AdvanceResult | null = null
     if (report.ok) {
       if (deps.checkDrift !== false) {
-        const again = await mergeDrift({ truth, realRoot: roots.realRoot, base: batch.base, target: outcome.commit })
+        // **树侧事实只算一次**（C）：两次 check 的 base/target 不变，第二次只重取 ref 与盘上。
+        const again = await mergeDrift({
+          truth,
+          realRoot: roots.realRoot,
+          base: batch.base,
+          target: outcome.commit,
+          ...(drift?.drift.facts === undefined ? {} : { facts: drift.drift.facts }),
+        })
         if (!again.ok) throw new RoundRunError('drift', again.say)
       }
       advanced = await publish({

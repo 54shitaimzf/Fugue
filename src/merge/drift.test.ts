@@ -23,7 +23,7 @@ import type { BlobId, CommitId, RelPath } from '../terms.ts'
 import type { TreeEntry } from '../entries.ts'
 import { openTruth } from '../truth/truth.ts'
 import { WORKSPACE_STATE, hashBytes, scanTree } from '../materialize/diffstat.ts'
-import { DriftError, driftOf, leavesOf, mergeDrift } from './drift.ts'
+import { DriftError, driftFactsOf, driftOf, leavesOf, mergeDrift } from './drift.ts'
 
 const roots: string[] = []
 process.on('exit', () => {
@@ -152,6 +152,27 @@ test('R3 · 铺过又删：盘上还有别的文件时，底里唯一那条被�
     assert.deepEqual(verdict.drift.colliding, ['only.txt'])
     assert.match(verdict.say, /你删了、而这次合并仍要保留/)
     assert.equal(readFileSync(join(real, 'new.txt'), 'utf8'), '目标新增\n', '拒的时候盘上字节一个没动')
+  } finally {
+    await t.close()
+  }
+})
+
+// C/D：树侧事实只算一次。带着第一遍算出的 facts 跑第二遍，判决要与不带时**逐字段相等**；
+// `want` 收窄成盘上那些路径后，存在性仍由两份路径集回答（下面的负对照用例仍然绿）。
+test('C/D · 树侧事实只算一次：带 facts 的判决与不带时逐字段相等', async () => {
+  const { real, t, base } = await scene({ 'a.txt': '底\n', 'b.txt': '底 b\n' })
+  try {
+    writeFileSync(join(real, 'b.txt'), '用户改过的 b\n')
+    const target = await commitOf(t, { 'a.txt': '目标 a\n', 'b.txt': '底 b\n' }, '目标树')
+    const without = await mergeDrift({ truth: t, realRoot: real, base, target })
+    const facts = await driftFactsOf(t, base, target, ['a.txt', 'b.txt'])
+    const one = await mergeDrift({ truth: t, realRoot: real, base, target, facts })
+    assert.deepEqual(one, without, '带 facts 与不带 facts 的判决逐字段相等')
+    assert.deepEqual(one.drift.touched, without.drift.touched)
+    assert.deepEqual(facts.touched, without.drift.touched, 'touched 是从两份路径集差分出来的')
+    // 验收之后那一次复核：盘上没变，同一份 facts 的判决照旧逐字段相等。
+    const two = await mergeDrift({ truth: t, realRoot: real, base, target, facts })
+    assert.deepEqual(two, one)
   } finally {
     await t.close()
   }
