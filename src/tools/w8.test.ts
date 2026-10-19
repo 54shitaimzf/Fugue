@@ -531,6 +531,41 @@ test('B10 验收期间盘上被改：写回前复核当场拒，不落发布事�
   }
 })
 
+// R3：盘上铺过、底里的文件被删光——原先 `baseOnDisk` 只看“底里还有没有路径在盘上”，
+// 盘上只剩目标新增的那一条时被当成“还没铺”，推进会把删掉的文件静默建回来。
+test('R3 盘上铺过又删光底里的文件：漂移拒在写回前，零发布', async () => {
+  const b = await bench()
+  try {
+    // 底里那四条从盘上删掉；盘上留着一条目标树里也有的（它不是“用户新加要被删的”）。
+    for (const rel of ['README.md', 'a.ts', 'notes/keep.md', 'notes/gone.md']) rmSync(join(b.root, rel))
+    writeFileSync(join(b.root, 'scratch.txt'), '用户自己的\n')
+    const step = (id: string, path: string, content: string): readonly ModelEvent[] => [
+      ...callOne(0, id, 'write', { path, content }),
+      { t: 'usage', usage: USAGE },
+      { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+    ]
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      step('c_a', 'a.ts', '合并结果\n'),
+      step('c_s', 'scratch.txt', '用户自己的\n'),
+      DONE,
+    ]
+    await assert.rejects(
+      () => runRound({ ...depsOf(b, scriptedModel(scripts), ['a.ts', 'scratch.txt']) }),
+      (err: unknown) => {
+        assert.ok(err instanceof RoundRunError, `该是 RoundRunError，实得 ${String(err)}`)
+        assert.equal(err.at, 'drift')
+        assert.match(err.message, /你删了、而这次合并仍要保留/)
+        return true
+      },
+    )
+    const rows = await eventsOf(b.root)
+    assert.equal(rows.filter((e) => e.t === 'merge/publish').length, 0, '拒在写回之前：一条发布事实都不该落')
+    assert.equal(rows.filter((e) => e.t === 'merge/accept').length, 0)
+  } finally {
+    await b.close()
+  }
+})
+
 test('B09 最终验收只跑一遍：断言执行一次 · 发布事实两条 · 接受事件一条', async () => {
   const b = await bench()
   const dir = mkdtempSync(join(tmpdir(), 'fugue-b09-'))

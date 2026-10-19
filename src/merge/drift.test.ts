@@ -111,7 +111,7 @@ test('B03 用户删除也是修改：目标还留着就拒，两边都删才放�
   }
 })
 
-test('B03 判据的边界：整棵树一条底路径都不在盘上时按“还没铺”处理，不判用户删除', async () => {
+test('R3 · 真没铺：盘上一条文件都没有时按“还没铺”处理，不判用户删除', async () => {
   const { real, t, base } = await scene({ 'only.txt': '底里唯一的一条\n' })
   try {
     rmSync(join(real, 'only.txt'))
@@ -119,6 +119,9 @@ test('B03 判据的边界：整棵树一条底路径都不在盘上时按“还�
     const verdict = await mergeDrift({ truth: t, realRoot: real, base, target })
     assert.equal(verdict.ok, true, '整棵树还没铺到盘上时，缺文件不是“用户删除”')
     assert.deepEqual(verdict.drift.userDeleted, [])
+    // **边界（已知代价）**：盘上一条文件都不剩时，“真没铺”与“铺过又删光”在盘上是同一幅
+    // 样子，而这一层不新建持久层去记历史——按“还没铺”处理。单文件仓库删掉那唯一一条也在
+    // 这一档。下一份测试量的是能分出来的那一半：盘上还有别的文件（铺过）时，删就是要拒。
     // 负对照：盘上还有一条底里的路径时，缺的那一条就算用户的删除。
     writeFileSync(join(real, 'only.txt'), '底里唯一的一条\n')
     rmSync(join(real, 'only.txt'))
@@ -129,6 +132,26 @@ test('B03 判据的边界：整棵树一条底路径都不在盘上时按“还�
     const again = await mergeDrift({ truth: t, realRoot: real, base: base2, target: target2 })
     assert.equal(again.ok, false, '盘上确实铺过（至少一条底路径在），缺的那一条是删除')
     assert.deepEqual(again.drift.userDeleted, ['only.txt'])
+  } finally {
+    await t.close()
+  }
+})
+
+// R3：**铺过的证据是盘上还有内容**，不是“底里还有一条路径在盘上”。原先 `baseOnDisk` 只查
+// 后者，于是“底里唯一一条被删、而盘上还有别的文件”被当成“还没铺”，推进会把它静默建回来。
+test('R3 · 铺过又删：盘上还有别的文件时，底里唯一那条被删要拒', async () => {
+  const { real, t, base } = await scene({ 'only.txt': '底里唯一的一条\n' })
+  try {
+    // 盘上留着的是目标树里新增的那一条（推进不会删它，不因它而拒）；底里唯一那条被删了。
+    writeFileSync(join(real, 'new.txt'), '目标新增\n')
+    rmSync(join(real, 'only.txt'))
+    const target = await commitOf(t, { 'only.txt': '合并要写的那一版\n', 'new.txt': '目标新增\n' }, '目标树')
+    const verdict = await mergeDrift({ truth: t, realRoot: real, base, target })
+    assert.equal(verdict.ok, false, `盘上被用过、底里唯一那条被删，该拒：${verdict.say}`)
+    assert.deepEqual(verdict.drift.userDeleted, ['only.txt'])
+    assert.deepEqual(verdict.drift.colliding, ['only.txt'])
+    assert.match(verdict.say, /你删了、而这次合并仍要保留/)
+    assert.equal(readFileSync(join(real, 'new.txt'), 'utf8'), '目标新增\n', '拒的时候盘上字节一个没动')
   } finally {
     await t.close()
   }
