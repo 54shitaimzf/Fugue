@@ -71,6 +71,29 @@ async function begin(s: Scene, commit = s.target): Promise<void> {
   })
 }
 
+/** 发一份契约（收尾要从它正文里取断言清单）。 */
+async function issue(s: Scene, names: readonly string[] = ['过']): Promise<void> {
+  await s.log.append('round', {
+    t: 'contract/issue',
+    round: ROUND,
+    contract: 'r1.implement.1' as never,
+    owner: 'agent/r1/1' as never,
+    paths: ['a.txt' as RelPath],
+    body: JSON.stringify({
+      kind: 'implement',
+      id: 'r1.implement.1',
+      agent: 'agent/r1/1',
+      branch: 'refs/heads/agent/r1/1',
+      goal: '改 a',
+      ownedPaths: ['a.txt'],
+      deliverables: [],
+      assertions: names.map((name) => ({ action: 'ok', name })),
+      seed: [],
+      actionOutputs: {},
+    }),
+  })
+}
+
 function writeTarget(s: Scene): void {
   writeFileSync(join(s.root, 'a.txt'), '新的 a\n')
   writeFileSync(join(s.root, 'c.txt'), '新 c\n')
@@ -230,3 +253,71 @@ async function factsOf(log: LogHandle): Promise<readonly import('../log/events.t
   for await (const { e } of log.readMerged()) out.push(e)
   return out
 }
+
+// R2：全写回之后，`fugue recover` 的下一步必须真能执行——补落 done + accept，不重放写，
+// 收完账上没有未收尾的发布（下一轮的守卫因此放行）。
+test('R2 · 全写回后照 recover 的下一步收尾：落 done+accept、不重放写、新轮能开', async () => {
+  const s = await scene()
+  try {
+    await begin(s)
+    await issue(s, ['过', '也过'])
+    writeTarget(s)
+    await s.truth.advance('refs/heads/main', s.target, s.base)
+    await s.log.close()
+    const before = await runCli(['--root', s.root, 'recover'])
+    assert.equal(before.code, 0, before.stderr)
+    assert.match(before.stdout, /fugue recover --finish/, '下一步要给出能照做的收尾命令')
+    const disk = (): string => readFileSync(join(s.root, 'a.txt'), 'utf8') + '|' + readFileSync(join(s.root, 'c.txt'), 'utf8')
+    const unchanged = disk()
+    const fin = await runCli(['--root', s.root, 'recover', '--finish'])
+    assert.equal(fin.code, 0, fin.stderr)
+    assert.match(fin.stdout, /全写回/)
+    assert.match(fin.stdout, /收尾事实已落/)
+    assert.equal(disk(), unchanged, '收尾不能碰工作树（不重放写）')
+    const after = await runCli(['--root', s.root, 'recover'])
+    assert.equal(after.code, 0, after.stderr)
+    assert.match(after.stdout, /没有未收尾的发布/)
+    const log = openLog(s.root)
+    try {
+      const events = await factsOf(log)
+      assert.equal(openPublishOf(events), null, '收尾后没有未收尾的发布（下一轮能开）')
+      const accepts = events.filter((e) => e.t === 'merge/accept')
+      assert.equal(accepts.length, 1)
+      const one = accepts[0]
+      assert.ok(one !== undefined && one.t === 'merge/accept')
+      assert.deepEqual(one.assertions, [
+        { assertion: '过', verdict: 'pass' },
+        { assertion: '也过', verdict: 'pass' },
+      ])
+      assert.equal(events.filter((e) => e.t === 'merge/publish' && e.phase === 'done').length, 1)
+    } finally {
+      await log.close()
+    }
+  } finally {
+    await close(s)
+  }
+})
+
+// R2 的负对照：不是全写回就不落账。`--finish` 退出码 1，一条事实都不补。
+test('R2 · 不是全写回时 --finish 拒：退出码 1，一条事实都不落', async () => {
+  const s = await scene()
+  try {
+    await begin(s)
+    await issue(s)
+    await s.log.close()
+    const r = await runCli(['--root', s.root, 'recover', '--finish'])
+    assert.equal(r.code, 1)
+    assert.match(r.stderr, /不是全写回/)
+    const log = openLog(s.root)
+    try {
+      const events = await factsOf(log)
+      assert.equal(events.filter((e) => e.t === 'merge/accept').length, 0)
+      assert.equal(events.filter((e) => e.t === 'merge/publish').length, 1)
+      assert.equal(openPublishOf(events)?.phase, 'begin')
+    } finally {
+      await log.close()
+    }
+  } finally {
+    await close(s)
+  }
+})

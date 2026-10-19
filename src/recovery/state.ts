@@ -284,6 +284,7 @@ export async function recoverOf(deps: RecoveryDeps): Promise<RecoveryReport | nu
           ? ['没有需要恢复的写；看进展：fugue status --once']
           : [
               '接受事件在中断前没有落下（文件与主线已经是对的，不需要重放写）',
+              '收尾（只落账，不重放写）：fugue recover --finish',
               '查看这一轮的结果：fugue status --once · git show --stat ' + open.commit,
             ],
     }

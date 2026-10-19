@@ -33,7 +33,7 @@ interface FlagTable {
  */
 export const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
   log: { flags: ['root', 'agent', 'json', 'help', 'header'], note: 'log 是抄本——不渲染、不筛选' },
-  recover: { flags: ['root', 'json', 'help'], note: '恢复只报事实与下一步，不自动重放写；没有未收尾的发布就直说' },
+  recover: { flags: ['root', 'json', 'help', 'finish'], note: '恢复只报事实与下一步，不自动重放写；--finish 只在“全写回、验收已过”时补落 done 与 accept；没有未收尾的发布就直说' },
   status: {
     flags: ['root', 'json', 'help', 'once', 'metrics', 'report', 'ledger', 'agent', 'wait', 'timeout'],
     note: '一次快照就加 --once，跟随是另一条命令：watch --follow；只读某一格加 --agent <id>',

@@ -3,6 +3,7 @@
 // CLI 与 serve 读的是同一份 `recovery/state.ts` 判断；这里只把它收成 `unit(value, human)`，
 // 人面与机器面因此不各写一遍。命令不写盘、不挪 ref、不重放写——D8 B 的边界。
 import { openCtx } from '../cli/shared.ts'
+import { finishOf, RecoverFinishRefused } from '../recovery/finish.ts'
 import { recoverOf } from '../recovery/state.ts'
 import type { RecoveryReport, RecoveryState } from '../recovery/state.ts'
 import { ok, unit } from './types.ts'
@@ -44,14 +45,36 @@ export function humanRecovery(report: RecoveryReport | null): string {
 }
 
 /**
- * `fugue recover [--json]`。
+ * `fugue recover [--json] [--finish]`。
  *
- * 退出码：0 = 核对完成（包括“有冲突”——那是读数）；1 = 核对本身没做成（句柄打不开 · 库读不动）。
- * **绝不把“判不了”印成“没写回”**：那一档是 `unverified`。
+ * 缺省只读：核对五态、报事实与下一步。`--finish` 是**显式收尾**：只在“全写回、验收已过”
+ * 那一档把账上缺的 `merge/publish done` 与 `merge/accept` 补上（不重放写）；其余四态一律拒，
+ * 退出码 1 并把人指回 `fugue recover`。
+ *
+ * 退出码：0 = 核对完成（包括“有冲突”——那是读数）或收尾落成；1 = 核对/收尾没做成
+ * （句柄打不开 · 库读不动 · 不是全写回）。**绝不把“判不了”印成“没写回”**：那一档是 `unverified`。
  */
 export async function recoverValue(a: ValueArgs): Promise<ValueResult> {
-  const ctx = await openCtx(a.root, a.flags, {})
+  const finish = a.flags.has('finish')
+  // 收尾要写那两条事实，所以整条命令取写者的锁；缺省那条路径仍是纯读（观察不得影响状态）。
+  const ctx = await openCtx(a.root, a.flags, finish ? { write: true, sync: 'each' } : {})
   try {
+    if (finish) {
+      try {
+        const report = await finishOf({ truth: ctx.truth, realRoot: ctx.roots.realRoot, log: ctx.log })
+        return ok(unit(report, humanRecovery(report)))
+      } catch (err) {
+        if (err instanceof RecoverFinishRefused) {
+          return {
+            ok: false,
+            code: 1,
+            message: err.message,
+            hint: '先运行 fugue recover 看清五态与下一步；收尾只在“全写回”时可用。',
+          }
+        }
+        throw err
+      }
+    }
     const report = await recoverOf({ truth: ctx.truth, realRoot: ctx.roots.realRoot, log: ctx.log })
     return ok(unit(report, humanRecovery(report)))
   } finally {
