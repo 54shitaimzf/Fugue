@@ -65,7 +65,10 @@ export class LogHeldError extends Error {
   readonly why: string
 
   constructor(writer: WriterId, path: string, holder: Holder | null, why: string) {
-    super(heldMessage(writer, path, holder))
+    // **具体拒因要进公共 message**（R4）：CLI 与 serve 的错误出口读的都是 `message`，
+    // 只进 `why` 的话，死接管锁那条“确认之后 rm '<takeover>'”到不了人面前——人看到的
+    // 只是主锁的通用提示，可能去删错文件。
+    super(`${heldMessage(writer, path, holder)}${why === '' ? '' : `\n${why}`}`)
     this.name = 'LogHeldError'
     this.writer = writer
     this.path = path

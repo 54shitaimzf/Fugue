@@ -59,6 +59,11 @@ export interface ServeResult {
   /** 失败时那两栏（§ 9.8 的错误形状）：值层给了就照原样往 `error.data` 里放。 */
   readonly hint?: string
   readonly subject?: string
+  /**
+   * **失败的那句话**（值层的 `message`）。它原先在 `serveResultOf` 里被丢掉，回执只剩
+   * “命令没成（退出码 1）”——死接管锁那条 rm 指引因此到不了客户端（R4）。
+   */
+  readonly message?: string
 }
 
 /**
@@ -101,6 +106,7 @@ function serveResultOf(r: ValueResult, json: boolean, via: ServeResult['via']): 
       stdout: '',
       notes: [],
       via,
+      message: r.message,
       ...(r.hint === undefined ? {} : { hint: r.hint }),
       ...(r.subject === undefined ? {} : { subject: r.subject }),
     }
@@ -303,7 +309,7 @@ export async function serveConnection(io: ConnIo): Promise<void> {
       result = await runSubprocess(io.cli, req.method, params, io.root)
     }
     if (result.code !== 0) {
-      const message = result.notes.join('\n')
+      const message = result.message ?? result.notes.join('\n')
       answer(
         req.id,
         encodeError(
