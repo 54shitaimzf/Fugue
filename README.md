@@ -158,7 +158,7 @@ fugue round work --live --max-steps 8
 | 原始的工作记录（每行一条，不做任何处理） | `fugue log` |
 | 实时跟踪进度（只读，不会影响正在运行的任务） | `fugue watch --follow` |
 | 一边看一边用快捷键操作 | `fugue tui` |
-| 上一次写回有没有收尾、现在该做什么 | `fugue recover` |
+| 上一次写回有没有收尾、现在该做什么 | `fugue recover`（全写回时按提示收尾：`fugue recover --finish`） |
 | 清理它创建的临时工作目录 | `fugue dispose` |
 
 任务完成后，`git status` 可能会显示很多文件有改动，这是正常的。你项目里的文件已经和它生成的提交完全一致了，只是 git 的暂存区（index）还停在旧版本。运行一次 `git reset` 就好了。它故意不去动你的暂存区。
@@ -182,6 +182,14 @@ fugue recover
 ```
 
 它只读，按账上与盘上的实际状态报“未写回 / 全写回 / 部分写回 / 冲突 / 未验证”，并给出下一步；不会自动重放写，也不会替你挪 ref。`--json` 给脚本读同一份报告。没有未收尾的发布时，它会直说没有。
+
+判到“全写回”（文件与主线都已经到发布目标、验收已过）时，下一步会给出显式收尾：
+
+```sh
+fugue recover --finish
+```
+
+它只补落 `merge/publish done` 与 `merge/accept` 两条事实，不重放写、不碰工作树、不挪 ref；其余四态会拒绝并指回 `fugue recover`。
 
 ### 接到别的程序里
 
