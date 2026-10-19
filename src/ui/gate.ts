@@ -68,8 +68,8 @@ export interface GateFace {
   /** 这一批的结论（第二幕 ⑧）：结论行印的就是它。 */
   readonly conclusion: GateConclusion
   /**
-   * **这一批的浓缩件**（`T14` / `T17`：门视图的**缺省呈现**就是它）。`null` = 这一趟没算它
-   * （别的调用点、或者门口还没算出那一批）——那时门视图上那几行一个都不印，而不是印几行空的。
+   * **这一批的浓缩件**（`T14` / `T17`：计算值，命令行与阅读面的「本批标记」印它）。`null` = 这一趟没算它
+   * （别的调用点、或者门口还没算出那一批）——那时门块的摘要只剩卡片算出来的那几个数。
    *
    * 它是**算出来的值**（`round/compact.ts` 那个纯函数），不是界面自己攒的一份：命令行印的、
    * 界面印的、将来别的壳印的都是同一个函数在同一个账上算出来的那一份。
@@ -187,7 +187,8 @@ export function previewLinesOf(card: GateCard): readonly string[] {
 }
 
 /**
- * 门视图上那几行浓缩件（`T14` / `T17`：门口那一批的**缺省呈现**就是它）。
+ * 命令行那一份浓缩件（`T14` / `T17`）：`fugue gate` / `round go` 印它，阅读面的「本批标记」也印它。
+ * **门块本身不印**——门块是决定的地方，先给判断要用的数（`gateSummaryOf`）。
  *
  * **一处句子**：与命令行印的是同一份 `compactLinesOf`——这里只做**单栏化**：去掉行首那两格缩进
  * （门块里的行从第一列起），把制表符换成两个空格（命令行那一面靠它对齐，而门块里一栏一行，它
@@ -198,6 +199,36 @@ export function gateCompactLinesOf(face: GateFace): readonly string[] {
   return face.compact === null
     ? []
     : compactLinesOf(face.compact).map((line) => line.replace(/^\s+/, '').replace(/\t+/g, '  '))
+}
+
+/**
+ * 门块最上面那两行**人话**：这一批几件调查、几件实现、盖多少路径、按什么验收，以及与上一批的关系。
+ *
+ * 命令行那份浓缩件（`gateCompactLinesOf`）一个字不改，仍归命令行与阅读面；门块是作决定的地方，
+ * 先给判断要用的数，编号 · 底 · 批号 · 指纹收进阅读面的「本批标记」。
+ */
+export function gateSummaryOf(face: GateFace): readonly string[] {
+  const c = face.conclusion
+  // 数与命令行那份浓缩件同源：有它就用它那三个数（读者在阅读面的「本批标记」里看到的是同一组），
+  // 没算那一份时才退到卡片上算出来的结论。
+  const paths = face.compact?.paths ?? c.paths
+  const accepts = face.compact?.accepts ?? c.accepts
+  const count = (kind: string): number => face.cards.filter(card => card.kind === kind).length
+  const parts = [
+    count('investigate') > 0 ? `${count('investigate')} 项调查` : '',
+    count('implement') > 0 ? `${count('implement')} 项实现` : '',
+    count('resolve') > 0 ? `${count('resolve')} 项解决冲突` : '',
+    paths > 0 ? `覆盖 ${paths} 条${WORDS.paths}` : '',
+    accepts > 0 ? `${WORDS.accepts} ${accepts} 条` : '',
+  ].filter(one => one !== '')
+  if (parts.length === 0) return []
+  const cmp = face.compact?.compare
+  const compare = cmp === 'first' ? '第一次确认：上一批没有放行记录'
+    : cmp === 'same' ? '与上一批相同'
+    : cmp === 'unproven' ? `上一批有 ${face.compact?.missing.length ?? 0} 件取不回来，差额算不出来`
+    : cmp === 'changed' ? `与上一批不同：${face.compact?.diff.length ?? 0} 处`
+    : ''
+  return compare === '' ? [parts.join(' · ')] : [parts.join(' · '), compare]
 }
 
 /** 界面自己在这一块里的那两样。**纯视图状态**（进程一退就没了，也不进账）。 */
@@ -282,15 +313,14 @@ export function optionRowOf(view: GateView, keymap: Keymap = KEYMAP): string {
 
 /**
  * 确认内容按实际宽度折行。队列与选项折出的所有行优先保留，选项的等待色覆盖整句；
- * 先让位的是浓缩件与卡片前面的补充资料，命令与写入路径仍靠近确认行。
+ * 先让位的是摘要与卡片前面的补充资料，命令与写入路径仍靠近确认行。
  */
 export function gateLayoutOf(o: { readonly face: GateFace; readonly view: GateView; readonly columns: number; readonly keymap?: Keymap; readonly height?: number }): BottomInput & { readonly blocked?: true } {
   const fold = (one: string): readonly string[] => o.columns > 0 ? wrap(one.trimStart(), o.columns) : [one]
   const card = cardAt(o.face, o.view.at)
-  // **浓缩件那一栏排在预览上面**（`T14` / `T17`）：它是这一批的话，下面那几行是当前这一份契约的话。
-  // 排在最上头也就是**矮屏上第一个让位**（`ui/frame.ts` 从前往后裁掉行首、末 `keep` 行留住）——那一头
-  // 保住的是架构 § 15.1.a 那份清单（每个任务写哪些路径 · 验收标准各是什么），浓缩件是它之下的补充。
-  const compact = o.face.cards.length === 0 ? [] : gateCompactLinesOf(o.face).flatMap(fold)
+  // **门块先给判断要用的数**（第二幕 ⑧ 的三个数 · `gateSummaryOf`）；命令行那份浓缩件
+  // 收进阅读面的「本批标记」——同一个纯函数算出来的同一份字，只是不在决定的当口铺编号与指纹。
+  const compact = o.face.cards.length === 0 ? [] : gateSummaryOf(o.face).flatMap(fold)
   const head = card === null ? [] : previewLinesOf(card).flatMap(fold)
   const queue = fold(gateQueueRowOf(o.face, o.view.at))
   const options = fold(optionRowOf(o.view, o.keymap))

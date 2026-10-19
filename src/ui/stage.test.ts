@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { StatusRow } from '../probe/status.ts'
-import { conclusionLineOf, gateCompactLinesOf, gateFaceOf, lineOf } from './gate.ts'
+import { conclusionLineOf, gateCompactLinesOf, gateFaceOf, gateSummaryOf, lineOf } from './gate.ts'
 import type { Compact } from '../round/compact.ts'
 import type { Contract } from '../contract/types.ts'
 import { WORDS } from '../words.ts'
@@ -400,11 +400,11 @@ test('⑪ 提示行按此刻屏幕上是什么问那一档：阅读面 > 门口 
   console.log('⑪ 读数：三档都问到了（input → gate → plan）· 永久阅读注记0')
 })
 
-// ── ⑫ 门视图的缺省呈现是浓缩件（`T14` / `T17`）──────────────────────────────────────
+// ── ⑫ 门块先给摘要，浓缩件收进阅读面（`T14` / `T17`）──────────────────────────────
 //
-// 判据一句话：门口一开，**不用按任何键**，那几行就在门块那一栏里（排在当前契约的预览上面）——
-// 结论行照旧一条、同一道"一批只说一次"守着；换了一批才再说，门口没了整块收起来。
-test('⑫ 门口一开：门块头几行就是浓缩件（结论行照旧一条 · 换一批才说）', async () => {
+// 判据一句话：门口一开，**不用按任何键**，门块头几行就是判断要用的数；结论行照旧一条、同一道
+// "一批只说一次"守着；换了一批才再说，门口没了整块收起来。编号与指纹在阅读面的「本批标记」里。
+test('⑫ 门口一开：门块头几行是摘要（结论行照旧一条 · 换一批才说）', async () => {
   const contract = {
     id: 'r1.investigate.1',
     agent: 'agent/r1/1',
@@ -438,12 +438,18 @@ test('⑫ 门口一开：门块头几行就是浓缩件（结论行照旧一条 
     [conclusionLineOf({ tasks: 1, paths: 0, accepts: 0 })],
     '门口一开照旧推一条结论行；浓缩件走门块那一栏，不再进永久行',
   )
-  const shown = gateCompactLinesOf(ctl.face as GateFace)
+  const shown = gateSummaryOf(ctl.face as GateFace)
   const rows = stage.view().bottom?.rows ?? []
-  assert.deepEqual([...rows.slice(0, shown.length)], [...shown], '门块的头几行该就是浓缩件')
-  assert.equal(shown.length, 3, `这一档该 3 行（抬头 · 件数 · 与上一批），实际 ${shown.length}`)
-  assert.ok(shown.every((line) => !line.includes('\t')), '门块是一栏一行的正文：那几行里不许留制表符')
-  assert.ok(rows.length > shown.length, `浓缩件之后还有这一份契约的预览，实际一共 ${rows.length} 行`)
+  assert.deepEqual([...rows.slice(0, shown.length)], [...shown], '门块的头几行该就是摘要')
+  assert.equal(shown.length, 2, `这一档该 2 行（批次范围 · 第一次确认），实际 ${shown.length}`)
+  assert.ok(!rows.some((line) => line.includes('浓缩') || line.includes('指纹')), '决定面不铺编号与指纹')
+  assert.ok(rows.length > shown.length, `摘要之后还有这一份契约的预览，实际一共 ${rows.length} 行`)
+  const receipt = gateCompactLinesOf(ctl.face as GateFace)
+  assert.ok((receipt[0] ?? '').startsWith('浓缩  第 r1 轮  '), '命令行那一份句子照旧')
+  stage.onAction({ action: 'read' })
+  const open = (stage.view().read?.rows ?? []).join('\n')
+  assert.ok(open.includes('本批标记') && open.includes('浓缩  第 r1 轮  '), '浓缩件在阅读面可达')
+  stage.onAction({ action: 'cancel' })
   // 同一批再算一遍不重复推；换一批（编号变了）才再说。
   mark = ctl.notes.length
   await stage.refreshGate()
@@ -456,16 +462,19 @@ test('⑫ 门口一开：门块头几行就是浓缩件（结论行照旧一条 
   mark = ctl.notes.length
   await stage.refreshGate()
   assert.equal(ctl.notes.length - mark, 1, '换了一批要说（结论行一条）')
-  assert.notDeepEqual(
+  assert.deepEqual(
     [...(stage.view().bottom?.rows ?? []).slice(0, shown.length)],
     [...shown],
-    '换了一批，门块头上那几行跟着换（批号变了）',
+    '只换编号时摘要不变（决定面不跟着指纹抖）',
   )
+  stage.onAction({ action: 'read' })
+  assert.ok((stage.view().read?.rows ?? []).join('\n').includes('fp-2'), '阅读面里的本批标记跟着换新')
+  stage.onAction({ action: 'cancel' })
   // 门口没了（那一批发出去了）：不推任何东西，门块整块收起来。
   ctl.face = null
   mark = ctl.notes.length
   await stage.refreshGate()
   assert.equal(ctl.notes.length, mark, '门口没了不再推')
   assert.equal(stage.view().bottom, undefined, '门口没了门块整块收起来')
-  console.log(`⑫ 读数：门块头 ${shown.length} 行是浓缩件（与命令行同一份句子）· 两批各推 1 条结论行 · 门口收起来整块不见`)
+  console.log(`⑫ 读数：门块头 ${shown.length} 行是摘要 · 浓缩件在阅读面可达 · 两批各推 1 条结论行 · 门口收起来整块不见`)
 })

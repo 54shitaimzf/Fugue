@@ -11,6 +11,7 @@
 // 一步，也是唯一需要保证顺序的一步；另外两步归 M1 与 M2。
 import type { FileHandle } from 'node:fs/promises'
 import { mkdir, open, readFile, readdir, stat } from 'node:fs/promises'
+import { readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { assertIdent } from '../identity.ts'
 import { clockOf } from '../clock.ts'
@@ -169,24 +170,34 @@ async function readWriterUncached(root: string, w: WriterId): Promise<Row[]> {
   return parseWriterText(w, text)
 }
 
-/** 枚举全部 writer。**排序**，好让 (seq, writer) 的合并序不依赖目录的枚举顺序。 */
-async function listWriters(root: string): Promise<WriterId[]> {
+/** 递归枚举日志目录里的全部 writer（日志文件名去掉 `.jsonl`）。**排序**。
+ *
+ * `log/agent/r1/1.jsonl` 这种嵌套 writer 与第一层的 `round.jsonl` 走同一份清单——
+ * 日志枚举只有这一处（批次的代、`writers()`、读侧合并都读它），不另猜目录结构。
+ * 目录不存在 = 空账；**读不动（权限 · I/O）照旧抛**，不冒充空账。
+ */
+export function logFileNamesOf(root: string): WriterId[] {
   const out: string[] = []
-  const walk = async (dir: string, prefix: string): Promise<void> => {
+  const walk = (dir: string, prefix: string): void => {
     let entries
     try {
-      entries = await readdir(dir, { withFileTypes: true })
+      entries = readdirSync(dir, { withFileTypes: true })
     } catch (err) {
       if ((err as { code?: string }).code === 'ENOENT') return
       throw err
     }
     for (const e of entries) {
-      if (e.isDirectory()) await walk(join(dir, e.name), prefix + e.name + '/')
+      if (e.isDirectory()) walk(join(dir, e.name), prefix + e.name + '/')
       else if (e.name.endsWith('.jsonl')) out.push(prefix + e.name.slice(0, -'.jsonl'.length))
     }
   }
-  await walk(logDir(root), '')
-  return out.sort()
+  walk(logDir(root), '')
+  return out.sort() as WriterId[]
+}
+
+/** 枚举全部 writer。**排序**，好让 (seq, writer) 的合并序不依赖目录的枚举顺序。 */
+async function listWriters(root: string): Promise<WriterId[]> {
+  return logFileNamesOf(root)
 }
 
 /**
@@ -227,42 +238,65 @@ export async function readFully(
 }
 
 /**
- * 写者准备时从文件尾取回下一个序号。**只读一个窗口**，不读整份日志——
- * 追加的代价因此与已有日志的长度无关（架构 § 9.4 的重建代价上界）。
+ * 写者准备时从文件尾取回下一个序号，并给出**最后一个完整行的字节终点**。
+ *
+ * B04：读那一侧一直容忍半行（`parseWriterText`），但写这一侧原先不截；重新打开之后下一条完整
+ * 事件直接接在半行后面，拼成一条坏 JSON。**只有拿着该 writer 锁的写者**才可以截：只读路径
+ * 仍然一个字节都不改。
+ *
+ * 窗口从 64 KiB 起**向后再退**（审查 B04 的第二个边界）：合法事件没有大小上限，最后一行可能
+ * 比窗口长；固定窗口会让一份本来完好的日志报“无法确定序号”。这里只在没找到换行时把窗口往前
+ * 扩，代价与那一行的长度成正比——不拿“截短契约”换固定代价。
  */
-async function tailSeq(fh: FileHandle, w: WriterId): Promise<LogSeq> {
+async function tailState(fh: FileHandle, w: WriterId): Promise<{ readonly seq: LogSeq; readonly completeEnd: number }> {
   const st = await fh.stat()
-  if (st.size === 0) return 0
-  const want = Math.min(st.size, TAIL_WINDOW)
-  const start = st.size - want
-  const buf = Buffer.alloc(want)
-  // **窗口要读满**：读不满就没有"这份日志的尾部"可谈（文件在读取中变短），那不是能猜的事。
-  const used = await readFully(fh, buf, start)
-  if (used !== want) throw new LogCorruptError(w, 0, '日志尾部在读取中改变，拒绝恢复')
-  // 完整的那一段从**原字节**上切（见 `completeEndOf`），不从解出来的字符串上切。
-  let text = buf.toString('utf8', 0, completeEndOf(buf))
-  if (want < st.size) {
-    // 窗口的第一行可能被切断，丢掉它。
-    const nl = text.indexOf('\n')
-    text = nl === -1 ? '' : text.slice(nl + 1)
+  if (st.size === 0) return { seq: 0, completeEnd: 0 }
+  const readAt = async (start: number, length: number): Promise<Buffer> => {
+    const buf = Buffer.alloc(length)
+    const used = await readFully(fh, buf, start)
+    if (used !== length) throw new LogCorruptError(w, 0, '日志尾部在读取中改变，拒绝恢复')
+    return buf
   }
-  if (text.length === 0) {
-    // 窗口里一条完整行都没有。两种情形必须分开：整份文件就是一条半行（崩溃在第一
-    // 次追加的中间，序号从 1 起）；或者窗口比一行还短——那就不能猜。
-    if (want < st.size) {
-      throw new LogCorruptError(w, 0, `尾部 ${TAIL_WINDOW} 字节内没有完整行，无法确定下一个序号`)
+  // 一 · 最后一个换行（= 最后一条完整行的终点）。
+  let end = st.size
+  let lastNl = -1
+  while (end > 0) {
+    const start = Math.max(0, end - TAIL_WINDOW)
+    const buf = await readAt(start, end - start)
+    const at = buf.lastIndexOf(0x0a)
+    if (at >= 0) {
+      lastNl = start + at
+      break
     }
-    return 0
+    end = start
   }
-  const last = text.slice(0, -1)
-  const d = decodeLine(last.slice(last.lastIndexOf('\n') + 1))
+  // 整份文件一条换行都没有：就是一条没写完的行（崩溃在第一次追加中间），序号从 1 重新起。
+  if (lastNl < 0) return { seq: 0, completeEnd: 0 }
+  const completeEnd = lastNl + 1
+
+  // 二 · 这一行自己的起点（它前面那个换行）。
+  let scan = lastNl
+  let prevNl = -1
+  while (scan > 0) {
+    const start = Math.max(0, scan - TAIL_WINDOW)
+    const buf = await readAt(start, scan - start)
+    const at = buf.lastIndexOf(0x0a)
+    if (at >= 0) {
+      prevNl = start + at
+      break
+    }
+    scan = start
+  }
+  const lineStart = prevNl + 1
+  const last = (await readAt(lineStart, lastNl - lineStart)).toString('utf8')
+  const d = decodeLine(last)
   if (!d.ok) throw new LogCorruptError(w, 0, `日志尾部不可解析：${d.reason}`)
   // **信封里的 writer 也要与这一份文件名对得上**：读那一侧早就查（`parseWriterText`），写这一侧
   // 原先不查——一份改名或拷错的日志会顺着别人的序号往下写，而那段序号区间不属于它。
   if (d.pos.writer !== w) {
     throw new LogCorruptError(w, 0, `信封里的 writer 与文件名不符：${JSON.stringify(d.pos.writer)}`)
   }
-  return d.pos.seq
+  return { seq: d.pos.seq, completeEnd }
 }
 
 interface WriterState {
@@ -331,7 +365,12 @@ export function openLog(root: string, opts: LogOptions = {}): LogHandle {
       const fh = await open(file, 'a+')
       let nextSeq: LogSeq
       try {
-        nextSeq = (await tailSeq(fh, w)) + 1
+        const tail = await tailState(fh, w)
+        // **B04：拿着锁的写者，在第一次追加之前把未提交的尾段截到完整行边界。**
+        // 只读路径不走到这里（它们不改盘上任何字节）；中段损坏照旧由读者拒绝。
+        const size = (await fh.stat()).size
+        if (tail.completeEnd < size) await fh.truncate(tail.completeEnd)
+        nextSeq = tail.seq + 1
       } catch (err) {
         await fh.close()
         throw err

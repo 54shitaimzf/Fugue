@@ -12,7 +12,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { spawnSync } from 'node:child_process'
-import { join } from 'node:path'
+import { mkdirSync, chmodSync, writeFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { logFileOf } from './log.ts'
 import { stdinOf, runCli } from '../../test/helpers/run-cli.ts'
 import { tmpDir } from '../../test/helpers/tmp.ts'
 import { BatchStaleError, batchOf, generationOf } from './batch.ts'
@@ -95,4 +97,34 @@ test('④ 空账也是一个代（空串），不是「没有代」', () => {
   const b = batchOf(dir)
   assert.equal(b.generation, '')
   console.log('④ 读数：空账的代是空串（一条日志都没有）')
+})
+
+test('B07 嵌套 writer 也在代里；读不动的目录不冒充空账', () => {
+  const dir = tmpDir('fugue-batch-nested-')
+  const nested = logFileOf(dir, 'agent/r1/1')
+  mkdirSync(dirname(nested), { recursive: true })
+  writeFileSync(nested, '')
+  const before = generationOf(dir)
+  assert.match(before, /agent\/r1\/1\.jsonl:/, `嵌套 writer 该在代里：${before}`)
+  const batch = batchOf(dir)
+
+  // 嵌套 writer 长了一个字节 → 这一批必须整批作废。
+  writeFileSync(nested, '{"x":1}\n')
+  return assert.rejects(
+    () => batch.read(() => '跨代的那一份'),
+    (err: unknown) => {
+      assert.ok(err instanceof BatchStaleError, `要抛 BatchStaleError，拿到 ${String(err)}`)
+      assert.match(err.to, /agent\/r1\/1\.jsonl:/)
+      return true
+    },
+  ).finally(() => {
+    // **读不动的目录不是空账**：权限错要抛，不能 return ''。
+    chmodSync(join(dir, '.fugue', 'log', 'agent'), 0o000)
+    try {
+      assert.throws(() => generationOf(dir), /EACCES|permission denied|permission/i)
+    } finally {
+      chmodSync(join(dir, '.fugue', 'log', 'agent'), 0o755)
+    }
+    console.log(`B07 读数：嵌套 writer 进代；权限错照抛（不是空账）`)
+  })
 })

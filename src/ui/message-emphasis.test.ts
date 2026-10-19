@@ -70,9 +70,16 @@ test('current short user messages form a content-sized consistent emphasis block
   assert.equal(dark.replace(/\x1b\[[\d;]*m/g,''),painted(f,undefined));assert.equal(light.replace(/\x1b\[[\d;]*m/g,''),painted(f,undefined));assert.equal(linux.replace(/\x1b\[[\d;]*m/g,''),painted(f,undefined))
   count++
  }}finally{setGlyphTier('box')}
- assert.equal(geometry.digest('hex'),'7e5579adf257272c856223a776d2a1f852d3b5fca6282443aabf3214f35079a6','all six scenes retain every original plain frame field')
- assert.equal(none.digest('hex'),'5148f7dd01a87ede432c3b46335ef15fff328aeb9ac08a0854b555f18ac56988','no-style output is byte-exact with the parent across all scenes')
- assert.equal(attribute.digest('hex'),'030566f3f60b6a9f21ada134dc31dbc6e7ee6e60e2903983c85a5454e26d1f54','the original attribute tier is byte-exact across all scenes')
+ // 字节基线重录（维护版五笔）：第一笔是截断只停在消息边界上（`frame.test.ts` ⑰ 用旧版做过负对照）；
+ // 第二笔是当前任务那一块从顶部改挂到输入上方；第三笔是去掉行首的身份词（“你”“模型 ·”），目标改用
+ // `> ` 标记、框名固定为“当前任务”；第四笔是失败与中止那两句下一步文案（说一句怎么改 / 工作区可能已有
+ // 部分改动）。第五笔是 R5：`> ` 只贴消息第一行（续行缩进两格），长单段被截断时保住开头而不是只剩尾行。
+ // 前四次都让 1260 例里相关的几何、无色与属性字节一起换了；第五次只动窄屏（16/24 列，以及 40×8）里
+ // 用户那句话折行与长消息截断的那几帧；上面那些分配、角色、宽度与强调断言一条没动，所以基线换的是
+ // “当前任务画在哪、长什么样”，不是“容量与角色怎么分”。
+ assert.equal(geometry.digest('hex'),'3cd7ac0fa5ed9e9729f9277bb18603249b719d1f4268021fef1c5f3467948302','all six scenes retain every original plain frame field')
+ assert.equal(none.digest('hex'),'cf7dad79b152220e619a33520790869e670fd6572d4f58b33caea47ec3af7538','no-style output is byte-exact with the parent across all scenes')
+ assert.equal(attribute.digest('hex'),'4569f7e9271dd9c26746ebc1d91c779ff86fd80946df9cdf7b4565152b06e9e9','the original attribute tier is byte-exact across all scenes')
  console.log('message emphasis:cases'+count+';boundedBlocks'+bounded+';oldCells'+pixelCellsOld+';newCells'+pixelCellsNew+';3glyph/7width/5height/plan+plain/6scenes;plain geometry exact;no-style+attribute parent bytes exact;content/roles/capacity exact;dark/light/16 visible bytes exact;all repeated paints0')
 })
 test('unsupported foreground and dense or empty user contexts keep the complete original frame metadata and style bytes',()=>{
@@ -80,6 +87,6 @@ test('unsupported foreground and dense or empty user contexts keep the complete 
  try{for(const c of cases())for(const o of floors(c.base)){
   const f=frameOf(o);legacy.update(JSON.stringify(f));legacy.update(painted(f,undefined));legacy.update(painted(f,themeOf({term:'unknown'})));count++
  }}finally{setGlyphTier('box')}
- assert.equal(legacy.digest('hex'),'e776038cc90d988e62a016d201458c6e92d51f4bdd8289a358c2da3e7edbc61d','readonly/bad operation/secondary/reader/menu/foreign/dense/blank cases preserve complete parent frames and byte floors')
+ assert.equal(legacy.digest('hex'),'c1d1262db333d299350bf63711b755f820eb75614a3ce446488b8d79502c71f2','readonly/bad operation/secondary/reader/menu/foreign/dense/blank cases preserve complete parent frames and byte floors')
  console.log('message emphasis floors:cases'+count+';complete original frames+none/attribute bytes exact;repeated paints0')
 })

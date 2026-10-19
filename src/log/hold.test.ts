@@ -287,6 +287,77 @@ test('陈旧判死看三样：pid 不在了 · pid 被复用 · 跨了一次启�
   holdWriter(dir, W('a1')).release()
 })
 
+test('B05 接管只允许一个所有者：接管锁在场时明确拒绝，不自动删别人的接管锁', () => {
+  const dir = tmpDir('fugue-hold-')
+  const path = lockFileOf(dir, W('a1'))
+  const takeover = `${path}.takeover`
+
+  // 一条“死了的”主锁（pid 不在了），加一条**活着**的接管锁（本进程）。
+  const seed = holdWriter(dir, W('a1'))
+  const real = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  seed.release()
+  writeRecord(path, { ...real, pid: 999999999 })
+  writeRecord(takeover, real)
+
+  assert.throws(
+    () => holdWriter(dir, W('a1')),
+    (err: unknown) => {
+      assert.ok(err instanceof LogHeldError, `应拒绝接管，实得 ${String(err)}`)
+      assert.match(err.why, /正在接管/)
+      return true
+    },
+    '两个申请者同时接管时必须只让一个进——另一个拒绝',
+  )
+  assert.equal(existsSync(path), true, '被拒的那一个不能碰主锁')
+  assert.equal(existsSync(takeover), true, '别人的接管锁不能被自动删掉')
+
+  // **持者崩掉的接管锁也不自动删**：给出确认之后手敲的那条命令。
+  writeRecord(takeover, { ...real, pid: 999999999 })
+  assert.throws(
+    () => holdWriter(dir, W('a1')),
+    (err: unknown) => {
+      assert.ok(err instanceof LogHeldError)
+      assert.match(err.why, /不自动删/)
+      assert.ok(err.why.includes(takeover), `话里要指得出那一条接管锁：${err.why}`)
+      assert.ok(err.why.includes("rm '"), '要给出确认之后手敲的那一条命令')
+      return true
+    },
+  )
+  assert.equal(existsSync(takeover), true, '接管者崩了也不叫恢复——不自动删')
+
+  // 人按指路删掉之后，单个接管者照常把死锁接过来，而且接管锁自己会放掉。
+  rmSync(takeover)
+  const got = holdWriter(dir, W('a1'))
+  assert.equal(got.writer, W('a1'))
+  assert.equal(existsSync(takeover), false, '接管成功之后接管锁要放掉')
+  got.release()
+  assert.equal(existsSync(path), false)
+})
+
+// R4：死接管锁的拒因必须到达**公共** CLI 面（不只是内部的 `why`）：对象是 `.takeover`
+// 文件、确认之后 rm 它，而不是让人去删主锁；这条拒绝也不许自动删任何一个。
+test('R4 · 死接管锁：CLI 的失败回执含 .takeover 路径与 rm 指引，锁不自动删', () => {
+  const dir = fixture()
+  branchRef(dir, 'a1')
+  const path = lockFileOf(dir, W('a1'))
+  const takeover = `${path}.takeover`
+  const seed = holdWriter(dir, W('a1'))
+  const real = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  seed.release()
+  writeRecord(path, { ...real, pid: 999999999 })
+  writeRecord(takeover, { ...real, pid: 999999999 })
+  const r = cli(dir, ['--agent', 'a1', 'write', 'x.ts', '--stdin'], 'x\n')
+  assert.equal(r.code, 1, `该拒：${r.err}`)
+  assert.match(r.err, /已经有写者/)
+  assert.ok(r.err.includes(takeover), `公共回执要指得出那一条接管锁：${r.err}`)
+  assert.match(r.err, /rm '/, '要给出确认之后手敲的那条命令')
+  assert.ok(r.err.includes('不自动删'), '要说清为什么不自动删')
+  assert.equal(existsSync(takeover), true, '死接管锁不自动删')
+  assert.equal(existsSync(path), true, '主锁也不该被这个失败删掉')
+  rmSync(takeover)
+  rmSync(path)
+})
+
 test('锁文件读不动时：拒绝，并把"确认之后删掉它"这条路给出来', () => {
   const dir = tmpDir('fugue-hold-')
   const path = lockFileOf(dir, W('a1'))

@@ -23,7 +23,7 @@ import type { BlobId, CommitId, RelPath } from '../terms.ts'
 import type { TreeEntry } from '../entries.ts'
 import { openTruth } from '../truth/truth.ts'
 import { WORKSPACE_STATE, hashBytes, scanTree } from '../materialize/diffstat.ts'
-import { DriftError, driftOf, leavesOf, mergeDrift } from './drift.ts'
+import { DriftError, driftFactsOf, driftOf, leavesOf, mergeDrift } from './drift.ts'
 
 const roots: string[] = []
 process.on('exit', () => {
@@ -69,6 +69,130 @@ async function scene(files: Readonly<Record<string, string>>): Promise<{ real: s
   await t.advance('refs/heads/main', base, null)
   return { real, t, base }
 }
+
+test('B03 用户删除也是修改：目标还留着就拒，两边都删才放行', async () => {
+  const { real, t, base } = await scene({
+    'a.txt': '底\n',
+    'keep.txt': '这次合并不动它\n',
+    'both.txt': '两边都删\n',
+    'gone.txt': '目标删、用户没碰\n',
+  })
+  try {
+    // 用户删了三条：a（目标改它）· keep（目标原样留着）· both（目标也删了）。
+    rmSync(join(real, 'a.txt'))
+    rmSync(join(real, 'keep.txt'))
+    rmSync(join(real, 'both.txt'))
+    const target = await commitOf(t, { 'a.txt': '合并的新内容\n', 'keep.txt': '这次合并不动它\n' }, '目标树')
+    const verdict = await mergeDrift({ truth: t, realRoot: real, base, target })
+    assert.equal(verdict.ok, false, '用户删掉的路径不能未经判定就重建')
+    assert.deepEqual(verdict.drift.userDeleted, ['a.txt', 'keep.txt'])
+    assert.deepEqual(verdict.drift.colliding, ['a.txt', 'keep.txt'])
+    assert.match(verdict.say, /你删了、而这次合并仍要保留/)
+    assert.match(verdict.say, /a\.txt/)
+    assert.match(verdict.say, /keep\.txt/)
+
+    // **两边都删**（both）与**目标删、用户没碰**（gone）都不进拒。
+    assert.equal(verdict.drift.userDeleted.includes('both.txt' as RelPath), false)
+    assert.deepEqual(verdict.drift.deleted, ['gone.txt'], '目标删、用户没碰：推进就是把它删掉')
+
+    // 目标新增一条盘上没有的路径：推进只是新建，不是覆盖用户意图。
+    const added = await commitOf(t, { 'a.txt': '合并的新内容\n', 'keep.txt': '这次合并不动它\n', 'new.txt': '新来的\n' }, '目标树 + 新增')
+    const withAdded = await mergeDrift({ truth: t, realRoot: real, base, target: added })
+    assert.equal(withAdded.drift.userDeleted.includes('new.txt' as RelPath), false)
+
+    // **用户把删除“提交”了**（目标里也没有 a、keep）：两边都删 → 不拒。
+    const bothGone = await commitOf(t, {}, '目标把三条都删了')
+    const goneVerdict = await mergeDrift({ truth: t, realRoot: real, base, target: bothGone })
+    assert.deepEqual(goneVerdict.drift.userDeleted, [], '两边都没了不是“用户删除未判定”')
+    assert.deepEqual(goneVerdict.drift.colliding, [])
+    assert.equal(goneVerdict.ok, true)
+  } finally {
+    await t.close()
+  }
+})
+
+test('R3 · 真没铺：盘上一条文件都没有时按“还没铺”处理，不判用户删除', async () => {
+  const { real, t, base } = await scene({ 'only.txt': '底里唯一的一条\n' })
+  try {
+    rmSync(join(real, 'only.txt'))
+    const target = await commitOf(t, { 'only.txt': '合并要写的那一版\n' }, '目标树')
+    const verdict = await mergeDrift({ truth: t, realRoot: real, base, target })
+    assert.equal(verdict.ok, true, '整棵树还没铺到盘上时，缺文件不是“用户删除”')
+    assert.deepEqual(verdict.drift.userDeleted, [])
+    // **边界（已知代价）**：盘上一条文件都不剩时，“真没铺”与“铺过又删光”在盘上是同一幅
+    // 样子，而这一层不新建持久层去记历史——按“还没铺”处理。单文件仓库删掉那唯一一条也在
+    // 这一档。下一份测试量的是能分出来的那一半：盘上还有别的文件（铺过）时，删就是要拒。
+    // 负对照：盘上还有一条底里的路径时，缺的那一条就算用户的删除。
+    writeFileSync(join(real, 'only.txt'), '底里唯一的一条\n')
+    rmSync(join(real, 'only.txt'))
+    mkdirSync(join(real, 'other'), { recursive: true })
+    writeFileSync(join(real, 'other', 'keep.txt'), '另一条在盘上\n')
+    const base2 = await commitOf(t, { 'only.txt': '底里唯一的一条\n', 'other/keep.txt': '另一条在盘上\n' }, '底 2')
+    const target2 = await commitOf(t, { 'only.txt': '合并要写的那一版\n', 'other/keep.txt': '另一条在盘上\n' }, '目标 2')
+    const again = await mergeDrift({ truth: t, realRoot: real, base: base2, target: target2 })
+    assert.equal(again.ok, false, '盘上确实铺过（至少一条底路径在），缺的那一条是删除')
+    assert.deepEqual(again.drift.userDeleted, ['only.txt'])
+  } finally {
+    await t.close()
+  }
+})
+
+// R3：**铺过的证据是盘上还有内容**，不是“底里还有一条路径在盘上”。原先 `baseOnDisk` 只查
+// 后者，于是“底里唯一一条被删、而盘上还有别的文件”被当成“还没铺”，推进会把它静默建回来。
+test('R3 · 铺过又删：盘上还有别的文件时，底里唯一那条被删要拒', async () => {
+  const { real, t, base } = await scene({ 'only.txt': '底里唯一的一条\n' })
+  try {
+    // 盘上留着的是目标树里新增的那一条（推进不会删它，不因它而拒）；底里唯一那条被删了。
+    writeFileSync(join(real, 'new.txt'), '目标新增\n')
+    rmSync(join(real, 'only.txt'))
+    const target = await commitOf(t, { 'only.txt': '合并要写的那一版\n', 'new.txt': '目标新增\n' }, '目标树')
+    const verdict = await mergeDrift({ truth: t, realRoot: real, base, target })
+    assert.equal(verdict.ok, false, `盘上被用过、底里唯一那条被删，该拒：${verdict.say}`)
+    assert.deepEqual(verdict.drift.userDeleted, ['only.txt'])
+    assert.deepEqual(verdict.drift.colliding, ['only.txt'])
+    assert.match(verdict.say, /你删了、而这次合并仍要保留/)
+    assert.equal(readFileSync(join(real, 'new.txt'), 'utf8'), '目标新增\n', '拒的时候盘上字节一个没动')
+  } finally {
+    await t.close()
+  }
+})
+
+// C/D：树侧事实只算一次。带着第一遍算出的 facts 跑第二遍，判决要与不带时**逐字段相等**；
+// `want` 收窄成盘上那些路径后，存在性仍由两份路径集回答（下面的负对照用例仍然绿）。
+test('C/D · 树侧事实只算一次：带 facts 的判决与不带时逐字段相等', async () => {
+  const { real, t, base } = await scene({ 'a.txt': '底\n', 'b.txt': '底 b\n' })
+  try {
+    writeFileSync(join(real, 'b.txt'), '用户改过的 b\n')
+    const target = await commitOf(t, { 'a.txt': '目标 a\n', 'b.txt': '底 b\n' }, '目标树')
+    const without = await mergeDrift({ truth: t, realRoot: real, base, target })
+    const facts = await driftFactsOf(t, base, target, ['a.txt', 'b.txt'])
+    const one = await mergeDrift({ truth: t, realRoot: real, base, target, facts })
+    assert.deepEqual(one, without, '带 facts 与不带 facts 的判决逐字段相等')
+    assert.deepEqual(one.drift.touched, without.drift.touched)
+    assert.deepEqual(facts.touched, without.drift.touched, 'touched 是从两份路径集差分出来的')
+    // 验收之后那一次复核：盘上没变，同一份 facts 的判决照旧逐字段相等。
+    const two = await mergeDrift({ truth: t, realRoot: real, base, target, facts })
+    assert.deepEqual(two, one)
+  } finally {
+    await t.close()
+  }
+})
+
+test('B03 树里的工作区本子不算用户删除：盘上跳过它时，锁文件不被判成“删了又要重建”', async () => {
+  // 真实现场：`git add -A` 可能把 `.fugue/log/round.lock` 一并落进底；盘上那一份由日志自己
+  // 持有、`scanTree` 又跳过 `.fugue`。三方比对若照收树里的本子，就会把自己的锁当成用户删除。
+  const { real, t, base } = await scene({ 'a.txt': '底\n', '.fugue/log/round.lock': '{"pid":1}\n' })
+  try {
+    const target = await commitOf(t, { 'a.txt': '合并的新内容\n', '.fugue/log/round.lock': '{"pid":1}\n' }, '目标树')
+    const verdict = await mergeDrift({ truth: t, realRoot: real, base, target })
+    assert.equal(verdict.ok, true, '工作区本子不参与漂移，合并照常放行')
+    assert.deepEqual(verdict.drift.userDeleted, [])
+    assert.deepEqual(verdict.drift.colliding, [])
+    assert.deepEqual(verdict.drift.touched, ['a.txt'], '动到的只有用户文件')
+  } finally {
+    await t.close()
+  }
+})
 
 test('① 盘上 == 底（用户没碰过）→ 放行：合并的正常样子', async () => {
   const { real, t, base } = await scene({ 'src/a.ts': '底那一份\n', 'README.md': '# 项目\n' })

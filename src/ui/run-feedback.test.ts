@@ -16,7 +16,7 @@ function rig(keymap?:()=>Keymap){
  return {stage,notes,presses,signals,running:(v:boolean)=>{running=v},runAvailable:(v:boolean)=>{available=v},stopReply:(v:boolean)=>{acceptStop=v},last:(v:readonly string[])=>{last=v},aborts:()=>aborts,redraws:()=>redraws}
 }
 const unknownWriteback=(notes:readonly string[])=>{
- const body=notes.join('\n');assert.match(body,/文件是否已写回，请查看进展与记录/)
+ const body=notes.join('\n');assert.match(body,/文件写没写回，以记录里的写回结果为准/)
  assert.doesNotMatch(body,/本次.*未写回|结果已写回|没有改动.*文件|账照写|写到哪算哪/)
 }
 test('startup failures retain the original reason and actual command, offer a next step, and never claim execution succeeded',()=>{
@@ -44,6 +44,9 @@ test('stop is a request, holds queued work, and the resume hint uses the current
  assert.deepEqual(r.signals,['SIGINT']);assert.match(r.notes.join('\n'),/已请求停止执行，正在等待结束/);unknownWriteback(r.notes)
  assert.match(r.notes.join('\n'),/排队任务暂停.*Alt-S.*下一条/);assert.doesNotMatch(r.notes.join('\n'),/Enter|打断了|SIGINT/)
  r.running(false);r.stage.onRunDone({code:null,why:null});assert.deepEqual(r.presses,[],'a stop request never auto-starts queued work')
+ const after=r.stage.view().feedback??[]
+ assert.ok(after.some(l=>l.includes('执行因信号结束')),'the outcome reaches current feedback')
+ assert.ok(!after.some(l=>l.includes('正在等待结束')),'the stale request line is replaced by the outcome')
  for(const d of decodeOf('\x1bs',km))r.stage.onAction(d)
  assert.deepEqual(r.presses,['say first']);r.stage.close()
  const lost=rig();lost.running(true);lost.stopReply(false);lost.stage.onAction({action:'interrupt'})

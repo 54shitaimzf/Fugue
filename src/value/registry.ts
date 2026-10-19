@@ -12,6 +12,7 @@
 // 这一条）——命令面单一真源那条纪律在值层这一头也成立。
 import { FLAGS_OF } from '../cli/flags.ts'
 import { logValue, statusValue, watchValue } from './observe.ts'
+import { recoverValue } from './recovery.ts'
 import {
   branchValue,
   chmodValue,
@@ -59,6 +60,7 @@ export const VALUE_LAYER: Readonly<Record<string, ValueRunner>> = {
   log: logValue,
   status: statusValue,
   watch: watchValue,
+  recover: recoverValue,
 }
 
 /** 这一格命令名在值层里吗（`round` 的子命令按 `round new` 那种键查）。 */

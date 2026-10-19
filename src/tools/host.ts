@@ -271,10 +271,14 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     const path = rel as RelPath
     // 新增还是改写**只有视图答得对**（`View.kindOf`：只看上层——下层会随 base 前移而变）。
     const kind = view.kindOf(path)
+    // **改写保留原模式**（B11）：编辑正文不隐含 chmod。新文件才用 100644 这个明确缺省。
+    // 模式取的是现在那一份文件的（`view.stat` 与 `kindOf` 同一个视野）；读不到时按新文件算。
+    const meta = kind === 'modify' ? await view.stat(path) : null
+    const mode = meta !== null && meta.kind === 'file' ? normMode(meta.mode) : normMode(0o100644)
     const d: Delta =
       kind === 'add'
         ? { kind: 'add', path, bytes, mode: normMode(0o100644) }
-        : { kind: 'modify', path, bytes, mode: normMode(0o100644) }
+        : { kind: 'modify', path, bytes, mode }
     const r = await change(d)
     return { rev: r.rev }
   }

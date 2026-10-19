@@ -15,8 +15,8 @@
 // **它不测 TUI · 外观 · attach/pause/step**（本幕的活，施工单 § 三 7）。
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
@@ -26,6 +26,7 @@ import { FLAGS_OF } from '../cli/flags.ts'
 import { PROTOCOL_VERSION } from '../protocol.ts'
 import { ENTRY_KEYS, methodOf } from '../value/registry.ts'
 import { openLog } from '../log/log.ts'
+import { holdWriter, lockFileOf } from '../log/hold.ts'
 import { IDLE_MS, methodSurface, serveConnection } from './connect.ts'
 import type { StatusRow } from '../probe/status.ts'
 import { createRootTail, posKey } from './tail.ts'
@@ -463,6 +464,32 @@ test('写命令经 serve：按请求开、按请求关（失败之后锁不在�
   console.log('读数：经 serve 的写命令失败之后锁不在盘上（按请求开 · 按请求关）')
 })
 
+// R4：与 CLI 同一份拒因。serve 的值层失败只往回执里放 hint/subject，message 原先丢掉了；
+// 死接管锁的对象（`.takeover`）与 rm 指引要真的到达对端。
+test('R4 死接管锁：serve 的失败回执含 .takeover 路径与 rm 指引，锁不自动删', async () => {
+  const root = await makeRoot()
+  const path = lockFileOf(root.dir, 'a1' as never)
+  const takeover = `${path}.takeover`
+  const seed = holdWriter(root.dir, 'a1' as never)
+  const real = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  seed.release()
+  writeFileSync(path, JSON.stringify({ ...real, pid: 999999999 }) + '\n')
+  mkdirSync(dirname(takeover), { recursive: true })
+  writeFileSync(takeover, JSON.stringify({ ...real, pid: 999999999 }) + '\n')
+  try {
+    const replies = (await serveLines(root, [ask(1, 'remove', { agent: 'a1', args: ['a.txt'] })])).map(parse)
+    const err = errorOf(replies[0])
+    assert.equal(err.code, -32000)
+    assert.ok(err.message.includes(takeover), `serve 回执要指得出那一条接管锁：${err.message}`)
+    assert.match(err.message, /rm '/, '要给出确认之后手敲的那条命令')
+    assert.equal(existsSync(takeover), true, '死接管锁不自动删')
+    console.log('读数：serve 的死接管锁回执含 .takeover 路径与 rm 指引')
+  } finally {
+    rmSync(takeover)
+    rmSync(path)
+  }
+})
+
 test('半行不算一行：回执一行一条', async () => {
   const root = await makeRoot()
   const input = new PassThrough()
@@ -483,6 +510,37 @@ test('半行不算一行：回执一行一条', async () => {
   await done
   assert.equal(out.length, 1)
   console.log('读数：半行不算一行；一条回执一行')
+})
+
+test('B13 stdio 在任意字节边界分块：中文与请求 id 不被拆坏', async () => {
+  const root = await makeRoot()
+  const id = '请求🙂'
+  const line = JSON.stringify({ jsonrpc: '2.0', id, method: 'initialize', params: { _protocol: PROTOCOL_VERSION } }) + '\n'
+  const bytes = Buffer.from(line, 'utf8')
+  const emoji = bytes.indexOf(Buffer.from('🙂'))
+  const firstHan = bytes.indexOf(Buffer.from('请'))
+  assert.ok(emoji > 0 && firstHan > 0, '样本里要有中文与 emoji')
+  // 每一个可能切在码点中间的边界：单个汉字的第一字节之后 · emoji 的四个字节之间。
+  const cuts = [firstHan + 1, emoji + 1, emoji + 2, emoji + 3]
+  for (const cut of cuts) {
+    const input = new PassThrough()
+    const out: string[] = []
+    const done = serveConnection({
+      input,
+      output: { write: (s: string) => out.push(s) },
+      cli: CLI,
+      root: root.dir,
+      idleMs: 0,
+      product: PRODUCT,
+    })
+    input.write(bytes.subarray(0, cut))
+    input.write(bytes.subarray(cut))
+    input.end()
+    await done
+    const reply = parse(out[0] ?? '{}')
+    assert.equal(reply.id, id, `切在第 ${cut} 字节时请求 id 被拆坏了：${JSON.stringify(reply.id)}`)
+  }
+  console.log(`B13 读数：${cuts.length} 个字节边界分块，回执 id 仍是「${id}」`)
 })
 
 test('⑥ `--wait` 糖：等到了报等到了 · 到点如实报超时（不静默成功）', async () => {

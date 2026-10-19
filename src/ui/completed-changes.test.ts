@@ -26,7 +26,7 @@ test('accepted recorded commits supply a short actual change summary and complet
  const short=messages(rows,changes),full=messages(rows,changes,true)
  assert.match(short,/提交改动（5）/);assert.match(short,/actual.txt · src\/main.ts · removed.txt · …/)
  assert.doesNotMatch(short,/unused\.txt|strange/);assert.match(full,/原模型原文/);assert.match(full,/新增：actual\.txt/)
- assert.ok(full.indexOf('本次提交改动')<full.indexOf('你\n'),'completion read opens with current result before long prior discussion')
+ assert.ok(full.indexOf('本次提交改动')<full.indexOf('> 核对现状并更新文件'),'completion read opens with current result before long prior discussion')
  assert.match(full,/删除：removed\.txt/);assert.match(full,/类型变更：link\.txt/)
  assert.ok(full.includes(JSON.stringify(changes.files[3]!.path)),'control/whitespace filename stays one escaped readable path')
  assert.ok(!full.includes('\x1b'),'filename cannot issue terminal controls')

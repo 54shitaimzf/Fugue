@@ -268,6 +268,8 @@ type LogEvent =
   | { t: 'contract/issue'; round: RoundId; contract: ContractId; owner: AgentId; paths: RelPath[]
                           digest: string; body: string }
   | { t: 'merge/attempt';  round: RoundId; branches: BranchId[]; conflicts: number }
+  | { t: 'merge/publish';  round: RoundId; commit: CommitId; phase: 'begin' | 'done'
+                          ref?: RefName; expected?: CommitId }
   | { t: 'merge/accept';   round: RoundId; commit: CommitId; assertions: AssertionResult[] }
   | { t: 'prefix/assemble'; agent: AgentId; zoneAHash: string; zoneBHash: string; zoneCHash: string }
   | { t: 'llm/call';     agent: AgentId; step: StepId; model: ModelId; wire: string
@@ -1515,6 +1517,7 @@ fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 | 编排 | `fugue round new\|plan\|go\|run\|merge` | `M11` `M12` `M13` | S7 |
 | 说话 | `fugue say <一句话>` | `M12` `M0` | S9（归档 § 5.10） |
 | 观察 | `fugue status [--once] [--metrics] [--report]` / `watch [--follow]` / `tui [--root <dir>]` | `M0` `M14` | S8 尾（归档 § 5.18）· `tui` 在归档 § 5.19 第五段 |
+| 恢复 | `fugue recover [--json]` | `M0` `M1`（发布事实与五态，§ 9.11） | D8 B（路线图 § 5 的 0.5.1 行） |
 | 自检 | `fugue doctor` | § 15.7 的落点与围栏探针（`probeHost` · `probeBwrap` · `probeLandlock`）+ engines · crc32 | 纯读：读得出就退 0——「缺」是读数不是失败（§ 8.15 不造伪判据） |
 | 配置 | `fugue config show\|set\|get\|ls` | 工作区配置（§ 15.3.a）；ls 只列顶层键域、连配置都不读——配置读不动时它照样给得出这张清单 | S1 |
 | 入口 | `fugue serve [--idle-ms <毫秒>]` | § 9.11（同一份值层的第二个壳；方法面从本表派生，入口不出方法名） | S8 尾 |
@@ -1534,6 +1537,8 @@ fugue [--root <dir>] [--agent <id>] [--json] <command> [args]
 **配置命令是唯一一条模型没有对应工具的写操作。** 它不构成 § 9.8 意义上的旁路——**配置是边界的来源**：模型没有到达"改配置"这个效果的路径，所以不存在"有路不许走"（§ 24 纪律 13）。
 
 **`replay` 只读。** 它重建并报出视图，不改任何状态。**这张表里因此没有"回退"**——把视图挪回某个修订点再往下写不是一条路；要看某个修订点，`--to` 给的就是那个。
+
+**`recover` 只读。** 它检查上一次写回有没有收尾，按账上的发布事实、实际 ref 与盘上内容报"未写回 / 全写回 / 部分写回 / 冲突 / 未验证"五态；不自动重放写、不挪 ref，判不了就报 `unverified`。
 
 **`fugue replay --verify` 是重放性质的验收命令**：逐 agent 重建视图，比对 `rev`、全量读出、`diff()`，任一 diverge 即非零退出。**比的是两条独立的重建路径**——从快照起与从 0 起（验"快照是加速项"），交错读与按 writer 读（验"重建结果只由自己的操作决定"）。它同时也是 S1 的验收脚本，也是崩溃恢复实验的探针（杀掉进程后运行它）。
 
@@ -2627,7 +2632,7 @@ round.goal      用户要什么（一句话）
 
 | 模块 | 当前 | **演进触发条件（可观测）** | 演进方式 | 前提 |
 |---|---|---|---|---|
-| `M1 truth` | TS + git CLI | 每轮 git 调用次数 × 单次开销超过 1 s——**实测基线 1.0–1.5 ms/次，故约 700–1000 次/轮** | `gix`（gitoxide）经 napi-rs | `RefName` / `BlobId` / `TreeId` 冻结 |
+| `M1 truth` | TS + git CLI | 每轮 git 调用次数 × 单次开销超过 1 s——**实测基线 1.0–1.5 ms/次，故约 700–1000 次/轮** | `gix`（gitoxide）经 `fugue-core` sidecar（子进程 · 不走 napi-rs） | `RefName` / `BlobId` / `TreeId` 冻结 |
 | `M4 materialize` | TS `fs` + overlayfs | **不演进**：fork 已 O(1)（3–5 ms），delta 落地 1.67 ms/文件，两项都已低于可见延迟 | — | — |
 | `M2 view` | TS Map | `grep` 走视图侧的单次耗时进入可见延迟 | Rust + `ignore` crate | `Delta` 冻结 |
 | `M3 roots` | TS 路径运算 | fs 调用次数 × 单次耗时可见 | Rust（纯函数，迁移最轻） | `Roots` 冻结 |
@@ -2636,7 +2641,7 @@ round.goal      用户要什么（一句话）
 | `M7 policy` | TS + 原生 runner | 沙箱部分已原生 | — | — |
 | `M10 assemble` | **TS** | **不演进**（冷路径） | — | — |
 
-**演进顺序**：`M1 → M2 → M3 → M5`。**`M1` 排第一**——它的收益最确定，也不依赖其他模块。
+**演进顺序**：`M1 → M2 → M3 → M5`。**`M1` 排第一**——它的收益最确定，也不依赖其他模块。**`M1` 的载体是 `fugue-core` sidecar（子进程），不走 napi-rs；QuickJS PTC 工作进程与有 Git 写权限的服务分开（不同进程/权限/寿命），TS 前处理继续留 Node。**
 
 实测：ext4 上单次 plumbing 调用 **1.0–1.5 ms**（§ 8.2 的同一组基线），其中绝大部分是进程创建——**`rev-parse` 与 `cat-file blob` 的耗时几乎相同（0.99 ms 对 1.06 ms）**：前者只解析一个 ref，后者要把一个对象真正读出来，工作量差得远，耗时却一致。代价因此不在做的工作上，而在**启动一个进程**。一个 agent 一轮写数百个文件，纯 spawn 开销即达秒级，正好压在触发条件上。**这不是 CPU 问题，是进程创建问题**——在 Node 内只能靠批量化绕开（§ 8.2），在 `gix` 中是函数调用。
 

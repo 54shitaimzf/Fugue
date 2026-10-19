@@ -51,6 +51,8 @@ export const PROBES = [
   { id: 'status-metrics-report', steps: [{ argv: ['--json', 'status', '--metrics', '--report'] }] },
   { id: 'status-ledger', steps: [{ argv: ['--json', 'status', '--ledger'] }] },
   { id: 'status-agent', steps: [{ argv: ['status', '--agent', 'round'] }] },
+  { id: 'recover-人面', steps: [{ argv: ['recover'] }] },
+  { id: 'recover-json面', steps: [{ argv: ['--json', 'recover'] }] },
   { id: 'read-人面', steps: [{ argv: ['read', 'a.txt'] }] },
   { id: 'read-json面', steps: [{ argv: ['--json', 'read', 'a.txt'] }] },
   { id: 'list-人面', steps: [{ argv: ['list'] }] },

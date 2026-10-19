@@ -23,6 +23,7 @@ import type {
   PolicyLayer,
   PolicyMode,
   RelPath,
+  RefName,
   RoundId,
   RoundState,
   SignalId,
@@ -213,6 +214,14 @@ export type LogEvent =
       body: string
     }
   | { t: 'merge/attempt'; round: RoundId; branches: BranchId[]; conflicts: number }
+  /**
+   * **发布那一段的事实**（B10 · D8 B）：目标提交 · 钉住的旧 ref 与旧值 · 走到哪一步。
+   *
+   * 它只记"开始写真实工作树"与"写完了"两个点，不记「可能已经写了一半」的中间态——
+   * 中断后的五态由 `src/recovery/state.ts` 拿这两条与**实际 ref/盘上内容**对照算出来，
+   * 不靠进程在死前把事情报完。`begin` 落盘之后进程就死了，恢复仍然判得出写没写。
+   */
+  | { t: 'merge/publish'; round: RoundId; commit: CommitId; phase: 'begin' | 'done'; ref?: RefName; expected?: CommitId }
   | { t: 'merge/accept'; round: RoundId; commit: CommitId; assertions: AssertionResult[] }
   | {
       t: 'prefix/assemble'

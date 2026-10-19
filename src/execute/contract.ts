@@ -37,6 +37,11 @@ export interface RunResult {
   readonly exit: number
   readonly ms: number
   /**
+   * 子进程根本没起来（`spawn` 的 `error`：命令不在那一类）。验收门拿它把
+   * 「跑不起来」与「跑过但没过」分开（§ 8.12 末段三档）——退出码 1 不能被读成后者。
+   */
+  readonly spawnError?: string
+  /**
    * 这一趟里出现了沙箱的拒绝签名。
    *
    * **它是读出来的，不是内核给的**：子进程 `open()` 拿 errno 30 (EROFS)，而父进程手里只剩

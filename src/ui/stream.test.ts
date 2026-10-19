@@ -77,7 +77,7 @@ function llmCall(agent: string, step: string): LogEvent {
 }
 
 /**
- * 30 族各一条。**族名从事件自己读**（`e.t`）——测试拿它这份夹具的族与源码那把尺对，
+ * 31 族各一条。**族名从事件自己读**（`e.t`）——测试拿它这份夹具的族与源码那把尺对，
  * 于是"联合长了一族而夹具没跟上"也是红的。
  */
 function oneOfEach(): StatusRow[] {
@@ -149,6 +149,8 @@ function oneOfEach(): StatusRow[] {
       body: '{}',
     }),
     row({ t: 'merge/attempt', round: brand('r1'), branches: [brand('b1'), brand('b2')], conflicts: 0 }),
+    row({ t: 'merge/publish', round: brand('r1'), commit: brand('abcdef0123456789'), phase: 'begin' }),
+    row({ t: 'merge/publish', round: brand('r1'), commit: brand('abcdef0123456789'), phase: 'done' }),
     row({
       t: 'merge/accept',
       round: brand('r1'),
@@ -208,10 +210,10 @@ const MIX_GOLDEN: readonly string[] = [
   "验收：2 项通过，1 项无法运行。"
 ]
 
-test('① 表与联合逐字对得上：30 族一个不多一个不少', () => {
+test('① 表与联合逐字对得上：31 族一个不多一个不少', () => {
   const src = familiesInSource()
   assert.deepEqual([...Object.keys(FAMILY_KIND)].sort(), src, '表的键与联合的族名不逐字相同（漏一族或多一族）')
-  assert.equal(src.length, 30, `联合该是 30 族，源码里数出 ${src.length} 族`)
+  assert.equal(src.length, 31, `联合该是 31 族，源码里数出 ${src.length} 族`)
   const permanent = src.filter((f) => FAMILY_KIND[f as EventFamily] === 'permanent')
   assert.equal(permanent.length, 10, `进历史的那几族该是 10 族，表里数出 ${permanent.length} 族`)
   assert.deepEqual([...unclassified(src)], [], '表漏了这一族（联合里有、表上没有）')
@@ -279,7 +281,7 @@ test('④ 一条事件一行：逐字等于那一份原文 · 按到达序 · �
   console.log(`④ 读数：${lines.length} 行逐字等于黄金 · 45 字不截（49 字全文）· 100 字截成 80+… · 兜的默认 ${BODY_CHARS}`)
 })
 
-test('⑤ 一族一行都不少：夹具覆盖 30 族、进历史的正好那 10 族', () => {
+test('⑤ 一族一行都不少：夹具覆盖 31 族、进历史的正好那 10 族', () => {
   const rows = oneOfEach()
   const families = [...new Set(rows.map((r) => r.e.t))].sort()
   assert.deepEqual(families, familiesInSource(), '夹具没覆盖到每一族（新长的一族没有被喂进来）')

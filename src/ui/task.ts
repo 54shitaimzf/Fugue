@@ -54,17 +54,26 @@ function goalOf(body: string): string {
   return clean(typeof value === 'string' ? value : body)
 }
 // JSON tasks use the canonical draft validator; prose and non-JSON fences stay intact.
+// The section scaffolding (`## 第 N 项`) is a machine skeleton: on the human face it becomes a
+// numbered purpose line, so a first-time reader sees what the batch will do instead of raw markdown.
 function draftPreview(body: string): string | undefined {
   if (!body.includes('\x60\x60\x60')) return undefined
   try {
     const draft = draftOf(body)
     let at = 0
-    const shown = body.replace(/\x60{3}([A-Za-z0-9_-]*)[ \t]*\r?\n[\s\S]*?\x60{3}/g, (block, language: string) => {
-      if (language.toLowerCase() !== 'json') return block
-      const section = draft.sections[at++]
-      return section === undefined ? block : (section.kind === 'investigate' ? '调查：' + section.question : '实现：' + section.goal)
-    })
-    return at === draft.sections.length ? '模型 · 任务草案\n' + clean(shown) : undefined
+    const shown = body
+      .replace(/^[ \t]*#{1,6}[^\n]*\r?\n+(?=\x60{3}json\b)/gm, '')
+      .replace(/\x60{3}([A-Za-z0-9_-]*)[ \t]*\r?\n[\s\S]*?\x60{3}/g, (block, language: string) => {
+        if (language.toLowerCase() !== 'json') return block
+        const section = draft.sections[at]
+        if (section === undefined) return block
+        at += 1
+        const purpose = section.kind === 'investigate' ? '调查：' + section.question : '实现：' + section.goal
+        return `${at}. ${purpose}`
+      })
+    return at === draft.sections.length
+      ? '任务草案\n' + clean(shown.replace(/\n{2,}(?=\d+\. )/g, '\n').replace(/(\d+\. [^\n]*)\n{2,}/g, '$1\n'))
+      : undefined
   } catch { return undefined }
 }
 export function taskOf(rows: readonly StatusRow[], focus: string | null = null, full = false, changes?: CommitChanges): TaskFace {
@@ -90,16 +99,16 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
     switch (e.t) {
       // A phase edge expires the previous action; a same-phase record does not.
       case 'round/state': if (e.from !== e.to) action = ''; state = e.to; from = e.from; break
-      case 'round/intent': base = e.base; messages.push({ text: `你\n${goalOf(e.body)}`, role: 'user' }); break
+      case 'round/intent': base = e.base; messages.push({ text: `> ${goalOf(e.body)}`, role: 'user' }); break
       case 'holder/distill': {
         const preview = full ? undefined : draftPreview(e.body)
-        messages.push({ text: `模型 · 当前理解\n${clean(e.body)}`, role: 'model', ...(preview === undefined ? {} : { preview }) }); break
+        messages.push({ text: clean(e.body), role: 'model', ...(preview === undefined ? {} : { preview }) }); break
       }
-      case 'agent/handoff': messages.push({ text: `模型 · 交接说明\n${clean(e.body)}`, role: 'model' }); break
+      case 'agent/handoff': messages.push({ text: clean(e.body), role: 'model' }); break
       case 'holder/ask': {
         const questions = objectOf(e.body)?.questions
         const texts = Array.isArray(questions) ? questions.flatMap(q => q !== null && typeof q === 'object' && typeof q.question === 'string' ? [q.question, ...(Array.isArray(q.options) ? q.options.flatMap(o => o !== null && typeof o === 'object' && typeof o.label === 'string' ? [`${o.label}${typeof o.description === 'string' ? `：${o.description}` : ''}`] : []) : [])] : []) : [e.body]
-        messages.push({ text: `模型 · 需要你决定\n${clean(texts.join('\n'))}`, role: 'model' }); break
+        messages.push({ text: `需要你决定\n${clean(texts.join('\n'))}`, role: 'model' }); break
       }
       case 'holder/todos': {
         const todos = objectOf(e.body)?.todos
@@ -156,7 +165,7 @@ export function taskOf(rows: readonly StatusRow[], focus: string | null = null, 
   }
   // 实际动作已经说明当前进展；失败、验收与写回结论仍优先。
   const actionStatus = notice === null && state === 'Working' && action !== '' && action !== problem
-  const status = notice?.text ?? (actionStatus ? action : state === null ? '当前任务记录' : state === 'Planning' ? WORDS.planPreparing : state === 'Working' && issued ? '这批任务已确认，结果尚未写回。' : roundLabelOf(state, from))
+  const status = notice?.text ?? (actionStatus ? action : state === null ? '当前任务记录' : state === 'Planning' ? WORDS.planPreparing : state === 'Aborted' ? WORDS.abortGuide : state === 'Working' && issued ? '这批任务已确认，结果尚未写回。' : roundLabelOf(state, from))
   result.push({ text: status, role: notice?.role ?? (actionStatus ? 'instruction' : state === 'Aborted' ? 'refuse' : 'system') })
   result.push(...changeRows)
   if (notice?.text === WORDS.verifyNotWritten) result.push({ text: WORDS.verifyFailedGuide, role: 'instruction' })

@@ -14,14 +14,16 @@
 //
 // 这一份不碰终端、不折帧（那是 `ui/follow.test.ts` 的事）。
 import assert from 'node:assert/strict'
+import { openServeSource, rowsReaderOf } from './source.ts'
 import { spawnSync } from 'node:child_process'
+import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { runCli, stdinOf } from '../../test/helpers/run-cli.ts'
 import { tmpDir } from '../../test/helpers/tmp.ts'
 import { openLog } from '../log/log.ts'
 import { PROTOCOL_VERSION } from '../protocol.ts'
-import { openServeSource, rowsReaderOf } from './source.ts'
 
 /** 一个一次性工作区：git 仓 + 两条写 + 一次提交（账上因此有几条真事件）。 */
 async function makeRoot(): Promise<string> {
@@ -122,6 +124,33 @@ test('④ 负对照：游标串读不出来就抛——不静默当"账上没有
   } finally {
     await src.close()
   }
+})
+
+test('B12 连接死了之后的请求与关闭都结束；关闭从开始关就计时', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fugue-source-dead-'))
+  const cli = join(dir, 'fake-serve.mjs')
+  // 握手之后**立刻退出**：客户端已死，后续 pass/close 不能永远排队。
+  writeFileSync(
+    cli,
+    `let buf=''
+process.stdin.on('data',(c)=>{buf+=c;const lines=buf.split('\\n');buf=lines.pop()??'';for(const l of lines){if(!l.trim())continue;const m=JSON.parse(l);if(m.method==='initialize'){process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{protocol:'1',product:'fake',methods:['watch']}})+'\\n');setTimeout(()=>process.exit(0),5)}}})
+`,
+  )
+  const src = await openServeSource({ root: dir, cli, killAfterMs: 500 })
+  assert.equal(src.hello.product, 'fake')
+  // 等子进程真的退出（close 事件到了）。
+  await new Promise((r) => setTimeout(r, 100))
+  const guard = <T>(p: Promise<T>): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<T>((_done, fail) => {
+        setTimeout(() => fail(new Error('2 秒内没结束')), 2_000).unref()
+      }),
+    ])
+  await guard(assert.rejects(() => src.pass(''), /退了|收尾/))
+  await guard(src.close())
+  await guard(src.close())
+  rmSync(dir, { recursive: true, force: true })
 })
 
 test('⑤ 收尾幂等：`close()` 两次只走一趟，子进程收干净', async () => {

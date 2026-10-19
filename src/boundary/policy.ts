@@ -88,6 +88,14 @@ export interface PolicyInput {
   readonly binding?: ActionBinding
   /** 这一趟探到的层。不给就现探一次；两处读同一份的调用方传自己那一份，省一次 spawn。 */
   readonly probed?: LayersProbe
+  /**
+   * **这一趟铺在哪棵树上**（缺省就是本 agent 的物化树）。
+   *
+   * 验收门要它：断言跑在另铺的一棵物化树上（`round/execute.ts` 的 `matDir`），而不是 agent 的
+   * 常住视图。坐标与可写落点必须跟着那棵树走——`degradedArgv` 的 Landlock 可写集读的是
+   * `policy.writableRoots`，指错树的话第二层会把验收自己的写当场拒掉。
+   */
+  readonly tree?: AbsPath
 }
 
 /** 工作区配置里期望档那一个键（P1c，计划 § 5.20）。 */
@@ -133,11 +141,12 @@ export function resolvePolicy(i: PolicyInput): Policy {
   ]
   const fenced = mount
   const cache = cacheLayoutOf(i.roots, i.agent)
+  const tree = i.tree ?? i.roots.mergedRoot(i.agent)
   // **坐标跟着档走**：有挂载层在场就是沙箱里那三条；没有时子进程就在宿主上跑，坐标照实写
   // 宿主那三条——两档各是各的事实，而 `envFor()` 与 `confine()` 读的是同一份。
   const coords: Coords = fenced
     ? SANDBOX_COORDS
-    : { tree: i.roots.mergedRoot(i.agent), home: cache.home, tmp: i.roots.tempRoot(i.agent) }
+    : { tree, home: cache.home, tmp: i.roots.tempRoot(i.agent) }
   // **档是事实**：挂载层在场时它给的是命令行要的那一档（`read-only` 档把树绑成只读、
   // `workspace-write` 档把它绑成可写）；挂载层不在时，第二层在就由它说了算——它管着写那一维，
   // 所以"缺省档"意味着树不可写；两层都不在才是 E4 那一档（树可写）。

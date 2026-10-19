@@ -61,6 +61,7 @@ import { capReceipt, lineCount, MAX_RECEIPT_BYTES } from './receipt.ts'
 import { createWalk } from './walk-cache.ts'
 import type { ToolHost } from './execute.ts'
 import { createToolHost, prefetchBudgetOf } from './host.ts'
+import { applyEdit } from '../view/edit.ts'
 import { refHeadOf } from '../round/head.ts'
 import { AGENT_LAND_NOW } from '../round/driver.ts'
 import { HOLDER_LAND_NOW } from '../round/plan.ts'
@@ -150,6 +151,32 @@ async function face(name: string, args: unknown, host: ToolHost, cwd = '', holde
 }
 
 // ── ① 参数那一层 ─────────────────────────────────────────────────────────────
+
+test('B11 改写保留原模式：100755 不被写成 100644，新文件仍是 100644', async () => {
+  const b = await bench()
+  try {
+    await b.host.writeBytes('tool.sh', new Uint8Array(Buffer.from('#!/bin/sh\necho one\n', 'utf8')))
+    // 先把它变成可执行（chmod 是另一条动作，不经 `edit`/`write`）。
+    await applyEdit(
+      { view: b.view, truth: b.truth, log: b.log, writer: AGENT as WriterId },
+      { kind: 'chmod', path: 'tool.sh' as RelPath, mode: 0o100755 },
+    )
+    assert.equal((await b.host.readBytes('tool.sh'))?.mode, 0o100755, '前置：这份文件在视图里本来就是可执行的')
+
+    // 普通文本修改：内容变了，模式一个字节都不该动。
+    await b.host.edit('tool.sh', { kind: 'replace', find: 'one', replace: 'two', all: false })
+    const got = await b.host.readBytes('tool.sh')
+    assert.ok(got !== null)
+    assert.equal(asText(got.bytes), '#!/bin/sh\necho two\n')
+    assert.equal(got.mode, 0o100755, 'edit 不能隐式清掉执行位')
+
+    // 新文件还是明确的缺省模式。
+    await b.host.writeBytes('plain.txt', new Uint8Array(Buffer.from('新文件\n', 'utf8')))
+    assert.equal((await b.host.readBytes('plain.txt'))?.mode, 0o100644)
+  } finally {
+    await b.close()
+  }
+})
 
 test('① 参数不是对象 · 少了必填参数：两条都是"一次失败的结果"，不是抛', async () => {
   const b = await bench()

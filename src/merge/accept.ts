@@ -18,17 +18,18 @@
 // **保留前缀不进真实工作树**（§ 9.10）：`.fugue` 那几样在视图与提交里，而 `advance` 跳过它们
 // ——既不改它们，也不删它们。
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { spawnSync } from 'node:child_process'
-import type { AbsPath, CommitId, RelPath } from '../terms.ts'
+import type { AbsPath, AgentId, CommitId, Enforcement, PolicyMode, RelPath } from '../terms.ts'
 import type { Assertion, AssertionResult, AssertionRun, Contract } from '../contract/types.ts'
 import { resultOf } from '../contract/types.ts'
 import { gitModeOf } from '../delta.ts'
 import { WORKSPACE_STATE } from '../materialize/diffstat.ts'
 import type { Truth } from '../truth/contract.ts'
-import type { RefName } from '../terms.ts'
+import type { Log } from '../log/events.ts'
+import type { RefName, RoundId } from '../terms.ts'
 import type { TreeEntry } from '../entries.ts'
+import { createExecutor } from '../execute/exec.ts'
 
 /** 这一层自己的失败：验收跑不起来 · 推进时撞上写不动的东西。 */
 export class AcceptError extends Error {}
@@ -45,12 +46,23 @@ export class AcceptError extends Error {}
 export interface AssertionRunSpec {
   /** 契约里那一条（它的 `name` 与 `expect` 是判决的依据）。 */
   readonly assertion: Assertion
-  /** 真起的那个命令行。 */
+  /** 真起的那个命令行。**验收与 agent 执行走同一条包法**（`round/assertions.ts`）。 */
   readonly argv: readonly string[]
   /** 子进程的环境。**由调用方给全**——这一份不做环境继承的判断。 */
   readonly env: Record<string, string>
   /** 在哪跑。**是那棵树的根下的一个相对位置**，不是绝对路径。 */
   readonly cwd?: RelPath
+  /** 这一条属于哪个 agent（执行器按它取 cwd；验收里就是契约的 owner）。 */
+  readonly agent?: AgentId
+  /** 包成了哪一档（如实报告：跑得起来但只有一层围栏时，读数要说出来）。 */
+  readonly enforcement?: Enforcement
+  /** 包装机制（`bwrap` / `landlock` / `none`）——与 `enforcement` 一起进 note。 */
+  readonly mechanism?: 'bwrap' | 'landlock' | 'none'
+  /**
+   * **准备阶段就判定跑不起来**（动作绑不上 · 策略不成立 · 声明目录落不到树里）。
+   * 这一条直接进 `unrunnable`，不起进程——§ 8.12 末段的三档靠它分开。
+   */
+  readonly notRun?: string
 }
 
 /**
@@ -61,33 +73,50 @@ export interface AssertionRunSpec {
  *   · 起得来、退出码等于期望 → `ran` 且相等 → `pass`
  *
  * **退出码 127 也归 `not-run`**：那是 shell 说"这个命令找不到"，与 `ENOENT` 是同一件事的两种
- * 报法——一个是 `spawnSync` 直接给的，一个是经 shell 走一圈给的。两处都收，判据一处。
+ * 报法——一个是执行器的 `spawnError` 直接给的，一个是经 shell 走一圈给的。两处都收，判据一处。
+ *
+ * **它走 `Executor`，不走 `spawnSync`**（B01）：包好的 argv 已经由 `round/assertions.ts`
+ * 过过动作声明 · 策略 · 环境 · 沙箱；这一份只负责起、收、判。
  */
-function runAssertion(root: AbsPath, spec: AssertionRunSpec): AssertionResult {
-  const cwd = join(root, spec.cwd ?? '')
-  if (!existsSync(cwd)) {
+async function runAssertion(root: AbsPath, spec: AssertionRunSpec): Promise<AssertionResult> {
+  if (spec.notRun !== undefined) return resultOf(spec.assertion, { kind: 'not-run', note: spec.notRun })
+  const cwd = spec.cwd ?? ''
+  if (!existsSync(join(root, cwd))) {
     return resultOf(spec.assertion, {
       kind: 'not-run',
-      note: `在哪跑不存在：${spec.cwd === undefined || spec.cwd === '' ? '（树根）' : spec.cwd}`,
+      note: `在哪跑不存在：${cwd === '' ? '（树根）' : cwd}`,
     })
   }
   const started = performance.now()
-  const r = spawnSync(spec.argv[0] as string, spec.argv.slice(1), {
-    cwd,
-    env: spec.env,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
+  const executor = createExecutor({ cwdOf: (_a, rel) => join(root, rel) })
+  const r = await executor.run(
+    spec.agent ?? ('round' as AgentId),
+    {
+      action: spec.assertion.action,
+      confined: {
+        argv: spec.argv,
+        mechanism: spec.mechanism ?? 'none',
+        mode: 'workspace-write' as PolicyMode,
+        enforcement: spec.enforcement ?? 'partial',
+      },
+      cwd,
+      env: spec.env,
+    },
+    new AbortController().signal,
+  )
   const ms = Math.round(performance.now() - started)
-  const head = (s: string | null): string => (s ?? '').split('\n').slice(0, 3).join(' / ').slice(0, 200)
-  if (r.error !== undefined && (r.error as NodeJS.ErrnoException).code === 'ENOENT') {
-    return resultOf(spec.assertion, { kind: 'not-run', note: `命令不在：${spec.argv[0]}（ENOENT）` })
+  const head = (s: string): string => s.split('\n').slice(0, 3).join(' / ').slice(0, 200)
+  if (r.spawnError !== undefined) {
+    return resultOf(spec.assertion, { kind: 'not-run', note: `命令不在：${spec.argv[0]}（${r.spawnError}）` })
   }
-  const exit = r.status === null ? 1 : r.status
+  const exit = r.exit
   if (exit === 127) {
     return resultOf(spec.assertion, { kind: 'not-run', note: `退出码 127：命令找不到（${spec.argv[0]}）` })
   }
-  const note = `exit ${exit}${r.stderr !== null && r.stderr !== '' ? `｜${head(r.stderr)}` : ''}${r.stdout !== null && r.stdout !== '' ? `｜${head(r.stdout)}` : ''}`
+  const note =
+    `exit ${exit}` +
+    `${r.stderr === '' ? '' : `｜${head(r.stderr)}`}` +
+    `${r.stdout === '' ? '' : `｜${head(r.stdout)}`}`
   return resultOf(spec.assertion, { kind: 'ran', ms, exit, note })
 }
 
@@ -120,8 +149,12 @@ export function reportOf(results: readonly AssertionResult[]): VerifyReport {
  *
  * 它**不 commit、不 advance、不认识真实工作树**——那三件事在下面那一个函数里。
  */
-export function verify(root: AbsPath, specs: readonly AssertionRunSpec[]): VerifyReport {
-  return reportOf(specs.map((s) => runAssertion(root, s)))
+export async function verify(root: AbsPath, specs: readonly AssertionRunSpec[]): Promise<VerifyReport> {
+  const results: AssertionResult[] = []
+  // **逐条跑，不并行**：断言共享同一棵验收树与同一份缓存声明，并行会把「验收自己改到的
+  // 树」变成另一条竞争；一轮只跑一遍，串行不构成可感知代价。
+  for (const s of specs) results.push(await runAssertion(root, s))
+  return reportOf(results)
 }
 
 /** 一次推进的结果：改了几条 · 删了几条 · 跳过哪几处。 */
@@ -191,6 +224,39 @@ export async function advance(deps: AdvanceDeps, commit: CommitId): Promise<Adva
   const written: RelPath[] = []
   const removed: RelPath[] = []
 
+  // **一 · 祖先的类型转换先做**（B02）：目标要 `dir/x` 而盘上 `dir` 是普通文件或软链时，
+  // `mkdirSync(dir, {recursive:true})` 会报 ENOTDIR（文件）或**沿着旧链写到树外**（软链）。
+  // 合法的转换（文件→目录 · 链接→目录）应当完成，所以先把挡路的祖先逐层换成目录，
+  // 再写叶子；顺序从浅到深，浅层换掉之后深层的 `lstat` 才是那棵树里真正的形状。
+  //
+  // **不跟随旧祖先**：`lstat` 看的是那一条路径自己；软链在这里被当作"要换掉的旧条目"，
+  // 而不是通向别处的门。目标里同一位置本来就是软链/文件的路径不在这份计划里（它们是叶子，
+  // 由下面两支处理）；`want` 里同时出现 `a` 与 `a/b` 的树不成立（git 也不允许）。
+  const dirs = new Set<RelPath>()
+  for (const rel of want.keys()) {
+    let d = dirname(rel)
+    while (d !== '.' && d !== '' && d !== '/') {
+      dirs.add(d as RelPath)
+      d = dirname(d)
+    }
+  }
+  const byDepth = [...dirs].sort((a, b) => {
+    const da = a.split('/').length
+    const db = b.split('/').length
+    return da === db ? (a < b ? -1 : a > b ? 1 : 0) : da - db
+  })
+  for (const rel of byDepth) {
+    if (isPreserved(rel)) continue
+    const abs = join(root, rel)
+    const now = lstatSync(abs, { throwIfNoEntry: false })
+    if (now !== undefined && now.isDirectory()) continue
+    if (now !== undefined) {
+      // 普通文件与软链都能直接 unlink；目录不会走到这里（上面 continue 了）。
+      unlinkSync(abs)
+    }
+    mkdirSync(abs)
+  }
+
   // 一 · 目标里有的，逐条落。**一致的跳过**（比内容哈希，不比 mtime）。
   for (const [rel, w] of want) {
     if (isPreserved(rel)) {
@@ -224,8 +290,10 @@ export async function advance(deps: AdvanceDeps, commit: CommitId): Promise<Adva
     let entries
     try {
       entries = readdirSync(abs, { withFileTypes: true })
-    } catch {
-      return
+    } catch (err) {
+      // 根部不存在是合法的“已经清空”；其余读不懂的错照报（不把它当空目录吞掉）。
+      if ((err as { code?: string }).code === 'ENOENT') return
+      throw err
     }
     for (const e of entries) {
       const rel = dir === '' ? e.name : `${dir}/${e.name}`
@@ -237,13 +305,14 @@ export async function advance(deps: AdvanceDeps, commit: CommitId): Promise<Adva
       if (e.isDirectory()) {
         walkDrop(rel)
         // 空目录收掉：目标树里没有它（git 里目录不是条目）。
+        // **用 rmdirSync**：`rmSync(child, {force:true})` 对目录不是正确的“删空目录”操作。
         try {
-          if (readdirSync(child).length === 0) {
-            rmSync(child, { force: true })
-            removed.push(rel)
-          }
-        } catch {
-          // 删不动就算了：它不是内容，下一次推进还会经过这里。
+          rmdirSync(child)
+        } catch (err) {
+          const code = (err as { code?: string }).code
+          // 并发下被别的进程删掉（ENOENT）或这一层刚长出内容（ENOTEMPTY）都不是错；
+          // 其余错（权限 · I/O）照旧抛：那是“收尾失败”，不能静默。
+          if (code !== 'ENOTEMPTY' && code !== 'ENOENT') throw err
         }
         continue
       }
@@ -299,17 +368,77 @@ export async function commitThenAdvance(deps: {
   readonly ref?: RefName
   /** 挪 ref 时钉住的旧值（CAS）：轮次开始时钉住的那个底。给了就要求它没被别人动过。 */
   readonly refExpectedOld?: CommitId
+  /**
+   * 落**发布事实**（B10/D8 B）：给了就在动真实工作树之前记 `merge/publish begin`，
+   * 推进完（含 ref CAS）之后记 `done`。中断之后恢复只靠这两条 + 实际 ref/盘上状态，
+   * 不重跑已经产生副作用的动作。
+   */
+  readonly record?: { readonly log: Log; readonly round: RoundId }
 }): Promise<AcceptOutcome> {
-  const report = verify(deps.tree, deps.specs)
+  const report = await verify(deps.tree, deps.specs)
   if (!report.ok) {
     // **一条都不落。** 没有 commit · 没有 advance · 真实工作树与进来时逐字节相同。
     return { report }
   }
-  const advanced = await advance({ truth: deps.truth, realRoot: deps.realRoot, ...(deps.preserve === undefined ? {} : { preserve: deps.preserve }) }, deps.commit)
+  const advanced = await publish({
+    truth: deps.truth,
+    realRoot: deps.realRoot,
+    commit: deps.commit,
+    ...(deps.preserve === undefined ? {} : { preserve: deps.preserve }),
+    ...(deps.ref === undefined ? {} : { ref: deps.ref }),
+    ...(deps.refExpectedOld === undefined ? {} : { refExpectedOld: deps.refExpectedOld }),
+    ...(deps.record === undefined ? {} : { record: deps.record }),
+  })
+  return { report, commit: deps.commit, advanced }
+}
+
+/**
+ * **发布那一段**：验收已经过了，只差把结果落到真实工作树与主线。
+ *
+ * 单独一层是为了 B09：验收由调用方跑一次（`runIssued`），这一层不再偷偷跑第二遍。
+ * `commitThenAdvance` 保留为「验收 + 发布」的完整形状（测试与其它调用点用）。
+ *
+ * 顺序是硬的：**记 begin → 改文件 → 挪 ref（CAS）→ 记 done**。中间任一步断掉，账上都留着
+ * begin；恢复（`src/recovery/state.ts`）据此对照实际 ref 与盘上内容判五态，不自动重放。
+ */
+export async function publish(deps: {
+  readonly truth: Truth
+  readonly realRoot: AbsPath
+  readonly commit: CommitId
+  readonly preserve?: readonly RelPath[]
+  readonly ref?: RefName
+  readonly refExpectedOld?: CommitId
+  readonly record?: { readonly log: Log; readonly round: RoundId }
+}): Promise<AdvanceResult> {
+  const begin = deps.record
+  if (begin !== undefined) {
+    await begin.log.append('round', {
+      t: 'merge/publish',
+      round: begin.round,
+      commit: deps.commit,
+      phase: 'begin',
+      ...(deps.ref === undefined ? {} : { ref: deps.ref }),
+      ...(deps.refExpectedOld === undefined ? {} : { expected: deps.refExpectedOld }),
+    })
+  }
+  const advanced = await advance(
+    { truth: deps.truth, realRoot: deps.realRoot, ...(deps.preserve === undefined ? {} : { preserve: deps.preserve }) },
+    deps.commit,
+  )
   // **顺序即不变量**（PLAN § 5.7 的 A6）：验收 → 推进真实工作树 → 挪主线。挪 ref 放在最后，
   // 因为它是唯一一步"挪了就不回头"的：前面任何一步没过，主线仍指着轮次开始时的底。
   if (deps.ref !== undefined) await deps.truth.advance(deps.ref, deps.commit, deps.refExpectedOld ?? null)
-  return { report, commit: deps.commit, advanced }
+  if (begin !== undefined) {
+    await begin.log.append('round', {
+      t: 'merge/publish',
+      round: begin.round,
+      commit: deps.commit,
+      phase: 'done',
+      ...(deps.ref === undefined ? {} : { ref: deps.ref }),
+      ...(deps.refExpectedOld === undefined ? {} : { expected: deps.refExpectedOld }),
+    })
+  }
+  return advanced
 }
 
 /**

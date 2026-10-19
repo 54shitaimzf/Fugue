@@ -562,7 +562,7 @@ function modelHeadings(lines: readonly string[]): readonly boolean[] {
       fence = { mark: marker[1]![0]!, count: marker[1]!.length }
       continue
     }
-    if (i === 0 && /^模型 · /.test(line)) { headings[i] = true; continue }
+    if (i === 0 && /^(?:任务草案|需要你决定)$/.test(line)) { headings[i] = true; continue }
     if (/^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)) { headings[i] = true; continue }
     if (/^ {0,3}(?:=+|-+)[ \t]*$/.test(line) && prose[i - 1]) {
       for (let at = i - 1; at >= 0 && prose[at]; at -= 1) headings[at] = true
@@ -684,16 +684,27 @@ export function frameOf(o: FrameInput): Frame {
       : (view === 'progress' ? body.left : body.right).map((l) => ({ l, role: 'body' as const }))
   const bodyRows = [...taskBodyRows,
     ...(o.operationArea === true && view === 'chat' && !readingOn && !foregroundMenu && o.menu === undefined
-      ? (o.feedback ?? []).filter(l => !issueOn || o.runIssue!.feedback !== true || l !== o.runIssue!.text + WORDS.runWritebackGuide).map(l => ({ l: `系统 · ${l}`, role: 'instruction' as const })) : []),
+      ? (o.feedback ?? []).filter(l => !issueOn || o.runIssue!.feedback !== true || l !== o.runIssue!.text + WORDS.runWritebackGuide)
+        .flatMap(l => {
+          // `! ` 是行首标记：先按文字折行，再贴回第一行；续行缩进两格。
+          const parts = wrap(l, Math.max(1, inner - 2))
+          return parts.map((line, i) => ({ l: i === 0 ? `! ${line}` : `  ${line}`, role: 'instruction' as const }))
+        }) : []),
   ]
   let rowAt = 0
   const rows = bodyRows.flatMap((one) => {
+    // 用户那句话的 `> ` 是行首标记，不能自己占一行：先摘下来，按剩余宽度折行，再贴回第一行。
+    const userMark = one.role === 'user' && one.l.startsWith('> ')
     const paragraphs = o.task === undefined ? [one.l] : one.l.split('\n')
-    const parts = paragraphs.map((p, i) => wrap(p, Math.max(1, inner - (i === 0 ? 0 : 2))))
-    const identified = o.task !== undefined && ['user', 'model'].includes(one.role) && paragraphs.length > 1
+    const parts = paragraphs.map((p, i) => wrap(userMark && i === 0 ? p.slice(2) : p, Math.max(1, inner - (userMark && i === 0 ? 2 : i === 0 ? 0 : 2))))
+    const identified = o.task !== undefined && ['user', 'model'].includes(one.role)
     const headingAt = rowAt, headingCount = parts[0]?.length ?? 0
     const headings = one.role === 'model' ? modelHeadings(paragraphs) : []
-    const physical = parts.flatMap((part, i) => part.map(x => ({ l: i === 0 ? x : `  ${x}`, role: headings[i] ? 'modelHeading' as const : one.role,
+    const physical = parts.flatMap((part, i) => part.map((x, j) => ({
+      // `> ` 只贴在这条消息的**第一行**：续行缩进两格。原先按「段」贴，第一段折成几行就
+      // 每个续行都带一个 `> `，一条长单段看起来像一串引用块，行首标记也就不再指向消息开头。
+      l: userMark ? (i === 0 && j === 0 ? `> ${x}` : `  ${x}`) : i === 0 ? x : `  ${x}`,
+      role: headings[i] ? 'modelHeading' as const : one.role,
       ...(identified ? { headingAt, headingCount } : {}) })))
     rowAt += physical.length
     return physical
@@ -820,14 +831,71 @@ export function frameOf(o: FrameInput): Frame {
   const content = readingOn || foregroundMenu ? [] : rows.length <= bodyBudget ? rows : o.task === undefined
     ? rows.slice(0, Math.max(0, bodyBudget - 1))
     : (() => {
-        const head = rows.slice(0, Math.min(2, Math.max(0, bodyBudget - 2)))
-        const tail = bodyBudget > 3 ? rows.slice(-(bodyBudget - 3)) : []
-        const first = tail[0], tailAt = rows.length - tail.length
-        // 尾部从消息中间开始时，原有身份标题随正文进入视窗；不改消息原文。
-        if (first?.headingAt !== undefined && first.headingAt < tailAt
-          && first.headingAt + first.headingCount! > head.length) {
-          const count = Math.min(first.headingCount!, tail.length)
-          return [...head, ...rows.slice(first.headingAt, first.headingAt + count), ...tail.slice(count)]
+        // **截断不拆消息**（B 型观感）：先按消息边界取头，再从消息边界取尾，中间省掉的交给
+        // 下面那一行「N 行未展开」说清。标题留在屏上、正文被截在中段，比丢标题更难读。
+        // 一行最多给「未展开」留出那一行；头尾都只停在消息边界上（首行 / 一条消息的标题行 / 空行）。
+        const limit = Math.max(0, bodyBudget - 1)
+        const groupEnd = (at: number): number => {
+          const h = rows[at]?.headingAt
+          if (h === undefined) return at + 1
+          let end = at
+          while (end < rows.length && rows[end]?.headingAt === h) end += 1
+          return end
+        }
+        let head = rows.slice(0, Math.min(2, Math.max(0, limit - 1)))
+        const edge = head.length > 0 ? rows[head.length - 1] : undefined
+        if (edge?.headingAt !== undefined && edge.headingAt < head.length) {
+          // 头停在一条消息的标题上：能整条放下就放下，放不下就退到标题之前（别留孤标题）。
+          const end = groupEnd(edge.headingAt)
+          head = end <= limit - 2 ? rows.slice(0, end) : rows.slice(0, edge.headingAt)
+        }
+        // 当前目标不能被截在身后：头里没装下用户那句话时，把它那一段一起带回来（放得下才带）；
+        // 后面那条空行能带就带，让目标与模型的回答之间留出呼吸。
+        const goalAt = rows.findLastIndex(one => one.role === 'user')
+        // 目标那一条消息的**开头**（不是最后一行）：一条长单段整条都是 user，按最后一行取会把
+        // 开头丢掉、只剩尾行。
+        const goalStart = goalAt < 0 ? -1 : (rows[goalAt]?.headingAt ?? goalAt)
+        if (goalAt >= head.length) {
+          const goalEnd = groupEnd(goalStart)
+          const roomy = goalEnd < rows.length && rows[goalEnd]?.l.trim() === '' ? goalEnd + 1 : goalEnd
+          if (roomy <= limit - 2) head = rows.slice(0, roomy)
+          else if (goalEnd <= limit - 1) head = rows.slice(0, goalEnd)
+          else {
+            // 矮到装不下前面那几行时：失败/结果那几行与目标一起优先，前面那些状态与空行让位；
+            // 两者都装不下时保失败/结果（它比目标更急），再不行才只保目标。
+            const urgent = rows.slice(0, goalStart).filter(one => one.role === 'refuse' || one.role === 'ok')
+            const combined = [...urgent, ...rows.slice(goalStart, goalEnd)]
+            if (combined.length <= limit - 1) head = combined
+            else if (urgent.length > 0 && urgent.length <= limit - 1) head = urgent
+            else if (goalEnd - goalStart <= limit - 1) head = rows.slice(goalStart, goalEnd)
+          }
+        }
+        const tailBudget = limit - head.length
+        const start = Math.max(head.length, rows.length - tailBudget)
+        let tail: typeof rows = []
+        let clean = start
+        // 尾巴从消息中间开始时，先往后退到下一条消息的标题或一个空行。
+        while (clean < rows.length) {
+          const row = rows[clean]
+          if (row === undefined) break
+          const midMessage = row.headingAt !== undefined && row.headingAt !== clean
+          if (!midMessage && row.l.trim() !== '') break
+          clean += 1
+        }
+        if (clean < rows.length && rows.length - clean >= 2) tail = rows.slice(clean)
+        else if (start < rows.length) {
+          // 截点之后没有干净的边界（一整条长消息比尾巴预算还长）：把这条消息的**开头**一起
+          // 带回来，再接最新的那几行正文。标题整块放得下就放标题；放不下时退到这条消息的
+          // 第一行——行首标记在那一行上，首行可识别，标记只出现在一处。
+          const row = rows[start]!
+          const at = row.headingAt, count = row.headingCount ?? 0
+          if (at !== undefined && count > 0 && at >= head.length) {
+            // 连“标题 + 一行正文”都放不下时不印半条消息：宁可整条留到看全里。
+            if (tailBudget > count) {
+              const heading = rows.slice(at, at + count)
+              tail = [...heading, ...rows.slice(-(tailBudget - count))]
+            } else if (tailBudget > 1) tail = [rows[at]!, ...rows.slice(-(tailBudget - 1))]
+          } else tail = rows.slice(rows.length - tailBudget)
         }
         return [...head, ...tail]
       })()
@@ -861,21 +929,29 @@ export function frameOf(o: FrameInput): Frame {
   const fixed = 2 + shown.length + (withFooter ? 2 : 0) + menuBody.length + gateBody.length + gateNotice.length
   // 保留整窗容量与固定操作区；有余量时让当前任务从顶部展开。
   // 已知空会话和可信任务可移动留白；阅读、菜单、二级面及坏操作元数据沿用原排法。
-  const nearby = o.operationArea === true && !readingOn && dropped === 0 && o.menu === undefined && view === 'chat' && (taskStatus || emptyContext)
+  // 已有记录、但当前没有任务时（例如启动时就看见一条没收尾的发布）：反馈也贴着输入，
+  // 不在顶上留一整屏空白；阅读、菜单、坏操作元数据仍沿用原排法。
+  const noTask = o.task !== undefined && o.task.round === null && o.task.state === null && o.task.rows.length === 0
+  const nearby = o.operationArea === true && !readingOn && dropped === 0 && o.menu === undefined && view === 'chat' && (taskStatus || emptyContext || noTask)
     && (o.bottom === undefined || operationStatus)
   const spare = Math.max(0, height - fixed)
   // 真实交互候选块的余量留在框外；不限制正文容量，输入仍在原位置。
   const menuNearby = o.operationArea === true && (o.menu?.help === true || ordinaryOn) && spare > 0
-  // 有足够的现成留白时，任务从顶部读，固定操作留在下方；两区只围实际内容。
+  // 余量够时对话块贴着输入往上长：下段（决定/账尾）固定在下，上段贴着它，框外留白留在上面。
   // 两条框线与至少一行框外留白都从余量取，短帧或未知上下文保留原布局。
-  const separate = nearby && spare >= 3
   const contentRows = shown.length
   const lowerRows = gateBody.length + gateNotice.length
+  // 分开的两段只在**下面真有东西**时才成立：没有门口那一块、也没有账尾时，那两段之间只是空白，
+  // 却会把框底那条边擦掉（`separate` 那一段用整行空白填中间，末行边被一起填掉）。
+  const separate = nearby && lowerRows > 0 && spare >= 3
   const gap = nearby && gateBody.length + gateNotice.length > 0 ? Math.min(1, spare) : 0
   if (menuNearby || (nearby && !separate)) shown.unshift(...Array.from({ length: menuNearby ? spare : spare - gap }, () => ({ l: '', role: 'body' as const })))
-  for (let i = 0; i < (menuNearby ? 0 : nearby && !separate ? gap : spare); i += 1) shown.push({ l: '', role: 'body' })
+  // 两段式：内容与下段之间留三行（上段的底边、一行空、下段的顶边），其余留白由 `lowerShift` 挪到框外；
+  // 多铺一行就会把下段顶出框外。
+  for (let i = 0; i < (menuNearby ? 0 : separate ? 3 : nearby ? gap : spare); i += 1) shown.push({ l: '', role: 'body' })
   // 确认与对话用已有的最后一行留白分隔；满容量时不另占正文或操作行。
-  if (operationStatus && fixed < height) shown[shown.length - 1] = { l: glyphs().div.repeat(inner), role: 'border' }
+  // 分成两段时那条线由下段自己的顶边承担，不再拿正文的末行去换。
+  if (operationStatus && !separate && fixed < height) shown[shown.length - 1] = { l: glyphs().div.repeat(inner), role: 'border' }
   for (const one of menuBody) shown.push({ l: one, role: 'overlay' })
   for (const one of gateNotice) shown.push({ l: one, role: 'overlayBody' })
   // 按切掉的头部行数还原坐标：选项折成几行，就给几行同一种等待反馈。
@@ -888,6 +964,11 @@ export function frameOf(o: FrameInput): Frame {
     shown.push({ l: one, role: waitAt >= 0 && originalAt >= waitAt && originalAt < waitEnd ? 'waiting'
       : !headingOn || (originalAt >= headingAt && originalAt < headingAt + headingCount) ? 'overlay' : 'overlayBody' })
   }
+  // 下段（门口那一块 · 账尾）贴着输入，上段贴着它往下长：两段相邻、上面留白。
+  // 从下段顶边倒推上段该落多低；内容比地方还多时不挪（留白为 0，照旧从顶上截）。
+  const lowerHead = lowerRows > 0 ? height - (withFooter ? 2 : 0) - lowerRows - 2 : withFooter ? height - 3 : height
+  const lowerShift = separate ? Math.max(0, lowerHead - 2 - (1 + contentRows)) : 0
+  if (lowerShift > 0) shown.unshift(...Array.from({ length: lowerShift }, () => ({ l: '', role: 'body' as const })))
 
   const lines: string[] = []
   const roles: LineRole[] = []
@@ -900,12 +981,9 @@ export function frameOf(o: FrameInput): Frame {
   // 只采用匹配当前轮次的最后一条用户目标；缺失或旧投影保留原框名。
   const taskOn = o.task !== undefined && o.task.round !== null && view === 'chat'
   const currentTask = taskOn && taskMatches
-  const titleRow = currentTask ? o.task!.rows.findLast(r => r.role === 'user') : undefined
-  const foldedGoal = titleRow?.text.startsWith('你\n') ? titleRow.text.slice(2).replace(/\s+/g, ' ').trim() : ''
-  const subject = hasControl(foldedGoal) ? '' : foldedGoal
-  const titleRoom = mainWidth - 5 - widthOf('当前任务 · ')
-  const taskHead = subject !== '' && titleRoom >= 4 ? `当前任务 · ${clip(subject, titleRoom)}` : '当前任务'
-  const head = ordinaryOn ? (o.menu?.source === 'cmd' ? '命令' : '文件路径') : foregroundMenu ? '按键帮助' : readingOn ? (typeof o.read?.heading === 'string' && o.read.heading !== '' ? o.read.heading : '阅读面') : `${taskOn ? taskHead : viewNameOf(view)}${view === 'chat' ? '' : focus}`
+  // 框名只说“这是什么”，不再把用户刚说的话重复一遍：目标就在下面那块强调里，
+  // 标题再抄一次只会让同一句话占两处注意力。
+  const head = ordinaryOn ? (o.menu?.source === 'cmd' ? '命令' : '文件路径') : foregroundMenu ? '按键帮助' : readingOn ? (typeof o.read?.heading === 'string' && o.read.heading !== '' ? o.read.heading : '阅读面') : `${taskOn ? '当前任务' : viewNameOf(view)}${view === 'chat' ? '' : focus}`
   lines.push(`${g.tl}${bar(edge, head)}${g.tr}`)
   roles.push(foregroundMenu || readingOn ? 'readHeading' : 'border')
   for (const one of shown) {
@@ -924,15 +1002,14 @@ export function frameOf(o: FrameInput): Frame {
   lines.push(`${g.bl}${g.h.repeat(edge)}${g.br}`)
   roles.push('border')
   // 标题紧邻正文；余量不足时沿用相邻操作区的紧凑摆法。
-  const headerAt = menuNearby ? spare : nearby && !separate ? spare - gap : 0
+  const headerAt = menuNearby ? spare : separate ? lowerShift : nearby ? spare - gap : 0
   if (headerAt > 0) {
     lines.fill(' '.repeat(width), 0, headerAt)
     roles.fill('body', 0, headerAt)
     lines[headerAt] = `${g.tl}${bar(edge, head)}${g.tr}`
     roles[headerAt] = foregroundMenu ? 'readHeading' : 'border'
   }
-  const contentEnd = 1 + contentRows
-  const lowerHead = lowerRows > 0 ? height - (withFooter ? 2 : 0) - lowerRows - 2 : withFooter ? height - 3 : height
+  const contentEnd = 1 + contentRows + lowerShift
   if (separate) {
     lines[contentEnd] = `${g.bl}${g.h.repeat(edge)}${g.br}`
     roles[contentEnd] = 'border'
@@ -990,7 +1067,7 @@ export function frameOf(o: FrameInput): Frame {
   }
   if (sideWidth > 0) {
     const sideInner = sideWidth - 2
-    const labels = ['计划', '', ...plan.flatMap(p => wrap(`${p.status === 'completed' ? '[x]' : p.status === 'in_progress' ? '>' : '[ ]'} ${p.text}`, sideInner)), '', '完整计划可按需阅读']
+    const labels = ['计划', '', ...plan.flatMap(p => wrap(`${p.status === 'completed' ? '[x]' : p.status === 'in_progress' ? '>' : '[ ]'} ${p.text}`, sideInner))]
     if (labels.length > height) labels.splice(height - 1, labels.length, `${g.mark} 还有计划未展开`)
     // 短计划跟当前内容对齐；长计划仍使用全部高度，不因主区稀疏而少印。
     const sideAt = Math.min(nearby ? headerAt : 0, Math.max(0, height - labels.length))

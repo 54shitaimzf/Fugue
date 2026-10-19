@@ -379,6 +379,31 @@ test('④ 越界的 bash：一次 run 都没有 · 视图一个字节没变 · �
 
 // ── ④b `cwd` 的三支（W8 冻结点第 2 句：执行侧与事件都只收归一后的那一份）────────
 
+test('B08 公共执行器：视图层工具也过围栏，拒时宿主零调用', async () => {
+  await withLog(async (log, root) => {
+    const fence = await fenceAt(root)
+    let calls = 0
+    const host = fakeHost()
+    const executor = createToolExecutor(
+      depsOf(log, (raw, cwd) => {
+        calls += 1
+        return fence(raw, cwd)
+      }, { host }),
+    )
+    // 视图层工具（`write`）原先被无条件当成“已过围栏”，围栏一次都不调、宿主直接被叫到。
+    const bad = await executor.execute(call('write', { path: '../outside.txt', content: '越界' }), handleOf())
+    assert.equal(bad.ok, false, '越界的写该被围栏拦住')
+    assert.equal(calls, 1, '围栏恰好过一次')
+    assert.deepEqual(host.writes, [], '被拦下的那一次不能碰到宿主')
+
+    // 正对照：合法的写照样过，围栏仍恰好一次，宿主的参数是归一一后的那一条。
+    const good = await executor.execute(call('write', { path: 'inside.txt', content: 'ok' }), handleOf())
+    assert.equal(good.ok, true)
+    assert.equal(calls, 2)
+    assert.deepEqual(host.writes, [{ path: 'inside.txt', text: 'ok' }])
+  })
+})
+
 test('④b `cwd` 三支：空串是根 · 相对归一后写回 `args.cwd` · 绝对在围栏这关拒', async () => {
   await withLog(async (log, root) => {
     const host = fakeHost()

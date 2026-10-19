@@ -26,11 +26,14 @@ test('canonical valid draft has all human purposes while original prose, other c
  for(const count of [3,8]){
   const body=draft(count),rows=ledger(body),before=statusOf(rows),t=taskOf(rows)
   const model=t.rows.find(r=>r.role==='model')!
-  assert.equal(model.text,'模型 · 当前理解\n'+body)
-  assert.ok(model.preview!.startsWith('模型 · 任务草案\n'))
+  assert.equal(model.text,body)
+  assert.ok(model.preview!.startsWith('任务草案\n'))
   assert.ok(model.preview!.includes('# 原说明标题'));assert.ok(model.preview!.includes('最后的解释不删。'))
   assert.ok(model.preview!.includes(fence+'python\nprint("示例仍在")\n'+fence))
   assert.ok(model.preview!.includes('调查：确认保留范围'))
+  assert.ok(model.preview!.includes('1. 调查：确认保留范围'),'purposes are numbered in batch order')
+  assert.ok(!model.preview!.includes('## 第'),'the markdown section skeleton stays off the human face')
+  assert.ok(!model.preview!.includes('r1.implement'),'contract ids stay off the human face')
   for(let i=0;i<count-1;i++)assert.ok(model.preview!.includes('实现：更新文件'+i),'all purposes remain; no three-item cap')
   assert.ok(!model.preview!.includes('ownedPaths'))
   const full=taskOf(rows,null,true).rows.find(r=>r.role==='model')!
@@ -40,7 +43,7 @@ test('canonical valid draft has all human purposes while original prose, other c
  for(const body of ['普通模型说明',fence+'json\n{bad}\n'+fence,draft().replace('"ownedPaths"','"unknownField"'),draft().replace('"question":"确认保留范围"','"question":""')]){
   const t=taskOf(ledger(body)),model=t.rows.find(r=>r.role==='model')!
   assert.equal(model.preview,undefined,'unrecognized/invalid draft keeps original display')
-  assert.equal(model.text,'模型 · 当前理解\n'+body)
+  assert.equal(model.text,body)
  }
  console.log('draft projection:3/8 purposes exact; original raw/prose/headings/non-JSON code retained; 4 invalid/plain floors; machine exact')
 })

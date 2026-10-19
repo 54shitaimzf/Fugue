@@ -16,7 +16,7 @@ import { applyIntent, emptyEditor, inputFrameOf, intentOf, modeOf, rememberSubmi
 import type { Editor } from './input.ts'
 import { acceptOf, candidatesOf, clampSel, completeOf, moveSel, pathsOf, queryOf, rowsTextOf, specsOf } from './menu.ts'
 import type { MenuRow, MenuSource } from './menu.ts'
-import { GATE_VIEW, cardAt, previewLinesOf, conclusionLineOf, gateLayoutOf, lineOf, pressGate, stepAt } from './gate.ts'
+import { GATE_VIEW, cardAt, previewLinesOf, conclusionLineOf, gateCompactLinesOf, gateLayoutOf, lineOf, pressGate, stepAt } from './gate.ts'
 import type { GateFace, GateOption, GateView } from './gate.ts'
 import { EMPTY_QUEUE, dropLastOf, enqueueOf, queueRowsOf, shiftOf } from './queue.ts'
 import { altAt, clampNav, navNodesOf, navRowsOf, writerAt } from './nav.ts'
@@ -27,10 +27,11 @@ import type { ReadFaceName, ReadState } from './read.ts'
 import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
 import type { LineMode, RunLauncher, RunOutcome } from './run.ts'
-import { innerOf } from './frame.ts'
+import { openPublishOf } from '../recovery/facts.ts'
 import { widthOf } from './glyph.ts'
 import { taskOf } from './task.ts'
 import type { RunIssue } from './task.ts'
+import { innerOf } from './frame.ts'
 import type { ReadPreview } from './frame.ts'
 import type { ImageRequest } from '../serve/image-source.ts'
 import type { PixelImage } from './image-codec.ts'
@@ -359,10 +360,12 @@ export function openStage(deps: StageDeps): Stage {
   const planLines = (): readonly string[] => {
     const face = gate
     if (face === null) return []
-    return face.cards.flatMap((card, i) => [
+    const lines = face.cards.flatMap((card, i) => [
       ...(i === 0 ? [] : ['']),
       ...previewLinesOf(card).map((line, j) => j === 0 ? `${i + 1}/${face.cards.length} · ${line}` : line),
     ])
+    // 命令行那份浓缩件不进决定面；完整阅读的末尾留一块「本批标记」，编号 · 底 · 批号 · 指纹在那里可达。
+    return face.compact === null ? lines : [...lines, '', '本批标记', ...gateCompactLinesOf(face)]
   }
   let readingWidth: number | undefined
   const reflowRead = (): void => {
@@ -529,6 +532,9 @@ export function openStage(deps: StageDeps): Stage {
   const onRunDone = (r: RunOutcome): void => {
     const go = deps.run()
     const current = taskOf(deps.rows())
+    // 收尾到了，“正在等待结束”就不再是当前事实：它由这一趟的结局那句话接替。
+    // 历史记录（notes）里两条都留着；屏上的当前反馈只留一条。
+    if (feedback.length > 0) feedback = feedback.filter(line => line !== `已请求停止执行，正在等待结束。${WORDS.runWritebackGuide}`)
     // Only a fresh verification failure from this launch can replace generic exit feedback.
     // An old failure, another round, a signal or a spawn failure still needs its own message.
     const reported = r.code === 1 && deps.rows().slice(runStartedAt).some(row =>
@@ -654,6 +660,15 @@ export function openStage(deps: StageDeps): Stage {
     // 树那一栏（`T8`，排在最上面）与"切到哪一格"（`focus`：`null` = 整份账）。
     const navRows = navRowsOf(navNodes, navAt, cols())
     const navPart = navRows.length === 0 ? {} : { nav: { rows: navRows, sel: navAt } }
+    // **发布没收尾就先说**（D8 B）：TUI 不自动重放、不假装还在写；只把事实与下一步放到
+    // 当前反馈里（与 `round work` 的守卫读同一份发布事实）。收尾之后这一行自然消失。
+    const openPublish = openPublishOf(deps.rows().map(r => r.e))
+    const recovery = openPublish === null ? [] : [
+      openPublish.phase === 'begin'
+        ? '上一次发布没收尾（写回中途）：写回可能停在半路，不会自动重放。跑 fugue recover 看实际状态。'
+        : '上一次发布没收尾（写回已落、接受未落）：不会自动重放。跑 fugue recover 看实际状态。',
+    ]
+    const feedbackRows = [...feedback, ...recovery.filter(line => !feedback.includes(line))]
     // 阅读面那一栏（`T9`，排在内容那一栏最下面）：**开着才占地方**。三面是从 `readState` 排的版
     // （`facesOf` 不再折一次），看到第几行由 `reading.top` 说了算。
     const readPart =
@@ -672,7 +687,7 @@ export function openStage(deps: StageDeps): Stage {
     return {
       ...hintPart,
       ...(gate === null || gate.cards.length === 0 ? {} : { pendingRound: gate.round }),
-      ...(feedback.length === 0 ? {} : { feedback }),
+      ...(feedbackRows.length === 0 ? {} : { feedback: feedbackRows }),
       ...(runIssue === null ? {} : { runIssue }),
       ...(completedChanges === undefined ? {} : { completedChanges }),
       ...navPart,

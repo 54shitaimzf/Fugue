@@ -16,7 +16,7 @@
 //
 // 板子与 `round/driver.test.ts` 同一套（真 git 仓库 · 真日志 · 真视图 · 真 fork）；模型是脚本化的，不联网。
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -41,6 +41,7 @@ import { entriesOf } from '../merge/accept.ts'
 import type { AgentId, BranchId, CommitId, ContractId, RelPath, WriterId } from '../terms.ts'
 import { realDriver } from '../round/driver.ts'
 import { runRound } from '../round/execute.ts'
+import { RoundRunError } from '../round/execute.ts'
 import type { RoundRunDeps } from '../round/execute.ts'
 
 const AGENT = 'agent-1' as AgentId
@@ -478,7 +479,7 @@ test('⑩ 正常链路上 `ensure` 前那次 `collect` 是空的（一条 spurio
   const b = await bench()
   try {
     // 两条命令都只读：既不改视图（⑥ 量过），也不落 `mat/reclaim`（这一条量它）。
-    // 若那一次 collect 会"顺手报一条"，两趟之后这里就会多出两条。
+    // 若那一次 collect 会“顺手报一条”，两趟之后这里就会多出两条。
     const scripts: readonly (readonly ModelEvent[])[] = [
       oneCall('bash', { command: '/bin/cat README.md' }),
       oneCall('bash', { command: '/bin/cat a.ts' }),
@@ -492,6 +493,109 @@ test('⑩ 正常链路上 `ensure` 前那次 `collect` 是空的（一条 spurio
     // 而两条命令都真跑到了（不是"一条都没起进程"被当成"没东西要收"）。
     assert.equal(rows.filter((e) => e.t === 'run/start').length, 2, '两条 bash 各起过一次')
   } finally {
+    await b.close()
+  }
+})
+
+test('B10 验收期间盘上被改：写回前复核当场拒，不落发布事实', async () => {
+  const b = await bench()
+  try {
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      oneCall('write', { path: 'a.ts', content: '合并结果\n' }),
+      DONE,
+    ]
+    // 验收那一条直接改真实工作树（夹具里不走沙箱）：模拟“验收跑着，人改了文件”。
+    await assert.rejects(
+      () =>
+        runRound({
+          ...depsOf(b, scriptedModel(scripts)),
+          specsOf: () => [
+            {
+              assertion: { action: 'ok', name: '改盘', expect: 0 } as never,
+              argv: ['/bin/sh', '-c', `printf 'user\n' >> '${b.root}/a.ts'`],
+              env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+            },
+          ],
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof RoundRunError, `该是 RoundRunError，实得 ${String(err)}`)
+        assert.equal(err.at, 'drift')
+        return true
+      },
+    )
+    const rows = await eventsOf(b.root)
+    assert.equal(rows.filter((e) => e.t === 'merge/publish').length, 0, '拒在写回之前：一条发布事实都不该落')
+    assert.equal(rows.filter((e) => e.t === 'merge/accept').length, 0)
+  } finally {
+    await b.close()
+  }
+})
+
+// R3：盘上铺过、底里的文件被删光——原先 `baseOnDisk` 只看“底里还有没有路径在盘上”，
+// 盘上只剩目标新增的那一条时被当成“还没铺”，推进会把删掉的文件静默建回来。
+test('R3 盘上铺过又删光底里的文件：漂移拒在写回前，零发布', async () => {
+  const b = await bench()
+  try {
+    // 底里那四条从盘上删掉；盘上留着一条目标树里也有的（它不是“用户新加要被删的”）。
+    for (const rel of ['README.md', 'a.ts', 'notes/keep.md', 'notes/gone.md']) rmSync(join(b.root, rel))
+    writeFileSync(join(b.root, 'scratch.txt'), '用户自己的\n')
+    const step = (id: string, path: string, content: string): readonly ModelEvent[] => [
+      ...callOne(0, id, 'write', { path, content }),
+      { t: 'usage', usage: USAGE },
+      { t: 'stop', reason: 'tool-calls', raw: 'tool_use' },
+    ]
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      step('c_a', 'a.ts', '合并结果\n'),
+      step('c_s', 'scratch.txt', '用户自己的\n'),
+      DONE,
+    ]
+    await assert.rejects(
+      () => runRound({ ...depsOf(b, scriptedModel(scripts), ['a.ts', 'scratch.txt']) }),
+      (err: unknown) => {
+        assert.ok(err instanceof RoundRunError, `该是 RoundRunError，实得 ${String(err)}`)
+        assert.equal(err.at, 'drift')
+        assert.match(err.message, /你删了、而这次合并仍要保留/)
+        return true
+      },
+    )
+    const rows = await eventsOf(b.root)
+    assert.equal(rows.filter((e) => e.t === 'merge/publish').length, 0, '拒在写回之前：一条发布事实都不该落')
+    assert.equal(rows.filter((e) => e.t === 'merge/accept').length, 0)
+  } finally {
+    await b.close()
+  }
+})
+
+test('B09 最终验收只跑一遍：断言执行一次 · 发布事实两条 · 接受事件一条', async () => {
+  const b = await bench()
+  const dir = mkdtempSync(join(tmpdir(), 'fugue-b09-'))
+  const counter = join(dir, 'count')
+  try {
+    const scripts: readonly (readonly ModelEvent[])[] = [
+      oneCall('write', { path: 'a.ts', content: '改过的一份\n' }),
+      DONE,
+    ]
+    const run = await runRound({
+      ...depsOf(b, scriptedModel(scripts)),
+      checkDrift: false,
+      // 一条会留下次数痕迹的断言。只在**最终验收**那一遍跑，不在别处跑。
+      specsOf: () => [
+        {
+          assertion: { action: 'ok', name: '只跑一遍', expect: 0 } as never,
+          argv: ['/bin/sh', '-c', `echo x >> '${counter}'`],
+          env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+        },
+      ],
+    })
+    assert.equal(run.report.ok, true, `验收该过：${JSON.stringify(run.report)}`)
+    assert.equal(readFileSync(counter, 'utf8').trim().split('\n').length, 1, '最终验收被执行了两遍（B09）')
+    const rows = await eventsOf(b.root)
+    assert.equal(rows.filter((e) => e.t === 'merge/publish').length, 2, '发布事实该是 begin + done 各一条')
+    assert.equal(rows.filter((e) => e.t === 'merge/accept').length, 1, '接受事件一条')
+    const phases = rows.filter((e) => e.t === 'merge/publish').map((e) => (e as { phase: string }).phase)
+    assert.deepEqual(phases, ['begin', 'done'], '发布事实的次序就是真发生的次序')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
     await b.close()
   }
 })

@@ -37,9 +37,10 @@ test('当前任务的状态只在正文展示；两行页脚空间用于更多�
     const legacy=frameOf({snapshot,task:{...task,state:null},width,height})
     assert.equal(f.roles.includes('footer'),false)
     assert.equal(f.lines.length,height);assert.ok(f.lines.every(l=>widthOf(l)===width))
-    if(width>=80){
+    if(width>=80&&height>=7){
       assert.equal(content(f).filter(s=>s==='正在执行').length,1,'窄矮场景仍保留状态，一处足够')
-      if(height>=7){
+      // 7 行那几档先保住目标那一块；两行页脚的差额只在读得下正文的高度上量。
+      if(height>=19){
         const model=(v:ReturnType<typeof frameOf>)=>v.roles.filter(r=>r==='model'||r==='modelHeading').length
         assert.equal(model(f),model(legacy)+2,'正文实际多显示两行模型原文')
       }

@@ -23,6 +23,7 @@ import type { Log } from '../log/events.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { AgentId, BranchId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../terms.ts'
+import type { AbsPath } from '../terms.ts'
 import type { Built, Intent, SplitAssignment } from '../contract/build.ts'
 import type { Contract } from '../contract/types.ts'
 import { mergeGate, precheck } from '../contract/precheck.ts'
@@ -31,10 +32,11 @@ import { mergeDrift } from '../merge/drift.ts'
 import type { DriftVerdict } from '../merge/drift.ts'
 import { conflictCount, conflictTreeEntries, fold, refold } from '../merge/merge.ts'
 import type { FoldOutcome } from '../merge/merge.ts'
-import { commitThenAdvance, entriesOf, verify } from '../merge/accept.ts'
+import { entriesOf, publish, verify } from '../merge/accept.ts'
 import type { AdvanceResult, AssertionRunSpec, VerifyReport } from '../merge/accept.ts'
 import { refFor } from '../identity.ts'
 import { startRound } from './start.ts'
+import { openPublishOf, eventsOf } from '../recovery/state.ts'
 import type { RoundStartDeps } from './start.ts'
 import { RETRY_DEFAULT, step } from './machine.ts'
 import type { Cause, RoundState } from './machine.ts'
@@ -175,7 +177,7 @@ export interface RunTailDeps {
   /** `AgentDriver` 那一份 ask 要的那几样（**打桩那一档一个都不读**）。 */
   readonly driver?: DriverSupport
   /** 验收要跑的那几条（已经包好的命令行）。**按契约给**：`contractOf` 给哪几份就跑哪几条。 */
-  readonly specsOf: (c: Contract, agent: AgentId) => readonly AssertionRunSpec[]
+  readonly specsOf: (c: Contract, agent: AgentId, tree: AbsPath) => readonly AssertionRunSpec[]
   /** 要不要在合并前判漂移（缺省判）。判的时候用的是**轮次开始时那份基线**。 */
   readonly checkDrift?: boolean
   /**
@@ -346,6 +348,17 @@ export async function runRound(deps: RoundRunDeps): Promise<RoundRun> {
 export async function runIssued(deps: RunTailDeps, batch: IssuedBatch): Promise<RoundRun> {
   const { roots, truth, log, round } = deps
 
+  // **上一次发布没收尾就不接着跑**（B10）：接着跑会重新验收、重新写一遍，而上一趟可能已经把
+  // 一部分（甚至全部）结果落了盘。恢复入口只报事实、不自动重放；这一处只负责停下并指路。
+  const open = openPublishOf(await eventsOf(log))
+  if (open !== null) {
+    throw new RoundRunError(
+      'recover',
+      `${open.round} 有一次发布没有收尾（目标 ${open.commit} · ${open.phase === 'begin' ? '写到一半或进程被杀' : '文件与 ref 已推进，接受事件未落'}）。\n` +
+        `  先运行 fugue recover 核对实际状态，再决定继续还是收尾——这里不自动重放可能已经生效的写。`,
+    )
+  }
+
   // 二 · 每个 agent 一格。契约按顺序，底是钉住的那一个——**每条分支的底相同**，所以一个 agent
   // 交上来的提交可以直接拿去折（它的父是 base）。
   const work: Record<ContractId, CommitId> = {}
@@ -458,35 +471,47 @@ export async function runIssued(deps: RunTailDeps, batch: IssuedBatch): Promise<
     if (!drift.ok) throw new RoundRunError('drift', drift.say)
   }
 
-  // 六 · 验收：**跑在物化出来的那棵树上**（架构 § 8.14 第 5 步）。
+  // 六 · 验收：**只跑一遍**（B09），跑在物化出来的那棵树上（架构 § 8.14 第 5 步）。
   const matDir = mkdtempSync(join(tmpdir(), 'fugue-round-verify-'))
   try {
     await materializeCommit(truth, outcome.commit, matDir)
     const specs: AssertionRunSpec[] = []
-    for (const c of batch.contracts) specs.push(...deps.specsOf(c, c.agent as AgentId))
+    for (const c of batch.contracts) specs.push(...deps.specsOf(c, c.agent as AgentId, matDir))
     // 冲突解决那一份也要验：它是这一轮里真的干了活的一份，跳过它等于验收少了一条。
-    if (resolvedContract !== null) specs.push(...deps.specsOf(resolvedContract, resolvedContract.agent as AgentId))
-    const report = verify(matDir, specs)
+    if (resolvedContract !== null) specs.push(...deps.specsOf(resolvedContract, resolvedContract.agent as AgentId, matDir))
+    const report = await verify(matDir, specs)
 
-    // 七 · 通过才定格 + 推进（A6）。没过时 `commitThenAdvance` 提前返回——**真实工作树一个字节不动**。
-    const accepted = await commitThenAdvance({
-      truth,
-      realRoot: roots.realRoot,
-      tree: matDir,
-      specs,
-      commit: outcome.commit,
-      // **定格之后主线要挪到新提交**：不然工作树是新树、主线还指着轮次开始时的底，
-      // 下一轮读到的底就是旧的（走查量到过）。CAS 钉在轮次开始时的那个底上。
-      ref: refFor('round'),
-      refExpectedOld: batch.base,
-    })
+    // 七 · 通过才发布（A6）。没过时一个字节不动；过了先在写回前**再核一次漂移**
+    // （B10：验收可能跑很久，期间用户的改动不能被覆盖），再走发布那一段。
+    let advanced: AdvanceResult | null = null
+    if (report.ok) {
+      if (deps.checkDrift !== false) {
+        // **树侧事实只算一次**（C）：两次 check 的 base/target 不变，第二次只重取 ref 与盘上。
+        const again = await mergeDrift({
+          truth,
+          realRoot: roots.realRoot,
+          base: batch.base,
+          target: outcome.commit,
+          ...(drift?.drift.facts === undefined ? {} : { facts: drift.drift.facts }),
+        })
+        if (!again.ok) throw new RoundRunError('drift', again.say)
+      }
+      advanced = await publish({
+        truth,
+        realRoot: roots.realRoot,
+        commit: outcome.commit,
+        ref: refFor('round'),
+        refExpectedOld: batch.base,
+        record: { log, round },
+      })
+    }
 
     // 状态机那两步（A3）：**通过 → Committed；没过 → 回 Working 或 Aborted**。判决来自 `machine.ts`。
     // **回边还是超界**：`retriesLeft` 由调用方给（`--retry <n>`），不给就是 `RETRY_DEFAULT`（1）
     // ——"没通过就回一次"。这一档进 `round/state`，A8 的第二个数数的就是这条回边。
     const retriesLeft = deps.retriesLeft ?? RETRY_DEFAULT
     let state: RoundState = 'Verifying'
-    if (accepted.report.ok) {
+    if (report.ok && advanced !== null) {
       state = step(state, 'verdict-pass')
       state = step(state, 'advanced')
     } else {
@@ -494,12 +519,12 @@ export async function runIssued(deps: RunTailDeps, batch: IssuedBatch): Promise<
       state = step(state, cause, cause === 'verdict-fail' ? { retryLeft: true } : {})
     }
     await log.append('round', { t: 'round/state', round, from: 'Verifying', to: state })
-    if (accepted.commit !== undefined) {
+    if (report.ok && advanced !== null) {
       await log.append('round', {
         t: 'merge/accept',
         round,
-        commit: accepted.commit,
-        assertions: accepted.report.results.map((r) => ({ assertion: r.assertion, verdict: r.verdict })),
+        commit: outcome.commit,
+        assertions: report.results.map((r) => ({ assertion: r.assertion, verdict: r.verdict })),
       })
     }
 
@@ -514,8 +539,8 @@ export async function runIssued(deps: RunTailDeps, batch: IssuedBatch): Promise<
       drift,
       fold: outcome,
       conflictTree,
-      report: accepted.report,
-      advanced: accepted.advanced ?? null,
+      report,
+      advanced,
       state,
     }
   } finally {

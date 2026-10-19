@@ -330,6 +330,10 @@ test('⑦ 折行与洁净：物理行拼回原文逐字节相等 · 切点整簇
   assert.equal(narrow[0], 'a\\u001b', '折在 7 列上：整簇切（这一行恰 7 列）')
   assert.ok(narrow.every((l) => widthOf(l) <= 7), '每一行都在列宽里')
   assert.equal(escapeControl('\u0000'), '\\u0000', '零字节也有可见形状（它就是撕帧的那一个）')
+  // 制表符是命令行回执的列分隔：换成两个空格（不是六个字符的 \u0009）；回执原文一个字节不改。
+  const table = readWrap('r1\t1c5ba7ed\t放行：3 份任务', 80)
+  assert.equal(table[0], 'r1  1c5ba7ed  放行：3 份任务', '制表符按两格空白落到屏上')
+  assert.ok(!table[0]!.includes('\\u0009'), '不把列分隔印成转义记号')
   console.log(`⑦ 读数：转义档 ${JSON.stringify(raw)} → ${JSON.stringify(narrow)}`)
 
   // **面那一层接上了它**：`faceRowsOf` 把标题与每一行都折进 `cols`——折开的那一份拼起来，与不折
@@ -398,7 +402,7 @@ test('⑧ 详情面：图上走了几步 · 内核拒 · 边界挡 · 最近—�
   const faces = facesOf(readStateOf(rows, { snapshot: snap }))
   assert.ok(faces.detail !== null, '给了快照就有详情面')
   const text = (faces.detail?.lines ?? []).join('\n')
-  for (const want of ['图上走了 4 步', `${WORDS.denies} 1`, `${WORDS.bounds} 1`, `${WORDS.last} bound/deny`]) {
+  for (const want of ['状态变化 3 次 · 跳 4 步', `${WORDS.denies} 1`, `${WORDS.bounds} 1`, `${WORDS.last} bound/deny`]) {
     assert.ok(text.includes(want), `详情面上少了这一处「${want}」：\n${text}`)
   }
   // 不给快照：那一面是 `null`（"没有"与"有但是空的"分得开），而且 `Tab` 跳过它。

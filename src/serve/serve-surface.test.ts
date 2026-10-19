@@ -59,7 +59,7 @@ test('① 动词集合从 `FLAGS_OF` 派生互核：命令面 · 值层 · serve
   // 相等才有意义（手抄一份目录去比就是这条断言要挡的那种做法）。
   assert.deepEqual(surface, derived, 'serve 的方法面与 `FLAGS_OF` 派生出来的那一份逐条相同')
   assert.deepEqual(verbs, keys.filter((k) => !['serve', 'tui'].includes(k)), '动词集合 = 命令面的键减去入口那两个')
-  assert.equal(TOP_LEVEL.length, 29, `命令面顶层 29 条（这一站加了 \`serve\` 那一行入口），拿到 ${TOP_LEVEL.length}`)
+  assert.equal(TOP_LEVEL.length, 30, `命令面顶层 30 条（本站新增恢复），拿到 ${TOP_LEVEL.length}`)
   assert.ok(TOP_LEVEL.includes('serve'), '`serve` 在命令面里（入口行）')
   assert.ok(!surface.includes(methodOf('serve')), '`serve` 是入口，不出方法名')
   console.log(`① 读数：命令面 ${TOP_LEVEL.length} 条顶层 → ${keys.length} 个键 → 动词 ${verbs.length} → 方法面 ${surface.length}（逐条相同）`)

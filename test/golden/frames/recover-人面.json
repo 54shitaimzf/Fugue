@@ -1,0 +1,16 @@
+{
+  "id": "recover-人面",
+  "note": "",
+  "steps": [
+    {
+      "argv": [
+        "recover"
+      ]
+    }
+  ],
+  "face": {
+    "code": 0,
+    "stdout": "恢复：没有未收尾的发布。\n",
+    "stderr": ""
+  }
+}

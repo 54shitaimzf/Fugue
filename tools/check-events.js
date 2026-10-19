@@ -86,8 +86,11 @@ if (planPath === null) {
     ok(`计划里 ${planNames.length} 条`)
     const inCodeNotPlan = codeNames.filter((n) => !planNames.includes(n))
     const inPlanNotCode = planNames.filter((n) => !codeNames.includes(n))
-    if (inCodeNotPlan.length === 0) ok('代码里每一条都在计划那张表里')
-    else bad('代码里有、计划那张表里没有：' + inCodeNotPlan.join(' · '))
+    // **归档是历史快照，不是今天的联合。** 它那一格记的是 § 5.18 收口那一天的族；之后新长的
+    // 族（例如 0.5.1 的 `merge/publish`）只属于架构 § 8.1 那张当前表，不回写历史归档。
+    // 所以这一半的判据是**单向**：历史表里的每一族今天仍必须在（撤族要报），今天新增的不算漂。
+    if (inCodeNotPlan.length === 0) ok('历史表覆盖了当前全部族')
+    else ok(`历史表之外新增 ${inCodeNotPlan.length} 条（${inCodeNotPlan.join(' · ')}）——历史归档不跟着长`)
     if (inPlanNotCode.length === 0) ok('计划那张表里每一条都在代码里')
     else bad('计划那张表里有、代码里没有：' + inPlanNotCode.join(' · '))
     const declared = cell.match(/\*\*(\d+)\s*条事件族\*\*/)

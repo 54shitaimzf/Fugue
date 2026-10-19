@@ -75,8 +75,19 @@ export function createRootTail(root: string, opts: TailOptions = {}): RootTail {
       // 索引之外的那些才收：**追加即推进**。晚出现的 writer 第一条就是 `seq = 1`，而它的索引
       // 起点是 0——所以"从零读、按 writer 筛"这条写法不会把它整段漏掉（裸 `seq` 会）。
       if (pos.seq <= (walked.get(pos.writer) ?? 0)) continue
-      const row: StatusRow = { pos, e }
-      rows.push(row)
+        const row: StatusRow = { pos, e }
+      // **按 (seq, writer) 插进已读过的行里**（B06）：晚出现的 writer 第一条可能比缓存里
+      // 已有的行小，直接 push 会让热读与重建给出两种次序——那不是 UI 修饰，是服务端语义。
+      let lo = 0
+      let hi = rows.length
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1
+        const at = (rows[mid] as StatusRow).pos
+        const before = at.seq < pos.seq || (at.seq === pos.seq && at.writer < pos.writer)
+        if (before) lo = mid + 1
+        else hi = mid
+      }
+      rows.splice(lo, 0, row)
       walked.set(pos.writer, pos.seq)
     }
     return passes

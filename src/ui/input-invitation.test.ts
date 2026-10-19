@@ -30,7 +30,7 @@ test('the empty-input invitation belongs only to an unstarted input; current fee
    assert.equal(active.footer,'');assert.ok(active.lines.every(s=>s===' '.repeat(width)));assert.ok(active.roles.every(r=>r==='body'))
    assert.equal(active.height,waiting.height);assert.equal(active.lines.length,height);assert.ok(active.lines.every(s=>widthOf(s)===width))
    const f=frameOf({...o,inputIdle:false,feedback:['输入有误']});frames++
-   assert.match(content(f).replace(/\s/g,''),/^系统(?:·)?输入有误$/);assert.ok(f.roles.includes('instruction'),'a current problem is still visible near input')
+   assert.match(content(f).replace(/\s/g,''),/^!输入有误$/);assert.ok(f.roles.includes('instruction'),'a current problem is still visible near input')
    for(const inputIdle of [undefined,true,null,0,'false'] as const){assert.deepEqual(frameOf({...o,inputIdle} as never),waiting);frames++}
    for(const extra of [{operationArea:false},{operationArea:undefined},{task:undefined},{snapshot:{...statusOf([]),events:1}},{snapshot:statusOf(events),task:taskOf(events)},{conversation:[{text:'Original model message',role:'model' as const}]},{read:{rows:['Original read line'],top:0,heading:'Current reading',footer:'1/1 行 · 只读'}},{menu:{rows:['Current help'],sel:0}},{bottom:{rows:['Current action'],keep:1}},{nav:{rows:['Existing agent'],sel:0}},{view:'progress' as const},{view:'spending' as const}]){
     assert.deepEqual(frameOf({...o,...extra,inputIdle:false}),frameOf({...o,...extra}),'other actual contexts keep their complete original frame');frames+=2
@@ -54,7 +54,7 @@ test('actual editor, Session and Term withdraw and restore the invitation throug
   try{
    assert.equal(draw(),prompt);type(' ');assert.equal(draw(),'','a real whitespace draft has already begun');assert.equal(stage.view().inputIdle,false)
    const original=' DRAFT-ORIGINAL-'+('abc'.repeat(60))+'中文';type(original.slice(1));const draft=stage.view().input;assert.equal(draw(),'')
-   stage.notify('CURRENT-INPUT-PROBLEM');assert.match(draw().replace(/\s/g,''),/^系统(?:·)?CURRENT-INPUT-PROBLEM$/)
+   stage.notify('CURRENT-INPUT-PROBLEM');assert.match(draw().replace(/\s/g,''),/^!CURRENT-INPUT-PROBLEM$/)
    stage.onAction({action:'home'});assert.equal(draw(),'');const home=stage.view().input
    stage.onAction({action:'read'});assert.ok(draw().includes('事件流'));stage.onAction({action:'cancel'});assert.equal(draw(),'');assert.deepEqual(stage.view().input,home)
    stage.onAction({action:'help'});draw();stage.onAction({action:'cancel'});assert.equal(draw(),'');assert.deepEqual(stage.view().input,home)
