@@ -6,7 +6,7 @@
 //   · 全写回（full）      ：文件与主线都已经到目标提交；
 //   · 部分写回（partial） ：两者只到了一边，或文件只写了一部分；
 //   · 冲突（conflict）    ：盘上有既不是发布前、也不是发布目标的内容（用户的改动会被覆盖）；
-//   · 未验证（unverified）：事实不够（目标提交读不出 · ref 读不出 · 这次中断早于发布记录），
+//   · 未验证（unverified）：事实不够（目标提交读不出 · 发布前那一份读不出 · ref 读不出 · 这次中断早于发布记录），
 //                          或者 ref 被第三个人挪到了别处。
 //
 // **它只读。** 不写盘、不挪 ref、不重放写——"继续"是人的决定，命令面只把事实与下一步说清。
@@ -300,6 +300,30 @@ export async function recoverOf(deps: RecoveryDeps): Promise<RecoveryReport | nu
       say: `未写回：工作树还是发布前那一份，${ref} 还在 ${open.expected}。`,
       paths: [],
       next: ['可以重试这一轮：fugue round work', '重试之前先看一眼上一轮停在哪儿：fugue status --once'],
+    }
+  }
+  // **发布前那一份读不出时，“部分写回”是猜的**（R6）：那一栏要说“已经变了哪些（相对发布前）”，
+  // 而发布前那一份不在。判不了就落 unverified，不把它报成“只到了一边”。全写回那一条已在上面
+  // 返回——它不需要旧对象（盘与 ref 都等于目标，已经证明完）。
+  if (base === null) {
+    const expected = open.expected ?? null
+    return {
+      state: 'unverified',
+      round: open.round,
+      commit: open.commit,
+      expected,
+      ref,
+      refNow,
+      say:
+        expected === null
+          ? '账上没有发布前那一份（merge/publish 与 round/intent 都没记 expected），判不了写回到哪一步。'
+          : `发布前那一份 ${expected} 读不出来（对象不在 · 仓库读不动），判不了写回到哪一步。`,
+      paths: [],
+      next: [
+        ...(expected === null ? [] : [`先确认这个提交还在：git cat-file -t ${expected}`]),
+        '先确认这个工作区的 Git 对象库完好：git fsck',
+        '确认之前不要重跑 round work',
+      ],
     }
   }
   // 剩下的都算部分写回：至少有一边已经动了，但不是全写回。把"已经落了哪些"报出来

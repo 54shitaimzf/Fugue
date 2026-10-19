@@ -208,6 +208,35 @@ test('未验证：目标对象读不出来 / 主线被第三个人挪走', async
   }
 })
 
+// R6：发布前那一份（`expected`）读不出时，**不能把“判不了”报成“部分写回”**；
+// 而“盘与 ref 都已经到目标”这一档不依赖它，照旧判 full。
+test('R6 · 发布前那一份读不出：不是全写回时报 unverified，不报 partial；全写回仍保留', async () => {
+  const s = await scene()
+  try {
+    const fake = 'f'.repeat(40) as CommitId
+    await s.log.append('round', {
+      t: 'merge/publish',
+      round: ROUND,
+      commit: s.target,
+      phase: 'begin',
+      ref: 'refs/heads/main',
+      expected: fake,
+    })
+    // 盘上还是发布前那一份、主线已经到目标：不是全写回，而旧对象读不出——判不了。
+    await s.truth.advance('refs/heads/main', s.target, s.base)
+    const r = await recoverOf({ truth: s.truth, realRoot: s.root, log: s.log })
+    assert.equal(r?.state, 'unverified', `旧对象读不出时不能报“部分写回”：${JSON.stringify(r)}`)
+    assert.match(String(r?.say), /发布前/)
+    assert.doesNotMatch(String(r?.say), /部分写回/)
+    // 全写回不依赖旧对象：盘与 ref 都到目标时仍判 full。
+    writeTarget(s)
+    const full = await recoverOf({ truth: s.truth, realRoot: s.root, log: s.log })
+    assert.equal(full?.state, 'full')
+  } finally {
+    await close(s)
+  }
+})
+
 test('命令面：recover --json 报五态之一 · 人面说清下一步 · 没有发布就直说', async () => {
   const s = await scene()
   try {
