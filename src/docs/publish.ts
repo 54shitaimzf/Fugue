@@ -19,7 +19,7 @@
 // `docs-prev-<token>` 再上链接（那一次存在一个很窄的窗口，恢复会把它挪回来）；之后每次发布
 // 都只换链接。读那一侧同时认两种形状，`docs status` 在迁移前照旧报"过期"而不是"未生成"。
 import { lstat, mkdir, readFile, readdir, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import type { LastAttempt, Manifest } from './contract.ts'
 import { DocsError, MANIFEST_VERSION, docsRootOf } from './contract.ts'

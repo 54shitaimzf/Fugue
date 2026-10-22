@@ -115,7 +115,7 @@ export const CONTENT_TASK = `现在写这一页的正文。按上面的定义、
 export const CONTENT_MIN_CHARS = 400
 
 /** 写作那一趟 B 区的开头：写作合同 + 这一套主题的视觉语言（换主题只动这一段）。 */
-export function writingContractOf(theme: ThemeSpec): string {
+function writingContractOf(theme: ThemeSpec): string {
   return `${WRITING_CONTRACT}\n\n这一批文档的视觉语言（${theme.name}，出自 ${theme.basis}）：\n${theme.guidance}\n`
 }
 
@@ -185,7 +185,7 @@ function rangeText(r: FileRange): string {
 }
 
 /** 写作那一趟的 B 区：合同与视觉语言 + 定义 + 同批 + 来源 + 摘录 + 本轮变化。 */
-export function writingPageOf(o: {
+function writingPageOf(o: {
   readonly page: PageDef
   readonly plan: DocsPlan
   readonly theme: ThemeSpec
@@ -222,7 +222,7 @@ export function writingPageOf(o: {
 }
 
 /** 取证第一趟的 B 区：合同 + 定义 + 同批 + 来源（索引在 A 区）。 */
-export function evidencePageOf(o: { readonly page: PageDef; readonly plan: DocsPlan; readonly source: string }): string {
+function evidencePageOf(o: { readonly page: PageDef; readonly plan: DocsPlan; readonly source: string }): string {
   return [
     EVIDENCE_CONTRACT,
     '',
@@ -240,7 +240,7 @@ export function evidencePageOf(o: { readonly page: PageDef; readonly plan: DocsP
 }
 
 /** 取证第二趟的 B 区：合同 + 被截断的那几份的路径、总行数与开头一小段。 */
-export function evidenceRangesPageOf(o: { readonly page: PageDef; readonly excerpts: readonly Excerpt[] }): string {
+function evidenceRangesPageOf(o: { readonly page: PageDef; readonly excerpts: readonly Excerpt[] }): string {
   const parts = [
     EVIDENCE_RANGES_CONTRACT,
     '',

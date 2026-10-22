@@ -54,7 +54,6 @@ import {
   EXCERPT_BUDGET,
   EXCERPT_LIMIT,
   RANGE_MAX,
-  RANGE_PREVIEW,
   chainOf,
 } from './prompt.ts'
 import type { PromptChain } from './prompt.ts'
@@ -328,7 +327,6 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
   /** 走到哪一步花掉了什么：**失败时也要带上已完成页的用量**（复审 R8）。 */
   const allUsage: (Usage | null)[] = []
   const usagePages: UsageTotal['pages'][number][] = []
-  let factsForFail: TreeFacts | null = null
 
   const modelFacts = (p: DocsPlan | null): ModelFacts => modelFactsOf(deps.caller, p?.maxTokens)
 
@@ -392,7 +390,6 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       throw new DocsError('facts', `找不到提交 ${JSON.stringify(at)}：${(err as Error).message}`)
     }
     const facts = await treeFactsOf(deps.truth, commit, plan)
-    factsForFail = facts
     if (facts.missing.length > 0) throw new DocsError('facts', missingText(facts.missing, String(commit)))
 
     const sources = new Map<string, string>()
@@ -688,18 +685,9 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       pages: prepared.map((p) => ({ id: p.def.id, title: p.def.title, out: p.def.out, headings: p.pass2.headings })),
     }
   } catch (err) {
-    void factsForFail
     return fail(err)
   }
 }
-
-/** 从 CLI 那一层看得到的一行：这一批之后，文档住在哪儿（`Fugue 的产物位置`）。 */
-export function docsHintOf(root: string): string {
-  return `${docsRootOf(root)}/index.html（用浏览器打开；file:// 即可）`
-}
-
-/** 首页文件名（`docs status` 与 `docs build` 的出口指它）。 */
-export const INDEX_FILE = 'index.html'
 
 /** 一个 HTML 转义的小工具再导出：CLI 那一层拼人面时用它，不必再 import markdown。 */
 export { escapeHtml }
