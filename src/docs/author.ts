@@ -2,13 +2,14 @@
 //
 // 两条策略，**同一处接缝**：
 //
-//   · `two-pass`（缺省）——一次取证点名 + 一次补读行段 + 一次写作。今天的行为。
-//   · `loop`——一轮轮点名，直到模型说读够了或预算用完，再写。同一个读取层、同一份提示词链、
-//     同一条写作调用，只是"问几次"不同。
+//   · `loop`（缺省）——一轮轮点名，直到模型说读够了或预算用完，再写。
+//   · `two-pass`——一次取证点名 + 一次补读行段 + 一次写作；可选的那一档。同一个读取层、
+//     同一份提示词链、同一条写作调用，只是"问几次"不同。
 //
 // 新能力换策略，不换代码路径：`docs.read` 选一条，`build.ts` 只认 `Author` 这个接口。
 import { checkContent } from './check.ts'
 import type { DocCaller, DocsPlan, Materials, PageContent, PageDef, ReadStrategy, TreeFacts } from './contract.ts'
+import { EVIDENCE_MAX } from './prompt.ts'
 import type { PromptChain } from './prompt.ts'
 import { openRead, LOOP_BUDGET, TWO_PASS_BUDGET } from './reader.ts'
 import type { ReadAsk } from './reader.ts'
@@ -19,7 +20,7 @@ import type { Truth } from '../truth/contract.ts'
 import type { CommitId } from '../terms.ts'
 import type { ThemeSpec } from './theme.ts'
 
-/** 自由读最多几轮（一轮最多 6 处点名，见 `LOOP_BUDGET`）。 */
+/** 自由读最多几轮（第一轮照取证合同收 12 处，之后每轮最多 6 处，见 `LOOP_BUDGET`）。 */
 const LOOP_ROUNDS = 8
 
 export interface AuthorInput {
@@ -256,10 +257,13 @@ const loop: Author = {
           notes.push(round === 0 ? degradeNote(err) : `继续取证那一趟没成，按已经读到的写：${(err as Error).message}`)
           break
         }
-        const asks = pathsOf(text).slice(0, LOOP_BUDGET.paths)
+        // 第一轮问的是取证合同（“最多 12 条”），之后各轮问的是继续取证合同（“最多 6 条”）：
+        // 收几处跟着那一轮发出去的合同走，不然模型点了 12 处、宿主只看 6 处，后 6 处连清单都不进。
+        const cap = round === 0 ? EVIDENCE_MAX : LOOP_BUDGET.paths
+        const asks = pathsOf(text).slice(0, cap)
         if (asks.length === 0) break
         const before = session.chars
-        await session.ask(asks)
+        await session.ask(asks, cap)
         if (session.log.requested.length > 0) askedAny = true
         if (session.chars === before) break // 这一轮没读到任何新东西：再问也是同一份
       }
@@ -285,7 +289,7 @@ const loop: Author = {
   },
 }
 
-/** 按配置选一条策略。**默认两趟**：自由读要验过才翻默认。 */
+/** 按配置选一条策略。**默认自由读**：验过之后翻的默认；两趟是可选的那一档。 */
 export function authorOf(name: ReadStrategy): Author {
   return name === 'loop' ? loop : twoPass
 }

@@ -76,6 +76,18 @@ function fake(script: Script): { caller: DocCaller; seen: { kind: string; req: P
   return { caller, seen }
 }
 
+/** 19 份小文件：够第一轮点 12 处、第二轮再点 7 处。 */
+async function wideRepo(): Promise<{ truth: Truth; commit: CommitId; facts: TreeFacts; source: string }> {
+  const root = tmpRepo()
+  const source = '# demo\n\n第一版说明。\n'
+  const files: Record<string, string> = { 'package.json': JSON.stringify({ name: 'demo', version: '1.2.3' }), 'README.md': source }
+  for (let i = 1; i <= 19; i++) files[`src/f${String(i).padStart(2, '0')}.ts`] = `export const f${i} = ${i}\n`
+  const commit = await commitFiles(root, files, [], 'refs/heads/main')
+  const truth = openTruth(root)
+  const facts = await treeFactsOf(truth, commit, PLAN)
+  return { truth, commit, facts, source }
+}
+
 async function repo(): Promise<{ truth: Truth; commit: CommitId; facts: TreeFacts; source: string }> {
   const root = tmpRepo()
   const source = '# demo\n\n第一版说明。\n'
@@ -173,4 +185,18 @@ test('④ 负对照：同一条脚本、同一份材料，两趟读不到第 920
   assert.equal(out.calls, 3, '取证 + 补读 + 写作 = 3 次调用')
   assert.equal(out.evidence.ranges[0]!.shown.some((r) => r.from === 900), false)
   console.log(`④ 读数：调用 ${seen.length} 次 · 写作输入里没有 NEEDLE`)
+})
+
+test('⑤ 自由读第一轮照合同收 12 处，第二轮起按继续取证的合同收 6 处', async (ctx) => {
+  const { truth, commit, facts, source } = await wideRepo()
+  ctx.after(() => truth.close())
+  const first = Array.from({ length: 12 }, (_, i) => `src/f${String(i + 1).padStart(2, '0')}.ts`)
+  const next = Array.from({ length: 7 }, (_, i) => `src/f${String(i + 13).padStart(2, '0')}.ts`)
+  const { caller, seen } = fake({ evidence: JSON.stringify({ paths: first }), again: [JSON.stringify({ paths: next }), '{"paths":[]}'] })
+  const out = await authorOf('loop').write(input({ facts, caller, truth, commit, source, read: true, strategy: 'loop' }))
+  assert.deepEqual(out.evidence.requested, [...first, ...next.slice(0, 6)], '第一轮 12 处全收；第二轮点名 7 处只收前 6')
+  assert.equal(out.evidence.missing.length, 0, '这 19 份都在提交里，一份都不该缺')
+  assert.equal(seen.filter((s) => s.kind === 'again').length, 2, '两轮继续取证（第二轮给空数组收手）')
+  assert.equal(out.calls, 4, '三轮取证 + 一次写作 = 4 次调用')
+  console.log(`⑤ 读数：第一轮收 ${out.evidence.requested.length - 6} 处 · 第二轮点名 ${next.length} 处收 6 处 · requested ${out.evidence.requested.length}`)
 })

@@ -34,7 +34,7 @@ export interface ReadBudget {
   readonly ranges: number
 }
 
-/** 两趟那一档：一份 24k 字符 · 一页 120k 字符 · 12 份 · 8 段（今天的行为）。 */
+/** 两趟那一档：一份 24k 字符 · 一页 120k 字符 · 12 份 · 8 段（`docs.read: two-pass` 时用）。 */
 export const TWO_PASS_BUDGET: ReadBudget = {
   head: EXCERPT_LIMIT,
   total: EXCERPT_BUDGET,
@@ -42,7 +42,7 @@ export const TWO_PASS_BUDGET: ReadBudget = {
   ranges: RANGE_MAX,
 }
 
-/** 自由读那一档：一页放宽到 180k 字符，每一轮最多 6 处点名（轮数由策略管）。 */
+/** 自由读那一档：一页放宽到 180k 字符，第一轮照取证合同收 12 处、之后每轮 6 处（轮数由策略管）。 */
 export const LOOP_BUDGET: ReadBudget = {
   head: EXCERPT_LIMIT,
   total: 180_000,
@@ -71,8 +71,8 @@ export interface ReadSession {
   read(asks: readonly ReadAsk[]): Promise<ReadTurn>
   /** 第二趟：对已读的那几份补读行段；没读过的路径一律不认。 */
   extend(asks: readonly ReadAsk[]): Promise<ReadTurn>
-  /** 自由读：一条条自动分流——没读过的读开头，读过的带行段就补读。 */
-  ask(asks: readonly ReadAsk[]): Promise<ReadTurn>
+  /** 自由读：一条条自动分流——没读过的读开头，读过的带行段就补读。`limit` 不给就按这一趟的预算。 */
+  ask(asks: readonly ReadAsk[], limit?: number): Promise<ReadTurn>
   /** 已经读到的摘录（按点名次序）。 */
   readonly excerpts: readonly Excerpt[]
   /** 读取轨迹（清单与页面都从这一份取）。 */
@@ -167,9 +167,9 @@ export function openRead(o: ReadOptions): ReadSession {
       for (const ask of asks.slice(0, budget.ranges)) await extendOne(ask)
       return turn(before)
     },
-    async ask(asks) {
+    async ask(asks, limit) {
       const before = found.length
-      for (const ask of asks.slice(0, budget.paths)) {
+      for (const ask of asks.slice(0, limit ?? budget.paths)) {
         if (!asked.has(ask.path)) {
           await readOne(ask)
           continue
