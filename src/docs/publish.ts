@@ -28,6 +28,24 @@ function tokenOf(): string {
   return `${process.pid}-${Date.now().toString(36)}`
 }
 
+/** token 里的进程号（`<pid>-<time36>`）；名字认不出来就是 `null`。 */
+function pidOf(token: string): number | null {
+  const head = token.split('-')[0] ?? ''
+  if (!/^\d+$/.test(head)) return null
+  const n = Number(head)
+  return Number.isSafeInteger(n) && n > 0 ? n : null
+}
+
+/** 这个进程还活着吗（`EPERM` 算活着：活着只是不归我们管）。 */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await stat(path)
@@ -110,13 +128,19 @@ export async function recoverPublish(root: string): Promise<string | null> {
   } catch {
     return null
   }
-  const prefs = names.filter((n) => n.startsWith('docs-prev-')).sort()
+  const prefs = names.filter((n) => n.startsWith('docs-prev-'))
   const stages = names.filter((n) => n.startsWith('docs-stage-'))
   const docs = docsRootOf(root)
   let restored: string | null = null
   const docsThere = await exists(docs)
   if (!docsThere && prefs.length > 0) {
-    const keep = prefs[prefs.length - 1]!
+    // **多个 prev 时取最新那个**（目录自己的 mtime 就是那一批落盘的时刻）。
+    // 按名字（pid 字典序）取会拿错：“999-…” 排在 “1000-…” 后面，拿到的不是后来的旧批。
+    const withTime = await Promise.all(
+      prefs.map(async (p) => ({ p, t: (await stat(join(base, p))).mtimeMs })),
+    )
+    withTime.sort((a, b) => (b.t === a.t ? (a.p < b.p ? 1 : -1) : b.t - a.t))
+    const keep = withTime[0]!.p
     try {
       await rename(join(base, keep), docs)
       restored = keep.slice('docs-prev-'.length)
@@ -128,7 +152,12 @@ export async function recoverPublish(root: string): Promise<string | null> {
     if (restored !== null && p.endsWith(restored)) continue
     await rm(join(base, p), { recursive: true, force: true })
   }
-  for (const s of stages) await rm(join(base, s), { recursive: true, force: true })
+  for (const s of stages) {
+    // **正在写的批次不删**：并发一次 `docs status` 就把另一个进程的暂存收掉，会让它白跑一趟。
+    const pid = pidOf(s.slice('docs-stage-'.length))
+    if (pid !== null && pid !== process.pid && alive(pid)) continue
+    await rm(join(base, s), { recursive: true, force: true })
+  }
   return restored
 }
 
@@ -173,14 +202,22 @@ export async function readLast(root: string): Promise<LastAttempt | null> {
   }
 }
 
-/** 记一次尝试的结果。**失败也写**：它记的是"最近一次试了什么、为什么没成"。 */
+/** 记一次尝试的结果。**失败也写**：它记的是“最近一次试了什么、为什么没成”。
+ *
+ * **原子写**：先写同目录的临时名再改名。直接覆盖时，进程死在半途会留下一段半 JSON，
+ * 下一次读到的是“没有记录”——“最近一次”那一栏就静默退回空，比报一个旧值更坏。
+ */
 export async function writeLast(root: string, attempt: LastAttempt): Promise<void> {
   const dir = docsRootOf(root)
+  const file = join(dir, 'last.json')
+  const tmp = join(dir, `last.json.tmp-${tokenOf()}`)
   try {
     await mkdir(dir, { recursive: true })
-    await writeFile(join(dir, 'last.json'), JSON.stringify(attempt, null, 2) + '\n')
+    await writeFile(tmp, JSON.stringify(attempt, null, 2) + '\n')
+    await rename(tmp, file)
   } catch (err) {
-    throw new DocsError('publish', `最近一次生成的结果写不进去：${join(dir, 'last.json')} —— ${(err as Error).message}`)
+    await rm(tmp, { force: true }).catch(() => undefined)
+    throw new DocsError('publish', `最近一次生成的结果写不进去：${file} —— ${(err as Error).message}`)
   }
 }
 

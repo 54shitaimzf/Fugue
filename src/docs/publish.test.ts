@@ -3,7 +3,7 @@
 // 判据来自交接单 § 2.1 末段（可引用的地址跨版本成立）· § 3.2（整批替换）· § 6.1 第 6 条
 // （新版至少一页生成后中断，旧入口仍对应同一个提交与指纹）。
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { commitFiles, tmpRepo } from '../../test/helpers/docs-repo.ts'
@@ -11,7 +11,7 @@ import { openTruth } from '../truth/truth.ts'
 import { buildDocs } from './build.ts'
 import type { DocCaller } from './contract.ts'
 import { docsRootOf, stageRootOf } from './contract.ts'
-import { publishBatch, recoverPublish } from './publish.ts'
+import { publishBatch, recoverPublish, writeLast } from './publish.ts'
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s)
 
@@ -169,4 +169,55 @@ test('⑤ 暂存写不进去：当场拒，旧批次一个字节不动，暂存�
   const leftovers = readdirSync(join(root, '.fugue')).filter((n) => n.startsWith('docs-stage-'))
   assert.deepEqual(leftovers, [], '暂存目录要收掉')
   console.log('⑤ 读数：旧批次不变 · 暂存残留 0 个')
+})
+
+test('⑥ 恢复不动活进程的暂存：并发一次 status 不会把正在写的批次收掉', async () => {
+  const root = tmpRepo()
+  const live = stageRootOf(root, `${process.ppid}-live`)
+  const dead = stageRootOf(root, '4194303-dead')
+  mkdirSync(live, { recursive: true })
+  writeFileSync(join(live, 'index.html'), '正在写')
+  mkdirSync(dead, { recursive: true })
+  writeFileSync(join(dead, 'index.html'), '已经死了')
+  await recoverPublish(root)
+  assert.equal(existsSync(live), true, '活进程的暂存要留着')
+  assert.equal(existsSync(dead), false, '死进程的暂存要收掉')
+  console.log('⑥ 读数：活 pid 的 stage 在 · 死 pid 的删')
+})
+
+test('⑦ 多个 prev 时恢复最新那个：按落盘时刻，不按 pid 字典序', async () => {
+  const root = tmpRepo()
+  const old = join(root, '.fugue', 'docs-prev-1000-a')
+  const late = join(root, '.fugue', 'docs-prev-999-b')
+  mkdirSync(old, { recursive: true })
+  mkdirSync(late, { recursive: true })
+  writeFileSync(join(old, 'index.html'), '早的旧批')
+  writeFileSync(join(late, 'index.html'), '晚的旧批')
+  utimesSync(old, new Date('2026-10-22T00:00:00Z'), new Date('2026-10-22T00:00:00Z'))
+  utimesSync(late, new Date('2026-10-22T00:00:05Z'), new Date('2026-10-22T00:00:05Z'))
+  const restored = await recoverPublish(root)
+  assert.equal(restored, '999-b')
+  assert.equal(readFileSync(join(docsRootOf(root), 'index.html'), 'utf8'), '晚的旧批')
+  console.log('⑦ 读数：恢复 999-b（名字小、时刻新）')
+})
+
+test('⑧ 最近一次的结果原子落盘：写完之后没有临时文件，读回来就是那一份', async () => {
+  const root = tmpRepo()
+  await writeLast(root, {
+    ok: true,
+    at: '2026-10-22T00:00:00.000Z',
+    commit: null,
+    fingerprint: null,
+    pages: 0,
+    theme: null,
+    model: null,
+    materials: null,
+    reason: null,
+    at_stage: null,
+  })
+  const names = readdirSync(join(root, '.fugue', 'docs'))
+  assert.deepEqual(names.filter((n) => n.startsWith('last.json.tmp-')), [])
+  const back = JSON.parse(readFileSync(join(root, '.fugue', 'docs', 'last.json'), 'utf8')) as { ok: boolean }
+  assert.equal(back.ok, true)
+  console.log('⑧ 读数：last.json 可读 · 临时文件 0 个')
 })
