@@ -624,6 +624,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       theme: theme.id,
       model: deps.caller.model,
       materials: deps.materials,
+      usage: { calls: total.calls, inputTokens: total.inputTokens, outputTokens: total.outputTokens },
       reason: null,
       at_stage: null,
     }

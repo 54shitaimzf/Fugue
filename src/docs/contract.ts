@@ -224,6 +224,11 @@ export interface LastAttempt {
   readonly theme: string | null
   readonly model: string | null
   readonly materials: Materials | null
+  /**
+   * 一次生成的两条用量读数（成功时才有）。**它是"真实调用留下读数"那一条的落点**：
+   * 只留在终端的 stdout 上，下一次命令就查不到了——而"最近一次生成"本来就该回答"花了多少"。
+   */
+  readonly usage?: { readonly calls: number; readonly inputTokens: number | null; readonly outputTokens: number | null }
   /** 失败原因（成功时 `null`）。 */
   readonly reason: string | null
   /** 失败落在哪一格（`config` · `facts` · `model` · `render` · `publish`）。 */

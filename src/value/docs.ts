@@ -233,6 +233,9 @@ function statusLines(r: StatusReport): string {
     lines.push('最近一次生成：还没有记录')
   } else if (r.attempt.ok) {
     lines.push(`最近一次生成：成功（提交 ${r.attempt.commit?.slice(0, 12) ?? '?'} · ${r.attempt.pages} 页 · ${r.attempt.at}）`)
+    if (r.attempt.usage !== undefined) {
+      lines.push(`  用量：${r.attempt.usage.calls} 次调用 · ${num(r.attempt.usage.inputTokens)} 入 / ${num(r.attempt.usage.outputTokens)} 出`)
+    }
   } else {
     const stage = r.attempt.at_stage === null ? '' : `${STAGES[r.attempt.at_stage] ?? r.attempt.at_stage}·`
     lines.push(`最近一次生成：失败（${stage}${r.attempt.reason ?? '没有原因'}）`)

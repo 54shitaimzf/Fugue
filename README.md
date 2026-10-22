@@ -250,6 +250,12 @@ fugue docs prompt start         # 打出这一份的实际写作输入，不调�
 
 页面因为输出预算被截断时，抬一下单页预算：`fugue config set docs.maxTokens 65536`，再生成一次。
 
+生成之后想自己核对一遍形状（清单与实际文件对不对得上 · 内部链接与锚点可不可达 · 查找索引落不落得到正文）：
+
+```sh
+node tools/check-docs.js            # 缺省看 <root>/.fugue/docs
+```
+
 ## 它为什么可靠
 
 它只以两样东西为准：**git 仓库本身**，和 **`.fugue/log/` 里的工作记录**（只追加、不修改，每行一条）。
