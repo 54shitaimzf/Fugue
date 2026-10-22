@@ -348,3 +348,13 @@ test('⑯ 内容块与宿主控件各占各的命名空间：`content`/`doc-*` �
   assert.equal(xIds.length, 3, `三个标题（x · x · x-2）各一个 id：${xIds.join(' · ')}`)
   console.log(`⑯ 读数：${ids.length} 个 id 全不重复 · content 让给宿主 · x 一族 ${xIds.join('/')}`)
 })
+
+test('⑰ 容器整块消费：steps 里列表前后的正文与代码块都在（不是只取第一个列表）', () => {
+  const md = ['::: steps', '先看这一段说明，它也是容器里的内容。', '', '1. 一步', '   ```sh', '   echo hi', '   ```', '', '2. 两步', '', '收尾这一段也要在。', ':::'].join('\n')
+  const r = renderMarkdown(md)
+  assert.ok(r.html.includes('先看这一段说明，它也是容器里的内容。'), '列表之前的正文要在')
+  assert.ok(r.html.includes('收尾这一段也要在。'), '列表之后的正文要在')
+  assert.ok(r.html.includes('echo hi'), '列表项里的代码块要在')
+  assert.equal((r.html.match(/class="step"/g) ?? []).length, 2)
+  console.log('⑰ 读数：2 步 · 列表前后正文与代码块都在')
+})

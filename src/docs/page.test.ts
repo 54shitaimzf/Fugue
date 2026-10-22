@@ -185,10 +185,12 @@ test('⑦ 一节一地址：标题 ID 与目录/查找的锚点逐字相同（�
 test('⑧ 查找是模态：声明与实际行为在同一处（背景 inert · Tab 循环 · Esc 回到入口）', () => {
   const { html } = page()
   assert.ok(html.includes('role="dialog" aria-modal="true"'), '声明为模态')
-  assert.ok(html.includes("setAttribute('inert'"), '打开时背景不再可聚焦')
+  assert.ok(html.includes('overlay.hidden = false; background(true)'), '打开时把背景设成 inert')
+  assert.ok(html.includes('overlay.hidden = true; background(false)'), '关闭时恢复背景')
+  assert.ok(html.includes("setAttribute('inert'"), 'inert 真的落到背景元素上')
   assert.ok(html.includes('addEventListener(\'keydown\', trap)'), 'Tab 在面板里循环')
   assert.ok(html.includes('if (openBtn) openBtn.focus()'), '关闭后焦点回到打开入口')
   // 查找结果是真实链接，落到内容块（不是页首）
   assert.ok(html.includes("a.href = e.p + (e.b ? '#' + e.b"), '命中落到内容块')
-  console.log('⑧ 读数：aria-modal · inert · Tab 循环 · 焦点回入口 · 命中落块')
+  console.log('⑧ 读数：aria-modal · 打开/关闭都管 inert · Tab 循环 · 焦点回入口 · 命中落块')
 })
