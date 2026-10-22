@@ -159,8 +159,7 @@ test('① 一次生成：两页正文 · 首页 · 清单（提交 · 版本 · 
   assert.ok(manifest.pages[0].evidence.ranges.every((r: { truncated: boolean }) => r.truncated === false), '小文件是全文')
   assert.deepEqual(manifest.pages[0].dropped, [], '第一版没有旧地址')
   assert.match(manifest.fingerprint, /^sha256:[0-9a-f]{64}$/)
-  assert.ok(manifest.files.some((f: { path: string }) => f.path === 'index.html'))
-  assert.ok(manifest.files.some((f: { path: string }) => f.path === 'content/start.md'))
+  // 清单与盘上文件一致、每页命中的内容块真实存在：`publish.test.ts ⑦` 与产物级那套管这两件。
   // 取证：请求了三条（两条真、一条不在）——**不在的那条如实记下**
   assert.deepEqual(manifest.pages[0].evidence.found, ['README.md', 'src/a.ts'])
   assert.deepEqual(manifest.pages[0].evidence.missing, ['nope.ts'])

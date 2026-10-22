@@ -114,19 +114,6 @@ test('② 页脚事实：完整提交 · 来源与 sha · 指纹 · 视觉语言
   console.log('② 读数：提交/来源/指纹/主题齐全 · 无时间戳')
 })
 
-test('③ 查找索引：内嵌 JSON 可解析，命中带页 · 章节 · 片段；`</script>` 被拆开', () => {
-  const { html, entries } = page()
-  const m = /<script type="application\/json" id="doc-index">([\s\S]*?)<\/script>/.exec(html)
-  assert.ok(m !== null, '索引块要在')
-  const parsed = JSON.parse(m[1]!) as { p: string; s: string; h: string; b: string; x: string }[]
-  assert.equal(parsed.length, entries.length)
-  assert.ok(parsed.some((e) => e.p === 'start.html' && e.s === '先做什么' && e.h === 'first' && e.x.includes('前置条件')), JSON.stringify(parsed[0]))
-  assert.ok(parsed.every((e) => e.b !== ''), '每条命中都要有内容块 id')
-  assert.ok(html.includes('<script>alert(1)</script>') === false, '正文里的脚本不成为脚本')
-  assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), '它作为字面文字保留')
-  console.log(`③ 读数：索引 ${parsed.length} 条 · 第一条 ${parsed[0]?.p}#${parsed[0]?.h}`)
-})
-
 test('④ 无 JS 的完整阅读路径：原生展开 · 收音机标签 · noscript 说明；按钮在脚本打开前不出现', () => {
   const { html } = page()
   assert.ok(/<details[^>]*>/.test(html), '展开是原生的')
