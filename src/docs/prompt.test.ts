@@ -172,6 +172,20 @@ test('⑦ `docs prompt` 打出来的那一份：三段齐全，且如实说明�
   console.log(`⑦ 读数：${text.split('\n').length} 行 · ${text.length} 字符 · 三段齐全`)
 })
 
+test('⑨ 自由读的下一轮：A 区仍是同一份；B 区说得出已经读到什么、还差什么', () => {
+  const page = pageOf(PLAN, 'start')
+  const facts = factsWith({ version: '1.2.3', files: 10, commit: 'aaaa' })
+  const chain = chainOf(facts)
+  const excerpt = { path: 'src/a.ts', text: '…原文…', bytes: 1, lines: 900, chars: 10, shown: [{ from: 1, to: 100 }], truncated: true }
+  const again = chain.again({ page, plan: PLAN, source: 'S', excerpts: [excerpt], round: 1 })
+  assert.equal(again.shared, chain.shared, 'A 区不因轮次变')
+  assert.ok(again.page.includes('已经读到（第 1 轮之前）'))
+  assert.ok(again.page.includes('src/a.ts（第 1–100 行；还有内容没读（共 900 行））'), again.page.slice(-300))
+  assert.ok(again.page.includes('{"paths"'), '还是要一份 JSON')
+  assert.equal(again.page.includes('完整树路径索引'), false, 'B 区不重复索引')
+  console.log(`⑨ 读数：A ${again.shared.length} 字符 · 已读清单 ${again.page.length} 字符`)
+})
+
 test('⑧ 摘录带行段与截断：B 区说得出"读到第几行、还有没有没读的"（复审 R3）', () => {
   const page = pageOf(PLAN, 'start')
   const facts = factsWith({ version: '1.2.3', files: 10, commit: 'aaaa' })
