@@ -23,12 +23,14 @@ const PAGES = [
   { id: 'arch', title: '架构', source: 'design/A.md', audience: '维护者', role: '理解边界', prompt: '讲约束' },
 ]
 
-function configWith(o: { prompt?: string; pages?: typeof PAGES; theme?: string; title?: string; maxTokens?: number } = {}): ConfigDoc {
+function configWith(o: { prompt?: string; pages?: typeof PAGES; theme?: string; title?: string; maxTokens?: number; read?: 'two-pass' | 'loop' } = {}): ConfigDoc {
   return {
     docs: {
       theme: o.theme ?? 'primer',
       ...(o.title === undefined ? {} : { title: o.title }),
       ...(o.maxTokens === undefined ? {} : { maxTokens: o.maxTokens }),
+      // **测试里显式钉住两趟**：自由读的一轮轮会让调用次数随模型回话变，读数就不定了。
+      read: o.read ?? 'two-pass',
       pages: (o.pages ?? PAGES).map((p) => (p.id === 'start' && o.prompt !== undefined ? { ...p, prompt: o.prompt } : p)),
     },
   }
@@ -177,7 +179,7 @@ test('① 一次生成：两页正文 · 首页 · 清单（提交 · 版本 · 
   assert.ok([...prefix][0]!.includes('完整树路径索引'), '索引在 A 区')
   assert.ok(bodies.every((b) => !b.context.includes('完整树路径索引')), 'B 区不再贴索引')
   assert.equal(manifest.prompt, PROMPT_VERSION, '清单记着这一批用的提示词布局版本')
-  assert.equal(manifest.read, 'two-pass', '缺省读取策略是两趟')
+  assert.equal(manifest.read, 'two-pass', '这一份配置显式要的两趟')
   const last = JSON.parse(readFileSync(join(root, '.fugue', 'docs-last.json'), 'utf8')) as { usage: { cacheReadTokens: number; cacheWriteTokens: number } }
   assert.equal(last.usage.cacheReadTokens, 80, '缓存读也要落到 last.json，下一次 `docs status` 才答得出“花了多少”')
   assert.equal(last.usage.cacheWriteTokens, 0, '写缓存那一栏照实记（没有断点时是 0）')
@@ -621,13 +623,13 @@ test('⑱ 读取策略进清单与指纹：换 `docs.read` 就过期（内容相
   const { root, truth } = await repo()
   ctx.after(() => truth.close())
   const fixed = (): Date => new Date('2026-10-22T00:00:00.000Z')
-  const two = await buildDocs({ root, config: configWith(), truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
+  const twoConfig: ConfigDoc = configWith()
+  const two = await buildDocs({ root, config: twoConfig, truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
   assert.ok(two.ok)
   const first = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8')) as { read: string; fingerprint: string }
   assert.equal(first.read, 'two-pass')
 
-  const loopConfig: ConfigDoc = { docs: { ...configWith().docs, read: 'loop' } }
-  const loop = await buildDocs({ root, config: loopConfig, truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
+  const loop = await buildDocs({ root, config: configWith({ read: 'loop' }), truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
   assert.ok(loop.ok)
   const second = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8')) as { read: string; fingerprint: string }
   assert.equal(second.read, 'loop')

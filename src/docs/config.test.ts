@@ -135,9 +135,9 @@ test('⑤ 产物名要能被浏览器当路径原样打开：`#` / `?` 一律拒
   console.log(`⑤ 读数：${names.length} 个名字 URL 解析后不变 · ${3} 个带片段/查询/空格的名字当场拒`)
 })
 
-test('⑥ `docs.read`：不写就是两趟；写错当场拒，话里列出带进来的两种', () => {
-  assert.equal(parseDocs(base())?.read, 'two-pass')
-  assert.equal(parseDocs(poke(base(), ['docs', 'read'], 'loop'))?.read, 'loop')
+test('⑥ `docs.read`：不写就是 loop（验过之后翻的默认）；写错当场拒，话里列出两种', () => {
+  assert.equal(parseDocs(base())?.read, 'loop')
+  assert.equal(parseDocs(poke(base(), ['docs', 'read'], 'two-pass'))?.read, 'two-pass')
   assert.throws(
     () => parseDocs(poke(base(), ['docs', 'read'], 'loop!')),
     (err: unknown) => {
@@ -148,5 +148,5 @@ test('⑥ `docs.read`：不写就是两趟；写错当场拒，话里列出带�
       return true
     },
   )
-  console.log('⑥ 读数：缺省 two-pass · 写集为 loop · 写错当场拒')
+  console.log('⑥ 读数：缺省 loop · 写集为 two-pass · 写错当场拒')
 })

@@ -43,6 +43,8 @@ export interface Authored {
   readonly usage: Usage | null
   readonly evidenceUsage: Usage | null
   readonly rangeUsage: Usage | null
+  /** 这一页真发出去的模型调用次数（自由读的一轮轮都算）。 */
+  readonly calls: number
 }
 
 export interface Author {
@@ -164,6 +166,7 @@ const twoPass: Author = {
     let evidence: PageContent['evidence'] = EMPTY
     let evidenceUsage: Usage | null = null
     let rangeUsage: Usage | null = null
+    let calls = 1 // 写作那一趟
     if (input.read) {
       let text = ''
       try {
@@ -177,6 +180,7 @@ const twoPass: Author = {
         })
         text = call.text
         evidenceUsage = call.usage
+        calls += 1
       } catch (err) {
         notes.push(degradeNote(err))
       }
@@ -196,6 +200,7 @@ const twoPass: Author = {
               thinking: 'low',
             })
             rangeUsage = call.usage
+            calls += 1
             await session.extend(rangesOf(call.text))
           } catch (err) {
             rangeNote = `补读行段那一趟没成，截断的文件只有第一段：${(err as Error).message}`
@@ -219,7 +224,7 @@ const twoPass: Author = {
       missing: evidence.missing,
       notes,
     })
-    return { markdown: written.markdown, evidence, notes, usage: written.usage, evidenceUsage, rangeUsage }
+    return { markdown: written.markdown, evidence, notes, usage: written.usage, evidenceUsage, rangeUsage, calls }
   },
 }
 
@@ -231,6 +236,7 @@ const loop: Author = {
     const session = openRead({ truth: input.truth, commit: input.commit, known: new Set(input.facts.paths), budget: LOOP_BUDGET })
     let evidence: PageContent['evidence'] = EMPTY
     let evidenceUsage: Usage | null = null
+    let calls = 1 // 写作那一趟
     if (input.read) {
       evidenceUsage = null
       const usages: Usage[] = []
@@ -251,6 +257,7 @@ const loop: Author = {
             thinking: 'low',
           })
           text = call.text
+          calls += 1
           if (call.usage !== null) usages.push(call.usage)
         } catch (err) {
           notes.push(round === 0 ? degradeNote(err) : `继续取证那一趟没成，按已经读到的写：${(err as Error).message}`)
@@ -281,7 +288,7 @@ const loop: Author = {
       missing: evidence.missing,
       notes,
     })
-    return { markdown: written.markdown, evidence, notes, usage: written.usage, evidenceUsage, rangeUsage: null }
+    return { markdown: written.markdown, evidence, notes, usage: written.usage, evidenceUsage, rangeUsage: null, calls }
   },
 }
 

@@ -83,8 +83,8 @@ export type ReadStrategy = 'two-pass' | 'loop'
 /** 带进来的两种读取策略（配置写错时报出这两个）。 */
 export const READ_STRATEGIES: readonly ReadStrategy[] = ['two-pass', 'loop']
 
-/** 缺省那一档：**先两趟**，自由读验过再翻默认。 */
-export const DEFAULT_READ: ReadStrategy = 'two-pass'
+/** 缺省那一档：**自由读验过之后翻成默认**（两趟仍是可选项）。 */
+export const DEFAULT_READ: ReadStrategy = 'loop'
 
 export interface DocsPlan {
   /** 文档集的标题（缺省用仓库名）。 */

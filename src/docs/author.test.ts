@@ -155,6 +155,7 @@ test('③ 自由读：先读开头一段，再点到第 900–950 行，写作�
   assert.ok(range.shown.some((r) => r.from === 900 && r.to === 950), '清单里记着补读的行段')
   assert.equal(seen.filter((s) => s.kind === 'again').length, 2, '两轮继续取证（第二轮给空数组收手）')
   assert.equal(out.evidenceUsage?.inputTokens, 30, '三轮取证各 10 入')
+  assert.equal(out.calls, 4, '三轮取证 + 一次写作 = 4 次调用')
   console.log(`③ 读数：调用 ${seen.length} 次 · 行段 ${range.shown.length} 段 · 写入含 NEEDLE`)
 })
 
@@ -169,6 +170,7 @@ test('④ 负对照：同一条脚本、同一份材料，两趟读不到第 920
   const write = seen.find((s) => s.kind === 'writing')!
   assert.equal(write.req.context.includes('L920 NEEDLE'), false, '两趟只读开头与那一段行')
   assert.equal(seen.some((s) => s.kind === 'again'), false, '两趟没有"继续取证"这一趟')
+  assert.equal(out.calls, 3, '取证 + 补读 + 写作 = 3 次调用')
   assert.equal(out.evidence.ranges[0]!.shown.some((r) => r.from === 900), false)
   console.log(`④ 读数：调用 ${seen.length} 次 · 写作输入里没有 NEEDLE`)
 })

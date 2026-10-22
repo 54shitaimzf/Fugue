@@ -170,12 +170,14 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
   /** 走到哪一步花掉了什么：**失败时也要带上已完成页的用量**（复审 R8）。 */
   const allUsage: (Usage | null)[] = []
   const usagePages: UsageTotal['pages'][number][] = []
+  /** 真发出去的调用次数（自由读一页可能是好几轮，不能拿用量数组长度当次数）。 */
+  let allCalls = 0
 
   const modelFacts = (p: DocsPlan | null): ModelFacts => modelFactsOf(deps.caller, p?.maxTokens)
 
   const fail = async (err: unknown): Promise<BuildFailure> => {
     const e = err instanceof DocsError ? err : new DocsError('build', (err as Error).message)
-    const total = sumUsage(allUsage)
+    const total = sumUsage(allUsage, allCalls)
     const attempt = attemptOf({
       ok: false,
       at: now().toISOString(),
@@ -286,6 +288,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
         read: deps.evidence !== false,
       })
       allUsage.push(authored.usage)
+      allCalls += authored.calls
       // **取证那几趟只数真发出去的调用**：`--no-evidence` 这一次一次都没发，不该算进读数。
       if (deps.evidence !== false) {
         allUsage.push(authored.evidenceUsage)
@@ -462,7 +465,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
     files.push({ path: 'manifest.json', bytes: new TextEncoder().encode(JSON.stringify(manifest, null, 2) + '\n') })
     await publishBatch(deps.root, files)
 
-    const total = sumUsage(allUsage)
+    const total = sumUsage(allUsage, allCalls)
     const attempt = attemptOf({
       ok: true,
       at: generatedAt,

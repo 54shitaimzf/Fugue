@@ -22,8 +22,9 @@ export interface UsageSum extends UsageNumbers {
   readonly cacheWriteTokens: number | null
 }
 
-/** 一串用量求和。某一项全都量不到时它仍是 `null`，不拿 0 顶。 */
-export function sumUsage(usages: readonly (Usage | null)[]): UsageSum {
+/** 一串用量求和。某一项全都量不到时它仍是 `null`，不拿 0 顶。`calls` 由调用方给：
+ * 自由读的一次"取证"背后可能是好几轮调用，不能拿数组长度当次数。 */
+export function sumUsage(usages: readonly (Usage | null)[], calls: number = usages.length): UsageSum {
   let input: number | null = null
   let cacheRead: number | null = null
   let cacheWrite: number | null = null
@@ -35,7 +36,7 @@ export function sumUsage(usages: readonly (Usage | null)[]): UsageSum {
     cacheWrite = add(cacheWrite, u.cacheWriteTokens)
     output = add(output, u.outputTokens)
   }
-  return { calls: usages.length, inputTokens: input, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, outputTokens: output }
+  return { calls, inputTokens: input, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, outputTokens: output }
 }
 
 function add(sum: number | null, n: number | null): number | null {
