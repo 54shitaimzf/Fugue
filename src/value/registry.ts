@@ -12,6 +12,7 @@
 // 这一条）——命令面单一真源那条纪律在值层这一头也成立。
 import { FLAGS_OF } from '../cli/flags.ts'
 import { logValue, statusValue, watchValue } from './observe.ts'
+import { docsBuildValue, docsPromptValue, docsStatusValue } from './docs.ts'
 import { recoverValue } from './recovery.ts'
 import {
   branchValue,
@@ -61,6 +62,10 @@ export const VALUE_LAYER: Readonly<Record<string, ValueRunner>> = {
   status: statusValue,
   watch: watchValue,
   recover: recoverValue,
+  // 文档这一族（0.5.2）：定义与提交 → 可独立阅读的 HTML · 状态 · 一份的写作输入。
+  'docs build': docsBuildValue,
+  'docs status': docsStatusValue,
+  'docs prompt': docsPromptValue,
 }
 
 /** 这一格命令名在值层里吗（`round` 的子命令按 `round new` 那种键查）。 */
