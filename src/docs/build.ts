@@ -8,9 +8,10 @@
 //   4. 宿主校验与呈现：markdown → HTML（`markdown.ts`），套公共交互与主题（`page.ts`）
 //   5. 整批替换 + 清单与指纹（`publish.ts`）；最近一次结果单独记（`last.json`）
 //
-// **两趟调用，材料不同。** 第一趟只要一份"要读哪几份文件"的 JSON；第二趟带上那几份的原文写
-// 正文。取证那一趟拿到的文件**可能被截断**：截断的每一份进第二趟取证（"要后面哪几行"），
-// 补读的行段与第一段一起进写作输入——"关键实现藏在文件后半部"因此取得着，而不是只能猜。
+// **取证与写作是两件材料不同的事。** 取证只问"要读哪几份文件"（`docs.read` 缺省自由读：
+// 一轮轮接着问；`two-pass` 是固定两次），写作那一趟带上读到的原文写正文。读到的文件**可能
+// 被截断**：截断的每一份可以再点"要后面哪几行"，补读的行段与第一段一起进写作输入——
+// "关键实现藏在文件后半部"因此取得着，而不是只能猜。
 //
 // **生成不等于可信**（交接单 § 2.5）：宿主机械核对的是形状、引用、锚点与整批一致；内容取舍
 // 与交互适用性仍要人按读者任务复核。这一份的 `notes` 把"兑不掉的地方"逐条留给复核。
@@ -240,9 +241,9 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
     const sources = new Map<string, string>()
     for (const p of plan.pages) sources.set(p.id, await sourceTextOf(deps.truth, commit, p.id, p.source))
 
-    // 提示词链：**A 区在这里装一次**，取证两趟与写作那一趟都发这一份字节。
+    // 提示词链：**A 区在这里装一次**，取证各轮与写作那一趟都发这一份字节。
     const prompt = chainOf(facts)
-    /** 这一批用哪条读取策略（`docs.read`；缺省两趟）。 */
+    /** 这一批用哪条读取策略（`docs.read`；缺省自由读）。 */
     const author = authorOf(plan.read)
 
     // 三 · 逐页取证 + 写作

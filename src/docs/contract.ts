@@ -66,7 +66,6 @@ export interface PageDef {
   readonly out: string
 }
 
-/** 工作区配置里 `docs` 那一份。 */
 /**
  * 读取策略：**取证那一趟怎么读**。`two-pass` 是两趟（要哪几份 → 截断的补行段）；`loop` 是
  * 自由读（一轮轮点名，直到模型说读够了）。
@@ -91,7 +90,7 @@ export interface DocsPlan {
   readonly model: string | undefined
   /** 单页输出预算（缺省取模型声明里的那一档）。 */
   readonly maxTokens: number | undefined
-  /** 取证那一趟怎么读（缺省 `two-pass`）。 */
+  /** 取证那一趟怎么读（缺省 `loop`；`two-pass` 是可选的两趟）。 */
   readonly read: ReadStrategy
 }
 
