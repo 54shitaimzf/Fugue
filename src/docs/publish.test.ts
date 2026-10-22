@@ -221,3 +221,44 @@ test('⑧ 最近一次的结果原子落盘：写完之后没有临时文件，�
   assert.equal(back.ok, true)
   console.log('⑧ 读数：last.json 可读 · 临时文件 0 个')
 })
+
+test('⑨ 旧锚点没有后继：清单里说明去向，不静默消失（交接单 § 2.1）', async (ctx) => {
+  const root = tmpRepo()
+  const c1 = await commitFiles(root, { 'README.md': '# demo\n' }, [], 'refs/heads/main')
+  const truth = openTruth(root)
+  ctx.after(() => truth.close())
+  const cfg = {
+    docs: {
+      pages: [{ id: 'start', title: '开始', source: 'README.md', audience: '新人', role: '上手', prompt: '最短路径' }],
+    },
+  }
+  const body = (withTemp: boolean): string =>
+    [
+      '## 安装 Fugue {#install}',
+      '',
+      '这一段说明这一页要解决的问题，以及读者能从这里得到什么。'.repeat(12),
+      '',
+      ...(withTemp ? ['## 临时一节 {#temp}', '', '下一版会被删掉的一节。'.repeat(6), ''] : []),
+      '## 下一节',
+      '',
+      '更多内容。'.repeat(30),
+    ].join('\n')
+  const caller = (withTemp: boolean): DocCaller => ({
+    model: 'fake/model',
+    wireModel: 'fake',
+    async call(req) {
+      if (req.system.includes('只输出一个 JSON 对象')) return { text: '{"paths":[]}', usage: null }
+      return { text: body(withTemp), usage: null }
+    },
+  })
+  const first = await buildDocs({ root, config: cfg, truth, caller: caller(true), materials: { kind: 'manual', note: 'n' }, now: () => new Date('2026-10-22T00:00:00.000Z') })
+  assert.ok(first.ok)
+  await commitFiles(root, { 'README.md': '# demo 2\n' }, [c1 as never], 'refs/heads/main')
+  const second = await buildDocs({ root, config: cfg, truth, caller: caller(false), materials: { kind: 'manual', note: 'n' }, now: () => new Date('2026-10-22T00:00:00.000Z') })
+  assert.ok(second.ok)
+  const manifest = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8'))
+  const start = manifest.pages.find((p: { id: string }) => p.id === 'start')
+  assert.ok(start.notes.some((n: string) => n.includes('旧深链接没有后继') && n.includes('temp')), JSON.stringify(start.notes))
+  assert.equal(Object.hasOwn(start.anchors, 'temp'), false)
+  console.log(`⑨ 读数：note：${start.notes.join(' / ')}`)
+})

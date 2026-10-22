@@ -264,8 +264,8 @@ function similarity(a: string, b: string): number {
 function aliasPlan(
   prev: Manifest | null,
   fresh: Map<string, readonly MdHeading[]>,
-): Map<string, { aliases: Record<string, string[]>; anchors: Record<string, string> }> {
-  const out = new Map<string, { aliases: Record<string, string[]>; anchors: Record<string, string> }>()
+): Map<string, { aliases: Record<string, string[]>; anchors: Record<string, string>; dropped: string[] }> {
+  const out = new Map<string, { aliases: Record<string, string[]>; anchors: Record<string, string>; dropped: string[] }>()
   for (const [pageId, headings] of fresh) {
     const ids = new Set(headings.map((h) => h.id))
     const anchors: Record<string, string> = {}
@@ -302,7 +302,15 @@ function aliasPlan(
         if (best !== null && bestScore >= 0.5 && !tie) add(h.id, best.id)
       }
     }
-    out.set(pageId, { aliases, anchors })
+    // **旧 id 包括了上一批自己就是别名的那几条**（一代代改标题的链）：它们也要么有后继、
+    // 要么被报出来。只看 `prior.headings` 会漏掉“上一批就已经是个旧名字”的那一层。
+    const priorIds = new Set<string>()
+    if (prior !== undefined) {
+      for (const h of prior.headings) priorIds.add(h.id)
+      for (const old of Object.keys(prior.anchors ?? {})) priorIds.add(old)
+    }
+    const dropped = [...priorIds].filter((old) => !ids.has(old) && anchors[old] === undefined)
+    out.set(pageId, { aliases, anchors, dropped })
   }
   return out
 }
@@ -546,6 +554,13 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
         aliases: alias.get(p.def.id)?.aliases ?? {},
       })
       p.notes.push(...p.pass2.notes)
+      // **旧地址的去向要说得出来**（交接单 § 2.1）：没有后继的那几条进清单的 note，
+      // 不静默丢掉。页面里落不成锚点，去向就是“这一版没有对应内容”。
+      const dropped = alias.get(p.def.id)?.dropped ?? []
+      if (dropped.length > 0) {
+        const shown = dropped.slice(0, 6).join(' · ')
+        p.notes.push(`旧深链接没有后继（这一版没有对应内容）：${shown}${dropped.length > 6 ? ` …共 ${dropped.length} 条` : ''}`)
+      }
     }
 
     // 五 · 清单 · 首页 · 保存
