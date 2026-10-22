@@ -2,35 +2,49 @@
 //
 // 三条性质，三个落点：
 //
-//   一 · **发布前一个字节都不动旧批次。** 新批次先写进与产物目录同级的暂存目录
-//        （`<root>/.fugue/docs-stage-<token>/`），全部写完并通过校验才切换。
-//   二 · **切换是两次改名**，不是一个文件一个文件换。两次改名之间进程若被杀，下一次
-//        `recoverPublish` 会把旧批次改回来——"旧入口、页面、资源与清单仍对应同一个提交与
-//        指纹"这条判据因此有一条可执行的退化档，而不是一句希望。
-//   三 · **清单与页面同批替换**：`manifest.json` 就在批次里，与页面一起搬。当前读到的页面、
-//        资源与清单永远是同一批。
+//   一 · **发布前一个字节都不动旧批次。** 新批次先写成一个**不可变批次目录**
+//        （`<root>/.fugue/docs-batch-<指纹前 12 位>/`；名字由内容定，同内容不重写），全部写完
+//        并通过校验才算数。
+//   二 · **切换是一次改名，不是两次。** 公开入口 `<root>/.fugue/docs` 是一个**指向当前批次的
+//        符号链接**；发布先在同级建一个临时链接，再把它改名到 `docs`——`rename` 是原子的，
+//        因此**不存在"入口不存在"的窗口**（复审 R2 的那处缺口）。读者从入口读到的页面、资源
+//        与清单永远是同一个完整批次（批次目录不可变）。
+//   三 · **恢复不拿走退路。** `recoverPublish` 只收没被指向的批次与残留临时名；指针读不出来
+//        或恢复失败时**一个批次都不删**——最后一份完整批次必须还在。
 //
-// `last.json` 住在产物目录里，但**不属于任何一批**：失败时只写它，旧批次原样留着。
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+// `last.json` 住在 `.fugue/docs-last.json`，**不在任何一批里**：失败时只写它，旧批次原样留着；
+// 它记的是"最近一次试了什么"，与"当前可读是哪一批"分开归属（交接单 § 3.3）。
+//
+// **老布局（`docs/` 是一个真目录）仍然读得出来**：这一版第一次发布时把旧目录整个挪到
+// `docs-prev-<token>` 再上链接（那一次存在一个很窄的窗口，恢复会把它挪回来）；之后每次发布
+// 都只换链接。读那一侧同时认两种形状，`docs status` 在迁移前照旧报"过期"而不是"未生成"。
+import { lstat, mkdir, readFile, readdir, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import type { LastAttempt, Manifest } from './contract.ts'
-import { DocsError, MANIFEST_VERSION, docsRootOf, stageRootOf } from './contract.ts'
+import { DocsError, MANIFEST_VERSION, docsRootOf } from './contract.ts'
 
-/** 一批里的一份文件：路径相对产物目录，内容是字节（正文与页面都是 UTF-8）。 */
+/** 一批里的一份文件：路径相对批次目录，内容是字节（正文与页面都是 UTF-8）。 */
 export interface BatchFile {
   readonly path: string
   readonly bytes: Uint8Array
 }
 
-/** 一次替换的标记：进程号加时刻（只用于临时目录名，不进任何清单）。 */
+/** 批次目录名前缀：`docs-batch-<指纹前 12 位>`。 */
+const BATCH_PREFIX = 'docs-batch-'
+/** 临时链接名：`docs-link-<pid>-<time36>`（只在切换那一瞬间存在）。 */
+const LINK_PREFIX = 'docs-link-'
+/** 老布局迁移时旧目录的去处（恢复用）。 */
+const PREV_PREFIX = 'docs-prev-'
+
+/** 一次替换的标记：进程号加时刻（只用于临时名，不进任何清单）。 */
 function tokenOf(): string {
   return `${process.pid}-${Date.now().toString(36)}`
 }
 
-/** token 里的进程号（`<pid>-<time36>`）；名字认不出来就是 `null`。 */
-function pidOf(token: string): number | null {
-  const head = token.split('-')[0] ?? ''
+/** 名字里的进程号（`<pid>-<time36>`）；认不出来就是 `null`。 */
+function pidOf(name: string): number | null {
+  const head = name.split('-')[0] ?? ''
   if (!/^\d+$/.test(head)) return null
   const n = Number(head)
   return Number.isSafeInteger(n) && n > 0 ? n : null
@@ -55,6 +69,65 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+type Kind = 'missing' | 'link' | 'dir' | 'other'
+
+async function kindOf(path: string): Promise<Kind> {
+  try {
+    const st = await lstat(path)
+    if (st.isSymbolicLink()) return 'link'
+    if (st.isDirectory()) return 'dir'
+    return 'other'
+  } catch {
+    return 'missing'
+  }
+}
+
+/** 入口链接现在指向哪个批次 id；不是链接或读不出来就是 `null`。 */
+async function pointerId(root: string): Promise<string | null> {
+  const docs = docsRootOf(root)
+  if ((await kindOf(docs)) !== 'link') return null
+  let target: string
+  try {
+    target = await readlink(docs)
+  } catch {
+    return null
+  }
+  const name = target.split(/[\\/]/).filter(Boolean).pop() ?? ''
+  return name.startsWith(BATCH_PREFIX) ? name.slice(BATCH_PREFIX.length) : null
+}
+
+/** 一个批次目录的绝对路径。 */
+export function batchDirOf(root: string, id: string): string {
+  return join(root, '.fugue', `${BATCH_PREFIX}${id}`)
+}
+
+/** 这一批的 id：清单里的指纹（同内容 → 同名），没有清单就按文件内容算。 */
+function batchIdOf(files: readonly BatchFile[]): string {
+  const manifest = files.find((f) => f.path === 'manifest.json')
+  if (manifest !== undefined) {
+    try {
+      const m = JSON.parse(new TextDecoder().decode(manifest.bytes)) as { fingerprint?: unknown }
+      if (typeof m.fingerprint === 'string') {
+        const hex = m.fingerprint.replace(/^sha256:/, '')
+        if (/^[0-9a-f]{12,}$/.test(hex)) return hex.slice(0, 12)
+      }
+    } catch {
+      // 清单不是 JSON 时退回按内容算（发布出去的那一份仍然可复现）。
+    }
+  }
+  const h = createHash('sha256')
+  for (const f of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
+    h.update(f.path)
+    h.update(f.bytes)
+  }
+  return h.digest('hex').slice(0, 12)
+}
+
+/** 写完的一批是不是完整（入口与清单都在）。 */
+async function completeBatch(dir: string): Promise<boolean> {
+  return (await exists(join(dir, 'index.html'))) && (await exists(join(dir, 'manifest.json')))
+}
+
 /** 写一批文件到暂存目录（路径里的父目录按需建）。 */
 async function writeStage(stage: string, files: readonly BatchFile[]): Promise<void> {
   for (const f of files) {
@@ -64,6 +137,23 @@ async function writeStage(stage: string, files: readonly BatchFile[]): Promise<v
   }
 }
 
+/** 测试用的崩点：`FUGUE_DOCS_CRASH_AT=<点名>` 时在这一步真的杀掉自己（断言"每个崩点都可读"）。 */
+function crashAt(name: string): void {
+  if (process.env['FUGUE_DOCS_CRASH_AT'] !== name) return
+  process.kill(process.pid, 'SIGKILL')
+}
+
+/** 把临时链接改名到入口（**原子**：要么还是旧的，要么已经是新的）。 */
+async function swapPointer(root: string, linkTmp: string): Promise<void> {
+  const docs = docsRootOf(root)
+  const kind = await kindOf(docs)
+  if (kind === 'dir') {
+    // 老布局迁移：旧目录整个挪到 prev（恢复能把它挪回来），再上链接。
+    await rename(docs, join(root, '.fugue', `${PREV_PREFIX}${tokenOf()}`))
+  }
+  await rename(linkTmp, docs)
+}
+
 /**
  * 把一批文件发布成当前可读产物。返回产物目录。
  *
@@ -71,14 +161,15 @@ async function writeStage(stage: string, files: readonly BatchFile[]): Promise<v
  * 读着一份它以为是新的旧产物。
  */
 export async function publishBatch(root: string, files: readonly BatchFile[]): Promise<string> {
-  const docs = docsRootOf(root)
+  const base = join(root, '.fugue')
+  const id = batchIdOf(files)
   const token = tokenOf()
-  const stage = stageRootOf(root, token)
-  const prev = join(root, '.fugue', `docs-prev-${token}`)
-  await rm(stage, { recursive: true, force: true })
+  const stage = join(base, `${BATCH_PREFIX}${id}.tmp-${token}`)
+  const final = batchDirOf(root, id)
+  await mkdir(base, { recursive: true })
   try {
     await writeStage(stage, files)
-    // 切换前先在暂存里核一遍：入口与清单都在，才值得动旧批次。
+    // 切换前先核一遍：入口与清单都在，才值得动指针。
     if (!(await exists(join(stage, 'manifest.json')))) {
       throw new DocsError('publish', `暂存批次里没有 manifest.json：${stage}`)
     }
@@ -90,85 +181,176 @@ export async function publishBatch(root: string, files: readonly BatchFile[]): P
     if (err instanceof DocsError) throw err
     throw new DocsError('publish', `写不进暂存目录：${(err as Error).message}`)
   }
+  crashAt('stage')
 
-  let moved = false
+  // 同一份指纹的批次已经在盘上：内容逐字节相同，直接用它（不重写一个正在被读的批次）。
   try {
-    if (await exists(docs)) {
-      await rename(docs, prev)
-      moved = true
-    }
-    await rename(stage, docs)
+    if (await completeBatch(final)) await rm(stage, { recursive: true, force: true })
+    else await rename(stage, final)
   } catch (err) {
-    if (moved) {
-      try {
-        await rename(prev, docs)
-      } catch {
-        // 改不回来也留一条能查的话：prev 还在盘上，下一次 recoverPublish 会接上。
-      }
-    }
-    await rm(stage, { recursive: true, force: true })
+    await rm(stage, { recursive: true, force: true }).catch(() => undefined)
+    throw new DocsError('publish', `批次落不下来：${(err as Error).message}`)
+  }
+  crashAt('batch')
+
+  const linkTmp = join(base, `${LINK_PREFIX}${token}`)
+  try {
+    await symlink(`${BATCH_PREFIX}${id}`, linkTmp)
+  } catch (err) {
+    throw new DocsError('publish', `切换指针建不起来：${(err as Error).message}`)
+  }
+  crashAt('link')
+  try {
+    await swapPointer(root, linkTmp)
+  } catch (err) {
+    await rm(linkTmp, { force: true }).catch(() => undefined)
     throw new DocsError('publish', `切换批次失败：${(err as Error).message}`)
   }
-  await rm(prev, { recursive: true, force: true })
-  return docs
+  crashAt('swap')
+  await collect(root)
+  crashAt('cleanup')
+  return docsRootOf(root)
+}
+
+/** 留下当前批次与最近一份完整批次，收掉其余没被指向的批次与残留临时名。 */
+async function collect(root: string): Promise<void> {
+  const base = join(root, '.fugue')
+  const cur = await pointerId(root)
+  // **指针读不出来就一个都不删**：最后一份完整批次不许因为一次读失败被收走。
+  if (cur === null) return
+  let names: string[] = []
+  try {
+    names = await readdir(base)
+  } catch {
+    return
+  }
+  const batches: { name: string; id: string; at: number; complete: boolean }[] = []
+  for (const name of names) {
+    if (!name.startsWith(BATCH_PREFIX)) continue
+    const rest = name.slice(BATCH_PREFIX.length)
+    if (rest.includes('.tmp-')) {
+      const pid = pidOf(rest.split('.tmp-')[1] ?? '')
+      if (pid !== null && pid !== process.pid && alive(pid)) continue
+      await rm(join(base, name), { recursive: true, force: true }).catch(() => undefined)
+      continue
+    }
+    const mtime = await stat(join(base, name)).then((s) => s.mtimeMs).catch(() => 0)
+    batches.push({ name, id: rest, at: mtime, complete: await completeBatch(join(base, name)) })
+  }
+  const linked = batches.find((b) => b.id === cur)
+  const others = batches
+    .filter((b) => b.id !== cur && b.complete)
+    .sort((a, b) => b.at - a.at)
+  const keep = new Set<string>([cur])
+  if (others[0] !== undefined) keep.add(others[0].id)
+  // 指针指向的那一批不完整时，保留最近一份完整批次作为退路（不删它）。
+  if (linked === undefined || !linked.complete) return
+  for (const b of batches) {
+    if (keep.has(b.id)) continue
+    await rm(join(base, b.name), { recursive: true, force: true }).catch(() => undefined)
+  }
+  // 残留的临时链接（交换没走完的那一次）与迁移留下的旧目录：指针有效时才收。
+  for (const name of names) {
+    if (name.startsWith(LINK_PREFIX)) await rm(join(base, name), { force: true }).catch(() => undefined)
+    if (name.startsWith(PREV_PREFIX)) await rm(join(base, name), { recursive: true, force: true }).catch(() => undefined)
+  }
 }
 
 /**
- * 收上次没走完的切换。
+ * 收上次没走完的那一次切换。**它不改当前批次的字节，只在入口缺失时把指针接回去。**
  *
- * 三档：有 `docs-prev-*` 而产物目录不在 → 把旧批次改回来（返回那个 token）；两边都在 →
- * 删掉残留的 prev（新批次已经就位）；只有 `docs-stage-*` → 删掉（从没发布过）。
- * **它不是启动钩子**：由 `docs build` / `docs status` 在动手前各调一次，单次进程没有常驻状态。
+ * 四档：入口缺失而迁移旧目录在 → 把它挪回入口（旧批次仍是那一份）；入口缺失或悬空而有完整
+ * 批次 → 把指针接到最近那一份；入口有效 → 只收残留临时名。**恢复失败时一个批次都不删**。
  */
 export async function recoverPublish(root: string): Promise<string | null> {
   const base = join(root, '.fugue')
+  const docs = docsRootOf(root)
   let names: string[] = []
   try {
     names = await readdir(base)
   } catch {
     return null
   }
-  const prefs = names.filter((n) => n.startsWith('docs-prev-'))
-  const stages = names.filter((n) => n.startsWith('docs-stage-'))
-  const docs = docsRootOf(root)
+  const kind = await kindOf(docs)
+  const linked = kind === 'link' ? await pointerId(root) : null
+  const pointerOk = linked !== null && (await completeBatch(batchDirOf(root, linked)))
   let restored: string | null = null
-  const docsThere = await exists(docs)
-  if (!docsThere && prefs.length > 0) {
-    // **多个 prev 时取最新那个**（目录自己的 mtime 就是那一批落盘的时刻）。
-    // 按名字（pid 字典序）取会拿错：“999-…” 排在 “1000-…” 后面，拿到的不是后来的旧批。
-    const withTime = await Promise.all(
-      prefs.map(async (p) => ({ p, t: (await stat(join(base, p))).mtimeMs })),
-    )
-    withTime.sort((a, b) => (b.t === a.t ? (a.p < b.p ? 1 : -1) : b.t - a.t))
-    const keep = withTime[0]!.p
-    try {
-      await rename(join(base, keep), docs)
-      restored = keep.slice('docs-prev-'.length)
-    } catch {
-      restored = null
+
+  if (kind === 'missing' || (kind === 'link' && !pointerOk)) {
+    // 一 · 迁移留下的旧目录：优先挪回入口（读者看到的是原来那一份完整旧批）。
+    const prevs = names.filter((n) => n.startsWith(PREV_PREFIX))
+    if (prevs.length > 0 && kind === 'missing') {
+      const withTime = await Promise.all(prevs.map(async (p) => ({ p, t: (await stat(join(base, p)).catch(() => ({ mtimeMs: 0 }))).mtimeMs })))
+      withTime.sort((a, b) => b.t - a.t)
+      try {
+        await rename(join(base, withTime[0]!.p), docs)
+        restored = 'legacy'
+        names = names.filter((n) => n !== withTime[0]!.p)
+      } catch {
+        // 挪不回去就什么都不删（下面直接返回）。
+        return null
+      }
+    } else {
+      const batches: { id: string; at: number }[] = []
+      for (const name of names) {
+        if (!name.startsWith(BATCH_PREFIX) || name.includes('.tmp-')) continue
+        const id = name.slice(BATCH_PREFIX.length)
+        if (!(await completeBatch(join(base, name)))) continue
+        batches.push({ id, at: await stat(join(base, name)).then((s) => s.mtimeMs).catch(() => 0) })
+      }
+      batches.sort((a, b) => b.at - a.at)
+      const newest = batches[0]
+      if (newest === undefined) return null
+      const tmp = join(base, `${LINK_PREFIX}${tokenOf()}`)
+      try {
+        await symlink(`${BATCH_PREFIX}${newest.id}`, tmp)
+        await rename(tmp, docs)
+        restored = newest.id
+      } catch {
+        await rm(tmp, { force: true }).catch(() => undefined)
+        return null
+      }
     }
   }
-  for (const p of prefs) {
-    if (restored !== null && p.endsWith(restored)) continue
-    await rm(join(base, p), { recursive: true, force: true })
-  }
-  for (const s of stages) {
-    // **正在写的批次不删**：并发一次 `docs status` 就把另一个进程的暂存收掉，会让它白跑一趟。
-    const pid = pidOf(s.slice('docs-stage-'.length))
-    if (pid !== null && pid !== process.pid && alive(pid)) continue
-    await rm(join(base, s), { recursive: true, force: true })
+
+  // 收残留：死的暂存目录与临时链接（**不删任何完整批次**——那是下一次发布 `collect` 的事）。
+  for (const name of names) {
+    if (name.startsWith(BATCH_PREFIX) && name.includes('.tmp-')) {
+      const pid = pidOf(name.split('.tmp-')[1] ?? '')
+      if (pid !== null && pid !== process.pid && alive(pid)) continue
+      await rm(join(base, name), { recursive: true, force: true }).catch(() => undefined)
+    }
+    if (name.startsWith(LINK_PREFIX)) await rm(join(base, name), { force: true }).catch(() => undefined)
   }
   return restored
 }
 
+/** 当前可读批次所在目录：入口链接 → 批次目录；老布局就是入口自己。 */
+async function currentDirOf(root: string): Promise<string | null> {
+  const docs = docsRootOf(root)
+  const kind = await kindOf(docs)
+  if (kind === 'dir') return docs
+  if (kind !== 'link') return null
+  const id = await pointerId(root)
+  return id === null ? null : batchDirOf(root, id)
+}
+
 /** 读当前批次清单。**不在 = `null`**（还没生成过）；读不动 = 抛——那是产物损坏，不是"没生成"。 */
 export async function readManifest(root: string): Promise<Manifest | null> {
-  const file = join(docsRootOf(root), 'manifest.json')
+  const dir = await currentDirOf(root)
+  if (dir === null) return null
+  const file = join(dir, 'manifest.json')
   let text: string
   try {
     text = await readFile(file, 'utf8')
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      // 入口在而清单不在：指针指着一批不完整的东西，不是"没生成"。
+      if ((await kindOf(docsRootOf(root))) === 'link') {
+        throw new DocsError('publish', `入口指向的批次里没有清单：${file}`)
+      }
+      return null
+    }
     throw new DocsError('publish', `清单读不出来：${file} —— ${(err as Error).message}`)
   }
   let raw: unknown
@@ -190,16 +372,22 @@ export async function readManifest(root: string): Promise<Manifest | null> {
   return raw as Manifest
 }
 
-/** 最近一次生成尝试。**不在 = `null`**（还没试过）。 */
+/** 最近一次生成尝试的位置：**与任何一批都无关**（`<root>/.fugue/docs-last.json`）。 */
+function lastPathOf(root: string): string {
+  return join(root, '.fugue', 'docs-last.json')
+}
+
+/** 最近一次生成尝试。**不在 = `null`**（还没试过）；老布局的 `docs/last.json` 也认。 */
 export async function readLast(root: string): Promise<LastAttempt | null> {
-  const file = join(docsRootOf(root), 'last.json')
-  try {
-    const text = await readFile(file, 'utf8')
-    const raw = JSON.parse(text) as LastAttempt
-    return typeof raw.ok === 'boolean' ? raw : null
-  } catch {
-    return null
+  for (const file of [lastPathOf(root), join(docsRootOf(root), 'last.json')]) {
+    try {
+      const raw = JSON.parse(await readFile(file, 'utf8')) as LastAttempt
+      if (typeof raw.ok === 'boolean') return raw
+    } catch {
+      continue
+    }
   }
+  return null
 }
 
 /** 记一次尝试的结果。**失败也写**：它记的是“最近一次试了什么、为什么没成”。
@@ -208,11 +396,11 @@ export async function readLast(root: string): Promise<LastAttempt | null> {
  * 下一次读到的是“没有记录”——“最近一次”那一栏就静默退回空，比报一个旧值更坏。
  */
 export async function writeLast(root: string, attempt: LastAttempt): Promise<void> {
-  const dir = docsRootOf(root)
-  const file = join(dir, 'last.json')
-  const tmp = join(dir, `last.json.tmp-${tokenOf()}`)
+  const base = join(root, '.fugue')
+  const file = lastPathOf(root)
+  const tmp = join(base, `docs-last.json.tmp-${tokenOf()}`)
   try {
-    await mkdir(dir, { recursive: true })
+    await mkdir(base, { recursive: true })
     await writeFile(tmp, JSON.stringify(attempt, null, 2) + '\n')
     await rename(tmp, file)
   } catch (err) {
@@ -237,11 +425,12 @@ export function digestOf(files: readonly BatchFile[]): { path: string; sha: stri
  * 也是"这一批不再可信"，而状态要说得出来。
  */
 export async function batchIntegrity(root: string, manifest: Manifest): Promise<string[]> {
-  const docs = docsRootOf(root)
+  const dir = await currentDirOf(root)
+  if (dir === null) return manifest.files.map((f) => f.path)
   const bad: string[] = []
   for (const f of manifest.files) {
     try {
-      const bytes = await readFile(join(docs, f.path))
+      const bytes = await readFile(join(dir, f.path))
       const sha = createHash('sha256').update(bytes).digest('hex')
       if (sha !== f.sha || bytes.length !== f.bytes) bad.push(f.path)
     } catch {

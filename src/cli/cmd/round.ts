@@ -558,6 +558,7 @@ export async function roundRun(
       run: started,
       live,
       replay: wireIn !== undefined,
+      session: await sessionForDocs(ctx, round, started.base),
     })
     return emitRunFace({ json, flags, run: started, stops, deniedAction, report, attribution: [...attribution], metrics, docs })
   } catch (err) {
@@ -568,6 +569,28 @@ export async function roundRun(
     // **agent 那几个口由调用方关**（`runRound` 只借不还）。
     await closeAgentLogs()
     await ctx.close()
+  }
+}
+
+/**
+ * 本轮会话：**自动收口把它接进写作输入**（交接单 § 2.5 的 "A + B + C"）。
+ *
+ * 从同一条调用链上已有的那份视图读（与 `holderOf` 里读的是同一个坐标：
+ * `.fugue/session/<轮次>.jsonl`），而不是另起一份。读不到就是空串——第一次说话之前这一场
+ * 对话还没有一条。取到的路径与正文交给 `docsAtClose` 写进材料范围。
+ */
+async function sessionForDocs(
+  ctx: { readonly log: Log; readonly truth: TruthHandle },
+  round: string,
+  base: CommitId,
+): Promise<{ readonly path: string; readonly text: string }> {
+  const path = String(sessionPathOf(round as RoundId))
+  try {
+    const view = await loadView(ctx.log, 'round' as WriterId, { lower: lowerAt(ctx.truth, base) })
+    const bytes = await view.read(sessionPathOf(round as RoundId))
+    return { path, text: bytes === null ? '' : new TextDecoder().decode(bytes) }
+  } catch {
+    return { path, text: '' }
   }
 }
 
@@ -1371,6 +1394,7 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
       run,
       live: wire.live,
       replay: wire.wireIn !== undefined,
+      session: await sessionForDocs(ctx, round, run.base),
     })
     return emitRunFace({ json, flags, run, stops, deniedAction: null, report, attribution: [...attribution], metrics, docs })
   } catch (err) {

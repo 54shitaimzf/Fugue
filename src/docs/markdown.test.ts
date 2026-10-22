@@ -2,11 +2,76 @@
 //
 // 判据来自交接单 § 2.1：链接是真实链接、章节有稳定 ID、展开入口写清内容、主结论不在折叠里；
 // § 2.6：宿主校验"引用是否可达、操作是否成立"；以及"无法兑现的表达如实说明并保留完整可读内容"。
+//
+// **两条抓内容的断言在最后**（⑭ 上手页六步与五条命令 · ⑮ 七份真实正文的每一段可读文字都有着落）：
+// 1583 条断言全绿与"这一页丢了五步"曾经同时成立，缺的正是这一条——拿真实正文当输入。
 import assert from 'node:assert/strict'
+import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
-import { renderMarkdown, slugOf } from './markdown.ts'
+import { escapeHtml, plainInline, renderMarkdown, slugOf } from './markdown.ts'
 
 const resolve = (raw: string): { href: string } => ({ href: raw })
+
+const CONTENT_DIR = new URL('../../test/fixtures/docs-content/', import.meta.url)
+
+function bodyOf(name: string): string {
+  return readFileSync(new URL(name, CONTENT_DIR), 'utf8')
+}
+
+/** 页面里的可读文字：去掉脚本与样式，标签折成空格，实体解回来，空白并成一个。 */
+function visibleOf(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/g, ' ')
+    .replace(/<style[\s\S]*?<\/style>/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, '')
+}
+
+/**
+ * 一份正文里"读者应该能读到的每一段文字"。
+ *
+ * 它从**同一套标记**出发：围栏里的每一行是原文，其余行去掉标题/列表/引用/表格分隔/块的标记，
+ * 再用 `plainInline`（渲染器自己那一处）剥行内标记。于是这条断言量与的是"字还在不在"，
+ * 不是"标签长什么样"。
+ */
+function readableOf(md: string): string[] {
+  const out: string[] = []
+  let fence = false
+  for (const raw of md.replace(/\r\n/g, '\n').split('\n')) {
+    const line = raw.trimEnd()
+    if (/^\s*```/.test(line)) {
+      fence = !fence
+      continue
+    }
+    if (fence) {
+      if (line.trim() !== '') out.push(line)
+      continue
+    }
+    const t = line.trim()
+    if (t === '' || /^:::\s*$/.test(t)) continue
+    const open = /^:::\s*[a-z][a-z0-9-]*\s*(.*)$/.exec(t)
+    if (open !== null) {
+      if ((open[1] ?? '').trim() !== '') out.push(open[1]!.trim())
+      continue
+    }
+    if (t.startsWith('|') && /^[\s:|-]+$/.test(t)) continue // 表格分隔行
+    if (t.startsWith('|')) {
+      for (const cell of t.replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/)) {
+        if (cell.trim() !== '') out.push(cell.trim().replace(/\\\|/g, '|'))
+      }
+      continue
+    }
+    out.push(t.replace(/^#{1,6}\s+/, '').replace(/^\s*([-*]|\d+\.)\s+/, '').replace(/^>\s?/, ''))
+  }
+  return out
+    .map((s) => plainInline(s).replace(/\s+/g, ''))
+    .filter((s) => s.length >= 8)
+}
 
 test('① 标题：稳定 ID 由文字推、`{#id}` 优先、重名去重、H1 让位给宿主（降到 H2）', () => {
   const r = renderMarkdown(
@@ -43,7 +108,7 @@ test('② 代码：语言类名保留、原文逐字转义（生成内容写不�
   console.log(`② 读数：转义 ${r.html.includes('&lt;script&gt;') ? 'ok' : 'FAIL'} · 未收尾记 note`)
 })
 
-test('③ 表格与列表：结构、对齐、嵌套各就各位', () => {
+test('③ 表格与列表：结构、对齐、嵌套各就各位（块 id 落在容器上，不挡选择器）', () => {
   const md = [
     '| 参数 | 含义 |',
     '| --- | --- |',
@@ -59,9 +124,9 @@ test('③ 表格与列表：结构、对齐、嵌套各就各位', () => {
   const r = renderMarkdown(md)
   assert.ok(r.html.includes('<thead><tr><th scope="col">参数</th>'))
   assert.ok(r.html.includes('<td><code>--at</code></td>'))
-  assert.ok(/<ul><li>第一<ul><li>嵌套<\/li><\/ul><\/li><li>第二<\/li><\/ul>/.test(r.html), r.html)
-  assert.ok(r.html.includes('<ol><li>一步</li><li>两步</li></ol>'))
-  console.log('③ 读数：表头 2 列 · 嵌套列表一层 · 有序列表')
+  assert.ok(/<ul[^>]*><li>第一<ul[^>]*><li>嵌套<\/li><\/ul><\/li><li>第二<\/li><\/ul>/.test(r.html), r.html)
+  assert.ok(/<ol[^>]*><li>一步<\/li><li>两步<\/li><\/ol>/.test(r.html))
+  console.log('③ 读数：表头 2 列 · 嵌套列表一层 · 有序列表 · 三块各有 id')
 })
 
 test('④ 块：note/details/tabs/steps/figure 各自成立，且无 JS 也能用', () => {
@@ -93,8 +158,8 @@ test('④ 块：note/details/tabs/steps/figure 各自成立，且无 JS 也能�
     ':::',
   ].join('\n')
   const r = renderMarkdown(md)
-  assert.ok(r.html.includes('<div class="callout note"><p class="callout-title">前置条件</p>'))
-  assert.ok(/<details>\s*<summary>完整参数表<\/summary>/.test(r.html), '原生展开，不靠脚本')
+  assert.ok(/<div class="callout note"[^>]*><p class="callout-title">前置条件<\/p>/.test(r.html), r.html)
+  assert.ok(/<details[^>]*>\s*<summary>完整参数表<\/summary>/.test(r.html), '原生展开，不靠脚本')
   // 标签是收音机 + 紧挨着的 label：`:checked + label` 是选中态的唯一判据
   assert.ok(/<input class="tabin" type="radio" name="tabs-1" id="tabs-1-1" checked><label for="tabs-1-1">第一次<\/label>/.test(r.html), r.html)
   assert.equal((r.html.match(/class="tabpanel"/g) ?? []).length, 2)
@@ -209,9 +274,77 @@ test('⑫ 转义的反引号：不参与配对，整句仍是一个代码段；�
 
 test('⑬ 没写收尾的 details 不许把后面整页藏起来（退化档：收在下一个二级标题之前）', () => {
   const r = renderMarkdown(['::: details 细节', '藏在里面', '', '## 后面', '', '正文还在。'].join('\n'))
-  const d = r.html.slice(r.html.indexOf('<details>'), r.html.indexOf('</details>') + 10)
+  const at = r.html.indexOf('<details')
+  const d = r.html.slice(at, r.html.indexOf('</details>') + 10)
   assert.ok(d.includes('藏在里面'))
   assert.ok(!d.includes('正文还在。'), '后面的正文不许被吞进 details')
   assert.ok(r.html.includes('正文还在。'))
   console.log(`⑬ 读数：details 只包住自己那一段 · note：${r.notes.join(' / ')}`)
+})
+
+test('⑭ 上手页：六个步骤与五条命令都在页面里（拿当前正文当固定输入，复审 R1 的负对照）', () => {
+  const md = bodyOf('start.md')
+  const r = renderMarkdown(md)
+  const steps = r.html.match(/class="step"/g) ?? []
+  assert.equal(steps.length, 6, `上手页要有 6 步，页面里只有 ${steps.length} 步`)
+  // 一条 `::: steps` 包成一张有序列表（六个"1."不各自从头数）
+  const stepsAt = r.html.indexOf('<div class="steps"')
+  const stepsBox = r.html.slice(stepsAt, r.html.indexOf('</div>', stepsAt))
+  assert.equal((stepsBox.match(/<ol/g) ?? []).length, 1, '六步要在同一张有序列表里')
+  assert.equal((stepsBox.match(/class="step"/g) ?? []).length, 6, '同一张列表里六项')
+  for (const cmd of [
+    'fugue config set actions.test',
+    'fugue config set round.id r1',
+    'fugue round plan',
+    'fugue round go',
+    'fugue round work --live --max-steps 8',
+  ]) {
+    assert.ok(r.html.includes(escapeHtml(cmd)), `页面上找不到这条命令：${cmd}`)
+  }
+  console.log(`⑭ 读数：${steps.length} 步 · 五条命令都在 · 页面 ${r.html.length} 字符`)
+})
+
+test('⑮ 七份真实正文：每一段可读文字都在页面或 notes 里（不是只数反引号）', () => {
+  const names = readdirSync(CONTENT_DIR).filter((n) => n.endsWith('.md')).sort()
+  assert.equal(names.length, 7, `固定材料要有七份：${names.join(' · ')}`)
+  let total = 0
+  for (const name of names) {
+    const md = bodyOf(name)
+    const r = renderMarkdown(md)
+    const page = visibleOf(r.html)
+    const notes = visibleOf(r.notes.join('\n'))
+    const missing = readableOf(md).filter((seg) => !page.includes(seg) && !notes.includes(seg))
+    total += readableOf(md).length
+    assert.deepEqual(missing, [], `${name} 里有 ${missing.length} 段文字在页面与 notes 里都找不到：${missing.slice(0, 5).join(' | ')}`)
+  }
+  console.log(`⑮ 读数：7 份 · ${total} 段可读文字全部有着落`)
+})
+
+test('⑯ 内容块与宿主控件各占各的命名空间：`content`/`doc-*` 撞不上，重名不产生两个同名 id', () => {
+  const md = [
+    '## content {#content}',
+    '',
+    '正文甲。这一段要够长才不触发别的东西。',
+    '',
+    '## x',
+    '',
+    '正文乙。',
+    '',
+    '## x',
+    '',
+    '正文丙。',
+    '',
+    '## x-2',
+    '',
+    '正文丁。',
+  ].join('\n')
+  const r = renderMarkdown(md, { reserved: ['content', 'doc-search', 'doc-q'] })
+  const ids = [...r.html.matchAll(/ id="([^"]+)"/g)].map((m) => m[1])
+  assert.equal(new Set(ids).size, ids.length, `id 撞了：${ids.join(' · ')}`)
+  assert.ok(!ids.includes('content'), '正文不许占宿主控件的 id')
+  // 三个都叫 x 的标题 + 一个 x-2：四个请求名落成四个不同 id（不是两个 x-2）
+  const xIds = r.headings.filter((h) => h.text === 'x' || h.text === 'x-2').map((h) => h.id)
+  assert.equal(new Set(xIds).size, xIds.length, `重名去重要真的去重：${xIds.join(' · ')}`)
+  assert.equal(xIds.length, 3, `三个标题（x · x · x-2）各一个 id：${xIds.join(' · ')}`)
+  console.log(`⑯ 读数：${ids.length} 个 id 全不重复 · content 让给宿主 · x 一族 ${xIds.join('/')}`)
 })

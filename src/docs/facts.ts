@@ -13,7 +13,7 @@
 import type { Truth } from '../truth/contract.ts'
 import type { CommitId, RelPath } from '../terms.ts'
 import { createHash } from 'node:crypto'
-import type { DocsPlan, SourceFact, TreeFacts } from './contract.ts'
+import type { DocsPlan, FileRange, SourceFact, TreeFacts } from './contract.ts'
 import { DocsError } from './contract.ts'
 
 /** 整棵树的路径表与两个数。 */
@@ -140,32 +140,80 @@ export function looksBinary(bytes: Uint8Array): boolean {
 /** 一段摘录：给模型读的那一份。 */
 export interface Excerpt {
   readonly path: string
+  /** 贴出来的原文（多段时中间标出跳过的行）。 */
   readonly text: string
   readonly bytes: number
+  /** 这份文件一共多少行 · 多少字符（截断范围的判据）。 */
+  readonly lines: number
+  readonly chars: number
+  /** 真贴出来的行段（1 起，含两端；按行序、不重叠）。 */
+  readonly shown: readonly FileRange[]
   readonly truncated: boolean
+}
+
+/** 两段行之间合并：重叠或相邻就连成一段。 */
+function mergeRanges(ranges: readonly FileRange[], lines: number): FileRange[] {
+  const clean = ranges
+    .map((r) => ({ from: Math.max(1, Math.min(lines, Math.floor(r.from))), to: Math.max(1, Math.min(lines, Math.floor(r.to))) }))
+    .filter((r) => r.to >= r.from)
+    .sort((a, b) => a.from - b.from || a.to - b.to)
+  const out: FileRange[] = []
+  for (const r of clean) {
+    const last = out[out.length - 1]
+    if (last !== undefined && r.from <= last.to + 1) {
+      if (r.to > last.to) out[out.length - 1] = { from: last.from, to: r.to }
+      continue
+    }
+    out.push(r)
+  }
+  return out
 }
 
 /**
  * 从提交里取一份摘录（模型点名要读的那几份）。
  *
- * **三道上界**：单份 `limit` · 二进制跳过 · 不存在返回 `null`。返回 `truncated` 是为了让
- * 模型知道"这不是全文"——拿半份当全文写结论，比读不到更坏。
+ * **两份材料**：开头一段（`limit` 个字符）与模型点名补读的行段（`ranges`）。两样合起来就是
+ * 这一次真看到的内容；`shown` 把行段逐段记下来，清单里据此能说出"哪些结论只看到开头"。
+ *
+ * 三道上界：单份 `limit` · 二进制跳过 · 不存在返回 `null`。
  */
 export async function excerptAt(
   truth: Truth,
   commit: CommitId,
   path: string,
-  limit: number,
+  opts: { readonly limit: number; readonly ranges?: readonly FileRange[] },
 ): Promise<Excerpt | null> {
   const bytes = await truth.readAt(commit, path as RelPath)
   if (bytes === null) return null
   if (looksBinary(bytes)) return null
   const text = new TextDecoder().decode(bytes)
-  const truncated = text.length > limit
+  const all = text.split('\n')
+  const lines = all.length
+  const chars = text.length
+  // 开头一段：一直取到超过 limit 个字符的那一行之前。
+  let headEnd = 0
+  let taken = 0
+  while (headEnd < lines && (headEnd === 0 || taken + all[headEnd]!.length + 1 <= opts.limit)) {
+    taken += all[headEnd]!.length + 1
+    headEnd += 1
+  }
+  const wanted: FileRange[] = [{ from: 1, to: Math.max(1, headEnd) }, ...(opts.ranges ?? [])]
+  const shown = mergeRanges(wanted, lines)
+  const parts: string[] = []
+  let expect = 1
+  for (const r of shown) {
+    if (r.from > expect) parts.push(`…（跳过第 ${expect}–${r.from - 1} 行）…`)
+    parts.push(all.slice(r.from - 1, r.to).join('\n'))
+    expect = r.to + 1
+  }
+  if (expect <= lines) parts.push(`…（第 ${expect} 行到第 ${lines} 行没贴）…`)
   return {
     path,
-    text: truncated ? `${text.slice(0, limit)}\n…（这份还有 ${text.length - limit} 个字符没贴；不要把它当全文）` : text,
+    text: parts.join('\n'),
     bytes: bytes.length,
-    truncated,
+    lines,
+    chars,
+    shown,
+    truncated: shown.length === 0 || shown[0]!.from > 1 || shown[shown.length - 1]!.to < lines,
   }
 }

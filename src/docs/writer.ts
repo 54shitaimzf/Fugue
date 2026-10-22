@@ -15,7 +15,7 @@ import type { Catalog } from '../model/catalog.ts'
 import { authWith, promptCacheFor } from '../model/contract.ts'
 import type { ModelDecl, ModelRequest, ThinkingLevel } from '../model/contract.ts'
 import { callModel, targetAt } from '../model/http.ts'
-import type { DocCall, DocCaller, DocCallRequest } from './contract.ts'
+import type { DocCall, DocCaller, DocCallRequest, ModelFacts } from './contract.ts'
 import { DocsError } from './contract.ts'
 
 export interface CallerOptions {
@@ -76,6 +76,21 @@ function requestOf(
   }
 }
 
+/**
+ * 一台机器的模型声明（不取凭据）。**指纹只认这一份**：`build` 与 `status` 都从这里取"用了哪个模型"。
+ */
+export function modelFactsFromConfig(config: ConfigDoc, model: string | undefined, cat: Catalog = readCatalog()): ModelFacts {
+  const decl = declOf(config, model, cat)
+  return {
+    id: decl.id,
+    wireModel: decl.model,
+    thinking: decl.call.thinking ?? null,
+    temperature: decl.call.temperature ?? null,
+    maxTokens: decl.call.maxTokens,
+    contextLimit: decl.contextLimit,
+  }
+}
+
 /** 建一个真档写作接缝。**声明在这里查一次**（写错模型名当场拒，不等到发请求）。 */
 export function callerOf(o: CallerOptions): DocCaller {
   const cat = readCatalog()
@@ -98,6 +113,14 @@ export function callerOf(o: CallerOptions): DocCaller {
     model: decl.id,
     wireModel: decl.model,
     ...(decl.call.thinking === undefined ? {} : { thinking: decl.call.thinking }),
+    facts: {
+      id: decl.id,
+      wireModel: decl.model,
+      thinking: decl.call.thinking ?? null,
+      temperature: decl.call.temperature ?? null,
+      maxTokens: decl.call.maxTokens,
+      contextLimit: decl.contextLimit,
+    },
     async call(req: DocCallRequest): Promise<DocCall> {
       const t = targetNow()
       const request = requestOf(decl, req, req.thinking ?? decl.call.thinking, req.maxTokens)

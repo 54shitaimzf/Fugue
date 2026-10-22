@@ -16,6 +16,10 @@
 //
 // **标题 ID 是稳定地址的一半**：`slugOf` 由标题文字推出来，同一主题重生成时不变；标题改了而
 // 主题没变时，旧地址由 `aliases`（上一批清单里的 anchor 对照）落成 `<span id="旧">`。
+//
+// **每一块都带一个可定位的 id**（`doc-b-<n>`）：查找命中落到具体内容块，落在折叠内容里也能到
+// （`page.ts` 的揭示脚本展开全部祖辈）。块 id 的位置变了不要紧——它不是对外承诺的地址，
+// 查找结果当页生成、当页使用。
 import { MAX_TABS } from './style.ts'
 
 /** 正文里的一个标题。 */
@@ -23,6 +27,20 @@ export interface MdHeading {
   readonly id: string
   readonly text: string
   readonly level: number
+}
+
+/**
+ * 正文里一个**可定位的内容块**：查找索引存的就是它。
+ *
+ * `text` 是这一块的全部可读文字（**不截断**）——查找覆盖整份正文靠这一栏，而不是每一节的开头。
+ */
+export interface MdBlock {
+  readonly id: string
+  readonly text: string
+  /** 所属章节的标题 id（搜索结果里作"§ 章节"与退化锚点）。 */
+  readonly heading: string
+  /** 所属章节的标题文字。 */
+  readonly section: string
 }
 
 /** 一次引用（跨页校验与清单要用）。 */
@@ -35,6 +53,8 @@ export interface MdLink {
 export interface MdResult {
   readonly html: string
   readonly headings: readonly MdHeading[]
+  /** 内容块（按文档次序；查找索引从这一份生成，与渲染同源）。 */
+  readonly blocks: readonly MdBlock[]
   readonly links: readonly MdLink[]
   /** 兑不掉、如实记下的地方（不可达的引用 · 未识别的块 · 截断的容器）。 */
   readonly notes: readonly string[]
@@ -43,14 +63,51 @@ export interface MdResult {
 /** 引用与图片怎么落到产物里。`null` = 兑不掉（保留文字，记一条 note）。 */
 export type Resolver = (raw: string, kind: 'link' | 'image') => { readonly href: string; readonly note?: string } | null
 
+/**
+ * 一页里所有会落到 `id` 上的名字的分配器：**标题 · 内容块 · 旧别名 · 宿主控件共用一个表**。
+ *
+ * 原先按"请求的 id"各自计数，`x` · `x` · `x-2` 会撞出两个 `x-2`（第二刀里那处口子）。
+ * 现在只有一个判据：这个 id 在这一页里被占过没有。
+ */
+export interface IdAllocator {
+  /** 拿一个这一页里没被占过的 id（撞了就在后面加 `-2` · `-3`…）。 */
+  take(want: string): string
+  /** 预先占掉几个（宿主控件 · 旧别名）。 */
+  reserve(...names: readonly string[]): void
+}
+
+export function idAllocator(reserved: readonly string[] = []): IdAllocator {
+  const used = new Set(reserved)
+  return {
+    take(want: string): string {
+      let id = want
+      let n = 1
+      while (used.has(id)) {
+        n += 1
+        id = `${want}-${n}`
+      }
+      used.add(id)
+      return id
+    },
+    reserve(...names: readonly string[]): void {
+      for (const n of names) used.add(n)
+    },
+  }
+}
+
 export interface RenderOptions {
   readonly resolve?: Resolver
   /** 新标题 ID → 旧 ID（旧深链接的去向）。 */
   readonly aliases?: Readonly<Record<string, readonly string[]>>
   /** 标题从几级起算（正文页从 2：H1 由宿主按定义加）。 */
   readonly baseLevel?: number
-  /** 一页里标题 ID 的起点（同一页内的去重表由调用方跨段共享时用）。 */
-  readonly used?: Map<string, number>
+  /** 不属于正文、但同一页里已经占着的 id（宿主控件）。 */
+  readonly reserved?: readonly string[]
+  /**
+   * 已经定下来的标题 id（第一趟渲染的结果）。第二趟照用，于是"跨页校验认的 id"与"页面里印的
+   * id"不可能错开一格；同时它们被预先占掉，内容块不会撞上标题。
+   */
+  readonly headingIds?: readonly string[]
 }
 
 /** 标题文字 → 稳定 ID。中文按字保留，空白与 `_` 折成连字符，其余标点丢掉。 */
@@ -77,9 +134,14 @@ export function escapeHtml(text: string): string {
 
 interface Ctx {
   headings: MdHeading[]
+  blocks: MdBlock[]
   links: MdLink[]
   notes: string[]
-  used: Map<string, number>
+  ids: IdAllocator
+  /** 当前所在章节（内容块记它，查找结果据此显示"§ 章节"）。 */
+  section: { id: string; text: string }
+  /** 内容块的序号（id 的候选名；撞了由分配器兜）。 */
+  blockSeq: number
 }
 
 function isBlank(line: string | undefined): boolean {
@@ -236,14 +298,11 @@ function headingOf(line: string, ctx: Ctx, opts: RenderOptions): { level: number
   return { level, text, want }
 }
 
-function uniqueId(want: string, ctx: Ctx): string {
-  const n = ctx.used.get(want) ?? 0
-  ctx.used.set(want, n + 1)
-  return n === 0 ? want : `${want}-${n + 1}`
-}
-
-/** 标题的纯文字形式：目录、查找与清单拿它显示（`inline()` 只管标题自己那一截 HTML）。 */
-function plainInline(text: string): string {
+/** 标题的纯文字形式：目录、查找与清单拿它显示（`inline()` 只管标题自己那一截 HTML）。
+ *
+ * 它也是“正文完整性”那条断言的取材处（测试从同一处剥标记）：两处各写一份剥法就会漂。
+ */
+export function plainInline(text: string): string {
   return text
     .replace(/`([^`]*)`/g, '$1')
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
@@ -256,11 +315,26 @@ function plainInline(text: string): string {
     .trim()
 }
 
+/** 一个内容块：拿 id（撞了就换一个），把它的全文记进查找索引。返回印在元素上的 id。 */
+function pushBlock(ctx: Ctx, raw: string): string {
+  ctx.blockSeq += 1
+  const id = ctx.ids.take(`doc-b-${ctx.blockSeq}`)
+  const text = plainInline(raw).replace(/\s+/g, ' ').trim()
+  if (text !== '') ctx.blocks.push({ id, text, heading: ctx.section.id, section: ctx.section.text })
+  return id
+}
+
 function renderHeading(line: string, ctx: Ctx, opts: RenderOptions): string {
   const { level, text, want } = headingOf(line, ctx, opts)
-  const id = uniqueId(want ?? slugOf(text), ctx)
-  // **标题表里放纯文字**：目录与查找直接拿它显示，带反引号/星号的原文会在导航里漏出标记。
-  ctx.headings.push({ id, text: plainInline(text), level })
+  const fixed = opts.headingIds?.[ctx.headings.length]
+  const id = fixed ?? ctx.ids.take(want ?? slugOf(text))
+  // **定下来的 id 也预先占掉**：内容块与别名不许撞上它。
+  ctx.ids.reserve(id)
+  const plain = plainInline(text)
+  ctx.headings.push({ id, text: plain, level })
+  ctx.section = { id, text: plain }
+  // 章节标题本身也是可查的词（"前置条件"这种词常常只在标题上）。
+  ctx.blocks.push({ id, text: plain, heading: id, section: plain })
   const anchor = `<a class="anchor" href="#${escapeHtml(id)}" aria-label="这一节的链接">#</a>`
   const alias = (opts.aliases?.[id] ?? [])
     .map((old) => `<span class="anchor-alias" id="${escapeHtml(old)}"></span>`)
@@ -269,7 +343,13 @@ function renderHeading(line: string, ctx: Ctx, opts: RenderOptions): string {
 }
 
 /** 表格：表头 + `| --- |` 分隔行。 */
-function tableAt(lines: readonly string[], at: number, ctx: Ctx, opts: RenderOptions): { html: string; next: number } | null {
+function tableAt(
+  lines: readonly string[],
+  at: number,
+  ctx: Ctx,
+  opts: RenderOptions,
+  id: string,
+): { html: string; next: number; text: string } | null {
   const head = lines[at]!
   // 判据是两行：表头里有 |，紧跟着的那一行是分隔行。少一样就不是表格（当段落读）。
   if (!head.includes('|')) return null
@@ -318,8 +398,9 @@ function tableAt(lines: readonly string[], at: number, ctx: Ctx, opts: RenderOpt
   }
   const body = rows.map((r) => `<tr>${rowOf(r)}</tr>`).join('\n')
   return {
-    html: `<div class="table-wrap"><table>\n<thead><tr>${th}</tr></thead>\n<tbody>\n${body}\n</tbody>\n</table></div>`,
+    html: `<div class="table-wrap" id="${escapeHtml(id)}"><table>\n<thead><tr>${th}</tr></thead>\n<tbody>\n${body}\n</tbody>\n</table></div>`,
     next: j,
+    text: [...headers, ...rows.flat()].join(' '),
   }
 }
 
@@ -329,7 +410,7 @@ function tableAt(lines: readonly string[], at: number, ctx: Ctx, opts: RenderOpt
  * **顶层的块与列表项里的块共用这一个**：围栏的收尾判据、语言类名与“没写收尾”的 note
  * 只有一处，两种位置不会读出两种结果。
  */
-function fenceAt(lines: readonly string[], at: number, ctx: Ctx): { html: string; next: number } {
+function fenceAt(lines: readonly string[], at: number, ctx: Ctx, id: string | null = null): { html: string; next: number; code: string } {
   const fence = /^\s*```\s*([\w-]*)\s*$/.exec(lines[at]!)
   const lang = fence?.[1] ?? ''
   // **按围栏自己的缩进去掉一层**：列表项里的代码块缩进属于容器，不属于命令原文。
@@ -345,25 +426,62 @@ function fenceAt(lines: readonly string[], at: number, ctx: Ctx): { html: string
   }
   if (j >= lines.length) ctx.notes.push('代码围栏没有收尾：后面一直读到页末')
   const cls = lang === '' ? '' : ` class="language-${escapeHtml(lang)}"`
-  return { html: `<pre><code${cls}>${escapeHtml(body.join('\n'))}</code></pre>`, next: j + 1 }
+  const code = body.join('\n')
+  const attr = id === null ? '' : ` id="${escapeHtml(id)}"`
+  return { html: `<pre${attr}><code${cls}>${escapeHtml(code)}</code></pre>`, next: j + 1, code }
 }
 
-/** 列表：一层缩进嵌套；`steps` 里换一种包法（每项一个 `.step`）。 */
+/**
+ * 列表：一层缩进嵌套；`steps` 里换一种包法（每项一个 `.step`）。
+ *
+ * **空行不是列表的结尾**：`1. 甲` 空一行 `2. 乙` 是同一张列表（GFM 的 loose list）。原先在空行
+ * 处返回，于是"六步写在六个空行隔开的列表里"只呈现了第一步——正文静默丢五步（复审 R1）。
+ */
 function listAt(
   lines: readonly string[],
   at: number,
   ctx: Ctx,
   opts: RenderOptions,
   asSteps = false,
-): { html: string; next: number } {
+  id: string | null = null,
+): { html: string; next: number; text: string } {
   const indent = indentOf(lines[at]!)
   const ordered = /^\s*\d+\.\s/.test(lines[at]!)
   // 一项里可能混着文字与块（代码围栏）：文字攒一段一起做行内，块按块拼回原位。
-  const items: { parts: { html: boolean; s: string }[]; nested: string[] }[] = []
+  const items: { parts: { html: boolean; s: string }[]; nested: string[]; plain: string[] }[] = []
+  const sameItem = (line: string): boolean => {
+    const m = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(line)
+    return m !== null && m[1]!.length === indent && /^\s*\d+\.\s/.test(line) === ordered
+  }
   let j = at
   while (j < lines.length) {
     const line = lines[j]!
-    if (isBlank(line)) break
+    if (isBlank(line)) {
+      // **空行之后还是同一张列表**（下一行仍是这一层的项）；否则它结束的是"这一项的那一段"。
+      let k = j + 1
+      while (k < lines.length && isBlank(lines[k]!)) k += 1
+      if (k >= lines.length) break
+      const next = lines[k]!
+      if (sameItem(next)) {
+        j = k
+        continue
+      }
+      if (items.length > 0 && indentOf(next) > indent) {
+        if (/^\s*([-*]|\d+\.)\s+/.test(next)) {
+          const sub = listAt(lines, k, ctx, opts, asSteps)
+          items[items.length - 1]!.nested.push(sub.html)
+          items[items.length - 1]!.plain.push(sub.text)
+          j = sub.next
+          continue
+        }
+        // 空行之后的缩进续行仍属于上一项（列表项里的第二段，不另起一项）
+        items[items.length - 1]!.parts.push({ html: false, s: next.trim() })
+        items[items.length - 1]!.plain.push(next.trim())
+        j = k + 1
+        continue
+      }
+      break
+    }
     const m = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(line)
     if (m === null) {
       // **围栏是块，不是续行**：列表项里的代码块按块渲染。
@@ -371,12 +489,14 @@ function listAt(
       if (items.length > 0 && indentOf(line) > indent && /^\s*```\s*[\w-]*\s*$/.test(line)) {
         const f = fenceAt(lines, j, ctx)
         items[items.length - 1]!.parts.push({ html: true, s: f.html })
+        items[items.length - 1]!.plain.push(f.code)
         j = f.next
         continue
       }
       // 续行：算上一条的一部分（列表项里的换行不是新段落）
       if (items.length > 0 && indentOf(line) >= indent) {
         items[items.length - 1]!.parts.push({ html: false, s: line.trim() })
+        items[items.length - 1]!.plain.push(line.trim())
         j += 1
         continue
       }
@@ -387,11 +507,12 @@ function listAt(
     if (ind > indent) {
       const sub = listAt(lines, j, ctx, opts, asSteps)
       items[items.length - 1]?.nested.push(sub.html)
+      items[items.length - 1]?.plain.push(sub.text)
       j = sub.next
       continue
     }
     if (items.length > 0 && /^\s*\d+\.\s/.test(line) !== ordered) break
-    items.push({ parts: [{ html: false, s: m[3]! }], nested: [] })
+    items.push({ parts: [{ html: false, s: m[3]! }], nested: [], plain: [m[3]!] })
     j += 1
   }
   const lis = items
@@ -415,7 +536,8 @@ function listAt(
     })
     .join('')
   const tag = ordered ? 'ol' : 'ul'
-  return { html: `<${tag}>${lis}</${tag}>`, next: j }
+  const attr = id === null ? '' : ` id="${escapeHtml(id)}"`
+  return { html: `<${tag}${attr}>${lis}</${tag}>`, next: j, text: items.flatMap((it) => it.plain).join(' ') }
 }
 
 /**
@@ -472,27 +594,36 @@ function renderContainer(lines: readonly string[], at: number, ctx: Ctx, opts: R
   // **块内内容按需渲染，不预先渲染一遍**：`tabs` 里面是若干 `::: tab`，先整体渲染一遍会把
   // 每个 tab 都当成"不在 tabs 里的孤立块"，既多记两条 note，也让标题表多收一遍。
   const blockOf = (body: readonly string[]): string => renderBlocks(body, ctx, opts, group)
+  const idOf = (): string => pushBlock(ctx, plainInline(open.arg))
   switch (open.kind) {
     case 'note':
     case 'tip':
     case 'warn':
     case 'danger': {
+      const id = idOf()
       const title = open.arg === '' ? '' : `<p class="callout-title">${inline(open.arg, ctx, opts)}</p>`
-      return { html: `<div class="callout ${open.kind}">${title}${blockOf(took.inner)}</div>`, next: took.next }
+      return { html: `<div class="callout ${open.kind}" id="${escapeHtml(id)}">${title}${blockOf(took.inner)}</div>`, next: took.next }
     }
     case 'details': {
+      const id = idOf()
       const summary = open.arg === '' ? '更多信息' : inline(open.arg, ctx, opts)
-      return { html: `<details>\n<summary>${summary}</summary>\n${blockOf(took.inner)}\n</details>`, next: took.next }
+      return { html: `<details id="${escapeHtml(id)}">\n<summary>${summary}</summary>\n${blockOf(took.inner)}\n</details>`, next: took.next }
     }
     case 'steps': {
+      // **块内每一段都要呈现**：列表之前的说明、列表之后的收尾，各自照常渲染；列表本身按
+      // `.step` 包。原先只渲染"第一个列表"，容器里其余的字全丢（复审 R1）。
       const at2 = firstItem(took.inner)
       if (at2 < 0) return { html: `<div class="steps">${blockOf(took.inner)}</div>`, next: took.next }
+      const before = at2 === 0 ? '' : blockOf(took.inner.slice(0, at2))
       const list = listAt(took.inner, at2, ctx, opts, true)
-      return { html: `<div class="steps">${list.html}</div>`, next: took.next }
+      const id = pushBlock(ctx, list.text)
+      const after = list.next >= took.inner.length ? '' : blockOf(took.inner.slice(list.next))
+      return { html: `<div class="steps" id="${escapeHtml(id)}">${before}${list.html}${after}</div>`, next: took.next }
     }
     case 'figure': {
+      const id = idOf()
       const cap = open.arg === '' ? '' : `<figcaption>${inline(open.arg, ctx, opts)}</figcaption>`
-      return { html: `<figure class="figure"><div class="figure-body">${blockOf(took.inner)}</div>${cap}</figure>`, next: took.next }
+      return { html: `<figure class="figure" id="${escapeHtml(id)}"><div class="figure-body">${blockOf(took.inner)}</div>${cap}</figure>`, next: took.next }
     }
     case 'tabs': {
       const tabs = splitTabs(took.inner)
@@ -500,6 +631,7 @@ function renderContainer(lines: readonly string[], at: number, ctx: Ctx, opts: R
         ctx.notes.push('tabs 里没有 ::: tab 段，已按普通内容呈现')
         return { html: blockOf(took.inner), next: took.next }
       }
+      const id = pushBlock(ctx, tabs.map((t) => t.label).join(' '))
       group.n += 1
       const gid = `tabs-${group.n}`
       const keep = tabs.slice(0, MAX_TABS)
@@ -516,7 +648,7 @@ function renderContainer(lines: readonly string[], at: number, ctx: Ctx, opts: R
         .map((t, i) => `<div class="tabpanel" role="group" aria-label="${escapeHtml(t.label)}" data-tab-for="${gid}-${i + 1}">${renderBlocks(t.inner, ctx, opts, group)}</div>`)
         .join('\n')
       const rest = tabs.slice(MAX_TABS).map((t) => renderBlocks(t.inner, ctx, opts, group)).join('')
-      return { html: `<div class="tabs" role="group">${pairs}${panels}</div>${rest}`, next: took.next }
+      return { html: `<div class="tabs" role="group" id="${escapeHtml(id)}">${pairs}${panels}</div>${rest}`, next: took.next }
     }
     case 'tab': {
       // 没有 tabs 包着的孤立 tab：内容是正文，别丢。
@@ -525,8 +657,9 @@ function renderContainer(lines: readonly string[], at: number, ctx: Ctx, opts: R
     }
     default: {
       ctx.notes.push(`未识别的块：::: ${open.kind}（内容原样保留）`)
+      const id = idOf()
       const title = `<p class="callout-title">${escapeHtml(open.kind)}</p>`
-      return { html: `<div class="callout">${title}${blockOf(took.inner)}</div>`, next: took.next }
+      return { html: `<div class="callout" id="${escapeHtml(id)}">${title}${blockOf(took.inner)}</div>`, next: took.next }
     }
   }
 }
@@ -549,7 +682,11 @@ function renderBlocks(lines: readonly string[], ctx: Ctx, opts: RenderOptions, g
     }
     // 代码围栏
     if (/^\s*```\s*([\w-]*)\s*$/.test(line)) {
-      const f = fenceAt(lines, i, ctx)
+      const id = pushBlock(ctx, '')
+      const f = fenceAt(lines, i, ctx, id)
+      // **代码块的可读文字也进索引**：命令与参数是查找里最常被找的东西。
+      const plain = f.code.replace(/\s+/g, ' ').trim()
+      if (plain !== '') ctx.blocks.push({ id, text: plain, heading: ctx.section.id, section: ctx.section.text })
       out.push(f.html)
       i = f.next
       continue
@@ -574,15 +711,23 @@ function renderBlocks(lines: readonly string[], ctx: Ctx, opts: RenderOptions, g
       continue
     }
     // 表格
-    const table = tableAt(lines, i, ctx, opts)
-    if (table !== null) {
-      out.push(table.html)
-      i = table.next
-      continue
+    {
+      const probe = /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(lines[i + 1] ?? '') ? pushBlock(ctx, '') : ''
+      const table = tableAt(lines, i, ctx, opts, probe)
+      if (table !== null) {
+        const plain = plainInline(table.text).replace(/\s+/g, ' ').trim()
+        if (plain !== '') ctx.blocks.push({ id: probe, text: plain, heading: ctx.section.id, section: ctx.section.text })
+        out.push(table.html)
+        i = table.next
+        continue
+      }
     }
     // 列表
     if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
-      const list = listAt(lines, i, ctx, opts)
+      const id = pushBlock(ctx, '')
+      const list = listAt(lines, i, ctx, opts, false, id)
+      const plain = plainInline(list.text).replace(/\s+/g, ' ').trim()
+      if (plain !== '') ctx.blocks.push({ id, text: plain, heading: ctx.section.id, section: ctx.section.text })
       out.push(list.html)
       i = list.next
       continue
@@ -596,6 +741,7 @@ function renderBlocks(lines: readonly string[], ctx: Ctx, opts: RenderOptions, g
         if (quote === null) break
         body.push(quote[1]!)
       }
+      // 引用里的每一段各拿一个块 id（外层不另记一条，否则同一句话进两次索引）。
       out.push(`<blockquote>${renderBlocks(body, ctx, opts, group)}</blockquote>`)
       i = j
       continue
@@ -609,7 +755,8 @@ function renderBlocks(lines: readonly string[], ctx: Ctx, opts: RenderOptions, g
       if (j > i && startsBlock(lines, j)) break
       para.push(l.trim())
     }
-    out.push(`<p>${inline(para.join(' '), ctx, opts)}</p>`)
+    const id = pushBlock(ctx, para.join(' '))
+    out.push(`<p id="${escapeHtml(id)}">${inline(para.join(' '), ctx, opts)}</p>`)
     i = j
   }
   return out.join('\n')
@@ -629,13 +776,22 @@ function startsBlock(lines: readonly string[], at: number): boolean {
 }
 
 /**
- * 一份正文 → HTML + 标题表 + 引用表 + 兑不掉的清单。
+ * 一份正文 → HTML + 标题表 + 内容块 + 引用表 + 兑不掉的清单。
  *
  * **同一份输入两次调用逐字节相同**：这是"宿主那一半可复现"的最小那块（交接单 § 1.4）。
  */
 export function renderMarkdown(md: string, opts: RenderOptions = {}): MdResult {
-  const ctx: Ctx = { headings: [], links: [], notes: [], used: opts.used ?? new Map() }
+  const aliasIds = Object.values(opts.aliases ?? {}).flat()
+  const ctx: Ctx = {
+    headings: [],
+    blocks: [],
+    links: [],
+    notes: [],
+    ids: idAllocator([...(opts.reserved ?? []), ...aliasIds]),
+    section: { id: '', text: '' },
+    blockSeq: 0,
+  }
   const text = md.replace(/\r\n/g, '\n').replace(/\t/g, '  ')
   const html = renderBlocks(text.split('\n'), ctx, opts, { n: 0 })
-  return { html, headings: ctx.headings, links: ctx.links, notes: ctx.notes }
+  return { html, headings: ctx.headings, blocks: ctx.blocks, links: ctx.links, notes: ctx.notes }
 }

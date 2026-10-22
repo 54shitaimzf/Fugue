@@ -11,8 +11,8 @@ import type { Truth } from '../truth/contract.ts'
 import type { ConfigDoc } from '../config.ts'
 import { pageOf, parseDocs } from '../docs/config.ts'
 import { DocsError, docsRootOf } from '../docs/contract.ts'
-import type { Materials, StatusReport } from '../docs/contract.ts'
-import { buildDocs } from '../docs/build.ts'
+import type { DocsPlan, Materials, StatusReport } from '../docs/contract.ts'
+import { buildDocs, recordAttemptFailure } from '../docs/build.ts'
 import { sourceTextOf, treeFactsOf } from '../docs/facts.ts'
 import { shortFingerprint } from '../docs/fingerprint.ts'
 import { promptTextOf } from '../docs/prompt.ts'
@@ -99,14 +99,21 @@ export async function docsBuildValue(a: ValueArgs): Promise<ValueResult> {
     at === undefined
       ? {
           kind: 'manual',
-          note: '手动 fugue docs build：来源与事实取 refs/heads/main（收口时是刚写回的那个提交），定义与主题取当前工作区配置',
+          note: '手动 fugue docs build：来源与事实取 refs/heads/main（收口时是刚写回的那个提交），定义与主题取当前工作区配置；**没有本轮会话**（这一条从当前工作区出发，不是从哪一轮收口里接的）',
         }
       : {
           kind: 'manual',
-          note: `手动 --at ${at}：来源与事实取指定提交，定义与主题取当前工作区配置——回答"用今天的计划看那一版代码是什么样"`,
+          note: `手动 --at ${at}：来源与事实取指定提交，定义与主题取当前工作区配置——回答"用今天的计划看那一版代码是什么样"；**没有本轮会话**（--at 只给提交）`,
         }
 
   const truth = openTruth(a.root)
+  /** 记一笔尝试用的目标提交：**解析模型就能失败，那时也得说出试的是哪一版**。 */
+  let target: string | null = null
+  try {
+    target = String(await truth.resolve((at ?? 'refs/heads/main') as never))
+  } catch {
+    target = null
+  }
   try {
     let caller
     try {
@@ -116,6 +123,15 @@ export async function docsBuildValue(a: ValueArgs): Promise<ValueResult> {
         ...(credential === undefined ? {} : { credential }),
       })
     } catch (err) {
+      await recordAttemptFailure({
+        root: a.root,
+        reason: (err as Error).message,
+        at_stage: err instanceof DocsError ? err.at : 'model',
+        commit: target,
+        materials,
+        model: model ?? null,
+        theme: null,
+      })
       failOf(err, a.root)
     }
     const out = await buildDocs({
@@ -171,27 +187,30 @@ export async function docsBuildValue(a: ValueArgs): Promise<ValueResult> {
   }
 }
 
+/** 读一份能用的文档计划：没有 `docs` 键直说“能力没启用”（不是一个空计划）。 */
+function planOrThrow(config: ConfigDoc): DocsPlan {
+  const plan = parseDocs(config)
+  if (plan === null) {
+    throw new DocsError('config', '文档能力没有启用：工作区配置里没有 docs 键（架构 § 15.3.a）——收口只做归并与验收')
+  }
+  return plan
+}
+
 /** 两栏分开报：现有产物对应哪一版 · 最近一次生成成没成（交接单 § 3.5）。 */
 export async function docsStatusValue(a: ValueArgs): Promise<ValueResult> {
   noExtra(a, 'status')
   const config = await configOf(a.root)
   // **能力没启用就直说**（交接单 § 3.5 末段）：不是"未生成"，是"这份配置里没有文档这一节"。
   try {
-    if (parseDocs(config) === null) {
-      throw new DocsError('config', '文档能力没有启用：工作区配置里没有 docs 键（架构 § 15.3.a）——收口只做归并与验收')
-    }
+    planOrThrow(config)
   } catch (err) {
     failOf(err, a.root)
   }
   const truth = openTruth(a.root)
   try {
-    let model: string
-    try {
-      model = resolvedModelId(config, undefined)
-    } catch (err) {
-      failOf(err, a.root)
-    }
-    const report = await statusOf({ root: a.root, config, truth, model })
+    // 模型声明那一栏由 `statusOf` 自己算：缺模型时它只让“当前这一版读不出来”，
+    // “最近一次生成”那一栏照旧报得出来（复审 R8 的失败归属）。
+    const report = await statusOf({ root: a.root, config, truth })
     return ok({ value: report, faces: { json: JSON.stringify(report), human: statusLines(report) } })
   } catch (err) {
     if (err instanceof DocsError) {
@@ -284,7 +303,7 @@ export async function docsPromptValue(a: ValueArgs): Promise<ValueResult> {
         theme,
         materials: {
           kind: 'manual',
-          note: '手动 docs prompt：只有定义、来源与事实；没有本轮变化，也没有取证摘录（这一条命令不调模型）',
+          note: '手动 docs prompt：只有定义、来源与事实；没有本轮变化、没有本轮会话，也没有取证摘录（这一条命令不调模型）',
         },
       })
       return ok({

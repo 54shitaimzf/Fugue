@@ -108,3 +108,25 @@ test('⑤ `docs status`：未生成那一档说清当前提交与入口，机器
   assert.ok(v.docsDir.endsWith('.fugue/docs'))
   console.log(`⑤ 读数：state=missing · 当前提交 ${v.artifact.now.commit.slice(0, 12)} · 入库 ${v.docsDir}`)
 })
+
+test('⑥ 手动入口明说"没有本轮会话"：`docs build` 与 `--at` 都不冒充收口上下文', async () => {
+  const { root } = await seeded()
+  await setDocs(root)
+  // 模型名写错：早期失败也要落进"最近一次"（复审 R8）。
+  const badModel = await runCli(['--root', root, 'config', 'set', 'docs.model', 'no-such-model'])
+  assert.equal(badModel.code, 0, badModel.stderr)
+  const build = await runCli(['--root', root, '--json', 'docs', 'build'])
+  assert.equal(build.code, 1, build.stderr)
+  assert.ok(build.stderr.includes('no-such-model'), build.stderr)
+  const status = await runCli(['--root', root, '--json', 'docs', 'status'])
+  assert.equal(status.code, 0, status.stderr)
+  const v = JSON.parse(status.stdout) as {
+    artifact: { state: string }
+    attempt: { ok: boolean; at_stage: string; commit: string | null; materials: { note: string } }
+  }
+  assert.equal(v.artifact.state, 'missing', '没有产物：旧批次本来就不存在')
+  assert.equal(v.attempt.ok, false, '模型缺失也要成为“最近一次”')
+  assert.equal(v.attempt.at_stage, 'model')
+  assert.ok(v.attempt.materials.note.includes('没有本轮会话'), v.attempt.materials.note)
+  console.log(`⑥ 读数：早期失败进最近一次（${v.attempt.at_stage}）· 材料明说没有本轮会话`)
+})

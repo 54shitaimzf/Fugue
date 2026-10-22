@@ -83,6 +83,8 @@ test('③ 写错一格当场拒：主题 · 来源 · id · 产物名 · 未知�
     { doc: poke(base(), ['docs', 'pages', 0, 'id'], 'Start Page'), cell: 'docs.pages[0].id' },
     { doc: poke(base(), ['docs', 'pages', 0, 'out'], 'index.html'), cell: 'docs.pages[0].out' },
     { doc: poke(base(), ['docs', 'pages', 0, 'out'], 'javascript:alert(1).html'), cell: 'docs.pages[0].out' },
+    { doc: poke(base(), ['docs', 'pages', 0, 'out'], 'guide#part.html'), cell: 'docs.pages[0].out' },
+    { doc: poke(base(), ['docs', 'pages', 0, 'out'], 'guide?x.html'), cell: 'docs.pages[0].out' },
     { doc: poke(base(), ['docs', 'pages', 0, 'audience'], ''), cell: 'docs.pages[0].audience' },
     { doc: poke(base(), ['docs', 'pagse'], []), cell: 'docs.pagse' },
     { doc: poke(base(), ['docs', 'pages', 0, 'soruce'], 'README.md'), cell: 'docs.pages[0].soruce' },
@@ -109,4 +111,26 @@ test('④ 目录里的主题都在，写错时话里列全（模型不会去猜"
     (err: unknown) => err instanceof DocsError && ['primer', 'carbon', 'material3', 'govuk'].every((t) => err.message.includes(t)),
   )
   console.log(`④ 读数：${good.join(' · ')} 四套都解析得出；未知主题的报错列全四套`)
+})
+
+test('⑤ 产物名要能被浏览器当路径原样打开：`#` / `?` 一律拒（要么拒、要么在地址那一处编码）', () => {
+  // **配置收下的每一个输出名，都能经目录链接打开**：这里拿 URL 解析验一遍（浏览器的判据）。
+  const names = ['start.html', 'start-v2.html', 'Part_2.final.html']
+  for (const name of names) {
+    const plan = parseDocs(poke(base(), ['docs', 'pages', 0, 'out'], name))
+    assert.equal(plan?.pages[0]?.out, name)
+    const url = new URL(name, 'file:///tmp/docs/index.html')
+    assert.equal(url.pathname.endsWith(`/${name}`), true, `${name} 经 URL 解析后不再指向同一个文件：${url.href}`)
+    assert.equal(url.hash, '', '不能读出片段')
+    assert.equal(url.search, '', '不能读出查询')
+  }
+  // 负对照：带 `#` / `?` 的名字要是被收下，上一条就是死链。
+  for (const bad of ['guide#part.html', 'guide?x.html', 'a b.html']) {
+    assert.throws(
+      () => parseDocs(poke(base(), ['docs', 'pages', 0, 'out'], bad)),
+      (err: unknown) => err instanceof DocsError && err.message.includes('docs.pages[0].out'),
+      bad,
+    )
+  }
+  console.log(`⑤ 读数：${names.length} 个名字 URL 解析后不变 · ${3} 个带片段/查询/空格的名字当场拒`)
 })

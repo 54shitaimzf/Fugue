@@ -27,6 +27,22 @@ import { searchIndexJson } from './search.ts'
 import { BASE_CSS } from './style.ts'
 import type { ThemeSpec } from './theme.ts'
 
+/**
+ * 页面骨架自己占着的 id。正文的标题 · 内容块 · 旧别名都**不许撞上它们**（复审 R11 的第二个口子：
+ * 模型写 `{#content}` 会与 `<main id="content">` 重名，跳转落到错的地方）。
+ *
+ * 这一份是**唯一一处**列这些名字的地方：`build.ts` 把它交给 `renderMarkdown` 的分配器预先占掉。
+ */
+export const HOST_IDS: readonly string[] = [
+  'content',
+  'doc-search',
+  'doc-q',
+  'doc-q-label',
+  'doc-results',
+  'doc-empty',
+  'doc-index',
+]
+
 /** 这一批的站点事实：页首与页脚都从这里取，一处算好。 */
 export interface SiteInfo {
   /** 文档集的标题（`docs.title`，缺省用仓库名）。 */
@@ -304,7 +320,8 @@ const ENHANCE_JS = `<script>
       var li = d.createElement('li');
       var a = d.createElement('a');
       a.className = 'search-hit';
-      a.href = e.p + (e.h ? '#' + e.h : '');
+      // **落到具体内容块**（字段 b），没有块 id 时退到章节（字段 h）。
+      a.href = e.p + (e.b ? '#' + e.b : e.h ? '#' + e.h : '');
       var t = d.createElement('span'); t.className = 'hit-title'; t.textContent = e.t;
       var s = d.createElement('span'); s.className = 'hit-section'; s.textContent = e.s ? '§ ' + e.s : '';
       var x = d.createElement('span'); x.className = 'hit-snippet'; x.textContent = snippet(e.x, term);
@@ -312,13 +329,37 @@ const ENHANCE_JS = `<script>
       li.appendChild(a); list.appendChild(li);
     });
   }
+  // **模态就是模态**（复审 R9）：打开时背景 inert，Tab/Shift-Tab 在面板里循环，关闭后焦点
+  // 回到打开它的那一个入口。inert 不认的浏览器仍由下面那段 Tab 循环守住同一个行为。
+  function background(on) {
+    var els = [d.querySelector('.top'), d.querySelector('.layout')];
+    for (var i = 0; i < els.length; i++) {
+      if (!els[i]) continue;
+      if (on) els[i].setAttribute('inert', ''); else els[i].removeAttribute('inert');
+    }
+  }
+  function inside(el) { return el && overlay && overlay.contains(el); }
+  function trap(ev) {
+    if (!overlay || overlay.hidden || ev.key !== 'Tab') return;
+    var all = overlay.querySelectorAll('input, button, a[href]');
+    var list2 = [];
+    for (var i = 0; i < all.length; i++) if (!all[i].disabled) list2.push(all[i]);
+    if (list2.length === 0) return;
+    var first = list2[0], last = list2[list2.length - 1];
+    if (ev.shiftKey && (d.activeElement === first || d.activeElement === q || !inside(d.activeElement))) {
+      ev.preventDefault(); last.focus();
+    } else if (!ev.shiftKey && (d.activeElement === last || !inside(d.activeElement))) {
+      ev.preventDefault(); first.focus();
+    }
+  }
   function openSearch() {
     if (!overlay) return;
-    overlay.hidden = false; if (q) { q.value = ''; q.focus(); } render('');
+    overlay.hidden = false; background(true); if (q) { q.value = ''; q.focus(); } render('');
   }
   function closeSearch() {
     if (!overlay) return;
-    overlay.hidden = true;
+    if (overlay.hidden) return;
+    overlay.hidden = true; background(false);
     if (openBtn) openBtn.focus();
   }
   if (openBtn && overlay) { openBtn.hidden = false; openBtn.addEventListener('click', openSearch); }
@@ -326,6 +367,7 @@ const ENHANCE_JS = `<script>
   if (overlay) {
     overlay.addEventListener('click', function (ev) { if (ev.target === overlay) closeSearch(); });
     list && list.addEventListener('click', function () { closeSearch(); });
+    overlay.addEventListener('keydown', trap);
   }
 
   // ── 目录：标出当前小节 ──────────────────────────────────────────────────
@@ -346,18 +388,24 @@ const ENHANCE_JS = `<script>
   }
 
   // ── 锚点落在折叠内容里：先展开，再到达 ──────────────────────────────────
+  // **全部祖辈**（复审 R5：原先只展开最近的一层，标签里的 details 里的块只开一层就停）。
   function reveal() {
     var id = decodeURIComponent((location.hash || '').slice(1));
     if (!id) return;
     var el = d.getElementById(id);
     if (!el) return;
-    var panel = el.closest ? el.closest('.tabpanel') : null;
-    if (panel) {
-      var radio = d.getElementById(panel.getAttribute('data-tab-for'));
-      if (radio) radio.checked = true;
+    var node = el;
+    while (node && node !== d.body) {
+      if (node.classList && node.classList.contains('tabpanel')) {
+        var radio = d.getElementById(node.getAttribute('data-tab-for'));
+        if (radio) radio.checked = true;
+      }
+      if (node.tagName === 'DETAILS') node.open = true;
+      node = node.parentElement;
     }
-    var box = el.closest ? el.closest('details') : null;
-    if (box) box.open = true;
+    // 到达之后把焦点放在那一块：键盘与读屏能接着读（tabindex 只在这时加，不改页面结构）。
+    if (el.tabIndex < 0) el.setAttribute('tabindex', '-1');
+    el.focus({ preventScroll: false });
   }
   window.addEventListener('hashchange', reveal);
   reveal();

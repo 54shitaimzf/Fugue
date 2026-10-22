@@ -74,9 +74,10 @@ function site(theme = primer): SiteInfo {
 function page(theme = primer): { html: string; page: PageDef; headings: ReturnType<typeof renderMarkdown>['headings']; entries: ReturnType<typeof searchEntriesOf> } {
   const def = PLAN.pages[0]!
   const md = renderMarkdown(MD, { resolve: (raw) => ({ href: raw }) })
-  const entries = searchEntriesOf(def, MD, md.headings)
+  const entries = searchEntriesOf(def, md.blocks)
   const other = PLAN.pages[1]!
-  const entriesAll = [...entries, ...searchEntriesOf(other, '## 边界 {#boundary}\n\n正文。\n', [{ id: 'boundary', text: '边界', level: 2 }])]
+  const otherMd = renderMarkdown('## 边界 {#boundary}\n\n正文。\n')
+  const entriesAll = [...entries, ...searchEntriesOf(other, otherMd.blocks)]
   const rendered = renderPage({
     site: site(theme),
     plan: PLAN,
@@ -117,9 +118,10 @@ test('③ 查找索引：内嵌 JSON 可解析，命中带页 · 章节 · 片�
   const { html, entries } = page()
   const m = /<script type="application\/json" id="doc-index">([\s\S]*?)<\/script>/.exec(html)
   assert.ok(m !== null, '索引块要在')
-  const parsed = JSON.parse(m[1]!) as { p: string; s: string; h: string; x: string }[]
+  const parsed = JSON.parse(m[1]!) as { p: string; s: string; h: string; b: string; x: string }[]
   assert.equal(parsed.length, entries.length)
   assert.ok(parsed.some((e) => e.p === 'start.html' && e.s === '先做什么' && e.h === 'first' && e.x.includes('前置条件')), JSON.stringify(parsed[0]))
+  assert.ok(parsed.every((e) => e.b !== ''), '每条命中都要有内容块 id')
   assert.ok(html.includes('<script>alert(1)</script>') === false, '正文里的脚本不成为脚本')
   assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), '它作为字面文字保留')
   console.log(`③ 读数：索引 ${parsed.length} 条 · 第一条 ${parsed[0]?.p}#${parsed[0]?.h}`)
@@ -127,7 +129,7 @@ test('③ 查找索引：内嵌 JSON 可解析，命中带页 · 章节 · 片�
 
 test('④ 无 JS 的完整阅读路径：原生展开 · 收音机标签 · noscript 说明；按钮在脚本打开前不出现', () => {
   const { html } = page()
-  assert.ok(html.includes('<details>'), '展开是原生的')
+  assert.ok(/<details[^>]*>/.test(html), '展开是原生的')
   assert.ok(/type="radio"/.test(html) && /<label for="tabs-1-1">/.test(html), '切换是收音机，不靠脚本')
   assert.ok(html.includes('<noscript><p class="nojs-note">'), '没有脚本时的退路要说给读者')
   assert.ok(html.includes('data-open-search hidden'), '查找按钮由脚本放出，脚本不在时不出现')
@@ -140,7 +142,7 @@ test('⑤ 换主题：正文与操作逐字节相同，只有视觉变量与主�
   const b = page(govuk).html
   const body = (h: string): string => h.slice(h.indexOf('<h1>'), h.indexOf('<footer>'))
   assert.equal(body(a), body(b), '正文那一截（标题到页脚）逐字节相同')
-  for (const op of ['<details>', 'type="radio"', 'data-open-search', 'class="anchor"']) {
+  for (const op of ['<details', 'type="radio"', 'data-open-search', 'class="anchor"']) {
     assert.ok(a.includes(op) && b.includes(op), `两边都要有 ${op}`)
   }
   assert.ok(a.includes('data-doc-theme="primer"') && b.includes('data-doc-theme="govuk"'))
@@ -172,7 +174,21 @@ test('⑦ 一节一地址：标题 ID 与目录/查找的锚点逐字相同（�
   for (const h of headings) assert.ok(html.includes(`id="${h.id}"`), `正文缺 id=${h.id}`)
   for (const e of entries) {
     if (e.s === '先做什么') assert.equal(e.h, headings[0]?.id)
+    assert.notEqual(e.b, '', '每条命中都要有内容块 id')
   }
+  // 本页的命中要落在本页的块上（跨页的只看 id 非空）。
+  for (const e of entries.filter((x) => x.p === 'start.html')) assert.ok(html.includes(`id="${e.b}"`), `命中要落到页面里的内容块：${e.p}#${e.b}`)
   assert.equal(outOf('start'), 'start.html')
-  console.log(`⑦ 读数：${headings.length} 个标题 ID 在正文 · 索引锚点对齐`)
+  console.log(`⑦ 读数：${headings.length} 个标题 ID 在正文 · ${entries.length} 条命中都有内容块`)
+})
+
+test('⑧ 查找是模态：声明与实际行为在同一处（背景 inert · Tab 循环 · Esc 回到入口）', () => {
+  const { html } = page()
+  assert.ok(html.includes('role="dialog" aria-modal="true"'), '声明为模态')
+  assert.ok(html.includes("setAttribute('inert'"), '打开时背景不再可聚焦')
+  assert.ok(html.includes('addEventListener(\'keydown\', trap)'), 'Tab 在面板里循环')
+  assert.ok(html.includes('if (openBtn) openBtn.focus()'), '关闭后焦点回到打开入口')
+  // 查找结果是真实链接，落到内容块（不是页首）
+  assert.ok(html.includes("a.href = e.p + (e.b ? '#' + e.b"), '命中落到内容块')
+  console.log('⑧ 读数：aria-modal · inert · Tab 循环 · 焦点回入口 · 命中落块')
 })

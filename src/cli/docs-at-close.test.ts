@@ -148,3 +148,50 @@ test('⑤ 文档失败：返回 ok:false（轮次那一侧照旧按验收定退�
   assert.equal(existsSync(`${docsRootOf(root)}/manifest.json`), false)
   console.log(`⑤ 读数：${out.lines[0]}`)
 })
+
+test('⑥ 自动收口：本轮会话进写作输入（只在这一轮讨论里出现过的约束也在），取到的范围写进结果', async (ctx) => {
+  const { root, commit } = await repo()
+  const truth = openTruth(root)
+  ctx.after(() => truth.close())
+  const seen: string[] = []
+  const spy: DocCaller = {
+    ...fake(),
+    async call(req) {
+      seen.push(req.context)
+      return fake().call(req)
+    },
+  }
+  const text = `${JSON.stringify({ who: '人', text: '这一版必须保留 retro-compat 约束：旧参数不能删' })}\n${JSON.stringify({ who: '持轮者', text: '明白，按这条改。' })}\n`
+  const out = await docsAtClose({
+    root,
+    config: CONFIG,
+    flags,
+    round: 'r1',
+    run: runOf({ accepted: true, commit }),
+    live: true,
+    replay: false,
+    caller: spy,
+    session: { path: '.fugue/session/r1.jsonl', text },
+  })
+  assert.ok(out !== null && out.ok, out === null ? 'null' : out.lines.join(' | '))
+  const materials = out.value.materials as { session?: { path: string; records: number; chars: number; text: string }; note: string }
+  assert.ok(materials.session !== undefined, '材料里要记取到的那一段')
+  assert.equal(materials.session.records, 2)
+  assert.equal(materials.session.chars, text.length)
+  assert.ok(materials.session.text.includes('retro-compat'))
+  assert.ok(materials.note.includes('本轮会话'), materials.note)
+  assert.ok(seen.some((c) => c.includes('retro-compat')), '写作输入里要有会话原文')
+  console.log(`⑥ 读数：会话 ${materials.session.records} 条 / ${materials.session.chars} 字符进写作输入 · note 带范围`)
+})
+
+test('⑦ 没有会话记录：材料里如实写"这一轮没有会话记录"，不冒充取得过', async (ctx) => {
+  const { root, commit } = await repo()
+  const truth = openTruth(root)
+  ctx.after(() => truth.close())
+  const out = await docsAtClose({ root, config: CONFIG, flags, round: 'r1', run: runOf({ accepted: true, commit }), live: true, replay: false, caller: fake() })
+  assert.ok(out !== null && out.ok)
+  const materials = out.value.materials as { session?: unknown; note: string }
+  assert.equal(materials.session, undefined)
+  assert.ok(materials.note.includes('没有会话记录'), materials.note)
+  console.log(`⑦ 读数：note：${materials.note}`)
+})

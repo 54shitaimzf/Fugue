@@ -13,20 +13,24 @@ import type { ConfigDoc } from '../config.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { RefName } from '../terms.ts'
 import { parseDocs } from './config.ts'
-import type { ArtifactReport, DocsPlan, SourceFact, StatusReport, TreeFacts } from './contract.ts'
+import type { ArtifactReport, DocsPlan, ModelFacts, SourceFact, StatusReport, TreeFacts } from './contract.ts'
 import { DocsError, docsRootOf } from './contract.ts'
 import { treeFactsOf } from './facts.ts'
-import { fingerprintOf } from './fingerprint.ts'
+import { fingerprintOf, modelFactsOf } from './fingerprint.ts'
 import { batchIntegrity, readLast, readManifest, recoverPublish } from './publish.ts'
 import { THEME_IDS, themeOf } from './theme.ts'
+import { modelFactsFromConfig } from './writer.ts'
 
 export interface StatusDeps {
   readonly root: string
   /** 合并读过的配置（定义与主题）。 */
   readonly config: ConfigDoc
   readonly truth: Truth
-  /** 现在会用的写作模型键（与 `build` 同一处算）。 */
-  readonly model: string
+  /**
+   * 现在会用的写作模型声明。**不给就从配置与目录现算**：模型或凭据缺席时"最近一次"那一栏
+   * 照旧报得出来，第一栏说"当前这一版读不出来"（不是把整条 status 变成一条错）。
+   */
+  readonly model?: ModelFacts
   /** 当前提交看哪条 ref（缺省 `refs/heads/main`）。 */
   readonly ref?: string
 }
@@ -62,9 +66,12 @@ async function nowOf(deps: StatusDeps): Promise<Now> {
       const lines = facts.missing.map((m) => `  · 文档 ${m.id}：source 指向 ${m.source}`)
       throw new DocsError('facts', `来源在当前提交里缺失（${facts.missing.length} 份）：\n${lines.join('\n')}`)
     }
+    // **模型声明与 build 同一处算**（复审 R7）：换思考档也判过期；缺模型时这一栏读不出来。
+    const declared = modelFactsFromConfig(deps.config, plan.model)
+    const model = deps.model ?? modelFactsOf({ model: declared.id, wireModel: declared.wireModel, facts: declared }, plan.maxTokens)
     return {
       commit,
-      fingerprint: fingerprintOf({ commit, plan, sources: facts.sources, theme, model: deps.model }),
+      fingerprint: fingerprintOf({ commit, plan, sources: facts.sources, theme, model }),
       error: null,
       plan,
       sources: facts.sources,

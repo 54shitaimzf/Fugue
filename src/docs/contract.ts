@@ -37,7 +37,7 @@ export function stageRootOf(root: string, token: string): string {
  * 它进状态指纹：同样的正文、同样的主题，渲染器换了一版，产物仍然过期——那是"宿主那一半
  * 逐字节可复现"这句话的边界（交接单 § 1.4）。
  */
-export const RENDERER_VERSION = 3
+export const RENDERER_VERSION = 4
 
 /** 清单的版本（清单自己换形状时加一，与渲染器版本分开）。 */
 export const MANIFEST_VERSION = 1
@@ -104,13 +104,52 @@ export interface TreeFacts {
   readonly paths: readonly string[]
 }
 
+/** 一段行（1 起，含两端）。取证按它补读文件的后半。 */
+export interface FileRange {
+  readonly from: number
+  readonly to: number
+}
+
+/**
+ * 一份取证摘录在清单里的形状：**截断范围进清单**（复审 R3：原先只记 requested/found/missing，
+ * 被截断的 7 份一个字都没记，复核时看不出"哪些结论只看到开头"）。
+ */
+export interface EvidenceRange {
+  readonly path: string
+  /** 这份文件一共多少行 · 多少字符。 */
+  readonly lines: number
+  readonly chars: number
+  /** 真贴出来的行段（可能多段：开头一段 + 补读的那几段）。 */
+  readonly shown: readonly FileRange[]
+  /** 还有没贴出来的内容。 */
+  readonly truncated: boolean
+}
+
+/**
+ * 实际采用的模型声明（进指纹）。
+ *
+ * **只认 id 不够**（复审 R7）：`models.json` 可以在 id 不变时改思考档、温度、输出预算，
+ * 那种改动会让同一份正文配上不同的调用参数，却仍被 `status` 判成"最新"。
+ * 这里只收**声明**，不收凭据（换密钥不该改指纹）。
+ */
+export interface ModelFacts {
+  readonly id: string
+  readonly wireModel: string
+  readonly thinking: string | null
+  readonly temperature: number | null
+  /** 这一趟实际会用的输出预算（`docs.maxTokens` 覆盖之后的那一个）。 */
+  readonly maxTokens: number | null
+  readonly contextLimit: number | null
+}
+
 /**
  * 写作上下文里"本轮变化"那一份（交接单 § 2.5 的三种入口）。
  *
  * **自动收口**：归并与验收刚刚落了定，这一轮改了哪些契约、哪几条提交、验收过没过，是从
- * `RoundRun` 那一个返回值取的——完整树承担事实，这一段承担"改了什么"的讲述。
+ * `RoundRun` 那一个返回值取的——完整树承担事实，这一段承担"改了什么"的讲述；本轮会话里
+ * 取得的那一段（`session`）与它并列。
  *
- * **手动 `--at`**：没有本轮，材料只有指定提交；这一栏如实写明"按提交重建"。
+ * **手动 `--at`**：没有本轮，材料只有指定提交；这一栏如实写明"按提交重建"与"没有本轮会话"。
  */
 export interface Materials {
   readonly kind: 'round' | 'manual'
@@ -124,6 +163,17 @@ export interface Materials {
     readonly paths: readonly string[]
   }[]
   readonly verify?: { readonly ok: boolean; readonly passed: number; readonly failed: number }
+  /**
+   * 本轮会话里取得的那一段（交接单 § 2.5 的 "A + B + C"）。**取到的范围写进结果**：
+   * 条数 · 字符数 · 实际贴进写作输入的那一段。手动 `--at` 没有这一栏（并在 note 里直说）。
+   */
+  readonly session?: {
+    readonly path: string
+    readonly records: number
+    readonly chars: number
+    /** 实际进写作输入的那一段（超预算时只贴尾部，并注明）。 */
+    readonly text: string
+  }
 }
 
 /** 一次模型调用：三区文本进，一段文本与账出。**接缝在这里，真档与夹具档同形**。 */
@@ -151,6 +201,8 @@ export interface DocCaller {
   /** 提供方那边叫它什么（进读数，不进指纹）。 */
   readonly wireModel: string
   readonly thinking?: string
+  /** 实际采用的模型声明（指纹用）。不给时只能按 id/wire/thinking 估一份。 */
+  readonly facts?: ModelFacts
   call(req: DocCallRequest): Promise<DocCall>
 }
 
@@ -158,12 +210,14 @@ export interface DocCaller {
 export interface PageContent {
   readonly id: string
   readonly markdown: string
-  /** 模型点名要读的路径、真读到的、没读到的（清单里的"取证来源"）。 */
+  /** 模型点名要读的路径、真读到的、没读到的、真贴出来的行段与被截断的范围（清单里的"取证来源"）。 */
   readonly evidence: {
     readonly mode: 'requested' | 'skipped'
     readonly requested: readonly string[]
     readonly found: readonly string[]
     readonly missing: readonly string[]
+    /** 每一份摘录真贴出来的行段（完整或截断，逐份记）。 */
+    readonly ranges: readonly EvidenceRange[]
   }
   /** 宿主在校验里兑不掉、如实记下的地方（不可达的引用等）。 */
   readonly notes: readonly string[]
@@ -195,6 +249,8 @@ export interface Manifest {
   readonly themeVersion: number
   readonly renderer: number
   readonly model: string
+  /** 实际采用的模型声明（指纹的原料；只加不改：`model` 那一栏照旧是 id）。 */
+  readonly modelFacts: ModelFacts
   readonly materials: Materials
   readonly pages: readonly {
     readonly id: string
@@ -207,6 +263,8 @@ export interface Manifest {
     readonly cited: readonly string[]
     readonly headings: RenderedPage['headings']
     readonly anchors: Readonly<Record<string, string>>
+    /** 上一批有、这一版没有后继的旧地址（**完整枚举**，不是只给几条示例）。 */
+    readonly dropped: readonly string[]
     readonly notes: readonly string[]
   }[]
   /** 这一批写出去的文件（路径 + 指纹 + 字节数）——**整批替换的对照表**。 */
@@ -229,6 +287,13 @@ export interface LastAttempt {
    * 只留在终端的 stdout 上，下一次命令就查不到了——而"最近一次生成"本来就该回答"花了多少"。
    */
   readonly usage?: { readonly calls: number; readonly inputTokens: number | null; readonly outputTokens: number | null }
+  /** 失败之前**逐页已完成**的用量（第 N 页失败时前 N−1 页不丢）。 */
+  readonly usagePages?: readonly {
+    readonly id: string
+    readonly usage: Usage | null
+    readonly evidenceUsage: Usage | null
+    readonly rangeUsage: Usage | null
+  }[]
   /** 失败原因（成功时 `null`）。 */
   readonly reason: string | null
   /** 失败落在哪一格（`config` · `facts` · `model` · `render` · `publish`）。 */

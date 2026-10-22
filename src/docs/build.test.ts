@@ -10,7 +10,7 @@ import test from 'node:test'
 import { commitFiles, tmpRepo } from '../../test/helpers/docs-repo.ts'
 import { openTruth } from '../truth/truth.ts'
 import { buildDocs } from './build.ts'
-import type { BuildOutcome, DocCaller } from './contract.ts'
+import type { BuildOutcome, DocCaller, ModelFacts } from './contract.ts'
 import { DocsError, docsRootOf } from './contract.ts'
 import { parseDocs } from './config.ts'
 import { statusOf } from './status.ts'
@@ -50,18 +50,33 @@ interface FakeOptions {
   readonly content?: (id: string) => string
   readonly failOn?: string
   readonly evidencePaths?: string[]
+  readonly rangeAsks?: { path: string; from: number; to: number }[]
   readonly failEvidence?: boolean
+  readonly facts?: Partial<ModelFacts>
 }
 
-/** 假模型：按 `文档 id：<id>` 认出这一趟是哪一页；两趟用系统提示词区分。 */
-function fakeCaller(o: FakeOptions = {}): { caller: DocCaller; calls: { kind: 'evidence' | 'content'; id: string }[] } {
-  const calls: { kind: 'evidence' | 'content'; id: string }[] = []
+/** 夹具的模型声明：换思考档要能改指纹，换“凭据”（不在这一份里）不能。 */
+const FAKE_FACTS: ModelFacts = {
+  id: 'fake/model',
+  wireModel: 'fake',
+  thinking: 'high',
+  temperature: 0.2,
+  maxTokens: 8192,
+  contextLimit: 1048576,
+}
+
+/** 假模型：按 `文档 id：<id>` 认出这一趟是哪一页；三趟用系统提示词区分。 */
+function fakeCaller(o: FakeOptions = {}): { caller: DocCaller; calls: { kind: 'evidence' | 'ranges' | 'content'; id: string }[]; contexts: string[] } {
+  const calls: { kind: 'evidence' | 'ranges' | 'content'; id: string }[] = []
+  const contexts: string[] = []
   const caller: DocCaller = {
     model: 'fake/model',
     wireModel: 'fake',
+    thinking: 'high',
+    facts: { ...FAKE_FACTS, ...o.facts },
     async call(req) {
       const id = /文档 id：([^\n]+)/.exec(req.context)?.[1]?.trim() ?? '?'
-      const kind = req.system.includes('只输出一个 JSON 对象') ? 'evidence' : 'content'
+      const kind = req.system.includes('只输出一个 JSON 对象') ? (req.system.includes('补读取证') ? 'ranges' : 'evidence') : 'content'
       calls.push({ kind, id })
       if (kind === 'evidence') {
         if (o.failEvidence === true) throw new DocsError('model', '取证这一趟没成（夹具）')
@@ -70,6 +85,10 @@ function fakeCaller(o: FakeOptions = {}): { caller: DocCaller; calls: { kind: 'e
           usage: { inputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 5, reasoningTokens: null, model: null },
         }
       }
+      if (kind === 'ranges') {
+        return { text: JSON.stringify({ ranges: o.rangeAsks ?? [] }), usage: { inputTokens: 8, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 4, reasoningTokens: null, model: null } }
+      }
+      contexts.push(req.context)
       if (o.failOn === id) throw new DocsError('model', `模型没写完（夹具：${id}）`)
       return {
         text: o.content === undefined ? bodyOf(id) : o.content(id),
@@ -77,8 +96,10 @@ function fakeCaller(o: FakeOptions = {}): { caller: DocCaller; calls: { kind: 'e
       }
     },
   }
-  return { caller, calls }
+  return { caller, calls, contexts }
 }
+
+const STATUS_MODEL: ModelFacts = { ...FAKE_FACTS }
 
 /** 产物目录里每一份文件的字节（整批替换的对照表）。 */
 function snapshot(dir: string): Map<string, string> {
@@ -128,6 +149,10 @@ test('① 一次生成：两页正文 · 首页 · 清单（提交 · 版本 · 
   assert.equal(manifest.pages.length, 2)
   assert.equal(manifest.theme, 'primer')
   assert.equal(manifest.model, 'fake/model')
+  assert.deepEqual(Object.keys(manifest.modelFacts).sort(), ['contextLimit', 'id', 'maxTokens', 'temperature', 'thinking', 'wireModel'], '模型声明进清单（指纹的原料）')
+  assert.equal(manifest.pages[0].evidence.ranges.length, 2, '真读到的每一份都记一行段，截断与否都记')
+  assert.ok(manifest.pages[0].evidence.ranges.every((r: { truncated: boolean }) => r.truncated === false), '小文件是全文')
+  assert.deepEqual(manifest.pages[0].dropped, [], '第一版没有旧地址')
   assert.match(manifest.fingerprint, /^sha256:[0-9a-f]{64}$/)
   assert.ok(manifest.files.some((f: { path: string }) => f.path === 'index.html'))
   assert.ok(manifest.files.some((f: { path: string }) => f.path === 'content/start.md'))
@@ -205,12 +230,14 @@ test('④ 失败归属：第二页生成失败 → 旧批次逐字节不动 · l
     if (k === 'last.json') continue
     assert.equal(after.get(k), before.get(k), `旧批次被改了：${k}`)
   }
-  const last = JSON.parse(readFileSync(join(docsRootOf(root), 'last.json'), 'utf8'))
+  const last = JSON.parse(readFileSync(join(root, '.fugue', 'docs-last.json'), 'utf8'))
   assert.equal(last.ok, false)
   assert.ok(String(last.reason).includes('arch'))
   assert.equal(last.pages, 0)
+  assert.ok(last.usage.calls > 0, '失败之前已经花掉的调用要有读数（不是 0）')
+  assert.ok(Array.isArray(last.usagePages), '已完成页的逐页用量要留着')
 
-  const status = await statusOf({ root, config: configWith(), truth, model: 'fake/model' })
+  const status = await statusOf({ root, config: configWith(), truth, model: STATUS_MODEL })
   assert.equal(status.artifact.state, 'current', '旧产物仍是最新（指纹只看定义与提交）')
   assert.equal(status.attempt?.ok, false)
   console.log(`④ 读数：${before.size} 份旧文件逐字节不变 · last.ok=false · 产物 ${status.artifact.state}`)
@@ -241,14 +268,14 @@ test('⑥ 状态三档：未生成 / 最新 / 过期（定义变了报出两边�
   const { root, truth, commit } = await repo()
   ctx.after(() => truth.close())
   const fixed = (): Date => new Date('2026-10-22T00:00:00.000Z')
-  const missing = await statusOf({ root, config: configWith(), truth, model: 'fake/model' })
+  const missing = await statusOf({ root, config: configWith(), truth, model: STATUS_MODEL })
   assert.equal(missing.artifact.state, 'missing')
   assert.equal(missing.artifact.now.commit, String(commit))
   await buildDocs({ root, config: configWith(), truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
-  const current = await statusOf({ root, config: configWith(), truth, model: 'fake/model' })
+  const current = await statusOf({ root, config: configWith(), truth, model: STATUS_MODEL })
   assert.equal(current.artifact.state, 'current')
   assert.equal(current.artifact.commit, String(commit))
-  const stale = await statusOf({ root, config: configWith({ prompt: '定义变了' }), truth, model: 'fake/model' })
+  const stale = await statusOf({ root, config: configWith({ prompt: '定义变了' }), truth, model: STATUS_MODEL })
   assert.equal(stale.artifact.state, 'stale')
   assert.equal(stale.artifact.commit, String(commit))
   assert.notEqual(stale.artifact.fingerprint, stale.artifact.now.fingerprint)
@@ -262,7 +289,7 @@ test('⑦ 批次完整性：页面被手改，状态判过期并把那一条指�
   await buildDocs({ root, config: configWith(), truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
   const page = join(docsRootOf(root), 'start.html')
   writeFileSync(page, readFileSync(page, 'utf8') + '<!-- 手改 -->\n')
-  const status = await statusOf({ root, config: configWith(), truth, model: 'fake/model' })
+  const status = await statusOf({ root, config: configWith(), truth, model: STATUS_MODEL })
   assert.equal(status.artifact.state, 'stale')
   assert.deepEqual(status.artifact.integrity, ['start.html'])
   console.log('⑦ 读数：integrity=[start.html] · state=stale')
@@ -379,4 +406,109 @@ test('⑫ 跨页引用：目标页上没有那个锚点时落成页链接并记 
   assert.ok(html.includes('href="arch.html"'), '不存在的锚点落成页链接')
   assert.ok(!html.includes('arch.html#nope'), '不给读者一条死深链')
   console.log('⑫ 读数：好锚点保深链 · 坏锚点落页链接 + note')
+})
+
+test('⑬ 取证拿得到被截断文件的后半：第二趟按行段补读，写作输入里真有那一句', async (ctx) => {
+  const root = tmpRepo()
+  const filler = Array.from({ length: 900 }, (_, i) => `export const v${i} = ${i} // 填充行：让关键实现落在很后面`).join('\n')
+  const key = 'const KEY_IMPLEMENTATION = "后半部的关键实现"'
+  const big = `${filler}\n${key}\n${Array.from({ length: 300 }, (_, i) => `export const tail${i} = ${i} // 关键实现之后还有内容`).join('\n')}\n`
+  await commitFiles(
+    root,
+    {
+      'package.json': JSON.stringify({ name: 'demo', version: '1.2.3' }),
+      'README.md': '# demo\n',
+      'design/A.md': '# 架构\n',
+      'src/big.ts': big,
+    },
+    [],
+    'refs/heads/main',
+  )
+  const truth = openTruth(root)
+  ctx.after(() => truth.close())
+  // 关键实现在第 901 行：开头那 24000 字符的摘录一定够不到它。
+  const fake = fakeCaller({ evidencePaths: ['src/big.ts'], rangeAsks: [{ path: 'src/big.ts', from: 895, to: 920 }] })
+  const out = await buildDocs({
+    root,
+    config: configWith({ pages: [PAGES[0]!] }),
+    truth,
+    caller: fake.caller,
+    materials: { kind: 'manual', note: 'n' },
+    now: () => new Date('2026-10-22T00:00:00.000Z'),
+  })
+  assert.ok(out.ok, JSON.stringify(out))
+  assert.equal(fake.calls.filter((c) => c.kind === 'ranges').length, 1, '截断了就要有第二趟取证')
+  const writing = fake.contexts.join('\n')
+  assert.ok(writing.includes('后半部的关键实现'), '写作材料里没有后半部那一段')
+  const manifest = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8'))
+  const ev = manifest.pages[0].evidence.ranges[0]
+  assert.equal(ev.path, 'src/big.ts')
+  assert.equal(ev.truncated, true, '截断要如实记')
+  assert.ok(ev.lines > 900 && ev.chars > 24000)
+  assert.ok(ev.shown.some((r: { from: number; to: number }) => r.to >= 895), `补读的行段要进清单：${JSON.stringify(ev.shown)}`)
+  console.log(`⑬ 读数：${ev.lines} 行 / ${ev.chars} 字符 · 贴出 ${JSON.stringify(ev.shown)} · 写作材料含关键实现`)
+})
+
+test('⑭ 旧地址跨三版仍到 C：改名一串都跟到终点；版本号写法变了也认得（`v1-2-3` → `v123`）', async (ctx) => {
+  const root = tmpRepo()
+  const c1 = await commitFiles(root, { 'README.md': '# demo\n', 'design/A.md': '# 架构\n' }, [], 'refs/heads/main')
+  const truth = openTruth(root)
+  ctx.after(() => truth.close())
+  const cfg = configWith()
+  const fixed = (): Date => new Date('2026-10-22T00:00:00.000Z')
+  const body = (heading: string, id: string): string =>
+    [`## ${heading} {#${id}}`, '', '这一段说明这一页要解决的问题，以及读者能从这里得到什么。'.repeat(12), '', '## 下一节', '', '更多内容。'.repeat(30)].join('\n')
+  const caller = (start: string, arch: string): DocCaller => ({
+    model: 'fake/model',
+    wireModel: 'fake',
+    thinking: 'high',
+    facts: FAKE_FACTS,
+    async call(req) {
+      if (req.system.includes('只输出一个 JSON 对象')) return { text: '{"paths":[]}', usage: null }
+      const id = /文档 id：([^\n]+)/.exec(req.context)?.[1]?.trim()
+      return { text: id === 'start' ? start : arch, usage: null }
+    },
+  })
+  const build = async (start: string, arch: string): Promise<void> => {
+    const head = await truth.resolve('refs/heads/main' as never).catch(() => null)
+    await commitFiles(root, { 'README.md': `# demo ${String(head).slice(0, 7)}\n`, 'design/A.md': '# 架构\n' }, head === null ? [] : [String(head)], 'refs/heads/main')
+    const out = await buildDocs({ root, config: cfg, truth, caller: caller(start, arch), materials: { kind: 'manual', note: 'n' }, now: fixed })
+    assert.ok(out.ok, JSON.stringify(out))
+  }
+  // 第一版
+  await build(body('安装 Fugue', '安装-fugue'), body('1.2.3 —— 旧写法', 'v1-2-3'))
+  const manifest1 = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8'))
+  assert.equal(manifest1.pages[0].id, 'start')
+  // 第二版：两个主题都改名（一个靠相似度，一个靠版本号）
+  await build(body('装好 Fugue', '装好-fugue'), body('1.2.3 —— 文档成为可读产物', 'v123'))
+  const manifest2 = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8'))
+  assert.equal(manifest2.pages[0].anchors['安装-fugue'], '装好-fugue')
+  assert.equal(manifest2.pages[1].anchors['v1-2-3'], 'v123', '版本号写法变了，旧地址仍到')
+  // 第三版：再改一次名（A→B→C 之后，A 与 B 都要到 C）
+  await build(body('三步装好 Fugue', '三步装好-fugue'), body('1.2.3 —— 文档是产物', 'v123-final'))
+  const manifest3 = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8'))
+  assert.equal(manifest3.pages[0].anchors['装好-fugue'], '三步装好-fugue')
+  assert.equal(manifest3.pages[0].anchors['安装-fugue'], '三步装好-fugue', '三版之后最早的地址仍到 C')
+  assert.equal(manifest3.pages[1].anchors['v123'], 'v123-final')
+  assert.equal(manifest3.pages[1].anchors['v1-2-3'], 'v123-final')
+  const page = readFileSync(join(docsRootOf(root), 'start.html'), 'utf8')
+  assert.ok(page.includes('id="安装-fugue"'), '最早的地址在页面里仍是一个锚点')
+  console.log(`⑭ 读数：安装-fugue→三步装好-fugue · 装好-fugue→三步装好-fugue · v1-2-3/v123→v123-final · dropped ${manifest3.pages[0].dropped.length}/${manifest3.pages[1].dropped.length}`)
+})
+
+test('⑮ 指纹认模型声明：只改思考档就过期；只换凭据（不在声明里）不变', async (ctx) => {
+  const { root, truth } = await repo()
+  ctx.after(() => truth.close())
+  const fixed = (): Date => new Date('2026-10-22T00:00:00.000Z')
+  const high = await buildDocs({ root, config: configWith(), truth, caller: fakeCaller({ facts: { thinking: 'high' } }).caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
+  assert.ok(high.ok)
+  const low = await buildDocs({ root, config: configWith(), truth, caller: fakeCaller({ facts: { thinking: 'low' } }).caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
+  assert.ok(low.ok)
+  assert.notEqual(low.fingerprint, high.fingerprint, 'ID 不变、思考档变了也要判过期')
+  const base = fakeCaller({ facts: { thinking: 'high' } })
+  const withKey = { ...base.caller, credential: 'sk-another-one' }
+  const again = await buildDocs({ root, config: configWith(), truth, caller: withKey as DocCaller, materials: { kind: 'manual', note: 'n' }, now: fixed })
+  assert.ok(again.ok)
+  assert.equal(again.fingerprint, high.fingerprint, '换一把密钥不该改指纹')
+  console.log(`⑮ 读数：thinking high ${high.fingerprint.slice(9, 21)} · low ${low.fingerprint.slice(9, 21)} · 换密钥 ${again.fingerprint.slice(9, 21)}（与 high 相同）`)
 })

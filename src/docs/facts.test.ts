@@ -107,20 +107,27 @@ test('③ 来源在 C 里缺失：报出是哪一份、哪一条路径，正文�
 test('④ 摘录：只贴前面一段要如实说，二进制与不存在的路径都不给（null）', async (ctx) => {
   const root = tmpRepo()
   const commit = await commitFiles(root, {
-    'README.md': 'a'.repeat(500),
+    'README.md': `${'a'.repeat(120)}\n`.repeat(10),
     'bin.dat': 'head\u0000tail',
   })
   const truth = openTruth(root)
   ctx.after(() => truth.close())
   assert.equal(looksBinary(new TextEncoder().encode('head\u0000tail')), true)
-  const cut = await excerptAt(truth, commit, 'README.md', 50)
+  const cut = await excerptAt(truth, commit, 'README.md', { limit: 50 })
   assert.ok(cut !== null)
   assert.equal(cut.truncated, true)
-  assert.ok(cut.text.includes('不要把它当全文'), '截断要说出来')
-  assert.equal((await excerptAt(truth, commit, 'bin.dat', 1000)), null)
-  assert.equal((await excerptAt(truth, commit, 'nope.txt', 1000)), null)
-  const full = await excerptAt(truth, commit, 'README.md', 1000)
+  assert.ok(cut.text.includes('没贴'), '截断要说出来（并给出跳到第几行）')
+  assert.deepEqual(cut.shown, [{ from: 1, to: 1 }], '只贴了第一行')
+  // **按行段补读**：点名要后面的行，贴出来的行段进清单（复审 R3）。
+  const tail = await excerptAt(truth, commit, 'README.md', { limit: 50, ranges: [{ from: 8, to: 10 }] })
+  assert.ok(tail !== null)
+  assert.deepEqual(tail.shown, [{ from: 1, to: 1 }, { from: 8, to: 10 }])
+  assert.ok(tail.text.includes('跳过第 2–7 行'), '跳过的行要说明')
+  assert.equal((await excerptAt(truth, commit, 'bin.dat', { limit: 1000 })), null)
+  assert.equal((await excerptAt(truth, commit, 'nope.txt', { limit: 1000 })), null)
+  const full = await excerptAt(truth, commit, 'README.md', { limit: 2000 })
   assert.equal(full?.truncated, false)
+  assert.equal(full?.lines, 11)
   console.log(`④ 读数：README 500 字符 · 限额 50 → truncated=${cut.truncated}；二进制与不存在 → null`)
 })
 

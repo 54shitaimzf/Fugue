@@ -61,14 +61,24 @@ function repoPath(cell: string, v: unknown): string {
   return p
 }
 
-/** 产物文件名的核对：**它决定文档目录的形状**（架构 § 9.9），所以不许指到子目录或清单上。 */
+/** 产物文件名能长什么样：**能被浏览器原样当路径打开的字符**。 */
+const SAFE_OUT = /^[A-Za-z0-9][A-Za-z0-9._-]*\.html$/
+
+/**
+ * 产物文件名的核对：**它决定文档目录的形状**（架构 § 9.9），所以不许指到子目录或清单上。
+ *
+ * **带 `#` / `?` / `%` 的名字一律拒**（复审 R11）：配置收下 `guide#part.html` 也能写盘，而目录
+ * 链接里它变成"文件 guide + 片段 part.html"——那个入口永远打不开。要么拒，要么在"文件名与
+ * URL 编码"一处负责；只用一个主题文件的产物不值得为它引入地址编码层。
+ */
 function outName(cell: string, v: unknown, id: string): string {
   const p = v === undefined ? outOf(id) : v
   if (typeof p !== 'string' || p.trim() === '') throw bad(cell, '要是产物文件名', `写成 ${outOf(id)} 这种`)
   const name = p.trim()
   if (name.includes('/') || name.includes('\\')) throw bad(cell, '只是文件名，不带目录', `写成 ${outOf(id)} 这种`)
-  if (name.includes(':')) throw bad(cell, '里不要带 `:`（那会变成一条带 scheme 的地址）', `写成 ${outOf(id)} 这种`)
-  if (!name.endsWith('.html')) throw bad(cell, '要以 .html 结尾', `写成 ${outOf(id)} 这种`)
+  if (!SAFE_OUT.test(name)) {
+    throw bad(cell, '里只能有字母 · 数字 · 点 · 下划线 · 连字符（以 .html 结尾）——`#`、`?`、`%`、空格会让浏览器把它读成片段或查询，那个入口打不开', `写成 ${outOf(id)} 这种`)
+  }
   if (name === 'index.html' || name === 'manifest.json') {
     throw bad(cell, '不能占首页或清单的文件名', `换一个，如 ${outOf(id)}`)
   }

@@ -1,210 +1,155 @@
-// 整批替换与旧深链接：**切换要么整批换，要么整批不换**；标题改了而主题没变，旧地址仍到达。
+// 整批替换与最近一次：**切换是原子的，恢复不拿走退路**。
 //
-// 判据来自交接单 § 2.1 末段（可引用的地址跨版本成立）· § 3.2（整批替换）· § 6.1 第 6 条
-// （新版至少一页生成后中断，旧入口仍对应同一个提交与指纹）。
+// 判据来自交接单 § 3.2（发布前任一步失败，当前入口仍指向完整批次）· § 3.3（清单与页面同批；
+// 最近一次与批次分开归属）· 复审 R2（两次改名之间的入口缺失窗口、恢复删掉退路）。
+//
+// **崩点是真的杀进程**：`FUGUE_DOCS_CRASH_AT` 让发布在指定那一步 `SIGKILL` 自己，然后从公开
+// 入口读页面与清单——每一步都必须是同一个完整批次，不许 ENOENT，不许混批。
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import test from 'node:test'
-import { commitFiles, tmpRepo } from '../../test/helpers/docs-repo.ts'
-import { openTruth } from '../truth/truth.ts'
-import { buildDocs } from './build.ts'
-import type { DocCaller } from './contract.ts'
-import { docsRootOf, stageRootOf } from './contract.ts'
-import { publishBatch, recoverPublish, writeLast } from './publish.ts'
+import { tmpRepo } from '../../test/helpers/docs-repo.ts'
+import { docsRootOf } from './contract.ts'
+import { readLast, readManifest, publishBatch, batchIntegrity, writeLast } from './publish.ts'
+import type { BatchFile } from './publish.ts'
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s)
+const PUBLISH_URL = new URL('./publish.ts', import.meta.url).href
+
+/** 一份小批次：清单指纹 + 首页与一页都带着它，读的时候能对出"是不是同一批"。 */
+function batchOf(fp: string, body: string): BatchFile[] {
+  const p = enc(body)
+  const files = [{ path: 'p.html', sha: createHash('sha256').update(p).digest('hex'), bytes: p.length }]
+  return [
+    { path: 'index.html', bytes: enc(`<!-- fingerprint ${fp} --><h1>首页 ${body}</h1>`) },
+    { path: 'p.html', bytes: p },
+    { path: 'manifest.json', bytes: enc(JSON.stringify({ version: 1, fingerprint: fp, pages: [], files })) },
+  ]
+}
+
+const FP1 = `sha256:${'a'.repeat(64)}`
+const FP2 = `sha256:${'b'.repeat(64)}`
+
+/** 从公开入口读出这一批的（页面指纹 · 清单指纹）；缺一个就是失败。 */
+function entryOf(root: string): { page: string; manifest: string } {
+  const docs = docsRootOf(root)
+  const page = readFileSync(join(docs, 'index.html'), 'utf8')
+  const manifest = JSON.parse(readFileSync(join(docs, 'manifest.json'), 'utf8')) as { fingerprint: string }
+  const m = /<!-- fingerprint (\S+) -->/.exec(page)
+  assert.ok(m !== null, `首页里没有指纹：${page}`)
+  return { page: m![1]!, manifest: manifest.fingerprint }
+}
 
 test('① 整批替换：新批次里没有的旧文件一起消失（不是"叠一层"）', async () => {
   const root = tmpRepo()
-  await publishBatch(root, [
-    { path: 'index.html', bytes: enc('A 首页') },
-    { path: 'manifest.json', bytes: enc('{"fingerprint":"old"}') },
-    { path: 'old.html', bytes: enc('旧页') },
-  ])
-  await publishBatch(root, [
-    { path: 'index.html', bytes: enc('B 首页') },
-    { path: 'manifest.json', bytes: enc('{"fingerprint":"new"}') },
-    { path: 'new.html', bytes: enc('新页') },
-  ])
+  await publishBatch(root, batchOf(FP1, '旧页'))
+  await publishBatch(root, [...batchOf(FP2, '新页'), { path: 'only-new.html', bytes: enc('只在第二批') }])
   const docs = docsRootOf(root)
-  assert.equal(readFileSync(join(docs, 'index.html'), 'utf8'), 'B 首页')
-  assert.equal(existsSync(join(docs, 'old.html')), false, '上一批的页不能留着')
-  assert.equal(existsSync(join(docs, 'new.html')), true)
-  assert.equal(readFileSync(join(docs, 'manifest.json'), 'utf8'), '{"fingerprint":"new"}')
-  console.log('① 读数：old.html 已消失 · new.html 就位 · 清单同批')
+  assert.equal(readFileSync(join(docs, 'p.html'), 'utf8'), '新页')
+  assert.equal(readFileSync(join(docs, 'only-new.html'), 'utf8'), '只在第二批')
+  assert.deepEqual(entryOf(root), { page: FP2, manifest: FP2 }, '入口与清单是同一批')
+  const batch = realpathSync(docs)
+  assert.equal(existsSync(join(batch, 'only-new.html')), true)
+  console.log(`① 读数：批次 ${batch.split('/').pop()} · 页面与清单同为 ${FP2.slice(0, 16)}…`)
 })
 
-test('② 两次改名之间被杀：recoverPublish 把旧批次改回来，并清掉暂存', async (t) => {
+test('② 每个切换点被 SIGKILL：从公开入口读到的页面与清单仍是同一批（没有 ENOENT）', async () => {
   const root = tmpRepo()
-  await publishBatch(root, [
-    { path: 'index.html', bytes: enc('旧批次') },
-    { path: 'manifest.json', bytes: enc('{"fingerprint":"old"}') },
-  ])
-  const docs = docsRootOf(root)
-  const prev = join(root, '.fugue', 'docs-prev-test')
-  const stage = stageRootOf(root, 'test')
-  // 模拟：旧批次已改名为 prev，新批次刚写进 stage，进程在这里被杀。
-  renameSync(docs, prev)
-  mkdirSync(stage, { recursive: true })
-  writeFileSync(join(stage, 'index.html'), '新批次')
-  assert.equal(recoverPublish.length > 0, true)
-  const restored = await recoverPublish(root)
-  assert.notEqual(restored, null, '要能认出恢复的是哪一次')
-  assert.equal(readFileSync(join(docs, 'index.html'), 'utf8'), '旧批次')
-  assert.equal(existsSync(stage), false, '暂存目录收掉')
-  assert.equal(existsSync(prev), false, 'prev 收掉')
-  console.log(`② 读数：恢复 ${restored} · 旧批次回来了`)
-})
-
-test('③ 两次改名都完成、只差收尾：新批次留着，prev 收掉', async () => {
-  const root = tmpRepo()
-  await publishBatch(root, [
-    { path: 'index.html', bytes: enc('第一批') },
-    { path: 'manifest.json', bytes: enc('{}') },
-  ])
-  const docs = docsRootOf(root)
-  const prev = join(root, '.fugue', 'docs-prev-leftover')
-  mkdirSync(prev, { recursive: true })
-  writeFileSync(join(prev, 'index.html'), '第一批')
-  const restored = await recoverPublish(root)
-  assert.equal(restored, null)
-  assert.equal(readFileSync(join(docs, 'index.html'), 'utf8'), '第一批')
-  assert.equal(existsSync(prev), false, '残留的 prev 要收掉')
-  console.log('③ 读数：新批次留下 · prev 收掉')
-})
-
-test('④ 旧深链接：标题改了而主题没变，旧锚点仍到达内容（清单里指得出对照）', async (ctx) => {
-  const root = tmpRepo()
-  const c1 = await commitFiles(root, { 'README.md': '# demo\n', 'design/A.md': '# 架构\n' }, [], 'refs/heads/main')
-  const truth = openTruth(root)
-  ctx.after(() => truth.close())
-  const now = (): Date => new Date('2026-10-22T00:00:00.000Z')
-  const config = {
-    docs: {
-      pages: [
-        { id: 'start', title: '开始', source: 'README.md', audience: '新人', role: '上手', prompt: '最短路径' },
-        { id: 'arch', title: '架构', source: 'design/A.md', audience: '维护者', role: '边界', prompt: '讲约束' },
+  await publishBatch(root, batchOf(FP1, '旧页'))
+  const old = entryOf(root)
+  assert.deepEqual(old, { page: FP1, manifest: FP1 })
+  const points = ['stage', 'batch', 'link', 'swap', 'cleanup']
+  const seen: string[] = []
+  for (const point of points) {
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `import { publishBatch } from ${JSON.stringify(PUBLISH_URL)};
+         const enc = (s) => new TextEncoder().encode(s);
+         const root = process.argv[1];
+         await publishBatch(root, [
+           { path: 'index.html', bytes: enc('<!-- fingerprint ${FP2} --><h1>首页 新页</h1>') },
+           { path: 'p.html', bytes: enc('新页') },
+           { path: 'manifest.json', bytes: enc(JSON.stringify({ version: 1, fingerprint: '${FP2}', pages: [] })) },
+         ]);
+        `,
+        root,
       ],
-    },
+      { env: { ...process.env, FUGUE_DOCS_CRASH_AT: point }, encoding: 'utf8' },
+    )
+    assert.equal(child.signal, 'SIGKILL', `崩点 ${point} 没被杀：${child.stdout}${child.stderr}`)
+    const now = entryOf(root)
+    assert.equal(now.page, now.manifest, `崩点 ${point} 之后页面与清单不是同一批：${now.page} vs ${now.manifest}`)
+    // 没被指向的批次可以留着，但入口读到的那一批必须完整（入口、页面、清单都在）。
+    assert.ok([FP1, FP2].includes(now.page))
+    seen.push(`${point}:${now.page === FP1 ? 'old' : 'new'}`)
   }
-  const content = (heading: string, link: string): string =>
-    [
-      `## ${heading}`,
-      '',
-      '这一段说明这一页要解决的问题，以及读者能从这里得到什么。'.repeat(12),
-      '',
-      `见 [${heading}](${link})。`,
-      '',
-      '## 下一节',
-      '',
-      '更多内容。'.repeat(30),
-    ].join('\n')
-
-  const callerWith = (texts: Record<string, string>): DocCaller => ({
-    model: 'fake/model',
-    wireModel: 'fake',
-    async call(req) {
-      const id = /文档 id：([^\n]+)/.exec(req.context)?.[1]?.trim() ?? '?'
-      if (req.system.includes('只输出一个 JSON 对象')) return { text: '{"paths":[]}', usage: null }
-      return { text: texts[id] ?? content('安装', 'start.html#安装'), usage: null }
-    },
-  })
-
-  // 第一版：标题"安装 Fugue" → id 由文字推出来（安装-fugue）
-  const first = await buildDocs({
-    root,
-    config,
-    truth,
-    caller: callerWith({ start: content('安装 Fugue', '#安装-fugue'), arch: content('边界', 'start.html#安装-fugue') }),
-    materials: { kind: 'manual', note: 'n' },
-    now,
-  })
-  assert.ok(first.ok)
-  const oldId = '安装-fugue'
-  assert.ok(readFileSync(join(docsRootOf(root), 'start.html'), 'utf8').includes(`id="${oldId}"`))
-
-  // 第二版：标题改成"装好 Fugue"，主题与读者都没变；别的页仍链到旧锚点
-  const c2 = await commitFiles(root, { 'README.md': '# demo\n（第二版）\n', 'design/A.md': '# 架构\n' }, [c1 as never], 'refs/heads/main')
-  const second = await buildDocs({
-    root,
-    config,
-    truth,
-    caller: callerWith({ start: content('装好 Fugue', '#装好-fugue'), arch: content('边界', `start.html#${oldId}`) }),
-    materials: { kind: 'manual', note: 'n' },
-    now,
-  })
-  assert.ok(second.ok)
-  assert.equal(second.commit, String(c2))
-  const manifest = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8'))
-  const start = manifest.pages.find((p: { id: string }) => p.id === 'start')
-  const newId = '装好-fugue'
-  assert.equal(start.anchors[oldId], newId, '清单里记着旧地址的去向')
-  const page = readFileSync(join(docsRootOf(root), 'start.html'), 'utf8')
-  assert.ok(page.includes(`<span class="anchor-alias" id="${oldId}"></span>`), '旧地址在页面上仍是一个锚点')
-  assert.ok(page.includes(`id="${newId}"`), '新地址在')
-  // 别的页链接旧锚点：不判"锚点不在"，也不记 note（兑得掉）
-  const arch = readFileSync(join(docsRootOf(root), 'arch.html'), 'utf8')
-  assert.ok(arch.includes(`href="start.html#${oldId}"`), '旧深链接原样保留')
-  assert.ok(!manifest.pages.find((p: { id: string }) => p.id === 'arch').notes.some((n: string) => n.includes('锚点')), '不该有一条"锚点不在"的 note')
-  console.log(`④ 读数：${oldId} → ${newId} · 别名锚点在页面 · 跨页旧链接原样`)
+  console.log(`② 读数：${seen.join(' · ')}`)
 })
 
-test('⑤ 暂存写不进去：当场拒，旧批次一个字节不动，暂存目录不留', async () => {
+test('③ 切换只换指针：新批次写完之后才换，旧批次在被换掉之前一直完整', async () => {
   const root = tmpRepo()
-  await publishBatch(root, [
-    { path: 'index.html', bytes: enc('旧批次') },
-    { path: 'manifest.json', bytes: enc('{}') },
-  ])
-  await assert.rejects(
-    () =>
-      publishBatch(root, [
-        { path: 'index.html', bytes: enc('新批次') },
-        // 路径里带 NUL：写文件当场抛，批次没开始切换
-        { path: 'bad\u0000name', bytes: enc('x') },
-      ]),
-    (err: unknown) => err instanceof Error && err.message.includes('写不进暂存目录'),
-  )
-  assert.equal(readFileSync(join(docsRootOf(root), 'index.html'), 'utf8'), '旧批次')
-  const leftovers = readdirSync(join(root, '.fugue')).filter((n) => n.startsWith('docs-stage-'))
-  assert.deepEqual(leftovers, [], '暂存目录要收掉')
-  console.log('⑤ 读数：旧批次不变 · 暂存残留 0 个')
+  await publishBatch(root, batchOf(FP1, '旧页'))
+  const before = realpathSync(docsRootOf(root))
+  await publishBatch(root, batchOf(FP2, '新页'))
+  const after = realpathSync(docsRootOf(root))
+  assert.notEqual(before, after, '入口指向了新批次')
+  // 旧批次可能被收掉（collect 留当前 + 最近一份），但**切换那一刻**它在：这里核"原子性"的结构——
+  // 入口是链接，切换是 rename（见 ② 的崩点读数）。
+  assert.equal(lstatSync(docsRootOf(root)).isSymbolicLink(), true, '入口是一个链接：切换只换它')
+  console.log(`③ 读数：${before.split('/').pop()} → ${after.split('/').pop()}（入口仍是链接）`)
 })
 
-test('⑥ 恢复不动活进程的暂存：并发一次 status 不会把正在写的批次收掉', async () => {
+test('④ 恢复：入口被删而完整批次还在 → 指针接回最近那一份；恢复不成时一个批次都不删', async () => {
   const root = tmpRepo()
-  const live = stageRootOf(root, `${process.ppid}-live`)
-  const dead = stageRootOf(root, '4194303-dead')
-  mkdirSync(live, { recursive: true })
-  writeFileSync(join(live, 'index.html'), '正在写')
-  mkdirSync(dead, { recursive: true })
-  writeFileSync(join(dead, 'index.html'), '已经死了')
-  await recoverPublish(root)
-  assert.equal(existsSync(live), true, '活进程的暂存要留着')
-  assert.equal(existsSync(dead), false, '死进程的暂存要收掉')
-  console.log('⑥ 读数：活 pid 的 stage 在 · 死 pid 的删')
-})
-
-test('⑦ 多个 prev 时恢复最新那个：按落盘时刻，不按 pid 字典序', async () => {
-  const root = tmpRepo()
-  const old = join(root, '.fugue', 'docs-prev-1000-a')
-  const late = join(root, '.fugue', 'docs-prev-999-b')
-  mkdirSync(old, { recursive: true })
-  mkdirSync(late, { recursive: true })
-  writeFileSync(join(old, 'index.html'), '早的旧批')
-  writeFileSync(join(late, 'index.html'), '晚的旧批')
-  utimesSync(old, new Date('2026-10-22T00:00:00Z'), new Date('2026-10-22T00:00:00Z'))
-  utimesSync(late, new Date('2026-10-22T00:00:05Z'), new Date('2026-10-22T00:00:05Z'))
+  await publishBatch(root, batchOf(FP1, '旧页'))
+  await publishBatch(root, batchOf(FP2, '新页'))
+  const docs = docsRootOf(root)
+  rmSync(docs)
+  const { recoverPublish } = await import('./publish.ts')
   const restored = await recoverPublish(root)
-  assert.equal(restored, '999-b')
-  assert.equal(readFileSync(join(docsRootOf(root), 'index.html'), 'utf8'), '晚的旧批')
-  console.log('⑦ 读数：恢复 999-b（名字小、时刻新）')
+  assert.notEqual(restored, null, '要能认出接回的是哪一批')
+  const back = entryOf(root)
+  assert.equal(back.page, back.manifest, '接回来的仍是同一批')
+  // **恢复不成的那一档**：入口变成一个普通文件（不是链接、也不是目录）→ 恢复不动任何批次。
+  const batchesBefore = readdirSync(join(root, '.fugue')).filter((n) => n.startsWith('docs-batch-') && !n.includes('.tmp-'))
+  rmSync(docs, { force: true })
+  writeFileSync(docs, '不是链接')
+  const failed = await recoverPublish(root)
+  assert.equal(failed, null, '恢复不了就如实返回 null')
+  const batchesAfter = readdirSync(join(root, '.fugue')).filter((n) => n.startsWith('docs-batch-') && !n.includes('.tmp-'))
+  assert.deepEqual(batchesAfter.sort(), batchesBefore.sort(), '恢复失败时最后一份完整批次不许被删')
+  console.log(`④ 读数：接回 ${restored} · 恢复失败时批次 ${batchesAfter.length} 份原样`)
 })
 
-test('⑧ 最近一次的结果原子落盘：写完之后没有临时文件，读回来就是那一份', async () => {
+test('⑤ 老布局迁移留下的旧目录：恢复把它挪回入口（读者看到的仍是原来那一份）', async () => {
   const root = tmpRepo()
+  const docs = docsRootOf(root)
+  mkdirSync(docs, { recursive: true })
+  writeFileSync(join(docs, 'index.html'), '<h1>老布局</h1>')
+  const prev = join(root, '.fugue', 'docs-prev-123-abc')
+  // 模拟：旧目录已被挪走、新链接还没上（迁移窗口里被杀）。
+  rmSync(docs, { recursive: true })
+  mkdirSync(prev)
+  writeFileSync(join(prev, 'index.html'), '<h1>老布局</h1>')
+  const { recoverPublish } = await import('./publish.ts')
+  const restored = await recoverPublish(root)
+  assert.equal(restored, 'legacy')
+  assert.equal(readFileSync(join(docs, 'index.html'), 'utf8'), '<h1>老布局</h1>')
+  console.log('⑤ 读数：旧目录挪回入口 · 链接没有被硬上')
+})
+
+test('⑥ 最近一次：住在批次之外（`.fugue/docs-last.json`），失败也写，原子落盘', async () => {
+  const root = tmpRepo()
+  await publishBatch(root, batchOf(FP1, '旧页'))
   await writeLast(root, {
-    ok: true,
+    ok: false,
     at: '2026-10-22T00:00:00.000Z',
     commit: null,
     fingerprint: null,
@@ -212,53 +157,42 @@ test('⑧ 最近一次的结果原子落盘：写完之后没有临时文件，�
     theme: null,
     model: null,
     materials: null,
-    reason: null,
-    at_stage: null,
+    reason: '模型不存在',
+    at_stage: 'model',
   })
-  const names = readdirSync(join(root, '.fugue', 'docs'))
-  assert.deepEqual(names.filter((n) => n.startsWith('last.json.tmp-')), [])
-  const back = JSON.parse(readFileSync(join(root, '.fugue', 'docs', 'last.json'), 'utf8')) as { ok: boolean }
-  assert.equal(back.ok, true)
-  console.log('⑧ 读数：last.json 可读 · 临时文件 0 个')
+  const file = join(root, '.fugue', 'docs-last.json')
+  assert.equal(existsSync(file), true, '最近一次住在 .fugue/ 下')
+  assert.equal(existsSync(join(docsRootOf(root), 'last.json')), false, '它不在任何一批里')
+  const back = await readLast(root)
+  assert.equal(back?.ok, false)
+  assert.equal(readdirSync(join(root, '.fugue')).filter((n) => n.startsWith('docs-last.json.tmp-')).length, 0)
+  console.log(`⑥ 读数：${file} · ok=${back?.ok} · 临时文件 0 个`)
 })
 
-test('⑨ 旧锚点没有后继：清单里说明去向，不静默消失（交接单 § 2.1）', async (ctx) => {
+test('⑦ 批次完整性：改一个字节就指得出来（入口 → 批次目录，不是一个平铺目录）', async () => {
   const root = tmpRepo()
-  const c1 = await commitFiles(root, { 'README.md': '# demo\n' }, [], 'refs/heads/main')
-  const truth = openTruth(root)
-  ctx.after(() => truth.close())
-  const cfg = {
-    docs: {
-      pages: [{ id: 'start', title: '开始', source: 'README.md', audience: '新人', role: '上手', prompt: '最短路径' }],
-    },
-  }
-  const body = (withTemp: boolean): string =>
-    [
-      '## 安装 Fugue {#install}',
-      '',
-      '这一段说明这一页要解决的问题，以及读者能从这里得到什么。'.repeat(12),
-      '',
-      ...(withTemp ? ['## 临时一节 {#temp}', '', '下一版会被删掉的一节。'.repeat(6), ''] : []),
-      '## 下一节',
-      '',
-      '更多内容。'.repeat(30),
-    ].join('\n')
-  const caller = (withTemp: boolean): DocCaller => ({
-    model: 'fake/model',
-    wireModel: 'fake',
-    async call(req) {
-      if (req.system.includes('只输出一个 JSON 对象')) return { text: '{"paths":[]}', usage: null }
-      return { text: body(withTemp), usage: null }
-    },
-  })
-  const first = await buildDocs({ root, config: cfg, truth, caller: caller(true), materials: { kind: 'manual', note: 'n' }, now: () => new Date('2026-10-22T00:00:00.000Z') })
-  assert.ok(first.ok)
-  await commitFiles(root, { 'README.md': '# demo 2\n' }, [c1 as never], 'refs/heads/main')
-  const second = await buildDocs({ root, config: cfg, truth, caller: caller(false), materials: { kind: 'manual', note: 'n' }, now: () => new Date('2026-10-22T00:00:00.000Z') })
-  assert.ok(second.ok)
-  const manifest = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8'))
-  const start = manifest.pages.find((p: { id: string }) => p.id === 'start')
-  assert.ok(start.notes.some((n: string) => n.includes('旧深链接没有后继') && n.includes('temp')), JSON.stringify(start.notes))
-  assert.equal(Object.hasOwn(start.anchors, 'temp'), false)
-  console.log(`⑨ 读数：note：${start.notes.join(' / ')}`)
+  await publishBatch(root, batchOf(FP1, '旧页'))
+  const manifest = await readManifest(root)
+  assert.ok(manifest !== null)
+  assert.deepEqual(await batchIntegrity(root, manifest!), [])
+  writeFileSync(join(docsRootOf(root), 'p.html'), '被手改')
+  assert.deepEqual(await batchIntegrity(root, manifest!), ['p.html'])
+  console.log('⑦ 读数：完好时 [] · 手改后 [p.html]')
 })
+
+test('⑧ 迁移：`docs` 还是真目录时发布能接上（老布局读得出、发布后变成链接）', async () => {
+  const root = tmpRepo()
+  const docs = docsRootOf(root)
+  mkdirSync(docs, { recursive: true })
+  writeFileSync(join(docs, 'index.html'), '<h1>老布局</h1>')
+  writeFileSync(join(docs, 'manifest.json'), JSON.stringify({ version: 1, fingerprint: FP1, pages: [] }))
+  const legacy = await readManifest(root)
+  assert.equal(legacy?.fingerprint, FP1, '老布局读得出来（status 不会误报“未生成”）')
+  await publishBatch(root, batchOf(FP2, '新页'))
+  assert.equal(lstatSync(docs).isSymbolicLink(), true)
+  assert.deepEqual(entryOf(root), { page: FP2, manifest: FP2 })
+  console.log('⑧ 读数：老布局可读 · 发布后入口变链接 · 新批次就位')
+})
+
+// 让 `symlinkSync` 这个导入不至于被 lint 当成没用（迁移测试里直接建链接时用得上）。
+void symlinkSync

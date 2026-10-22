@@ -2,12 +2,16 @@
 //
 // 一只指纹盖住四样东西，任一样变了产物就过期：
 //
-//   提交 C · 文档定义（含主题 id 与主题版本） · 每份来源的 blob · 写作所用的模型声明
+//   提交 C · 文档定义（含主题 id 与主题版本） · 每份来源的 blob · **实际采用的模型声明**
+//
+// 模型那一栏从"只认 id"扩到整份声明（复审 R7）：`models.json` 可以在 id 不变时改思考档、温度、
+// 输出预算，那些改动会让同一份正文配上不同的调用参数，却仍被 `status` 判成"最新"。
+// **凭据不进指纹**：换一把密钥不该让产物过期。
 //
 // 渲染器版本也进指纹：宿主那一半换了一版，"同样正文出同样字节"这个前提就变了（交接单 § 1.4）。
 // **生成时间不进指纹**——它只进清单，否则同一份状态每次生成都是"过期"。
 import { createHash } from 'node:crypto'
-import type { DocsPlan, SourceFact } from './contract.ts'
+import type { DocsPlan, ModelFacts, SourceFact } from './contract.ts'
 import { FINGERPRINT_PREFIX, RENDERER_VERSION } from './contract.ts'
 import type { ThemeSpec } from './theme.ts'
 
@@ -23,13 +27,34 @@ function stable(v: unknown): string {
     .join(',')}}`
 }
 
+/**
+ * 这一次实际会用的模型声明。
+ *
+ * 计算只有这一处：`build` 与 `status` 都走它，于是"用了哪个模型"不会两边各理解一份。
+ * `docs.maxTokens` 覆盖输出预算时以**实际请求的那个数**为准。
+ */
+export function modelFactsOf(
+  caller: { readonly model: string; readonly wireModel: string; readonly thinking?: string; readonly facts?: ModelFacts },
+  planMaxTokens: number | undefined,
+): ModelFacts {
+  const f = caller.facts
+  return {
+    id: caller.model,
+    wireModel: f?.wireModel ?? caller.wireModel,
+    thinking: f?.thinking ?? caller.thinking ?? null,
+    temperature: f?.temperature ?? null,
+    maxTokens: planMaxTokens ?? f?.maxTokens ?? null,
+    contextLimit: f?.contextLimit ?? null,
+  }
+}
+
 export interface FingerprintInput {
   readonly commit: string
   readonly plan: DocsPlan
   readonly sources: readonly SourceFact[]
   readonly theme: ThemeSpec
-  /** 我们这边的模型键（换模型 = 过期：同一份定义换了写作用模型，正文不该算最新）。 */
-  readonly model: string
+  /** 实际采用的模型声明（换模型或换思考档 = 过期）。 */
+  readonly model: ModelFacts
 }
 
 /** 这一批的指纹：`sha256:` 加十六进制。 */

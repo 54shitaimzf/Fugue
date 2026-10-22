@@ -15,12 +15,14 @@ import { declaredSetOf } from '../contract/types.ts'
 import type { RoundRun } from '../round/execute.ts'
 import { openTruth } from '../truth/truth.ts'
 import { parseDocs } from '../docs/config.ts'
-import { buildDocs } from '../docs/build.ts'
+import { buildDocs, recordAttemptFailure } from '../docs/build.ts'
 import type { Materials } from '../docs/contract.ts'
 import { DocsError } from '../docs/contract.ts'
 import { shortFingerprint } from '../docs/fingerprint.ts'
+import { SESSION_LIMIT } from '../docs/prompt.ts'
 import { callerOf } from '../docs/writer.ts'
 import type { DocCaller } from '../docs/contract.ts'
+import { recordsOf } from '../round/say.ts'
 
 /** 收口那一格的结果：**两脸同源的一段话 + 一份结构**。 */
 export interface DocsClose {
@@ -46,6 +48,15 @@ function failedOf(err: unknown, commit: string | null): DocsClose {
   }
 }
 
+/** 会话进写作输入：**取到的范围写进结果**（条数 · 字符数 · 实际贴的那一段）。 */
+function materialSessionOf(s: { readonly path: string; readonly text: string }): NonNullable<Materials['session']> {
+  const { records } = recordsOf(s.text)
+  const chars = s.text.length
+  const text =
+    chars > SESSION_LIMIT ? `…（只贴最后 ${SESSION_LIMIT} 字符，共 ${chars} 字符）\n${s.text.slice(chars - SESSION_LIMIT)}` : s.text
+  return { path: s.path, records: records.length, chars, text }
+}
+
 /**
  * 收口那一格。`null` = 这个工作区没配文档（收口只做归并与验收，交接单 § 3.5 末段）。
  */
@@ -61,6 +72,11 @@ export async function docsAtClose(o: {
   readonly replay: boolean
   /** 写作接缝（测试注入假模型用；不给就走真档）。 */
   readonly caller?: DocCaller
+  /**
+   * 本轮会话（交接单 § 2.5 的 "A + B + C"）：`path` 是它在视图里的坐标，`text` 是原文。
+   * 不给 = 这一轮没有会话记录（写作输入里如实写这一句）。
+   */
+  readonly session?: { readonly path: string; readonly text: string }
 }): Promise<DocsClose | null> {
   let plan
   try {
@@ -94,28 +110,52 @@ export async function docsAtClose(o: {
     }
   }
 
-  const materials: Materials = {
-    kind: 'round',
-    note: `自动收口：轮次 ${o.round} 归并、验收与写回之后生成；完整树承担事实，本轮变化取契约与验收读数（持轮者会话的原文不在这一份的可达范围）`,
-    round: o.round,
-    contracts: o.run.batch.contracts.map((c) => ({
-      id: c.id,
-      agent: c.agent,
-      commit: String(o.run.work[c.id] ?? ''),
-      paths: declaredSetOf(c),
-    })),
-    verify: { ok: o.run.report.ok, passed: o.run.report.pass, failed: o.run.report.fail },
-  }
+  const materials: Materials = ((): Materials => {
+    const session = o.session === undefined ? undefined : materialSessionOf(o.session)
+    const sessionNote =
+      session === undefined
+        ? '这一轮没有会话记录'
+        : `本轮会话取 ${session.path}（${session.records} 条 · ${session.chars} 字符）`
+    return {
+      kind: 'round',
+      note: `自动收口：轮次 ${o.round} 归并、验收与写回之后生成；完整树承担事实，本轮变化取契约与验收读数；${sessionNote}`,
+      round: o.round,
+      contracts: o.run.batch.contracts.map((c) => ({
+        id: c.id,
+        agent: c.agent,
+        commit: String(o.run.work[c.id] ?? ''),
+        paths: declaredSetOf(c),
+      })),
+      verify: { ok: o.run.report.ok, passed: o.run.report.pass, failed: o.run.report.fail },
+      ...(session === undefined ? {} : { session }),
+    }
+  })()
 
   const truth = openTruth(o.root)
   try {
-    const caller =
-      o.caller ??
-      callerOf({
-        config: o.config,
-        ...(strFlag(o.flags, 'model') === undefined ? {} : { model: strFlag(o.flags, 'model')! }),
-        ...(strFlag(o.flags, 'credential') === undefined ? {} : { credential: strFlag(o.flags, 'credential')! }),
-      })
+    let caller: DocCaller
+    if (o.caller !== undefined) caller = o.caller
+    else {
+      try {
+        caller = callerOf({
+          config: o.config,
+          ...(strFlag(o.flags, 'model') === undefined ? {} : { model: strFlag(o.flags, 'model')! }),
+          ...(strFlag(o.flags, 'credential') === undefined ? {} : { credential: strFlag(o.flags, 'credential')! }),
+        })
+      } catch (err) {
+        // **模型或凭据缺席也是“最近一次生成”的一次尝试**（复审 R8）：否则 status 还显示上次成功。
+        await recordAttemptFailure({
+          root: o.root,
+          reason: (err as Error).message,
+          at_stage: err instanceof DocsError ? err.at : 'model',
+          commit,
+          materials,
+          model: null,
+          theme: null,
+        })
+        return failedOf(err, commit)
+      }
+    }
     const out = await buildDocs({
       root: o.root,
       config: o.config,

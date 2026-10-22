@@ -25,13 +25,26 @@ const bad = (m) => {
   console.log('  FAIL ' + m)
 }
 
+/**
+ * 产物目录可能是**指向当前批次的符号链接**（新的整批替换形态）：清单与文件都在批次目录里。
+ * 显式点名一个普通目录时（比如留档副本）就按它自己读。
+ */
+let base = dir
+let entryKind = 'dir'
+try {
+  entryKind = fs.lstatSync(dir).isSymbolicLink() ? 'link' : 'dir'
+  if (entryKind === 'link') base = fs.realpathSync(dir)
+} catch {
+  entryKind = 'missing'
+}
+
 function read(rel) {
-  return fs.readFileSync(path.join(dir, rel))
+  return fs.readFileSync(path.join(base, rel))
 }
 
 function listHtml(rel = '') {
   const out = []
-  for (const e of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
+  for (const e of fs.readdirSync(path.join(base, rel), { withFileTypes: true })) {
     const p = rel === '' ? e.name : `${rel}/${e.name}`
     if (e.isDirectory()) out.push(...listHtml(p))
     else if (e.name.endsWith('.html')) out.push(p)
@@ -39,7 +52,7 @@ function listHtml(rel = '') {
   return out
 }
 
-console.log(`目录：${dir}`)
+console.log(`目录：${dir}${entryKind === 'link' ? `（指向批次 ${base}）` : ''}`)
 if (!fs.existsSync(dir)) {
   // **显式点名的目录不在，是路径写错了，不是“还没生成”**：默认位置缺了才是后者。
   if (process.argv[2] !== undefined) {
@@ -70,6 +83,15 @@ if (manifest !== null) {
   else bad('生成时间不在清单里（或不是时间）')
   if (Array.isArray(manifest.pages) && manifest.pages.length > 0) ok(`页面清单 ${manifest.pages.length} 份`)
   else bad('页面清单是空的')
+  // **旧地址的去向要能完整枚举**（复审 R6：原先只有六条示例与一个总数）。
+  const dropped = manifest.pages.filter((p) => Array.isArray(p.dropped)).reduce((n, p) => n + p.dropped.length, 0)
+  const missingDropped = manifest.pages.filter((p) => !Array.isArray(p.dropped))
+  if (missingDropped.length > 0) bad(`有 ${missingDropped.length} 页没写 dropped（旧地址的去向列不全）`)
+  else ok(`旧地址枚举齐全（${manifest.pages.length} 页 · 无后继 ${dropped} 条）`)
+  // **截断范围进清单**（复审 R3）：取证被截断的那些要说得出来。
+  const noTrunc = manifest.pages.filter((p) => p.evidence === undefined || !Array.isArray(p.evidence.ranges))
+  if (noTrunc.length > 0) bad(`有 ${noTrunc.length} 页的 evidence 没记取证行段`)
+  else ok('每页的取证行段（含截断）都在清单里')
 }
 
 // ── 二 · 批次 ────────────────────────────────────────────────────────────────
@@ -131,7 +153,7 @@ for (const h of allHtml) {
   for (const m of html.matchAll(/\ssrc="([^"]+)"/g)) {
     const src = m[1]
     if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('//')) bad(`${h} 里有一张带 scheme 的图：${src}`)
-    else if (src.startsWith('_assets/') && !fs.existsSync(path.join(dir, src))) bad(`${h} 的图不在产物里：${src}`)
+    else if (src.startsWith('_assets/') && !fs.existsSync(path.join(base, src))) bad(`${h} 的图不在产物里：${src}`)
   }
   // 可见正文里的反引号：代码段正常会变成 <code>、围栏会变成 <pre>，落单的反引号说明那一截没被当成代码。
   // `<code>` 里面那些是作者有意写的字面反引号（模型写“形如 `\`T1\`` 的声明”那一类），不算漏。
@@ -164,6 +186,30 @@ for (const h of allHtml) {
   }
   const dead = entries.filter((e) => !idsOf.has(e.p) || (e.h !== '' && !idsOf.get(e.p).has(e.h)))
   if (dead.length > 0) bad(`${h} 的索引里有 ${dead.length} 条命中落不到正文（如 ${dead[0].p}#${dead[0].h}）`)
+  // **命中落到具体内容块**，且**索引里的文字真的在渲染正文里**（复审 R1/R5：两处各一份时它们会漂）。
+  const deadBlock = entries.filter((e) => e.b !== '' && !idsOf.get(e.p)?.has(e.b))
+  if (deadBlock.length > 0) bad(`${h} 的索引里有 ${deadBlock.length} 条命中没有内容块（如 ${deadBlock[0].p}#${deadBlock[0].b}）`)
+  const textOfPage = (page) => {
+    const raw = read(page).toString('utf8')
+    return raw
+      .replace(/<script[\s\S]*?<\/script>/g, '')
+      .replace(/<style[\s\S]*?<\/style>/g, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\s+/g, ' ')
+  }
+  const textCache = new Map()
+  const missingText = entries.filter((e) => {
+    if (!idsOf.has(e.p)) return false
+    if (!textCache.has(e.p)) textCache.set(e.p, textOfPage(e.p))
+    return !textCache.get(e.p).includes(e.x.replace(/\s+/g, ' ').trim())
+  })
+  if (missingText.length > 0) bad(`${h} 的索引里有 ${missingText.length} 条片段在正文里找不到（如 ${missingText[0].p}：${missingText[0].x.slice(0, 40)}）`)
+  if (deadBlock.length === 0 && missingText.length === 0) ok(`${h} 的 ${entries.length} 条命中都落到内容块，且文字都在正文里`)
   if (!html.includes('<noscript>')) bad(`${h} 没有"没有脚本也能读"的说明`)
   if (manifest !== null && manifest.theme !== undefined) {
     if (html.includes(`data-doc-theme="${manifest.theme}"`)) ok(`${h} 的主题与清单一致（${manifest.theme}）`)

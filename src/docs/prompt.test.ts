@@ -144,3 +144,32 @@ test('⑥ `docs prompt` 打出来的那一份：三段齐全，且如实说明�
   }
   console.log(`⑥ 读数：${text.split('\n').length} 行 · ${text.length} 字符 · 三段齐全`)
 })
+
+test('⑦ 摘录带行段与截断：B 区说得出"读到第几行、还有没有没读的"（复审 R3）', () => {
+  const page = pageOf(PLAN, 'start')
+  const facts = factsWith({ version: '1.2.3', files: 10, commit: 'aaaa' })
+  const excerpt = {
+    path: 'src/a.ts',
+    text: '…原文…',
+    bytes: 100,
+    lines: 900,
+    chars: 30000,
+    shown: [{ from: 1, to: 400 }, { from: 700, to: 760 }],
+    truncated: true,
+  }
+  const B = contextOf({ page, plan: PLAN, facts, source: 'S', materials: MATERIALS, excerpts: [excerpt] })
+  assert.ok(B.includes('第 1–400 行') && B.includes('第 700–760 行'), '贴出来的行段要写明')
+  assert.ok(B.includes('还有内容没读（共 900 行）'), '截断要如实说')
+  // 会话进 B 区；手动入口没有这一栏
+  const withSession = contextOf({
+    page,
+    plan: PLAN,
+    facts,
+    source: 'S',
+    materials: { ...MATERIALS, session: { path: '.fugue/session/r7.jsonl', records: 3, chars: 120, text: '人：保留旧参数' } },
+    excerpts: [],
+  })
+  assert.ok(withSession.includes('本轮会话') && withSession.includes('保留旧参数'))
+  assert.ok(!B.includes('本轮会话'))
+  console.log(`⑦ 读数：摘录行段 2 段 · 截断说明在 · 会话 ${withSession.includes('保留旧参数') ? '进 B 区' : '缺失'}`)
+})

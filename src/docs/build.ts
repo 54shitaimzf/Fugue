@@ -4,12 +4,13 @@
 //
 //   1. 核定义（`config.ts`）——写错就停，指出该改的那一格
 //   2. 取事实（`facts.ts`）——来源缺失就停，报出是哪一份、哪一条路径
-//   3. 逐页取证（模型点名要读的文件）→ 逐页写作（模型给 markdown）
+//   3. 逐页取证（模型点名要读的文件与行段）→ 逐页写作（模型给 markdown）
 //   4. 宿主校验与呈现：markdown → HTML（`markdown.ts`），套公共交互与主题（`page.ts`）
 //   5. 整批替换 + 清单与指纹（`publish.ts`）；最近一次结果单独记（`last.json`）
 //
 // **两趟调用，材料不同。** 第一趟只要一份"要读哪几份文件"的 JSON；第二趟带上那几份的原文写
-// 正文。两趟都失败时按文档失败处理，旧批次一个字节不动（交接单 § 3.2 · § 3.5）。
+// 正文。取证那一趟拿到的文件**可能被截断**：截断的每一份进第二趟取证（"要后面哪几行"），
+// 补读的行段与第一段一起进写作输入——"关键实现藏在文件后半部"因此取得着，而不是只能猜。
 //
 // **生成不等于可信**（交接单 § 2.5）：宿主机械核对的是形状、引用、锚点与整批一致；内容取舍
 // 与交互适用性仍要人按读者任务复核。这一份的 `notes` 把"兑不掉的地方"逐条留给复核。
@@ -24,9 +25,11 @@ import type { CommitId, RefName } from '../terms.ts'
 import { parseDocs } from './config.ts'
 import type {
   DocsPlan,
+  EvidenceRange,
   LastAttempt,
   Manifest,
   Materials,
+  ModelFacts,
   PageContent,
   PageDef,
   RenderedPage,
@@ -35,14 +38,29 @@ import type {
 import { DocsError, MANIFEST_VERSION, RENDERER_VERSION, docsRootOf } from './contract.ts'
 import { excerptAt, sourceTextOf, treeFactsOf } from './facts.ts'
 import type { Excerpt } from './facts.ts'
-import { fingerprintOf } from './fingerprint.ts'
+import { fingerprintOf, modelFactsOf } from './fingerprint.ts'
 import type { DocCaller } from './contract.ts'
 import { escapeHtml, renderMarkdown } from './markdown.ts'
 import type { MdHeading, MdResult } from './markdown.ts'
-import { renderIndexPage, renderPage } from './page.ts'
+import { HOST_IDS, renderIndexPage, renderPage } from './page.ts'
 import type { SiteInfo } from './page.ts'
-import { EVIDENCE_MAX, EXCERPT_LIMIT, CONTENT_TASK, contextOf, evidenceContextOf, evidenceSystemOf, systemOf } from './prompt.ts'
-import { CONTENT_MIN_CHARS, EVIDENCE_TASK } from './prompt.ts'
+import {
+  CONTENT_TASK,
+  EVIDENCE_MAX,
+  EVIDENCE_RANGES_TASK,
+  EVIDENCE_TASK,
+  EXCERPT_BUDGET,
+  EXCERPT_LIMIT,
+  RANGE_MAX,
+  RANGE_PREVIEW,
+  contextOf,
+  evidenceContextOf,
+  evidenceRangesContextOf,
+  evidenceRangesSystemOf,
+  evidenceSystemOf,
+  systemOf,
+} from './prompt.ts'
+import { CONTENT_MIN_CHARS } from './prompt.ts'
 import { digestOf, publishBatch, readManifest, writeLast } from './publish.ts'
 import type { BatchFile } from './publish.ts'
 import { recoverPublish } from './publish.ts'
@@ -66,6 +84,18 @@ export interface BuildDeps {
   readonly theme?: string
   /** 取证那一趟关掉（测试与"只有来源"的退化档）。 */
   readonly evidence?: boolean
+  /**
+   * **只重渲染**：用已经写好的正文代替模型那一趟（`tools/rerender-docs.js` 用）。
+   * 清单语义与指纹口径不变：提交 · 定义 · 来源 · 模型声明照旧参与指纹；
+   * 取证事实从上一批搬过来（它描述的是这些正文当时依据的材料）。
+   */
+  readonly reuse?: {
+    readonly markdown: ReadonlyMap<string, string>
+    readonly evidence: ReadonlyMap<string, PageContent['evidence']>
+    readonly notes: ReadonlyMap<string, readonly string[]>
+  }
+  /** 记不记"最近一次"（重渲染不记：它不是一次模型生成）。 */
+  readonly record?: boolean
   readonly now?: () => Date
 }
 
@@ -78,6 +108,7 @@ export interface UsageTotal {
     readonly id: string
     readonly usage: Usage | null
     readonly evidenceUsage: Usage | null
+    readonly rangeUsage: Usage | null
   }[]
 }
 
@@ -110,6 +141,8 @@ export interface BuildFailure {
   readonly commit: string | null
   readonly docsDir: string
   readonly materials: Materials
+  /** 失败之前已经花掉的调用（第 N 页失败时前 N−1 页的读数不许丢）。 */
+  readonly usage: UsageTotal
 }
 
 export type BuildOutcome = BuildSuccess | BuildFailure
@@ -122,6 +155,7 @@ interface Prepared {
   readonly notes: string[]
   readonly usage: Usage | null
   readonly evidenceUsage: Usage | null
+  readonly rangeUsage: Usage | null
   /** 第一遍渲染：只取标题表（引用兑不兑得掉还不知道）。 */
   readonly pass1: MdResult
   /** 第二遍：严格解析之后的正文与标题。 */
@@ -147,7 +181,59 @@ function missingText(missing: readonly { id: string; source: string }[], commit:
   return `来源在提交 ${commit.slice(0, 12)} 里缺失（${missing.length} 份）：\n${lines.join('\n')}\n  该改的是 ${missing.length === 1 ? '那一份定义' : '那几份定义'}的 source，或者把来源带进这个提交`
 }
 
-/** 取证那一趟：模型点名要读的路径 → 真读到的那几份原文。 */
+/** 一次取证点名：路径，可带一段行（`{path, from, to}`）。 */
+interface PathAsk {
+  readonly path: string
+  readonly from: number | null
+  readonly to: number | null
+}
+
+/** 模型那一趟的 JSON：取第一段 `{…}`。**解析不了就是空**。 */
+function jsonOf(text: string): Record<string, unknown> | null {
+  const m = /\{[\s\S]*\}/.exec(text)
+  if (m === null) return null
+  try {
+    const v = JSON.parse(m[0]) as unknown
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
+/** 取证第一趟：路径清单；每一条可以是字符串，也可以是 `{path, from, to}`（已经知道要哪几行）。 */
+function pathAsksOf(text: string): PathAsk[] {
+  const v = jsonOf(text)
+  if (v === null || !Array.isArray(v.paths)) return []
+  const out: PathAsk[] = []
+  for (const raw of v.paths) {
+    if (typeof raw === 'string' && raw.trim() !== '') {
+      out.push({ path: raw.trim(), from: null, to: null })
+      continue
+    }
+    if (typeof raw === 'object' && raw !== null) {
+      const o = raw as { path?: unknown; from?: unknown; to?: unknown }
+      if (typeof o.path !== 'string' || o.path.trim() === '') continue
+      const from = typeof o.from === 'number' && Number.isInteger(o.from) && o.from > 0 ? o.from : null
+      const to = typeof o.to === 'number' && Number.isInteger(o.to) && o.to >= (from ?? 0) ? o.to : null
+      out.push({ path: o.path.trim(), from, to: from === null ? null : to })
+    }
+  }
+  return out
+}
+
+/** 取证第二趟：补读的行段。 */
+function rangesOf(text: string): PathAsk[] {
+  const v = jsonOf(text)
+  if (v === null || !Array.isArray(v.ranges)) return []
+  return pathAsksOf(JSON.stringify({ paths: v.ranges })).slice(0, RANGE_MAX)
+}
+
+/**
+ * 取证那一趟：模型点名要读的路径 → 真读到的原文；被截断的再问一次"要后面哪几行"。
+ *
+ * **两次取证，一次写作**：第二趟只在"有文件被截断"时才发。它把截断那几份的开头一小段与总行数
+ * 摆在模型面前，让它按行段点名——于是"关键实现放在文件后半部"取得着，而不是只能靠第一段猜。
+ */
 async function gatherEvidence(o: {
   readonly def: PageDef
   readonly plan: DocsPlan
@@ -156,8 +242,8 @@ async function gatherEvidence(o: {
   readonly truth: Truth
   readonly commit: CommitId
   readonly caller: DocCaller
-}): Promise<{ evidence: PageContent['evidence']; excerpts: Excerpt[]; note: string | null; usage: Usage | null }> {
-  const empty: PageContent['evidence'] = { mode: 'skipped', requested: [], found: [], missing: [] }
+}): Promise<{ evidence: PageContent['evidence']; excerpts: Excerpt[]; note: string | null; usage: Usage | null; rangeUsage: Usage | null }> {
+  const empty: PageContent['evidence'] = { mode: 'skipped', requested: [], found: [], missing: [], ranges: [] }
   let text: string
   let usage: Usage | null = null
   try {
@@ -172,42 +258,72 @@ async function gatherEvidence(o: {
     usage = call.usage
   } catch (err) {
     // **退到"只有来源与索引"那一档**：写得少，不是跑不起来（交接单 § 2.5 的地板）。
-    return { evidence: empty, excerpts: [], note: `取证这一趟没成，这一页按来源与索引写：${(err as Error).message}`, usage: null }
+    return { evidence: empty, excerpts: [], note: `取证这一趟没成，这一页按来源与索引写：${(err as Error).message}`, usage: null, rangeUsage: null }
   }
-  const requested = pathsOf(text).slice(0, EVIDENCE_MAX)
+  const asks = pathAsksOf(text).slice(0, EVIDENCE_MAX)
+  if (asks.length === 0) return { evidence: empty, excerpts: [], note: null, usage, rangeUsage: null }
+
   const known = new Set(o.facts.paths)
-  const found: string[] = []
   const missing: string[] = []
+  const requested: string[] = []
   const excerpts: Excerpt[] = []
-  for (const p of requested) {
-    if (!known.has(p)) {
-      missing.push(p)
+  let budget = EXCERPT_BUDGET
+  for (const ask of asks) {
+    requested.push(ask.path)
+    if (!known.has(ask.path)) {
+      missing.push(ask.path)
       continue
     }
-    const x = await excerptAt(o.truth, o.commit, p, EXCERPT_LIMIT)
-    if (x === null) missing.push(p)
-    else {
-      excerpts.push(x)
-      found.push(p)
+    const x = await excerptAt(o.truth, o.commit, ask.path, {
+      limit: Math.min(EXCERPT_LIMIT, Math.max(1, budget)),
+      ...(ask.from === null ? {} : { ranges: [{ from: ask.from, to: ask.to ?? ask.from + 200 }] }),
+    })
+    if (x === null) {
+      missing.push(ask.path)
+      continue
+    }
+    budget -= x.text.length
+    excerpts.push(x)
+  }
+
+  // 第二趟：截断的那几份问行段。**一次都问不出来就退到"只有第一段"**，并记一条 note。
+  let rangeUsage: Usage | null = null
+  let note: string | null = null
+  const cut = excerpts.filter((x) => x.truncated)
+  if (cut.length > 0 && budget > 0) {
+    try {
+      const call = await o.caller.call({
+        system: evidenceRangesSystemOf(),
+        context: evidenceRangesContextOf({ page: o.def, excerpts: cut }),
+        task: EVIDENCE_RANGES_TASK,
+        maxTokens: 2048,
+        thinking: 'low',
+      })
+      rangeUsage = call.usage
+      const asks2 = rangesOf(call.text)
+      for (const ask of asks2) {
+        const at = excerpts.findIndex((x) => x.path === ask.path)
+        if (at < 0) continue
+        const more = await excerptAt(o.truth, o.commit, ask.path, {
+          limit: Math.min(EXCERPT_LIMIT, Math.max(1, budget)),
+          ranges: [{ from: ask.from ?? 1, to: ask.to ?? (ask.from ?? 1) + 200 }],
+        })
+        if (more === null) continue
+        budget -= Math.max(0, more.text.length - excerpts[at]!.text.length)
+        excerpts[at] = more
+      }
+    } catch (err) {
+      note = `补读行段那一趟没成，截断的文件只有第一段：${(err as Error).message}`
     }
   }
-  if (requested.length === 0) {
-    return { evidence: { mode: 'skipped', requested: [], found: [], missing: [] }, excerpts: [], note: null, usage }
+  if (cut.length > 0) {
+    const still = excerpts.filter((x) => x.truncated).map((x) => `${x.path}（共 ${x.lines} 行，只贴了 ${x.shown.map((r) => `${r.from}–${r.to}`).join(' · ')}）`)
+    if (still.length > 0) {
+      note = `${note === null ? '' : `${note}；`}有文件没读全：${still.join(' · ')}——正文里引用后面的内容时写明缺哪一段`
+    }
   }
-  return { evidence: { mode: 'requested', requested, found, missing }, excerpts, note: null, usage }
-}
-
-/** 模型那一趟的 JSON：取第一段 `{…}`，只认 `paths` 那一栏。**解析不了就是空数组**。 */
-function pathsOf(text: string): string[] {
-  const m = /\{[\s\S]*\}/.exec(text)
-  if (m === null) return []
-  try {
-    const v = JSON.parse(m[0]) as { paths?: unknown }
-    if (!Array.isArray(v.paths)) return []
-    return v.paths.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim())
-  } catch {
-    return []
-  }
+  const truncated: EvidenceRange[] = excerpts.map((x) => ({ path: x.path, lines: x.lines, chars: x.chars, shown: x.shown, truncated: x.truncated }))
+  return { evidence: { mode: 'requested', requested, found: excerpts.map((x) => x.path), missing, ranges: truncated }, excerpts, note, usage, rangeUsage }
 }
 
 /** 正文的形状核对：**宿主只判可机械核对的那几条**（内容取舍留给复核）。返回兑不掉的 note。 */
@@ -232,7 +348,7 @@ function checkContent(def: PageDef, md: string): string[] {
   return notes
 }
 
-/** 两个标题的相似度（汉字按二字组，英文按词）：旧深链接的去向靠它判"同一主题"。 */
+/** 两个标题的相似度（汉字按二字组，英文按词）：改名那一类题目的最后一档兜底。 */
 function similarity(a: string, b: string): number {
   const norm = (s: string): string[] => {
     const clean = s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
@@ -260,50 +376,130 @@ function similarity(a: string, b: string): number {
   return (2 * hit) / (A.length + B.length)
 }
 
-/** 旧标题 → 新标题：**同一主题换了标题**时，旧深链接仍到达内容（交接单 § 2.1 末段）。 */
-function aliasPlan(
-  prev: Manifest | null,
-  fresh: Map<string, readonly MdHeading[]>,
-): Map<string, { aliases: Record<string, string[]>; anchors: Record<string, string>; dropped: string[] }> {
-  const out = new Map<string, { aliases: Record<string, string[]>; anchors: Record<string, string>; dropped: string[] }>()
+/** 地址身份键：折掉分隔符与大小写。`v1-2-3` · `v1.2.3` · `v123` 是同一个键。 */
+function identityKey(s: string): string {
+  return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+}
+
+/** 版本号键：`v1-2-3` · `1.2.3` · `v123` 都折成 `v123`。不是版本号就是 `null`。 */
+function versionKeyOfId(id: string): string | null {
+  const t = id.trim().toLowerCase().replace(/^v/, '')
+  const m = /^(\d+)[.\-_ ]?(\d+)[.\-_ ]?(\d+)$/.exec(t)
+  if (m === null) return null
+  return `v${m[1]}${m[2]}${m[3]}`
+}
+
+function versionKeyOfText(text: string): string | null {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(text)
+  return m === null ? null : `v${m[1]}${m[2]}${m[3]}`
+}
+
+interface AliasPlan {
+  readonly aliases: Record<string, string[]>
+  readonly anchors: Record<string, string>
+  readonly dropped: string[]
+}
+
+/**
+ * 旧标题 → 新标题：**同一主题换了标题**时，旧深链接仍到达内容（交接单 § 2.1 末段）。
+ *
+ * 身份按**同一性**判，而不只按字面相似度：
+ *   一 · 同一个 id · 分隔符折掉之后同一个 id（`v0-5-2` = `v052`）· 同一个版本号
+ *   二 · 标题文字的同一性（折掉标点与大小写）· 前缀包含（"1.2.3" ⊂ "1.2.3 —— …"）
+ *   三 · 相似度（≥ 0.75 且明显高于第二名）：真题里"安装 Fugue → 装好 Fugue"走这一档
+ *   四 · 上一批的对照链（A→B，这一版 B→C）：**沿线跟到终点**，三版之后 A 仍到 C
+ *
+ * **继承不等于照旧**：如果旧 id 与它继承到的目标各带一个版本号而两者不同，那条继承是错的
+ * （真题：`v0-5-1` 被接到 `0.1.0` 那一节），按旧 id 自己的身份重新找。
+ */
+function aliasPlan(prev: Manifest | null, fresh: Map<string, readonly MdHeading[]>): Map<string, AliasPlan> {
+  const out = new Map<string, AliasPlan>()
+  const SIM = 0.75
   for (const [pageId, headings] of fresh) {
     const ids = new Set(headings.map((h) => h.id))
+    const byIdentity = new Map<string, string>()
+    const byVersion = new Map<string, string>()
+    for (const h of headings) {
+      const ik = identityKey(h.id)
+      if (ik !== '' && !byIdentity.has(ik)) byIdentity.set(ik, h.id)
+      const vk = versionKeyOfId(h.id) ?? versionKeyOfText(h.text)
+      if (vk !== null && !byVersion.has(vk)) byVersion.set(vk, h.id)
+    }
+    const prior = prev?.pages.find((p) => p.id === pageId)
+    /** 旧 id（可带旧标题文字）→ 这一版里它的去向；`null` = 找不到。 */
+    const direct = new Map<string, string | null>()
+    const tryDirect = (oldId: string, oldText: string | null): string | null => {
+      if (ids.has(oldId)) return oldId
+      const ik = identityKey(oldId)
+      if (ik !== '' && byIdentity.has(ik)) return byIdentity.get(ik)!
+      const vk = versionKeyOfId(oldId) ?? (oldText === null ? null : versionKeyOfText(oldText))
+      if (vk !== null && byVersion.has(vk)) return byVersion.get(vk)!
+      if (oldText === null) return null
+      const tk = identityKey(oldText)
+      if (tk !== '') {
+        const same = headings.find((h) => identityKey(h.text) === tk)
+        if (same !== undefined) return same.id
+        const inside = headings.filter((h) => {
+          const hk = identityKey(h.text)
+          return hk.length >= 3 && (hk.includes(tk) || tk.includes(hk))
+        })
+        if (inside.length === 1) return inside[0]!.id
+      }
+      let best: MdHeading | null = null
+      let bestScore = 0
+      let second = 0
+      for (const h of headings) {
+        if (direct.get(h.id) === oldId) continue
+        const s = similarity(oldText, h.text)
+        if (s > bestScore + 1e-9) {
+          second = bestScore
+          bestScore = s
+          best = h
+        } else if (s > second) second = s
+      }
+      if (best !== null && bestScore >= SIM && bestScore - second >= 0.15) return best.id
+      return null
+    }
+
+    if (prior !== undefined) {
+      for (const h of prior.headings) direct.set(h.id, tryDirect(h.id, h.text))
+      // 上一批的别名链：**沿线跟到终点**（A→B 之后 B→C，A 也要到 C）。
+      for (const [old, target] of Object.entries(prior.anchors ?? {})) {
+        let cur = target
+        const seen = new Set<string>()
+        let landed: string | null = null
+        while (!seen.has(cur)) {
+          seen.add(cur)
+          if (direct.has(cur)) {
+            landed = direct.get(cur) ?? null
+            break
+          }
+          if (ids.has(cur)) {
+            landed = cur
+            break
+          }
+          const next = prior.anchors?.[cur]
+          if (next === undefined) break
+          cur = next
+        }
+        // 版本号不同的"继承"是错的：按旧 id 自己的身份重找。
+        const ov = versionKeyOfId(old)
+        const tv = landed === null ? null : versionKeyOfId(landed)
+        if (landed !== null && ov !== null && tv !== null && ov !== tv) landed = null
+        const own = tryDirect(old, null)
+        direct.set(old, own ?? landed)
+      }
+    }
+
     const anchors: Record<string, string> = {}
     const aliases: Record<string, string[]> = {}
-    const add = (old: string, target: string): void => {
-      if (old === target || ids.has(old)) return
+    for (const [old, target] of direct) {
+      if (target === null || target === old || ids.has(old)) continue
       anchors[old] = target
       const list = aliases[target] ?? []
       if (!list.includes(old)) list.push(old)
       aliases[target] = list
     }
-    const prior = prev?.pages.find((p) => p.id === pageId)
-    if (prior !== undefined) {
-      // 一 · 上一批的对照链不断：目标还在就照旧；目标没了但旧 id 本身成了真标题，就落回它。
-      for (const [old, target] of Object.entries(prior.anchors ?? {})) {
-        if (ids.has(target)) add(old, target)
-        else if (ids.has(old)) continue
-      }
-      // 二 · 上一批有、这一批没有的标题：按文字相似度找最像的那一节。
-      for (const h of prior.headings) {
-        if (ids.has(h.id) || anchors[h.id] !== undefined) continue
-        let best: MdHeading | null = null
-        let bestScore = 0
-        let tie = false
-        for (const now of headings) {
-          if (anchors[now.id] !== undefined && !ids.has(now.id)) continue
-          const s = similarity(h.text, now.text)
-          if (s > bestScore + 1e-9) {
-            bestScore = s
-            best = now
-            tie = false
-          } else if (Math.abs(s - bestScore) < 1e-9 && best !== null) tie = true
-        }
-        if (best !== null && bestScore >= 0.5 && !tie) add(h.id, best.id)
-      }
-    }
-    // **旧 id 包括了上一批自己就是别名的那几条**（一代代改标题的链）：它们也要么有后继、
-    // 要么被报出来。只看 `prior.headings` 会漏掉“上一批就已经是个旧名字”的那一层。
     const priorIds = new Set<string>()
     if (prior !== undefined) {
       for (const h of prior.headings) priorIds.add(h.id)
@@ -327,7 +523,6 @@ async function planAssets(o: {
   readonly truth: Truth
   readonly commit: CommitId
 }): Promise<AssetPlan> {
-  const enc = new TextEncoder()
   const byPath = new Map<string, { href: string; bytes: Uint8Array }>()
   const byPage = new Map<string, Map<string, string>>()
   const known = new Set(o.facts.paths)
@@ -396,9 +591,16 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
   let commit: CommitId | null = null
   let plan: DocsPlan | null = null
   let theme: ThemeSpec | null = null
+  /** 走到哪一步花掉了什么：**失败时也要带上已完成页的用量**（复审 R8）。 */
+  const allUsage: (Usage | null)[] = []
+  const usagePages: UsageTotal['pages'][number][] = []
+  let factsForFail: TreeFacts | null = null
+
+  const modelFacts = (p: DocsPlan | null): ModelFacts => modelFactsOf(deps.caller, p?.maxTokens)
 
   const fail = async (err: unknown): Promise<BuildFailure> => {
     const e = err instanceof DocsError ? err : new DocsError('build', (err as Error).message)
+    const total = sumUsage(allUsage)
     const attempt: LastAttempt = {
       ok: false,
       at: now().toISOString(),
@@ -410,17 +612,27 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       materials: deps.materials,
       reason: e.message,
       at_stage: e.at,
+      usage: { calls: total.calls, inputTokens: total.inputTokens, outputTokens: total.outputTokens },
+      ...(usagePages.length === 0 ? {} : { usagePages }),
     }
     try {
       await writeLast(deps.root, attempt)
     } catch {
       // 连"失败"都写不进去时，把原因留在返回的那一句里——不吞掉。
     }
-    return { ok: false, at_stage: e.at, reason: e.message, commit: commit === null ? null : String(commit), docsDir, materials: deps.materials }
+    return {
+      ok: false,
+      at_stage: e.at,
+      reason: e.message,
+      commit: commit === null ? null : String(commit),
+      docsDir,
+      materials: deps.materials,
+      usage: { calls: total.calls, inputTokens: total.inputTokens, outputTokens: total.outputTokens, pages: usagePages },
+    }
   }
 
   try {
-    // 零 · 收上次没走完的切换（两次改名之间被杀的那一档）。
+    // 零 · 收上次没走完的切换（只收没被指向的批次；当前那一批一个字节都不动）。
     await recoverPublish(deps.root)
 
     // 一 · 定义
@@ -446,6 +658,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       throw new DocsError('facts', `找不到提交 ${JSON.stringify(at)}：${(err as Error).message}`)
     }
     const facts = await treeFactsOf(deps.truth, commit, plan)
+    factsForFail = facts
     if (facts.missing.length > 0) throw new DocsError('facts', missingText(facts.missing, String(commit)))
 
     const sources = new Map<string, string>()
@@ -453,13 +666,38 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
 
     // 三 · 逐页取证 + 写作
     const prepared: Prepared[] = []
-    /** 两趟（取证 + 写作）的用量都收：读数要说得清"这一次一共花了几次调用"。 */
-    const allUsage: (Usage | null)[] = []
     const prev = await readManifest(deps.root).catch(() => null)
     for (const def of plan.pages) {
+      if (deps.reuse !== undefined) {
+        // **只重渲染**：正文与取证事实都是上一批的，这一趟一个模型调用都不发。
+        const md = deps.reuse.markdown.get(def.id)
+        if (md === undefined) throw new DocsError('render', `重渲染缺少这一页的正文：content/${def.id}.md`)
+        const evidence = deps.reuse.evidence.get(def.id) ?? { mode: 'skipped' as const, requested: [], found: [], missing: [], ranges: [] }
+        const notes = [...(deps.reuse.notes.get(def.id) ?? []), ...checkContent(def, md)]
+        const pass1 = renderMarkdown(md, { resolve: (raw) => ({ href: raw }), reserved: HOST_IDS })
+        prepared.push({
+          def,
+          markdown: md,
+          evidence,
+          notes,
+          usage: null,
+          evidenceUsage: null,
+          rangeUsage: null,
+          pass1,
+          pass2: pass1,
+          rendered: { id: def.id, title: def.title, out: def.out, html: '', headings: pass1.headings, anchors: {}, notes: [] },
+        })
+        continue
+      }
       const ev =
         deps.evidence === false
-          ? { evidence: { mode: 'skipped' as const, requested: [], found: [], missing: [] }, excerpts: [], note: null, usage: null }
+          ? {
+              evidence: { mode: 'skipped' as const, requested: [], found: [], missing: [], ranges: [] },
+              excerpts: [],
+              note: null,
+              usage: null,
+              rangeUsage: null,
+            }
           : await gatherEvidence({ def, plan, facts, source: sources.get(def.id)!, truth: deps.truth, commit, caller: deps.caller })
       const call = await deps.caller.call({
         system: systemOf(theme),
@@ -477,9 +715,13 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       })
       const contentNotes = checkContent(def, call.text)
       allUsage.push(call.usage)
-      // **取证那一趟只数真发出去的调用**：`--no-evidence` 这一次一次都没发，不该算进读数。
-      if (deps.evidence !== false) allUsage.push(ev.usage)
-      const pass1 = renderMarkdown(call.text, { resolve: (raw) => ({ href: raw }) })
+      // **取证那几趟只数真发出去的调用**：`--no-evidence` 这一次一次都没发，不该算进读数。
+      if (deps.evidence !== false) {
+        allUsage.push(ev.usage)
+        if (ev.rangeUsage !== null) allUsage.push(ev.rangeUsage)
+      }
+      usagePages.push({ id: def.id, usage: call.usage, evidenceUsage: ev.usage, rangeUsage: ev.rangeUsage })
+      const pass1 = renderMarkdown(call.text, { resolve: (raw) => ({ href: raw }), reserved: HOST_IDS })
       prepared.push({
         def,
         markdown: call.text,
@@ -487,6 +729,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
         notes: [...contentNotes, ...(ev.note === null ? [] : [ev.note])],
         usage: call.usage,
         evidenceUsage: ev.usage,
+        rangeUsage: ev.rangeUsage,
         pass1,
         pass2: pass1,
         rendered: {
@@ -552,19 +795,21 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       p.pass2 = renderMarkdown(p.markdown, {
         resolve: resolverFor(p.def),
         aliases: alias.get(p.def.id)?.aliases ?? {},
+        reserved: HOST_IDS,
+        headingIds: p.pass1.headings.map((h) => h.id),
       })
       p.notes.push(...p.pass2.notes)
-      // **旧地址的去向要说得出来**（交接单 § 2.1）：没有后继的那几条进清单的 note，
-      // 不静默丢掉。页面里落不成锚点，去向就是“这一版没有对应内容”。
+      // **旧地址的去向要说得出来**（交接单 § 2.1）：没有后继的那几条进清单，不静默丢掉。
       const dropped = alias.get(p.def.id)?.dropped ?? []
       if (dropped.length > 0) {
-        const shown = dropped.slice(0, 6).join(' · ')
-        p.notes.push(`旧深链接没有后继（这一版没有对应内容）：${shown}${dropped.length > 6 ? ` …共 ${dropped.length} 条` : ''}`)
+        const shown = dropped.slice(0, 8).join(' · ')
+        p.notes.push(`旧深链接没有后继（这一版没有对应内容）：${shown}${dropped.length > 8 ? ` …共 ${dropped.length} 条（完整列表见 manifest.json 的 pages[].dropped）` : ''}`)
       }
     }
 
     // 五 · 清单 · 首页 · 保存
-    const fingerprint = fingerprintOf({ commit: String(commit), plan, sources: facts.sources, theme, model: deps.caller.model })
+    const factsOfModel = modelFacts(plan)
+    const fingerprint = fingerprintOf({ commit: String(commit), plan, sources: facts.sources, theme, model: factsOfModel })
     const siteInfo: SiteInfo = {
       project: plan.title ?? facts.name ?? '文档',
       version: facts.version,
@@ -575,7 +820,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       theme,
     }
     const index: SearchEntry[] = []
-    for (const p of prepared) index.push(...searchEntriesOf(p.def, p.markdown, p.pass2.headings))
+    for (const p of prepared) index.push(...searchEntriesOf(p.def, p.pass2.blocks))
 
     const files: BatchFile[] = []
     const manifestPages: Manifest['pages'] = []
@@ -605,6 +850,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
         cited: citedOf(p.markdown, facts),
         headings: p.pass2.headings,
         anchors,
+        dropped: alias.get(p.def.id)?.dropped ?? [],
         notes: p.notes,
       })
     }
@@ -635,6 +881,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       themeVersion: theme.version,
       renderer: RENDERER_VERSION,
       model: deps.caller.model,
+      modelFacts: factsOfModel,
       materials: deps.materials,
       pages: manifestPages,
       files: digestOf(files),
@@ -653,11 +900,12 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       model: deps.caller.model,
       materials: deps.materials,
       usage: { calls: total.calls, inputTokens: total.inputTokens, outputTokens: total.outputTokens },
+      usagePages,
       reason: null,
       at_stage: null,
     }
     try {
-      await writeLast(deps.root, attempt)
+      if (deps.record !== false) await writeLast(deps.root, attempt)
     } catch (err) {
       // 批次已经发布：这一条写不进去只影响"最近一次"那一栏，把话说在返回里。
       return {
@@ -675,7 +923,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
           calls: total.calls,
           inputTokens: total.inputTokens,
           outputTokens: total.outputTokens,
-          pages: prepared.map((p) => ({ id: p.def.id, usage: p.usage, evidenceUsage: p.evidenceUsage })),
+          pages: prepared.map((p) => ({ id: p.def.id, usage: p.usage, evidenceUsage: p.evidenceUsage, rangeUsage: p.rangeUsage })),
         },
         notes: [`最近一次生成的结果写不进去：${(err as Error).message}`],
         pages: prepared.map((p) => ({ id: p.def.id, title: p.def.title, out: p.def.out, headings: p.pass2.headings })),
@@ -696,12 +944,13 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
         calls: total.calls,
         inputTokens: total.inputTokens,
         outputTokens: total.outputTokens,
-        pages: prepared.map((p) => ({ id: p.def.id, usage: p.usage, evidenceUsage: p.evidenceUsage })),
+        pages: prepared.map((p) => ({ id: p.def.id, usage: p.usage, evidenceUsage: p.evidenceUsage, rangeUsage: p.rangeUsage })),
       },
       notes: prepared.flatMap((p) => p.notes),
       pages: prepared.map((p) => ({ id: p.def.id, title: p.def.title, out: p.def.out, headings: p.pass2.headings })),
     }
   } catch (err) {
+    void factsForFail
     return fail(err)
   }
 }
@@ -709,6 +958,44 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
 /** 从 CLI 那一层看得到的一行：这一批之后，文档住在哪儿（`Fugue 的产物位置`）。 */
 export function docsHintOf(root: string): string {
   return `${docsRootOf(root)}/index.html（用浏览器打开；file:// 即可）`
+}
+
+/**
+ * 记一次**还没走到 `buildDocs`** 的失败（模型或凭据缺席那一类，复审 R8）。
+ *
+ * 那种失败原先直接抛错，于是“刚刚生成失败”在 `status` 的最近一次那一栏里根本不存在——还显示
+ * 上一次成功。这里把尝试边界提到解析模型之前：**失败也落账**，已完成的调用数如实写。
+ */
+export async function recordAttemptFailure(o: {
+  readonly root: string
+  readonly reason: string
+  readonly at_stage: string
+  readonly commit: string | null
+  readonly materials: Materials
+  readonly model: string | null
+  readonly theme: string | null
+  readonly usage?: { readonly calls: number; readonly inputTokens: number | null; readonly outputTokens: number | null }
+  readonly usagePages?: LastAttempt['usagePages']
+}): Promise<void> {
+  const attempt: LastAttempt = {
+    ok: false,
+    at: new Date().toISOString(),
+    commit: o.commit,
+    fingerprint: null,
+    pages: 0,
+    theme: o.theme,
+    model: o.model,
+    materials: o.materials,
+    reason: o.reason,
+    at_stage: o.at_stage,
+    usage: o.usage ?? { calls: 0, inputTokens: null, outputTokens: null },
+    ...(o.usagePages === undefined ? {} : { usagePages: o.usagePages }),
+  }
+  try {
+    await writeLast(o.root, attempt)
+  } catch {
+    // 连“失败”都写不进去时不能报成功：调用方本来就在抛错那一头，话里带得出原因。
+  }
 }
 
 /** 首页文件名（`docs status` 与 `docs build` 的出口指它）。 */

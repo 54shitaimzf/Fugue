@@ -4,25 +4,37 @@
 //
 //   · **A 区 = 公共写作合同 + 主题规则 + 语法**。它对同一套主题下的所有页面**逐字节相同**，
 //     所以它是可缓存的那一段；它也必须是公共层给的——模型不能靠生成内容自授新的能力。
-//   · **B 区 = 这一页的定义 · 来源 · 事实 · 摘录**。逐页不同，事实跟着提交走。
+//   · **B 区 = 这一页的定义 · 来源 · 事实 · 摘录 · 本轮变化与会话**。逐页不同，事实跟着提交走。
 //   · **C 区 = 这一次要它做的事**（那一句话）：只写正文、只输出 markdown。
 //
-// **两趟调用都有出处。** 第一趟只要一份"要读哪几份文件"的清单（取证），第二趟才写正文；
-// 于是"正文里的实现结论追得到提交内的代码"不是靠模型自觉，而是材料里真有那几份原文。
-// 第一趟失败（不是 JSON、点名的路径都不在）不是失败：退回"只有来源与索引"那一档，把
-// `evidence.mode = 'skipped'` 如实记进清单——**地板是写得少，不是跑不起来**。
+// **取证是两趟**：第一趟只要一份"要读哪几份文件"的清单；第二趟只问"被截断的那几份要后面哪
+// 几行"。写作那一趟拿到的摘录因此是"开头一段 + 补读的行段"，并且逐段标出行号范围——于是
+// "关键实现藏在文件后半部"取得着，正文也能把结论指到 `path:行段`。
 //
 // **这一份是纯函数**：给同样的输入，出同样的字节。宿主的指纹与 `docs prompt` 都靠它。
 import type { Excerpt } from './facts.ts'
+import type { FileRange } from './contract.ts'
 import type { TreeFacts } from './contract.ts'
 import type { PageDef, DocsPlan, Materials } from './contract.ts'
 import type { ThemeSpec } from './theme.ts'
 
-/** 一份摘录的字符上界（单份）。**它写进 A 区的那句话里**：模型要知道自己看到的是不是全文。 */
-export const EXCERPT_LIMIT = 12_000
+/** 一份摘录的**开头一段**（字符）。它写进 B 区的那句说明里：模型要知道自己看到的是不是全文。 */
+export const EXCERPT_LIMIT = 24_000
+
+/** 一页所有摘录加起来的上界（字符）。**超了就不再多贴**：取证有预算，不是把仓库贴进来。 */
+export const EXCERPT_BUDGET = 120_000
 
 /** 一页最多点名几份文件（防"把整个仓库贴进来"）。 */
 export const EVIDENCE_MAX = 12
+
+/** 第二趟取证最多收几段补读（行段）。 */
+export const RANGE_MAX = 8
+
+/** 第二趟取证给模型看的开头预览（字符）：它得看见一点内容，才说得出要后面哪几行。 */
+export const RANGE_PREVIEW = 3_000
+
+/** 本轮会话进写作输入的上界（字符）：超了只贴最后这一段，并在材料说明里写清楚。 */
+export const SESSION_LIMIT = 12_000
 
 /**
  * 公共写作合同（A 区前半）。**它只在两个地方出现：这里与测试的期望值**——不抄进主题，
@@ -53,7 +65,7 @@ export const WRITING_CONTRACT = `你在给一个项目的文档写**一页正文
   :::
   :::
   （漏一层收尾也读得出来，但会少一层框，并记进待复核。）
-- ::: steps 里面放有序列表 —— 连续操作，顺序可读。
+- ::: steps 里面放有序列表 —— 连续操作，顺序可读。项与项之间可以有说明段与代码块。
 - ::: figure 图注 —— 图解或示意；里面可以有段文字、ASCII 图或列表，图注说明它表达什么关系。
 
 其他写法：
@@ -65,24 +77,34 @@ export const WRITING_CONTRACT = `你在给一个项目的文档写**一页正文
 
 内容要求：
 - 事实取自下面的材料：本页来源、提交 C 的完整树事实、以及你点名要读的文件摘录。实现结论要能追到具体路径——写到具体文件、命令、参数或测试。
+- **说"来源与实现有差异"时，指到据以判断的那一段原文**：写 \`路径:起行-止行\`（摘录的小标题给了每段的真实行号）。没有读到那一段就不要下这个结论，改写"这一版没读到对应的实现"。
 - 本页来源可能落后于代码（旧参数已删、行为已变、边界已移）。以提交 C 的代码与测试为准纠正，并在正文里说明来源与实现差在哪。
 - 材料不足时如实写出缺什么，不要补一个看起来合理的说法。
 - 按这一页的 reader 与 role 组织：先解决读者的问题，再决定顺序、层次、例子、图解与交互；交互要有具体标签，且每个交互都应帮助读者找到、理解、比较或使用内容。
 - 用中文写；术语沿用来源里的叫法；同一件事前后一个叫法。`
 
-/** 取证那一趟的合同（A 区，另一套——两趟的 A 各自稳定）。 */
+/** 取证第一趟的合同（A 区，另一套——三趟的 A 各自稳定）。 */
 export const EVIDENCE_CONTRACT = `你在为一页项目文档**选修辞**：列出你需要读到原文的仓库文件，宿主会把它们贴到下一步。
 
 只输出一个 JSON 对象，形如 {"paths":["src/a.ts","test/a.test.ts"]}：
 - 最多 ${EVIDENCE_MAX} 条，按重要性排序；路径必须照完整树索引里的写法逐字给，不要写目录、不要写通配符。
+- 已经知道要看哪几行时，那一条写成 {"path":"src/a.ts","from":120,"to":260}（行号从 1 起）。
 - 选那些能支撑这一页结论的文件：实现、接口、测试、配置、数据形状；来源文档本身不用再列。
 - 只要写正文确实需要的；没有需要的就给空数组。不要在 JSON 之外写任何文字。`
 
-/** 取证那一趟那一句话（C 区）。 */
-export const EVIDENCE_TASK = '给出你要读的路径清单（只输出 JSON）。'
+/** 取证第二趟（只问被截断的那几份）。 */
+export const EVIDENCE_RANGES_CONTRACT = `你在为一页项目文档**补读取证**：下面这几份文件太长，第一次只贴了开头。
 
-/** 第二趟那一句话（C 区）。 */
-export const CONTENT_TASK = `现在写这一页的正文。按上面的定义、来源、事实与摘录组织内容，只输出 markdown 正文。`
+只输出一个 JSON 对象，形如 {"ranges":[{"path":"src/a.ts","from":300,"to":420}]}：
+- 最多 ${RANGE_MAX} 段，按重要性排序；行号从 1 起，必须落在该文件的总行数之内。
+- 只点你写这一页确实要读的那几段；没有需要的就给 {"ranges":[]}。不要在 JSON 之外写任何文字。`
+
+/** 取证两趟的 C 区。 */
+export const EVIDENCE_TASK = '给出你要读的路径清单（只输出 JSON）。'
+export const EVIDENCE_RANGES_TASK = '给出你要补读的行段（只输出 JSON）。'
+
+/** 第三趟那一句话（C 区）。 */
+export const CONTENT_TASK = `现在写这一页的正文。按上面的定义、来源、事实、摘录与本轮上下文组织内容，只输出 markdown 正文。`
 
 /**
  * 一页正文的下界（字符）。**它不是质量线，是"这一页没写出来"的判据**：模型给一段空话或
@@ -95,9 +117,13 @@ export function systemOf(theme: ThemeSpec): string {
   return `${WRITING_CONTRACT}\n\n这一批文档的视觉语言（${theme.name}，出自 ${theme.basis}）：\n${theme.guidance}\n`
 }
 
-/** A 区（取证那一趟）。 */
+/** A 区（取证那两趟）。 */
 export function evidenceSystemOf(): string {
   return EVIDENCE_CONTRACT + '\n'
+}
+
+export function evidenceRangesSystemOf(): string {
+  return EVIDENCE_RANGES_CONTRACT + '\n'
 }
 
 /** 定义那一块：每份文档都有、人维护的那六栏（交接单 § 2.3）。 */
@@ -147,10 +173,14 @@ function materialsBlock(m: Materials): string {
   if (m.verify !== undefined) {
     lines.push(`验收：${m.verify.ok ? '通过' : '未通过'}（过 ${m.verify.passed} · 未过 ${m.verify.failed}）`)
   }
+  if (m.session !== undefined) {
+    lines.push('', `本轮会话（${m.session.path} · ${m.session.records} 条 · 共 ${m.session.chars} 字符；下面是进写作输入的那一段）：`)
+    lines.push(m.session.text === '' ? '（这一轮没有会话记录）' : m.session.text)
+  }
   return lines.join('\n')
 }
 
-/** 取证那一趟的 B 区：定义 + 来源 + 索引。**不给事实之外的裁剪**：索引就是完整树的路径表。 */
+/** 取证第一趟的 B 区：定义 + 来源 + 索引。**不给事实之外的裁剪**：索引就是完整树的路径表。 */
 export function evidenceContextOf(o: {
   readonly page: PageDef
   readonly plan: DocsPlan
@@ -173,7 +203,25 @@ export function evidenceContextOf(o: {
   ].join('\n')
 }
 
-/** 第二趟的 B 区：定义 + 来源 + 事实 + 摘录 + 本轮变化。 */
+/** 取证第二趟的 B 区：被截断的那几份的路径、总行数与开头一小段。 */
+export function evidenceRangesContextOf(o: { readonly page: PageDef; readonly excerpts: readonly Excerpt[] }): string {
+  const parts = [
+    `这一页：${o.page.id}（${o.page.title} · 给 ${o.page.audience}）`,
+    '',
+    `下面这几份文件太长，第一次只贴了开头。请按行段点名你要补读的部分（行号从 1 起；每份总共多少行已给出）。`,
+  ]
+  for (const x of o.excerpts) {
+    parts.push('', `### ${x.path}（共 ${x.lines} 行 · ${x.chars} 字符；下面只是开头）`, '```', x.text.slice(0, RANGE_PREVIEW), '```')
+  }
+  return parts.join('\n')
+}
+
+/** 一段行印成 `第 12–40 行`。 */
+function rangeText(r: FileRange): string {
+  return r.from === r.to ? `第 ${r.from} 行` : `第 ${r.from}–${r.to} 行`
+}
+
+/** 第二趟的 B 区：定义 + 来源 + 事实 + 摘录（带行段）+ 本轮变化。 */
 export function contextOf(o: {
   readonly page: PageDef
   readonly plan: DocsPlan
@@ -196,9 +244,11 @@ export function contextOf(o: {
     '-----',
   ]
   if (o.excerpts.length > 0) {
-    parts.push('', '你点名要读的文件（提交 C 里的原文；单份超过上限时末尾注明）：')
+    parts.push('', '你点名要读的文件（提交 C 里的原文；小标题给出贴出来的行段与总行数）：')
     for (const x of o.excerpts) {
-      parts.push(`\n### ${x.path}（${x.bytes} 字节${x.truncated ? ' · 只贴了前面一段' : ''}）\n\`\`\`\n${x.text}\n\`\`\``)
+      const shown = x.shown.map(rangeText).join(' · ')
+      const tail = x.truncated ? `；还有内容没读（共 ${x.lines} 行）` : '；全文'
+      parts.push(`\n### ${x.path}（${shown}${tail}）\n\`\`\`\n${x.text}\n\`\`\``)
     }
   }
   if (o.evidenceMissing !== undefined && o.evidenceMissing.length > 0) {
@@ -233,6 +283,6 @@ export function promptTextOf(o: {
     CONTENT_TASK,
     '',
     '# 说明',
-    '真生成时宿主会先用取证合同问一次"要读哪几份文件"，把那些文件在提交 C 里的原文补进 B 区，再走一次上面这三段。这一条命令不调模型，所以摘录那一栏是空的。',
+    '真生成时宿主会先用取证合同问一次"要读哪几份文件"，把那些文件在提交 C 里的原文补进 B 区（长的再问一次"要后面哪几行"），再走一次上面这三段。这一条命令不调模型，所以摘录那一栏是空的。',
   ].join('\n')
 }
