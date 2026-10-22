@@ -97,7 +97,7 @@ async function pointerId(root: string): Promise<string | null> {
 }
 
 /** 一个批次目录的绝对路径。 */
-export function batchDirOf(root: string, id: string): string {
+function batchDirOf(root: string, id: string): string {
   return join(root, '.fugue', `${BATCH_PREFIX}${id}`)
 }
 

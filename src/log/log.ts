@@ -10,7 +10,7 @@
 // 写者一侧的三步顺序是：先落 blob · 再追加日志 · 最后改内存视图。本模块是中间那
 // 一步，也是唯一需要保证顺序的一步；另外两步归 M1 与 M2。
 import type { FileHandle } from 'node:fs/promises'
-import { mkdir, open, readFile, readdir, stat } from 'node:fs/promises'
+import { mkdir, open, readFile, stat } from 'node:fs/promises'
 import { readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { assertIdent } from '../identity.ts'

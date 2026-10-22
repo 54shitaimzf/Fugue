@@ -45,7 +45,7 @@ export interface ThemeSpec {
 }
 
 /** 随交付的四套。**至少三套**（交接单 § 2.2 末段），这里四套材料都给了成品。 */
-export const THEMES: Readonly<Record<string, ThemeSpec>> = {
+const THEMES: Readonly<Record<string, ThemeSpec>> = {
   [primerTheme.id]: primerTheme,
   [carbonTheme.id]: carbonTheme,
   [material3Theme.id]: material3Theme,

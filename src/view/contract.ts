@@ -19,7 +19,6 @@
 // 留在日志里，而"重放必须一致"是承重性质。`check` 与 `applyDelta` 用的是同一段判断。
 import type { Delta } from '../delta.ts'
 import type { DirEntry, EntryMeta } from '../entries.ts'
-import type { Log } from '../log/events.ts'
 import type { AgentId, BlobId, CommitId, LogSeq, RelPath, ViewRev } from '../terms.ts'
 
 /**

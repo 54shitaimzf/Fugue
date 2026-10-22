@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import { assertWriterId, logFileOf } from '../log/log.ts'
 import type { TreeEntry } from '../entries.ts'
 import type { LogSeq, ViewRev, WriterId } from '../terms.ts'
-import type { SnapEntry, View, ViewSnapshot, ViewState } from './contract.ts'
+import type { SnapEntry, View, ViewSnapshot } from './contract.ts'
 
 export function snapDir(root: string, w: WriterId): string {
   assertWriterId(w)

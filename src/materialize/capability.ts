@@ -22,7 +22,7 @@ import { linkSync, mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:f
 import { join } from 'node:path'
 import { readConfig, readWorkspaceConfig, setConfig, writeConfig } from '../config.ts'
 import { probeHost } from '../roots/host.ts'
-import type { AbsPath, ForkStrategy, RelPath } from '../terms.ts'
+import type { AbsPath, ForkStrategy } from '../terms.ts'
 import type { MaterializeOptions } from './contract.ts'
 import { MountError, makeWhiteout, mountOverlay, removeTree, sudoAvailable, unmountOverlay } from './mount.ts'
 import type { MountMode, OverlaySpec } from './mount.ts'

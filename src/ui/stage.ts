@@ -26,7 +26,7 @@ import { EMPTY_READ, readContentOf, facesOf, firstFace, readWrap, readStateOf, r
 import type { ReadFaceName, ReadState } from './read.ts'
 import type { QueueState } from './queue.ts'
 import { GO_LINE } from './run.ts'
-import type { LineMode, RunLauncher, RunOutcome } from './run.ts'
+import type { RunLauncher, RunOutcome } from './run.ts'
 import { openPublishOf } from '../recovery/facts.ts'
 import { widthOf } from './glyph.ts'
 import { taskOf } from './task.ts'

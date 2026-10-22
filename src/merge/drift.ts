@@ -39,7 +39,6 @@
 //
 // **为什么只在物化之前判、`fork` 时不判**：`fork` 时也判的话，用户手里有半途的活就开不了一轮——
 // 那是**跑不起来**，不是变慢（PLAN § 5.7 的口径二与架构 § 3 那把地板尺子）。
-import { createHash } from 'node:crypto'
 import type { BlobId, CommitId, RefName, RelPath } from '../terms.ts'
 import type { Truth } from '../truth/contract.ts'
 import { gitModeOf } from '../delta.ts'

@@ -12,6 +12,7 @@ import type { DocCaller, DocsPlan, Materials, PageContent, PageDef, ReadStrategy
 import type { PromptChain } from './prompt.ts'
 import { openRead, LOOP_BUDGET, TWO_PASS_BUDGET } from './reader.ts'
 import type { ReadAsk } from './reader.ts'
+import { sumUsage } from './usage.ts'
 import type { Excerpt } from './facts.ts'
 import type { Usage } from '../model/contract.ts'
 import type { Truth } from '../truth/contract.ts'
@@ -19,7 +20,7 @@ import type { CommitId } from '../terms.ts'
 import type { ThemeSpec } from './theme.ts'
 
 /** 自由读最多几轮（一轮最多 6 处点名，见 `LOOP_BUDGET`）。 */
-export const LOOP_ROUNDS = 8
+const LOOP_ROUNDS = 8
 
 export interface AuthorInput {
   readonly page: PageDef
@@ -98,26 +99,18 @@ function rangesOf(text: string): ReadAsk[] {
 
 /** 几次取证的用量合起来（自由读会有好几轮）。`null` 不当 0。 */
 function addUsage(list: readonly (Usage | null)[]): Usage | null {
-  let input: number | null = null
-  let cacheRead: number | null = null
-  let cacheWrite: number | null = null
-  let output: number | null = null
-  for (const u of list) {
-    if (u === null) continue
-    input = add(input, u.inputTokens)
-    cacheRead = add(cacheRead, u.cacheReadTokens)
-    cacheWrite = add(cacheWrite, u.cacheWriteTokens)
-    output = add(output, u.outputTokens)
+  if (list.length === 0) return null
+  const s = sumUsage(list)
+  if (s.inputTokens === null && s.cacheReadTokens === null && s.cacheWriteTokens === null && s.outputTokens === null) return null
+  return {
+    inputTokens: s.inputTokens,
+    cacheReadTokens: s.cacheReadTokens,
+    cacheWriteTokens: s.cacheWriteTokens,
+    outputTokens: s.outputTokens,
+    reasoningTokens: null,
+    model: null,
   }
-  if (input === null && cacheRead === null && cacheWrite === null && output === null) return null
-  return { inputTokens: input, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, outputTokens: output, reasoningTokens: null, model: null }
 }
-
-function add(sum: number | null, n: number | null): number | null {
-  if (n === null) return sum
-  return (sum ?? 0) + n
-}
-
 /** 所有策略共用的收尾：拿摘录去写那一趟，再核正文形状。 */
 async function writeWith(input: {
   readonly page: PageDef

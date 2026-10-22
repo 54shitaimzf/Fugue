@@ -26,11 +26,6 @@ export function docsRootOf(root: string): string {
   return join(root, '.fugue', 'docs')
 }
 
-/** 暂存批次的位置：与产物目录**同级**，所以切换是两次改名，不是一件一件换。 */
-export function stageRootOf(root: string, token: string): string {
-  return join(root, '.fugue', `docs-stage-${token}`)
-}
-
 /**
  * 渲染器的版本。**改了宿主那一半（markdown · 页面骨架 · 交互脚本）就加一**。
  *
