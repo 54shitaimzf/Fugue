@@ -25,8 +25,8 @@ const css = `:root[data-doc-theme="primer"]{
 }
 :root[data-doc-theme="primer"] h2{border-bottom:var(--doc-border-width) solid var(--doc-border);padding-bottom:var(--doc-space-2)}
 :root[data-doc-theme="primer"] .toc a[aria-current="true"]{background:var(--doc-selected);border-radius:var(--doc-radius)}
-:root[data-doc-theme="primer"] .tablist{border-bottom:1px solid var(--doc-border);gap:var(--doc-space-3)}
-:root[data-doc-theme="primer"] .tablist label[aria-selected="true"]{border-bottom:2px solid #fd8c73}
+:root[data-doc-theme="primer"] .tabs>.tabin+label{padding:var(--doc-space-2) var(--doc-space-3)}
+:root[data-doc-theme="primer"] .tabs>.tabin:checked+label{border-bottom-color:#fd8c73}
 :root[data-doc-theme="primer"] .callout{border-left:4px solid var(--doc-accent)}
 :root[data-doc-theme="primer"] .callout.warn{border-left-color:var(--doc-attention)}
 :root[data-doc-theme="primer"] .callout.danger{border-left-color:var(--doc-danger)}

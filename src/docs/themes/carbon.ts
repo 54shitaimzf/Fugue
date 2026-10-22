@@ -30,9 +30,8 @@ const css = `:root[data-doc-theme="carbon"]{
 :root[data-doc-theme="carbon"] .callout{border-left:3px solid var(--doc-accent);background:var(--doc-callout-bg)}
 :root[data-doc-theme="carbon"] .tag{background:var(--doc-surface);border-radius:999px;font-size:var(--doc-meta-size)}
 :root[data-doc-theme="carbon"] code{font-size:0.92em}
-:root[data-doc-theme="carbon"] .tablist{border-bottom:1px solid var(--doc-border);gap:0}
-:root[data-doc-theme="carbon"] .tablist label{padding:var(--doc-space-2) var(--doc-space-3)}
-:root[data-doc-theme="carbon"] .tablist label[aria-selected="true"]{border-bottom:2px solid var(--doc-accent);background:var(--doc-selected)}`
+:root[data-doc-theme="carbon"] .tabs>.tabin+label{padding:var(--doc-space-2) var(--doc-space-3);border-radius:0}
+:root[data-doc-theme="carbon"] .tabs>.tabin:checked+label{border-bottom-color:var(--doc-accent);background:var(--doc-selected)}`
 
 const guidance = `视觉语言：IBM Carbon 的文档方向（层次 · 对齐 · 有节奏的密度）。
 - 层级：页标题 34px · 章节 22px · 小节 18px · 正文 16px/1.65 · 辅助 13px。章节之间用一条顶线分开，表格上下用粗线。

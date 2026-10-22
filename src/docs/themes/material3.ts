@@ -30,8 +30,8 @@ const css = `:root[data-doc-theme="material3"]{
 :root[data-doc-theme="material3"] table{border:0}
 :root[data-doc-theme="material3"] table th{background:var(--doc-surface);font-weight:500}
 :root[data-doc-theme="material3"] table td{border-left:0;border-right:0}
-:root[data-doc-theme="material3"] .tablist label{border-radius:999px;padding:var(--doc-space-1) var(--doc-space-3)}
-:root[data-doc-theme="material3"] .tablist label[aria-selected="true"]{background:var(--doc-selected)}
+:root[data-doc-theme="material3"] .tabs>.tabin+label{border-radius:999px;padding:var(--doc-space-1) var(--doc-space-3);margin:var(--doc-space-2) var(--doc-space-1) 0}
+:root[data-doc-theme="material3"] .tabs>.tabin:checked+label{background:var(--doc-selected);border-bottom-color:transparent}
 :root[data-doc-theme="material3"] .step::before{background:var(--doc-accent);color:#fff}
 :root[data-doc-theme="material3"] .tag{background:var(--doc-selected);border-radius:999px}`
 
