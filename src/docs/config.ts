@@ -13,12 +13,12 @@
 // **定义住配置 = 位置就是规则**（架构 § 24 纪律 13）：模型够不到这里，人改这里。
 import type { ConfigDoc } from '../config.ts'
 import { getConfig } from '../config.ts'
-import type { DocsPlan, PageDef } from './contract.ts'
-import { DocsError } from './contract.ts'
+import type { DocsPlan, PageDef, ReadStrategy } from './contract.ts'
+import { DEFAULT_READ, DocsError, READ_STRATEGIES } from './contract.ts'
 import { DEFAULT_THEME, THEME_IDS, themeOf } from './theme.ts'
 
 /** `docs` 那一节认得的键（拼错的键当场拒，不静默忽略）。 */
-export const DOCS_KEYS: readonly string[] = ['title', 'theme', 'pages', 'model', 'maxTokens']
+export const DOCS_KEYS: readonly string[] = ['title', 'theme', 'pages', 'model', 'maxTokens', 'read']
 
 /** `docs.pages` 一条认得的键。 */
 export const PAGE_KEYS: readonly string[] = ['id', 'title', 'source', 'audience', 'role', 'prompt', 'out']
@@ -142,6 +142,8 @@ export function parseDocs(config: ConfigDoc): DocsPlan | null {
     maxTokens = n
   }
 
+  const read: ReadStrategy = raw.read === undefined ? DEFAULT_READ : readStrategyOf(raw.read)
+
   if (!Array.isArray(raw.pages) || raw.pages.length === 0) {
     throw bad('docs.pages', '要是至少一份页面定义的数组', '写 [{"id":"start","title":"开始","source":"README.md","audience":"…","role":"…","prompt":"…"}]')
   }
@@ -163,7 +165,16 @@ export function parseDocs(config: ConfigDoc): DocsPlan | null {
     pages,
     model,
     maxTokens,
+    read,
   }
+}
+
+/** `docs.read` 的核对：**名字写错就拒**，并列出带进来的两种策略。 */
+function readStrategyOf(v: unknown): ReadStrategy {
+  if (typeof v !== 'string' || !(READ_STRATEGIES as readonly string[]).includes(v)) {
+    throw bad('docs.read', `不是带进来的读取策略之一（收到 ${JSON.stringify(v)}）`, `取 ${READ_STRATEGIES.join(' / ')} 之一`)
+  }
+  return v as ReadStrategy
 }
 
 /** 按 id 取一页定义。**没有就报出有哪几份**——`docs prompt <id>` 的失败面靠它。 */

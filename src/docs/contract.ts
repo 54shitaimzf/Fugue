@@ -72,6 +72,20 @@ export interface PageDef {
 }
 
 /** 工作区配置里 `docs` 那一份。 */
+/**
+ * 读取策略：**取证那一趟怎么读**。`two-pass` 是两趟（要哪几份 → 截断的补行段）；`loop` 是
+ * 自由读（一轮轮点名，直到模型说读够了）。
+ *
+ * 它是生成参数，不是性能开关：两种策略产出的正文不同，指纹与清单都记它。
+ */
+export type ReadStrategy = 'two-pass' | 'loop'
+
+/** 带进来的两种读取策略（配置写错时报出这两个）。 */
+export const READ_STRATEGIES: readonly ReadStrategy[] = ['two-pass', 'loop']
+
+/** 缺省那一档：**先两趟**，自由读验过再翻默认。 */
+export const DEFAULT_READ: ReadStrategy = 'two-pass'
+
 export interface DocsPlan {
   /** 文档集的标题（缺省用仓库名）。 */
   readonly title: string | undefined
@@ -82,6 +96,8 @@ export interface DocsPlan {
   readonly model: string | undefined
   /** 单页输出预算（缺省取模型声明里的那一档）。 */
   readonly maxTokens: number | undefined
+  /** 取证那一趟怎么读（缺省 `two-pass`）。 */
+  readonly read: ReadStrategy
 }
 
 /** 一份来源在提交 C 里的事实。`sha` 与 `bytes` 在来源缺失时是 `null`。 */
@@ -258,6 +274,8 @@ export interface Manifest {
   readonly renderer: number
   /** 提示词布局的版本（与渲染器分开：换的是模型看见的字节，不是 HTML）。 */
   readonly prompt: number
+  /** 取证用的读取策略（换策略 = 换内容，所以它进清单也进指纹）。 */
+  readonly read: ReadStrategy
   readonly model: string
   /** 实际采用的模型声明（指纹的原料；只加不改：`model` 那一栏照旧是 id）。 */
   readonly modelFacts: ModelFacts

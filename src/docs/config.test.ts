@@ -134,3 +134,19 @@ test('⑤ 产物名要能被浏览器当路径原样打开：`#` / `?` 一律拒
   }
   console.log(`⑤ 读数：${names.length} 个名字 URL 解析后不变 · ${3} 个带片段/查询/空格的名字当场拒`)
 })
+
+test('⑥ `docs.read`：不写就是两趟；写错当场拒，话里列出带进来的两种', () => {
+  assert.equal(parseDocs(base())?.read, 'two-pass')
+  assert.equal(parseDocs(poke(base(), ['docs', 'read'], 'loop'))?.read, 'loop')
+  assert.throws(
+    () => parseDocs(poke(base(), ['docs', 'read'], 'loop!')),
+    (err: unknown) => {
+      assert.ok(err instanceof DocsError, `要抛 DocsError，拿到 ${String(err)}`)
+      assert.equal(err.at, 'config')
+      assert.ok(err.message.includes('docs.read'), err.message)
+      assert.ok(err.message.includes('two-pass') && err.message.includes('loop'), `话里要列出两种策略：${err.message}`)
+      return true
+    },
+  )
+  console.log('⑥ 读数：缺省 two-pass · 写集为 loop · 写错当场拒')
+})

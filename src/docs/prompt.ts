@@ -105,6 +105,18 @@ export const EVIDENCE_RANGES_CONTRACT = `你在为一页项目文档**补读取�
 export const EVIDENCE_TASK = '给出你要读的路径清单（只输出 JSON）。'
 export const EVIDENCE_RANGES_TASK = '给出你要补读的行段（只输出 JSON）。'
 
+/** 自由读每一轮最多几处点名。 */
+export const LOOP_ASK = 6
+
+/** 自由读第二轮到第 N 轮的合同（B 区）：**已经读到什么、还要读什么**。 */
+export const EVIDENCE_AGAIN_CONTRACT = `你在为一页项目文档**继续取证**：下面是已经读到的文件与行段。
+
+只输出一个 JSON 对象，形如 {"paths":["src/b.ts",{"path":"src/a.ts","from":900,"to":950}]}：
+- 最多 ${LOOP_ASK} 条，按重要性排序；没读过的文件只写路径（字符串），读过的要后面的行段就写 {"path":…,"from":…,"to":…}（行号从 1 起）。
+- 只要写正文确实需要的；读够了就给 {"paths":[]}。不要在 JSON 之外写任何文字。`
+
+export const EVIDENCE_AGAIN_TASK = '给出下一批要读的路径或行段（只输出 JSON）；读够了就给空数组。'
+
 /** 第三趟那一句话（C 区）。 */
 export const CONTENT_TASK = `现在写这一页的正文。按上面的定义、来源、事实、摘录与本轮上下文组织内容，只输出 markdown 正文。`
 
@@ -254,6 +266,39 @@ function evidenceRangesPageOf(o: { readonly page: PageDef; readonly excerpts: re
   return parts.join('\n')
 }
 
+/** 自由读第二轮到第 N 轮的 B 区：定义 + 来源 + 已经读到的清单。 */
+function againPageOf(o: {
+  readonly page: PageDef
+  readonly plan: DocsPlan
+  readonly source: string
+  readonly excerpts: readonly Excerpt[]
+  readonly round: number
+}): string {
+  const read =
+    o.excerpts.length === 0
+      ? ['（还什么都没读到）']
+      : o.excerpts.map((x) => {
+          const shown = x.shown.map(rangeText).join(' · ')
+          const tail = x.truncated ? `还有内容没读（共 ${x.lines} 行）` : '全文'
+          return `- ${x.path}（${shown}；${tail}）`
+        })
+  return [
+    EVIDENCE_AGAIN_CONTRACT,
+    '',
+    definitionBlock(o.page),
+    '',
+    siblingsBlock(o.plan, o.page),
+    '',
+    `本页来源 ${o.page.source} 的正文（原样，可能落后于代码）：`,
+    '-----',
+    o.source,
+    '-----',
+    '',
+    `已经读到（第 ${o.round} 轮之前）：`,
+    ...read,
+  ].join('\n')
+}
+
 /** 一次调用的三区。**`shared` 一定是同一个 `PromptChain` 给的那一份**（缓存前缀靠这一点）。 */
 export interface Assembled {
   readonly shared: string
@@ -282,6 +327,15 @@ export interface RangesInput {
   readonly excerpts: readonly Excerpt[]
 }
 
+export interface AgainInput {
+  readonly page: PageDef
+  readonly plan: DocsPlan
+  readonly source: string
+  readonly excerpts: readonly Excerpt[]
+  /** 这是第几轮（从 1 起）。 */
+  readonly round: number
+}
+
 /**
  * 这一批的提示词链：**A 区装一次，所有调用共用这一份字节**。
  *
@@ -297,6 +351,8 @@ export interface PromptChain {
   evidence(o: EvidenceInput): Assembled
   /** 取证第二趟（被截断的那几份要后面哪几行）。 */
   ranges(o: RangesInput): Assembled
+  /** 自由读的下一轮：已经读到什么、还需要什么。 */
+  again(o: AgainInput): Assembled
 }
 
 /** 按这一批的事实装配提示词链。`shared` 只在这里算一次。 */
@@ -307,6 +363,7 @@ export function chainOf(facts: TreeFacts): PromptChain {
     writing: (o) => ({ shared, page: writingPageOf(o), task: CONTENT_TASK }),
     evidence: (o) => ({ shared, page: evidencePageOf(o), task: EVIDENCE_TASK }),
     ranges: (o) => ({ shared, page: evidenceRangesPageOf(o), task: EVIDENCE_RANGES_TASK }),
+    again: (o) => ({ shared, page: againPageOf(o), task: EVIDENCE_AGAIN_TASK }),
   }
 }
 

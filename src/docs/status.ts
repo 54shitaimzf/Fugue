@@ -71,7 +71,7 @@ async function nowOf(deps: StatusDeps): Promise<Now> {
     const model = deps.model ?? modelFactsOf({ model: declared.id, wireModel: declared.wireModel, facts: declared }, plan.maxTokens)
     return {
       commit,
-      fingerprint: fingerprintOf({ commit, plan, sources: facts.sources, theme, model }),
+      fingerprint: fingerprintOf({ commit, plan, sources: facts.sources, theme, model, read: plan.read }),
       error: null,
       plan,
       sources: facts.sources,

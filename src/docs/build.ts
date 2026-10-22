@@ -24,6 +24,7 @@ import type { CommitId, RefName } from '../terms.ts'
 import { parseDocs } from './config.ts'
 import { aliasPlan } from './address.ts'
 import { attemptOf, recordAttempt } from './attempt.ts'
+import { authorOf } from './author.ts'
 import { planAssets } from './assets.ts'
 import { checkContent, citedOf } from './check.ts'
 import { repoPathOf } from './paths.ts'
@@ -31,32 +32,22 @@ import { sumUsage } from './usage.ts'
 import type { UsageSum } from './usage.ts'
 import type {
   DocsPlan,
-  EvidenceRange,
   Manifest,
   Materials,
   ModelFacts,
   PageContent,
   PageDef,
   RenderedPage,
-  TreeFacts,
 } from './contract.ts'
 import { DocsError, MANIFEST_VERSION, PROMPT_VERSION, RENDERER_VERSION, docsRootOf } from './contract.ts'
-import { excerptAt, sourceTextOf, treeFactsOf } from './facts.ts'
-import type { Excerpt } from './facts.ts'
+import { sourceTextOf, treeFactsOf } from './facts.ts'
 import { fingerprintOf, modelFactsOf } from './fingerprint.ts'
 import type { DocCaller } from './contract.ts'
 import { escapeHtml, renderMarkdown } from './markdown.ts'
 import type { MdHeading, MdResult } from './markdown.ts'
 import { HOST_IDS, renderIndexPage, renderPage } from './page.ts'
 import type { SiteInfo } from './page.ts'
-import {
-  EVIDENCE_MAX,
-  EXCERPT_BUDGET,
-  EXCERPT_LIMIT,
-  RANGE_MAX,
-  chainOf,
-} from './prompt.ts'
-import type { PromptChain } from './prompt.ts'
+import { chainOf } from './prompt.ts'
 import { digestOf, publishBatch, readManifest } from './publish.ts'
 import type { BatchFile } from './publish.ts'
 import { recoverPublish } from './publish.ts'
@@ -169,154 +160,6 @@ function missingText(missing: readonly { id: string; source: string }[], commit:
   return `来源在提交 ${commit.slice(0, 12)} 里缺失（${missing.length} 份）：\n${lines.join('\n')}\n  该改的是 ${missing.length === 1 ? '那一份定义' : '那几份定义'}的 source，或者把来源带进这个提交`
 }
 
-/** 一次取证点名：路径，可带一段行（`{path, from, to}`）。 */
-interface PathAsk {
-  readonly path: string
-  readonly from: number | null
-  readonly to: number | null
-}
-
-/** 模型那一趟的 JSON：取第一段 `{…}`。**解析不了就是空**。 */
-function jsonOf(text: string): Record<string, unknown> | null {
-  const m = /\{[\s\S]*\}/.exec(text)
-  if (m === null) return null
-  try {
-    const v = JSON.parse(m[0]) as unknown
-    return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null
-  } catch {
-    return null
-  }
-}
-
-/** 取证第一趟：路径清单；每一条可以是字符串，也可以是 `{path, from, to}`（已经知道要哪几行）。 */
-function pathAsksOf(text: string): PathAsk[] {
-  const v = jsonOf(text)
-  if (v === null || !Array.isArray(v.paths)) return []
-  const out: PathAsk[] = []
-  for (const raw of v.paths) {
-    if (typeof raw === 'string' && raw.trim() !== '') {
-      out.push({ path: raw.trim(), from: null, to: null })
-      continue
-    }
-    if (typeof raw === 'object' && raw !== null) {
-      const o = raw as { path?: unknown; from?: unknown; to?: unknown }
-      if (typeof o.path !== 'string' || o.path.trim() === '') continue
-      const from = typeof o.from === 'number' && Number.isInteger(o.from) && o.from > 0 ? o.from : null
-      const to = typeof o.to === 'number' && Number.isInteger(o.to) && o.to >= (from ?? 0) ? o.to : null
-      out.push({ path: o.path.trim(), from, to: from === null ? null : to })
-    }
-  }
-  return out
-}
-
-/** 取证第二趟：补读的行段。 */
-function rangesOf(text: string): PathAsk[] {
-  const v = jsonOf(text)
-  if (v === null || !Array.isArray(v.ranges)) return []
-  return pathAsksOf(JSON.stringify({ paths: v.ranges })).slice(0, RANGE_MAX)
-}
-
-/**
- * 取证那一趟：模型点名要读的路径 → 真读到的原文；被截断的再问一次"要后面哪几行"。
- *
- * **两次取证，一次写作**：第二趟只在"有文件被截断"时才发。它把截断那几份的开头一小段与总行数
- * 摆在模型面前，让它按行段点名——于是"关键实现放在文件后半部"取得着，而不是只能靠第一段猜。
- */
-async function gatherEvidence(o: {
-  readonly def: PageDef
-  readonly plan: DocsPlan
-  readonly facts: TreeFacts
-  readonly source: string
-  readonly truth: Truth
-  readonly commit: CommitId
-  readonly caller: DocCaller
-  readonly prompt: PromptChain
-}): Promise<{ evidence: PageContent['evidence']; excerpts: Excerpt[]; note: string | null; usage: Usage | null; rangeUsage: Usage | null }> {
-  const empty: PageContent['evidence'] = { mode: 'skipped', requested: [], found: [], missing: [], ranges: [] }
-  let text: string
-  let usage: Usage | null = null
-  try {
-    const ask = o.prompt.evidence({ page: o.def, plan: o.plan, source: o.source })
-    const call = await o.caller.call({
-      system: ask.shared,
-      context: ask.page,
-      task: ask.task,
-      maxTokens: 4096,
-      thinking: 'low',
-    })
-    text = call.text
-    usage = call.usage
-  } catch (err) {
-    // **退到"只有来源与索引"那一档**：写得少，不是跑不起来（交接单 § 2.5 的地板）。
-    return { evidence: empty, excerpts: [], note: `取证这一趟没成，这一页按来源与索引写：${(err as Error).message}`, usage: null, rangeUsage: null }
-  }
-  const asks = pathAsksOf(text).slice(0, EVIDENCE_MAX)
-  if (asks.length === 0) return { evidence: empty, excerpts: [], note: null, usage, rangeUsage: null }
-
-  const known = new Set(o.facts.paths)
-  const missing: string[] = []
-  const requested: string[] = []
-  const excerpts: Excerpt[] = []
-  let budget = EXCERPT_BUDGET
-  for (const ask of asks) {
-    requested.push(ask.path)
-    if (!known.has(ask.path)) {
-      missing.push(ask.path)
-      continue
-    }
-    const x = await excerptAt(o.truth, o.commit, ask.path, {
-      limit: Math.min(EXCERPT_LIMIT, Math.max(1, budget)),
-      ...(ask.from === null ? {} : { ranges: [{ from: ask.from, to: ask.to ?? ask.from + 200 }] }),
-    })
-    if (x === null) {
-      missing.push(ask.path)
-      continue
-    }
-    budget -= x.text.length
-    excerpts.push(x)
-  }
-
-  // 第二趟：截断的那几份问行段。**一次都问不出来就退到"只有第一段"**，并记一条 note。
-  let rangeUsage: Usage | null = null
-  let note: string | null = null
-  const cut = excerpts.filter((x) => x.truncated)
-  if (cut.length > 0 && budget > 0) {
-    try {
-      const ask = o.prompt.ranges({ page: o.def, excerpts: cut })
-      const call = await o.caller.call({
-        system: ask.shared,
-        context: ask.page,
-        task: ask.task,
-        maxTokens: 2048,
-        thinking: 'low',
-      })
-      rangeUsage = call.usage
-      const asks2 = rangesOf(call.text)
-      for (const ask of asks2) {
-        const at = excerpts.findIndex((x) => x.path === ask.path)
-        if (at < 0) continue
-        const more = await excerptAt(o.truth, o.commit, ask.path, {
-          limit: Math.min(EXCERPT_LIMIT, Math.max(1, budget)),
-          ranges: [{ from: ask.from ?? 1, to: ask.to ?? (ask.from ?? 1) + 200 }],
-        })
-        if (more === null) continue
-        budget -= Math.max(0, more.text.length - excerpts[at]!.text.length)
-        excerpts[at] = more
-      }
-    } catch (err) {
-      note = `补读行段那一趟没成，截断的文件只有第一段：${(err as Error).message}`
-    }
-  }
-  if (cut.length > 0) {
-    const still = excerpts.filter((x) => x.truncated).map((x) => `${x.path}（共 ${x.lines} 行，只贴了 ${x.shown.map((r) => `${r.from}–${r.to}`).join(' · ')}）`)
-    if (still.length > 0) {
-      note = `${note === null ? '' : `${note}；`}有文件没读全：${still.join(' · ')}——正文里引用后面的内容时写明缺哪一段`
-    }
-  }
-  const truncated: EvidenceRange[] = excerpts.map((x) => ({ path: x.path, lines: x.lines, chars: x.chars, shown: x.shown, truncated: x.truncated }))
-  return { evidence: { mode: 'requested', requested, found: excerpts.map((x) => x.path), missing, ranges: truncated }, excerpts, note, usage, rangeUsage }
-}
-
 /** 一次生成。**成功与失败都是返回值**：失败时旧批次留在原处，`last.json` 记下原因。 */
 export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
   const docsDir = docsRootOf(deps.root)
@@ -397,6 +240,8 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
 
     // 提示词链：**A 区在这里装一次**，取证两趟与写作那一趟都发这一份字节。
     const prompt = chainOf(facts)
+    /** 这一批用哪条读取策略（`docs.read`；缺省两趟）。 */
+    const author = authorOf(plan.read)
 
     // 三 · 逐页取证 + 写作
     const prepared: Prepared[] = []
@@ -426,48 +271,36 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
         })
         continue
       }
-      const ev =
-        deps.evidence === false
-          ? {
-              evidence: { mode: 'skipped' as const, requested: [], found: [], missing: [], ranges: [] },
-              excerpts: [],
-              note: null,
-              usage: null,
-              rangeUsage: null,
-            }
-          : await gatherEvidence({ def, plan, facts, source: sources.get(def.id)!, truth: deps.truth, commit, caller: deps.caller, prompt })
-      const words = prompt.writing({
+      // 一条策略：读取与写作都在 `author.ts`，这里只把材料递进去。
+      const authored = await author.write({
         page: def,
         plan,
         theme,
+        facts,
         source: sources.get(def.id)!,
         materials: deps.materials,
-        excerpts: ev.excerpts,
-        evidenceMissing: ev.evidence.missing,
+        prompt,
+        caller: deps.caller,
+        truth: deps.truth,
+        commit,
+        read: deps.evidence !== false,
       })
-      const call = await deps.caller.call({
-        system: words.shared,
-        context: words.page,
-        task: words.task,
-        ...(plan.maxTokens === undefined ? {} : { maxTokens: plan.maxTokens }),
-      })
-      const contentNotes = checkContent(def, call.text)
-      allUsage.push(call.usage)
+      allUsage.push(authored.usage)
       // **取证那几趟只数真发出去的调用**：`--no-evidence` 这一次一次都没发，不该算进读数。
       if (deps.evidence !== false) {
-        allUsage.push(ev.usage)
-        if (ev.rangeUsage !== null) allUsage.push(ev.rangeUsage)
+        allUsage.push(authored.evidenceUsage)
+        if (authored.rangeUsage !== null) allUsage.push(authored.rangeUsage)
       }
-      usagePages.push({ id: def.id, usage: call.usage, evidenceUsage: ev.usage, rangeUsage: ev.rangeUsage })
-      const pass1 = renderMarkdown(call.text, { resolve: (raw) => ({ href: raw }), reserved: HOST_IDS })
+      usagePages.push({ id: def.id, usage: authored.usage, evidenceUsage: authored.evidenceUsage, rangeUsage: authored.rangeUsage })
+      const pass1 = renderMarkdown(authored.markdown, { resolve: (raw) => ({ href: raw }), reserved: HOST_IDS })
       prepared.push({
         def,
-        markdown: call.text,
-        evidence: ev.evidence,
-        notes: [...contentNotes, ...(ev.note === null ? [] : [ev.note])],
-        usage: call.usage,
-        evidenceUsage: ev.usage,
-        rangeUsage: ev.rangeUsage,
+        markdown: authored.markdown,
+        evidence: authored.evidence,
+        notes: [...authored.notes],
+        usage: authored.usage,
+        evidenceUsage: authored.evidenceUsage,
+        rangeUsage: authored.rangeUsage,
         pass1,
         pass2: pass1,
         rendered: {
@@ -547,7 +380,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
 
     // 五 · 清单 · 首页 · 保存
     const factsOfModel = modelFacts(plan)
-    const fingerprint = fingerprintOf({ commit: String(commit), plan, sources: facts.sources, theme, model: factsOfModel })
+    const fingerprint = fingerprintOf({ commit: String(commit), plan, sources: facts.sources, theme, model: factsOfModel, read: plan.read })
     const siteInfo: SiteInfo = {
       project: plan.title ?? facts.name ?? '文档',
       version: facts.version,
@@ -619,6 +452,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       themeVersion: theme.version,
       renderer: RENDERER_VERSION,
       prompt: PROMPT_VERSION,
+      read: plan.read,
       model: deps.caller.model,
       modelFacts: factsOfModel,
       materials: deps.materials,

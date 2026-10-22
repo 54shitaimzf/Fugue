@@ -178,6 +178,7 @@ test('① 一次生成：两页正文 · 首页 · 清单（提交 · 版本 · 
   assert.ok([...prefix][0]!.includes('完整树路径索引'), '索引在 A 区')
   assert.ok(bodies.every((b) => !b.context.includes('完整树路径索引')), 'B 区不再贴索引')
   assert.equal(manifest.prompt, PROMPT_VERSION, '清单记着这一批用的提示词布局版本')
+  assert.equal(manifest.read, 'two-pass', '缺省读取策略是两趟')
   const last = JSON.parse(readFileSync(join(root, '.fugue', 'docs-last.json'), 'utf8')) as { usage: { cacheReadTokens: number; cacheWriteTokens: number } }
   assert.equal(last.usage.cacheReadTokens, 80, '缓存读也要落到 last.json，下一次 `docs status` 才答得出“花了多少”')
   assert.equal(last.usage.cacheWriteTokens, 0, '写缓存那一栏照实记（没有断点时是 0）')
@@ -615,4 +616,22 @@ test('⑰ 旧布局判过期：清单没有 prompt 那一栏（提示词布局�
   assert.equal(stale.artifact.fingerprint, old)
   assert.equal(stale.artifact.now.fingerprint, fresh.artifact.now.fingerprint, '当前那一版没变')
   console.log(`⑰ 读数：旧布局 ${shortFingerprint(old)} → stale；当前 ${shortFingerprint(fresh.artifact.now.fingerprint!)}`)
+})
+
+test('⑱ 读取策略进清单与指纹：换 `docs.read` 就过期（内容相同也不行）', async (ctx) => {
+  const { root, truth } = await repo()
+  ctx.after(() => truth.close())
+  const fixed = (): Date => new Date('2026-10-22T00:00:00.000Z')
+  const two = await buildDocs({ root, config: configWith(), truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
+  assert.ok(two.ok)
+  const first = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8')) as { read: string; fingerprint: string }
+  assert.equal(first.read, 'two-pass')
+
+  const loopConfig: ConfigDoc = { docs: { ...configWith().docs, read: 'loop' } }
+  const loop = await buildDocs({ root, config: loopConfig, truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
+  assert.ok(loop.ok)
+  const second = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8')) as { read: string; fingerprint: string }
+  assert.equal(second.read, 'loop')
+  assert.notEqual(second.fingerprint, first.fingerprint, '策略进了指纹：换策略就是换内容取法')
+  console.log(`⑱ 读数：two-pass ${shortFingerprint(first.fingerprint)} · loop ${shortFingerprint(second.fingerprint)}`)
 })
