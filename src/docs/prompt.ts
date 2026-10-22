@@ -68,8 +68,17 @@ export const EVIDENCE_CONTRACT = `你在为一页项目文档**选修辞**：列
 - 选那些能支撑这一页结论的文件：实现、接口、测试、配置、数据形状；来源文档本身不用再列。
 - 只要写正文确实需要的；没有需要的就给空数组。不要在 JSON 之外写任何文字。`
 
+/** 取证那一趟那一句话（C 区）。 */
+export const EVIDENCE_TASK = '给出你要读的路径清单（只输出 JSON）。'
+
 /** 第二趟那一句话（C 区）。 */
 export const CONTENT_TASK = `现在写这一页的正文。按上面的定义、来源、事实与摘录组织内容，只输出 markdown 正文。`
+
+/**
+ * 一页正文的下界（字符）。**它不是质量线，是"这一页没写出来"的判据**：模型给一段空话或
+ * 一个标题就收工，比报错更坏——读者拿到的是一页看起来成功的空页。质量由人按读者任务复核。
+ */
+export const CONTENT_MIN_CHARS = 400
 
 /** 一套主题 + 公共合同 = A 区（正文那一趟）。 */
 export function systemOf(theme: ThemeSpec): string {

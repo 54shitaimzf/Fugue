@@ -8,7 +8,7 @@
 // 状态源在今天就落在 `—— 提交 C 的完整树 + 提交元数据`；定义提示词落在工作区配置的 `docs` 键。
 // 于是"过期"是**比出来的**：指纹一样就是最新，不一样就是过期，不需要谁来判断。
 import { join } from 'node:path'
-import type { Usage } from '../model/contract.ts'
+import type { ThinkingLevel, Usage } from '../model/contract.ts'
 
 /** 文档这一层的失败：配置写错 · 来源缺失 · 材料不足 · 模型没写完 · 保存失败。**话原样带给人。** */
 export class DocsError extends Error {
@@ -90,6 +90,8 @@ export interface TreeFacts {
   readonly commitShort: string
   /** 提交 C 里 `package.json` 的版本号；没有 `package.json` 或读不动就是 `null`（如实缺）。 */
   readonly version: string | null
+  /** 提交 C 里 `package.json` 的 `name`（首页与页首的项目名，缺省用它）。 */
+  readonly name: string | null
   /** 完整树里的文件数（不含目录条目）。 */
   readonly files: number
   /** 顶层目录及其文件数（按名字排序；顶层文件不计入）。 */
@@ -133,6 +135,8 @@ export interface DocCallRequest {
   /** C 区：这一次要它做的事（那一句话）。 */
   readonly task: string
   readonly maxTokens?: number
+  /** 这一趟的思考档（取证那一趟低一档：它只选文件，不写正文）。 */
+  readonly thinking?: ThinkingLevel
 }
 
 export interface DocCall {
@@ -240,6 +244,8 @@ export interface ArtifactReport {
   readonly theme: string | null
   /** 当前那一版：状态要从它算出过期与否。 */
   readonly now: { readonly commit: string | null; readonly fingerprint: string | null; readonly error: string | null }
+  /** 清单里那几条文件与盘上不一致的路径（空 = 完好）。**它也是"过期"的一种**。 */
+  readonly integrity: readonly string[]
 }
 
 export interface StatusReport {

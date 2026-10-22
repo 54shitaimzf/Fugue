@@ -67,15 +67,18 @@ export function sha256Of(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-/** 读提交里的 `package.json` 版本号。**读不到就是 `null`**——不编一个版本出来。 */
-async function versionAt(truth: Truth, commit: CommitId): Promise<string | null> {
+/** 读提交里的 `package.json` 的版本号与项目名。**读不到就是 `null`**——不编一个出来。 */
+async function packageAt(truth: Truth, commit: CommitId): Promise<{ version: string | null; name: string | null }> {
   const bytes = await truth.readAt(commit, 'package.json' as RelPath)
-  if (bytes === null) return null
+  if (bytes === null) return { version: null, name: null }
   try {
-    const v = JSON.parse(new TextDecoder().decode(bytes)) as { version?: unknown }
-    return typeof v.version === 'string' && v.version !== '' ? v.version : null
+    const v = JSON.parse(new TextDecoder().decode(bytes)) as { version?: unknown; name?: unknown }
+    return {
+      version: typeof v.version === 'string' && v.version !== '' ? v.version : null,
+      name: typeof v.name === 'string' && v.name !== '' ? v.name : null,
+    }
   } catch {
-    return null
+    return { version: null, name: null }
   }
 }
 
@@ -101,10 +104,12 @@ export async function treeFactsOf(truth: Truth, commit: CommitId, plan: DocsPlan
     if (fact === null) missing.push({ id: p.id, source: p.source })
     else sources.push(fact)
   }
+  const pkg = await packageAt(truth, commit)
   return {
     commit: String(commit),
     commitShort: String(commit).slice(0, 12),
-    version: await versionAt(truth, commit),
+    version: pkg.version,
+    name: pkg.name,
     files: walk.files,
     topDirs: walk.topDirs,
     sources,

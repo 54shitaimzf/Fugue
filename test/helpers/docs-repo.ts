@@ -30,11 +30,17 @@ export function tmpRepo(prefix = 'fugue-docs-'): string {
   return root
 }
 
-/** 用真源那一层落一条提交（blob → tree → commit），返回提交号。 */
+/**
+ * 用真源那一层落一条提交（blob → tree → commit），返回提交号。
+ *
+ * 给了 `ref` 就顺手 CAS 推进它（缺省不推）——`docs status` 读的是 `refs/heads/main`，所以
+ * "当前那一版"那几条断言必须有一条真的 ref，不能只造一个游离提交。
+ */
 export async function commitFiles(
   root: string,
   files: Readonly<Record<string, string>>,
   parents: readonly CommitId[] = [],
+  ref: string | null = null,
 ): Promise<CommitId> {
   const truth = openTruth(root)
   try {
@@ -43,7 +49,9 @@ export async function commitFiles(
       entries.push({ name: path as RelPath, mode: 0o100644, id: await truth.putBlob(new TextEncoder().encode(text)) })
     }
     const tree = await truth.putTree(entries)
-    return await truth.commit(tree, [...parents], `test: ${Object.keys(files).join(', ')}`)
+    const commit = await truth.commit(tree, [...parents], `test: ${Object.keys(files).join(', ')}`)
+    if (ref !== null) await truth.advance(ref as never, commit, parents[0] ?? null)
+    return commit
   } finally {
     truth.close()
   }
