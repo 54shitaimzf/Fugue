@@ -31,7 +31,6 @@ const css = `:root[data-doc-theme="govuk"]{
 :root[data-doc-theme="govuk"] .callout.danger{border-left-color:var(--doc-danger)}
 :root[data-doc-theme="govuk"] .callout.tip{border-left-color:var(--doc-success)}
 :root[data-doc-theme="govuk"] .tag{background:var(--doc-accent);color:#fff;border-radius:0;font-weight:700;letter-spacing:0.02em}
-:root[data-doc-theme="govuk"] .tag.warn{background:var(--doc-attention)} :root[data-doc-theme="govuk"] .tag.danger{background:var(--doc-danger)}
 :root[data-doc-theme="govuk"] .tabs>.tabin+label{border-bottom-width:2px;padding:var(--doc-space-2) var(--doc-space-2)}
 :root[data-doc-theme="govuk"] .tabs>.tabin:checked+label{border-bottom:4px solid var(--doc-text)}
 :root[data-doc-theme="govuk"] .steps .step::before{background:var(--doc-text);color:#fff;border-radius:0}

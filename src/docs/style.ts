@@ -181,7 +181,9 @@ footer code{background:none;padding:0}
   .layout{display:block;padding:0;max-width:none}
   a{color:inherit;text-decoration:underline}
   pre,details,.tabs{border:1px solid #ccc;break-inside:avoid}
-  details>.tabpanel{display:block!important}
+  /* 打印时每个面板都要出（屏幕上一次只看一块）；标签本身不用印。 */
+  .tabs>.tabin,.tabs>.tabin+label{display:none!important}
+  .tabs>.tabpanel{display:block!important}
 }
 @media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 ` + tabRules()

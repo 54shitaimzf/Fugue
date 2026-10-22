@@ -67,6 +67,7 @@ function outName(cell: string, v: unknown, id: string): string {
   if (typeof p !== 'string' || p.trim() === '') throw bad(cell, '要是产物文件名', `写成 ${outOf(id)} 这种`)
   const name = p.trim()
   if (name.includes('/') || name.includes('\\')) throw bad(cell, '只是文件名，不带目录', `写成 ${outOf(id)} 这种`)
+  if (name.includes(':')) throw bad(cell, '里不要带 `:`（那会变成一条带 scheme 的地址）', `写成 ${outOf(id)} 这种`)
   if (!name.endsWith('.html')) throw bad(cell, '要以 .html 结尾', `写成 ${outOf(id)} 这种`)
   if (name === 'index.html' || name === 'manifest.json') {
     throw bad(cell, '不能占首页或清单的文件名', `换一个，如 ${outOf(id)}`)

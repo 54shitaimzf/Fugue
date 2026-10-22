@@ -155,7 +155,7 @@ test('⑥ 首页由宿主合成：每份文档一个入口，写清给谁看与�
     site: site(),
     plan: PLAN,
     index: entries,
-    pages: PLAN.pages.map((p) => ({ page: p, headings: 2 })),
+    pages: PLAN.pages.map((p) => ({ page: p })),
   })
   assert.ok(index.includes('<h1>Fugue 文档</h1>'))
   for (const p of PLAN.pages) {

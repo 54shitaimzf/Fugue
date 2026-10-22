@@ -601,7 +601,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
             site: siteInfo,
             plan,
             index,
-            pages: plan.pages.map((page) => ({ page, headings: (fresh.get(page.id) ?? []).length })),
+            pages: plan.pages.map((page) => ({ page })),
           }),
         ),
       },

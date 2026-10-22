@@ -99,7 +99,7 @@ export async function docsBuildValue(a: ValueArgs): Promise<ValueResult> {
     at === undefined
       ? {
           kind: 'manual',
-          note: '手动 fugue docs build：来源与事实取当前提交（refs/heads/main），定义与主题取当前工作区配置',
+          note: '手动 fugue docs build：来源与事实取 refs/heads/main（收口时是刚写回的那个提交），定义与主题取当前工作区配置',
         }
       : {
           kind: 'manual',
@@ -212,7 +212,7 @@ function statusLines(r: StatusReport): string {
   if (a.state === 'missing') {
     lines.push('文档：未生成')
     if (a.now.error !== null) lines.push(`  当前这一版读不出来：${a.now.error}`)
-    else lines.push(`  定义已就绪，对应的提交 ${a.now.commit?.slice(0, 12) ?? '（还没提交）'}`)
+    else lines.push(`  定义已就绪，refs/heads/main 现在是 ${a.now.commit?.slice(0, 12) ?? '（还没提交）'}`)
     lines.push(`  生成：fugue docs build　产物目录：${r.docsDir}`)
   } else if (a.state === 'current') {
     lines.push(`文档：最新 —— 产物对应 ${a.commitShort ?? a.commit?.slice(0, 12) ?? '?'}`)
@@ -220,7 +220,7 @@ function statusLines(r: StatusReport): string {
     lines.push(`  指纹 ${shortFingerprint(a.fingerprint ?? '')}`)
     lines.push(`  入口 ${r.docsDir}/index.html`)
   } else {
-    lines.push(`文档：过期 —— 产物对应 ${a.commitShort ?? a.commit?.slice(0, 12) ?? '?'}，当前提交 ${a.now.commit?.slice(0, 12) ?? '（读不出来）'}`)
+    lines.push(`文档：过期 —— 产物对应 ${a.commitShort ?? a.commit?.slice(0, 12) ?? '?'}，refs/heads/main 现在是 ${a.now.commit?.slice(0, 12) ?? '（读不出来）'}`)
     if (a.now.error !== null) lines.push(`  当前这一版读不出来：${a.now.error}`)
     if (a.fingerprint !== null && a.now.fingerprint !== null) {
       lines.push(`  指纹：产物 ${shortFingerprint(a.fingerprint)} · 当前 ${shortFingerprint(a.now.fingerprint)}`)

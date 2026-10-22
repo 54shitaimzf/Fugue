@@ -50,7 +50,7 @@ export interface PageInput {
   readonly sourceSha: string | null
   /** 站点级的查找索引（同一份嵌进每一页：离线、可查）。 */
   readonly index: readonly SearchEntry[]
-  /** 旧深链接的去向（旧 id → 新 id），只进清单与页脚的说明，不进正文。 */
+  /** 旧深链接的去向（旧 id → 新 id）：清单里记对照，正文里落成别名锚点，旧链接仍到达这一节。 */
   readonly anchors: Readonly<Record<string, string>>
 }
 
@@ -59,7 +59,7 @@ export interface IndexInput {
   readonly plan: DocsPlan
   readonly index: readonly SearchEntry[]
   /** 每页的标题 · 读者 · 职责（首页由宿主按定义与事实合成，交接单 § 3.4）。 */
-  readonly pages: readonly { readonly page: PageDef; readonly headings: number }[]
+  readonly pages: readonly { readonly page: PageDef }[]
 }
 
 /** 页首那一行：项目 · 适用版本与提交。 */

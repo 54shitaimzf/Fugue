@@ -82,6 +82,7 @@ test('③ 写错一格当场拒：主题 · 来源 · id · 产物名 · 未知�
     { doc: poke(base(), ['docs', 'pages', 0, 'source'], '../outside.md'), cell: 'docs.pages[0].source' },
     { doc: poke(base(), ['docs', 'pages', 0, 'id'], 'Start Page'), cell: 'docs.pages[0].id' },
     { doc: poke(base(), ['docs', 'pages', 0, 'out'], 'index.html'), cell: 'docs.pages[0].out' },
+    { doc: poke(base(), ['docs', 'pages', 0, 'out'], 'javascript:alert(1).html'), cell: 'docs.pages[0].out' },
     { doc: poke(base(), ['docs', 'pages', 0, 'audience'], ''), cell: 'docs.pages[0].audience' },
     { doc: poke(base(), ['docs', 'pagse'], []), cell: 'docs.pagse' },
     { doc: poke(base(), ['docs', 'pages', 0, 'soruce'], 'README.md'), cell: 'docs.pages[0].soruce' },
