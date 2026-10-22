@@ -62,7 +62,7 @@ export const VALUE_LAYER: Readonly<Record<string, ValueRunner>> = {
   status: statusValue,
   watch: watchValue,
   recover: recoverValue,
-  // 文档这一族（0.5.2）：定义与提交 → 可独立阅读的 HTML · 状态 · 一份的写作输入。
+  // 文档这一族：定义与提交 → 可独立阅读的 HTML · 状态 · 一份的写作输入。
   'docs build': docsBuildValue,
   'docs status': docsStatusValue,
   'docs prompt': docsPromptValue,

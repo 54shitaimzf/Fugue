@@ -197,6 +197,59 @@ fugue recover --finish
 
 它的寿命绑在客户端上：标准输入一断它就收尾，没人问它 30 秒它自己走——不引守护进程。一个工作区一个 serve，同时盯几个项目就开几个。
 
+## 生成项目文档（HTML）
+
+`fugue docs` 把这一版代码写成一套能直接打开读的 HTML 文档：给使用者、维护者和下游读者看。文档只服务阅读，不参与 agent 的任何决策，也不会被写回任何真源。
+
+在 `.fugue/config` 里写文档定义（给谁看、讲什么、从哪来、怎么写）与整套视觉语言：
+
+```json
+{
+  "docs": {
+    "theme": "primer",
+    "pages": [
+      {
+        "id": "start",
+        "title": "开始",
+        "source": "README.md",
+        "audience": "第一次用的人",
+        "role": "从安装到跑通第一条命令",
+        "prompt": "先给最短路径，再给边界"
+      },
+      {
+        "id": "api",
+        "title": "接口参考",
+        "source": "docs/api.md",
+        "audience": "要把 Fugue 接进来的人",
+        "role": "每个参数、默认值与失败行为",
+        "prompt": "按查询任务组织，给出能直接跑的例子",
+        "out": "api.html"
+      }
+    ]
+  }
+}
+```
+
+每条定义六栏：`id`（稳定标识，文件名与深链接都用它）· `title` · `source`（仓库里的 markdown，随提交走）· `audience`（给谁看）· `role`（负责讲什么、边界在哪）· `prompt`（这一份的写法与重点）；`out` 可选，缺省是 `<id>.html`。键名写错、路径写成绝对路径或 `..`，命令当场拒并指到该改的那一格。
+
+```sh
+fugue docs build               # 按当前提交生成整套
+fugue docs build --at <提交>    # 按指定提交重建（定义与主题取今天的工作区配置）
+fugue docs build --theme govuk  # 只换一套视觉语言
+fugue docs status               # 现有产物对应哪一版 · 最近一次生成成没成
+fugue docs prompt start         # 打出这一份的实际写作输入，不调模型
+```
+
+产物在 `.fugue/docs/`：`index.html` 是入口，浏览器直接打开就行（`file://` 可用，不用起服务）。每一页自包含：样式、脚本与查找索引都在页面里，本地图片复制进 `_assets/`；关掉 JavaScript 后正文、目录、原生展开与标签切换仍可读，查找退到浏览器自带的查找。
+
+**视觉语言是整套换的**：`theme` 取 `primer`（GitHub Primer）· `carbon`（IBM Carbon）· `material3`（Material 3）· `govuk`（GOV.UK Design System）之一。换主题只换呈现，内容与操作含义不变；主题的视觉规则也会进写作输入，所以模型会按那一套规范组织页面。
+
+**一次生成是两趟调用**：先让模型点名要读哪几份仓库文件，再把那几份原文、来源与提交事实一起给它写正文。用量、逐页取证与页面清单记在 `.fugue/docs/manifest.json`；最近一次生成成没成记在 `last.json`，`docs status` 把这两件事分开报。
+
+**失败不毁旧版**：新批次全部生成并通过校验才替换；中断或失败时，旧页面、旧资源与旧清单原样留着，下一步照样能读。`round run` / `round work` 通过验收后会自动生成一次（打桩与回放两档不出网，不生成）。
+
+页面因为输出预算被截断时，抬一下单页预算：`fugue config set docs.maxTokens 65536`，再生成一次。
+
 ## 它为什么可靠
 
 它只以两样东西为准：**git 仓库本身**，和 **`.fugue/log/` 里的工作记录**（只追加、不修改，每行一条）。
@@ -212,7 +265,7 @@ fugue recover --finish
 
 ## 更多资料
 
-- `fugue --help`：命令速查表，每条都有一两句话说明。命令面一共 30 条（`round` 有 5 条子命令、`config` 有 4 条）；命令全表在架构 § 9.6。
+- `fugue --help`：命令速查表，每条都有一两句话说明。命令面一共 31 条（`round` 有 5 条子命令、`docs` 有 3 条、`config` 有 4 条）；命令全表在架构 § 9.6。
 - 每个版本的改动：[CHANGELOG.md](CHANGELOG.md)。
 - 想修改或测试赋格本身：先看 [AGENTS.md](AGENTS.md)（开发环境、怎么跑测试、演示脚本），再看 [tools/](tools/)（演示脚本、测量工具和性能测试，它们只用于开发，不属于产品）。
 - 设计文档在 [design/](design/)：架构（这一版**是**什么）· 路线图（按什么次序收口）· 目标（第一版之后做什么）· 随笔（为什么这么设计）。落地计划（正在做的那一站）与归档（已经落地的那一份）随施工走，不在这个仓库里。
