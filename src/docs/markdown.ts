@@ -242,10 +242,25 @@ function uniqueId(want: string, ctx: Ctx): string {
   return n === 0 ? want : `${want}-${n + 1}`
 }
 
+/** 标题的纯文字形式：目录、查找与清单拿它显示（`inline()` 只管标题自己那一截 HTML）。 */
+function plainInline(text: string): string {
+  return text
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1$2')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/\{#[^}]*\}/g, '')
+    .replace(/\\`/g, '`')
+    .trim()
+}
+
 function renderHeading(line: string, ctx: Ctx, opts: RenderOptions): string {
   const { level, text, want } = headingOf(line, ctx, opts)
   const id = uniqueId(want ?? slugOf(text), ctx)
-  ctx.headings.push({ id, text, level })
+  // **标题表里放纯文字**：目录与查找直接拿它显示，带反引号/星号的原文会在导航里漏出标记。
+  ctx.headings.push({ id, text: plainInline(text), level })
   const anchor = `<a class="anchor" href="#${escapeHtml(id)}" aria-label="这一节的链接">#</a>`
   const alias = (opts.aliases?.[id] ?? [])
     .map((old) => `<span class="anchor-alias" id="${escapeHtml(old)}"></span>`)

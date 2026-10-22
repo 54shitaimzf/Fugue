@@ -24,7 +24,11 @@ test('① 标题：稳定 ID 由文字推、`{#id}` 优先、重名去重、H1 �
   assert.ok(r.html.includes('id="install"'), '目录与深链接要能到达这一节')
   // 中文标题的 slug 保留汉字（不是空串）
   assert.equal(slugOf('第一次生成'), '第一次生成')
-  console.log(`① 读数：${r.headings.map((h) => `${h.level}:${h.id}`).join(' · ')}`)
+  // 标题里的行内标记：正文里渲染成 <code>，标题表里是纯文字（目录与查找拿它显示）
+  const span = renderMarkdown('## 三个 `.fugue` 不是同一个目录')
+  assert.equal(span.headings[0]?.text, '三个 .fugue 不是同一个目录')
+  assert.ok(span.html.includes('<code>.fugue</code>'), '标题自己仍渲染行内代码')
+  console.log(`① 读数：${r.headings.map((h) => `${h.level}:${h.id}`).join(' · ')} · 标题表纯文字`)
 })
 
 test('② 代码：语言类名保留、原文逐字转义（生成内容写不出可执行标签）', () => {
