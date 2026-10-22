@@ -3,7 +3,9 @@
 // 判据：自动收口是版本触发点；生成失败只落在文档自己的结果里；打桩与回放两档不出网；
 // 没配文档时收口一个字节都不多。
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import { commitFiles, tmpRepo } from '../../test/helpers/docs-repo.ts'
 import { openTruth } from '../truth/truth.ts'
@@ -194,4 +196,15 @@ test('⑦ 没有会话记录：材料里如实写"这一轮没有会话记录"�
   assert.equal(materials.session, undefined)
   assert.ok(materials.note.includes('没有会话记录'), materials.note)
   console.log(`⑦ 读数：note：${materials.note}`)
+})
+
+test('⑧ 连仓库都打不开：返回 ok:false，不抛（轮次的退出码只按验收）', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'fugue-docs-nogit-'))
+  const out = await docsAtClose({ root, config: CONFIG, flags, round: 'r1', run: runOf({ accepted: true, commit: 'a'.repeat(40) }), live: true, replay: false, caller: fake() })
+  assert.ok(out !== null)
+  assert.equal(out.ok, false, '文档的失败落在自己那一格里')
+  assert.ok(out.lines[0]!.includes('生成失败'), out.lines.join(' | '))
+  assert.ok(out.lines[0]!.includes('找不到对象库'), out.lines.join(' | '))
+  assert.equal(existsSync(join(root, '.fugue')), false, '.git 都没有时不该写出任何东西')
+  console.log(`⑧ 读数：${out.lines[0]}`)
 })

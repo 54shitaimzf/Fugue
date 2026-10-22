@@ -8,12 +8,13 @@
 //     （PLAN § 5.8 的口径一）。要生成就 `fugue docs build`，它自己会取凭据。
 //
 // **写作上下文从哪里来**（交接单 § 2.5）：完整树承担事实，这一段承担"改了什么"——本轮归并的
-// 契约（id · agent · 提交 · 写入面）与验收读数。持轮者会话里那一段原文不在这一份的可达范围，
-// 所以 `note` 如实写"本轮变化取契约与验收读数"，取到的范围也写进结果。
+// 契约（id · agent · 提交 · 写入面）与验收读数。持轮者会话那一段由调用方经 `session` 交进来
+// （`round.ts` 给出路径与正文），`note` 写清取到的范围；没交就如实写"这一轮没有会话记录"。
 import type { ConfigDoc } from '../config.ts'
 import { declaredSetOf } from '../contract/types.ts'
 import type { RoundRun } from '../round/execute.ts'
 import { openTruth } from '../truth/truth.ts'
+import type { TruthHandle } from '../truth/truth.ts'
 import { parseDocs } from '../docs/config.ts'
 import { buildDocs } from '../docs/build.ts'
 import { recordAttemptFailure } from '../docs/attempt.ts'
@@ -132,8 +133,11 @@ export async function docsAtClose(o: {
     }
   })()
 
-  const truth = openTruth(o.root)
+  // **连“打开仓库”都算在失败面里**：它抛在 try 外的话，文档的失败会变成轮次的失败
+  // （交接单 § 3.5：文档成不成不改轮次退出码）。.git 不在就是一个能发生的情形。
+  let truth: TruthHandle | null = null
   try {
+    truth = openTruth(o.root)
     let caller: DocCaller
     if (o.caller !== undefined) caller = o.caller
     else {
@@ -192,6 +196,6 @@ export async function docsAtClose(o: {
   } catch (err) {
     return failedOf(err, commit)
   } finally {
-    truth.close()
+    if (truth !== null) await truth.close()
   }
 }
