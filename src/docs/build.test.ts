@@ -21,10 +21,12 @@ const PAGES = [
   { id: 'arch', title: '架构', source: 'design/A.md', audience: '维护者', role: '理解边界', prompt: '讲约束' },
 ]
 
-function configWith(o: { prompt?: string; pages?: typeof PAGES; theme?: string } = {}): ConfigDoc {
+function configWith(o: { prompt?: string; pages?: typeof PAGES; theme?: string; title?: string; maxTokens?: number } = {}): ConfigDoc {
   return {
     docs: {
       theme: o.theme ?? 'primer',
+      ...(o.title === undefined ? {} : { title: o.title }),
+      ...(o.maxTokens === undefined ? {} : { maxTokens: o.maxTokens }),
       pages: (o.pages ?? PAGES).map((p) => (p.id === 'start' && o.prompt !== undefined ? { ...p, prompt: o.prompt } : p)),
     },
   }
@@ -168,6 +170,12 @@ test('③ 指纹：换定义（prompt）或换提交都会过期；换主题也�
   const byPrompt = await buildDocs({ root, config: configWith({ prompt: '换一个重点' }), truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
   assert.ok(byPrompt.ok)
   assert.notEqual(byPrompt.fingerprint, base.fingerprint)
+  const byTitle = await buildDocs({ root, config: configWith({ title: '另一个标题' }), truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
+  assert.ok(byTitle.ok)
+  assert.notEqual(byTitle.fingerprint, base.fingerprint, '标题进指纹（它出现在页首与首页）')
+  const byBudget = await buildDocs({ root, config: configWith({ maxTokens: 8192 }), truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
+  assert.ok(byBudget.ok)
+  assert.notEqual(byBudget.fingerprint, base.fingerprint, '单页预算进指纹（它影响截断与否）')
   const byTheme = await buildDocs({ root, config: configWith(), theme: 'govuk', truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
   assert.ok(byTheme.ok)
   assert.notEqual(byTheme.fingerprint, base.fingerprint, '主题进指纹')
@@ -176,7 +184,7 @@ test('③ 指纹：换定义（prompt）或换提交都会过期；换主题也�
   assert.ok(byCommit.ok)
   assert.notEqual(byCommit.fingerprint, base.fingerprint, '提交进指纹')
   assert.equal(byCommit.commit, String(c2))
-  console.log(`③ 读数：base ${base.fingerprint.slice(9, 21)} · 改定义/主题/提交后三只指纹都不同`)
+  console.log(`③ 读数：base ${base.fingerprint.slice(9, 21)} · 改定义/标题/预算/主题/提交后指纹都不同`)
 })
 
 test('④ 失败归属：第二页生成失败 → 旧批次逐字节不动 · last 记失败 · 产物仍是最新', async (ctx) => {
@@ -282,4 +290,93 @@ test('⑨ 没有 docs 键：不生成，按配置失败回报（收口因此"只
   assert.ok(out.reason.includes('没有 docs 键'))
   assert.equal(parseDocs({}), null)
   console.log('⑨ 读数：config 失败 · 话里说"没有 docs 键"')
+})
+
+test('⑩ 跳过取证那一趟：一次调用都不多发，读数也不多算（`--no-evidence`）', async (ctx) => {
+  const { root, truth } = await repo()
+  ctx.after(() => truth.close())
+  const { caller, calls } = fakeCaller()
+  const out = await buildDocs({
+    root,
+    config: configWith(),
+    truth,
+    caller,
+    materials: { kind: 'manual', note: 'n' },
+    evidence: false,
+    now: () => new Date('2026-10-22T00:00:00.000Z'),
+  })
+  assert.ok(out.ok, JSON.stringify(out))
+  assert.equal(calls.filter((c) => c.kind === 'evidence').length, 0, '取证那趟一次都没发')
+  assert.equal(out.usage.calls, 2, '两页各一次正文调用')
+  const manifest = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8'))
+  assert.deepEqual(manifest.pages.map((p: { evidence: { mode: string } }) => p.evidence.mode), ['skipped', 'skipped'])
+  console.log(`⑩ 读数：${out.usage.calls} 次调用（两页）· 取证 0 次`)
+})
+
+test('⑪ 正文形状：短页与只写 H1 当场拒（render 格）；H1+## 收下但记一条 note', async (ctx) => {
+  const { root, truth } = await repo()
+  ctx.after(() => truth.close())
+  const fixed = (): Date => new Date('2026-10-22T00:00:00.000Z')
+  const short = await buildDocs({ root, config: configWith(), truth, caller: fakeCaller({ content: () => '## 一小节\n\n太短。' }).caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
+  assert.equal(short.ok, false)
+  if (!short.ok) {
+    assert.equal(short.at_stage, 'render')
+    assert.match(short.reason, /短于 400/)
+  }
+  const h1only = await buildDocs({
+    root,
+    config: configWith(),
+    truth,
+    caller: fakeCaller({ content: () => ['# 只有一级标题', '', '正文。'.repeat(220)].join('\n') }).caller,
+    materials: { kind: 'manual', note: 'n' },
+    now: fixed,
+  })
+  assert.equal(h1only.ok, false)
+  if (!h1only.ok) assert.match(h1only.reason, /只写了 H1/)
+  const mixed = await buildDocs({
+    root,
+    config: configWith(),
+    truth,
+    caller: fakeCaller({ content: (id) => ['# 页内一级标题', '', '## ' + id + ' 的正文 {#' + id + '-top}', '', '正文。'.repeat(200)].join('\n') }).caller,
+    materials: { kind: 'manual', note: 'n' },
+    now: fixed,
+  })
+  assert.ok(mixed.ok, JSON.stringify(mixed))
+  const manifest = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8'))
+  assert.ok(manifest.pages[0].notes.some((n: string) => n.includes('写了 H1')), JSON.stringify(manifest.pages[0].notes))
+  console.log('⑪ 读数：短页拒 · 只有 H1 拒 · H1+## 收下并记 note')
+})
+
+test('⑫ 跨页引用：目标页上没有那个锚点时落成页链接并记 note（来源路径那一路也要校）', async (ctx) => {
+  const { root, truth } = await repo()
+  ctx.after(() => truth.close())
+  const body = (id: string): string =>
+    [
+      '## ' + id + ' 的正文 {#' + id + '-top}',
+      '',
+      '这一段说明这一页要解决的问题，以及读者能从这里得到什么。'.repeat(12),
+      '',
+      '[去架构的边界](design/A.md#arch-top) · [去不存在的节](design/A.md#nope)',
+      '',
+      '## 下一节',
+      '',
+      '更多内容。'.repeat(30),
+    ].join('\n')
+  const out = await buildDocs({
+    root,
+    config: configWith(),
+    truth,
+    caller: fakeCaller({ content: body, evidencePaths: [] }).caller,
+    materials: { kind: 'manual', note: 'n' },
+    now: () => new Date('2026-10-22T00:00:00.000Z'),
+  })
+  assert.ok(out.ok, JSON.stringify(out))
+  const manifest = JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8'))
+  const start = manifest.pages.find((p: { id: string }) => p.id === 'start')
+  assert.ok(start.notes.some((n: string) => n.includes('锚点不在目标页')), JSON.stringify(start.notes))
+  const html = readFileSync(join(docsRootOf(root), 'start.html'), 'utf8')
+  assert.ok(html.includes('href="arch.html#arch-top"'), '存在的手术保留深链接')
+  assert.ok(html.includes('href="arch.html"'), '不存在的锚点落成页链接')
+  assert.ok(!html.includes('arch.html#nope'), '不给读者一条死深链')
+  console.log('⑫ 读数：好锚点保深链 · 坏锚点落页链接 + note')
 })

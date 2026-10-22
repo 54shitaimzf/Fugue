@@ -210,19 +210,26 @@ function pathsOf(text: string): string[] {
   }
 }
 
-/** 正文的形状核对：**宿主只判可机械核对的那几条**（内容取舍留给复核）。 */
-function checkContent(def: PageDef, md: string): void {
+/** 正文的形状核对：**宿主只判可机械核对的那几条**（内容取舍留给复核）。返回兑不掉的 note。 */
+function checkContent(def: PageDef, md: string): string[] {
+  const notes: string[] = []
   const text = md.trim()
   if (text === '') throw new DocsError('render', `第 ${def.id} 页（${def.title}）的正文是空的`)
   if (text.length < CONTENT_MIN_CHARS) {
     throw new DocsError('render', `第 ${def.id} 页（${def.title}）的正文只有 ${text.length} 个字符，短于 ${CONTENT_MIN_CHARS}：这一页没写出来`)
   }
+  const hasH1 = /^\s*#\s+/m.test(text)
+  const hasH2 = /^\s*#{2,}\s+/m.test(text)
+  // **只写 H1 时先说清这一条**：它同时满足“没有 ##”，但真正该改的是“从 ## 起”。
+  if (hasH1 && !hasH2) {
+    throw new DocsError('render', `第 ${def.id} 页（${def.title}）只写了 H1：页标题由宿主加，正文要从 ## 起`)
+  }
   if (!/^\s*#{2,6}\s+/m.test(text)) {
     throw new DocsError('render', `第 ${def.id} 页（${def.title}）的正文里一个章节标题都没有（## 起）：读者无法按节读`)
   }
-  if (/^\s*#\s+/m.test(text) && !/^\s*#{2,}\s+/m.test(text)) {
-    throw new DocsError('render', `第 ${def.id} 页（${def.title}）只写了 H1：页标题由宿主加，正文要从 ## 起`)
-  }
+  // **H1 与 ## 同时出现时不拒**（那一段仍有完整可读内容），但要如实记下来：它会被宿主按 H2 呈现。
+  if (hasH1) notes.push('正文里写了 H1（页标题由宿主按定义加）：这一行按 H2 呈现')
+  return notes
 }
 
 /** 两个标题的相似度（汉字按二字组，英文按词）：旧深链接的去向靠它判"同一主题"。 */
@@ -460,14 +467,16 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
         task: CONTENT_TASK,
         ...(plan.maxTokens === undefined ? {} : { maxTokens: plan.maxTokens }),
       })
-      checkContent(def, call.text)
-      allUsage.push(ev.usage, call.usage)
+      const contentNotes = checkContent(def, call.text)
+      allUsage.push(call.usage)
+      // **取证那一趟只数真发出去的调用**：`--no-evidence` 这一次一次都没发，不该算进读数。
+      if (deps.evidence !== false) allUsage.push(ev.usage)
       const pass1 = renderMarkdown(call.text, { resolve: (raw) => ({ href: raw }) })
       prepared.push({
         def,
         markdown: call.text,
         evidence: ev.evidence,
-        notes: ev.note === null ? [] : [ev.note],
+        notes: [...contentNotes, ...(ev.note === null ? [] : [ev.note])],
         usage: call.usage,
         evidenceUsage: ev.usage,
         pass1,
@@ -522,7 +531,11 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
           return { href: path, note: `跨页引用 ${raw} 的锚点不在目标页，已落成页链接` }
         }
         const asSource = bySource.get(repoPathOf(def.source, path) ?? path)
-        if (asSource !== undefined) return { href: asSource.out + (hash === '' ? '' : `#${hash}`) }
+        if (asSource !== undefined) {
+          // 来源那一页也要校锚点：指向不存在的节时落成页链接并记 note，不交给读者一条死深链。
+          if (hash === '' || idsOf(asSource.id).has(hash)) return { href: asSource.out + (hash === '' ? '' : `#${hash}`) }
+          return { href: asSource.out, note: `跨页引用 ${raw} 的锚点不在目标页，已落成页链接` }
+        }
         return null
       }
     }

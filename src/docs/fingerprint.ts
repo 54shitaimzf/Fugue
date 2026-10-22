@@ -39,6 +39,10 @@ export function fingerprintOf(o: FingerprintInput): string {
     renderer: RENDERER_VERSION,
     theme: { id: o.theme.id, version: o.theme.version },
     model: o.model,
+    // **定义里进页面与进请求的那几格都进指纹**：标题出现在页首与首页，单页预算影响截断与否。
+    // 少了它们，改标题之后 `status` 还会说“最新”，而页面上仍是旧标题。
+    title: o.plan.title ?? null,
+    maxTokens: o.plan.maxTokens ?? null,
     pages: o.plan.pages.map((p) => ({
       id: p.id,
       title: p.title,
