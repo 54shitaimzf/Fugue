@@ -131,3 +131,37 @@ test('⑦ 逐字节可复现：同一份正文两次渲染相同；旧 ID 落成
   assert.ok(!renderMarkdown(md).html.includes('anchor-alias'), '没有旧 id 就不落别名')
   console.log('⑦ 读数：两次相同 · 旧 id 别名在位')
 })
+
+test('⑧ 标签的简写：每个 tab 不各写收尾也读得懂；后面每一节仍在标签之外（实测遇到的写法）', () => {
+  const md = [
+    '::: tabs',
+    '::: tab 甲',
+    '内容甲',
+    '::: tab 乙',
+    '内容乙',
+    '::: tab 丙',
+    '内容丙',
+    ':::',
+    '',
+    '## 后面的节',
+    '',
+    '这一节必须看得见。',
+  ].join('\n')
+  const r = renderMarkdown(md)
+  assert.equal((r.html.match(/class="tabpanel"/g) ?? []).length, 3, r.html)
+  for (const t of ['内容甲', '内容乙', '内容丙']) assert.ok(r.html.includes(t))
+  const after = r.html.slice(r.html.indexOf('</div>') + 6)
+  assert.ok(after.includes('id="后面的节"') || after.includes('后面的节'), '后面那一节要在标签之外')
+  assert.ok(r.html.indexOf('这一节必须看得见。') > r.html.lastIndexOf('class="tabpanel"'), '不在面板里')
+  assert.ok(r.notes.some((n) => n.includes('收住')), '收在哪儿要说出来')
+  console.log(`⑧ 读数：3 个面板 · 后续节在标签外 · note：${r.notes.join(' / ')}`)
+})
+
+test('⑨ 没写收尾的 details 不许把后面整页藏起来（退化档：收在下一个二级标题之前）', () => {
+  const r = renderMarkdown(['::: details 细节', '藏在里面', '', '## 后面', '', '正文还在。'].join('\n'))
+  const d = r.html.slice(r.html.indexOf('<details>'), r.html.indexOf('</details>') + 10)
+  assert.ok(d.includes('藏在里面'))
+  assert.ok(!d.includes('正文还在。'), '后面的正文不许被吞进 details')
+  assert.ok(r.html.includes('正文还在。'))
+  console.log(`⑨ 读数：details 只包住自己那一段 · note：${r.notes.join(' / ')}`)
+})

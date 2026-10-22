@@ -44,6 +44,9 @@ const VALUED: ReadonlySet<string> = new Set([
   'wait', 'timeout',
   // `--idle-ms <毫秒>`（`serve` 的闲时阈值，走查与测试要一个短的）：同一条纪律。
   'idle-ms',
+  // `--at <提交>` 与 `--theme <主题>`（`docs build`，0.5.2）：两个都取值。不列在这里的话提交号
+  // 与主题名会变成位置参数，而 `docs build` 当场报"多出来的是 …"——实测撞过。
+  'at', 'theme',
 ])
 
 export function parseArgv(argv: readonly string[]): Parsed {

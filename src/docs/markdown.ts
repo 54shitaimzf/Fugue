@@ -117,7 +117,21 @@ function takeContainer(lines: readonly string[], at: number): { inner: string[];
       if (depth === 0) return { inner: lines.slice(at + 1, j), next: j + 1, closed: true }
     }
   }
-  return { inner: lines.slice(at + 1), next: lines.length, closed: false }
+  // **没写收尾时不吞到页末**：退到"下一个二级标题处收住"。
+  //
+  // 为什么：`details` 会藏内容、`tabs` 会一次只显示一块。把后面整页吞进一个没关的块里，
+  // 读者看到的是"这一页怎么没了"——而模型漏写一个 `:::` 是常事（实测：一次 govuk 生成里
+  // 三页都漏了；吞进去的那几节落在标签面板里，整段不可见）。收在下一个 `##` 之前，代价是
+  // 那一段少一层框，换来的是后面每一节都还在。**只在"找不到收尾"这条退化路上生效**——
+  // 正常闭合的块里放 `##` 不受影响。
+  let end = lines.length
+  for (let k = at + 1; k < lines.length; k++) {
+    if (/^##\s/.test(lines[k]!)) {
+      end = k
+      break
+    }
+  }
+  return { inner: lines.slice(at + 1, end), next: end, closed: false }
 }
 
 /** 行内那几样。**先切链接与图片，再在剩下的文字段里做强调**——否则 `*` 会伸进 href 里。 */
@@ -286,7 +300,13 @@ function listAt(
   return { html: `<${tag}>${lis}</${tag}>`, next: j }
 }
 
-/** `tabs` 里的一段：`::: tab 标签`。 */
+/**
+ * `tabs` 里的一段：`::: tab 标签`。
+ *
+ * **`tab` 的收尾可以省**：下一个 `::: tab` 也算上一段的收尾。实测模型常写成
+ * `::: tabs` + 三个 `::: tab …` + 一个 `:::`（每段不各写收尾），严格按嵌套读会把三段读成一段、
+ * 还会把后面的正文一起吞进去。这里按"下一个 tab 或第一个 `:::` 收尾"读，两种写法都成立。
+ */
 function splitTabs(inner: readonly string[]): { label: string; inner: string[] }[] {
   const out: { label: string; inner: string[] }[] = []
   let i = 0
@@ -296,9 +316,19 @@ function splitTabs(inner: readonly string[]): { label: string; inner: string[] }
       i += 1
       continue
     }
-    const took = takeContainer(inner, i)
-    out.push({ label: open.arg, inner: took.inner })
-    i = took.next
+    const body: string[] = []
+    i += 1
+    while (i < inner.length) {
+      const next = containerOpen(inner[i]!)
+      if (next !== null && next.kind === 'tab') break
+      if (isClose(inner[i]!)) {
+        i += 1
+        break
+      }
+      body.push(inner[i]!)
+      i += 1
+    }
+    out.push({ label: open.arg, inner: body })
   }
   return out
 }
@@ -307,7 +337,7 @@ function splitTabs(inner: readonly string[]): { label: string; inner: string[] }
 function renderContainer(lines: readonly string[], at: number, ctx: Ctx, opts: RenderOptions, group: { n: number }): { html: string; next: number } {
   const open = containerOpen(lines[at]!)!
   const took = takeContainer(lines, at)
-  if (!took.closed) ctx.notes.push(`块没有收尾（::: ${open.kind}）：后面一直读到页末`)
+  if (!took.closed) ctx.notes.push(`块没有收尾（::: ${open.kind}）：在下一个二级标题处收住，后面照常读`)
   // **块内内容按需渲染，不预先渲染一遍**：`tabs` 里面是若干 `::: tab`，先整体渲染一遍会把
   // 每个 tab 都当成"不在 tabs 里的孤立块"，既多记两条 note，也让标题表多收一遍。
   const blockOf = (body: readonly string[]): string => renderBlocks(body, ctx, opts, group)
