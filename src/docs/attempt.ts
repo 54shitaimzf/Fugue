@@ -4,6 +4,7 @@
 // 那一栏里留下原因（复审 R8 的判据）。这一份不认识批次与页面，只认识“尝试”这件事。
 import type { LastAttempt, Materials } from './contract.ts'
 import { writeLast } from './publish.ts'
+import type { UsageSum } from './usage.ts'
 
 export interface AttemptFields {
   readonly ok: boolean
@@ -14,7 +15,8 @@ export interface AttemptFields {
   readonly theme: string | null
   readonly model: string | null
   readonly materials: Materials
-  readonly usage: { readonly calls: number; readonly inputTokens: number | null; readonly outputTokens: number | null }
+  /** 这一趟的用量合计（四项都与 `Usage` 同口径：缓存读不是第三笔输入，是输入里命中缓存的那部分）。 */
+  readonly usage: UsageSum
   readonly usagePages?: LastAttempt['usagePages']
   readonly reason: string | null
   readonly at_stage: string | null
@@ -33,7 +35,13 @@ export function attemptOf(f: AttemptFields): LastAttempt {
     materials: f.materials,
     reason: f.reason,
     at_stage: f.at_stage,
-    usage: { calls: f.usage.calls, inputTokens: f.usage.inputTokens, outputTokens: f.usage.outputTokens },
+    usage: {
+      calls: f.usage.calls,
+      inputTokens: f.usage.inputTokens,
+      cacheReadTokens: f.usage.cacheReadTokens,
+      cacheWriteTokens: f.usage.cacheWriteTokens,
+      outputTokens: f.usage.outputTokens,
+    },
     ...(f.usagePages === undefined ? {} : { usagePages: f.usagePages }),
   }
 }
@@ -56,7 +64,7 @@ export async function recordAttemptFailure(o: {
   readonly materials: Materials
   readonly model: string | null
   readonly theme: string | null
-  readonly usage?: { readonly calls: number; readonly inputTokens: number | null; readonly outputTokens: number | null }
+  readonly usage?: UsageSum
   readonly usagePages?: LastAttempt['usagePages']
 }): Promise<void> {
   const attempt = attemptOf({
@@ -70,7 +78,7 @@ export async function recordAttemptFailure(o: {
     materials: o.materials,
     reason: o.reason,
     at_stage: o.at_stage,
-    usage: o.usage ?? { calls: 0, inputTokens: null, outputTokens: null },
+    usage: o.usage ?? { calls: 0, inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null },
     ...(o.usagePages === undefined ? {} : { usagePages: o.usagePages }),
   })
   try {

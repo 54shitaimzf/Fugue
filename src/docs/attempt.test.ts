@@ -20,7 +20,7 @@ test('① 尝试的形状：成功与失败同一组栏 · usagePages 只在真�
     theme: 'primer',
     model: 'fake/model',
     materials: MATERIALS,
-    usage: { calls: 3, inputTokens: 10, outputTokens: 5 },
+    usage: { calls: 3, inputTokens: 10, cacheReadTokens: 7, cacheWriteTokens: null, outputTokens: 5 },
     usagePages: [{ id: 'start' } as never],
     reason: null,
     at_stage: null,
@@ -28,6 +28,7 @@ test('① 尝试的形状：成功与失败同一组栏 · usagePages 只在真�
   assert.equal(ok.ok, true)
   assert.equal(ok.pages, 2)
   assert.equal(ok.usage.calls, 3)
+  assert.equal(ok.usage.cacheReadTokens, 7, '缓存读原样带进形状（阶段 2 的加法）')
   assert.deepEqual(ok.usagePages, [{ id: 'start' }], '传了就原样带')
 
   const bad = attemptOf({
@@ -39,7 +40,7 @@ test('① 尝试的形状：成功与失败同一组栏 · usagePages 只在真�
     theme: null,
     model: null,
     materials: MATERIALS,
-    usage: { calls: 0, inputTokens: null, outputTokens: null },
+    usage: { calls: 0, inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null },
     reason: '模型不存在',
     at_stage: 'model',
   })
@@ -58,7 +59,7 @@ test('② 早期失败也落账：recordAttemptFailure 写进 `.fugue/docs-last.
     materials: MATERIALS,
     model: 'fake/model',
     theme: null,
-    usage: { calls: 1, inputTokens: 2, outputTokens: 3 },
+    usage: { calls: 1, inputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: null, outputTokens: 3 },
   })
   const back = await readLast(root)
   assert.ok(back !== null, '写进去了才读得到')
@@ -67,5 +68,6 @@ test('② 早期失败也落账：recordAttemptFailure 写进 `.fugue/docs-last.
   assert.equal(back.reason, '模型或凭据缺席：没有这个模型')
   assert.equal(back.usage.calls, 1)
   assert.equal(back.usage.inputTokens, 2)
+  assert.equal(back.usage.cacheReadTokens, 3, '失败那一笔的缓存读也要读得回来')
   console.log(`② 读数：last.json ok=${back.ok} · at_stage=${back.at_stage} · calls=${back.usage.calls}`)
 })

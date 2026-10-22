@@ -4,7 +4,7 @@
 // § 6.1 第 7、8 条。这一份走真入口（`runCli`）：从 argv 到值层到两条脸，中间不绕路。
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { runCli, stdinOf } from '../../test/helpers/run-cli.ts'
@@ -129,4 +129,37 @@ test('⑥ 手动入口明说"没有本轮会话"：`docs build` 与 `--at` 都�
   assert.equal(v.attempt.at_stage, 'model')
   assert.ok(v.attempt.materials.note.includes('没有本轮会话'), v.attempt.materials.note)
   console.log(`⑥ 读数：早期失败进最近一次（${v.attempt.at_stage}）· 材料明说没有本轮会话`)
+})
+
+test('⑦ `docs status` 的“最近一次”印得出缓存读：新记录带它、老记录不印（不把缺的当 0）', async () => {
+  const { root } = await seeded()
+  await setDocs(root)
+  mkdirSync(join(root, '.fugue'), { recursive: true })
+  const base = {
+    ok: true,
+    at: '2026-10-23T00:00:00.000Z',
+    commit: null,
+    fingerprint: 'sha256:ff',
+    pages: 7,
+    theme: 'primer',
+    model: 'fake/model',
+    materials: { kind: 'manual', note: '测试：手写一条记录' },
+    reason: null,
+    at_stage: null,
+  }
+  writeFileSync(
+    join(root, '.fugue', 'docs-last.json'),
+    JSON.stringify({ ...base, usage: { calls: 14, inputTokens: 729586, cacheReadTokens: 141296, cacheWriteTokens: 0, outputTokens: 141296 } }),
+  )
+  const fresh = await runCli(['--root', root, 'docs', 'status'])
+  assert.equal(fresh.code, 0, fresh.stderr)
+  assert.ok(fresh.stdout.includes('输入 729,586（缓存读 141,296）/ 输出 141,296'), fresh.stdout)
+
+  // 老记录没有缓存那两栏：**不印括号**，其余照旧（读得出来，不报“没量到”以外的错）。
+  writeFileSync(join(root, '.fugue', 'docs-last.json'), JSON.stringify({ ...base, usage: { calls: 3, inputTokens: 100, outputTokens: 20 } }))
+  const old = await runCli(['--root', root, 'docs', 'status'])
+  assert.equal(old.code, 0, old.stderr)
+  assert.ok(old.stdout.includes('输入 100/ 输出 20'), old.stdout)
+  assert.equal(old.stdout.includes('缓存读'), false, '老记录无从得知缓存读，就不该替它印一个 0')
+  console.log('⑦ 读数：新记录印“（缓存读 141,296）· 老记录不印括号')
 })

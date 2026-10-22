@@ -20,14 +20,9 @@ import { promptTextOf } from '../docs/prompt.ts'
 import { statusOf } from '../docs/status.ts'
 import { THEME_IDS, themeOf } from '../docs/theme.ts'
 import { callerOf, resolvedModelId } from '../docs/writer.ts'
+import { usageText } from '../docs/usage.ts'
 import { CommandError, UsageError, ok } from './types.ts'
 import type { ValueArgs, ValueResult } from './types.ts'
-
-/** 千分位（自己拼：不依赖宿主 locale，两条脸逐字节稳定）。 */
-function num(n: number | null): string {
-  if (n === null) return '（没量到）'
-  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-}
 
 /** 一条旗标的值。**给了却没值**是用法错（与 `--root` 那条同一把尺子）。 */
 function str(a: ValueArgs, name: string): string | undefined {
@@ -153,7 +148,7 @@ export async function docsBuildValue(a: ValueArgs): Promise<ValueResult> {
     const lines = [
       `文档：${out.pages.length} 页已生成 —— 打开 ${out.docsDir}/index.html 就能读（file:// 即可，不用起服务）`,
       `  提交 ${out.commitShort}（${out.commit}）· 版本 ${out.version ?? '提交里没有可读的版本号'} · 指纹 ${shortFingerprint(out.fingerprint)}`,
-      `  视觉语言 ${out.theme} · 模型 ${out.model} · 调用 ${out.usage.calls} 次 · ${num(out.usage.inputTokens)} 入 / ${num(out.usage.outputTokens)} 出`,
+      `  视觉语言 ${out.theme} · 模型 ${out.model} · ${usageText(out.usage)}`,
       `  材料：${out.materials.note}`,
       ...out.pages.map((p) => `  · ${p.title}（${p.out}）${p.headings.length} 节`),
     ]
@@ -254,7 +249,7 @@ function statusLines(r: StatusReport): string {
   } else if (r.attempt.ok) {
     lines.push(`最近一次生成：成功（提交 ${r.attempt.commit?.slice(0, 12) ?? '?'} · ${r.attempt.pages} 页 · ${r.attempt.at}）`)
     if (r.attempt.usage !== undefined) {
-      lines.push(`  用量：${r.attempt.usage.calls} 次调用 · ${num(r.attempt.usage.inputTokens)} 入 / ${num(r.attempt.usage.outputTokens)} 出`)
+      lines.push(`  用量：${usageText(r.attempt.usage)}`)
     }
   } else {
     const stage = r.attempt.at_stage === null ? '' : `${STAGES[r.attempt.at_stage] ?? r.attempt.at_stage}·`

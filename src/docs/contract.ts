@@ -286,7 +286,14 @@ export interface LastAttempt {
    * 一次生成的两条用量读数（成功时才有）。**它是"真实调用留下读数"那一条的落点**：
    * 只留在终端的 stdout 上，下一次命令就查不到了——而"最近一次生成"本来就该回答"花了多少"。
    */
-  readonly usage?: { readonly calls: number; readonly inputTokens: number | null; readonly outputTokens: number | null }
+  readonly usage?: {
+    readonly calls: number
+    readonly inputTokens: number | null
+    /** 命中缓存的那一部分（老记录里没有这一栏——那时汇总只加了出入两项）。 */
+    readonly cacheReadTokens?: number | null
+    readonly cacheWriteTokens?: number | null
+    readonly outputTokens: number | null
+  }
   /** 失败之前**逐页已完成**的用量（第 N 页失败时前 N−1 页不丢）。 */
   readonly usagePages?: readonly {
     readonly id: string

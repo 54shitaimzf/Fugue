@@ -92,7 +92,7 @@ function fakeCaller(o: FakeOptions = {}): { caller: DocCaller; calls: { kind: 'e
       if (o.failOn === id) throw new DocsError('model', `模型没写完（夹具：${id}）`)
       return {
         text: o.content === undefined ? bodyOf(id) : o.content(id),
-        usage: { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 50, reasoningTokens: null, model: null },
+        usage: { inputTokens: 100, cacheReadTokens: 40, cacheWriteTokens: 0, outputTokens: 50, reasoningTokens: null, model: null },
       }
     },
   }
@@ -142,6 +142,7 @@ test('① 一次生成：两页正文 · 首页 · 清单（提交 · 版本 · 
   assert.equal(out.version, '1.2.3')
   assert.equal(out.usage.calls, 4, '两页 × 两趟')
   assert.equal(out.usage.inputTokens, 220)
+  assert.equal(out.usage.cacheReadTokens, 80, '缓存读进合计（写作两页各 40）：原先汇总只加出入两项，把这一项丢了')
 
   const docs = docsRootOf(root)
   const manifest = JSON.parse(readFileSync(join(docs, 'manifest.json'), 'utf8'))
@@ -167,6 +168,9 @@ test('① 一次生成：两页正文 · 首页 · 清单（提交 · 版本 · 
   assert.ok(page.includes(manifest.fingerprint))
   assert.ok(page.includes('v1.2.3'))
   assert.equal(calls.filter((c) => c.kind === 'content').length, 2)
+  const last = JSON.parse(readFileSync(join(root, '.fugue', 'docs-last.json'), 'utf8')) as { usage: { cacheReadTokens: number; cacheWriteTokens: number } }
+  assert.equal(last.usage.cacheReadTokens, 80, '缓存读也要落到 last.json，下一次 `docs status` 才答得出“花了多少”')
+  assert.equal(last.usage.cacheWriteTokens, 0, '写缓存那一栏照实记（没有断点时是 0）')
   console.log(`① 读数：${manifest.pages.length} 页 · ${calls.length} 次调用 · ${out.usage.inputTokens} 入 / ${out.usage.outputTokens} 出 · 指纹 ${manifest.fingerprint.slice(0, 20)}…`)
 })
 

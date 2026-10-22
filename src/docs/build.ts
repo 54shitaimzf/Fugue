@@ -27,6 +27,8 @@ import { attemptOf, recordAttempt } from './attempt.ts'
 import { planAssets } from './assets.ts'
 import { checkContent, citedOf } from './check.ts'
 import { repoPathOf } from './paths.ts'
+import { sumUsage } from './usage.ts'
+import type { UsageSum } from './usage.ts'
 import type {
   DocsPlan,
   EvidenceRange,
@@ -109,10 +111,7 @@ export interface BuildDeps {
 }
 
 /** 这一趟的用量合计：逐页 + 合计。**真调用留下的读数**（交接单 § 2.5 的判据）。 */
-export interface UsageTotal {
-  readonly calls: number
-  readonly inputTokens: number | null
-  readonly outputTokens: number | null
+export interface UsageTotal extends UsageSum {
   readonly pages: readonly {
     readonly id: string
     readonly usage: Usage | null
@@ -170,18 +169,6 @@ interface Prepared {
   /** 第二遍：严格解析之后的正文与标题。 */
   pass2: MdResult
   rendered: RenderedPage
-}
-
-/** 一串用量求和：**缺的那几项不当 0**（`null` 是"没量到"，与 0 是两件事）。 */
-function sumUsage(usages: readonly (Usage | null)[]): { calls: number; inputTokens: number | null; outputTokens: number | null } {
-  let input: number | null = null
-  let output: number | null = null
-  for (const u of usages) {
-    if (u === null) continue
-    if (u.inputTokens !== null) input = (input ?? 0) + u.inputTokens
-    if (u.outputTokens !== null) output = (output ?? 0) + u.outputTokens
-  }
-  return { calls: usages.length, inputTokens: input, outputTokens: output }
 }
 
 /** 缺失来源那一句话：**逐份列出是哪一份、哪一条路径**（交接单 § 2.3 的判据）。 */
@@ -363,7 +350,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       materials: deps.materials,
       reason: e.message,
       at_stage: e.at,
-      usage: { calls: total.calls, inputTokens: total.inputTokens, outputTokens: total.outputTokens },
+      usage: total,
       ...(usagePages.length === 0 ? {} : { usagePages }),
     })
     try {
@@ -378,7 +365,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       commit: commit === null ? null : String(commit),
       docsDir,
       materials: deps.materials,
-      usage: { calls: total.calls, inputTokens: total.inputTokens, outputTokens: total.outputTokens, pages: usagePages },
+      usage: { ...total, pages: usagePages },
     }
   }
 
@@ -653,7 +640,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       theme: theme.id,
       model: deps.caller.model,
       materials: deps.materials,
-      usage: { calls: total.calls, inputTokens: total.inputTokens, outputTokens: total.outputTokens },
+      usage: total,
       usagePages,
       reason: null,
       at_stage: null,
@@ -674,9 +661,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
         generatedAt,
         materials: deps.materials,
         usage: {
-          calls: total.calls,
-          inputTokens: total.inputTokens,
-          outputTokens: total.outputTokens,
+          ...total,
           pages: prepared.map((p) => ({ id: p.def.id, usage: p.usage, evidenceUsage: p.evidenceUsage, rangeUsage: p.rangeUsage })),
         },
         notes: [`最近一次生成的结果写不进去：${(err as Error).message}`],
@@ -695,9 +680,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       generatedAt,
       materials: deps.materials,
       usage: {
-        calls: total.calls,
-        inputTokens: total.inputTokens,
-        outputTokens: total.outputTokens,
+        ...total,
         pages: prepared.map((p) => ({ id: p.def.id, usage: p.usage, evidenceUsage: p.evidenceUsage, rangeUsage: p.rangeUsage })),
       },
       notes: prepared.flatMap((p) => p.notes),
