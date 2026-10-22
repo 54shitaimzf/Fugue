@@ -41,6 +41,11 @@ function listHtml(rel = '') {
 
 console.log(`目录：${dir}`)
 if (!fs.existsSync(dir)) {
+  // **显式点名的目录不在，是路径写错了，不是“还没生成”**：默认位置缺了才是后者。
+  if (process.argv[2] !== undefined) {
+    console.log(`  FAIL 目录不存在：${dir}`)
+    process.exit(2)
+  }
   console.log('  info 没有这个目录：还没生成过（先跑 fugue docs build）')
   process.exit(0)
 }
@@ -106,6 +111,12 @@ for (const h of allHtml) {
   for (const m of html.matchAll(/href="([^"]+)"/g)) {
     const href = m[1]
     if (/^(https?:|mailto:)/.test(href)) continue
+    // **带 scheme 的链接单独说一句**：它也可能是 `javascript:` / `data:` 这类可执行地址，
+    // 不能只报成“链到不存在的页”。
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//')) {
+      bad(`${h} 里有一条带 scheme 的链接：${href}`)
+      continue
+    }
     links += 1
     const cut = href.indexOf('#')
     const page = (cut < 0 ? href : href.slice(0, cut)) || h
@@ -116,6 +127,20 @@ for (const h of allHtml) {
     }
     if (anchor !== '' && !idsOf.get(page).has(anchor)) bad(`${h} 里有一条链到不存在的锚点：${href}`)
   }
+  // 图片：只允许产物内的相对地址（`_assets/`）；外链图在生成时已印成链接。
+  for (const m of html.matchAll(/\ssrc="([^"]+)"/g)) {
+    const src = m[1]
+    if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('//')) bad(`${h} 里有一张带 scheme 的图：${src}`)
+    else if (src.startsWith('_assets/') && !fs.existsSync(path.join(dir, src))) bad(`${h} 的图不在产物里：${src}`)
+  }
+  // 可见正文里的反引号：代码段正常会变成 <code>、围栏会变成 <pre>，落单的反引号说明那一截没被当成代码。
+  const visible = html
+    .replace(/<script[\s\S]*?<\/script>/g, '')
+    .replace(/<style[\s\S]*?<\/style>/g, '')
+    .replace(/<pre>[\s\S]*?<\/pre>/g, '')
+    .replace(/<[^>]+>/g, '')
+  const ticks = (visible.match(/`/g) ?? []).length
+  if (ticks > 0) bad(`${h} 的可见正文里有 ${ticks} 个反引号（代码段没配对或围栏漏进了正文）`)
 }
 ok(`${allHtml.length} 个页面 · ${links} 条内部链接逐条查过`)
 

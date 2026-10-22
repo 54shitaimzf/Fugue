@@ -18,8 +18,8 @@ import type { DocCaller } from '../src/docs/contract.ts'
 const REPO = join(import.meta.dirname, '..')
 const TOOL = join(REPO, 'tools', 'check-docs.js')
 
-function run(dir?: string): { status: number; stdout: string } {
-  const r = spawnSync(process.execPath, [TOOL, ...(dir === undefined ? [] : [dir])], { cwd: REPO, encoding: 'utf8' })
+function run(dir?: string, cwd: string = REPO): { status: number; stdout: string } {
+  const r = spawnSync(process.execPath, [TOOL, ...(dir === undefined ? [] : [dir])], { cwd, encoding: 'utf8' })
   return { status: r.status ?? -1, stdout: r.stdout ?? '' }
 }
 
@@ -105,11 +105,40 @@ test('④ 负对照：目录里多一份清单没写的 HTML → 当场红（批
   console.log('④ 读数：退 1 · 指名 stray.html')
 })
 
-test('⑤ 还没生成过：说一句就退 0（不是失败——那是"还没做"）', () => {
+test('⑤ 还没生成过（默认位置）：说一句就退 0（不是失败——那是"还没做"）', () => {
   const empty = tmpDir('fugue-check-docs-empty-')
-  mkdirSync(empty, { recursive: true })
-  const r = run(join(empty, 'nope'))
+  const r = run(undefined, empty)
   assert.equal(r.status, 0)
   assert.ok(r.stdout.includes('还没生成过'), r.stdout)
-  console.log('⑤ 读数：目录不在 → info 一句 · 退 0')
+  console.log('⑤ 读数：默认目录不在 → info 一句 · 退 0')
+})
+
+test('⑥ 显式点名的目录不在：路径写错了，退 2 并说清（不许静默“通过”）', () => {
+  const empty = tmpDir('fugue-check-docs-empty-')
+  const r = run(join(empty, 'nope'))
+  assert.equal(r.status, 2)
+  assert.ok(r.stdout.includes('目录不存在'), r.stdout)
+  console.log('⑥ 读数：显式目录不在 → 退 2')
+})
+
+test('⑦ 负对照：可见正文里落单的反引号 → 当场红（围栏漏进正文那一类）', async () => {
+  const { docs } = await built()
+  const page = join(docs, 'start.html')
+  writeFileSync(page, readFileSync(page, 'utf8').replace('</main>', '<p>命令： ``sh echo hi</p></main>'))
+  const r = run(docs)
+  assert.equal(r.status, 1)
+  assert.ok(r.stdout.includes('可见正文里有'), r.stdout)
+  console.log('⑦ 读数：退 1 · 指名可见反引号')
+})
+
+test('⑧ 负对照：带 scheme 的图或链接 → 当场红（不只报成“不存在的页”）', async () => {
+  const { docs } = await built()
+  const page = join(docs, 'start.html')
+  const html = readFileSync(page, 'utf8')
+    .replace('</main>', '<img src="javascript:alert(1)"><a href="data:text/html,x">x</a></main>')
+  writeFileSync(page, html)
+  const r = run(docs)
+  assert.equal(r.status, 1)
+  assert.ok(r.stdout.includes('带 scheme'), r.stdout)
+  console.log('⑧ 读数：退 1 · 图片与链接各一条 scheme')
 })
