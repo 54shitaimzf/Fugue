@@ -24,10 +24,10 @@ import type { Truth } from '../truth/contract.ts'
 import type { CommitId, RefName } from '../terms.ts'
 import { parseDocs } from './config.ts'
 import { aliasPlan } from './address.ts'
+import { attemptOf, recordAttempt } from './attempt.ts'
 import type {
   DocsPlan,
   EvidenceRange,
-  LastAttempt,
   Manifest,
   Materials,
   ModelFacts,
@@ -62,7 +62,7 @@ import {
   systemOf,
 } from './prompt.ts'
 import { CONTENT_MIN_CHARS } from './prompt.ts'
-import { digestOf, publishBatch, readManifest, writeLast } from './publish.ts'
+import { digestOf, publishBatch, readManifest } from './publish.ts'
 import type { BatchFile } from './publish.ts'
 import { recoverPublish } from './publish.ts'
 import { searchEntriesOf } from './search.ts'
@@ -445,7 +445,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
   const fail = async (err: unknown): Promise<BuildFailure> => {
     const e = err instanceof DocsError ? err : new DocsError('build', (err as Error).message)
     const total = sumUsage(allUsage)
-    const attempt: LastAttempt = {
+    const attempt = attemptOf({
       ok: false,
       at: now().toISOString(),
       commit: commit === null ? null : String(commit),
@@ -458,9 +458,9 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       at_stage: e.at,
       usage: { calls: total.calls, inputTokens: total.inputTokens, outputTokens: total.outputTokens },
       ...(usagePages.length === 0 ? {} : { usagePages }),
-    }
+    })
     try {
-      await writeLast(deps.root, attempt)
+      await recordAttempt(deps.root, attempt)
     } catch {
       // 连"失败"都写不进去时，把原因留在返回的那一句里——不吞掉。
     }
@@ -737,7 +737,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
     await publishBatch(deps.root, files)
 
     const total = sumUsage(allUsage)
-    const attempt: LastAttempt = {
+    const attempt = attemptOf({
       ok: true,
       at: generatedAt,
       commit: String(commit),
@@ -750,9 +750,9 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       usagePages,
       reason: null,
       at_stage: null,
-    }
+    })
     try {
-      if (deps.record !== false) await writeLast(deps.root, attempt)
+      if (deps.record !== false) await recordAttempt(deps.root, attempt)
     } catch (err) {
       // 批次已经发布：这一条写不进去只影响"最近一次"那一栏，把话说在返回里。
       return {
@@ -805,44 +805,6 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
 /** 从 CLI 那一层看得到的一行：这一批之后，文档住在哪儿（`Fugue 的产物位置`）。 */
 export function docsHintOf(root: string): string {
   return `${docsRootOf(root)}/index.html（用浏览器打开；file:// 即可）`
-}
-
-/**
- * 记一次**还没走到 `buildDocs`** 的失败（模型或凭据缺席那一类，复审 R8）。
- *
- * 那种失败原先直接抛错，于是“刚刚生成失败”在 `status` 的最近一次那一栏里根本不存在——还显示
- * 上一次成功。这里把尝试边界提到解析模型之前：**失败也落账**，已完成的调用数如实写。
- */
-export async function recordAttemptFailure(o: {
-  readonly root: string
-  readonly reason: string
-  readonly at_stage: string
-  readonly commit: string | null
-  readonly materials: Materials
-  readonly model: string | null
-  readonly theme: string | null
-  readonly usage?: { readonly calls: number; readonly inputTokens: number | null; readonly outputTokens: number | null }
-  readonly usagePages?: LastAttempt['usagePages']
-}): Promise<void> {
-  const attempt: LastAttempt = {
-    ok: false,
-    at: new Date().toISOString(),
-    commit: o.commit,
-    fingerprint: null,
-    pages: 0,
-    theme: o.theme,
-    model: o.model,
-    materials: o.materials,
-    reason: o.reason,
-    at_stage: o.at_stage,
-    usage: o.usage ?? { calls: 0, inputTokens: null, outputTokens: null },
-    ...(o.usagePages === undefined ? {} : { usagePages: o.usagePages }),
-  }
-  try {
-    await writeLast(o.root, attempt)
-  } catch {
-    // 连“失败”都写不进去时不能报成功：调用方本来就在抛错那一头，话里带得出原因。
-  }
 }
 
 /** 首页文件名（`docs status` 与 `docs build` 的出口指它）。 */
