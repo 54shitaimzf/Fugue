@@ -68,6 +68,7 @@ export function searchEntriesOf(page: PageDef, md: string, headings: readonly Md
   let hash = ''
   let buf: string[] = []
   let n = 0
+  let inFence = false
   const flush = (): void => {
     const text = plainOf(buf)
     if (text !== '' || hash !== '') {
@@ -76,7 +77,15 @@ export function searchEntriesOf(page: PageDef, md: string, headings: readonly Md
     buf = []
   }
   for (const line of lines) {
-    if (/^#{1,6}\s+/.test(line.trim())) {
+    const t = line.trim()
+    // **围栏里的 `#` 是注释，不是标题**：计数要与渲染器一致（它也不在围栏里出标题），
+    // 否则围栏后每一节都会拿到前一节的锚点，命中点下去落到别的节。
+    if (/^```/.test(t)) {
+      inFence = !inFence
+      buf.push(line)
+      continue
+    }
+    if (!inFence && /^#{1,6}\s+/.test(t)) {
       flush()
       const h = headings[n]
       n += 1
@@ -91,9 +100,10 @@ export function searchEntriesOf(page: PageDef, md: string, headings: readonly Md
 }
 
 /**
- * 内嵌用的脚本内容。**`</` 要拆开**：一段 JSON 里出现 `</script>` 会当场结束脚本块——那是
- * "正文里写了什么就变成什么"的一个口子，拆开是这一层唯一的转义。
+ * 内嵌用的脚本内容。**所有 `<` 都写成 `\u003c`**：`</script>` 会当场结束脚本块，
+ * `<!--` 后跟 `<script` 会把 tokenizer 推进双重转义态、把页面尾部吞成脚本文本——
+ * 两类是同一个口子，拆 `<` 一次堵完（`\u003c` 是合法的 JSON 转义，解析回来还是 `<`）。
  */
 export function searchIndexJson(entries: readonly SearchEntry[]): string {
-  return JSON.stringify(entries).replace(/<\//g, '<\\/')
+  return JSON.stringify(entries).replace(/</g, '\\u003c')
 }
