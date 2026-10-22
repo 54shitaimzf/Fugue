@@ -17,7 +17,6 @@
 //
 // **不回流**：这一份只读定义与提交，读一次旧清单只为算"旧深链接的去向"；旧 HTML 与旧正文
 // 从不进写作输入（交接单 § 1.4 末段）。
-import { posix } from 'node:path'
 import type { ConfigDoc } from '../config.ts'
 import type { Usage } from '../model/contract.ts'
 import type { Truth } from '../truth/contract.ts'
@@ -25,6 +24,9 @@ import type { CommitId, RefName } from '../terms.ts'
 import { parseDocs } from './config.ts'
 import { aliasPlan } from './address.ts'
 import { attemptOf, recordAttempt } from './attempt.ts'
+import { planAssets } from './assets.ts'
+import { checkContent, citedOf } from './check.ts'
+import { repoPathOf } from './paths.ts'
 import type {
   DocsPlan,
   EvidenceRange,
@@ -61,7 +63,6 @@ import {
   evidenceSystemOf,
   systemOf,
 } from './prompt.ts'
-import { CONTENT_MIN_CHARS } from './prompt.ts'
 import { digestOf, publishBatch, readManifest } from './publish.ts'
 import type { BatchFile } from './publish.ts'
 import { recoverPublish } from './publish.ts'
@@ -332,100 +333,6 @@ async function gatherEvidence(o: {
   }
   const truncated: EvidenceRange[] = excerpts.map((x) => ({ path: x.path, lines: x.lines, chars: x.chars, shown: x.shown, truncated: x.truncated }))
   return { evidence: { mode: 'requested', requested, found: excerpts.map((x) => x.path), missing, ranges: truncated }, excerpts, note, usage, rangeUsage }
-}
-
-/** 正文的形状核对：**宿主只判可机械核对的那几条**（内容取舍留给复核）。返回兑不掉的 note。 */
-function checkContent(def: PageDef, md: string): string[] {
-  const notes: string[] = []
-  const text = md.trim()
-  if (text === '') throw new DocsError('render', `第 ${def.id} 页（${def.title}）的正文是空的`)
-  if (text.length < CONTENT_MIN_CHARS) {
-    throw new DocsError('render', `第 ${def.id} 页（${def.title}）的正文只有 ${text.length} 个字符，短于 ${CONTENT_MIN_CHARS}：这一页没写出来`)
-  }
-  const hasH1 = /^\s*#\s+/m.test(text)
-  const hasH2 = /^\s*#{2,}\s+/m.test(text)
-  // **只写 H1 时先说清这一条**：它同时满足“没有 ##”，但真正该改的是“从 ## 起”。
-  if (hasH1 && !hasH2) {
-    throw new DocsError('render', `第 ${def.id} 页（${def.title}）只写了 H1：页标题由宿主加，正文要从 ## 起`)
-  }
-  if (!/^\s*#{2,6}\s+/m.test(text)) {
-    throw new DocsError('render', `第 ${def.id} 页（${def.title}）的正文里一个章节标题都没有（## 起）：读者无法按节读`)
-  }
-  // **H1 与 ## 同时出现时不拒**（那一段仍有完整可读内容），但要如实记下来：它会被宿主按 H2 呈现。
-  if (hasH1) notes.push('正文里写了 H1（页标题由宿主按定义加）：这一行按 H2 呈现')
-  return notes
-}
-/** 图片的落点：从提交里复制到 `_assets/`，名字按内容哈希（同一张图只存一份）。 */
-interface AssetPlan {
-  readonly files: BatchFile[]
-  readonly hrefOf: (pageId: string, raw: string) => string | null
-}
-
-async function planAssets(o: {
-  readonly pages: readonly { def: PageDef; markdown: string }[]
-  readonly facts: TreeFacts
-  readonly truth: Truth
-  readonly commit: CommitId
-}): Promise<AssetPlan> {
-  const byPath = new Map<string, { href: string; bytes: Uint8Array }>()
-  const byPage = new Map<string, Map<string, string>>()
-  const known = new Set(o.facts.paths)
-  for (const { def, markdown } of o.pages) {
-    const map = new Map<string, string>()
-    const re = /!\[([^\]]*)\]\(([^)\s]+)/g
-    let m: RegExpExecArray | null
-    while ((m = re.exec(markdown)) !== null) {
-      const raw = m[2]!
-      if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) continue
-      const path = repoPathOf(def.source, raw)
-      if (path === null || !known.has(path)) continue
-      const hit = byPath.get(path)
-      if (hit !== undefined) {
-        map.set(raw, hit.href)
-        continue
-      }
-      const bytes = await o.truth.readAt(o.commit, path as never)
-      if (bytes === null) continue
-      const href = `_assets/${await assetNameOf(bytes, path)}`
-      byPath.set(path, { href, bytes })
-      map.set(raw, href)
-    }
-    byPage.set(def.id, map)
-  }
-  return {
-    files: [...byPath.values()].map((v) => ({ path: v.href, bytes: v.bytes })),
-    hrefOf: (pageId, raw) => byPage.get(pageId)?.get(raw) ?? null,
-  }
-}
-
-/** `_assets/` 里那份文件叫什么：内容哈希前 8 位 + 原名（同名不同内容也撞不上）。 */
-async function assetNameOf(bytes: Uint8Array, path: string): Promise<string> {
-  const { createHash } = await import('node:crypto')
-  const sha = createHash('sha256').update(bytes).digest('hex').slice(0, 8)
-  const base = posix.basename(path).replace(/[^\w.-]/g, '_')
-  return `${sha}-${base}`
-}
-
-/** 来源文件里的相对路径 → 提交里的仓库相对路径（越界与空路径都是 `null`）。 */
-function repoPathOf(source: string, raw: string): string | null {
-  const clean = raw.split('#')[0]!.split('?')[0]!
-  if (clean === '' || /^[a-z][a-z0-9+.-]*:/i.test(clean)) return null
-  const p = clean.startsWith('/') ? clean.slice(1) : posix.normalize(posix.join(posix.dirname(source), clean))
-  if (p.startsWith('..') || p === '' || p === '.') return null
-  return p
-}
-
-/** 正文里引用的路径（清单里的"取证依据"）：行内代码里出现的、提交里真有的那些。 */
-function citedOf(markdown: string, facts: TreeFacts): string[] {
-  const known = new Set(facts.paths)
-  const found = new Set<string>()
-  const re = /`([A-Za-z0-9_][A-Za-z0-9_./-]*\.[A-Za-z0-9]+)`/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(markdown)) !== null) {
-    const p = m[1]!
-    if (known.has(p)) found.add(p)
-  }
-  return [...found].sort()
 }
 
 /** 一次生成。**成功与失败都是返回值**：失败时旧批次留在原处，`last.json` 记下原因。 */
