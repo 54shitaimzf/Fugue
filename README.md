@@ -233,7 +233,7 @@ fugue recover --finish
 每条定义六栏：`id`（稳定标识，文件名与深链接都用它）· `title` · `source`（仓库里的 markdown，随提交走）· `audience`（给谁看）· `role`（负责讲什么、边界在哪）· `prompt`（这一份的写法与重点）；`out` 可选，缺省是 `<id>.html`。键名写错、路径写成绝对路径或 `..`，命令当场拒并指到该改的那一格。
 
 ```sh
-fugue docs build               # 按当前提交生成整套
+fugue docs build               # 按 refs/heads/main 生成整套（收口时是刚写回的那个提交）
 fugue docs build --at <提交>    # 按指定提交重建（定义与主题取今天的工作区配置）
 fugue docs build --theme govuk  # 只换一套视觉语言
 fugue docs status               # 现有产物对应哪一版 · 最近一次生成成没成
@@ -250,10 +250,10 @@ fugue docs prompt start         # 打出这一份的实际写作输入，不调�
 
 页面因为输出预算被截断时，抬一下单页预算：`fugue config set docs.maxTokens 65536`，再生成一次。
 
-生成之后想自己核对一遍形状（清单与实际文件对不对得上 · 内部链接与锚点可不可达 · 查找索引落不落得到正文）：
+生成之后想自己核对一遍形状（清单与实际文件对不对得上 · 内部链接与锚点可不可达 · 查找索引落不落得到正文 · 图片地址与代码块有没有落单）：
 
 ```sh
-node tools/check-docs.js            # 缺省看 <root>/.fugue/docs
+node tools/check-docs.js            # 缺省看 <root>/.fugue/docs；显式给的目录不存在时退 2
 ```
 
 ## 它为什么可靠
