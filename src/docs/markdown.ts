@@ -404,6 +404,11 @@ function tableAt(
   }
 }
 
+/** 这一行是不是围栏的开头。**列表项里的块与顶层的块用同一条判据**（不另写一份正则）。 */
+function fenceOpen(line: string): boolean {
+  return /^\s*```\s*[\w-]*\s*$/.test(line)
+}
+
 /**
  * 一段围栏：`at` 指向开围栏那一行，返回 HTML 与下一行。
  *
@@ -474,6 +479,15 @@ function listAt(
           j = sub.next
           continue
         }
+        // **空行之后的缩进围栏也是块**：原先这一支只当“第二段”读，围栏标记与反引号就漏进了正文
+        // （实测：`::: steps` 里的第一步把围栏标记与命令拼成了一句）。
+        if (fenceOpen(next)) {
+          const f = fenceAt(lines, k, ctx)
+          items[items.length - 1]!.parts.push({ html: true, s: f.html })
+          items[items.length - 1]!.plain.push(f.code)
+          j = f.next
+          continue
+        }
         // 空行之后的缩进续行仍属于上一项（列表项里的第二段，不另起一项）
         items[items.length - 1]!.parts.push({ html: false, s: next.trim() })
         items[items.length - 1]!.plain.push(next.trim())
@@ -486,7 +500,7 @@ function listAt(
     if (m === null) {
       // **围栏是块，不是续行**：列表项里的代码块按块渲染。
       // 原先当续行读，围栏标记会漏进正文（实测：`\`\`\`sh` 与反引号一起出现在句子里）。
-      if (items.length > 0 && indentOf(line) > indent && /^\s*```\s*[\w-]*\s*$/.test(line)) {
+      if (items.length > 0 && indentOf(line) > indent && fenceOpen(line)) {
         const f = fenceAt(lines, j, ctx)
         items[items.length - 1]!.parts.push({ html: true, s: f.html })
         items[items.length - 1]!.plain.push(f.code)
