@@ -180,18 +180,33 @@ test('⑦ 批次完整性：改一个字节就指得出来（入口 → 批次�
   console.log('⑦ 读数：完好时 [] · 手改后 [p.html]')
 })
 
-test('⑧ 迁移：`docs` 还是真目录时发布能接上（老布局读得出、发布后变成链接）', async () => {
+test('⑧ 迁移：`docs` 还是真目录时发布能接上；老布局里的 last.json 跟着搬出去', async () => {
   const root = tmpRepo()
   const docs = docsRootOf(root)
   mkdirSync(docs, { recursive: true })
   writeFileSync(join(docs, 'index.html'), '<h1>老布局</h1>')
   writeFileSync(join(docs, 'manifest.json'), JSON.stringify({ version: 1, fingerprint: FP1, pages: [] }))
+  writeFileSync(join(docs, 'last.json'), JSON.stringify({ ok: true, pages: 7, reason: null }))
   const legacy = await readManifest(root)
   assert.equal(legacy?.fingerprint, FP1, '老布局读得出来（status 不会误报“未生成”）')
   await publishBatch(root, batchOf(FP2, '新页'))
   assert.equal(lstatSync(docs).isSymbolicLink(), true)
   assert.deepEqual(entryOf(root), { page: FP2, manifest: FP2 })
-  console.log('⑧ 读数：老布局可读 · 发布后入口变链接 · 新批次就位')
+  // 老布局把“最近一次”放在 docs/ 里；跟着旧目录一起删掉的话，下一次 status 会静默变回空。
+  const moved = JSON.parse(readFileSync(join(root, '.fugue', 'docs-last.json'), 'utf8')) as { pages: number }
+  assert.equal(moved.pages, 7, '迁移时要把 last.json 接出来')
+  console.log('⑧ 读数：老布局可读 · 发布后入口变链接 · last.json 搬到 .fugue/docs-last.json')
+})
+
+test('⑨ 同一指纹、不同字节：按内容命名批次，不把两批混成一批', async () => {
+  const root = tmpRepo()
+  await publishBatch(root, batchOf(FP1, '旧页'))
+  await publishBatch(root, batchOf(FP1, '改过的页'))
+  assert.equal(readFileSync(join(docsRootOf(root), 'p.html'), 'utf8'), '改过的页', '入口读到的是刚发布的那一批')
+  assert.deepEqual(entryOf(root), { page: FP1, manifest: FP1 }, '指纹没变，但页面确实是新字节')
+  const batches = readdirSync(join(root, '.fugue')).filter((n) => n.startsWith('docs-batch-'))
+  assert.equal(batches.length, 2, `同指纹不同字节要落成两批：${batches.join(' · ')}`)
+  console.log(`⑨ 读数：两批 ${batches.map((b) => b.slice(11)).join(' · ')} · 入口读新字节`)
 })
 
 // 让 `symlinkSync` 这个导入不至于被 lint 当成没用（迁移测试里直接建链接时用得上）。

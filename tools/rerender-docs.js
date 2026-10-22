@@ -17,6 +17,7 @@ import { readConfig } from '../src/config.ts'
 import { parseDocs } from '../src/docs/config.ts'
 import { RENDERER_VERSION, docsRootOf } from '../src/docs/contract.ts'
 import { buildDocs } from '../src/docs/build.ts'
+import { excerptAt } from '../src/docs/facts.ts'
 import { readManifest } from '../src/docs/publish.ts'
 import { callerOf } from '../src/docs/writer.ts'
 import { openTruth } from '../src/truth/truth.ts'
@@ -36,6 +37,8 @@ const args = process.argv.slice(2)
 const root = resolvePath(flag(args, 'root', process.cwd()))
 const at = flag(args, 'at', 'HEAD')
 const theme = flag(args, 'theme', undefined)
+/** 迁移用：旧地址的去向按这一份清单算（比如上一版真实清单里那句“没有后继”）。 */
+const prevPath = flag(args, 'prev', undefined)
 
 const config = await readConfig(root)
 const plan = parseDocs(config)
@@ -43,34 +46,76 @@ if (plan === null) {
   console.error('这个工作区没有 docs 配置：没有可重渲染的文档计划')
   process.exit(1)
 }
-const prev = await readManifest(root)
+const prev = prevPath === undefined ? await readManifest(root) : JSON.parse(readFileSync(resolvePath(prevPath), 'utf8'))
 if (prev === null) {
   console.error(`没有现成产物可重渲染：${docsRootOf(root)} 下还没有清单（先跑一次 fugue docs build）`)
   process.exit(1)
+}
+
+/**
+ * 上一批只剩一句说明、没有机器记录时，把“没有后继”的旧地址取回来再认一遍。
+ *
+ * 0.5.1 时代的标题 id（如 `v0-5-2`）在 0.5.2 的第一版生成里被当作“没有后继”丢掉了，清单里
+ * 只留下那句说明；而 `v052` 就在同一页。这一次迁移从说明里把它们取回来，按 id 自己的身份重认；
+ * 之后每一批都有 `pages[].dropped` 这份机器记录，不再需要解析文字。
+ */
+function revivedOf(manifest) {
+  const out = new Map()
+  for (const p of manifest.pages) {
+    const ids = [...(p.dropped ?? [])]
+    for (const note of p.notes ?? []) {
+      const hit = /旧深链接没有后继（这一版没有对应内容）：(.*)$/.exec(note)
+      if (hit !== null) {
+        for (const part of hit[1].split('·')) {
+          // 旧说明末尾有“…共 N 条”：它是个计数，不是一个旧地址。
+          const id = part.replace(/…共\s*\d+\s*条.*$/, '').trim()
+          if (id === '' || id.includes('…')) continue
+          ids.push(id)
+        }
+      }
+    }
+    if (ids.length > 0) out.set(p.id, [...new Set(ids)])
+  }
+  return out
 }
 
 const dir = docsRootOf(root)
 const markdown = new Map()
 const evidence = new Map()
 const notes = new Map()
-for (const p of plan.pages) {
-  const before = prev.pages.find((x) => x.id === p.id)
-  if (before === undefined) {
-    console.error(`上一批里没有文档 ${p.id} 的正文：content/${p.id}.md`)
-    process.exit(1)
-  }
-  markdown.set(p.id, readFileSync(join(dir, before.content), 'utf8'))
-  evidence.set(p.id, before.evidence)
-  notes.set(p.id, before.notes)
-}
-
-const materials = {
-  kind: 'manual',
-  note: `按已有正文重渲染（渲染器 ${RENDERER_VERSION}）：内容与取证来自上一批 content/，这一趟没有调用模型`,
-}
-
 const truth = openTruth(root)
 try {
+  const commit = await truth.resolve(at)
+  for (const p of plan.pages) {
+    const before = prev.pages.find((x) => x.id === p.id)
+    if (before === undefined) {
+      console.error(`上一批里没有文档 ${p.id} 的正文：content/${p.id}.md`)
+      process.exit(1)
+    }
+    markdown.set(p.id, readFileSync(join(dir, before.content), 'utf8'))
+    notes.set(p.id, before.notes)
+    // **截断范围补进清单**：上一批没有记行段（那时清单只有 requested/found/missing）。
+    // 用当时那道上界（12000 字符）按同一份提交重算一遍：它说的是“这些正文当时看到的是哪一段”。
+    const ranges = []
+    for (const path of before.evidence?.found ?? []) {
+      const x = await excerptAt(truth, commit, path, { limit: 12_000 })
+      if (x === null) continue
+      ranges.push({ path, lines: x.lines, chars: x.chars, shown: x.shown, truncated: x.truncated })
+    }
+    evidence.set(p.id, {
+      mode: before.evidence?.mode ?? 'skipped',
+      requested: before.evidence?.requested ?? [],
+      found: before.evidence?.found ?? [],
+      missing: before.evidence?.missing ?? [],
+      ranges,
+    })
+  }
+
+  const materials = {
+    kind: 'manual',
+    note: `按已有正文重渲染（渲染器 ${RENDERER_VERSION}）：内容与取证事实来自上一批 content/，这一趟没有调用模型（取证行段按上一版的上界 12000 字符重算，不是当时落下的原始读数）`,
+  }
+
   const caller = callerOf({ config })
   const out = await buildDocs({
     root,
@@ -81,6 +126,8 @@ try {
     at,
     ...(theme === undefined ? {} : { theme }),
     reuse: { markdown, evidence, notes },
+    revive: revivedOf(prev),
+    prev,
     record: false,
   })
   if (!out.ok) {

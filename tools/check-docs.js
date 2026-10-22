@@ -203,10 +203,13 @@ for (const h of allHtml) {
       .replace(/\s+/g, ' ')
   }
   const textCache = new Map()
+  // 行内标记（反引号 · 星号 · 反斜杠）不算差别：索引里是标记原文，页面上是渲染之后的字。
+  const norm = (s) => s.replace(/\s+/g, '').replace(/[`*\\]/g, '')
   const missingText = entries.filter((e) => {
     if (!idsOf.has(e.p)) return false
-    if (!textCache.has(e.p)) textCache.set(e.p, textOfPage(e.p))
-    return !textCache.get(e.p).includes(e.x.replace(/\s+/g, ' ').trim())
+    if (!textCache.has(e.p)) textCache.set(e.p, norm(textOfPage(e.p)))
+    // 空白不算差别：行内标签会把一句话切成几截，去掉空白之后的字才是"读得到的字"。
+    return !textCache.get(e.p).includes(norm(e.x))
   })
   if (missingText.length > 0) bad(`${h} 的索引里有 ${missingText.length} 条片段在正文里找不到（如 ${missingText[0].p}：${missingText[0].x.slice(0, 40)}）`)
   if (deadBlock.length === 0 && missingText.length === 0) ok(`${h} 的 ${entries.length} 条命中都落到内容块，且文字都在正文里`)

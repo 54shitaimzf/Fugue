@@ -512,3 +512,53 @@ test('⑮ 指纹认模型声明：只改思考档就过期；只换凭据（不�
   assert.equal(again.fingerprint, high.fingerprint, '换一把密钥不该改指纹')
   console.log(`⑮ 读数：thinking high ${high.fingerprint.slice(9, 21)} · low ${low.fingerprint.slice(9, 21)} · 换密钥 ${again.fingerprint.slice(9, 21)}（与 high 相同）`)
 })
+
+test('⑯ 合并与复活：合并的那一节接住旧版本号；判过“没有后继”的地址在这一版重新出现时接回来', async (ctx) => {
+  const root = tmpRepo()
+  await commitFiles(root, { 'README.md': '# demo\n', 'design/A.md': '# 架构\n' }, [], 'refs/heads/main')
+  const truth = openTruth(root)
+  ctx.after(() => truth.close())
+  const fixed = (): Date => new Date('2026-10-22T00:00:00.000Z')
+  const cfg = configWith()
+  const body = (sections: [string, string][]): string =>
+    sections.map(([h, id]) => `## ${h} {#${id}}\n\n${'这一段说明这一页要解决的问题。'.repeat(30)}`).join('\n\n')
+  const caller = (start: string, arch: string): DocCaller => ({
+    model: 'fake/model',
+    wireModel: 'fake',
+    thinking: 'high',
+    facts: FAKE_FACTS,
+    async call(req) {
+      if (req.system.includes('只输出一个 JSON 对象')) return { text: '{"paths":[]}', usage: null }
+      const id = /文档 id：([^\n]+)/.exec(req.context)?.[1]?.trim()
+      return { text: id === 'start' ? start : arch, usage: null }
+    },
+  })
+  const build = async (start: string, arch: string): Promise<void> => {
+    const head = await truth.resolve('refs/heads/main' as never).catch(() => null)
+    await commitFiles(root, { 'README.md': `# demo ${String(head).slice(0, 7)}\n`, 'design/A.md': '# 架构\n' }, head === null ? [] : [String(head)], 'refs/heads/main')
+    const out = await buildDocs({ root, config: cfg, truth, caller: caller(start, arch), materials: { kind: 'manual', note: 'n' }, now: fixed })
+    assert.ok(out.ok, JSON.stringify(out))
+  }
+  const read = (): { anchors: Record<string, string>; dropped: string[] }[] =>
+    (JSON.parse(readFileSync(join(docsRootOf(root), 'manifest.json'), 'utf8')) as { pages: { anchors: Record<string, string>; dropped: string[] }[] }).pages
+  // 第一版：旧写法（版本号分隔的 id）
+  await build(body([['0.4.3 —— 界面的一版', 'v0-4-3'], ['0.2.1 —— 收口', 'v0-2-1']]), body([['1.2.3 —— 旧写法', 'v1-2-3']]))
+  // 第二版：两节合并成一节；架构页改成与版本号无关的标题 → v0-5-2 判“没有后继”
+  await build(
+    body([['0.4.4 与 0.4.3 —— 界面的两版', 'v044'], ['0.2.x —— 收口批次', 'v02x']]),
+    body([['安装说明', '安装说明']]),
+  )
+  const two = read()
+  assert.equal(two[0]!.anchors['v0-4-3'], 'v044', '“0.4.4 与 0.4.3”这一节要接住 0.4.3 的旧地址')
+  assert.equal(two[0]!.anchors['v0-2-1'], 'v02x', '“0.2.x”这一族要接住 0.2.1 的旧地址')
+  assert.deepEqual(two[1]!.dropped, ['v1-2-3'])
+  // 第三版：架构页又写回 1.2.3 那一节 → 上一批判过“没有后继”的地址自动复活
+  await build(
+    body([['0.4.4 与 0.4.3 —— 界面的两版', 'v044'], ['0.2.x —— 收口批次', 'v02x']]),
+    body([['1.2.3 —— 文档是产物', 'v123']]),
+  )
+  const three = read()
+  assert.equal(three[1]!.anchors['v1-2-3'], 'v123', '删过一次的地址在这一版重新出现时要接回来')
+  assert.deepEqual(three[1]!.dropped, ['安装说明'], '上一版临时用的那个标题才是这一版被删的地址')
+  console.log(`⑯ 读数：合并 v0-4-3→v044 · v0-2-1→v02x · 复活 v1-2-3→v123 · 上一版的标题转为 dropped`)
+})

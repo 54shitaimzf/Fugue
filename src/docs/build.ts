@@ -96,6 +96,13 @@ export interface BuildDeps {
   }
   /** 记不记"最近一次"（重渲染不记：它不是一次模型生成）。 */
   readonly record?: boolean
+  /** 旧地址的去向按这份清单算（重渲染迁移时用上一版真实清单；缺省读当前产物）。 */
+  readonly prev?: Manifest | null
+  /**
+   * 迁移用：上一批只剩“说明”而没有机器记录时，把那些旧地址再拿来认一遍。
+   * 只有 `tools/rerender-docs.js` 传它（从旧清单的 note 里取回 0.5.1 时代的地址）。
+   */
+  readonly revive?: ReadonlyMap<string, readonly string[]>
   readonly now?: () => Date
 }
 
@@ -394,6 +401,25 @@ function versionKeyOfText(text: string): string | null {
   return m === null ? null : `v${m[1]}${m[2]}${m[3]}`
 }
 
+/** 一段标题文字里提到的**所有**版本号（“0.3.4 到 0.3.1”是两个）：合并的那一节靠它接旧地址。 */
+function versionKeysOfText(text: string): string[] {
+  const out: string[] = []
+  for (const m of text.matchAll(/(\d+)\.(\d+)\.(\d+)/g)) out.push(`v${m[1]}${m[2]}${m[3]}`)
+  return out
+}
+
+/** 标题里写成通配的那一族（“0.2.x”）：它接过这一族里任何一个具体版本号的旧地址。 */
+function versionFamilyOfText(text: string): string | null {
+  const m = /(\d+)\.(\d+)\.(?:x|\*)/i.exec(text)
+  return m === null ? null : `${m[1]}.${m[2]}.`
+}
+
+/** 一个 id 的版本族（“v0-2-1” → `0.2.`）；不是版本号就是 `null`。 */
+function versionFamilyOfId(id: string): string | null {
+  const m = /^v?(\d+)[.\-_]?(\d+)[.\-_]?(\d+)$/.exec(id.trim().toLowerCase())
+  return m === null ? null : `${m[1]}.${m[2]}.`
+}
+
 interface AliasPlan {
   readonly aliases: Record<string, string[]>
   readonly anchors: Record<string, string>
@@ -412,7 +438,11 @@ interface AliasPlan {
  * **继承不等于照旧**：如果旧 id 与它继承到的目标各带一个版本号而两者不同，那条继承是错的
  * （真题：`v0-5-1` 被接到 `0.1.0` 那一节），按旧 id 自己的身份重新找。
  */
-function aliasPlan(prev: Manifest | null, fresh: Map<string, readonly MdHeading[]>): Map<string, AliasPlan> {
+function aliasPlan(
+  prev: Manifest | null,
+  fresh: Map<string, readonly MdHeading[]>,
+  revive?: ReadonlyMap<string, readonly string[]>,
+): Map<string, AliasPlan> {
   const out = new Map<string, AliasPlan>()
   const SIM = 0.75
   for (const [pageId, headings] of fresh) {
@@ -434,6 +464,17 @@ function aliasPlan(prev: Manifest | null, fresh: Map<string, readonly MdHeading[
       if (ik !== '' && byIdentity.has(ik)) return byIdentity.get(ik)!
       const vk = versionKeyOfId(oldId) ?? (oldText === null ? null : versionKeyOfText(oldText))
       if (vk !== null && byVersion.has(vk)) return byVersion.get(vk)!
+      // **合并那一节**：“0.3.4 到 0.3.1” 这一节同时接过两个版本号的旧地址。
+      if (vk !== null) {
+        const mentioned = headings.filter((h) => versionKeysOfText(h.text).includes(vk))
+        if (mentioned.length === 1) return mentioned[0]!.id
+      }
+      // 通配的一族（“0.2.x”）接过族里任何一个具体版本号。
+      const family = versionFamilyOfId(oldId)
+      if (family !== null) {
+        const same = headings.filter((h) => versionFamilyOfText(h.text) === family)
+        if (same.length === 1) return same[0]!.id
+      }
       if (oldText === null) return null
       const tk = identityKey(oldText)
       if (tk !== '') {
@@ -489,6 +530,13 @@ function aliasPlan(prev: Manifest | null, fresh: Map<string, readonly MdHeading[
         const own = tryDirect(old, null)
         direct.set(old, own ?? landed)
       }
+      // **上一批判过“没有后继”的旧地址**（`pages[].dropped` + 迁移时从旧记录取回来的那几条）：
+      // 一个地址被删过一次，不等于永远不能复活——这一版里出现了与它同一身份的标题，就该重新接上。
+      for (const old of [...(prior.dropped ?? []), ...(revive?.get(pageId) ?? [])]) {
+        if (direct.has(old) || ids.has(old)) continue
+        const own = tryDirect(old, null)
+        if (own !== null) direct.set(old, own)
+      }
     }
 
     const anchors: Record<string, string> = {}
@@ -504,7 +552,9 @@ function aliasPlan(prev: Manifest | null, fresh: Map<string, readonly MdHeading[
     if (prior !== undefined) {
       for (const h of prior.headings) priorIds.add(h.id)
       for (const old of Object.keys(prior.anchors ?? {})) priorIds.add(old)
+      for (const old of prior.dropped ?? []) priorIds.add(old)
     }
+    for (const old of revive?.get(pageId) ?? []) priorIds.add(old)
     const dropped = [...priorIds].filter((old) => !ids.has(old) && anchors[old] === undefined)
     out.set(pageId, { aliases, anchors, dropped })
   }
@@ -666,14 +716,17 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
 
     // 三 · 逐页取证 + 写作
     const prepared: Prepared[] = []
-    const prev = await readManifest(deps.root).catch(() => null)
+    const prev = deps.prev !== undefined ? deps.prev : await readManifest(deps.root).catch(() => null)
     for (const def of plan.pages) {
       if (deps.reuse !== undefined) {
         // **只重渲染**：正文与取证事实都是上一批的，这一趟一个模型调用都不发。
         const md = deps.reuse.markdown.get(def.id)
         if (md === undefined) throw new DocsError('render', `重渲染缺少这一页的正文：content/${def.id}.md`)
         const evidence = deps.reuse.evidence.get(def.id) ?? { mode: 'skipped' as const, requested: [], found: [], missing: [], ranges: [] }
-        const notes = [...(deps.reuse.notes.get(def.id) ?? []), ...checkContent(def, md)]
+        // **只搬“取证”那几条**（它们不属于渲染，重渲染不会重算）；渲染得出的 note（旧地址去向 ·
+        // 不可达引用 · 形状）这一趟会自己重新生成，搬过来的话每重渲染一次就多一份重复。
+        const kept = (deps.reuse.notes.get(def.id) ?? []).filter((n) => /取证|补读|没读全/.test(n))
+        const notes = [...kept, ...checkContent(def, md)]
         const pass1 = renderMarkdown(md, { resolve: (raw) => ({ href: raw }), reserved: HOST_IDS })
         prepared.push({
           def,
@@ -746,7 +799,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
 
     // 四 · 校验与呈现（需要全批的标题表：跨页引用要判锚点在不在）
     const fresh = new Map(prepared.map((p) => [p.def.id, p.pass1.headings]))
-    const alias = aliasPlan(prev, fresh)
+    const alias = aliasPlan(prev, fresh, deps.revive)
     const idsOf = (pageId: string): Set<string> => {
       const set = new Set((fresh.get(pageId) ?? []).map((h) => h.id))
       for (const [old] of Object.entries(alias.get(pageId)?.anchors ?? {})) set.add(old)

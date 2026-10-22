@@ -101,26 +101,28 @@ export function batchDirOf(root: string, id: string): string {
   return join(root, '.fugue', `${BATCH_PREFIX}${id}`)
 }
 
-/** 这一批的 id：清单里的指纹（同内容 → 同名），没有清单就按文件内容算。 */
+/**
+ * 这一批的 id：**按内容算**（清单指纹 + 每一份文件的名字与 sha）。
+ *
+ * 不用指纹前缀：同一份指纹两趟生成的清单里 `generatedAt` 不同，字节就不同——按内容命名才不会把
+ * “同名不同字节”的批混成一批（读的人拿到的仍是同一批的页面与清单）。
+ */
 function batchIdOf(files: readonly BatchFile[]): string {
+  const digests = digestOf(files)
+    .map((f) => `${f.path}:${f.sha}:${f.bytes}`)
+    .sort()
+    .join('\n')
   const manifest = files.find((f) => f.path === 'manifest.json')
+  let fingerprint = ''
   if (manifest !== undefined) {
     try {
       const m = JSON.parse(new TextDecoder().decode(manifest.bytes)) as { fingerprint?: unknown }
-      if (typeof m.fingerprint === 'string') {
-        const hex = m.fingerprint.replace(/^sha256:/, '')
-        if (/^[0-9a-f]{12,}$/.test(hex)) return hex.slice(0, 12)
-      }
+      if (typeof m.fingerprint === 'string') fingerprint = m.fingerprint
     } catch {
-      // 清单不是 JSON 时退回按内容算（发布出去的那一份仍然可复现）。
+      // 清单不是 JSON 时只按文件内容算（发布出去的那一份仍然可复现）。
     }
   }
-  const h = createHash('sha256')
-  for (const f of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
-    h.update(f.path)
-    h.update(f.bytes)
-  }
-  return h.digest('hex').slice(0, 12)
+  return createHash('sha256').update(fingerprint).update('\n').update(digests).digest('hex').slice(0, 12)
 }
 
 /** 写完的一批是不是完整（入口与清单都在）。 */
@@ -252,7 +254,18 @@ async function collect(root: string): Promise<void> {
   // 残留的临时链接（交换没走完的那一次）与迁移留下的旧目录：指针有效时才收。
   for (const name of names) {
     if (name.startsWith(LINK_PREFIX)) await rm(join(base, name), { force: true }).catch(() => undefined)
-    if (name.startsWith(PREV_PREFIX)) await rm(join(base, name), { recursive: true, force: true }).catch(() => undefined)
+    if (name.startsWith(PREV_PREFIX)) {
+      // **迁移时先把“最近一次”接出来**：老布局把它放在 docs/ 下，而它不属于任何一批——
+      // 跟着旧目录一起删掉，下一次 status 的“最近一次”就会静默变回空。
+      const oldLast = join(base, name, 'last.json')
+      const newLast = lastPathOf(root)
+      try {
+        if (!(await exists(newLast)) && (await exists(oldLast))) await rename(oldLast, newLast)
+      } catch {
+        // 接不出来也不阻塞切换：readLast 仍认老位置。
+      }
+      await rm(join(base, name), { recursive: true, force: true }).catch(() => undefined)
+    }
   }
 }
 
