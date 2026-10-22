@@ -193,11 +193,21 @@ test('⑪ 列表项里的围栏是块：命令原样、围栏标记不漏；容�
   console.log('⑪ 读数：列表内围栏成块 · 无反引号漏出 · 容器内围栏不截断 · 后面照常')
 })
 
-test('⑫ 没写收尾的 details 不许把后面整页藏起来（退化档：收在下一个二级标题之前）', () => {
+test('⑫ 转义的反引号：不参与配对，整句仍是一个代码段；落单的印成“反引号字符”的代码段', () => {
+  const r = renderMarkdown('形如 `编号 \\`T1\\` – \\`T19\\`` 的声明，单个 \\` 号也认。')
+  assert.ok(r.html.includes('<code>编号 `T1` – `T19`</code>'), r.html)
+  assert.ok(r.html.includes('<code>`</code>'), '落单的转义反引号印成代码段')
+  // 可见文字（去掉标签）里不留裸反引号
+  const text = r.html.replace(/<[^>]+>/g, '')
+  assert.ok(!text.includes('\\`'), '反斜杠不该漏进正文')
+  console.log('⑫ 读数：代码段里 3 个字面反引号 · 落单的 1 个 · 反斜杠 0')
+})
+
+test('⑬ 没写收尾的 details 不许把后面整页藏起来（退化档：收在下一个二级标题之前）', () => {
   const r = renderMarkdown(['::: details 细节', '藏在里面', '', '## 后面', '', '正文还在。'].join('\n'))
   const d = r.html.slice(r.html.indexOf('<details>'), r.html.indexOf('</details>') + 10)
   assert.ok(d.includes('藏在里面'))
   assert.ok(!d.includes('正文还在。'), '后面的正文不许被吞进 details')
   assert.ok(r.html.includes('正文还在。'))
-  console.log(`⑫ 读数：details 只包住自己那一段 · note：${r.notes.join(' / ')}`)
+  console.log(`⑬ 读数：details 只包住自己那一段 · note：${r.notes.join(' / ')}`)
 })

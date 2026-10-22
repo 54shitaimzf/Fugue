@@ -134,10 +134,12 @@ for (const h of allHtml) {
     else if (src.startsWith('_assets/') && !fs.existsSync(path.join(dir, src))) bad(`${h} 的图不在产物里：${src}`)
   }
   // 可见正文里的反引号：代码段正常会变成 <code>、围栏会变成 <pre>，落单的反引号说明那一截没被当成代码。
+  // `<code>` 里面那些是作者有意写的字面反引号（模型写“形如 `\`T1\`` 的声明”那一类），不算漏。
   const visible = html
     .replace(/<script[\s\S]*?<\/script>/g, '')
     .replace(/<style[\s\S]*?<\/style>/g, '')
     .replace(/<pre>[\s\S]*?<\/pre>/g, '')
+    .replace(/<code>[\s\S]*?<\/code>/g, '')
     .replace(/<[^>]+>/g, '')
   const ticks = (visible.match(/`/g) ?? []).length
   if (ticks > 0) bad(`${h} 的可见正文里有 ${ticks} 个反引号（代码段没配对或围栏漏进了正文）`)

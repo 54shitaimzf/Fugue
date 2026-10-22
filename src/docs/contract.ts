@@ -37,7 +37,7 @@ export function stageRootOf(root: string, token: string): string {
  * 它进状态指纹：同样的正文、同样的主题，渲染器换了一版，产物仍然过期——那是"宿主那一半
  * 逐字节可复现"这句话的边界（交接单 § 1.4）。
  */
-export const RENDERER_VERSION = 1
+export const RENDERER_VERSION = 2
 
 /** 清单的版本（清单自己换形状时加一，与渲染器版本分开）。 */
 export const MANIFEST_VERSION = 1

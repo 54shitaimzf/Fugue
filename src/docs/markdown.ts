@@ -202,13 +202,19 @@ function inline(raw: string, ctx: Ctx, opts: RenderOptions): string {
   return out.join('')
 }
 
+/** 转义过的反引号在这一趟里的占位符（`\`` 不参与配对）。`\u0001` 不会出现在正文里。 */
+const ESC_TICK = '\u0001'
+
 /** 转义之后再做行内强调：代码 → 粗 → 斜体。顺序是承重的（粗体里的星号不再当斜体）。 */
 function emphasis(text: string): string {
-  let s = escapeHtml(text)
-  s = s.replace(/`([^`\n]+)`/g, (_m, code: string) => `<code>${code.trim()}</code>`)
+  let s = escapeHtml(text).replace(/\\`/g, ESC_TICK)
+  // 代码段里的转义反引号就是字面反引号（模型写 `编号 \`T1\`–\`T19\`` 时的意思）。
+  s = s.replace(/`([^`\n]+)`/g, (_m, code: string) => `<code>${code.trim().replaceAll(ESC_TICK, '`')}</code>`)
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
   s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
   s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
+  // 落单的转义反引号：印成一个“反引号字符”的代码段——可见文字里不留裸反引号。
+  s = s.replaceAll(ESC_TICK, '<code>`</code>')
   return s
 }
 
