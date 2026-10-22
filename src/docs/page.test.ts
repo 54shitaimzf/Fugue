@@ -62,7 +62,7 @@ assert.ok(primer !== null && govuk !== null)
 function site(theme = primer): SiteInfo {
   return {
     project: 'Fugue',
-    version: '0.5.2',
+    version: '1.2.3',
     commit: 'fd3cd29a1c2b3d4e5f60718293a4b5c6d7e8f901',
     commitShort: 'fd3cd29a1c2b',
     fingerprint: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
@@ -94,7 +94,7 @@ function page(theme = primer): { html: string; page: PageDef; headings: ReturnTy
 test('① 页首/目录：项目 · 适用版本 · 当前文档 · 本页章节（跳到正文的入口也在）', () => {
   const { html } = page()
   assert.ok(html.includes('href="#content">跳到正文</a>'), '键盘读者要有跳到正文的入口')
-  assert.ok(html.includes('v0.5.2 · 提交 fd3cd29a1c2b'), '页首给版本与提交')
+  assert.ok(html.includes('v1.2.3 · 提交 fd3cd29a1c2b'), '页首给版本与提交')
   assert.ok(html.includes('<a href="start.html" aria-current="page">开始</a>'), '目录标出当前文档')
   assert.ok(html.includes('<a href="architecture.html">架构</a>'), '目录列出同批的其它页')
   assert.ok(html.includes('href="#first">先做什么</a>'), '章节导航是真实链接')
@@ -162,7 +162,7 @@ test('⑥ 首页由宿主合成：每份文档一个入口，写清给谁看与�
     assert.ok(index.includes(`href="${p.out}">${p.title}</a>`), `缺入口：${p.id}`)
     assert.ok(index.includes(p.audience) && index.includes(p.role), `缺读者/职责：${p.id}`)
   }
-  assert.ok(index.includes('v0.5.2') && index.includes('fd3cd29a1c2b3d4e5f60718293a4b5c6d7e8f901'))
+  assert.ok(index.includes('v1.2.3') && index.includes('fd3cd29a1c2b3d4e5f60718293a4b5c6d7e8f901'))
   assert.ok(index.includes('508'), '文件数写在这一版')
   console.log(`⑥ 读数：首页 ${index.length} 字符 · ${PLAN.pages.length} 个入口 · 事实齐`)
 })

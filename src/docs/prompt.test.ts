@@ -58,7 +58,7 @@ assert.ok(primer !== null)
 
 test('① 三区：A 是公共合同与视觉语言，B 是这一页的定义来源事实，C 是那一句话', () => {
   const page = pageOf(PLAN, 'start')
-  const facts = factsWith({ version: '0.5.1', files: 10, commit: 'aaaa' })
+  const facts = factsWith({ version: '1.2.3', files: 10, commit: 'aaaa' })
   const A = systemOf(primer)
   const B = contextOf({ page, plan: PLAN, facts, source: '# 读我\n', materials: MATERIALS, excerpts: [] })
   assert.ok(A.includes('只输出 markdown 正文'))
@@ -74,7 +74,7 @@ test('① 三区：A 是公共合同与视觉语言，B 是这一页的定义来
 
 test('② 逐字节稳定：同样的输入出同样的字节（宿主可复现的那一半）', () => {
   const page = pageOf(PLAN, 'start')
-  const facts = factsWith({ version: '0.5.1', files: 10, commit: 'aaaa' })
+  const facts = factsWith({ version: '1.2.3', files: 10, commit: 'aaaa' })
   const once = contextOf({ page, plan: PLAN, facts, source: 'S', materials: MATERIALS, excerpts: [] })
   const twice = contextOf({ page, plan: PLAN, facts, source: 'S', materials: MATERIALS, excerpts: [] })
   assert.equal(once, twice)
@@ -90,7 +90,7 @@ test('③ 事实跟着提交走：B 区随版本 · 文件数 · 提交变化，
   const b1 = contextOf({
     page,
     plan: PLAN,
-    facts: factsWith({ version: '0.5.1', files: 10, commit: 'aaaa' }),
+    facts: factsWith({ version: '1.2.3', files: 10, commit: 'aaaa' }),
     source: 'S',
     materials: MATERIALS,
     excerpts: [],
@@ -98,24 +98,24 @@ test('③ 事实跟着提交走：B 区随版本 · 文件数 · 提交变化，
   const b2 = contextOf({
     page,
     plan: PLAN,
-    facts: factsWith({ version: '0.5.2', files: 11, commit: 'bbbb' }),
+    facts: factsWith({ version: '1.2.3', files: 11, commit: 'bbbb' }),
     source: 'S',
     materials: MATERIALS,
     excerpts: [],
   })
   assert.notEqual(b1, b2)
-  assert.ok(b2.includes('版本：0.5.2') && b2.includes('完整树文件数：11'))
+  assert.ok(b2.includes('版本：1.2.3') && b2.includes('完整树文件数：11'))
   // 负对照：同一份事实两次 -> 相同（差异不是随便来的）
   assert.equal(
     b1,
-    contextOf({ page, plan: PLAN, facts: factsWith({ version: '0.5.1', files: 10, commit: 'aaaa' }), source: 'S', materials: MATERIALS, excerpts: [] }),
+    contextOf({ page, plan: PLAN, facts: factsWith({ version: '1.2.3', files: 10, commit: 'aaaa' }), source: 'S', materials: MATERIALS, excerpts: [] }),
   )
   console.log('③ 读数：B 区随提交变化 · 同提交两次相同')
 })
 
 test('④ 换主题：A 区变（视觉语言），B 区不变（内容与事实不随主题变）', () => {
   const page = pageOf(PLAN, 'start')
-  const facts = factsWith({ version: '0.5.1', files: 10, commit: 'aaaa' })
+  const facts = factsWith({ version: '1.2.3', files: 10, commit: 'aaaa' })
   const args = { page, plan: PLAN, facts, source: 'S', materials: MATERIALS, excerpts: [] }
   const carbon = themeOf('carbon')
   assert.ok(carbon !== null)
@@ -127,7 +127,7 @@ test('④ 换主题：A 区变（视觉语言），B 区不变（内容与事实
 
 test('⑤ 取证那一步：B 区给完整树索引与来源，并只要一份 JSON 清单', () => {
   const page = pageOf(PLAN, 'start')
-  const facts = factsWith({ version: '0.5.1', files: 10, commit: 'aaaa' })
+  const facts = factsWith({ version: '1.2.3', files: 10, commit: 'aaaa' })
   const B = evidenceContextOf({ page, plan: PLAN, facts, source: '# 读我\n' })
   assert.ok(B.includes('src/a.ts'), '索引里有真路径')
   assert.ok(B.includes('最多 12 条'), '上界写进话里')
@@ -137,7 +137,7 @@ test('⑤ 取证那一步：B 区给完整树索引与来源，并只要一份 J
 
 test('⑥ `docs prompt` 打出来的那一份：三段齐全，且如实说明摘录那一栏为什么是空的', () => {
   const page = pageOf(PLAN, 'start')
-  const facts = factsWith({ version: '0.5.1', files: 10, commit: 'aaaa' })
+  const facts = factsWith({ version: '1.2.3', files: 10, commit: 'aaaa' })
   const text = promptTextOf({ page, plan: PLAN, facts, source: '# 读我\n', theme: primer, materials: MATERIALS })
   for (const want of ['# A 区', '# B 区', '# C 区', CONTENT_TASK, '这一条命令不调模型']) {
     assert.ok(text.includes(want), `缺：${want}`)

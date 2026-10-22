@@ -97,7 +97,7 @@ async function repo(o: { version?: string } = {}): Promise<{ root: string; commi
   const commit = await commitFiles(
     root,
     {
-      'package.json': JSON.stringify({ name: 'demo', version: o.version ?? '0.5.2' }),
+      'package.json': JSON.stringify({ name: 'demo', version: o.version ?? '1.2.3' }),
       'README.md': '# demo\n\n第一版说明。\n',
       'design/A.md': '# 架构\n\n边界。\n',
       'src/a.ts': 'export const a = 1\n',
@@ -116,7 +116,7 @@ test('① 一次生成：两页正文 · 首页 · 清单（提交 · 版本 · 
   const out = await buildDocs({ root, config: configWith(), truth, caller, materials: { kind: 'manual', note: '测试：按提交重建' }, now })
   assert.ok(out.ok, JSON.stringify(out))
   assert.equal(out.commit, String(commit))
-  assert.equal(out.version, '0.5.2')
+  assert.equal(out.version, '1.2.3')
   assert.equal(out.usage.calls, 4, '两页 × 两趟')
   assert.equal(out.usage.inputTokens, 220)
 
@@ -138,7 +138,7 @@ test('① 一次生成：两页正文 · 首页 · 清单（提交 · 版本 · 
   const page = readFileSync(join(docs, 'start.html'), 'utf8')
   assert.ok(page.includes(`<code>${String(commit)}</code>`))
   assert.ok(page.includes(manifest.fingerprint))
-  assert.ok(page.includes('v0.5.2'))
+  assert.ok(page.includes('v1.2.3'))
   assert.equal(calls.filter((c) => c.kind === 'content').length, 2)
   console.log(`① 读数：${manifest.pages.length} 页 · ${calls.length} 次调用 · ${out.usage.inputTokens} 入 / ${out.usage.outputTokens} 出 · 指纹 ${manifest.fingerprint.slice(0, 20)}…`)
 })
@@ -171,7 +171,7 @@ test('③ 指纹：换定义（prompt）或换提交都会过期；换主题也�
   const byTheme = await buildDocs({ root, config: configWith(), theme: 'govuk', truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
   assert.ok(byTheme.ok)
   assert.notEqual(byTheme.fingerprint, base.fingerprint, '主题进指纹')
-  const c2 = await commitFiles(root, { 'package.json': JSON.stringify({ name: 'demo', version: '0.5.3' }), 'README.md': '# demo\n\n第二版。\n', 'design/A.md': '# 架构\n\n边界。\n' }, [commit as never], 'refs/heads/main')
+  const c2 = await commitFiles(root, { 'package.json': JSON.stringify({ name: 'demo', version: '1.2.4' }), 'README.md': '# demo\n\n第二版。\n', 'design/A.md': '# 架构\n\n边界。\n' }, [commit as never], 'refs/heads/main')
   const byCommit = await buildDocs({ root, config: configWith(), truth, caller: fakeCaller().caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
   assert.ok(byCommit.ok)
   assert.notEqual(byCommit.fingerprint, base.fingerprint, '提交进指纹')

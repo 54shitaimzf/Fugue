@@ -54,6 +54,8 @@ import { makeDumpCall, wireInTransport, targetAt } from '../../model/http.ts'
 import { authWith } from '../../model/contract.ts'
 import type { ModelDecl } from '../../model/contract.ts'
 import { modelDeclOf, readCatalog } from '../../model/catalog.ts'
+import { docsAtClose } from '../docs-at-close.ts'
+import type { DocsClose } from '../docs-at-close.ts'
 import type { Catalog } from '../../model/catalog.ts'
 import { wireHeader } from '../../model/wire/headers.ts'
 import type { ToolEntry } from '../../tools/catalog.ts'
@@ -546,7 +548,18 @@ export async function roundRun(
     // 那一趟刚落的账就是这一份日志：**读一遍，折四遍**（`runFoldsOf` 那一处收着这四份的口径）。
     const { report, attribution, metrics } = await runFoldsOf({ log: ctx.log, round, cat, wantMetrics: flags.has('metrics') })
 
-    return emitRunFace({ json, flags, run: started, stops, deniedAction, report, attribution: [...attribution], metrics })
+    // 收口那一格：**文档不是轮次的一部分**——它的失败只落在自己的结果里（交接单 § 3.5），
+    // 轮次的退出码照旧按验收。打桩与回放两档不生成（见 `docs-at-close.ts`）。
+    const docs = await docsAtClose({
+      root,
+      config: doc,
+      flags,
+      round,
+      run: started,
+      live,
+      replay: wireIn !== undefined,
+    })
+    return emitRunFace({ json, flags, run: started, stops, deniedAction, report, attribution: [...attribution], metrics, docs })
   } catch (err) {
     if (err instanceof RoundRunError) return fail(`${err.at}：${err.message}`, json)
     if (err instanceof RoundStartError) return fail(err.message, json)
@@ -612,8 +625,10 @@ function emitRunFace(o: {
   readonly report: Awaited<ReturnType<typeof reportOf>>
   readonly attribution: readonly string[]
   readonly metrics: Awaited<ReturnType<typeof metricsOf>> | null
+  /** 收口处生成文档的结果；`null` = 这个工作区没配文档（机器面因此一个字节都不多）。 */
+  readonly docs: DocsClose | null
 }): number {
-  const { json, flags, run, stops, deniedAction, report, attribution, metrics } = o
+  const { json, flags, run, stops, deniedAction, report, attribution, metrics, docs } = o
   if (json) {
     emitJson({
       round: run.round,
@@ -640,6 +655,9 @@ function emitRunFace(o: {
       attribution: [...attribution],
       // 逐趟账：`--json` 与文字那一档给的是同一件事（同一个数组的两档渲染）。
       callLines: [...report.callLines],
+      // 收口处的文档结果：**只在配了 docs 时出现**——没配文档的轮次这一栏不存在，
+      // 所以那些轮次的字节一个都不动。
+      ...(docs === null ? {} : { docs: docs.value }),
     })
   } else {
     emitLine(`${run.round}\t${run.base}\t${stateFaceOf(run.state)}`)
@@ -668,6 +686,7 @@ function emitRunFace(o: {
       emitLine(METRICS_HEAD)
       for (const m of metrics) emitLine(`  ${lineOf(m)}`)
     }
+    for (const l of docs?.lines ?? []) emitLine(l)
     if (!run.report.ok) {
       for (const r of run.report.results.filter((x) => x.verdict !== 'pass')) {
         process.stderr.write(`${r.verdict}\t${r.assertion}\t${r.note}\n`)
@@ -1344,7 +1363,16 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
         `接着跑：${run.reused.length} 格已经交过卷（分支不是底了），取回它们的提交复用——没重跑：${run.reused.join(' · ')}\n`,
       )
     }
-    return emitRunFace({ json, flags, run, stops, deniedAction: null, report, attribution: [...attribution], metrics })
+    const docs = await docsAtClose({
+      root,
+      config: doc,
+      flags,
+      round,
+      run,
+      live: wire.live,
+      replay: wire.wireIn !== undefined,
+    })
+    return emitRunFace({ json, flags, run, stops, deniedAction: null, report, attribution: [...attribution], metrics, docs })
   } catch (err) {
     if (err instanceof RoundWorkError) return fail(err.message, json)
     if (err instanceof RoundRunError) return fail(`${err.at}：${err.message}`, json)
