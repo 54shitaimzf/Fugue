@@ -1,11 +1,13 @@
 // 写作输入：**模型在生成时看得见的东西**（交接单 § 1.2 的"写作上下文"· § 2.5）。
 //
-// 三段与三区一一对应，每一段为什么住那一区都说得出：
+// 三区与三段一一对应，**区的分界是装配的结论**：
 //
-//   · **A 区 = 公共写作合同 + 主题规则 + 语法**。它对同一套主题下的所有页面**逐字节相同**，
-//     所以它是可缓存的那一段；它也必须是公共层给的——模型不能靠生成内容自授新的能力。
-//   · **B 区 = 这一页的定义 · 来源 · 事实 · 摘录 · 本轮变化与会话**。逐页不同，事实跟着提交走。
-//   · **C 区 = 这一次要它做的事**（那一句话）：只写正文、只输出 markdown。
+//   · **A 区 = 这一批的公共事实**（提交 C 的版本、文件数、顶层目录与完整树索引）。它对这一批的
+//     **所有调用逐字节相同**——取证两趟与写作那一趟发的是同一份字节，缓存前缀就落在这里。
+//     它原先住在 B 区，于是每页每趟各贴一遍索引（约 19k 字符），一趟都命中不了。
+//   · **B 区 = 这一趟的合同 + 这一页的材料**：写作那一趟是写作合同 + 视觉语言 + 定义 + 同批 +
+//     来源 + 摘录 + 本轮变化；取证两趟各是取证合同 + 这一页（与来源 / 摘录预览）。
+//   · **C 区 = 这一次要它做的事**（那一句话）。
 //
 // **取证是两趟**：第一趟只要一份"要读哪几份文件"的清单；第二趟只问"被截断的那几份要后面哪
 // 几行"。写作那一趟拿到的摘录因此是"开头一段 + 补读的行段"，并且逐段标出行号范围——于是
@@ -37,7 +39,7 @@ export const RANGE_PREVIEW = 3_000
 export const SESSION_LIMIT = 12_000
 
 /**
- * 公共写作合同（A 区前半）。**它只在两个地方出现：这里与测试的期望值**——不抄进主题，
+ * 公共写作合同（B 区开头）。**它只在两个地方出现：这里与测试的期望值**——不抄进主题，
  * 也不抄进每一页的定义。
  *
  * 语法的每一行都由渲染器兑现（`markdown.ts`）：写了不认的语法会被转义成字面文本，而
@@ -83,7 +85,7 @@ export const WRITING_CONTRACT = `你在给一个项目的文档写**一页正文
 - 按这一页的 reader 与 role 组织：先解决读者的问题，再决定顺序、层次、例子、图解与交互；交互要有具体标签，且每个交互都应帮助读者找到、理解、比较或使用内容。
 - 用中文写；术语沿用来源里的叫法；同一件事前后一个叫法。`
 
-/** 取证第一趟的合同（A 区，另一套——三趟的 A 各自稳定）。 */
+/** 取证第一趟的合同（B 区，另一套——每一趟各管一件事）。 */
 export const EVIDENCE_CONTRACT = `你在为一页项目文档**选修辞**：列出你需要读到原文的仓库文件，宿主会把它们贴到下一步。
 
 只输出一个 JSON 对象，形如 {"paths":["src/a.ts","test/a.test.ts"]}：
@@ -112,18 +114,9 @@ export const CONTENT_TASK = `现在写这一页的正文。按上面的定义、
  */
 export const CONTENT_MIN_CHARS = 400
 
-/** 一套主题 + 公共合同 = A 区（正文那一趟）。 */
-export function systemOf(theme: ThemeSpec): string {
+/** 写作那一趟 B 区的开头：写作合同 + 这一套主题的视觉语言（换主题只动这一段）。 */
+export function writingContractOf(theme: ThemeSpec): string {
   return `${WRITING_CONTRACT}\n\n这一批文档的视觉语言（${theme.name}，出自 ${theme.basis}）：\n${theme.guidance}\n`
-}
-
-/** A 区（取证那两趟）。 */
-export function evidenceSystemOf(): string {
-  return EVIDENCE_CONTRACT + '\n'
-}
-
-export function evidenceRangesSystemOf(): string {
-  return EVIDENCE_RANGES_CONTRACT + '\n'
 }
 
 /** 定义那一块：每份文档都有、人维护的那六栏（交接单 § 2.3）。 */
@@ -145,10 +138,16 @@ function siblingsBlock(plan: DocsPlan, page: PageDef): string {
   return ['同批文档（跨页链接写这些文件名）：', ...others.map((p) => `- ${p.out} · ${p.title}（给 ${p.audience}）`)].join('\n')
 }
 
-/** 事实那一块：提交 C 的元数据（页面里的版本、提交、文件数与页脚都从这里来）。 */
-function factsBlock(facts: TreeFacts): string {
+/**
+ * A 区：这一批的公共事实。**只放所有调用都一样的字节**。
+ *
+ * 任何逐页的东西（id · 标题 · 来源）落进来，缓存前缀就散了——`prompt.test.ts` 的共享前缀
+ * 那一条会红。索引与事实原先住在 B 区：7 页 × 2 趟各贴一遍，一次都命中不了。
+ */
+export function sharedOf(facts: TreeFacts): string {
   const dirs = facts.topDirs.map((d) => `${d.name}（${d.files}）`).join(' · ')
   return [
+    '下面是这一批文档共用的提交事实与完整树索引；这一页要写的范围在后面的材料里。',
     `提交 C：${facts.commit}（短 ${facts.commitShort}）`,
     `版本：${facts.version ?? '（提交里没有可读的 package.json 版本号）'}`,
     `完整树文件数：${facts.files}`,
@@ -180,63 +179,27 @@ function materialsBlock(m: Materials): string {
   return lines.join('\n')
 }
 
-/** 取证第一趟的 B 区：定义 + 来源 + 索引。**不给事实之外的裁剪**：索引就是完整树的路径表。 */
-export function evidenceContextOf(o: {
-  readonly page: PageDef
-  readonly plan: DocsPlan
-  readonly facts: TreeFacts
-  readonly source: string
-}): string {
-  return [
-    definitionBlock(o.page),
-    '',
-    siblingsBlock(o.plan, o.page),
-    '',
-    factsBlock(o.facts),
-    '',
-    `本页来源 ${o.page.source} 的正文（原样，可能落后于代码）：`,
-    '-----',
-    o.source,
-    '-----',
-    '',
-    `请给出最多 ${EVIDENCE_MAX} 条要读的路径（JSON）。`,
-  ].join('\n')
-}
-
-/** 取证第二趟的 B 区：被截断的那几份的路径、总行数与开头一小段。 */
-export function evidenceRangesContextOf(o: { readonly page: PageDef; readonly excerpts: readonly Excerpt[] }): string {
-  const parts = [
-    `这一页：${o.page.id}（${o.page.title} · 给 ${o.page.audience}）`,
-    '',
-    `下面这几份文件太长，第一次只贴了开头。请按行段点名你要补读的部分（行号从 1 起；每份总共多少行已给出）。`,
-  ]
-  for (const x of o.excerpts) {
-    parts.push('', `### ${x.path}（共 ${x.lines} 行 · ${x.chars} 字符；下面只是开头）`, '```', x.text.slice(0, RANGE_PREVIEW), '```')
-  }
-  return parts.join('\n')
-}
-
 /** 一段行印成 `第 12–40 行`。 */
 function rangeText(r: FileRange): string {
   return r.from === r.to ? `第 ${r.from} 行` : `第 ${r.from}–${r.to} 行`
 }
 
-/** 第二趟的 B 区：定义 + 来源 + 事实 + 摘录（带行段）+ 本轮变化。 */
-export function contextOf(o: {
+/** 写作那一趟的 B 区：合同与视觉语言 + 定义 + 同批 + 来源 + 摘录 + 本轮变化。 */
+export function writingPageOf(o: {
   readonly page: PageDef
   readonly plan: DocsPlan
-  readonly facts: TreeFacts
+  readonly theme: ThemeSpec
   readonly source: string
   readonly materials: Materials
   readonly excerpts: readonly Excerpt[]
   readonly evidenceMissing?: readonly string[]
 }): string {
   const parts = [
+    writingContractOf(o.theme),
+    '',
     definitionBlock(o.page),
     '',
     siblingsBlock(o.plan, o.page),
-    '',
-    factsBlock(o.facts),
     '',
     `本页来源 ${o.page.source} 的正文（原样，可能落后于代码）：`,
     '-----',
@@ -258,11 +221,100 @@ export function contextOf(o: {
   return parts.join('\n')
 }
 
+/** 取证第一趟的 B 区：合同 + 定义 + 同批 + 来源（索引在 A 区）。 */
+export function evidencePageOf(o: { readonly page: PageDef; readonly plan: DocsPlan; readonly source: string }): string {
+  return [
+    EVIDENCE_CONTRACT,
+    '',
+    definitionBlock(o.page),
+    '',
+    siblingsBlock(o.plan, o.page),
+    '',
+    `本页来源 ${o.page.source} 的正文（原样，可能落后于代码）：`,
+    '-----',
+    o.source,
+    '-----',
+    '',
+    `请给出最多 ${EVIDENCE_MAX} 条要读的路径（JSON）。`,
+  ].join('\n')
+}
+
+/** 取证第二趟的 B 区：合同 + 被截断的那几份的路径、总行数与开头一小段。 */
+export function evidenceRangesPageOf(o: { readonly page: PageDef; readonly excerpts: readonly Excerpt[] }): string {
+  const parts = [
+    EVIDENCE_RANGES_CONTRACT,
+    '',
+    `这一页：${o.page.id}（${o.page.title} · 给 ${o.page.audience}）`,
+    '',
+    `下面这几份文件太长，第一次只贴了开头。请按行段点名你要补读的部分（行号从 1 起；每份总共多少行已给出）。`,
+  ]
+  for (const x of o.excerpts) {
+    parts.push('', `### ${x.path}（共 ${x.lines} 行 · ${x.chars} 字符；下面只是开头）`, '```', x.text.slice(0, RANGE_PREVIEW), '```')
+  }
+  return parts.join('\n')
+}
+
+/** 一次调用的三区。**`shared` 一定是同一个 `PromptChain` 给的那一份**（缓存前缀靠这一点）。 */
+export interface Assembled {
+  readonly shared: string
+  readonly page: string
+  readonly task: string
+}
+
+export interface WritingInput {
+  readonly page: PageDef
+  readonly plan: DocsPlan
+  readonly theme: ThemeSpec
+  readonly source: string
+  readonly materials: Materials
+  readonly excerpts: readonly Excerpt[]
+  readonly evidenceMissing?: readonly string[]
+}
+
+export interface EvidenceInput {
+  readonly page: PageDef
+  readonly plan: DocsPlan
+  readonly source: string
+}
+
+export interface RangesInput {
+  readonly page: PageDef
+  readonly excerpts: readonly Excerpt[]
+}
+
+/**
+ * 这一批的提示词链：**A 区装一次，所有调用共用这一份字节**。
+ *
+ * 新能力换的是链上的另一条路（取证怎么读 · 写作走几趟），不是再拼一遍 A 区——那正是缓存
+ * 前缀能不能命中的分界。
+ */
+export interface PromptChain {
+  /** A 区：这一批的公共事实（提交 C）。同一批里所有调用逐字节相同。 */
+  readonly shared: string
+  /** 写作那一趟。 */
+  writing(o: WritingInput): Assembled
+  /** 取证第一趟（要读哪几份文件）。 */
+  evidence(o: EvidenceInput): Assembled
+  /** 取证第二趟（被截断的那几份要后面哪几行）。 */
+  ranges(o: RangesInput): Assembled
+}
+
+/** 按这一批的事实装配提示词链。`shared` 只在这里算一次。 */
+export function chainOf(facts: TreeFacts): PromptChain {
+  const shared = sharedOf(facts)
+  return {
+    shared,
+    writing: (o) => ({ shared, page: writingPageOf(o), task: CONTENT_TASK }),
+    evidence: (o) => ({ shared, page: evidencePageOf(o), task: EVIDENCE_TASK }),
+    ranges: (o) => ({ shared, page: evidenceRangesPageOf(o), task: EVIDENCE_RANGES_TASK }),
+  }
+}
+
 /**
  * `fugue docs prompt <id>` 打出来的那一份：**定义、来源摘录、本次事实与输出约定**。
  *
  * 它不调模型、不写盘：把这次生成会交给模型的三段原样打出来，供人检查或交给别的模型
- * （交接单 § 2.3）。所以它必须与真生成那一趟同源——同一个 `systemOf` / `contextOf` / `task`。
+ * （交接单 § 2.3）。所以它必须与真生成那一趟同源——同一个 `chainOf` / 同一个任务常量。
  * 摘录那一栏在这里是空的：它要模型先点名，而这一条命令不调模型（话里说清楚）。
  */
 export function promptTextOf(o: {
@@ -273,14 +325,15 @@ export function promptTextOf(o: {
   readonly theme: ThemeSpec
   readonly materials: Materials
 }): string {
+  const words = chainOf(o.facts).writing({ ...o, excerpts: [] })
   return [
-    '# A 区 · 公共写作合同与视觉语言（同一主题下所有页面逐字节相同）',
-    systemOf(o.theme),
-    '# B 区 · 这一页的定义、来源与事实',
-    contextOf({ ...o, excerpts: [] }),
+    '# A 区 · 这一批的公共事实（同一批里所有调用逐字节相同；缓存前缀落在这里）',
+    words.shared,
+    '# B 区 · 这一趟的合同与这一页的定义、来源、材料',
+    words.page,
     '',
     '# C 区 · 这一次要做的事',
-    CONTENT_TASK,
+    words.task,
     '',
     '# 说明',
     '真生成时宿主会先用取证合同问一次"要读哪几份文件"，把那些文件在提交 C 里的原文补进 B 区（长的再问一次"要后面哪几行"），再走一次上面这三段。这一条命令不调模型，所以摘录那一栏是空的。',

@@ -42,6 +42,14 @@ export const RENDERER_VERSION = 4
 /** 清单的版本（清单自己换形状时加一，与渲染器版本分开）。 */
 export const MANIFEST_VERSION = 1
 
+/**
+ * 提示词布局的版本：**谁住哪一区 · 区的顺序 · 共享前缀的边界**变了就加一。
+ *
+ * 它进状态指纹：同样的提交与定义，装配换了一版，盘上那一批就是旧布局写出来的，提示词里的
+ * 材料与它不再对得上——`status` 要说得出来“过期”，而不是以为最新。
+ */
+export const PROMPT_VERSION = 1
+
 /** 指纹的前缀。**指纹里不带时间**：生成时间只进清单，页面只放内容与事实。 */
 export const FINGERPRINT_PREFIX = 'sha256:'
 
@@ -178,9 +186,9 @@ export interface Materials {
 
 /** 一次模型调用：三区文本进，一段文本与账出。**接缝在这里，真档与夹具档同形**。 */
 export interface DocCallRequest {
-  /** A 区：跨页稳定的那一段（公共写作合同 + 主题规则 + 语法）。 */
+  /** A 区：这一批的公共事实（提交 C 的事实与完整树索引）。**同一批里所有调用逐字节相同**——缓存前缀落在这里。 */
   readonly system: string
-  /** B 区：这一页的定义、来源、事实与摘录。 */
+  /** B 区：这一趟的合同与这一页的材料（写作：合同 + 主题 + 定义 + 来源 + 摘录；取证：另一套合同）。 */
   readonly context: string
   /** C 区：这一次要它做的事（那一句话）。 */
   readonly task: string
@@ -248,6 +256,8 @@ export interface Manifest {
   readonly theme: string
   readonly themeVersion: number
   readonly renderer: number
+  /** 提示词布局的版本（与渲染器分开：换的是模型看见的字节，不是 HTML）。 */
+  readonly prompt: number
   readonly model: string
   /** 实际采用的模型声明（指纹的原料；只加不改：`model` 那一栏照旧是 id）。 */
   readonly modelFacts: ModelFacts

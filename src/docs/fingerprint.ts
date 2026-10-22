@@ -12,7 +12,7 @@
 // **生成时间不进指纹**——它只进清单，否则同一份状态每次生成都是"过期"。
 import { createHash } from 'node:crypto'
 import type { DocsPlan, ModelFacts, SourceFact } from './contract.ts'
-import { FINGERPRINT_PREFIX, RENDERER_VERSION } from './contract.ts'
+import { FINGERPRINT_PREFIX, PROMPT_VERSION, RENDERER_VERSION } from './contract.ts'
 import type { ThemeSpec } from './theme.ts'
 
 /** 键序稳定的序列化（数组按原序——次序本身是定义的一部分：`docs.pages` 的先后就是导航的先后）。 */
@@ -55,6 +55,8 @@ export interface FingerprintInput {
   readonly theme: ThemeSpec
   /** 实际采用的模型声明（换模型或换思考档 = 过期）。 */
   readonly model: ModelFacts
+  /** 提示词布局的版本（缺省用 `PROMPT_VERSION`；显式给只给测试做负对照）。 */
+  readonly promptVersion?: number
 }
 
 /** 这一批的指纹：`sha256:` 加十六进制。 */
@@ -62,6 +64,8 @@ export function fingerprintOf(o: FingerprintInput): string {
   const body = stable({
     commit: o.commit,
     renderer: RENDERER_VERSION,
+    // **装配换了版也算过期**：提示词里的材料与盘上那一批不再对得上（计划 § 二）。
+    prompt: o.promptVersion ?? PROMPT_VERSION,
     theme: { id: o.theme.id, version: o.theme.version },
     model: o.model,
     // **定义里进页面与进请求的那几格都进指纹**：标题出现在页首与首页，单页预算影响截断与否。

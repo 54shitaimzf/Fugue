@@ -40,7 +40,7 @@ import type {
   RenderedPage,
   TreeFacts,
 } from './contract.ts'
-import { DocsError, MANIFEST_VERSION, RENDERER_VERSION, docsRootOf } from './contract.ts'
+import { DocsError, MANIFEST_VERSION, PROMPT_VERSION, RENDERER_VERSION, docsRootOf } from './contract.ts'
 import { excerptAt, sourceTextOf, treeFactsOf } from './facts.ts'
 import type { Excerpt } from './facts.ts'
 import { fingerprintOf, modelFactsOf } from './fingerprint.ts'
@@ -50,21 +50,14 @@ import type { MdHeading, MdResult } from './markdown.ts'
 import { HOST_IDS, renderIndexPage, renderPage } from './page.ts'
 import type { SiteInfo } from './page.ts'
 import {
-  CONTENT_TASK,
   EVIDENCE_MAX,
-  EVIDENCE_RANGES_TASK,
-  EVIDENCE_TASK,
   EXCERPT_BUDGET,
   EXCERPT_LIMIT,
   RANGE_MAX,
   RANGE_PREVIEW,
-  contextOf,
-  evidenceContextOf,
-  evidenceRangesContextOf,
-  evidenceRangesSystemOf,
-  evidenceSystemOf,
-  systemOf,
+  chainOf,
 } from './prompt.ts'
+import type { PromptChain } from './prompt.ts'
 import { digestOf, publishBatch, readManifest } from './publish.ts'
 import type { BatchFile } from './publish.ts'
 import { recoverPublish } from './publish.ts'
@@ -238,15 +231,17 @@ async function gatherEvidence(o: {
   readonly truth: Truth
   readonly commit: CommitId
   readonly caller: DocCaller
+  readonly prompt: PromptChain
 }): Promise<{ evidence: PageContent['evidence']; excerpts: Excerpt[]; note: string | null; usage: Usage | null; rangeUsage: Usage | null }> {
   const empty: PageContent['evidence'] = { mode: 'skipped', requested: [], found: [], missing: [], ranges: [] }
   let text: string
   let usage: Usage | null = null
   try {
+    const ask = o.prompt.evidence({ page: o.def, plan: o.plan, source: o.source })
     const call = await o.caller.call({
-      system: evidenceSystemOf(),
-      context: evidenceContextOf({ page: o.def, plan: o.plan, facts: o.facts, source: o.source }),
-      task: EVIDENCE_TASK,
+      system: ask.shared,
+      context: ask.page,
+      task: ask.task,
       maxTokens: 4096,
       thinking: 'low',
     })
@@ -288,10 +283,11 @@ async function gatherEvidence(o: {
   const cut = excerpts.filter((x) => x.truncated)
   if (cut.length > 0 && budget > 0) {
     try {
+      const ask = o.prompt.ranges({ page: o.def, excerpts: cut })
       const call = await o.caller.call({
-        system: evidenceRangesSystemOf(),
-        context: evidenceRangesContextOf({ page: o.def, excerpts: cut }),
-        task: EVIDENCE_RANGES_TASK,
+        system: ask.shared,
+        context: ask.page,
+        task: ask.task,
         maxTokens: 2048,
         thinking: 'low',
       })
@@ -402,6 +398,9 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
     const sources = new Map<string, string>()
     for (const p of plan.pages) sources.set(p.id, await sourceTextOf(deps.truth, commit, p.id, p.source))
 
+    // 提示词链：**A 区在这里装一次**，取证两趟与写作那一趟都发这一份字节。
+    const prompt = chainOf(facts)
+
     // 三 · 逐页取证 + 写作
     const prepared: Prepared[] = []
     const prev = deps.prev !== undefined ? deps.prev : await readManifest(deps.root).catch(() => null)
@@ -439,19 +438,20 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
               usage: null,
               rangeUsage: null,
             }
-          : await gatherEvidence({ def, plan, facts, source: sources.get(def.id)!, truth: deps.truth, commit, caller: deps.caller })
+          : await gatherEvidence({ def, plan, facts, source: sources.get(def.id)!, truth: deps.truth, commit, caller: deps.caller, prompt })
+      const words = prompt.writing({
+        page: def,
+        plan,
+        theme,
+        source: sources.get(def.id)!,
+        materials: deps.materials,
+        excerpts: ev.excerpts,
+        evidenceMissing: ev.evidence.missing,
+      })
       const call = await deps.caller.call({
-        system: systemOf(theme),
-        context: contextOf({
-          page: def,
-          plan,
-          facts,
-          source: sources.get(def.id)!,
-          materials: deps.materials,
-          excerpts: ev.excerpts,
-          evidenceMissing: ev.evidence.missing,
-        }),
-        task: CONTENT_TASK,
+        system: words.shared,
+        context: words.page,
+        task: words.task,
         ...(plan.maxTokens === undefined ? {} : { maxTokens: plan.maxTokens }),
       })
       const contentNotes = checkContent(def, call.text)
@@ -621,6 +621,7 @@ export async function buildDocs(deps: BuildDeps): Promise<BuildOutcome> {
       theme: theme.id,
       themeVersion: theme.version,
       renderer: RENDERER_VERSION,
+      prompt: PROMPT_VERSION,
       model: deps.caller.model,
       modelFacts: factsOfModel,
       materials: deps.materials,

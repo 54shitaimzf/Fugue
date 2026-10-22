@@ -42,7 +42,7 @@ function fake(): DocCaller {
     model: 'fake/model',
     wireModel: 'fake',
     async call(req) {
-      if (req.system.includes('只输出一个 JSON 对象')) return { text: '{"paths":[]}', usage: null }
+      if (req.context.includes('只输出一个 JSON 对象')) return { text: '{"paths":[]}', usage: null }
       return { text: BODY, usage: { inputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 5, reasoningTokens: null, model: null } }
     },
   }

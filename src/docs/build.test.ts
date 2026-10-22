@@ -11,9 +11,11 @@ import { commitFiles, tmpRepo } from '../../test/helpers/docs-repo.ts'
 import { openTruth } from '../truth/truth.ts'
 import { buildDocs } from './build.ts'
 import type { BuildOutcome, DocCaller, ModelFacts } from './contract.ts'
-import { DocsError, docsRootOf } from './contract.ts'
+import { DocsError, PROMPT_VERSION, docsRootOf } from './contract.ts'
 import { parseDocs } from './config.ts'
+import { fingerprintOf, modelFactsOf, shortFingerprint } from './fingerprint.ts'
 import { statusOf } from './status.ts'
+import { themeOf } from './theme.ts'
 import type { ConfigDoc } from '../config.ts'
 
 const PAGES = [
@@ -66,9 +68,10 @@ const FAKE_FACTS: ModelFacts = {
 }
 
 /** 假模型：按 `文档 id：<id>` 认出这一趟是哪一页；三趟用系统提示词区分。 */
-function fakeCaller(o: FakeOptions = {}): { caller: DocCaller; calls: { kind: 'evidence' | 'ranges' | 'content'; id: string }[]; contexts: string[] } {
+function fakeCaller(o: FakeOptions = {}): { caller: DocCaller; calls: { kind: 'evidence' | 'ranges' | 'content'; id: string }[]; contexts: string[]; bodies: { kind: string; id: string; system: string; context: string }[] } {
   const calls: { kind: 'evidence' | 'ranges' | 'content'; id: string }[] = []
   const contexts: string[] = []
+  const bodies: { kind: string; id: string; system: string; context: string }[] = []
   const caller: DocCaller = {
     model: 'fake/model',
     wireModel: 'fake',
@@ -76,8 +79,9 @@ function fakeCaller(o: FakeOptions = {}): { caller: DocCaller; calls: { kind: 'e
     facts: { ...FAKE_FACTS, ...o.facts },
     async call(req) {
       const id = /文档 id：([^\n]+)/.exec(req.context)?.[1]?.trim() ?? '?'
-      const kind = req.system.includes('只输出一个 JSON 对象') ? (req.system.includes('补读取证') ? 'ranges' : 'evidence') : 'content'
+      const kind = req.context.includes('只输出一个 JSON 对象') ? (req.context.includes('补读取证') ? 'ranges' : 'evidence') : 'content'
       calls.push({ kind, id })
+      bodies.push({ kind, id, system: req.system, context: req.context })
       if (kind === 'evidence') {
         if (o.failEvidence === true) throw new DocsError('model', '取证这一趟没成（夹具）')
         return {
@@ -96,7 +100,7 @@ function fakeCaller(o: FakeOptions = {}): { caller: DocCaller; calls: { kind: 'e
       }
     },
   }
-  return { caller, calls, contexts }
+  return { caller, calls, contexts, bodies }
 }
 
 const STATUS_MODEL: ModelFacts = { ...FAKE_FACTS }
@@ -135,7 +139,7 @@ test('① 一次生成：两页正文 · 首页 · 清单（提交 · 版本 · 
   const { root, commit, truth } = await repo()
   ctx.after(() => truth.close())
   const now = (): Date => new Date('2026-10-22T00:00:00.000Z')
-  const { caller, calls } = fakeCaller({ evidencePaths: ['README.md', 'src/a.ts', 'nope.ts'] })
+  const { caller, calls, bodies } = fakeCaller({ evidencePaths: ['README.md', 'src/a.ts', 'nope.ts'] })
   const out = await buildDocs({ root, config: configWith(), truth, caller, materials: { kind: 'manual', note: '测试：按提交重建' }, now })
   assert.ok(out.ok, JSON.stringify(out))
   assert.equal(out.commit, String(commit))
@@ -168,6 +172,12 @@ test('① 一次生成：两页正文 · 首页 · 清单（提交 · 版本 · 
   assert.ok(page.includes(manifest.fingerprint))
   assert.ok(page.includes('v1.2.3'))
   assert.equal(calls.filter((c) => c.kind === 'content').length, 2)
+  // **共享前缀**：四趟（每页取证 + 写作）发的是同一份 A 区字节；索引不再进 B 区。
+  const prefix = new Set(bodies.map((b) => b.system))
+  assert.equal(prefix.size, 1, `四趟应当共用一个 A 区，实际 ${prefix.size} 个`)
+  assert.ok([...prefix][0]!.includes('完整树路径索引'), '索引在 A 区')
+  assert.ok(bodies.every((b) => !b.context.includes('完整树路径索引')), 'B 区不再贴索引')
+  assert.equal(manifest.prompt, PROMPT_VERSION, '清单记着这一批用的提示词布局版本')
   const last = JSON.parse(readFileSync(join(root, '.fugue', 'docs-last.json'), 'utf8')) as { usage: { cacheReadTokens: number; cacheWriteTokens: number } }
   assert.equal(last.usage.cacheReadTokens, 80, '缓存读也要落到 last.json，下一次 `docs status` 才答得出“花了多少”')
   assert.equal(last.usage.cacheWriteTokens, 0, '写缓存那一栏照实记（没有断点时是 0）')
@@ -468,7 +478,7 @@ test('⑭ 旧地址跨三版仍到 C：改名一串都跟到终点；版本号�
     thinking: 'high',
     facts: FAKE_FACTS,
     async call(req) {
-      if (req.system.includes('只输出一个 JSON 对象')) return { text: '{"paths":[]}', usage: null }
+      if (req.context.includes('只输出一个 JSON 对象')) return { text: '{"paths":[]}', usage: null }
       const id = /文档 id：([^\n]+)/.exec(req.context)?.[1]?.trim()
       return { text: id === 'start' ? start : arch, usage: null }
     },
@@ -532,7 +542,7 @@ test('⑯ 合并与复活：合并的那一节接住旧版本号；判过“没�
     thinking: 'high',
     facts: FAKE_FACTS,
     async call(req) {
-      if (req.system.includes('只输出一个 JSON 对象')) return { text: '{"paths":[]}', usage: null }
+      if (req.context.includes('只输出一个 JSON 对象')) return { text: '{"paths":[]}', usage: null }
       const id = /文档 id：([^\n]+)/.exec(req.context)?.[1]?.trim()
       return { text: id === 'start' ? start : arch, usage: null }
     },
@@ -565,4 +575,44 @@ test('⑯ 合并与复活：合并的那一节接住旧版本号；判过“没�
   assert.equal(three[1]!.anchors['v1-2-3'], 'v123', '删过一次的地址在这一版重新出现时要接回来')
   assert.deepEqual(three[1]!.dropped, ['安装说明'], '上一版临时用的那个标题才是这一版被删的地址')
   console.log(`⑯ 读数：合并 v0-4-3→v044 · v0-2-1→v02x · 复活 v1-2-3→v123 · 上一版的标题转为 dropped`)
+})
+
+test('⑰ 旧布局判过期：清单没有 prompt 那一栏（提示词布局的上一版）→ 状态说过期，补上当前指纹又说最新', async (ctx) => {
+  const { root, truth, commit } = await repo()
+  ctx.after(() => truth.close())
+  const fixed = (): Date => new Date('2026-10-22T00:00:00.000Z')
+  const { caller } = fakeCaller()
+  const built = await buildDocs({ root, config: configWith(), truth, caller, materials: { kind: 'manual', note: 'n' }, now: fixed })
+  assert.ok(built.ok)
+  const fresh = await statusOf({ root, config: configWith(), truth, model: STATUS_MODEL })
+  assert.equal(fresh.artifact.state, 'current')
+
+  // 把清单折回上一版布局：没有 prompt 那一栏，指纹按 promptVersion 0 算。
+  const file = join(docsRootOf(root), 'manifest.json')
+  const manifest = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown> & {
+    pages: { id: string; source: string; sourceSha: string }[]
+    fingerprint: string
+  }
+  const plan = parseDocs(configWith())
+  assert.ok(plan !== null)
+  const theme = themeOf('primer')
+  assert.ok(theme !== null)
+  const old = fingerprintOf({
+    commit: String(commit),
+    plan,
+    sources: manifest.pages.map((p) => ({ id: p.id, source: p.source, sha: p.sourceSha })),
+    theme,
+    model: modelFactsOf(caller, plan.maxTokens),
+    promptVersion: 0,
+  })
+  assert.notEqual(old, manifest.fingerprint, '提示词版本一变，指纹就该变')
+  delete manifest.prompt
+  manifest.fingerprint = old
+  writeFileSync(file, JSON.stringify(manifest))
+
+  const stale = await statusOf({ root, config: configWith(), truth, model: STATUS_MODEL })
+  assert.equal(stale.artifact.state, 'stale', '旧布局写出来的那一批不是最新')
+  assert.equal(stale.artifact.fingerprint, old)
+  assert.equal(stale.artifact.now.fingerprint, fresh.artifact.now.fingerprint, '当前那一版没变')
+  console.log(`⑰ 读数：旧布局 ${shortFingerprint(old)} → stale；当前 ${shortFingerprint(fresh.artifact.now.fingerprint!)}`)
 })
