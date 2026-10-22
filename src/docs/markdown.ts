@@ -110,9 +110,17 @@ function isClose(line: string): boolean {
 function takeContainer(lines: readonly string[], at: number): { inner: string[]; next: number; closed: boolean } {
   let depth = 1
   let j = at + 1
+  // **围栏里的 `:::` 是内容，不是块的边界**（代码块里举一个块的写法，是最常见的说明方式）。
+  let inFence = false
   for (; j < lines.length; j++) {
-    if (containerOpen(lines[j]!) !== null) depth += 1
-    else if (isClose(lines[j]!)) {
+    const line = lines[j]!
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    if (containerOpen(line) !== null) depth += 1
+    else if (isClose(line)) {
       depth -= 1
       if (depth === 0) return { inner: lines.slice(at + 1, j), next: j + 1, closed: true }
     }
@@ -125,8 +133,14 @@ function takeContainer(lines: readonly string[], at: number): { inner: string[];
   // 那一段少一层框，换来的是后面每一节都还在。**只在"找不到收尾"这条退化路上生效**——
   // 正常闭合的块里放 `##` 不受影响。
   let end = lines.length
+  inFence = false
   for (let k = at + 1; k < lines.length; k++) {
-    if (/^##\s/.test(lines[k]!)) {
+    const line = lines[k]!
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (!inFence && /^##\s/.test(line)) {
       end = k
       break
     }
@@ -147,9 +161,19 @@ function inline(raw: string, ctx: Ctx, opts: RenderOptions): string {
       const src = m[2]!
       const hit = opts.resolve?.(src, 'image') ?? null
       if (hit === null) {
-        // 图片兑不掉（外链 · 提交里没有）：**印成链接**，读者仍知道图说的是什么。
-        out.push(`<a href="${escapeHtml(src)}" rel="noopener noreferrer">${escapeHtml(alt === '' ? src : alt)}</a>`)
-        ctx.notes.push(`图片不在提交里，已印成链接：${src}`)
+        // 图片兑不掉（外链 · 提交里没有）：**能外链的印成链接**，读者仍知道图说的是什么。
+        //
+        // **不算白名单的地址就只留文字**：这一段是正文里唯一一处把源串直接放进 `href` 的地方，
+        // `javascript:` 与 `data:text/html` 点一下就执行。链接那一路的白名单在 `build.ts`，
+        // 这一处自己也要有——兑不掉的图不值得换一个可执行地址。
+        const text = alt === '' ? src : alt
+        if (/^(https?:|mailto:)/i.test(src)) {
+          out.push(`<a href="${escapeHtml(src)}" rel="noopener noreferrer">${escapeHtml(text)}</a>`)
+          ctx.notes.push(`图片不在提交里，已印成链接：${src}`)
+        } else {
+          out.push(emphasis(text))
+          ctx.notes.push(`图片地址既不在提交里、也不是 http(s)/mailto，已印成纯文字：${src}`)
+        }
         ctx.links.push({ kind: 'dropped', href: src, text: alt })
       } else {
         if (hit.note !== undefined) ctx.notes.push(hit.note)
@@ -229,11 +253,30 @@ function tableAt(lines: readonly string[], at: number, ctx: Ctx, opts: RenderOpt
   // 判据是两行：表头里有 |，紧跟着的那一行是分隔行。少一样就不是表格（当段落读）。
   if (!head.includes('|')) return null
   if (!/^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(lines[at + 1] ?? '')) return null
+  // **`\|` 是表格里的一个竖线，不是列边界**（GFM 的写法；模型在单元格里写 `[all\|fast\|real]`
+  // 是常事）。按裸 `|` 切会把一行切成比表头多几格，多出来的格原先直接不渲染——正文静默丢一截。
   const cellsOf = (line: string): string[] => {
     let s = line.trim()
     if (s.startsWith('|')) s = s.slice(1)
-    if (s.endsWith('|')) s = s.slice(0, -1)
-    return s.split('|').map((c) => c.trim())
+    if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1)
+    const cells: string[] = []
+    let cur = ''
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i]!
+      if (ch === '\\' && s[i + 1] === '|') {
+        cur += '\\|'
+        i += 1
+        continue
+      }
+      if (ch === '|') {
+        cells.push(cur)
+        cur = ''
+        continue
+      }
+      cur += ch
+    }
+    cells.push(cur)
+    return cells.map((c) => c.trim().replace(/\\\|/g, '|'))
   }
   const headers = cellsOf(head)
   const rows: string[][] = []
@@ -244,13 +287,44 @@ function tableAt(lines: readonly string[], at: number, ctx: Ctx, opts: RenderOpt
     rows.push(cellsOf(line))
   }
   const th = headers.map((h) => `<th scope="col">${inline(h, ctx, opts)}</th>`).join('')
-  const body = rows
-    .map((r) => `<tr>${headers.map((_h, i) => `<td>${inline(r[i] ?? '', ctx, opts)}</td>`).join('')}</tr>`)
-    .join('\n')
+  // 行比表头多格时不丢字：前 n-1 格照放，多出来的并进末格，并记一条 note。
+  const rowOf = (r: string[]): string => {
+    if (r.length <= headers.length) return headers.map((_h, i) => `<td>${inline(r[i] ?? '', ctx, opts)}</td>`).join('')
+    ctx.notes.push(`表格有一行比表头多 ${r.length - headers.length} 格，多出来的文字并进了最后一格`)
+    const head = r.slice(0, Math.max(0, headers.length - 1))
+    const tail = r.slice(Math.max(0, headers.length - 1))
+    return [...head, tail.join(' | ')].map((c) => `<td>${inline(c, ctx, opts)}</td>`).join('')
+  }
+  const body = rows.map((r) => `<tr>${rowOf(r)}</tr>`).join('\n')
   return {
     html: `<div class="table-wrap"><table>\n<thead><tr>${th}</tr></thead>\n<tbody>\n${body}\n</tbody>\n</table></div>`,
     next: j,
   }
+}
+
+/**
+ * 一段围栏：`at` 指向开围栏那一行，返回 HTML 与下一行。
+ *
+ * **顶层的块与列表项里的块共用这一个**：围栏的收尾判据、语言类名与“没写收尾”的 note
+ * 只有一处，两种位置不会读出两种结果。
+ */
+function fenceAt(lines: readonly string[], at: number, ctx: Ctx): { html: string; next: number } {
+  const fence = /^\s*```\s*([\w-]*)\s*$/.exec(lines[at]!)
+  const lang = fence?.[1] ?? ''
+  // **按围栏自己的缩进去掉一层**：列表项里的代码块缩进属于容器，不属于命令原文。
+  const pad = indentOf(lines[at]!)
+  const body: string[] = []
+  let j = at + 1
+  for (; j < lines.length; j++) {
+    if (/^\s*```\s*$/.test(lines[j]!)) break
+    const line = lines[j]!
+    let cut = 0
+    while (cut < pad && line[cut] === ' ') cut += 1
+    body.push(line.slice(cut))
+  }
+  if (j >= lines.length) ctx.notes.push('代码围栏没有收尾：后面一直读到页末')
+  const cls = lang === '' ? '' : ` class="language-${escapeHtml(lang)}"`
+  return { html: `<pre><code${cls}>${escapeHtml(body.join('\n'))}</code></pre>`, next: j + 1 }
 }
 
 /** 列表：一层缩进嵌套；`steps` 里换一种包法（每项一个 `.step`）。 */
@@ -263,16 +337,25 @@ function listAt(
 ): { html: string; next: number } {
   const indent = indentOf(lines[at]!)
   const ordered = /^\s*\d+\.\s/.test(lines[at]!)
-  const items: { text: string[]; nested: string[] }[] = []
+  // 一项里可能混着文字与块（代码围栏）：文字攒一段一起做行内，块按块拼回原位。
+  const items: { parts: { html: boolean; s: string }[]; nested: string[] }[] = []
   let j = at
   while (j < lines.length) {
     const line = lines[j]!
     if (isBlank(line)) break
     const m = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(line)
     if (m === null) {
+      // **围栏是块，不是续行**：列表项里的代码块按块渲染。
+      // 原先当续行读，围栏标记会漏进正文（实测：`\`\`\`sh` 与反引号一起出现在句子里）。
+      if (items.length > 0 && indentOf(line) > indent && /^\s*```\s*[\w-]*\s*$/.test(line)) {
+        const f = fenceAt(lines, j, ctx)
+        items[items.length - 1]!.parts.push({ html: true, s: f.html })
+        j = f.next
+        continue
+      }
       // 续行：算上一条的一部分（列表项里的换行不是新段落）
       if (items.length > 0 && indentOf(line) >= indent) {
-        items[items.length - 1]!.text.push(line.trim())
+        items[items.length - 1]!.parts.push({ html: false, s: line.trim() })
         j += 1
         continue
       }
@@ -287,12 +370,26 @@ function listAt(
       continue
     }
     if (items.length > 0 && /^\s*\d+\.\s/.test(line) !== ordered) break
-    items.push({ text: [m[3]!], nested: [] })
+    items.push({ parts: [{ html: false, s: m[3]! }], nested: [] })
     j += 1
   }
   const lis = items
     .map((it) => {
-      const body = inline(it.text.join(' '), ctx, opts) + it.nested.join('')
+      const pieces: string[] = []
+      let text = ''
+      for (const part of it.parts) {
+        if (part.html) {
+          if (text !== '') {
+            pieces.push(inline(text, ctx, opts))
+            text = ''
+          }
+          pieces.push(part.s)
+        } else {
+          text = text === '' ? part.s : `${text} ${part.s}`
+        }
+      }
+      if (text !== '') pieces.push(inline(text, ctx, opts))
+      const body = pieces.join('') + it.nested.join('')
       return asSteps ? `<li class="step">${body}</li>` : `<li>${body}</li>`
     })
     .join('')
@@ -317,15 +414,28 @@ function splitTabs(inner: readonly string[]): { label: string; inner: string[] }
       continue
     }
     const body: string[] = []
+    let inFence = false
     i += 1
     while (i < inner.length) {
-      const next = containerOpen(inner[i]!)
+      const line = inner[i]!
+      if (/^\s*```/.test(line)) {
+        inFence = !inFence
+        body.push(line)
+        i += 1
+        continue
+      }
+      if (inFence) {
+        body.push(line)
+        i += 1
+        continue
+      }
+      const next = containerOpen(line)
       if (next !== null && next.kind === 'tab') break
-      if (isClose(inner[i]!)) {
+      if (isClose(line)) {
         i += 1
         break
       }
-      body.push(inner[i]!)
+      body.push(line)
       i += 1
     }
     out.push({ label: open.arg, inner: body })
@@ -417,19 +527,10 @@ function renderBlocks(lines: readonly string[], ctx: Ctx, opts: RenderOptions, g
       continue
     }
     // 代码围栏
-    const fence = /^\s*```\s*([\w-]*)\s*$/.exec(line)
-    if (fence !== null) {
-      const lang = fence[1] ?? ''
-      const body: string[] = []
-      let j = i + 1
-      for (; j < lines.length; j++) {
-        if (/^\s*```\s*$/.test(lines[j]!)) break
-        body.push(lines[j]!)
-      }
-      if (j >= lines.length) ctx.notes.push('代码围栏没有收尾：后面一直读到页末')
-      const cls = lang === '' ? '' : ` class="language-${escapeHtml(lang)}"`
-      out.push(`<pre><code${cls}>${escapeHtml(body.join('\n'))}</code></pre>`)
-      i = j + 1
+    if (/^\s*```\s*([\w-]*)\s*$/.test(line)) {
+      const f = fenceAt(lines, i, ctx)
+      out.push(f.html)
+      i = f.next
       continue
     }
     // 块

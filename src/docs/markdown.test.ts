@@ -157,11 +157,47 @@ test('⑧ 标签的简写：每个 tab 不各写收尾也读得懂；后面每�
   console.log(`⑧ 读数：3 个面板 · 后续节在标签外 · note：${r.notes.join(' / ')}`)
 })
 
-test('⑨ 没写收尾的 details 不许把后面整页藏起来（退化档：收在下一个二级标题之前）', () => {
+test('⑨ 图片兜底：能外链的印成链接，`javascript:`/`data:` 只留文字（正文里唯一一处把源串放进 href 的地方）', () => {
+  const r = renderMarkdown('![说](javascript:alert%281%29) ![图](data:text/html;base64,PHg+) ![外](https://example.com/a.png)', {
+    resolve: () => null,
+  })
+  assert.ok(!r.html.includes('javascript:'), r.html)
+  assert.ok(!r.html.includes('data:text/html'), r.html)
+  assert.ok(r.html.includes('https://example.com/a.png'), 'http(s) 仍是链接')
+  assert.equal((r.html.match(/<a /g) ?? []).length, 1, '只有那一条外链成了 <a>')
+  assert.ok(r.html.includes('说') && r.html.includes('图'), '兑不掉的图仍留着说明文字')
+  assert.ok(r.notes.filter((n) => n.includes('已印成纯文字')).length === 2, r.notes.join(' | '))
+  console.log(`⑨ 读数：${r.notes.length} 条 note · javascript/data 未成 href · https 成链接`)
+})
+
+test('⑩ 表格：`\\|` 是一个竖线不是列边界；比表头多的格并进末格并记 note（原先静默丢字）', () => {
+  const r = renderMarkdown(['| 版本 | 说明 | 影响 |', '| --- | --- | --- |', '| 0.2.1 | `[all\\|fast\\|real]` 三档 | 无 |', '| 0.2.2 | 多一列 | 这里 | 还有这里 |'].join('\n'))
+  assert.ok(r.html.includes('all|fast|real'), r.html)
+  assert.ok(r.html.includes('<td>无</td>'), '第三列要在')
+  assert.ok(r.html.includes('还有这里'), '多出来的字不许丢')
+  assert.ok(r.notes.some((n) => n.includes('多 1 格')), r.notes.join(' | '))
+  console.log(`⑩ 读数：转义竖线成字 · 末列在 · note：${r.notes.join(' / ')}`)
+})
+
+test('⑪ 列表项里的围栏是块：命令原样、围栏标记不漏；容器里的围栏不被 `:::` 与 `##` 提前截断', () => {
+  const li = renderMarkdown(['1. 进项目、把工作记录挡在提交之外：', '   ```sh', '   echo .fugue/ >> .git/info/exclude', '   ```', '   没有输出就是对了。'].join('\n'))
+  assert.ok(li.html.includes('<pre><code class="language-sh">echo .fugue/ &gt;&gt; .git/info/exclude</code></pre>'), li.html)
+  assert.ok(!li.html.includes('```'), '围栏标记不该出现')
+  assert.ok(!li.html.includes('`'), '没有落单的反引号')
+  assert.ok(li.html.indexOf('没有输出') > li.html.indexOf('</code></pre>'), '围栏后面的文字在块之后')
+  const box = renderMarkdown(['::: note 说明', '```', '::: tip 这是代码', '## 不是标题', '```', ':::', '', '## 后面'].join('\n'))
+  assert.ok(box.html.includes('::: tip 这是代码'), '围栏里的块标记是内容')
+  assert.ok(!box.html.includes('不是标题</h2>'), '围栏里的 ## 不成标题')
+  assert.equal(box.notes.length, 0, `不该有 note：${box.notes.join(' | ')}`)
+  assert.ok(box.html.includes('id="后面"'), '块后面照常读')
+  console.log('⑪ 读数：列表内围栏成块 · 无反引号漏出 · 容器内围栏不截断 · 后面照常')
+})
+
+test('⑫ 没写收尾的 details 不许把后面整页藏起来（退化档：收在下一个二级标题之前）', () => {
   const r = renderMarkdown(['::: details 细节', '藏在里面', '', '## 后面', '', '正文还在。'].join('\n'))
   const d = r.html.slice(r.html.indexOf('<details>'), r.html.indexOf('</details>') + 10)
   assert.ok(d.includes('藏在里面'))
   assert.ok(!d.includes('正文还在。'), '后面的正文不许被吞进 details')
   assert.ok(r.html.includes('正文还在。'))
-  console.log(`⑨ 读数：details 只包住自己那一段 · note：${r.notes.join(' / ')}`)
+  console.log(`⑫ 读数：details 只包住自己那一段 · note：${r.notes.join(' / ')}`)
 })
