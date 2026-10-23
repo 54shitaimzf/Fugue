@@ -74,7 +74,7 @@ process.stdout.write=(s,encoding,cb)=>{const b=Buffer.isBuffer(s)?s.toString():s
 
 const wait=n=>new Promise(r=>setTimeout(r,n)),visible=()=>grid.map(r=>r.join('').trimEnd()).join('\n')
 const until=async(f,why)=>{for(let i=0;i<2000;i++){if(f())return;await wait(20)}assert.fail(why+'\n'+visible())}
-const events=()=>readFileSync(join(root,'.fugue/log/round.jsonl'),'utf8').trim().split('\n').map(s=>JSON.parse(s))
+const events=()=>{const t=readFileSync(join(root,'.fugue/log/round.jsonl'),'utf8'),cut=t.lastIndexOf('\n');return cut<0?[]:t.slice(0,cut).split('\n').filter(s=>s).map(s=>JSON.parse(s))}
 const count=t=>events().filter(e=>e.t===t).length
 let snapshots=[],idleSamples=[]
 const snap=async(name)=>{
