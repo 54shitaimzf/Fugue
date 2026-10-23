@@ -20,9 +20,9 @@
 //
 // 这三处都是**派生体，不是第二处真源**：清空随时安全，容量 0 就是直通（地板 = 变慢，不是
 // 跑不起来）。跨进程不共享、不落盘——「单次进程 + 每次重建」没有被破坏。
-import { GitError, openGit, type GitHandle, type ReadTier } from './git.ts'
+import { GitError, openGit } from './git.ts'
 import type { Conflict, ConflictStage, Truth } from './contract.ts'
-import type { DirEntry, EntryKind, EntryMeta, ObjectId, TreeEntry } from '../entries.ts'
+import type { DirEntry, EntryKind, EntryMeta, TreeEntry } from '../entries.ts'
 import type { BlobId, CommitId, RefName, RelPath, TreeId } from '../terms.ts'
 import { BlobLru } from './blob-lru.ts'
 

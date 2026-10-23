@@ -9,7 +9,7 @@
 //   · 别的一律交给调用方（`onError` 那一钩）：`LogHeldError` 那种命令面特有的失败**只在壳那
 //     一层认得**，值层不该 import 它。
 import { HostError } from '../roots/host.ts'
-import { LogCorruptError, logDir, openLog } from '../log/log.ts'
+import { LogCorruptError, logDir } from '../log/log.ts'
 import { LogHeldError } from '../log/hold.ts'
 import { readOnlyKeys, valueRunnerOf } from './registry.ts'
 import { bindReadBatch, verifyBatch } from '../cli/shared.ts'

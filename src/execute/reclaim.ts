@@ -41,7 +41,7 @@ import type { Delta } from '../delta.ts'
 import { WORKSPACE_STATE, statOrNull } from '../materialize/diffstat.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { DirEntry, EntryMeta } from '../entries.ts'
-import type { AbsPath, AgentId, CommitId, ForkStrategy, RelPath } from '../terms.ts'
+import type { AbsPath, AgentId, ForkStrategy, RelPath } from '../terms.ts'
 import { cacheLayoutOf } from '../roots/coords.ts'
 
 /**

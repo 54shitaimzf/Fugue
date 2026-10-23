@@ -1214,3 +1214,55 @@ test('命令面那一段链描述与缺省行为说的是同一件事：合并�
   assert.equal(flat.includes('报出即拒'), false, '链描述还在说合并前报出即拒')
   assert.equal(flat.includes('--strict-merge-gate'), true, '那一档里没写严档那个开关')
 })
+
+test('收口处的文档：打桩那一轮不生成也把话说完，轮次的读数与退出码一个字节不变', () => {
+  // **触发口径**（交接单 § 2.5）：一次成功归并的收口。这一趟走打桩档，所以收口那一格应当
+  // 明确说"不生成"（打桩不出网），而**轮次自己的两样读数照旧**：`verify.ok` · `advanced`，
+  // 退出码照旧按验收（0）。它量的是"文档不是轮次的一部分"这一句：文档那一格报 `ok:false`，
+  // 轮次仍是 0。
+  const root = tmpRoot()
+  const outside = tmpDir('fugue-chain-docs-src-')
+  const src = join(outside, 'README.md')
+  writeFileSync(src, '# demo\n\n这一份给文档用。\n')
+  assert.equal(fugue(root, 'write', 'README.md', '--from', src).code, 0)
+  assert.equal(fugue(root, 'commit', '-m', '底').code, 0)
+  const okAction = JSON.stringify({ argv: ['/bin/sh', '-c', 'true'], outputs: [] })
+  assert.equal(fugue(root, 'config', 'set', 'actions.ok', okAction).code, 0)
+  assert.equal(
+    fugue(root, 'config', 'set', 'round.assertions', JSON.stringify([{ name: '总是过', action: 'ok', argv: ['/bin/sh', '-c', 'true'] }])).code,
+    0,
+  )
+  assert.equal(
+    fugue(
+      root,
+      'config',
+      'set',
+      'round.split',
+      JSON.stringify([{ goal: '写一份 a.ts', ownedPaths: ['a.ts'], deliverables: [{ path: 'a.ts', form: '一份文件' }], assertions: [{ name: '总是过', action: 'ok' }] }]),
+    ).code,
+    0,
+  )
+  const docs = JSON.stringify([
+    { id: 'start', title: '开始', source: 'README.md', audience: '第一次用的人', role: '读懂这一版', prompt: '最短路径' },
+  ])
+  assert.equal(fugue(root, 'config', 'set', 'docs.pages', docs).code, 0)
+  assert.equal(fugue(root, 'config', 'set', 'docs.theme', 'primer').code, 0)
+
+  const human = fugue(root, 'round', 'run', '写一份 a.ts')
+  assert.equal(human.code, 0, `round run 退了 ${human.code}：${human.stderr}`)
+  assert.match(human.stdout, /文档：这一轮是打桩档（没接真模型），不生成；要生成用 fugue docs build/, human.stdout)
+
+  const r = fugue(root, '--json', 'round', 'run', '再写一份 a.ts')
+  // 同一个目标再跑会撞上已有分支头（既有口径允许，报出来照发）；跑成了才看那一栏。
+  if (r.code === 0) {
+    const j = JSON.parse(r.stdout) as { verify: { ok: boolean }; advanced: unknown; docs?: { ok: boolean; reason: string } }
+    assert.equal(j.verify.ok, true)
+    assert.notEqual(j.advanced, null)
+    assert.ok(j.docs !== undefined, '配了 docs 的轮次，机器面要有一栏')
+    assert.equal(j.docs?.ok, false, '打桩档不该真的生成')
+    assert.match(String(j.docs?.reason), /打桩/)
+    console.log(`收口读数：人面写了"不生成" · 机器面 docs.ok=${String(j.docs?.ok)} · 轮次退出码 ${r.code}`)
+  } else {
+    assert.match(r.stderr, /\S/)
+  }
+})

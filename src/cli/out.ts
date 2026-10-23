@@ -103,6 +103,19 @@ fugue 是住在终端里的编码 agent：给它一句目标，它自己拆活�
   assemble <protocol> [--agent <id>] [--against <protocol>]
                              把要发给模型的前缀拼出来核对（协议名 subagent 或 holder）：
                              三区哈希 · 每区字节数 · 四条约束
+  文档（把这一版代码写成可独立阅读的 HTML）
+  docs build [--at <提交>] [--theme <主题>] [--model <模型>] [--no-evidence]
+                             按配置里的 docs 定义，逐页由模型撰写、宿主渲染成 HTML：
+                             公共交互（目录 · 查找 · 复制 · 展开 · 标签）固定，视觉语言
+                             整套可换（primer · carbon · material3 · govuk）。
+                             产物在 .fugue/docs/，index.html 双击就能读，不用起服务。
+                             --at 按指定提交重建（今天的定义 + 那一版的代码）；
+                             --theme 只换呈现；--no-evidence 跳过"先读哪几份文件"那一趟
+  docs status                现有产物对应哪一版（未生成 / 最新 / 过期），以及最近一次
+                             生成成没成、差在哪
+  docs prompt <id>           打出这一份的实际写作输入：定义、来源、事实与输出约定；
+                             不调模型、不写盘，供人检查或交给别的模型
+
   环境与配置
   doctor                     环境自检：node · git · bwrap … 一项项报给你（只读；「缺」算
                              读数不算失败）

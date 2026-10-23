@@ -30,7 +30,7 @@ import { overDistillLimit } from '../runtime/budget.ts'
 import { digestOf } from '../runtime/restart.ts'
 import { holderPass } from './plan.ts'
 import type { HolderExit, PlanResult } from './plan.ts'
-import { landingOf, lastOf, roundFactsOf } from './versions.ts'
+import { landingOf, roundFactsOf } from './versions.ts'
 import type { DistillVersion, RoundFacts } from './versions.ts'
 import type { RoundState } from './machine.ts'
 

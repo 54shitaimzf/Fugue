@@ -63,6 +63,14 @@ export const FLAGS_OF: Readonly<Record<string, FlagTable>> = {
   run: { flags: ['root', 'agent', 'json', 'help', 'step', 'mode', 'no-clock'], note: PHRASES.noClockNote },
   policy: { flags: ['root', 'agent', 'json', 'help', 'mode'] },
   config: { flags: ['root', 'json', 'help', 'system'], note: 'config set --system 写系统那一级（~/.fugue）；不带它写工作区' },
+  // 文档这一族：`build` 收提交 · 主题 · 模型 · 凭据与"跳过取证"那一个开关；
+  // `status` 与 `prompt` 只读，别的一律不收（表外开关当场退 2）。
+  'docs build': {
+    flags: ['root', 'json', 'help', 'at', 'theme', 'model', 'credential', 'no-evidence'],
+    note: '--at <提交> 按指定提交重建；--theme 换一套视觉语言；--no-evidence 跳过取证那一趟',
+  },
+  'docs status': { flags: ['root', 'json', 'help'], note: 'status 只看，不生成：过期就说明差在哪' },
+  'docs prompt': { flags: ['root', 'json', 'help'], note: 'prompt 打出这一份的写作输入，不调模型' },
   doctor: { flags: ['root', 'json', 'help'] },
   // **`serve` 是入口，不是动词**（架构 § 9.11「表里两类行分得开」）：它说的是这份东西怎么跑，
   // 因此虽然在这张表里（命令面单一真源：速查表与它对账），**它不出方法名**。

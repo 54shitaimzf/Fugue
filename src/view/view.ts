@@ -28,7 +28,6 @@ import type {
   SnapEntry,
   UpperEntry,
   View,
-  ViewSnapshot,
   ViewState,
 } from './contract.ts'
 

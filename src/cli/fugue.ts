@@ -115,7 +115,9 @@ async function run(argv: readonly string[]): Promise<number> {
   // 表外的开关退 2——写错的开关被咽下去之后，人看到的是"命令跑了、什么都没变"，那与
   // "这个开关今天没用"是同一张脸。`round` 按子命令一张；表里没有的键（未知命令 · round
   // 的未知子命令）落到下面的分发去说它自己的话。
-  const flagKey = cmd === 'round' ? `round ${positional[1] ?? ''}` : cmd
+  // `round` 与 `docs` 都按子命令各一张表（子命令之间不共用开关）。
+  const flagKey =
+    cmd === 'round' ? `round ${positional[1] ?? ''}` : cmd === 'docs' ? `docs ${positional[1] ?? ''}` : cmd
   const { FLAGS_OF } = await load('flags')
   const table = FLAGS_OF[flagKey]
   if (table !== undefined) {
@@ -132,7 +134,22 @@ async function run(argv: readonly string[]): Promise<number> {
   //
   // 放在开关表检查**之后**：表外开关当场退 2 那条纪律（§ 9.8）对值层这一档同样成立，而它比
   // 值层更靠前——两条脸不该因为出口换了就少一道门。
-  const valueKey = cmd === 'round' ? `round ${positional[1] ?? ''}` : cmd === undefined ? '' : cmd
+  const valueKey =
+    cmd === 'round'
+      ? `round ${positional[1] ?? ''}`
+      : cmd === 'docs'
+        ? `docs ${positional[1] ?? ''}`
+        : cmd === undefined
+          ? ''
+          : cmd
+  // `docs` 后面没跟子命令、或跟了一个不认识的：在这里说清有哪三条（值层查不到 `docs ` 那个键，
+  // 落到下面会变成一句"未知命令：docs"，那对一条有子命令的命令族是错的指路）。
+  if (cmd === 'docs' && !['build', 'status', 'prompt'].includes(positional[1] ?? '')) {
+    return usageFail(
+      `docs 后面要跟一条子命令：build（生成）· status（状态）· prompt（一份的写作输入），拿到的是 ${positional[1] ?? '（没有）'}`,
+      json,
+    )
+  }
   if (valueKey !== '') {
     // 值层那一份要装：`migrated` 就是"这条命令迁过来了吗"，它只有从登记表里问得出来。**这一份
     // 因此每条真实命令都要装**（实测 123 份）——这是"一处真相"的价钱：名单只在

@@ -23,13 +23,13 @@
 import { join } from 'node:path'
 import { getConfig } from '../config.ts'
 import type { ConfigDoc } from '../config.ts'
-import { declaredDirs, readEnvSpec, type ActionBinding, type EnvSpec } from './binding.ts'
+import { declaredDirs, readEnvSpec } from './binding.ts'
 import { probeBwrap } from './confine.ts'
 import { cacheLayoutOf } from '../roots/coords.ts'
 import { probeLandlock } from './landlock.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { AbsPath, AgentId, Enforcement, NetMode, PolicyLayer, PolicyMode } from '../terms.ts'
-import { PolicyError, readReach, SANDBOX_COORDS, type Coords, type ReachSpec } from './reach.ts'
+import { PolicyError, readReach, SANDBOX_COORDS } from './reach.ts'
 
 export { PolicyError } from './reach.ts'
 

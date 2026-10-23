@@ -13,8 +13,6 @@
 import type { Log, LogReader } from '../log/events.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { View } from '../view/contract.ts'
-import { loadView } from '../view/view.ts'
-import { lowerFor } from '../view/lower.ts'
 import { createToolHost } from '../tools/host.ts'
 import type { CommandPlan } from '../tools/host.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
