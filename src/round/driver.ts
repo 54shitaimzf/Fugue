@@ -54,7 +54,7 @@ import { handoffAt, successorOf } from '../runtime/restart.ts'
 import { refFor } from '../identity.ts'
 import type { ModelDecl } from '../model/contract.ts'
 import type { ModelFace } from '../model/roles.ts'
-import { faceHandle } from '../model/roles.ts'
+import { hopFace } from '../model/roles.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 
 /**
@@ -820,29 +820,17 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
         failed = true
         break
       }
-      // **回退那一跳**（角色层站）：链还有剩就换脸重试——同一步再走一遍（各落各的 `llm/call`，
-      // 按模型分账因此天然成立），每一跳落 `model/fallback`。链走完了才真算断在半路。
-      let hopped = false
-      while (hopAt < fallbacks.length && !hopped) {
-        const face = fallbacks[hopAt] as ModelFace
-        hopAt += 1
-        const fromId = handle.model
-        let why: string
-        try {
-          handle = faceHandle(handle, face)
-          decl = face.decl
-          why = stopped
-          // **换脸即复位**：这一趟失败的话已经落进了那一跳的账里（`model/fallback.why`），
-          // 新脸有自己的 slate——它要是干完，停因就是「收敛」，不是上一张脸的死法。
-          stopped = '收敛'
-          hopped = true
-        } catch (err) {
-          // 那张脸拼都拼不起来（凭据没配那一类）：与跑成死同一档——落一跳账，换下一张。
-          why = `那张脸拼不起来：${(err as Error).message}`
-        }
-        await log.append(writer, { t: 'model/fallback', agent, from: fromId, to: face.decl.id, why })
+      // **回退那一跳**（角色层站）：闸已过（取消 · 已执行工具 · 额度），换脸重试同一步——
+      // 各落各的 `llm/call`，每一跳落 `model/fallback`（公共实现在 `roles.ts` 的 `hopFace`，
+      // 与持轮者循环同一段代码）。链走完了才真算断在半路。
+      const hop = await hopFace(handle, fallbacks, hopAt, stopped, log, writer, agent)
+      hopAt = hop.at
+      if (hop.hopped && hop.face !== null) {
+        handle = hop.handle
+        decl = hop.face.decl
+        stopped = '收敛' // 换脸即复位——为什么复位，见 hopFace 那一段
+        continue
       }
-      if (hopped) continue
       failed = true
       break
     }

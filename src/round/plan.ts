@@ -27,7 +27,7 @@ import type { AgentHandle, CallModel, ToolCallRequest, ToolExecutor, ToolResult 
 import { createRuntime } from '../runtime/step.ts'
 import type { ModelDecl } from '../model/contract.ts'
 import type { ModelFace } from '../model/roles.ts'
-import { faceHandle } from '../model/roles.ts'
+import { hopFace } from '../model/roles.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { MODEL_FACING_LANGUAGE_LINE, emptyState, sourcesFor, stepBudgetLine, stepsLeftTail } from '../assemble/sources.ts'
@@ -568,25 +568,15 @@ export async function holderPass(deps: {
       if (r.executed === true) break
       // **额度已尽也不再换脸**：那一趟失败就是这一趟的终态。
       if (deps.maxSteps !== undefined && steps >= deps.maxSteps) break
-      // **回退那一跳**（角色层站）：与子格循环同一套——换脸重试同一步，每一跳落 `model/fallback`。
-      let hopped = false
-      while (hopAt < fallbacks.length && !hopped) {
-        const one = fallbacks[hopAt] as ModelFace
-        hopAt += 1
-        const fromId = handle.model
-        let why: string
-        try {
-          handle = faceHandle(handle, one)
-          why = stopped
-          // **换脸即复位**：失败那句话已进那一跳的账（model/fallback.why），新脸有自己的 slate。
-          stopped = '收敛'
-          hopped = true
-        } catch (err) {
-          why = `那张脸拼不起来：${(err as Error).message}`
-        }
-        await deps.log.append('round' as WriterId, { t: 'model/fallback', agent: handle.agent, from: fromId, to: one.decl.id, why })
+      // **回退那一跳**（角色层站）：与子格循环同一段代码（`roles.ts` 的 `hopFace`）——换脸重试
+      // 同一步，每一跳落 `model/fallback`。
+      const hop = await hopFace(handle, fallbacks, hopAt, stopped, deps.log, 'round' as WriterId, handle.agent)
+      hopAt = hop.at
+      if (hop.hopped && hop.face !== null) {
+        handle = hop.handle
+        stopped = '收敛' // 换脸即复位——为什么复位，见 hopFace 那一段
+        continue
       }
-      if (hopped) continue
       // **失败也要走到判那一步**：它是"这一格停了"的一种，`gate.problems` 会说出草案缺什么。
       break
     }

@@ -21,7 +21,7 @@
 // 轮次的角色。工具面那一层只把问题**带出来**（`ask_user_question` 的回执里那一栏），不认识尺。
 import type { AssembleState } from '../assemble/sources.ts'
 import type { Contract } from '../contract/types.ts'
-import type { ModelCall, ModelEvent } from '../model/contract.ts'
+import type { ModelCall } from '../model/contract.ts'
 import type { Target } from '../model/http.ts'
 import { wireFactsOf } from '../model/http.ts'
 import type { ModelFace } from '../model/roles.ts'

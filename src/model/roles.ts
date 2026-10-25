@@ -27,6 +27,8 @@ import { modelDeclOf } from './catalog.ts'
 import type { Target } from './http.ts'
 import { targetAt } from './http.ts'
 import type { AgentHandle } from '../runtime/step.ts'
+import type { Log } from '../log/events.ts'
+import type { AgentId, WriterId } from '../terms.ts'
 
 /** 三个角色：持轮者（round plan/talk 那几趟）· 裁断（轮内收下问题那一次）· 子格（契约那一格）。 */
 export type RoleName = 'holder' | 'ruler' | 'cell'
@@ -112,5 +114,52 @@ export function faceHandle(h: AgentHandle, f: ModelFace): AgentHandle {
     adapter: { name: f.decl.wire },
     call: f.decl.call,
   }
+}
+
+/** `hopFace` 的出口：换上了哪张脸（`face: null` = 链走完或全都拼不起来）。 */
+export interface HopOutcome {
+  readonly hopped: boolean
+  readonly handle: AgentHandle
+  readonly face: ModelFace | null
+  /** 链走到哪了（下一次从这儿起）。 */
+  readonly at: number
+}
+
+/**
+ * **回退那一跳的公共实现**（子格 `driver.ts` 与持轮者 `plan.ts` 两个步循环共用；裁断那一格
+ * 是"一脸一判"的另一形状，不共用这一段）：按链序取下一张脸换上，拼不起来（凭据没配那一类）
+ * 换下一张；每一跳（含拼不起来的那一跳）落 `model/fallback`。
+ *
+ * **闸不在这一层**：取消 · 已执行工具 · 额度尽，都由调用方在进来之前判掉——这一层只管"换"
+ * 与"落账"。**换脸即复位**也归调用方：失败那句话已进那一跳的账（`model/fallback.why`），
+ * 新脸有自己的 slate——它要是干完，停因就是「收敛」，不是上一张脸的死法。
+ */
+export async function hopFace(
+  h: AgentHandle,
+  fallbacks: readonly ModelFace[],
+  at: number,
+  why: string,
+  log: Log,
+  writer: WriterId,
+  agent: AgentId,
+): Promise<HopOutcome> {
+  let handle = h
+  let cursor = at
+  while (cursor < fallbacks.length) {
+    const face = fallbacks[cursor] as ModelFace
+    cursor += 1
+    const fromId = handle.model
+    let hopWhy = why
+    let swapped = handle
+    try {
+      swapped = faceHandle(handle, face)
+    } catch (err) {
+      // 那张脸拼都拼不起来（凭据没配那一类）：与跑成死同一档——落一跳账，换下一张。
+      hopWhy = `那张脸拼不起来：${(err as Error).message}`
+    }
+    await log.append(writer, { t: 'model/fallback', agent, from: fromId, to: face.decl.id, why: hopWhy })
+    if (swapped !== handle) return { hopped: true, handle: swapped, face, at: cursor }
+  }
+  return { hopped: false, handle, face: null, at: cursor }
 }
 
