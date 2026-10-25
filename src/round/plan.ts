@@ -27,7 +27,7 @@ import type { AgentHandle, CallModel, ToolCallRequest, ToolExecutor, ToolResult 
 import { createRuntime } from '../runtime/step.ts'
 import type { ModelDecl } from '../model/contract.ts'
 import type { ModelFace } from '../model/roles.ts'
-import { faceHandle } from './driver.ts'
+import { faceHandle } from '../model/roles.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { MODEL_FACING_LANGUAGE_LINE, emptyState, sourcesFor, stepBudgetLine, stepsLeftTail } from '../assemble/sources.ts'

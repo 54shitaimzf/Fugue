@@ -8,7 +8,12 @@ import { UsageError } from '../value/types.ts'
 import type { Catalog, } from './catalog.ts'
 import type { ModelDecl } from './contract.ts'
 import { ModelDeclError } from './contract.ts'
-import { faceOf, roleChainOf } from './roles.ts'
+import { faceHandle, faceOf, roleChainOf } from './roles.ts'
+import type { ModelFace } from './roles.ts'
+import { HOLDER_PROTOCOL } from '../assemble/protocol.ts'
+import type { Target } from './http.ts'
+import type { AgentHandle } from '../runtime/step.ts'
+import { emptyState } from '../assemble/sources.ts'
 
 /** 一份两模型的测试目录（手拼，不走 `readCatalog`——载入核对要价目，这里的脸不谈钱）。 */
 const A: ModelDecl = {
@@ -31,10 +36,11 @@ const CAT: Catalog = {
 
 const doc = (o: Record<string, unknown>): ConfigDoc => o as ConfigDoc
 
-test('① 解析次序：角色键 > round.model（旗标那一档递进来的 base）> 目录第一条；角色间互不打扰', () => {
-  // 角色键盖过 base；没配的角色落到 base；base 也没有就目录第一条。
+test('① 解析次序：--model 旗标 > 角色键 > round.model（base）> 目录第一条；角色间互不打扰', () => {
+  // 旗标盖过角色键（一次性的那一趟就是"三个角色都换到 X"）；旗标不在，角色键才说了算。
   const d = doc({ round: { models: { holder: 'test/backup' }, model: 'test/primary' } })
-  assert.equal(roleChainOf(d, CAT, 'holder', 'test/primary')[0]?.id, 'test/backup', '角色键盖过 base')
+  assert.equal(roleChainOf(d, CAT, 'holder', 'test/primary', 'test/primary')[0]?.id, 'test/primary', '旗标盖过角色键')
+  assert.equal(roleChainOf(d, CAT, 'holder', 'test/primary')[0]?.id, 'test/backup', '旗标不在，角色键盖过 base')
   assert.equal(roleChainOf(d, CAT, 'cell', 'test/primary')[0]?.id, 'test/primary', '没配的角色用 base')
   assert.equal(roleChainOf(doc({}), CAT, 'ruler', undefined)[0]?.id, 'test/primary', 'base 也没有就目录第一条')
   // round.models 与 round.model 平级共存（round.model 仍是字符串，两种形状不打架）。
@@ -45,27 +51,43 @@ test('① 解析次序：角色键 > round.model（旗标那一档递进来的 b
   assert.throws(() => roleChainOf(doc({ round: { models: { cell: 'nope/x' } } }), CAT, 'cell', undefined), ModelDeclError)
 })
 
-test('② 回退链：缺省是空链（不换模型）· 全局一份按次序 · 主脸自己与重复当场拒', () => {
+test('② 回退链：缺省是空链（不换模型）· 全局一份按次序 · 主脸与重复按角色跳过（不拦开跑）', () => {
   const none = roleChainOf(doc({ round: { model: 'test/primary' } }), CAT, 'cell', undefined)
   assert.equal(none.length, 1, '没配 round.fallback 就是空链——缺省不换模型')
 
   const chain = roleChainOf(doc({ round: { model: 'test/primary', fallback: ['test/backup'] } }), CAT, 'cell', undefined)
   assert.deepEqual(chain.map((m) => m.id), ['test/primary', 'test/backup'], '主脸在前，链按次序跟在后面')
-  // 三个角色共用同一条链。
+  // 三个角色共用同一条链；链里有这一角色的主脸时跳过它——cell=A, ruler=B, fallback=[B] 该能开跑
+  // （base 是调用方解析完的缺省：`selectedModelId` 把 round.model 折进去了）。
+  const shared = doc({ round: { models: { ruler: 'test/backup' }, fallback: ['test/backup'] } })
   assert.deepEqual(
-    roleChainOf(doc({ round: { model: 'test/primary', fallback: ['test/backup'] } }), CAT, 'ruler', undefined).map((m) => m.id),
+    roleChainOf(shared, CAT, 'cell', 'test/primary').map((m) => m.id),
     ['test/primary', 'test/backup'],
+    '子格的链是 A→B（正当组合，不因裁断的主脸在链里而被拦）',
   )
-  // 形状不对 · 名字未知 · 重复/主脸自己——三档都当场拒，话里指得出是哪一条。
+  assert.deepEqual(
+    roleChainOf(shared, CAT, 'ruler', 'test/primary').map((m) => m.id),
+    ['test/backup'],
+    '全局链里就是这一角色的主脸：跳过，链里没有别人',
+  )
+  // 主脸自己与重复的名字跳过（一张脸在这一格里至多试一次），不是拒——拒会把别的角色的正当组合拦死。
+  assert.deepEqual(
+    roleChainOf(doc({ round: { fallback: ['test/primary'] } }), CAT, 'cell', undefined).map((m) => m.id),
+    ['test/primary'],
+    '主脸自己被跳过：链空了，与没配一样',
+  )
+  assert.deepEqual(
+    roleChainOf(doc({ round: { fallback: ['test/backup', 'test/backup', 'test/primary'] } }), CAT, 'cell', undefined).map((m) => m.id),
+    ['test/primary', 'test/backup'],
+    '重复与主脸都跳过，其余按次序去重',
+  )
+  // 形状不对 · 名字未知——仍然当场拒，话里指得出是哪一条。
   assert.throws(() => roleChainOf(doc({ round: { fallback: 'test/backup' } }), CAT, 'cell', undefined), /round.fallback 要是一份模型名字的表/)
   assert.throws(() => roleChainOf(doc({ round: { fallback: ['nope/x'] } }), CAT, 'cell', undefined), ModelDeclError)
-  assert.throws(() => roleChainOf(doc({ round: { fallback: ['test/primary'] } }), CAT, 'cell', undefined), /主脸自己|重复/)
-  assert.throws(() => roleChainOf(doc({ round: { fallback: ['test/backup', 'test/backup'] } }), CAT, 'cell', undefined), /重复/)
 })
 
 test('③ 脸是惰性的：凭据没配不在构造时报，在第一次 target() 那一跑才报；给了 credential 就用它', () => {
   const noCreds = faceOf(B, CAT, { doc: doc({}) })
-  assert.doesNotThrow(() => undefined, '构造一张脸不碰凭据')
   assert.throws(() => noCreds.target(), /凭据没有配|credentials/, '真要用这张脸才报得出凭据那一档')
   // 配了引用表（环境变量那一档）：设一个临时变量。
   process.env.FUGUE_ROLES_TEST_KEY = 'sk-test-value'
@@ -82,5 +104,34 @@ test('③ 脸是惰性的：凭据没配不在构造时报，在第一次 target
   const given = faceOf(A, CAT, { doc: doc({}), credential: '直接给的值' })
   assert.equal(given.target().headers['authorization'] ?? given.target().headers['Authorization'] ?? '（看下一条）', '（看下一条）')
   assert.ok(Object.values(given.target().headers).includes('直接给的值'), '凭据原样进了头')
-  console.log('①②③ 读数：次序 角色键>base>目录第一条 · 链缺省空 · 重复三档拒 · 脸惰性（凭据那一跑才取）')
+  console.log('①②③ 读数：次序 旗标>角色键>base>目录第一条 · 链缺省空 · 主脸与重复跳过 · 脸惰性（凭据那一跑才取）')
+})
+
+test('④ 换脸不换角色：faceHandle 只动模型那几栏，protocol（角色）与 state 原样', () => {
+  // 持轮者的句柄：HOLDER_PROTOCOL 是它角色的那一份（工具派发按 `h.protocol === HOLDER_PROTOCOL`
+  // 认持轮者——`exit_plan_mode` 交卷靠它）。回退脸的声明 protocol 是 'subagent'：换模型不许把
+  // 角色也换了。
+  const fakeTarget = { host: 'https://test.invalid', path: '/x', headers: {}, from: 'test', wire: { name: 'openai-chat' } } as Target
+  const face: ModelFace = { decl: B, target: () => fakeTarget }
+  const h: AgentHandle = {
+    agent: 'round' as AgentHandle['agent'],
+    coord: null,
+    branch: 'refs/heads/main' as AgentHandle['branch'],
+    contract: '' as AgentHandle['contract'],
+    protocol: HOLDER_PROTOCOL,
+    model: A.id,
+    wireModel: A.model,
+    target: fakeTarget,
+    adapter: { name: A.wire },
+    call: A.call,
+    state: emptyState(),
+  }
+  const out = faceHandle(h, face)
+  assert.equal(out.protocol, HOLDER_PROTOCOL, '角色协议原样——换模型不换角色（exit_plan_mode 的派发闸读它）')
+  assert.equal(out.model, B.id, '我们这边的键跟着换')
+  assert.equal(out.wireModel, B.model, '提供方那边的名字跟着换')
+  assert.equal(out.adapter.name, B.wire, '线协议跟着换')
+  assert.equal(out.call, B.call, '调用配置跟着换（声明里那一档）')
+  assert.equal(out.target, fakeTarget, '目标换成新脸的那一个')
+  assert.equal(out.state, h.state, '状态与坐标不动：换脸不改这一格走到哪儿了')
 })

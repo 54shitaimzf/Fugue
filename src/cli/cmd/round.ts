@@ -809,11 +809,12 @@ async function holderWiringOf(o: {
       return got.ok ? { ok: true as const, value: got.value } : { ok: false as const, error: got.error }
     },
   })
-  // **模型按这一趟的选择来**（`--model` 旗标 > `round.model` 配置 > 缺省那条，`shared.ts` 一处）；
-  // 角色那一层（角色层站）盖在最上面：`round.models.holder` 只换持轮者，回退链 `round.fallback`
-  // 跟在主脸后面（缺省空链——不换模型）。主脸的凭据按从前的口径 eager 拼好（`credentialFor`），
-  // 回退脸惰性：同一家提供方共用主脸那份凭据（`--credential` 那一份），别家的按它自己的引用表取。
-  const holderChain = roleChainOf(o.doc, o.cat, 'holder', selectedModelId(o.wire.model, o.doc))
+  // **模型按这一趟的选择来**（`--model` 旗标 > 角色键 > `round.model` 配置 > 缺省那条——旗标最高
+  // 是"一次性的那一趟把三个角色都换到 X"的语义）；回退链 `round.fallback` 全局一份跟在主脸后面
+  // （缺省空链——不换模型；链里主脸自己与重复的名字按角色跳过）。主脸的凭据按从前的口径 eager
+  // 拼好（`credentialFor`），回退脸惰性：同一家提供方共用主脸那份凭据（`--credential` 那一份），
+  // 别家的按它自己的引用表取。
+  const holderChain = roleChainOf(o.doc, o.cat, 'holder', selectedModelId(o.wire.model, o.doc), o.wire.model)
   const decl = holderChain[0] as ModelDecl
   const holderGive = (d: ModelDecl): { readonly doc: ConfigDoc; readonly credential?: string } =>
     d.provider === decl.provider || o.judge || o.wire.wireIn !== undefined
@@ -1856,12 +1857,13 @@ export function driverSupport(o: {
    */
   readonly maxSteps?: number
 }): DriverSupport {
-  // **角色那一层**（角色层站）：子格与裁断各配各的脸（`round.models.cell|ruler` > `--model`/`round.model`
-  // > 目录第一条），回退链 `round.fallback` 全局一份跟在主脸后面。主脸凭据 eager（与从前逐字节
-  // 相同），回退脸惰性：同一家提供方共用主脸那份（`--credential` 的值），别家的按它自己的引用表取。
+  // **角色那一层**（角色层站）：子格与裁断各配各的脸（`--model` > `round.models.cell|ruler` >
+  // `round.model` > 目录第一条——旗标盖过角色键），回退链 `round.fallback` 全局一份跟在主脸后面
+  // （主脸自己与重复的名字按角色跳过）。主脸凭据 eager（与从前逐字节相同），回退脸惰性：同一家
+  // 提供方共用主脸那份（`--credential` 的值），别家的按它自己的引用表取。
   const base = selectedModelId(o.model, o.doc)
-  const cellChain = roleChainOf(o.doc, o.cat, 'cell', base)
-  const rulerChain = roleChainOf(o.doc, o.cat, 'ruler', base)
+  const cellChain = roleChainOf(o.doc, o.cat, 'cell', base, o.model)
+  const rulerChain = roleChainOf(o.doc, o.cat, 'ruler', base, o.model)
   const decl = cellChain[0] as ModelDecl
   const tools = publishedCatalog()
   const states = new Map<string, AssembleState>()
