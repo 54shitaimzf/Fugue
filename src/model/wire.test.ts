@@ -624,3 +624,50 @@ test('⑧ 上游那两档"没走完"记成 `incomplete`（不是当场抛）：�
       `anthropic pause_turn → ${String(pCall.stop)}（${String(pCall.rawStop)}）`,
   )
 })
+
+test('⑨ openai 名字后到的那一片也要发 tool-start（不发的话 checkEvents 把整趟判死）', async () => {
+  // 有些兼容实现把 `function.name` 放在**第二片**里（第一片只有 id 与一段参数）。
+  // 帧形照夹具那一套，正文用 JSON.stringify 现拼——参数值里带引号，手抄转义会数错。
+  const frame = (o: unknown): string => `data: ${JSON.stringify(o)}`
+  const chunk = (delta: unknown, finish: string | null = null): unknown => ({
+    id: 'chatcmpl-late-01',
+    object: 'chat.completion.chunk',
+    created: 1730000000,
+    model: 'deepseek-flash',
+    choices: [{ index: 0, delta, finish_reason: finish }],
+  })
+  const lateName = [
+    frame(chunk({ tool_calls: [{ index: 0, id: 'call_late_01', function: { arguments: '{"command":"ls"' } }] })),
+    '',
+    frame(chunk({ tool_calls: [{ index: 0, function: { name: 'bash', arguments: '' } }] })),
+    '',
+    frame(chunk({}, 'tool_calls')),
+    '',
+    'data: [DONE]',
+    '',
+  ].join('\n')
+  const o = openaiWireOf()
+  const events = await eventsOf(lateName, o, 1)
+  // 红断言：tool-start 必须在（名字到了就发——不管它到在哪一片）；它缺席的话 `tool-delta`
+  // 落在一个没开过的 index 上，`checkEvents` 把**整趟调用**判成坏账（cut-stream）。
+  const start = events.find((e) => e.t === 'tool-start')
+  assert.notEqual(start, undefined, '名字后到的那一片也该发出 tool-start')
+  const call = checkEvents(events)
+  assert.equal(call.toolCalls.length, 1, '那一条调用要拼得出来')
+  assert.equal(call.toolCalls[0]?.name, 'bash', '名字是后到那一片里的 bash')
+  assert.equal(call.toolCalls[0]?.arguments, '{"command":"ls"', '参数两片拼齐')
+  // 负对照：名字先到的那一版（夹具形状）照旧——tool-start 恰一条，不多发。
+  const early = [
+    frame(chunk({ tool_calls: [{ index: 0, id: 'c1', function: { name: 'bash', arguments: '{}' } }] })),
+    '',
+    frame(chunk({ tool_calls: [{ index: 0, function: { arguments: '' } }] })),
+    '',
+    frame(chunk({}, 'tool_calls')),
+    '',
+    'data: [DONE]',
+    '',
+  ].join('\n')
+  const earlyEvents = await eventsOf(early, o, 1)
+  assert.equal(earlyEvents.filter((e) => e.t === 'tool-start').length, 1, '名字先到的那一版 tool-start 恰一条（不重发）')
+  console.log('⑨ 读数：名字后到 → tool-start 发出 · 拼出 bash({"command":"ls"；名字先到 → 恰一条 tool-start')
+})
