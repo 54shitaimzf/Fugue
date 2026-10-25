@@ -1205,6 +1205,10 @@
         },
         "ms": {
           "type": "number"
+        },
+        "role": {
+          "type": "string",
+          "const": "ruler"
         }
       }
     },

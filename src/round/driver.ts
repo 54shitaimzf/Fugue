@@ -869,6 +869,9 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
         target: handle.target,
         adapter: handle.adapter,
         model: handle.wireModel,
+        step: Number(handle.state.step),
+        modelId: handle.model,
+        ...(handle.call === undefined ? {} : { callParams: handle.call }),
         signal,
         ...(ask.rulerFaces === undefined ? {} : { ruler: ask.rulerFaces }),
       })

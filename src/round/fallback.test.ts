@@ -24,7 +24,6 @@ import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { emptyState } from '../assemble/sources.ts'
 import type { Catalog } from '../model/catalog.ts'
 import type { ModelDecl } from '../model/contract.ts'
-import { wireNamed } from '../model/wire/registry.ts'
 import { faceOf } from '../model/roles.ts'
 import type { ModelFace } from '../model/roles.ts'
 import type { Transport, Target } from '../model/http.ts'
@@ -33,7 +32,7 @@ import type { CallModel, ModelEvent } from '../runtime/step.ts'
 import { recordingExecutor } from '../runtime/step.ts'
 import { runAgentOnce, withStepsLeft } from './driver.ts'
 import type { DriverAsk, DriverResult } from './driver.ts'
-import { takeAsks } from './handback.ts'
+import { takeAsks, verdictOf } from './handback.ts'
 import type { ToolExecutor, ToolCallRequest } from '../runtime/step.ts'
 import { ledgerOf } from '../probe/ledger.ts'
 import type { LedgerRow } from '../probe/ledger.ts'
@@ -248,20 +247,15 @@ test('①② 回退接得住 · 那一跳落账 · 按模型分账的首账（�
   }
 })
 
-test('③ 裁断那一格自己的链：脸死了换下一张（那一跳也落账），判出来了就停', async () => {
-  // 假的裁断调用：第一趟抛（主脸死），第二趟给出 verdictOf 认的那两行。
-  const scripts: readonly (readonly ModelEvent[])[] = [
-    [{ t: 'delta', text: 'tier: contract\nruling: 用回退脸判的' }],
-  ]
+test('③ 裁断那一格自己的链：脸死了换下一张（那一跳也落账），判出来了就停；两次调用各落 llm/call（role: ruler）', async () => {
+  // 假的裁断调用：第一趟抛（主脸死），第二趟给出 verdictOf 认的那两行——账是**核验过的完整
+  // 一次调用**（`ledger().call`），不再是从展示流上攒的残字。
+  const seen: { model: string; call?: unknown }[] = []
   let nth = 0
-  const inner = (request: never, signal: never) => {
-    void request
-    void signal
-    return undefined
-  }
-  void inner
-  const call: CallModel = (request, signal) => {
+  const RULING = 'tier: contract\nruling: 用回退脸判的'
+  const call: CallModel = (request) => {
     nth += 1
+    seen.push({ model: request.model, call: request.call })
     if (nth === 1) {
       return {
         events: (async function* (): AsyncGenerator<ModelEvent> {
@@ -270,15 +264,18 @@ test('③ 裁断那一格自己的链：脸死了换下一张（那一跳也落�
         ledger: () => ({ call: null, failure: 'Error: 模拟：裁断的主脸那台死了', attempts: [0] }),
       }
     }
-    const events = scripts[0] as readonly ModelEvent[]
     return {
       events: (async function* (): AsyncGenerator<ModelEvent> {
-        for (const e of [...events, { t: 'stop', reason: 'end-turn', raw: 'stop' } as ModelEvent]) yield e
+        yield { t: 'delta', text: RULING }
+        yield { t: 'stop', reason: 'end-turn', raw: 'stop' } as ModelEvent
       })(),
-      ledger: () => ({ call: { stop: 'end-turn' } as never, failure: null, attempts: [200] }),
+      ledger: () => ({
+        call: { text: RULING, thinking: null, toolCalls: [], usage: null, stop: 'end-turn', rawStop: 'stop' },
+        failure: null,
+        attempts: [200],
+      }),
     }
   }
-  void wireNamed
 
   const root = mkdtempSync(join(tmpdir(), 'fugue-fallback-ask-'))
   assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' }).status, 0)
@@ -299,18 +296,30 @@ test('③ 裁断那一格自己的链：脸死了换下一张（那一跳也落�
       target: (faces[0] as ModelFace).target(),
       adapter: { name: PRIMARY.wire },
       model: PRIMARY.model,
+      step: 2,
       ruler: faces,
     })
     assert.equal(out.verdict.tier, 'contract', '回退脸判出来了（self 档）')
     assert.equal(out.verdict.forwarded, false, '判成了就不转人')
     assert.match(out.verdict.ruling, /用回退脸判的/)
+    assert.deepEqual(seen[1]?.call, { thinking: 'off' }, '声明里的调用参数跟着脸进裁断请求（原先整档不进）')
     const rows: LogEventLike[] = []
     for await (const row of (log as unknown as Log).readMerged()) rows.push(row.e as LogEventLike)
     const hops = rows.filter((x) => x.t === 'model/fallback')
     assert.equal(hops.length, 1, '裁断的那一跳也落账')
     assert.equal(hops[0]?.from, 'test/primary')
     assert.equal(hops[0]?.to, 'test/backup')
-    console.log(`③ 读数：裁断链 1 跳（primary → backup）· tier=contract · forwarded=false · ask/raised 与 ask/ruling 各一条`)
+    // 裁断调用进账：两次各一笔 `llm/call`，`role: ruler` 标得出是裁断那一笔——三角色同一本账。
+    const rulerCalls = rows.filter((x) => x.t === 'llm/call') as { t: string; model?: string; stop?: string | null; role?: string; step?: string }[]
+    assert.deepEqual(
+      rulerCalls.map((x) => [x.model, x.stop, x.role, x.step]),
+      [
+        ['test/primary', null, 'ruler', '2'],
+        ['test/backup', 'end-turn', 'ruler', '2'],
+      ],
+      '主脸死（stop null）· 回退脸判出（end-turn），各一笔、role=ruler、step 跟着格子',
+    )
+    console.log(`③ 读数：裁断链 1 跳 · tier=contract · llm/call 2 笔（role: ruler）· 请求带声明里的调用参数`)
   } finally {
     await log.close()
     await truth.close()
@@ -457,4 +466,65 @@ test('⑧ 取消是独立终态：裁断链不换脸、一张都不发（预先�
     rmSync(root, { recursive: true, force: true })
   }
   console.log('⑧ 读数：预先取消 → 裁断 0 次调用 · 0 跳 · forwarded=true（why=已取消）')
+})
+
+test('⑨ 半截的旧回复没有资格当判决：传输层重试后，判词只认核验过的末次完整回复', async () => {
+  // 机制负对照：`verdictOf` 取**第一条** tier 行——若从展示流累积的残字里判（旧行为），传输层
+  // 重试会把第一趟的半截判词留在流上、旧的 'contract' 先赢；正式判词从 `ledger.call.text`
+  // （只有末次核验过的那一份）取，于是是 design。
+  assert.equal(
+    verdictOf('tier: contract\nruling: 旧\ntier: design\nruling: 新').tier,
+    'contract',
+    '机制负对照：第一条 tier 行先赢——残字混进判词就判错',
+  )
+  const NEW = 'tier: design\nruling: 新的完整判词'
+  let nth = 0
+  const transport: Transport = {
+    async *post(t: Target): AsyncGenerator<Uint8Array> {
+      void t
+      nth += 1
+      if (nth === 1) {
+        yield new TextEncoder().encode(`${frameOf({ content: 'tier: contract\nruling: 旧的半截判词' })}\n\n`)
+        throw new Error('模拟：流断在半路（传输层按重试档再来）')
+      }
+      for (const line of [frameOf({ content: NEW }), '', frameOf({}, 'stop'), '', 'data: [DONE]', '']) {
+        yield new TextEncoder().encode(`${line}\n`)
+      }
+    },
+  }
+  const base = faceOf(PRIMARY, TEST_CAT, { doc: {}, credential: '测试凭据（不出网）' }).target()
+  const retryFace: ModelFace = { decl: PRIMARY, target: () => ({ ...base, retries: { count: 1, on: [], timeout: true } }) }
+  const root = mkdtempSync(join(tmpdir(), 'fugue-fallback-retry-'))
+  assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' }).status, 0)
+  const truth = openTruth(root)
+  const log: LogHandle = openLog(root, { write: 'agent-1' as WriterId, sync: 'each' })
+  const c = { id: 'c1', agent: 'agent-1', branch: 'refs/heads/agent-1', goal: '做完', kind: 'implement', ownedPaths: [], deliverables: [], assertions: [], seed: [], actionOutputs: {} } as unknown as Contract
+  try {
+    const out = await takeAsks({
+      log,
+      writer: 'agent-1' as WriterId,
+      agent: 'agent-1' as AgentId,
+      contract: c,
+      task: { goal: '做完', question: '', deliverables: [], evidenceRequired: [], assertions: [], ownedPaths: [] },
+      asks: [{ question: '重试之后才判得成的那一问' }],
+      aZone: new TextEncoder().encode('A 区'),
+      call: wireCallOver(transport) as CallModel,
+      target: retryFace.target(),
+      adapter: { name: PRIMARY.wire },
+      model: PRIMARY.model,
+      ruler: [retryFace],
+    })
+    assert.equal(out.verdict.tier, 'design', `只认末次完整回复：${JSON.stringify(out.verdict)}`)
+    assert.match(out.verdict.ruling, /新的完整判词/)
+    const rows: LogEventLike[] = []
+    for await (const row of (log as unknown as Log).readMerged()) rows.push(row.e as LogEventLike)
+    assert.equal(rows.filter((x) => x.t === 'model/fallback').length, 0, '同一张脸的传输层重试不落换脸那一跳（两层分开）')
+    const rulerCalls = rows.filter((x) => x.t === 'llm/call') as { attempts?: number[] }[]
+    assert.deepEqual(rulerCalls[0]?.attempts, [0, 200], '重试记在 attempts：第一趟 0（传输错）· 第二趟 200')
+  } finally {
+    await log.close()
+    await truth.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+  console.log('⑨ 读数：半截 contract + 完整 design → 判 design · attempts [0,200] · 0 跳（重试是传输层的事）')
 })

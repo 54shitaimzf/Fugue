@@ -169,6 +169,8 @@ function schemaOf(type: string, aliases: Map<string, string>, where: string, see
   if (t === 'number') return { type: 'number' }
   if (t === 'boolean') return { type: 'boolean' }
   if (t === 'null') return { type: 'null' }
+  // 单个字面量（如 `role?: 'ruler'`）：字符串常量那一档（联合那一档在上面已经并成 enum）。
+  if (isLiteral(t)) return { type: 'string', const: t.slice(1, -1) }
   if (t.startsWith('Branded<')) return { type: 'string' }
   const alias = aliases.get(t)
   if (alias === undefined) unknown(t, where)
