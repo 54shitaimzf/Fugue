@@ -278,11 +278,15 @@ export async function adjudicateAsk(input: AskAdjudicationInput, deps: AskCallDe
 async function ruleOf(input: TakeAsksInput): Promise<AskVerdict> {
   const ask = { aZone: input.aZone, contract: input.contract, task: input.task, asks: input.asks }
   const sig = input.signal === undefined ? {} : { signal: input.signal }
+  /** 取消是独立终态：不换下一张脸（换脸救不了人喊停），问题原样转人——不归"模型供不上"。 */
+  const cancelled = (): string => '已取消（调用方喊停）——裁断没跑完，问题原样转人'
   if (input.ruler === undefined) {
+    if (input.signal?.aborted) return forwardAll(cancelled())
     return await adjudicateAsk(ask, { call: input.call, target: input.target, adapter: input.adapter, model: input.model, ...sig })
   }
   let dead: string | null = null
   for (let at = 0; at < input.ruler.length; at += 1) {
+    if (input.signal?.aborted) return forwardAll(cancelled())
     const face = input.ruler[at] as ModelFace
     let r: AskAttempt
     try {
@@ -300,15 +304,15 @@ async function ruleOf(input: TakeAsksInput): Promise<AskVerdict> {
     if (r.kind === 'verdict') return r.verdict
     dead = r.why
     const next = input.ruler[at + 1]
-    if (next !== undefined) {
-      await input.log.append(input.writer, {
-        t: 'model/fallback',
-        agent: input.agent,
-        from: face.decl.id,
-        to: next.decl.id,
-        why: r.why,
-      })
-    }
+    if (next === undefined) break
+    if (input.signal?.aborted) return forwardAll(cancelled())
+    await input.log.append(input.writer, {
+      t: 'model/fallback',
+      agent: input.agent,
+      from: face.decl.id,
+      to: next.decl.id,
+      why: r.why,
+    })
   }
   return forwardAll(dead ?? '裁断那一串脸一张都没跑起来')
 }

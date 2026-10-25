@@ -408,3 +408,53 @@ test('⑦ 收工那半句读同一个额度：attempts（含回退跳）优先�
   const withoutAttempts = await wrapped.execute(call, { state: { ...emptyState(), step: 1 } } as never)
   assert.match(withoutAttempts.output, /this is step 2: 1 left/, 'attempts 缺席退回逻辑步（没有失败重试的那一档两者相等）')
 })
+
+test('⑧ 取消是独立终态：裁断链不换脸、一张都不发（预先取消 → 转人，不归"模型供不上"）', async () => {
+  const ctl = new AbortController()
+  ctl.abort(new Error('人喊停了'))
+  let calls = 0
+  const call: CallModel = () => {
+    calls += 1
+    return {
+      events: (async function* (): AsyncGenerator<ModelEvent> {
+        yield { t: 'delta', text: 'tier: contract\nruling: 不该走到这里' }
+        yield { t: 'stop', reason: 'end-turn', raw: 'stop' } as ModelEvent
+      })(),
+      ledger: () => ({ call: null, failure: null, attempts: [200] }),
+    }
+  }
+  const root = mkdtempSync(join(tmpdir(), 'fugue-fallback-cancel-'))
+  assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' }).status, 0)
+  const truth = openTruth(root)
+  const log: LogHandle = openLog(root, { write: 'agent-1' as WriterId, sync: 'each' })
+  const c = { id: 'c1', agent: 'agent-1', branch: 'refs/heads/agent-1', goal: '做完', kind: 'implement', ownedPaths: [], deliverables: [], assertions: [], seed: [], actionOutputs: {} } as unknown as Contract
+  const faces = [PRIMARY, BACKUP].map((d) => faceOf(d, TEST_CAT, { doc: {}, credential: '测试凭据（不出网）' }))
+  try {
+    const out = await takeAsks({
+      log,
+      writer: 'agent-1' as WriterId,
+      agent: 'agent-1' as AgentId,
+      contract: c,
+      task: { goal: '做完', question: '', deliverables: [], evidenceRequired: [], assertions: [], ownedPaths: [] },
+      asks: [{ question: '取消之后还问的问题' }],
+      aZone: new TextEncoder().encode('A 区'),
+      call,
+      target: (faces[0] as ModelFace).target(),
+      adapter: { name: PRIMARY.wire },
+      model: PRIMARY.model,
+      signal: ctl.signal,
+      ruler: faces,
+    })
+    assert.equal(calls, 0, `预先取消：一张脸都不该被请（实际 ${calls} 次）`)
+    assert.equal(out.verdict.forwarded, true, '取消转人，不当裁断成了')
+    assert.match(out.verdict.why ?? '', /已取消/, 'why 说的是取消，不是"模型供不上"')
+    const rows: LogEventLike[] = []
+    for await (const row of (log as unknown as Log).readMerged()) rows.push(row.e as LogEventLike)
+    assert.equal(rows.filter((x) => x.t === 'model/fallback').length, 0, '取消不换脸：一跳都不落')
+  } finally {
+    await log.close()
+    await truth.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+  console.log('⑧ 读数：预先取消 → 裁断 0 次调用 · 0 跳 · forwarded=true（why=已取消）')
+})

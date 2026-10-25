@@ -690,3 +690,43 @@ test('⑩ 空闲看门狗：收下请求一个字节不回的那一档判死并�
     await shutdown()
   }
 })
+
+// ── ⑪ 预先取消：入口同步 signal.aborted 的现值，一次都不发 ──────────────────────────
+test('⑪ 预先取消的信号不发请求：已成立的取消不等未来的 abort 事件（也不按重试档再来）', async () => {
+  const f = fixture('deepseek-flash-anthropic')
+  let hits = 0
+  const server = createServer((_req, res) => {
+    hits += 1
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(f.response)
+    res.end()
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
+  const port = (server.address() as AddressInfo).port
+  const base = {
+    providerId: 'local',
+    host: `http://127.0.0.1:${port}`,
+    wire: fixtureTarget(f).wire,
+    path: '/v1/messages',
+    model: DECL.model,
+    from: 'decl',
+    headers: { 'content-type': 'application/json' },
+  } as const
+  const shutdown = async (): Promise<void> => {
+    server.closeAllConnections?.()
+    await new Promise<void>((ok) => server.close(() => ok()))
+  }
+  try {
+    const ctl = new AbortController()
+    ctl.abort(new Error('人喊停了（预先取消）'))
+    // 带上重试档也要 0 次：取消是终态，不归"传输错可重试"那一类。
+    const t: Target = { ...base, retries: { count: 2, on: [], timeout: true } }
+    const s = callModel(t, requestFrom(f), fetchTransport, ctl.signal)
+    await assert.rejects(drain(s.events), /人喊停了|AbortError/)
+    assert.equal(hits, 0, `预先取消：服务一次都不被撞（实际 ${hits} 次）——入口同步现值，不等未来的 abort 事件`)
+    assert.deepEqual([...s.ledger().attempts], [0], '取消那一趟记一次没拿到状态码的尝试，不按重试档再来')
+    console.log('⑪ 读数：预先取消 → 服务 0 次被撞 · attempts [0] · 错误带着取消的原因')
+  } finally {
+    await shutdown()
+  }
+})

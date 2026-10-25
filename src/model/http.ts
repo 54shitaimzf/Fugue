@@ -172,6 +172,12 @@ export class HttpError extends Error {
 /** 真网络那一档。**整个仓库里唯一一处 `fetch`。** */
 export const fetchTransport: Transport = {
   async *post(t: Target, body: Uint8Array, signal?: AbortSignal): AsyncGenerator<Uint8Array> {
+    // **取消的现值在入口同步**：只挂未来的 `abort` 事件，已经成立的取消就再也等不到那一声——
+    // 预先取消的调用会照发不误（2026-10-26 外部审查 3.4）。原因原样转递（AbortError 语义），
+    // 而调用那一层把取消当终态：不归"传输错可重试"那一类。
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error(`这一趟还没发就取消了：${String(signal.reason ?? '调用方喊停')}`)
+    }
     if (!t.host.startsWith('http')) {
       throw new HttpError(0, `这一份目标没有 host（来自 ${t.from}），发不了真请求：${JSON.stringify(t.host)}`)
     }
