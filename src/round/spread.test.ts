@@ -74,7 +74,7 @@ interface Cell {
   close(): Promise<void>
 }
 
-async function cell(agent: string, scripts: readonly (readonly ModelEvent[])[], make: (one: never, at: number) => ToolResult): Promise<Cell> {
+async function cell(agent: string, scripts: readonly (readonly ModelEvent[])[], make: (one: never, at: number) => ToolResult, signal?: AbortSignal): Promise<Cell> {
   const AGENT = agent as AgentId
   const root = mkdtempSync(join(tmpdir(), 'fugue-spread-'))
   assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' }).status, 0)
@@ -139,6 +139,7 @@ async function cell(agent: string, scripts: readonly (readonly ModelEvent[])[], 
     decl: DECL,
     call,
     execute: exec,
+    ...(signal === undefined ? {} : { signal }),
   }
   return {
     root,
@@ -227,5 +228,32 @@ test('② 断在半路要落账：failed 那一档进 DriverResult 与 agent/sto
   } finally {
     await broke.close()
     await fine.close()
+  }
+})
+
+test('③ 喊停的那条线真的接得上：循环顶先看一眼，停在那一步之前（已取消也算没干完）', async () => {
+  const halt = new AbortController()
+  // 脚本三趟（两条工具调用 + 一次说完）；执行器第二次伸手时喊停——第三步不再发起。
+  const c = await cell(
+    'agent-1',
+    [
+      [...callOne(0, 't1', 'read', { path: 'src/a.ts' }), { t: 'stop', reason: 'tool-calls', raw: 'tool_use' }],
+      [...callOne(0, 't2', 'read', { path: 'src/a.ts' }), { t: 'stop', reason: 'tool-calls', raw: 'tool_use' }],
+      [{ t: 'delta', text: '干完了。' }, { t: 'stop', reason: 'end-turn', raw: 'end_turn' }],
+    ],
+    (_one, at) => {
+      if (at === 1) halt.abort()
+      return { ok: true, output: '好。' }
+    },
+    halt.signal,
+  )
+  try {
+    const r = await c.run()
+    assert.match(r.stopped, /^已取消/, `停因该是已取消那一档：${r.stopped}`)
+    assert.equal(r.failed, true, '喊停的那一格也没干完——重跑闸不把它当交过卷')
+    assert.equal(r.steps, 2, `第三步不该再发起（喊停停在那一步之前）：实际走了 ${r.steps} 步`)
+    console.log(`③ 读数：第二步伸手时喊停 → steps=${r.steps} · stopped=${JSON.stringify(r.stopped)} · failed=true`)
+  } finally {
+    await c.close()
   }
 })

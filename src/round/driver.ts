@@ -98,6 +98,14 @@ export interface DriverAsk {
   readonly maxSteps?: number
   /** 到了触发点要不要交接（缺省要——`B6` 的停机纪律是"先停"）。 */
   readonly handoff?: boolean
+  /**
+   * **喊停的那条线**（可省 = 没有人能喊停，行为与从前逐字节相同）。给了它，循环每一步之前
+   * 看一眼：喊了就停（`stopped` 记「已取消」，`failed` 照断在半路那一档记——这一格没干完，
+   * 重跑那一道闸不把它当交过卷），已落的部分照常提交（账要留），模型调用与裁断都走同一条线
+   * （传输那一层会把它翻成一次没有状态码的失败）。**不装 SIGINT 处理器**：谁喊停由调用方
+   * 决定（serve 那一条路将来接它的取消口），这一层只认这一条线。
+   */
+  readonly signal?: AbortSignal
 }
 
 /**
@@ -116,9 +124,9 @@ export interface DriverResult {
   readonly handoffs: readonly string[]
   readonly stopped: string
   /**
-   * **这一格是断在半路停下来的**（`failed` 那一档：流半截 · 没能说完 · 工具抛了；步数到顶与
-   * 预算停不算——那两档是"按规矩停"）。它进 `agent/stop` 的 `failed` 那一栏，重跑那一道闸读它：
-   * 断掉的格不当作交过卷。
+   * **这一格是断在半路停下来的**（`failed` 那一档：流半截 · 没能说完 · 工具抛了 · 调用方喊停；
+   * 步数到顶与预算停不算——那两档是"按规矩停"）。它进 `agent/stop` 的 `failed` 那一栏，重跑
+   * 那一道闸读它：断掉的格不当作交过卷。
    */
   readonly failed: boolean
 }
@@ -729,9 +737,18 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
   let stopped = '收敛'
   /** 断在半路那一档（进 `agent/stop` 的 `failed` 栏：重跑那一道闸读它）。 */
   let failed = false
+  /** 喊停的那条线（`DriverAsk.signal`）：**循环里每一处 await 都走它**——原先每步现起一只
+   * 永不 abort 的控制器，那是一个死参数；现在一条线贯穿模型调用与裁断，循环顶先看一眼。 */
+  const signal = ask.signal ?? new AbortController().signal
   // **起手那一下也交一次**：这一格干完之后视图里那一份就是产出，而"提交"这件事在循环外面
   // （循环只管说话与调工具）。**顺序与架构 § 9.3 那三步一致**：视图先有内容，再走 `checkpoint()`。
   for (;;) {
+    // **喊停了就停在这一步之前**：已落的部分照常提交（账要留），这一格记断在半路（没干完）。
+    if (signal.aborted) {
+      stopped = '已取消（调用方喊停）'
+      failed = true
+      break
+    }
     // **这里不给工具目录那一段**（`tools: ''`）：循环这一层不认识目录，给了它等于把公布面绑进
     // 运行时。派发前那一份占用（`occupancyOf`）把目录算了进去，于是那一个是完整的一笔、这一个
     // 差了目录那一段。判"该不该交接"用的是这一笔，所以它偏松的一侧——而真读数会把这段差补回来
@@ -748,7 +765,6 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       stopped = budget.why
       break
     }
-    const signal = new AbortController().signal
     const r: StepResult = await runtime.step(handle, signal)
     steps += 1
     if (r.outcome.kind === 'failed') {
