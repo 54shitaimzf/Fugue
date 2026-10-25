@@ -1035,6 +1035,12 @@ export function openKeys(o: {
       input.removeListener('data', onData)
       input.setRawMode?.(false)
       o.out?.write(PASTE_DISABLE)
+      // **收尾即不再读按键**（`pause()` 把那条 TTY 读停掉）：摘了监听只不再交键，stdin 还在
+      // flowing——那一条 referenced 的 tty 读是唯一还攥着事件循环的句柄，退出码交给循环去收的
+      // 那一版（不再 `process.exit` 强推）在信号那一档就永远退不出去（诊断报告量到的：
+      // referenced+active 的 handle 恰一个 tty）。可选调用：真流都有它，测试里的假输入
+      // 只模型化「监听与 raw mode」那两样。
+      input.pause?.()
     },
   }
 }
