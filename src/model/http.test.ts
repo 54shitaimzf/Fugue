@@ -633,3 +633,60 @@ test('⑨ 重试：429 两次后成功 → 同一条调用三次尝试 · 同一
 
   console.log(`⑨ 读数：attempts [${l.attempts.join(' · ')}] · 三次同一 bodyHash ${l.bodyHash} · 默认档/名单外/线中掐断各一次即终`)
 })
+
+// ── ⑩ 空闲看门狗（挂死那一档终于判得死）──────────────────────────────────────────
+test('⑩ 空闲看门狗：收下请求一个字节不回的那一档判死并按重试档再来 · 没声明重试就当场报', async () => {
+  const f = fixture('deepseek-flash-anthropic')
+  let hits = 0
+  const server = createServer((_req, res) => {
+    hits += 1
+    if (hits % 2 === 1) return // 挂死那一档：收下请求、一个字节不回（连接就那么悬着）
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(f.response)
+    res.end()
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
+  const port = (server.address() as AddressInfo).port
+  const base = {
+    providerId: 'local',
+    host: `http://127.0.0.1:${port}`,
+    wire: fixtureTarget(f).wire,
+    path: '/v1/messages',
+    model: DECL.model,
+    from: 'decl',
+    headers: { 'content-type': 'application/json' },
+  } as const
+  const shutdown = async (): Promise<void> => {
+    server.closeAllConnections?.()
+    await new Promise<void>((ok) => server.close(() => ok()))
+  }
+  try {
+    // 甲：看门狗 300ms + 重试档（timeout 那一档至此终有产生者）——第一趟判死，第二趟走完。
+    const t1: Target = { ...base, idleTimeoutMs: 300, retries: { count: 1, on: [], timeout: true } }
+    const s1 = callModel(t1, requestFrom(f), fetchTransport)
+    const events: ModelEvent[] = []
+    const flight = (async () => {
+      for await (const e of s1.events) events.push(e)
+    })()
+    const raced = await Promise.race([
+      flight.then(() => 'done' as const),
+      new Promise<'hung'>((r) => setTimeout(() => r('hung'), 5000)),
+    ])
+    assert.equal(raced, 'done', '挂死那一趟要判得死、重试那一趟要接得住——没有看门狗这一档就是永远等')
+    const led1 = s1.ledger()
+    assert.deepEqual([...led1.attempts], [0, 200], `第一趟没拿到状态码（超时记 0）· 第二趟走完：${JSON.stringify(led1.attempts)}`)
+    assert.equal(led1.failure, null)
+    assert.equal(checkEvents(events).stop, 'tool-calls', '第二趟解出的是完整的一次调用')
+    assert.equal(hits, 2, '服务被撞了两次（挂死一次 · 走完一次）')
+
+    // 乙：没声明重试——挂死那一趟当场报出来（那句话进得了 stderr），不悄悄再来。
+    const t2: Target = { ...base, idleTimeoutMs: 300 }
+    const s2 = callModel(t2, requestFrom(f), fetchTransport)
+    await assert.rejects(drain(s2.events), /毫秒没有一个字节/)
+    assert.deepEqual([...s2.ledger().attempts], [0])
+    assert.equal(hits, 3, '乙只发一趟')
+    console.log('⑩ 读数：挂死 300ms 判死 · 甲 attempts [0, 200]（重试档接住）· 乙 attempts [0] 当场报')
+  } finally {
+    await shutdown()
+  }
+})

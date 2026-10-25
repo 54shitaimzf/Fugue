@@ -50,6 +50,8 @@ interface ProviderEntry {
   readonly host: string
   readonly wireOverrides?: Readonly<Partial<Record<WireName, string>>>
   readonly retries?: ProviderDecl['retries']
+  /** 空闲看门狗（毫秒 · 可省 = 没有看门狗）：形状在载入核对那一遍里卡（正整数）。 */
+  readonly idleTimeoutMs?: number
   readonly models?: Readonly<Record<string, ModelEntry>>
   readonly prices?: readonly PriceRow[]
 }
@@ -83,6 +85,11 @@ function validateCatalog(cat: Catalog): void {
       bad.push(`${name} 的系统提示词更新方式没有这一档：${String(m.systemPromptUpdate)}`)
     }
     if (priceOf(m.id, cat) === null) bad.push(`${name} 的价目缺一行：发出去的名字 ${m.model} 在价目表里查不到`)
+  }
+  for (const [pid, p] of Object.entries(cat.providers)) {
+    if (p.idleTimeoutMs !== undefined && (!Number.isInteger(p.idleTimeoutMs) || (p.idleTimeoutMs as number) <= 0)) {
+      bad.push(`${pid} 的空闲看门狗要是一个正整数（毫秒），拿到的是 ${JSON.stringify(p.idleTimeoutMs)}`)
+    }
   }
   if (bad.length > 0) {
     throw new ModelDeclError(`目录核对不过（${Object.keys(cat.models).length} 条模型 · ${Object.keys(cat.providers).length} 家提供方）：\n  ${bad.join('\n  ')}`)
@@ -124,6 +131,7 @@ export function readCatalog(systemDir: string = defaultSystemDir()): Catalog {
       host: p.host,
       ...(p.wireOverrides === undefined ? {} : { wireOverrides: p.wireOverrides }),
       ...(p.retries === undefined ? {} : { retries: p.retries }),
+      ...(p.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: p.idleTimeoutMs }),
     }
     for (const [mid, m] of Object.entries(p.models ?? {})) {
       const e = m as ModelEntry
