@@ -276,6 +276,7 @@ type LogEvent =
                          toolCount: number; invocations: number; thinking: string | null
                          stop: string | null; status: number | null; headers: unknown; usage: TokenUsage
                          attempts?: number[] }                                   // 试了几次（P2f）——恰一次时整栏不出现
+  | { t: 'model/fallback'; agent: AgentId; from: ModelId; to: ModelId; why: string }   // 回退那一跳（0.5.3）——换过去之后各落各的 llm/call
 
 interface Log {
   append(w: WriterId, e: LogEvent): Promise<LogSeq>          // 序号由该 writer 自己的计数器发放

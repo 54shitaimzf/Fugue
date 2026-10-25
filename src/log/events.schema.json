@@ -1207,6 +1207,35 @@
           "type": "number"
         }
       }
+    },
+    {
+      "title": "model/fallback",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "from",
+        "to",
+        "why"
+      ],
+      "properties": {
+        "t": {
+          "const": "model/fallback"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string"
+        }
+      }
     }
   ]
 }
