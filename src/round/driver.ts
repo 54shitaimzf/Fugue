@@ -53,6 +53,8 @@ import type { Prefix } from '../assemble/contract.ts'
 import { handoffAt, successorOf } from '../runtime/restart.ts'
 import { refFor } from '../identity.ts'
 import type { ModelDecl } from '../model/contract.ts'
+import type { ModelFace } from '../model/roles.ts'
+import { protocolFor } from '../assemble/protocol.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 
 /**
@@ -214,6 +216,26 @@ export function goalOf(c: Contract): string {
   if (c.kind === 'implement') return c.goal
   if (c.kind === 'resolve') return c.goal ?? `解 ${c.conflictPaths.length} 条冲突`
   return `查清 ${c.question}`
+}
+
+/**
+ * **换一张脸**（0.5.3 的回退那一跳）：句柄上属于**模型**的那几栏照新声明换——我们这边的键 ·
+ * 提供方的名字 · 目标 · 线协议 · 协议 · 调用配置。**状态与坐标不动**（换脸不改这一格走到哪儿
+ * 了），预算那一侧的声明由调用点跟着换（`planBudget` 读的是它）。
+ *
+ * 子格循环（这一份）与持轮者循环（`plan.ts`）换的是同一个函数——两处各写一遍的症状是"持轮者
+ * 换脸忘了换协议"，而那一档只表现为前缀短了一截，没有别的报错。
+ */
+export function faceHandle(h: AgentHandle, f: ModelFace): AgentHandle {
+  return {
+    ...h,
+    model: f.decl.id,
+    wireModel: f.decl.model,
+    target: f.target(),
+    adapter: { name: f.decl.wire },
+    protocol: protocolFor(f.decl),
+    call: f.decl.call,
+  }
 }
 
 /**
