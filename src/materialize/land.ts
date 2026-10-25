@@ -536,7 +536,12 @@ function clearEntry(rel: RelPath, abs: AbsPath): void {
 }
 
 /** 临时名与目标同目录，rename 因此是同一次系统调用里换名（也就顺带断了硬链接）。 */
-function tmpName(abs: AbsPath): AbsPath {
+/**
+ * 临时名（同目录 · 进程号 + 时刻）：**写进去再改名**那条路（先写后 `rename`，读者看见的只有
+ * 旧的或新的，没有写了一半的）共用的那一处。物化（这一份）与发布（`merge/accept.ts`）两处
+ * 用同一个名目——各写一遍的症状是两套临时名漂在树上，排障的人对不上。
+ */
+export function tmpName(abs: AbsPath): AbsPath {
   return join(dirname(abs), `.fugue-tmp-${process.pid}-${Date.now().toString(36)}`)
 }
 
