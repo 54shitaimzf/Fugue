@@ -115,6 +115,12 @@ export interface DriverResult {
   readonly commits: readonly LogSeq[]
   readonly handoffs: readonly string[]
   readonly stopped: string
+  /**
+   * **这一格是断在半路停下来的**（`failed` 那一档：流半截 · 没能说完 · 工具抛了；步数到顶与
+   * 预算停不算——那两档是"按规矩停"）。它进 `agent/stop` 的 `failed` 那一栏，重跑那一道闸读它：
+   * 断掉的格不当作交过卷。
+   */
+  readonly failed: boolean
 }
 
 /** 驱动不在时那句统一的话。**它要说清"缺的是哪一样"与"为什么不能装作干完了"。** */
@@ -296,7 +302,14 @@ export async function runAgentOnce(ask: DriverAsk, opts: RealDriverOptions = {})
   // `onResult` 那一个出口，而壳调用 `realDriver()` 时没接它——那句话于是出了这一层就没了，
   // 命令面只剩"验收：通过 1"。落成一条事件之后，"这一格到底干完没有"在日志里查得到
   // （**验收仍然是唯一的判据**，这一条是旁证）。
-  await log.append(writer, { t: 'agent/stop', agent, steps: r.steps, stopped: r.stopped, handoffs: r.handoffs.length })
+  await log.append(writer, {
+    t: 'agent/stop',
+    agent,
+    steps: r.steps,
+    stopped: r.stopped,
+    handoffs: r.handoffs.length,
+    ...(r.failed ? { failed: true } : {}),
+  })
   return r
 }
 
@@ -714,6 +727,8 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
   let steps = 0
   let handedOff = false
   let stopped = '收敛'
+  /** 断在半路那一档（进 `agent/stop` 的 `failed` 栏：重跑那一道闸读它）。 */
+  let failed = false
   // **起手那一下也交一次**：这一格干完之后视图里那一份就是产出，而"提交"这件事在循环外面
   // （循环只管说话与调工具）。**顺序与架构 § 9.3 那三步一致**：视图先有内容，再走 `checkpoint()`。
   for (;;) {
@@ -739,6 +754,7 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     if (r.outcome.kind === 'failed') {
       // **失败要报出来**：它不是"干完了"。`why` 是短分类（`cut-stream` · `max-tokens` · …）。
       stopped = `${r.outcome.error.why}：${r.outcome.error.message}`
+      failed = true
       break
     }
     // **真读数修正下一次判**（架构 § 8.15 的 `usage` 是唯一权威）：这一趟的用量与刚才那一笔估账
@@ -816,7 +832,7 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     ref: refFor(writer),
   })
   commits.push(committed.seq)
-  return { commit: committed.commit, steps, commits, handoffs, stopped }
+  return { commit: committed.commit, steps, commits, handoffs, stopped, failed }
 }
 
 /**

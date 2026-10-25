@@ -283,7 +283,17 @@ export function scriptedModel(scripts: readonly (readonly ModelEvent[])[]): Call
       events: (async function* (): AsyncGenerator<ModelEvent> {
         for (const e of events) yield e
       })(),
-      ledger: () => ({ call: checkEvents(events), failure: null, attempts: [200] }),
+      // **半截的那一档也交得出账**（与产品那一档同一个口径）：脚本里没有 `stop`，`checkEvents`
+      // 核得出"没收尾"，账上就是 `call: null` + 一句为什么——而不是把那次核对的原样抛出去。
+      // 抛出去的话 `step()` 的 catch 里还要再读一次账（拿 attempts），第二次抛就没人接了：
+      // "半截的流"这一档于是根本造不出来（cut-stream 的断言全红在这里）。
+      ledger: () => {
+        try {
+          return { call: checkEvents(events), failure: null, attempts: [200] }
+        } catch (err) {
+          return { call: null, failure: err instanceof Error ? `${err.name}: ${err.message}` : String(err), attempts: [200] }
+        }
+      },
     }
   }
 }

@@ -398,6 +398,9 @@
         },
         "handoffs": {
           "type": "number"
+        },
+        "failed": {
+          "type": "boolean"
         }
       }
     },

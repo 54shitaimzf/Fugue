@@ -405,3 +405,54 @@ test('④ 已经交过卷的格不重跑：只补没交卷的那几格（负对�
     await b.close()
   }
 })
+
+test('⑤ 断在半路的那一格不当作交过卷：重跑它（正常收工的 agent/stop 在场也照旧复用）', async () => {
+  // 甲：分支已推进（失败那一档照样提交——账要留），且那条 agent/stop 带 failed: true。
+  // 乙：同样推进分支，agent/stop 在场但正常收工——证明闸门认的是 failed 那一栏，不是事件在不在。
+  const one = async (failed: boolean): Promise<{ reused: string[]; calls: string[] }> => {
+    const b = await bench()
+    const logs = logsOf(b)
+    try {
+      await atGate(b)
+      await go(b)
+      const batch = await issuedBatchOf(b.log, ROUND)
+      const first = batch.contracts[0] as Contract
+      const firstAgent = first.agent as AgentId
+
+      // 手工把第一格"交卷"（与 ④ 同一套）：分支推到它自己那个提交。
+      const blob = await b.truth.putBlob(new TextEncoder().encode('（手工）第一格交过卷了\n'))
+      const merged = new Map((await entriesOf(b.truth, b.base)).map((e) => [e.name, e]))
+      merged.set('手工-第一格.txt', { name: '手工-第一格.txt', mode: 0o100644, id: blob })
+      const done = await b.truth.commit(await b.truth.putTree([...merged.values()]), [b.base], '（手工）第一格')
+      await b.truth.advance(refFor(firstAgent as WriterId), done, b.base)
+      // 那一趟"怎么停的"落账：真驱动 `runAgentOnce` 落的就是这一条。
+      await logs.logOf(firstAgent).append(firstAgent as WriterId, {
+        t: 'agent/stop',
+        agent: firstAgent,
+        steps: 3,
+        stopped: failed ? 'cut-stream：上游把流掐了' : '收敛',
+        handoffs: 0,
+        ...(failed ? { failed: true } : {}),
+      })
+
+      const calls: string[] = []
+      const run = await runIssued(tailDeps(b, calls, logs), batch)
+      return { reused: [...run.reused], calls }
+    } finally {
+      await logs.close()
+      await b.close()
+    }
+  }
+
+  const broke = await one(true)
+  assert.deepEqual(broke.reused, [], `断掉的那一格不该被复用：${JSON.stringify(broke.reused)}`)
+  assert.equal(broke.calls.length > 0, true, '断掉的那一格要重跑')
+
+  const fine = await one(false)
+  assert.equal(fine.reused.length, 1, `正常收工的那一格照旧复用（agent/stop 在场不是拒的理由）：${JSON.stringify(fine.reused)}`)
+  assert.equal(fine.calls.length, 1, '复用那一格之后，剩下的那格照旧要跑')
+
+  console.log(
+    `⑤ 读数：failed:true → 复用 ${broke.reused.length} 格 · 重跑 ${broke.calls.length} 格；正常收工 → 复用 ${fine.reused.length} 格 · 重跑 ${fine.calls.length} 格`,
+  )
+})

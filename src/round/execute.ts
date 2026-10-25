@@ -19,7 +19,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Log } from '../log/events.ts'
+import type { Log, LogEvent } from '../log/events.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { AgentId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../terms.ts'
@@ -272,6 +272,18 @@ export interface DriverSupport {
  *   7. `commitThenAdvance` —— 通过才定格 + 推进（A6 那句"顺序即不变量"）
  */
 /**
+ * 那个 writer 的**最后一条** `agent/stop`（`null` = 一条都没有——打桩那一档不落它）。
+ *
+ * 读它的是重跑那一道闸：断在半路的那一格不当作交过卷。整条 writer 日志只在这一刻读一遍
+ * （候选复用的那一格才有这一趟），一轮里的格子数就是它的上界。
+ */
+async function lastStopOf(log: Log, writer: WriterId): Promise<Extract<LogEvent, { t: 'agent/stop' }> | null> {
+  let last: Extract<LogEvent, { t: 'agent/stop' }> | null = null
+  for await (const e of log.readByWriter(writer)) if (e.t === 'agent/stop') last = e
+  return last
+}
+
+/**
  * 一格的那一份 ask。
  *
  * **它把该给的一次给足**：`deps.driver` 在就是真驱动那一档（`call` · `execute` · `decl` ·
@@ -368,9 +380,15 @@ export async function runIssued(deps: RunTailDeps, batch: IssuedBatch): Promise<
     // **已经交过卷的格不重跑**：那条分支已经不是这一轮钉住的底了。
     const head = await baseFor(deps.truth, agent as WriterId)
     if (head !== null && head !== batch.base) {
-      work[c.id] = head
-      reused.push(c.id as ContractId)
-      continue
+      // **断在半路的那一格不当作交过卷**：失败那一档照样提交（账要留），可那份提交是半截产物
+      // ——复用它等于把断点冻进这一轮的验收。判据是那条分支**最后一条** `agent/stop`（后一次
+      // 跑成了的那一格，它那条就是正常收工）：打桩那一档一条都没有（`null`），照旧复用。
+      const stop = await lastStopOf(deps.logOf(agent), agent as WriterId)
+      if (stop === null || stop.failed !== true) {
+        work[c.id] = head
+        reused.push(c.id as ContractId)
+        continue
+      }
     }
     const commit = await deps.stub(await askOf(deps, c, agent, batch.base))
     work[c.id] = commit
