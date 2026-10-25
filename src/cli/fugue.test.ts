@@ -461,3 +461,18 @@ test('大输出经管道一个字节不丢：退出码交给事件循环去收�
   assert.match(r.stdout.slice(-64), /^032767 /, '最后一行（哨兵）必须在')
   console.log(`读数：read big.txt 2 MiB 经管道读回 ${r.stdout.length} / ${body.length} 字节，哨兵行在`)
 })
+
+test('round work 的 --retry 给了不是整数就退 2：打错字不许静默吞成缺省值', () => {
+  const root = tmpRoot()
+  // **打错的**：非整数 · 负数 · 空串 · 光给旗子不给值——四档都是"命令行不成立"（退 2），
+  // 话里指名道姓。原先这四档全被 `numberOf` 静默吞成缺省，走查里那一次红就永远红不出来。
+  for (const bad of ['abc', '-1', '', 'true']) {
+    const r = bad === 'true' ? fugue(root, 'round', 'work', '--retry') : fugue(root, 'round', 'work', '--retry', bad)
+    assert.equal(r.code, 2, `--retry ${JSON.stringify(bad)} 该退 2，拿到 ${r.code}：${r.stderr.slice(0, 160)}`)
+    assert.match(r.stderr, /--retry/, '报的话要点名这个旗子')
+  }
+  // **0 是合法取值**（"一遍都不重来"）：不该被整数闸误伤——它往下走到"处境不对"那一档退 1，那是另一件事。
+  const zero = fugue(root, 'round', 'work', '--retry', '0')
+  assert.equal(zero.code, 1, `--retry 0 是合法取值（处境不对退 1），拿到 ${zero.code}：${zero.stderr.slice(0, 160)}`)
+  console.log('读数：--retry abc/-1/空串/裸旗 → 2 · --retry 0 → 1（合法，处境不对那一档）')
+})

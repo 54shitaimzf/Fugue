@@ -329,7 +329,7 @@ export async function roundRun(
   // `--fail <断言名>`：把配置里**那一条**断言换成必然失败的一条。撞不上就什么都不做——这一档是
   // "走查要撞红"，不是"让这一趟注定失败"。
   const failTarget = typeof flags.get('fail') === 'string' ? (flags.get('fail') as string) : undefined
-  const retriesLeft = numberOf(flags.get('retry'), 0) ?? RETRY_DEFAULT
+  const retriesLeft = numberOf(flags.get('retry'), 0, '--retry') ?? RETRY_DEFAULT
   const deny = flags.has('deny')
   // 合并前那一档预检的严宽：**缺省只报不拒**（判决进 `precheckMerge`、印在报告那一行；折叠照做，
   // 真冲突由它当场报出）。`--strict-merge-gate` 才是 fail-closed 那一档——留着的理由与改主意的
@@ -1290,7 +1290,7 @@ export async function roundWork(root: string, flags: Map<string, string | true>,
   const wire = wireFlagsOf(root, flags)
   const real = wire.live || wire.wireIn !== undefined
   const handoff = flags.has('no-handoff') ? false : undefined
-  const retriesLeft = numberOf(flags.get('retry'), 0) ?? RETRY_DEFAULT
+  const retriesLeft = numberOf(flags.get('retry'), 0, '--retry') ?? RETRY_DEFAULT
   // **要 N 把栅栏就先拿全 N 把，再开第一个口**（与 `round run` 同一条 · `fences.ts`）：拿不全
   // 就一把不剩地放掉。这一趟要几个 agent 得先读到那一批（见下面那一步）。
   const agentLogs = new Map<AgentId, LogHandle>()
@@ -1707,11 +1707,17 @@ function outputsOf(c: Contract): readonly string[] {
  *
  * `min` 存在只为一件事：`--retry` 的 **0 是一个有意义的取值**（"一遍都不重来"，架构 § 8.13），
  * 所以"没给"与"给了 0"要分得开——前者落到缺省，后者就是 0。
+ *
+ * **给了却不合形状就当场退 2**：`Number('abc')` 是 `NaN`，原先那一档静默吞成缺省——打错字的
+ * 人以为设上了，走查里那一次"撞红"就永远红不出来（与 `--max-steps` 抄写错当场拒同一条口径）。
  */
-function numberOf(v: string | true | undefined, min = 1): number | undefined {
-  if (v === undefined || v === true) return undefined
+function numberOf(v: string | true | undefined, min: number, name: string): number | undefined {
+  if (v === undefined) return undefined
+  if (v === true) throw new UsageError(`${name} 要一个不小于 ${min} 的整数：只给了旗子没给值`)
+  if (v === '') throw new UsageError(`${name} 要一个不小于 ${min} 的整数：拿到的是空串`)
   const n = Number(v)
-  return Number.isInteger(n) && n >= min ? n : undefined
+  if (Number.isInteger(n) && n >= min) return n
+  throw new UsageError(`${name} 要一个不小于 ${min} 的整数，拿到的是 ${JSON.stringify(v)}`)
 }
 
 /** 契约要写哪儿，给那一行印出来（三种来源各自那一份）。 */
