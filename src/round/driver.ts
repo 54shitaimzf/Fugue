@@ -702,6 +702,12 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
   const handoffs: string[] = []
   /** 轮内裁断回来的那几句结论（U18 甲案）：挂到下一步的「信号摘要」上，**只带结论**。 */
   const notes: string[] = []
+  /**
+   * **已经摊进「信号摘要」的判词条数**：每步只摊新增的那几句。`r.next.signals` 里躺着的是
+   * 上一步摊过的那几句，再把整份 `notes` 摊一遍，同一条判词会在 C 区里越滚越多——模型
+   * 每一步都把它当新信息读（实测：三步两问，第三步的前缀里第一问的判词出现两遍）。
+   */
+  let spreadAt = 0
   /** 这一格已经量到的那些比值（真 ÷ 估；每次调用最多加一份）。 */
   const ratios: number[] = []
   let handle: AgentHandle = { ...ask.handle, agent, state: ask.state }
@@ -762,7 +768,9 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       })
       notes.push(taken.note)
     }
-    handle = { ...handle, state: notes.length === 0 ? r.next : { ...r.next, signals: [...r.next.signals, ...notes] } }
+    const fresh = notes.slice(spreadAt)
+    handle = { ...handle, state: fresh.length === 0 ? r.next : { ...r.next, signals: [...r.next.signals, ...fresh] } }
+    spreadAt = notes.length
     if (r.outcome.kind === 'done') break
     // **交一次就够**（缺省只交一次）：触发点是一个数，而"这一格该不该换人"不是每一步都重新判的
     // ——反复交接会把同一格切成三四段，而每一段都要重读一遍 Zone A + Zone B。
