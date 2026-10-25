@@ -286,8 +286,9 @@ async function askOnce(input: AskAdjudicationInput, deps: AskCallDeps): Promise<
   })
   // **流要走完，账才成立**：这里不攒展示用的残字（那一套的教训是 3.10——传输层重试会把前一趟
   // 的半截文字留在事件流上，攒起来的 `said` 于是混了两趟）；正式判词只从核验后的账里取。
-  const reply = deps.call(request, deps.signal ?? new AbortController().signal)
+  let reply: ReturnType<CallModel> | null = null
   try {
+    reply = deps.call(request, deps.signal ?? new AbortController().signal)
     for await (const e of reply.events) {
       void e
     }
@@ -304,10 +305,12 @@ async function askOnce(input: AskAdjudicationInput, deps: AskCallDeps): Promise<
     return { kind: 'verdict', verdict: verdictOf(led.call.text), spent: spentOf(led.call, led.attempts, null) }
   } catch (err) {
     let attempts: readonly number[] = []
-    try {
-      attempts = reply.ledger().attempts
-    } catch {
-      attempts = []
+    if (reply !== null) {
+      try {
+        attempts = reply.ledger().attempts
+      } catch {
+        attempts = []
+      }
     }
     const facts = wireFactsOf(err)
     return {

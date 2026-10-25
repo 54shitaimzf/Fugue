@@ -14,6 +14,7 @@ import type { Contract } from '../contract/types.ts'
 import type { LogEvent } from '../log/events.ts'
 import { openLog } from '../log/log.ts'
 import type { ModelEvent } from '../model/contract.ts'
+import { checkEvents } from '../model/contract.ts'
 import { wireNamed } from '../model/wire/registry.ts'
 import type { CallModel, RuntimeRequest } from '../runtime/step.ts'
 import type { AskItem } from '../tools/execute.ts'
@@ -65,11 +66,18 @@ function recordingModel(scripts: readonly (readonly ModelEvent[])[], seen: Runti
     seen.push(request)
     const events = scripts[Math.min(at, scripts.length - 1)] ?? []
     at += 1
+    // 账从事件真算（与产品那一条 `checkEvents` 同源）：判词读的是 `ledger().call`，夹具不手拼。
+    let checked: ReturnType<typeof checkEvents> | null = null
+    try {
+      checked = checkEvents(events)
+    } catch {
+      checked = null
+    }
     return {
       events: (async function* (): AsyncGenerator<ModelEvent> {
         for (const e of events) yield e
       })(),
-      ledger: () => ({ call: null, failure: null, attempts: [200] }),
+      ledger: () => ({ call: checked, failure: null, attempts: [200] }),
     }
   }
 }
@@ -284,11 +292,11 @@ test('⑦ 落账：接住 + 判决两条都进日志 · 自决那一档不敲门
     }
   }
 
-  // 契约自己那一档：**自决**——两条落账，人的门口一条不发。
+  // 契约自己那一档：**自决**——接住 · 裁断那一笔 `llm/call`（`role: ruler`）· 判决，人的门口一条不发。
   const settled = await run('contract')
   assert.deepEqual(
     settled.map((e) => e.t),
-    ['ask/raised', 'ask/ruling'],
+    ['ask/raised', 'llm/call', 'ask/ruling'],
   )
   const ruler = settled.find((e) => e.t === 'ask/ruling')
   assert.ok(ruler !== undefined && ruler.t === 'ask/ruling')
@@ -299,7 +307,7 @@ test('⑦ 落账：接住 + 判决两条都进日志 · 自决那一档不敲门
   const carried = await run('design')
   assert.deepEqual(
     carried.map((e) => e.t),
-    ['ask/raised', 'ask/ruling', 'holder/ask'],
+    ['ask/raised', 'llm/call', 'ask/ruling', 'holder/ask'],
   )
   const a = carried.find((e) => e.t === 'ask/raised')
   const b = carried.find((e) => e.t === 'holder/ask')
