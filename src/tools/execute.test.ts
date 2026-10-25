@@ -57,7 +57,7 @@ import { createRuntime, scriptedModel } from '../runtime/step.ts'
 import type { ToolCallRequest } from '../runtime/step.ts'
 import { createToolExecutor } from '../capability/dispatch.ts'
 import { GREP_MODES, RUNTIME_TAIL_RESERVE, STOP_NOTE_RESERVE, faceOf, noFace, parseArgs } from './execute.ts'
-import { capReceipt, lineCount, MAX_RECEIPT_BYTES } from './receipt.ts'
+import { capReceipt, lineCount, MAX_RECEIPT_BYTES, openCapture } from './receipt.ts'
 import { createWalk } from './walk-cache.ts'
 import type { ToolHost } from './execute.ts'
 import { createToolHost, prefetchBudgetOf } from './host.ts'
@@ -1186,6 +1186,36 @@ test('⑨ 模型读到的回执里没有一个汉字（正文那几格只看头�
     // 四 · 回执被截断时那句标记（上限那一处是常数，不给模型选）
     judge('截断标记', capReceipt(`${'x'.repeat(9000)}\n`, 100))
     console.log('⑨ 读数：回执 21 条（含失败路）· 路径形状 6 条 · 围栏 3 条 · 截断标记 1 条——一个汉字都没有')
+  } finally {
+    await b.close()
+  }
+})
+
+// ── ⑰ 攒输出的上限（host 那一层攒的那一侧，不是回执那一侧）─────────────────────────
+test('⑰b 攒子进程输出带上限：不到上限逐字节原样 · 洪水拦在上限并说清截了多少', async () => {
+  // 单元：小上限做负对照（与 capReceipt 的判据同一条纪律——上限是常数，参数只给断言用）。
+  const cap = openCapture(1000)
+  cap.add('x'.repeat(600))
+  cap.add('y'.repeat(600))
+  assert.ok(cap.text().startsWith('x'.repeat(600) + 'y'.repeat(400)), '留下的是头 1000 个字符')
+  assert.match(cap.text(), /200 bytes omitted at capture limit 1000/, '截了多少要说清')
+  cap.add('z'.repeat(50))
+  assert.match(cap.text(), /250 bytes omitted/, '满了之后只数不加')
+  const small = openCapture(1000)
+  small.add('全部都在。')
+  assert.equal(small.text(), '全部都在。', '不到上限一个字节不多（没有标记）')
+
+  // 真进程：一条 5 MiB 的洪水（yes | head -c）——回执那一层的 8 KiB 截在攒完之后，
+  // 拦不住这一档；攒的那一侧把它拦在 4 MiB。
+  const b = await bench()
+  try {
+    const flood = await face('bash', { command: '/bin/sh -c "yes 0123456789abcdef | head -c 5000000"' }, b.host)
+    assert.equal(flood.ok, true, `洪水那一趟本身要跑成：${flood.output.slice(0, 120)}`)
+    assert.match(flood.output, /bytes omitted at capture limit 4194304/, `截断标记要进得到回执（尾巴那一侧）：${flood.output.slice(-200)}`)
+    const hi = await face('bash', { command: '/bin/sh -c "echo hi"' }, b.host)
+    assert.ok(hi.output.includes('hi'), `小输出逐字节原样：${hi.output}`)
+    assert.ok(!hi.output.includes('omitted'), '没截就没有标记')
+    console.log('⑰ 读数：洪水 5,000,000 字节 → 攒侧拦在 4,194,304 + 标记 · echo hi 逐字节原样')
   } finally {
     await b.close()
   }

@@ -132,3 +132,42 @@ export function capReceipt(text: string, limit: number = MAX_RECEIPT_BYTES): str
   const mark = `\n…(${omitted} bytes omitted · ${n} bytes and ${lineCount(text)} lines in all)…\n`
   return Buffer.concat([head, Buffer.from(mark, 'utf8'), tail]).toString('utf8')
 }
+
+/**
+ * host 那一层**攒**子进程输出（stdout · stderr）每条流的上限：内存那一档的护栏。
+ *
+ * 回执那一层的 8 KiB 是给**模型**的（截在攒完之后、进 C 区之前），拦不住"一条命令把上百
+ * MiB 排进管道"这一档——攒的那一侧原来一字节不落地进内存。这一层给攒的那一侧一条地板：
+ * 正常输出（哪怕几万字节）一个字节不截，被拦的只有把内存当排水口的那一种；截了要说清
+ * 截了多少（与 `capReceipt` 的标记同一条纪律：上限是常量，不给模型选）。
+ */
+export const MAX_CAPTURE_BYTES = 4 * 1024 * 1024
+
+/**
+ * 攒一条流的那只手：到上限只数不加，`text()` 在截过的时候带一句标记（没截就没有标记，
+ * 与回执那条"不到上限逐字节原样"同一条纪律）。**按字符数计**（`data` 那一档给的是解码过的
+ * 文本），上限的量级是 MiB 级，字符与字节的差在这一档不改变它拦的是什么。
+ */
+export function openCapture(limit: number = MAX_CAPTURE_BYTES): {
+  readonly add: (s: string) => void
+  readonly text: () => string
+} {
+  let kept = ''
+  let omitted = 0
+  return {
+    add(s) {
+      const room = limit - kept.length
+      if (room <= 0) {
+        omitted += s.length
+        return
+      }
+      if (s.length <= room) {
+        kept += s
+        return
+      }
+      kept += s.slice(0, room)
+      omitted += s.length - room
+    },
+    text: () => (omitted === 0 ? kept : `${kept}\n…(${omitted} bytes omitted at capture limit ${limit})…\n`),
+  }
+}
