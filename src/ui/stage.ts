@@ -287,34 +287,55 @@ export function openStage(deps: StageDeps): Stage {
    * 重算门口那一批。**只在账真的往前动了那两族事件时走**（`round/*` 与 `holder/*`：处境 · 意图 ·
    * 草案 · 放行都在这两族里）；`llm/call` 那些一行一行的高频事件不重算——一趟读全量日志是 O(行数)，
    * 拿它去乘每一行就等于把跟随这一档拖垮。
+   *
+   * **单飞 + 尾随重跑**：调用点（账连着动那几跳）不等前面那趟，于是会同时进来几趟。并发落地
+   * 的那一档，读得早的那趟可能落得晚——旧批的结论行进永久行**说第二遍**、门口搬回旧批。
+   * 合成一趟：后进来的只记「再来一趟」并**等同一只整趟**（含它跑完之后的重跑）——等的人
+   * 拿到回话时门口一定落在最新一批上（日志只追加，晚读的那趟见到的只会更多）。
    */
-  const refreshGate = async (): Promise<void> => {
-    let next: GateFace | null = null
-    try {
-      next = await deps.pendingFace()
-    } catch {
-      // 账读到一半炸了（日志被换掉 · 权限变了）：门口那一块收掉——读账那一头自己会报。
-      next = null
+  let gateFlying: Promise<void> | null = null
+  let gateWanted = false
+  const refreshGate = (): Promise<void> => {
+    if (gateFlying !== null) {
+      gateWanted = true
+      return gateFlying
     }
-    const key = next === null ? null : `${next.fingerprint}:${next.cards.length}`
-    if (key === lastGate) return
-    lastGate = key
-    gate = next
-    gateHidden = false
-    if (next === null) restoreDraft(); else suspendDraft()
-    panel = null; reading = null; keyHelpTop = null
-    planTop = null
-    planSnap = null
-    // **批次换了就把选中那一份与举手那一栏都归零**：上一批举过的手不许带到这一批上。
-    gateView = GATE_VIEW
-    // **结论行进永久行**（第二幕 ⑧）：门口一开就说清这一批「打算开几件事 · 覆盖哪些 · 按什么验收」。
-    // **一批只说一次**——上面那道 `key` 已经挡住重复（同一批再算几遍都不说）；换了一批才再说一条。
-    // **浓缩件那几行不走这儿**（`T14` / `T17`）：它是门视图自己那一栏，排在预览上面（`ui/gate.ts`
-    // 的 `gateLayoutOf`）——交互档里 `note()` 那几行只到阅读面的「命令记录」，而门口停着的人要的是
-    // "不用按任何键就看得到"，那一栏才满足它。
-    if (next !== null) note(conclusionLineOf(next.conclusion), false)
-    syncImage()
-    deps.redraw()
+    gateFlying = (async (): Promise<void> => {
+      try {
+        do {
+          gateWanted = false
+          let next: GateFace | null = null
+          try {
+            next = await deps.pendingFace()
+          } catch {
+            // 账读到一半炸了（日志被换掉 · 权限变了）：门口那一块收掉——读账那一头自己会报。
+            next = null
+          }
+          const key = next === null ? null : `${next.fingerprint}:${next.cards.length}`
+          if (key === lastGate) continue
+          lastGate = key
+          gate = next
+          gateHidden = false
+          if (next === null) restoreDraft(); else suspendDraft()
+          panel = null; reading = null; keyHelpTop = null
+          planTop = null
+          planSnap = null
+          // **批次换了就把选中那一份与举手那一栏都归零**：上一批举过的手不许带到这一批上。
+          gateView = GATE_VIEW
+          // **结论行进永久行**（第二幕 ⑧）：门口一开就说清这一批「打算开几件事 · 覆盖哪些 · 按什么验收」。
+          // **一批只说一次**——上面那道 `key` 已经挡住重复（同一批再算几遍都不说）；换了一批才再说一条。
+          // **浓缩件那几行不走这儿**（`T14` / `T17`）：它是门视图自己那一栏，排在预览上面（`ui/gate.ts`
+          // 的 `gateLayoutOf`）——交互档里 `note()` 那几行只到阅读面的「命令记录」，而门口停着的人要的是
+          // "不用按任何键就看得到"，那一栏才满足它。
+          if (next !== null) note(conclusionLineOf(next.conclusion), false)
+          syncImage()
+          deps.redraw()
+        } while (gateWanted)
+      } finally {
+        gateFlying = null
+      }
+    })()
+    return gateFlying
   }
   /** 这一刻树上选的是哪一格（`null` = 整份账）。阅读面读的就是它。 */
   const focusNow = (): string | null => writerAt(navNodes, navAt)

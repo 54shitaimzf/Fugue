@@ -49,6 +49,8 @@ function stageOf(
     hint?: string
     /** 这一刻的终端列数（U2 的一把尺那一格要它随测试改）。缺省 80，与从前逐字节相同。 */
     columns?: () => number
+    /** 门口重算那一趟的可控替身（⑩ 竞态断言用）。缺省 `ctl.face`——与从前逐字节相同。 */
+    pendingFace?: () => Promise<GateFace | null>
   } = {},
 ): {
   stage: ReturnType<typeof openStage>
@@ -100,7 +102,7 @@ function stageOf(
       return `${when} 那一段`
     },
     rows: () => ctl.rows,
-    pendingFace: async () => ctl.face,
+    pendingFace: o.pendingFace ?? (async () => ctl.face),
     run: () => go,
     now: () => clock,
     abort: () => {
@@ -477,4 +479,57 @@ test('⑫ 门口一开：门块头几行是摘要（结论行照旧一条 · 换
   assert.equal(ctl.notes.length, mark, '门口没了不再推')
   assert.equal(stage.view().bottom, undefined, '门口没了门块整块收起来')
   console.log(`⑫ 读数：门块头 ${shown.length} 行是摘要 · 浓缩件在阅读面可达 · 两批各推 1 条结论行 · 门口收起来整块不见`)
+})
+
+// ── ⑬ refreshGate 单飞（晚到的重算不许把门口搬回旧批）──────────────────────────────
+test('⑬ 门口重算单飞：并发那几趟合成一趟，晚到的旧批不许再进永久行（竞态那一档说第二遍）', async () => {
+  const contract = {
+    id: 'r1.investigate.1',
+    agent: 'agent/r1/1',
+    kind: 'investigate',
+    question: '现状怎么写的',
+    evidenceRequired: [],
+    seed: [],
+  } as unknown as Contract
+  const faceA = gateFaceOf({ round: 'r1', fingerprint: 'fp-a', same: [], contracts: [contract] }, {})
+  const faceB = gateFaceOf({ round: 'r1', fingerprint: 'fp-b', same: [], contracts: [contract, contract] }, {})
+
+  // 受控的重算替身：每次调用发一个手动落定的 Promise。
+  const pendings: { resolve: (f: GateFace | null) => void }[] = []
+  const pendingFace = (): Promise<GateFace | null> =>
+    new Promise((resolve) => {
+      pendings.push({ resolve })
+    })
+  const { stage, ctl } = stageOf({ pendingFace })
+  const said = (): readonly string[] => ctl.notes.filter((n) => n.includes('打算开'))
+
+  // 三趟几乎同时进来（生产里是账连着动那几跳——`void refreshGate()` 不等前面那趟）。
+  void stage.refreshGate()
+  void stage.refreshGate()
+  void stage.refreshGate()
+
+  // 灌两趟：先旧批、再新批。单飞那一版第二、三趟并入重跑（只有两只待落定）；竞态那一版
+  // 三只全在飞，第三只灌回旧批——旧批的结论行**再说一遍**、门口搬回旧批。
+  const flush = (): Promise<void> => new Promise((r) => setImmediate(r))
+  const give = async (f: GateFace): Promise<void> => {
+    while (pendings.length === given) await flush()
+    ;(pendings[given] as { resolve: (x: GateFace) => void }).resolve(f)
+    given += 1
+  }
+  let given = 0
+  await give(faceA)
+  await flush()
+  await give(faceB)
+  await flush()
+  // 竞态那一版还剩第三只在飞：给它旧批（那一趟读得早、落得晚——正是要拦的那一档）。
+  if (pendings.length > given) {
+    ;(pendings[given] as { resolve: (x: GateFace) => void }).resolve(faceA)
+    given += 1
+  }
+  await new Promise((r) => setTimeout(r, 0))
+
+  assert.equal(pendings.length, 2, `并发三趟该合成两趟读（首趟 + 重跑一趟）：实际起了 ${pendings.length} 趟`)
+  assert.equal(said().length, 2, `两批各恰一条结论行（旧批说第二遍就是竞态落地的形状）：${JSON.stringify(said())}`)
+  assert.ok(said()[1]?.includes('2 个'), `第二条说的是新那一批（2 个）：${said()[1] ?? ''}`)
+  console.log(`⑬ 读数：并发 3 趟 → 读 ${pendings.length} 趟 · 结论行 ${said().length} 条（A 一条 · B 一条）`)
 })
