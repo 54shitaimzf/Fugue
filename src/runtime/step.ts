@@ -207,6 +207,13 @@ export interface StepResult {
    * 的出口）。空/缺席都是"这一步没有"——轮次那一层据此收下并裁断。
    */
   readonly asks?: readonly AskItem[]
+  /**
+   * 这一步**有没有把工具调用交下去过**（执行了哪怕一条也是 `true`；缺席 = 没有）。
+   *
+   * 读它的是驱动那一层的回退闸：已执行工具的失败不换脸重跑——副作用已经落了，回退模型看不到
+   * 那一批回执，重跑这一步等于给它一个重放写的机会（2026-10-26 外部审查 3.1 的判决）。
+   */
+  readonly executed?: boolean
 }
 
 /**
@@ -520,6 +527,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         },
         next: h.state,
         seqs,
+        executed: true,
       }
     }
 
@@ -544,6 +552,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
           },
           next: h.state,
           seqs,
+          executed: true,
         }
       }
       if (r.halt === true) halted = true
@@ -570,7 +579,13 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
           lastStep: turnText(turnOf(said, done, call.thinking)),
           turns: [...(h.state.turns ?? []), turnOf(said, done, call.thinking)],
         }
-    return { outcome, next, seqs, ...(raised.length === 0 ? {} : { asks: raised }) }
+    return {
+      outcome,
+      next,
+      seqs,
+      ...(calls.length > 0 ? { executed: true } : {}),
+      ...(raised.length === 0 ? {} : { asks: raised }),
+    }
   }
 
   return {

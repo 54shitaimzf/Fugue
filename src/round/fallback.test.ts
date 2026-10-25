@@ -31,9 +31,10 @@ import type { Transport, Target } from '../model/http.ts'
 import { wireCallOver } from '../runtime/step.ts'
 import type { CallModel, ModelEvent } from '../runtime/step.ts'
 import { recordingExecutor } from '../runtime/step.ts'
-import { runAgentOnce } from './driver.ts'
+import { runAgentOnce, withStepsLeft } from './driver.ts'
 import type { DriverAsk, DriverResult } from './driver.ts'
 import { takeAsks } from './handback.ts'
+import type { ToolExecutor, ToolCallRequest } from '../runtime/step.ts'
 import { ledgerOf } from '../probe/ledger.ts'
 import type { LedgerRow } from '../probe/ledger.ts'
 import type { AgentId, CommitId, ContractId, RelPath, WriterId } from '../terms.ts'
@@ -100,6 +101,7 @@ function dyingPrimary(): Transport & { posts: string[] } {
 async function cellWith(
   transport: Transport,
   fallbacks: readonly ModelFace[],
+  opts: { readonly maxSteps?: number; readonly execute?: ToolExecutor } = {},
 ): Promise<{ run: () => Promise<DriverResult>; log: LogHandle; events: () => Promise<{ pos: { writer: string; seq: number }; e: LogEventLike }[]>; close: () => Promise<void> }> {
   const AGENT = 'agent-1' as AgentId
   const root = mkdtempSync(join(tmpdir(), 'fugue-fallback-'))
@@ -152,8 +154,9 @@ async function cellWith(
     },
     decl: PRIMARY,
     call: wireCallOver(transport) as CallModel,
-    execute: recordingExecutor(() => ({ ok: true, output: '好。' })),
+    execute: opts.execute ?? recordingExecutor(() => ({ ok: true, output: '好。' })),
     ...(fallbacks.length === 0 ? {} : { fallbacks }),
+    ...(opts.maxSteps === undefined ? {} : { maxSteps: opts.maxSteps }),
   }
   const events = async (): Promise<{ pos: { writer: string; seq: number }; e: LogEventLike }[]> => {
     const out: { pos: { writer: string; seq: number }; e: LogEventLike }[] = []
@@ -313,4 +316,95 @@ test('③ 裁断那一格自己的链：脸死了换下一张（那一跳也落�
     await truth.close()
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+/** Chat 那条线的一帧（`delta` + 可选 `finish_reason`）——工具调用夹具与 ⑨ 那一套同形。 */
+const frameOf = (delta: Record<string, unknown>, finish: string | null = null): string => {
+  const choice: Record<string, unknown> = { index: 0, delta, ...(finish === null ? {} : { finish_reason: finish }) }
+  return `data: ${JSON.stringify({ id: 'x', object: 'chat.completion.chunk', choices: [choice] })}`
+}
+
+/** 一份"两条工具调用"的完整响应：第一条会落副作用，第二条在执行器里抛。 */
+const TWO_TOOLS = [
+  frameOf({ tool_calls: [{ index: 0, id: 'call_a', type: 'function', function: { name: 'side', arguments: '{}' } }] }),
+  '',
+  frameOf({ tool_calls: [{ index: 1, id: 'call_b', type: 'function', function: { name: 'side', arguments: '{}' } }] }),
+  '',
+  frameOf({}, 'tool_calls'),
+  '',
+  'data: [DONE]',
+  '',
+].join('\n')
+
+test('⑤ 额度闸在每次发起之前：回退尝试计入 --max-steps（上界 1 → 只发一次；上界 2 → 主败+回退成功）', async () => {
+  const backup = (): ModelFace => faceOf(BACKUP, TEST_CAT, { doc: {}, credential: '测试凭据（不出网）' })
+  // 上界 1：主脸那一趟失败后额度已尽——不换脸、不再发，如实断在半路。
+  const one = await cellWith(dyingPrimary(), [backup()], { maxSteps: 1 })
+  try {
+    const r = await one.run()
+    assert.match(r.stopped, /^cut-stream/, '最后一趟失败且额度已尽：如实断在半路')
+    assert.equal(r.failed, true)
+    const rows = await one.events()
+    assert.equal(rows.filter((x) => x.e.t === 'llm/call').length, 1, '上界 1 就只发一次——回退不是暗中多出来的免费额度')
+    assert.equal(rows.filter((x) => x.e.t === 'model/fallback').length, 0, '额度尽了就不换脸（一跳都不落）')
+  } finally {
+    await one.close()
+  }
+  // 上界 2：主脸失败（1 次）+ 回退成功（1 次）——正当用满。
+  const two = await cellWith(dyingPrimary(), [backup()], { maxSteps: 2 })
+  try {
+    const r = await two.run()
+    assert.equal(r.stopped, '收敛', `两次额度够主败+回退成功：${r.stopped}`)
+    assert.equal(r.failed, false)
+    const rows = await two.events()
+    assert.equal(rows.filter((x) => x.e.t === 'llm/call').length, 2)
+    assert.equal(rows.filter((x) => x.e.t === 'model/fallback').length, 1)
+  } finally {
+    await two.close()
+  }
+  console.log('⑤ 读数：maxSteps=1 → 1 次调用 0 跳（failed）；maxSteps=2 → 2 次调用 1 跳（收敛）')
+})
+
+test('⑥ 已执行工具的失败不回退：副作用不从模型上下文里消失后被重做', async () => {
+  // 两台模型都给同一份"两条工具调用"：若允许回退重跑这一步，回退模型看不到第一条的回执，
+  // 会把同两条再发一遍——已落地的副作用被重放。
+  const posts: string[] = []
+  const both: Transport = {
+    async *post(t: Target): AsyncGenerator<Uint8Array> {
+      posts.push(t.model)
+      for (const line of TWO_TOOLS.split('\n')) yield new TextEncoder().encode(`${line}\n`)
+    },
+  }
+  let ran = 0
+  const execute: ToolExecutor = {
+    async execute(call: ToolCallRequest) {
+      ran += 1
+      if (ran % 2 === 0) throw new Error(`第二条工具当场抛了（${call.name}）`)
+      return { ok: true, output: '第一条落了' }
+    },
+  }
+  const cell = await cellWith(both, [faceOf(BACKUP, TEST_CAT, { doc: {}, credential: '测试凭据（不出网）' })], { execute })
+  try {
+    const r = await cell.run()
+    assert.match(r.stopped, /^tool-threw/, '执行阶段失败：如实停下')
+    assert.equal(r.failed, true)
+    assert.equal(ran, 2, `第一条已落、第二条抛——回退不许把这一步重走一遍（实际执行 ${ran} 次）`)
+    const rows = await cell.events()
+    assert.equal(rows.filter((x) => x.e.t === 'llm/call').length, 1, '只有主脸那一趟调用——不换脸重跑')
+    assert.equal(rows.filter((x) => x.e.t === 'model/fallback').length, 0)
+    assert.equal(posts.length, 1, '回退模型一次都没被请求')
+  } finally {
+    await cell.close()
+  }
+  console.log('⑥ 读数：两条工具 · 第一条落副作用 · 第二条抛 → 不回退 · 执行恰 2 次 · 调用恰 1 次')
+})
+
+test('⑦ 收工那半句读同一个额度：attempts（含回退跳）优先，逻辑步退位', async () => {
+  const inner: ToolExecutor = { async execute() { return { ok: true, output: 'x' } } }
+  const wrapped = withStepsLeft(inner, 3)
+  const call = { id: 'a', name: 'side', arguments: '{}' } as ToolCallRequest
+  const withAttempts = await wrapped.execute(call, { state: { ...emptyState(), step: 1, attempts: 2 } } as never)
+  assert.match(withAttempts.output, /this is step 3: 0 left/, 'attempts=2 → 这是第 3 次尝试、这次走完剩 0——与闸同一个数')
+  const withoutAttempts = await wrapped.execute(call, { state: { ...emptyState(), step: 1 } } as never)
+  assert.match(withoutAttempts.output, /this is step 2: 1 left/, 'attempts 缺席退回逻辑步（没有失败重试的那一档两者相等）')
 })

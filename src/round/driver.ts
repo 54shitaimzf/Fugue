@@ -287,7 +287,7 @@ export function withStepsLeft(inner: ToolExecutor, maxSteps?: number): ToolExecu
   /** 一条调用在这一格里走完那一趟（与 `plan.ts` 的 `holderFace` 同一个形状 · 同一条理由）。 */
   async function one(call: ToolCallRequest, h: AgentHandle): Promise<ToolResult> {
     const r = await inner.execute(call, h)
-    const t = stepsLeftTail(Number(h.state.step), maxSteps, AGENT_LAND_NOW)
+    const t = stepsLeftTail(Number(h.state.attempts ?? h.state.step), maxSteps, AGENT_LAND_NOW)
     return t === '' ? r : { ...r, output: capReceipt(r.output + t) }
   }
   return {
@@ -302,7 +302,7 @@ export function withStepsLeft(inner: ToolExecutor, maxSteps?: number): ToolExecu
         return out
       }
       const got = await inner.executeAll(calls, h)
-      const t = stepsLeftTail(Number(h.state.step), maxSteps, AGENT_LAND_NOW)
+      const t = stepsLeftTail(Number(h.state.attempts ?? h.state.step), maxSteps, AGENT_LAND_NOW)
       return t === '' ? got : got.map((r) => ({ ...r, output: capReceipt(r.output + t) }))
     },
   }
@@ -773,6 +773,15 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       failed = true
       break
     }
+    // **额度在每一次发起之前查**（含回退那一跳）：回退尝试同样计入 `--max-steps`，不暗中多一个
+    // 免费额度。上一趟走完而额度已尽，是与从前同一档的正常停（不算断在半路）。
+    if (maxSteps !== undefined && steps >= maxSteps) {
+      stopped = `到了你给的上界（${maxSteps} 步）`
+      break
+    }
+    // 收工那半句（`withStepsLeft`）与上面那道闸读**同一个数**：`attempts` 是已发起过的调用次数
+    // （含换脸重试），这一趟发起前先写进状态——模型看到的"还剩几步"不会比真正的额度乐观。
+    handle = { ...handle, state: { ...handle.state, attempts: steps } }
     // **这里不给工具目录那一段**（`tools: ''`）：循环这一层不认识目录，给了它等于把公布面绑进
     // 运行时。派发前那一份占用（`occupancyOf`）把目录算了进去，于是那一个是完整的一笔、这一个
     // 差了目录那一段。判"该不该交接"用的是这一笔，所以它偏松的一侧——而真读数会把这段差补回来
@@ -794,6 +803,23 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     if (r.outcome.kind === 'failed') {
       // **失败要报出来**：它不是"干完了"。`why` 是短分类（`cut-stream` · `max-tokens` · …）。
       stopped = `${r.outcome.error.why}：${r.outcome.error.message}`
+      // **取消是独立终态**：不归"模型供不上"，也不换脸——换脸救不了人喊停。
+      if (signal.aborted) {
+        stopped = '已取消（调用方喊停）'
+        failed = true
+        break
+      }
+      // **已执行过工具的失败不回退**：副作用已经落了，而回退模型看不到那一批回执——重跑这一步
+      // 等于给它一个重放写的机会。如实停下（`failed:true`），恢复那一档交给人。
+      if (r.executed === true) {
+        failed = true
+        break
+      }
+      // **额度已尽也不再换脸**：那一趟失败就是这一格的终态——上界是用户给的，换脸是花钱的事。
+      if (maxSteps !== undefined && steps >= maxSteps) {
+        failed = true
+        break
+      }
       // **回退那一跳**（角色层站）：链还有剩就换脸重试——同一步再走一遍（各落各的 `llm/call`，
       // 按模型分账因此天然成立），每一跳落 `model/fallback`。链走完了才真算断在半路。
       let hopped = false
@@ -878,10 +904,6 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       handoffs.push(out.prompt)
       handedOff = true
       handle = { ...handle, state: successorOf(handle.state, out.prompt) }
-    }
-    if (maxSteps !== undefined && steps >= maxSteps) {
-      stopped = `到了你给的上界（${maxSteps} 步）`
-      break
     }
   }
 

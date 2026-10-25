@@ -297,7 +297,7 @@ export function holderFace(inner: ToolExecutor, opts: HolderFaceOptions = {}): T
    */
   const finish = (call: ToolCallRequest, r: ToolResult, h: AgentHandle): ToolResult => {
     if (call.name === 'exit_plan_mode' && r.ok && r.halt === true) opts.onDeclare?.()
-    const tail = stepsLeftTail(Number(h.state.step), opts.maxSteps, HOLDER_LAND_NOW)
+    const tail = stepsLeftTail(Number(h.state.attempts ?? h.state.step), opts.maxSteps, HOLDER_LAND_NOW)
     return tail === '' ? r : { ...r, output: capReceipt(r.output + tail) }
   }
   /** 一条调用在这一格里走完那一趟（见 `driver.ts` 那一份的同一条理由）。 */
@@ -543,6 +543,13 @@ export async function holderPass(deps: {
       stopped = '已取消（调用方喊停）'
       break
     }
+    // **额度在每一次发起之前查**（含回退那一跳）：回退尝试同样计入 `--max-steps`，不暗中多一个
+    // 免费额度（与子格循环同一道闸、同一句话）。
+    if (deps.maxSteps !== undefined && steps >= deps.maxSteps) {
+      stopped = `到了你给的上界（${deps.maxSteps} 步）`
+      break
+    }
+    handle = { ...handle, state: { ...handle.state, attempts: steps } }
     const r = await runtime.step(handle, signal)
     steps += 1
     // **最后说的那一段**：一步的产物在 `next.turns` 的末尾那一条里（`turnText` 那一面是它的
@@ -551,6 +558,16 @@ export async function holderPass(deps: {
     if (last?.text !== undefined && last.text !== '') said = last.text
     if (r.outcome.kind === 'failed') {
       stopped = `${r.outcome.error.why}：${r.outcome.error.message}`
+      // **取消是独立终态**：不归"模型供不上"，也不换脸（与子格循环同一条）。
+      if (signal.aborted) {
+        stopped = '已取消（调用方喊停）'
+        break
+      }
+      // **已执行过工具的失败不回退**：副作用已经落了，回退模型看不到那一批回执——重跑这一步
+      // 等于重放写。如实停下。
+      if (r.executed === true) break
+      // **额度已尽也不再换脸**：那一趟失败就是这一趟的终态。
+      if (deps.maxSteps !== undefined && steps >= deps.maxSteps) break
       // **回退那一跳**（角色层站）：与子格循环同一套——换脸重试同一步，每一跳落 `model/fallback`。
       let hopped = false
       while (hopAt < fallbacks.length && !hopped) {
@@ -576,10 +593,6 @@ export async function holderPass(deps: {
     handle = { ...handle, state: r.next }
     if (r.outcome.kind === 'done') {
       exit = declared ? 'declared' : 'natural'
-      break
-    }
-    if (deps.maxSteps !== undefined && steps >= deps.maxSteps) {
-      stopped = `到了你给的上界（${deps.maxSteps} 步）`
       break
     }
   }
