@@ -1192,30 +1192,39 @@ test('⑨ 模型读到的回执里没有一个汉字（正文那几格只看头�
 })
 
 // ── ⑰ 攒输出的上限（host 那一层攒的那一侧，不是回执那一侧）─────────────────────────
-test('⑰b 攒子进程输出带上限：不到上限逐字节原样 · 洪水拦在上限并说清截了多少', async () => {
+test('⑰b 攒子进程输出带上限：不到上限逐字节原样 · 洪水拦在上限（头尾各半）· 按字符说清截了多少 · 末尾诊断仍在', async () => {
   // 单元：小上限做负对照（与 capReceipt 的判据同一条纪律——上限是常数，参数只给断言用）。
   const cap = openCapture(1000)
   cap.add('x'.repeat(600))
   cap.add('y'.repeat(600))
-  assert.ok(cap.text().startsWith('x'.repeat(600) + 'y'.repeat(400)), '留下的是头 1000 个字符')
-  assert.match(cap.text(), /200 bytes omitted at capture limit 1000/, '截了多少要说清')
+  // 头尾各半：留头 500 · 留尾 500，中段 200 截掉——错误信息长在**末尾**，丢中段不丢结尾。
+  assert.ok(cap.text().startsWith('x'.repeat(500)), '头留前一半')
+  assert.match(cap.text(), /200 chars omitted at capture limit 1000/, '截了多少按字符说清')
+  assert.ok(cap.text().endsWith('y'.repeat(500)), '尾留后一半')
   cap.add('z'.repeat(50))
-  assert.match(cap.text(), /250 bytes omitted/, '满了之后只数不加')
+  assert.match(cap.text(), /250 chars omitted/, '满了之后只数不加')
+  assert.ok(cap.text().endsWith('z'.repeat(50)), '尾巴滚动：最新的末尾不丢')
+
+  // 多字节字符按字符（码元）计与截：说截了几个就是几个，不拿字节冒充。
+  const cjk = openCapture(4)
+  cjk.add('中文abc文')
+  assert.equal(cjk.text(), '中文\n…(2 chars omitted at capture limit 4)…\nc文', '中文各占 1 码元：留「中文」与「c文」，截掉的恰是 2 个字符')
+
   const small = openCapture(1000)
   small.add('全部都在。')
   assert.equal(small.text(), '全部都在。', '不到上限一个字节不多（没有标记）')
 
-  // 真进程：一条 5 MiB 的洪水（yes | head -c）——回执那一层的 8 KiB 截在攒完之后，
-  // 拦不住这一档；攒的那一侧把它拦在 4 MiB。
+  // 真进程：洪水之后末尾那一行诊断仍要看得见——截头保尾，丢的是中段不是结论。
   const b = await bench()
   try {
-    const flood = await face('bash', { command: '/bin/sh -c "yes 0123456789abcdef | head -c 5000000"' }, b.host)
+    const flood = await face('bash', { command: '/bin/sh -c "yes 0123456789abcdef | head -c 5000000; echo FINAL_DIAGNOSTIC"' }, b.host)
     assert.equal(flood.ok, true, `洪水那一趟本身要跑成：${flood.output.slice(0, 120)}`)
-    assert.match(flood.output, /bytes omitted at capture limit 4194304/, `截断标记要进得到回执（尾巴那一侧）：${flood.output.slice(-200)}`)
+    assert.match(flood.output, /chars omitted at capture limit 4194304/, `截断标记要进得到回执（尾巴那一侧）：${flood.output.slice(-200)}`)
+    assert.ok(flood.output.includes('FINAL_DIAGNOSTIC'), '超限之后末尾的诊断仍在——尾巴救的就是这一行')
     const hi = await face('bash', { command: '/bin/sh -c "echo hi"' }, b.host)
     assert.ok(hi.output.includes('hi'), `小输出逐字节原样：${hi.output}`)
     assert.ok(!hi.output.includes('omitted'), '没截就没有标记')
-    console.log('⑰ 读数：洪水 5,000,000 字节 → 攒侧拦在 4,194,304 + 标记 · echo hi 逐字节原样')
+    console.log('⑰b 读数：洪水 5,000,000 字符 → 攒侧拦在 4,194,304（头尾各半）· 末尾诊断在 · echo hi 逐字节原样')
   } finally {
     await b.close()
   }

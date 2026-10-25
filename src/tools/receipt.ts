@@ -141,33 +141,48 @@ export function capReceipt(text: string, limit: number = MAX_RECEIPT_BYTES): str
  * 正常输出（哪怕几万字节）一个字节不截，被拦的只有把内存当排水口的那一种；截了要说清
  * 截了多少（与 `capReceipt` 的标记同一条纪律：上限是常量，不给模型选）。
  */
-export const MAX_CAPTURE_BYTES = 4 * 1024 * 1024
+export const MAX_CAPTURE_CHARS = 4 * 1024 * 1024
 
 /**
- * 攒一条流的那只手：到上限只数不加，`text()` 在截过的时候带一句标记（没截就没有标记，
- * 与回执那条"不到上限逐字节原样"同一条纪律）。**按字符数计**（`data` 那一档给的是解码过的
- * 文本），上限的量级是 MiB 级，字符与字节的差在这一档不改变它拦的是什么。
+ * 攒一条流的那只手：**头尾各半**（错误信息长在末尾——洪水排完之后那一行真正的诊断，靠的就是
+ * 尾巴那一半），中段截掉并说清截了多少。没截就没有标记（与回执那条"不到上限逐字节原样"同一
+ * 条纪律：上限是常量，不给模型选）。
+ *
+ * **按字符（UTF-16 码元）计**（`data` 那一档给的是解码过的文本，`String.length` 就是码元数）：
+ * 标记说的"截了几个"与实际截掉的码元数一致——多字节内容不拿字节冒充，也不把码元说成字节。
  */
-export function openCapture(limit: number = MAX_CAPTURE_BYTES): {
+export function openCapture(limit: number = MAX_CAPTURE_CHARS): {
   readonly add: (s: string) => void
   readonly text: () => string
 } {
-  let kept = ''
+  const headW = Math.ceil(limit / 2)
+  const tailW = limit - headW
+  let head = ''
+  let tail = ''
   let omitted = 0
+  const pushTail = (s: string): void => {
+    const all = tail + s
+    if (all.length > tailW) {
+      omitted += all.length - tailW
+      tail = tailW === 0 ? '' : all.slice(-tailW)
+    } else {
+      tail = all
+    }
+  }
   return {
     add(s) {
-      const room = limit - kept.length
-      if (room <= 0) {
-        omitted += s.length
+      if (head.length < headW) {
+        const room = headW - head.length
+        if (s.length <= room) {
+          head += s
+          return
+        }
+        head += s.slice(0, room)
+        pushTail(s.slice(room))
         return
       }
-      if (s.length <= room) {
-        kept += s
-        return
-      }
-      kept += s.slice(0, room)
-      omitted += s.length - room
+      pushTail(s)
     },
-    text: () => (omitted === 0 ? kept : `${kept}\n…(${omitted} bytes omitted at capture limit ${limit})…\n`),
+    text: () => (omitted === 0 ? head + tail : `${head}\n…(${omitted} chars omitted at capture limit ${limit})…\n${tail}`),
   }
 }
