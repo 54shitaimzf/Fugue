@@ -104,7 +104,7 @@ export interface PlanDeps {
   readonly call: CallModel
   readonly execute: ToolExecutor
   readonly tools?: readonly ToolEntry[]
-  /** **回退链**（0.5.3 角色层）：持轮者主脸之外的那几张，透传给 `holderPass`。 */
+  /** **回退链**（角色层站）：持轮者主脸之外的那几张，透传给 `holderPass`。 */
   readonly fallbacks?: readonly ModelFace[]
   readonly maxSteps?: number
   /** 草案在视图里的路径。缺省 `draftPathOf(round)`（保留前缀那一处，架构 § 9.10）。 */
@@ -506,7 +506,7 @@ export async function holderPass(deps: {
   /** 人喊停那一档：不请模型跑。 */
   readonly judgeOnly?: boolean
   /**
-   * **回退链**（0.5.3 角色层）：持轮者主脸之外的那几张。步循环 `failed` 那一档在链还有剩时
+   * **回退链**（角色层站）：持轮者主脸之外的那几张。步循环 `failed` 那一档在链还有剩时
    * 换脸重试（同一步再走一遍，各落各的 `llm/call`），每一跳落 `model/fallback`。不给 = 空链。
    */
   readonly fallbacks?: readonly ModelFace[]
@@ -551,7 +551,7 @@ export async function holderPass(deps: {
     if (last?.text !== undefined && last.text !== '') said = last.text
     if (r.outcome.kind === 'failed') {
       stopped = `${r.outcome.error.why}：${r.outcome.error.message}`
-      // **回退那一跳**（0.5.3）：与子格循环同一套——换脸重试同一步，每一跳落 `model/fallback`。
+      // **回退那一跳**（角色层站）：与子格循环同一套——换脸重试同一步，每一跳落 `model/fallback`。
       let hopped = false
       while (hopAt < fallbacks.length && !hopped) {
         const one = fallbacks[hopAt] as ModelFace

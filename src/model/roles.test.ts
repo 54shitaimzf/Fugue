@@ -1,4 +1,4 @@
-// 角色那一层的解析口径（路线图 0.5.3 本体第一件）：三个角色各配各的模型 + 全局回退链。
+// 角色那一层的解析口径（路线图多模型面那行（角色层站） 本体第一件）：三个角色各配各的模型 + 全局回退链。
 //
 // 跑法：cd ~/fugue && node --test src/model/roles.test.ts
 import assert from 'node:assert/strict'

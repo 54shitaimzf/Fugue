@@ -131,7 +131,7 @@ export interface SayDeps {
   readonly call: CallModel
   readonly execute: ToolExecutor
   readonly tools?: readonly ToolEntry[]
-  /** **回退链**（0.5.3 角色层）：持轮者主脸之外的那几张，透传给 `holderPass`。 */
+  /** **回退链**（角色层站）：持轮者主脸之外的那几张，透传给 `holderPass`。 */
   readonly fallbacks?: readonly ModelFace[]
   readonly maxSteps?: number
   /** 预备态那一趟的跑法（`planRound`）：这一份不认识契约门，也不认识占用估账。 */

@@ -77,7 +77,7 @@ export const FAMILY_KIND: Readonly<Record<EventFamily, FamilyKind>> = {
   'merge/publish': 'transient',
   'bound/deny': 'permanent',
   signal: 'permanent',
-  // 二 · 一步一条：调用与前缀装配。**回退那一跳**（0.5.3）与调用同一档：换脸是那一趟的读数，
+  // 二 · 一步一条：调用与前缀装配。**回退那一跳**（角色层站）与调用同一档：换脸是那一趟的读数，
   // 换过去之后各落各的 `llm/call`。
   'llm/call': 'transient',
   'prefix/assemble': 'transient',

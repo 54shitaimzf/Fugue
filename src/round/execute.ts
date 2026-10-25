@@ -254,9 +254,9 @@ export interface DriverSupport {
   /** 这一格的句柄（分支 · 契约 · 模型 · 目标）。同样收契约（理由同上）。 */
   readonly handle: (agent: AgentId, contract: Contract) => DriverAsk['handle']
   readonly decl: ModelDecl
-  /** 回退链（0.5.3 角色层）：主脸之外的那几张（惰性取目标）。不给 = 空链（不换模型）。 */
+  /** 回退链（角色层站）：主脸之外的那几张（惰性取目标）。不给 = 空链（不换模型）。 */
   readonly fallbacks?: readonly ModelFace[]
-  /** 裁断那一格自己的那串脸（0.5.3）。不给就照旧借格子自己那一套。 */
+  /** 裁断那一格自己的那串脸（角色层站）。不给就照旧借格子自己那一套。 */
   readonly rulerFaces?: readonly ModelFace[]
   readonly call?: CallModel
   readonly execute?: ToolExecutor

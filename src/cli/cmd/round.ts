@@ -779,7 +779,7 @@ async function holderWiringOf(o: {
   readonly baseState: AssembleState
   readonly recent: string
   readonly handleFor: (over: { readonly runtime: string; readonly recent: string }) => AgentHandle
-  /** 持轮者的回退链（0.5.3）：主脸之外的那几张（空链 = 不换模型）。 */
+  /** 持轮者的回退链（角色层站）：主脸之外的那几张（空链 = 不换模型）。 */
   readonly fallbacks: readonly ModelFace[]
 }> {
   // **钉住底**（读一次，然后传下去）：视图铺在它上面，日志里 `round/state` 那条链也以它为准。
@@ -810,7 +810,7 @@ async function holderWiringOf(o: {
     },
   })
   // **模型按这一趟的选择来**（`--model` 旗标 > `round.model` 配置 > 缺省那条，`shared.ts` 一处）；
-  // 角色那一层（0.5.3）盖在最上面：`round.models.holder` 只换持轮者，回退链 `round.fallback`
+  // 角色那一层（角色层站）盖在最上面：`round.models.holder` 只换持轮者，回退链 `round.fallback`
   // 跟在主脸后面（缺省空链——不换模型）。主脸的凭据按从前的口径 eager 拼好（`credentialFor`），
   // 回退脸惰性：同一家提供方共用主脸那份凭据（`--credential` 那一份），别家的按它自己的引用表取。
   const holderChain = roleChainOf(o.doc, o.cat, 'holder', selectedModelId(o.wire.model, o.doc))
@@ -1856,7 +1856,7 @@ export function driverSupport(o: {
    */
   readonly maxSteps?: number
 }): DriverSupport {
-  // **角色那一层**（0.5.3）：子格与裁断各配各的脸（`round.models.cell|ruler` > `--model`/`round.model`
+  // **角色那一层**（角色层站）：子格与裁断各配各的脸（`round.models.cell|ruler` > `--model`/`round.model`
   // > 目录第一条），回退链 `round.fallback` 全局一份跟在主脸后面。主脸凭据 eager（与从前逐字节
   // 相同），回退脸惰性：同一家提供方共用主脸那份（`--credential` 的值），别家的按它自己的引用表取。
   const base = selectedModelId(o.model, o.doc)
@@ -1956,7 +1956,7 @@ export function driverSupport(o: {
     state: (a, c) => stateFor(String(a), c),
     handle: (a, c) => handleFor(String(a), c),
     decl,
-    // **回退链与裁断自己的脸**（0.5.3）：空链不传（那一档与从前逐字节相同）。
+    // **回退链与裁断自己的脸**（角色层站）：空链不传（那一档与从前逐字节相同）。
     ...(faces.length > 1 ? { fallbacks: faces.slice(1) } : {}),
     ...(rulerFaces.length > 0 ? { rulerFaces } : {}),
     // **要它才包这一层**：不给 `--dump-wire` 时交出去的就是 `wireCall` 本身——多一层包装也许多
