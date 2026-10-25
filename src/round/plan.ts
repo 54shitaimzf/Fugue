@@ -561,6 +561,8 @@ export async function holderPass(deps: {
         try {
           handle = faceHandle(handle, one)
           why = stopped
+          // **换脸即复位**：失败那句话已进那一跳的账（model/fallback.why），新脸有自己的 slate。
+          stopped = '收敛'
           hopped = true
         } catch (err) {
           why = `那张脸拼不起来：${(err as Error).message}`

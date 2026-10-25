@@ -820,6 +820,9 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
           handle = faceHandle(handle, face)
           decl = face.decl
           why = stopped
+          // **换脸即复位**：这一趟失败的话已经落进了那一跳的账里（`model/fallback.why`），
+          // 新脸有自己的 slate——它要是干完，停因就是「收敛」，不是上一张脸的死法。
+          stopped = '收敛'
           hopped = true
         } catch (err) {
           // 那张脸拼都拼不起来（凭据没配那一类）：与跑成死同一档——落一跳账，换下一张。
