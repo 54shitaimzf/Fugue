@@ -730,3 +730,55 @@ test('⑪ 预先取消的信号不发请求：已成立的取消不等未来的 
     await shutdown()
   }
 })
+
+// ── ⑫ 错误分支同一条看门狗规则 ─────────────────────────────────────────────────────
+test('⑫ 错误正文按块读：持续出字节读得完（末尾原话进错误）· 首字节后停住判死（不吞成空正文）', async () => {
+  const f = fixture('deepseek-flash-anthropic')
+  let stall = false
+  const server = createServer((_req, res) => {
+    res.writeHead(400, { 'content-type': 'text/plain' })
+    if (stall) {
+      res.write('first bytes then silence')
+      return
+    }
+    let n = 0
+    const iv = setInterval(() => {
+      n += 1
+      res.write(`chunk-${n} `)
+      if (n === 5) {
+        res.write('FINAL_ERROR')
+        res.end()
+        clearInterval(iv)
+      }
+    }, 80)
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
+  const port = (server.address() as AddressInfo).port
+  const base = {
+    providerId: 'local',
+    host: `http://127.0.0.1:${port}`,
+    wire: fixtureTarget(f).wire,
+    path: '/v1/messages',
+    model: DECL.model,
+    from: 'decl',
+    headers: { 'content-type': 'application/json' },
+  } as const
+  const shutdown = async (): Promise<void> => {
+    server.closeAllConnections?.()
+    await new Promise<void>((ok) => server.close(() => ok()))
+  }
+  try {
+    // 甲：错误正文每 80ms 出一拨（阈值 250ms）——读得完，末尾那句原话进得了错误信息。
+    const t1: Target = { ...base, idleTimeoutMs: 250 }
+    const s1 = callModel(t1, requestFrom(f), fetchTransport)
+    await assert.rejects(drain(s1.events), /FINAL_ERROR/, '持续有进展的错误正文要读得完——末尾原话正是排障要的那一句')
+    // 乙：首字节之后停住——同一把看门狗判死，那句话原样抛（不是吞成空正文的 400）。
+    stall = true
+    const t2: Target = { ...base, idleTimeoutMs: 250 }
+    const s2 = callModel(t2, requestFrom(f), fetchTransport)
+    await assert.rejects(drain(s2.events), /毫秒没有一个字节/, '错误分支也判空闲：判死的原因不被吞成空正文')
+    console.log('⑫ 读数：错误正文持续出字节 → 读完且 FINAL_ERROR 进错误 · 停住 → 看门狗判死（原话抛出）')
+  } finally {
+    await shutdown()
+  }
+})
