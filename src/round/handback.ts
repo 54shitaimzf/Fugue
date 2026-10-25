@@ -23,6 +23,7 @@ import type { AssembleState } from '../assemble/sources.ts'
 import type { Contract } from '../contract/types.ts'
 import type { ModelEvent } from '../model/contract.ts'
 import type { Target } from '../model/http.ts'
+import type { ModelFace } from '../model/roles.ts'
 import type { WireAdapter } from '../model/wire/stream.ts'
 import type { CallModel, RuntimeRequest } from '../runtime/step.ts'
 import { digestOf } from '../runtime/restart.ts'
@@ -224,16 +225,21 @@ export interface AskCallDeps {
   readonly signal?: AbortSignal
 }
 
+/** 一次裁断的两档出口：**判出来了**（哪怕是退化路——那是模型说了话）· **这一趟没跑成**（换脸重试的那一档）。 */
+export type AskAttempt = { readonly kind: 'verdict'; readonly verdict: AskVerdict } | { readonly kind: 'dead'; readonly why: string }
+
 /**
- * 走一次裁断：**一个调用**，上下文一次性，用完即弃。
+ * 走**一躺**裁断（不带链）：一个调用，上下文一次性，用完即弃。
  *
  * 请求的三区直接照规格摆：**A 区 = 复用那一段字节**（原样），**B 区 = 尺 + 契约 + 问题原文**，
  * **C 区是空的**——那一格的历史一个字都不进这次调用，而这次调用的推敲（请求正文 · 原始回复）
  * 也不落任何地方：出去的只有判决（`verdictOf` 那两行）。
  *
- * 调用抛了 · 没走完 · 回复读不出那两行，三条都归 `forwardAll`——不在调用点各写一遍。
+ * **两档出口分开交**（`AskAttempt`）：判出来了（含 `verdictOf` 认不出那两行的退化路——模型
+ * 说了话，判决成立）与这一趟没跑成（调用抛了 · 流没走完——换脸重试的那一档）。原先两种
+ * 都折进 `forwardAll`，链走那一层就只能拿字符串 prefixes 猜——判据不许靠猜。
  */
-export async function adjudicateAsk(input: AskAdjudicationInput, deps: AskCallDeps): Promise<AskVerdict> {
+async function askOnce(input: AskAdjudicationInput, deps: AskCallDeps): Promise<AskAttempt> {
   const encoder = new TextEncoder()
   const request: RuntimeRequest = {
     target: deps.target,
@@ -250,11 +256,61 @@ export async function adjudicateAsk(input: AskAdjudicationInput, deps: AskCallDe
       if (e.t === 'delta') said += e.text
     }
     const led = reply.ledger()
-    if (led.failure !== null) return forwardAll(`那一次调用没走完：${led.failure}`)
+    if (led.failure !== null) return { kind: 'dead', why: `那一次调用没走完：${led.failure}` }
   } catch (err) {
-    return forwardAll(`那一次调用抛了：${(err as Error).message}`)
+    return { kind: 'dead', why: `那一次调用抛了：${(err as Error).message}` }
   }
-  return verdictOf(said)
+  return { kind: 'verdict', verdict: verdictOf(said) }
+}
+
+/**
+ * 走一次裁断（原出口）：判不出来就 `forwardAll`——与从前逐字节相同（不带链的调用点照旧）。
+ */
+export async function adjudicateAsk(input: AskAdjudicationInput, deps: AskCallDeps): Promise<AskVerdict> {
+  const r = await askOnce(input, deps)
+  return r.kind === 'dead' ? forwardAll(r.why) : r.verdict
+}
+
+/**
+ * 判那一次：**链在不在，走的都是同一份 `askOnce`**。链不在就借格子自己那一套（与从前逐字节
+ * 相同，一次即终）；链在就按次序走——没跑成换下一张（每一跳落 `model/fallback`），判出来了就停。
+ */
+async function ruleOf(input: TakeAsksInput): Promise<AskVerdict> {
+  const ask = { aZone: input.aZone, contract: input.contract, task: input.task, asks: input.asks }
+  const sig = input.signal === undefined ? {} : { signal: input.signal }
+  if (input.ruler === undefined) {
+    return await adjudicateAsk(ask, { call: input.call, target: input.target, adapter: input.adapter, model: input.model, ...sig })
+  }
+  let dead: string | null = null
+  for (let at = 0; at < input.ruler.length; at += 1) {
+    const face = input.ruler[at] as ModelFace
+    let r: AskAttempt
+    try {
+      r = await askOnce(ask, {
+        call: input.call,
+        target: face.target(),
+        adapter: { name: face.decl.wire },
+        model: face.decl.model,
+        ...sig,
+      })
+    } catch (err) {
+      // 那张脸拼都拼不起来（凭据没配那一类）：与跑成死同一档——落一跳账，换下一张。
+      r = { kind: 'dead', why: `那张脸拼不起来：${(err as Error).message}` }
+    }
+    if (r.kind === 'verdict') return r.verdict
+    dead = r.why
+    const next = input.ruler[at + 1]
+    if (next !== undefined) {
+      await input.log.append(input.writer, {
+        t: 'model/fallback',
+        agent: input.agent,
+        from: face.decl.id,
+        to: next.decl.id,
+        why: r.why,
+      })
+    }
+  }
+  return forwardAll(dead ?? '裁断那一串脸一张都没跑起来')
 }
 
 /** 问题被接住那一条：`ask/raised`（形状见 `log/events.ts`）。**正文就是那一批问题本身**。 */
@@ -316,6 +372,13 @@ export interface TakeAsksInput {
   readonly adapter: WireAdapter
   readonly model: string
   readonly signal?: AbortSignal
+  /**
+   * **裁断那一格自己的那串脸**（0.5.3 角色层）：给了就按它走——主脸在前，**这一趟没跑成**
+   * （调用抛了 · 流没走完）才换下一张，每一跳落 `model/fallback`；**判出来了就停**（哪怕是
+   * 退化路——模型说了话，判决成立，换一张脸不会把它说得更好）。链走完了还没跑成 → 退化路全
+   * 转发。不给就照旧借格子自己那一套（与从前逐字节相同）。
+   */
+  readonly ruler?: readonly ModelFace[]
 }
 
 export interface TakeAsksResult {
@@ -328,16 +391,7 @@ export interface TakeAsksResult {
 export async function takeAsks(input: TakeAsksInput): Promise<TakeAsksResult> {
   const raised = raisedEventOf(input.agent, input.contract.id as ContractId, input.asks)
   await input.log.append(input.writer, raised)
-  const verdict = await adjudicateAsk(
-    { aZone: input.aZone, contract: input.contract, task: input.task, asks: input.asks },
-    {
-      call: input.call,
-      target: input.target,
-      adapter: input.adapter,
-      model: input.model,
-      ...(input.signal === undefined ? {} : { signal: input.signal }),
-    },
-  )
+  const verdict = await ruleOf(input)
   await input.log.append(input.writer, rulingEventOf(input.agent, raised.digest, verdict))
   if (verdict.forwarded) {
     // **问题原样转出去**：同一条正文（连 `digest` 都相同）——转出去的是那一问，不是它的摘要。

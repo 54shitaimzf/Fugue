@@ -108,6 +108,17 @@ export interface DriverAsk {
    * 决定（serve 那一条路将来接它的取消口），这一层只认这一条线。
    */
   readonly signal?: AbortSignal
+  /**
+   * **回退链**（0.5.3）：主脸之外的那几张（惰性取目标）。步循环 `failed` 那一档在链还有剩时
+   * **换脸重试**：同一步再走一遍（各落各的 `llm/call`，`model` 那一栏就是新脸），每一跳落
+   * `model/fallback`；链走完了才真算断。不给 = 空链（不换模型，与从前逐字节相同）。
+   */
+  readonly fallbacks?: readonly ModelFace[]
+  /**
+   * **裁断那一格自己的那串脸**（0.5.3 角色层）：轮内收下问题那一次用哪几张。给了，
+   * `takeAsks` 按链走（跑不成换下一张，每一跳落账）；不给照旧借格子自己那一套。
+   */
+  readonly rulerFaces?: readonly ModelFace[]
 }
 
 /**
@@ -762,6 +773,11 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
   /** 喊停的那条线（`DriverAsk.signal`）：**循环里每一处 await 都走它**——原先每步现起一只
    * 永不 abort 的控制器，那是一个死参数；现在一条线贯穿模型调用与裁断，循环顶先看一眼。 */
   const signal = ask.signal ?? new AbortController().signal
+  /** 回退链走到第几张（0.5.3）：链里每张至多换一次——换过的不回头。 */
+  const fallbacks = ask.fallbacks ?? []
+  let hopAt = 0
+  /** 预算按哪份声明算：**跟着脸换**（上限与触发点是模型的量），主脸起手。 */
+  let decl = ask.decl
   // **起手那一下也交一次**：这一格干完之后视图里那一份就是产出，而"提交"这件事在循环外面
   // （循环只管说话与调工具）。**顺序与架构 § 9.3 那三步一致**：视图先有内容，再走 `checkpoint()`。
   for (;;) {
@@ -776,7 +792,7 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     // 差了目录那一段。判"该不该交接"用的是这一笔，所以它偏松的一侧——而真读数会把这段差补回来
     // （用量里带着工具 schema，比值吸收的就是它）。
     const budget = planBudget({
-      decl: ask.decl,
+      decl,
       prefix: prefixOf(handle),
       tools: '',
       seed: goalOf(contract),
@@ -792,6 +808,26 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     if (r.outcome.kind === 'failed') {
       // **失败要报出来**：它不是"干完了"。`why` 是短分类（`cut-stream` · `max-tokens` · …）。
       stopped = `${r.outcome.error.why}：${r.outcome.error.message}`
+      // **回退那一跳**（0.5.3）：链还有剩就换脸重试——同一步再走一遍（各落各的 `llm/call`，
+      // 按模型分账因此天然成立），每一跳落 `model/fallback`。链走完了才真算断在半路。
+      let hopped = false
+      while (hopAt < fallbacks.length && !hopped) {
+        const face = fallbacks[hopAt] as ModelFace
+        hopAt += 1
+        const fromId = handle.model
+        let why: string
+        try {
+          handle = faceHandle(handle, face)
+          decl = face.decl
+          why = stopped
+          hopped = true
+        } catch (err) {
+          // 那张脸拼都拼不起来（凭据没配那一类）：与跑成死同一档——落一跳账，换下一张。
+          why = `那张脸拼不起来：${(err as Error).message}`
+        }
+        await log.append(writer, { t: 'model/fallback', agent, from: fromId, to: face.decl.id, why })
+      }
+      if (hopped) continue
       failed = true
       break
     }
@@ -819,6 +855,7 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
         adapter: handle.adapter,
         model: handle.wireModel,
         signal,
+        ...(ask.rulerFaces === undefined ? {} : { ruler: ask.rulerFaces }),
       })
       notes.push(taken.note)
     }

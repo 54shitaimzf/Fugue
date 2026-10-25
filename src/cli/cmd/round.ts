@@ -57,6 +57,8 @@ import { modelDeclOf, readCatalog } from '../../model/catalog.ts'
 import { docsAtClose } from '../docs-at-close.ts'
 import type { DocsClose } from '../docs-at-close.ts'
 import type { Catalog } from '../../model/catalog.ts'
+import { faceOf, roleChainOf } from '../../model/roles.ts'
+import type { ModelFace } from '../../model/roles.ts'
 import { wireHeader } from '../../model/wire/headers.ts'
 import type { ToolEntry } from '../../tools/catalog.ts'
 import type { Contract } from '../../contract/types.ts'
@@ -777,6 +779,8 @@ async function holderWiringOf(o: {
   readonly baseState: AssembleState
   readonly recent: string
   readonly handleFor: (over: { readonly runtime: string; readonly recent: string }) => AgentHandle
+  /** 持轮者的回退链（0.5.3）：主脸之外的那几张（空链 = 不换模型）。 */
+  readonly fallbacks: readonly ModelFace[]
 }> {
   // **钉住底**（读一次，然后传下去）：视图铺在它上面，日志里 `round/state` 那条链也以它为准。
   // **这一趟的产物那一句拼在「工作总目标」那一段的末尾**（近因：模型读到的最后一处说什么，它
@@ -805,8 +809,17 @@ async function holderWiringOf(o: {
       return got.ok ? { ok: true as const, value: got.value } : { ok: false as const, error: got.error }
     },
   })
-  // **模型按这一趟的选择来**（`--model` 旗标 > `round.model` 配置 > 缺省那条，`shared.ts` 一处）。
-  const decl = modelDeclOf(selectedModelId(o.wire.model, o.doc), o.cat)
+  // **模型按这一趟的选择来**（`--model` 旗标 > `round.model` 配置 > 缺省那条，`shared.ts` 一处）；
+  // 角色那一层（0.5.3）盖在最上面：`round.models.holder` 只换持轮者，回退链 `round.fallback`
+  // 跟在主脸后面（缺省空链——不换模型）。主脸的凭据按从前的口径 eager 拼好（`credentialFor`），
+  // 回退脸惰性：同一家提供方共用主脸那份凭据（`--credential` 那一份），别家的按它自己的引用表取。
+  const holderChain = roleChainOf(o.doc, o.cat, 'holder', selectedModelId(o.wire.model, o.doc))
+  const decl = holderChain[0] as ModelDecl
+  const holderGive = (d: ModelDecl): { readonly doc: ConfigDoc; readonly credential?: string } =>
+    d.provider === decl.provider || o.judge || o.wire.wireIn !== undefined
+      ? { doc: o.doc, credential: credentialFor(decl, o.wire, o.judge, o.doc) }
+      : { doc: o.doc }
+  const holderFaces = holderChain.map((d) => faceOf(d, o.cat, holderGive(d)))
   const baseState = stateWithState(emptyState(), o.doc, o.root)
   // 「凝聚前最近几次原文」：**会话记录那一段投影**（最近 3 条）。记录不在就是空串——第一次说话
   // 之前这一场对话还没有一条。
@@ -821,7 +834,8 @@ async function holderWiringOf(o: {
     protocol: HOLDER_PROTOCOL,
     model: decl.id,
     wireModel: decl.model,
-    target: targetAt(decl.id, credentialFor(decl, o.wire, o.judge, o.doc), o.cat),
+    // 主脸的目标（eager，与从前逐字节相同——`holderFaces[0]` 的凭据就是 `credentialFor` 那一份）。
+    target: (holderFaces[0] as ModelFace).target(),
     adapter: { name: decl.wire },
     // **轮内固定的调用配置**（架构 § 10.2 的必固四条之一）**在声明里，而这里必须把它接上**。
     // 这一栏原先一处都没接：声明里那两栏是空的，于是没人看得出来"声明了却没发出去"——思考那一格
@@ -839,7 +853,7 @@ async function holderWiringOf(o: {
   })
   const pump = o.wire.wireIn === undefined ? undefined : wireInTransport(o.wire.wireIn)
   const call = o.wire.dumpDir === undefined ? wireCallOver(pump) : makeDumpCall(o.wire.dumpDir, pump)
-  return { base, view, head, execute, decl, call, tools: publishedCatalog(), baseState, recent, handleFor }
+  return { base, view, head, execute, decl, call, tools: publishedCatalog(), baseState, recent, handleFor, fallbacks: holderFaces.slice(1) }
 }
 
 /**
@@ -927,6 +941,7 @@ export async function roundPlan(
       call,
       execute,
       tools,
+      ...(w.fallbacks.length === 0 ? {} : { fallbacks: w.fallbacks }),
       ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
       ...(judge ? { judgeOnly: true } : {}),
       occupancy: {
@@ -1146,6 +1161,7 @@ export async function sayCommand(
       call: w.call,
       execute: w.execute,
       tools: w.tools,
+      ...(w.fallbacks.length === 0 ? {} : { fallbacks: w.fallbacks }),
       ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
       // 预备态那一趟就是 `round plan` 那一趟（同一个判据 · 同一份身份分配器 · 同一段估账）——
       // 差别只有一处：C 区第一条是人的那一句话。
@@ -1164,6 +1180,7 @@ export async function sayCommand(
           call: w.call,
           execute: w.execute,
           tools: w.tools,
+          ...(w.fallbacks.length === 0 ? {} : { fallbacks: w.fallbacks }),
           ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
           occupancy: {
             decl: w.decl,
@@ -1839,7 +1856,13 @@ export function driverSupport(o: {
    */
   readonly maxSteps?: number
 }): DriverSupport {
-  const decl = modelDeclOf(selectedModelId(o.model, o.doc), o.cat)
+  // **角色那一层**（0.5.3）：子格与裁断各配各的脸（`round.models.cell|ruler` > `--model`/`round.model`
+  // > 目录第一条），回退链 `round.fallback` 全局一份跟在主脸后面。主脸凭据 eager（与从前逐字节
+  // 相同），回退脸惰性：同一家提供方共用主脸那份（`--credential` 的值），别家的按它自己的引用表取。
+  const base = selectedModelId(o.model, o.doc)
+  const cellChain = roleChainOf(o.doc, o.cat, 'cell', base)
+  const rulerChain = roleChainOf(o.doc, o.cat, 'ruler', base)
+  const decl = cellChain[0] as ModelDecl
   const tools = publishedCatalog()
   const states = new Map<string, AssembleState>()
   const handles = new Map<string, AgentHandle>()
@@ -1854,7 +1877,12 @@ export function driverSupport(o: {
     o.wireIn === undefined
       ? authWith(decl.provider, getConfig(o.doc, `credentials.${decl.provider}`), o.credential ?? null)
       : (o.credential ?? '回放档：不出网，不取凭据')
-  const target = targetAt(decl.id, credential, o.cat)
+  /** 脸的凭据口径：同一家提供方共用主脸那一份；别家的（回退脸）惰性，按它自己的引用表取。 */
+  const give = (d: ModelDecl): { readonly doc: ConfigDoc; readonly credential?: string } =>
+    d.provider === decl.provider || o.wireIn !== undefined ? { doc: o.doc, credential } : { doc: o.doc }
+  const faces = cellChain.map((d) => faceOf(d, o.cat, give(d)))
+  const rulerFaces = rulerChain.map((d) => faceOf(d, o.cat, give(d)))
+  const target = (faces[0] as ModelFace).target()
   /** 回放档的那条传输（不给就是"没有"，`callModel` 走真网络）。 */
   const pump = o.wireIn === undefined ? undefined : wireInTransport(o.wireIn)
 
@@ -1928,6 +1956,9 @@ export function driverSupport(o: {
     state: (a, c) => stateFor(String(a), c),
     handle: (a, c) => handleFor(String(a), c),
     decl,
+    // **回退链与裁断自己的脸**（0.5.3）：空链不传（那一档与从前逐字节相同）。
+    ...(faces.length > 1 ? { fallbacks: faces.slice(1) } : {}),
+    ...(rulerFaces.length > 0 ? { rulerFaces } : {}),
     // **要它才包这一层**：不给 `--dump-wire` 时交出去的就是 `wireCall` 本身——多一层包装也许多
     // 一次调用开销，而"用户不用 debug 就不为它付成本"这条要落到结构上，不是靠自觉。
     // **这一档的签名是 `(目录)`**：`makeDumpCall` 自己起 `callModel`（它要的是完整的那笔账——

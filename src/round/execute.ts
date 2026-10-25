@@ -45,6 +45,7 @@ import { loadView } from '../view/view.ts'
 import type { View } from '../view/contract.ts'
 import type { AgentDriver, DriverAsk } from './driver.ts'
 import type { ModelDecl } from '../model/contract.ts'
+import type { ModelFace } from '../model/roles.ts'
 import type { CallModel, ToolExecutor } from '../runtime/step.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
@@ -253,6 +254,10 @@ export interface DriverSupport {
   /** 这一格的句柄（分支 · 契约 · 模型 · 目标）。同样收契约（理由同上）。 */
   readonly handle: (agent: AgentId, contract: Contract) => DriverAsk['handle']
   readonly decl: ModelDecl
+  /** 回退链（0.5.3 角色层）：主脸之外的那几张（惰性取目标）。不给 = 空链（不换模型）。 */
+  readonly fallbacks?: readonly ModelFace[]
+  /** 裁断那一格自己的那串脸（0.5.3）。不给就照旧借格子自己那一套。 */
+  readonly rulerFaces?: readonly ModelFace[]
   readonly call?: CallModel
   readonly execute?: ToolExecutor
   readonly tools?: readonly ToolEntry[]
@@ -320,6 +325,8 @@ async function askOf(deps: RoundRunDeps, c: Contract, agent: AgentId, base: Comm
     state: support.state(agent, c),
     handle: support.handle(agent, c),
     decl: support.decl,
+    ...(support.fallbacks === undefined || support.fallbacks.length === 0 ? {} : { fallbacks: support.fallbacks }),
+    ...(support.rulerFaces === undefined || support.rulerFaces.length === 0 ? {} : { rulerFaces: support.rulerFaces }),
     ...(support.tools === undefined ? {} : { tools: support.tools }),
     ...(support.call === undefined ? {} : { call: support.call }),
     ...(support.execute === undefined ? {} : { execute: support.execute }),

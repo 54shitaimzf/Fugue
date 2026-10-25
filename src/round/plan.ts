@@ -19,13 +19,15 @@
 // **这一份一个契约都不发 · 一条分支都不起 · 一片物化都不铺。** 那三样归 `round go`（架构
 // § 15.1.a："落地不是不可逆的一刻，派发才是"）。于是"这一趟跑完了"与"这一轮派发了"是两件事。
 import type { CommitId, RelPath, RoundId } from '../terms.ts'
-import type { AgentId } from '../terms.ts'
+import type { AgentId, WriterId } from '../terms.ts'
 import type { Log, LogSeq } from '../log/events.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { View } from '../view/contract.ts'
 import type { AgentHandle, CallModel, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
 import { createRuntime } from '../runtime/step.ts'
 import type { ModelDecl } from '../model/contract.ts'
+import type { ModelFace } from '../model/roles.ts'
+import { faceHandle } from './driver.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { MODEL_FACING_LANGUAGE_LINE, emptyState, sourcesFor, stepBudgetLine, stepsLeftTail } from '../assemble/sources.ts'
@@ -102,6 +104,8 @@ export interface PlanDeps {
   readonly call: CallModel
   readonly execute: ToolExecutor
   readonly tools?: readonly ToolEntry[]
+  /** **回退链**（0.5.3 角色层）：持轮者主脸之外的那几张，透传给 `holderPass`。 */
+  readonly fallbacks?: readonly ModelFace[]
   readonly maxSteps?: number
   /** 草案在视图里的路径。缺省 `draftPathOf(round)`（保留前缀那一处，架构 § 9.10）。 */
   readonly draftPath?: RelPath
@@ -493,14 +497,21 @@ export async function holderPass(deps: {
   readonly call: CallModel
   readonly execute: ToolExecutor
   /**
-   * 这一趟的产物（预备态那一趟的那份草案）：拒的话要指得出它。**讨论态那一趟不给**——
-   * 那一趟的产物不落在文件上（架构 § 15.1.a）。
+   * 这一趟的产物（预备态那一趟的那份草案）：拒的话要指得出它。**讨论态那一趟不给**——那
+   * 一趟的产物不落在文件上（架构 § 15.1.a）。
    */
   readonly draftPath?: RelPath
   readonly tools?: readonly ToolEntry[]
   readonly maxSteps?: number
   /** 人喊停那一档：不请模型跑。 */
   readonly judgeOnly?: boolean
+  /**
+   * **回退链**（0.5.3 角色层）：持轮者主脸之外的那几张。步循环 `failed` 那一档在链还有剩时
+   * 换脸重试（同一步再走一遍，各落各的 `llm/call`），每一跳落 `model/fallback`。不给 = 空链。
+   */
+  readonly fallbacks?: readonly ModelFace[]
+  /** 喊停的那条线（与子格循环同一语义：循环顶先看一眼，已取消也算这一趟没跑成）。 */
+  readonly signal?: AbortSignal
 }): Promise<HolderPassResult> {
   if (deps.judgeOnly === true) {
     return { steps: 0, exit: 'judged', stopped: '人喊停：这一趟不请模型跑，拿手里那一份直接判', said: '' }
@@ -523,16 +534,41 @@ export async function holderPass(deps: {
   let stopped = '收敛'
   let exit: HolderExit = 'natural'
   let said = ''
+  const fallbacks = deps.fallbacks ?? []
+  let hopAt = 0
+  const signal = deps.signal ?? new AbortController().signal
   for (;;) {
-    const r = await runtime.step(handle, new AbortController().signal)
+    // **喊停了就停在这一步之前**（与子格循环同一条线、同一句话）。
+    if (signal.aborted) {
+      stopped = '已取消（调用方喊停）'
+      break
+    }
+    const r = await runtime.step(handle, signal)
     steps += 1
     // **最后说的那一段**：一步的产物在 `next.turns` 的末尾那一条里（`turnText` 那一面是它的
     // 文本投影，这里直接读结构化那一面，不重述一遍）。
     const last = (r.next.turns ?? []).at(-1)
     if (last?.text !== undefined && last.text !== '') said = last.text
     if (r.outcome.kind === 'failed') {
-      // **失败也要走到判那一步**：它是"这一格停了"的一种，`gate.problems` 会说出草案缺什么。
       stopped = `${r.outcome.error.why}：${r.outcome.error.message}`
+      // **回退那一跳**（0.5.3）：与子格循环同一套——换脸重试同一步，每一跳落 `model/fallback`。
+      let hopped = false
+      while (hopAt < fallbacks.length && !hopped) {
+        const one = fallbacks[hopAt] as ModelFace
+        hopAt += 1
+        const fromId = handle.model
+        let why: string
+        try {
+          handle = faceHandle(handle, one)
+          why = stopped
+          hopped = true
+        } catch (err) {
+          why = `那张脸拼不起来：${(err as Error).message}`
+        }
+        await deps.log.append('round' as WriterId, { t: 'model/fallback', agent: handle.agent, from: fromId, to: one.decl.id, why })
+      }
+      if (hopped) continue
+      // **失败也要走到判那一步**：它是"这一格停了"的一种，`gate.problems` 会说出草案缺什么。
       break
     }
     handle = { ...handle, state: r.next }
@@ -598,6 +634,7 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
     execute: deps.execute,
     draftPath,
     ...(deps.tools === undefined ? {} : { tools: deps.tools }),
+    ...(deps.fallbacks === undefined || deps.fallbacks.length === 0 ? {} : { fallbacks: deps.fallbacks }),
     ...(deps.maxSteps === undefined ? {} : { maxSteps: deps.maxSteps }),
     ...(deps.judgeOnly === true ? { judgeOnly: true } : {}),
   })
