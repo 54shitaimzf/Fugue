@@ -528,3 +528,110 @@ test('⑨ 半截的旧回复没有资格当判决：传输层重试后，判词�
   }
   console.log('⑨ 读数：半截 contract + 完整 design → 判 design · attempts [0,200] · 0 跳（重试是传输层的事）')
 })
+
+test('⑩ 没发出去的那张脸不落 llm/call：账与真实请求数一致，那一跳由 model/fallback 记', async () => {
+  const requests: string[] = []
+  const call: CallModel = (request) => {
+    requests.push(request.model)
+    return {
+      events: (async function* (): AsyncGenerator<ModelEvent> {
+        yield { t: 'delta', text: 'tier: contract\nruling: 第二张判的' }
+        yield { t: 'stop', reason: 'end-turn', raw: 'stop' } as ModelEvent
+      })(),
+      ledger: () => ({
+        call: { text: 'tier: contract\nruling: 第二张判的', thinking: null, toolCalls: [], usage: null, stop: 'end-turn', rawStop: 'stop' },
+        failure: null,
+        attempts: [200],
+      }),
+    }
+  }
+  // 第一张脸的凭据拼不起来：target() 当场抛——它没有发出去任何请求。
+  const broken: ModelFace = {
+    decl: PRIMARY,
+    target: () => {
+      throw new Error('凭据没有配：testco')
+    },
+  }
+  const root = mkdtempSync(join(tmpdir(), 'fugue-fallback-unsent-'))
+  assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' }).status, 0)
+  const truth = openTruth(root)
+  const log: LogHandle = openLog(root, { write: 'agent-1' as WriterId, sync: 'each' })
+  const c = { id: 'c1', agent: 'agent-1', branch: 'refs/heads/agent-1', goal: '做完', kind: 'implement', ownedPaths: [], deliverables: [], assertions: [], seed: [], actionOutputs: {} } as unknown as Contract
+  const good = faceOf(BACKUP, TEST_CAT, { doc: {}, credential: '测试凭据（不出网）' })
+  try {
+    const out = await takeAsks({
+      log,
+      writer: 'agent-1' as WriterId,
+      agent: 'agent-1' as AgentId,
+      contract: c,
+      task: { goal: '做完', question: '', deliverables: [], evidenceRequired: [], assertions: [], ownedPaths: [] },
+      asks: [{ question: '第一张脸拼不起来的那一问' }],
+      aZone: new TextEncoder().encode('A 区'),
+      call,
+      target: good.target(),
+      adapter: { name: PRIMARY.wire },
+      model: PRIMARY.model,
+      ruler: [broken, good],
+    })
+    assert.equal(out.verdict.tier, 'contract', '第二张判出来了')
+    const rows: LogEventLike[] = []
+    for await (const row of (log as unknown as Log).readMerged()) rows.push(row.e as LogEventLike)
+    const calls = rows.filter((x) => x.t === 'llm/call')
+    assert.equal(requests.length, 1, `只发出去一次请求（实际 ${requests.length}）`)
+    assert.equal(calls.length, requests.length, `llm/call 笔数要与真实请求数一致（账 ${calls.length} 笔 · 请求 ${requests.length} 次）——没发出去的那张不落账`)
+    const hops = rows.filter((x) => x.t === 'model/fallback')
+    assert.equal(hops.length, 1, '拼不起来那一跳照记（why 是凭据那一句）')
+    assert.match(hops[0]?.why ?? '', /凭据|拼不起来/)
+    console.log('⑩ 读数：请求 1 次 · llm/call 1 笔 · 拼不起来那一跳落 model/fallback')
+  } finally {
+    await log.close()
+    await truth.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('⑪ 链尾的中途取消归成「已取消」：不把人喊停说成"那一次调用抛了"', async () => {
+  const ctl = new AbortController()
+  const call: CallModel = () => ({
+    events: (async function* (): AsyncGenerator<ModelEvent> {
+      // 调用进行中人喊停：适配器那一层把流断掉（AbortError 那一类）。
+      ctl.abort(new Error('人喊停了'))
+      yield { t: 'delta', text: 'tier: contr' } as ModelEvent
+      throw new Error('adapter saw abort')
+    })(),
+    ledger: () => ({ call: null, failure: 'Error: adapter saw abort', attempts: [0] }),
+  })
+  const root = mkdtempSync(join(tmpdir(), 'fugue-fallback-midcancel-'))
+  assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' }).status, 0)
+  const truth = openTruth(root)
+  const log: LogHandle = openLog(root, { write: 'agent-1' as WriterId, sync: 'each' })
+  const c = { id: 'c1', agent: 'agent-1', branch: 'refs/heads/agent-1', goal: '做完', kind: 'implement', ownedPaths: [], deliverables: [], assertions: [], seed: [], actionOutputs: {} } as unknown as Contract
+  const only = faceOf(PRIMARY, TEST_CAT, { doc: {}, credential: '测试凭据（不出网）' })
+  try {
+    const out = await takeAsks({
+      log,
+      writer: 'agent-1' as WriterId,
+      agent: 'agent-1' as AgentId,
+      contract: c,
+      task: { goal: '做完', question: '', deliverables: [], evidenceRequired: [], assertions: [], ownedPaths: [] },
+      asks: [{ question: '链尾取消的那一问' }],
+      aZone: new TextEncoder().encode('A 区'),
+      call,
+      target: only.target(),
+      adapter: { name: PRIMARY.wire },
+      model: PRIMARY.model,
+      signal: ctl.signal,
+      ruler: [only],
+    })
+    assert.equal(out.verdict.forwarded, true, '取消转人')
+    assert.match(out.verdict.why ?? '', /已取消/, `链尾取消要归类成「已取消」（实际 why=${JSON.stringify(out.verdict.why)}）`)
+    const rows: LogEventLike[] = []
+    for await (const row of (log as unknown as Log).readMerged()) rows.push(row.e as LogEventLike)
+    assert.equal(rows.filter((x) => x.t === 'model/fallback').length, 0, '单张脸：一跳都不落')
+    console.log('⑪ 读数：链尾中途取消 → why=已取消 · 转人 · 0 跳')
+  } finally {
+    await log.close()
+    await truth.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})

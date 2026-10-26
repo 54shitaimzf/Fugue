@@ -371,6 +371,8 @@ async function ruleOf(input: TakeAsksInput): Promise<AskVerdict> {
       ...sig,
     })
     await settle(r.spent, input.modelId ?? input.model, input.adapter.name, input.callParams)
+    // 调用确实发出去过（账已落），但"为什么转人"要说取消——链尾与无链同一条。
+    if (r.kind === 'dead' && input.signal?.aborted) return forwardAll(cancelled())
     return r.kind === 'dead' ? forwardAll(r.why) : r.verdict
   }
   let dead: string | null = null
@@ -378,6 +380,7 @@ async function ruleOf(input: TakeAsksInput): Promise<AskVerdict> {
     if (input.signal?.aborted) return forwardAll(cancelled())
     const face = input.ruler[at] as ModelFace
     let r: AskAttempt
+    let sent = true
     try {
       r = await askOnce(ask, {
         call: input.call,
@@ -389,19 +392,23 @@ async function ruleOf(input: TakeAsksInput): Promise<AskVerdict> {
       })
     } catch (err) {
       // 那张脸拼都拼不起来（凭据没配那一类）：与跑成死同一档——落一跳账，换下一张。
-      // 没发出去的请求没有用量：那一笔记的是"选了它、没跑成"（attempts 空，不伪造用量）。
+      // **没发出去的请求不落 `llm/call`**：台账一行就是一次真实调用，笔数要与请求数对得上；
+      // "选了它、没跑成"由 `model/fallback` 那一跳记（why 就是凭据那一句）。
+      sent = false
       r = {
         kind: 'dead',
         why: `那张脸拼不起来：${(err as Error).message}`,
         spent: { ms: 0, usage: null, attempts: [], rawStop: null, stop: null, status: null, headers: null },
       }
     }
-    await settle(r.spent, face.decl.id, face.decl.wire, face.decl.call)
+    if (sent) await settle(r.spent, face.decl.id, face.decl.wire, face.decl.call)
     if (r.kind === 'verdict') return r.verdict
+    // **死档统一查一次取消**：调用中途人喊停（流被断掉那一类）不该归成"供方抛了"——
+    // `ask/ruling.why` 是用户可见的那一句。
+    if (input.signal?.aborted) return forwardAll(cancelled())
     dead = r.why
     const next = input.ruler[at + 1]
     if (next === undefined) break
-    if (input.signal?.aborted) return forwardAll(cancelled())
     await input.log.append(input.writer, {
       t: 'model/fallback',
       agent: input.agent,
