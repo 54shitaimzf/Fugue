@@ -25,7 +25,7 @@
 // 的字节**（`hashOf`）。前者抓"装配漂了"，后者抓"适配器漂了"。
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { ModelCall, ModelRequest, ThinkingLevel, Usage } from './contract.ts'
+import type { ModelCall, ModelRequest, ThinkingLevel, Turn, Usage } from './contract.ts'
 import { requestJson } from './contract.ts'
 import type { Transport, Target } from './http.ts'
 import { callModel } from './http.ts'

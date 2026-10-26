@@ -25,6 +25,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Protocol, SegmentId, SegmentValue } from './contract.ts'
+import type { Turn } from '../model/contract.ts'
 
 /**
  * 一个 agent 的坐标。**它不是段，是段的源要的那把钥匙。**

@@ -22,6 +22,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { wireNamed } from './wire/registry.ts'
+import type { CallModel } from '../runtime/step.ts'
 import { wireHeader } from './wire/headers.ts'
 
 /**
