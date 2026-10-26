@@ -20,7 +20,7 @@ import type { Log, LogHandle } from '../log/events.ts'
 import { openTruth } from '../truth/truth.ts'
 import { loadView } from '../view/view.ts'
 import { lowerAt } from '../view/lower.ts'
-import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
+import { SUBAGENT_PROTOCOL, HOLDER_PROTOCOL } from '../assemble/protocol.ts'
 import { emptyState } from '../assemble/sources.ts'
 import type { Catalog } from '../model/catalog.ts'
 import type { ModelDecl } from '../model/contract.ts'
@@ -33,7 +33,8 @@ import { recordingExecutor } from '../runtime/step.ts'
 import { runAgentOnce, withStepsLeft } from './driver.ts'
 import type { DriverAsk, DriverResult } from './driver.ts'
 import { takeAsks, verdictOf } from './handback.ts'
-import type { ToolExecutor, ToolCallRequest } from '../runtime/step.ts'
+import type { ToolExecutor, ToolCallRequest, AgentHandle } from '../runtime/step.ts'
+import { holderPass } from './plan.ts'
 import { ledgerOf } from '../probe/ledger.ts'
 import type { LedgerRow } from '../probe/ledger.ts'
 import type { AgentId, CommitId, ContractId, RelPath, WriterId } from '../terms.ts'
@@ -633,5 +634,130 @@ test('⑪ 链尾的中途取消归成「已取消」：不把人喊停说成"那
     await log.close()
     await truth.close()
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+/** 回退脸交卷那一份完整响应（exit_plan_mode 一条 + 收尾）：持轮者的正路出口。 */
+const HOLDER_BACKUP_SSE = [
+  frameOf({ tool_calls: [{ index: 0, id: 'call_plan', type: 'function', function: { name: 'exit_plan_mode', arguments: '{"plan":"草案一句话"}' } }] }),
+  '',
+  frameOf({}, 'tool_calls'),
+  '',
+  'data: [DONE]',
+  '',
+].join('\n')
+
+/** 持轮者那一趟的台子：真 git · 真日志 · 假传输（主脸收下就死，回退脸交卷）。 */
+async function holderWith(
+  transport: Transport & { readonly bodies: string[] },
+  fallbacks: readonly ModelFace[],
+  opts: { readonly maxSteps?: number } = {},
+): Promise<{ run: () => Promise<{ steps: number; exit: string; stopped: string; said: string }>; events: () => Promise<{ pos: { writer: string; seq: number }; e: LogEventLike }[]>; close: () => Promise<void> }> {
+  const root = mkdtempSync(join(tmpdir(), 'fugue-fallback-holder-'))
+  assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' }).status, 0)
+  const truth = openTruth(root)
+  const log: LogHandle = openLog(root, { write: 'round' as WriterId, sync: 'each' })
+  const give = { doc: {}, credential: '测试凭据（不出网）' }
+  const faces = [PRIMARY, BACKUP].map((d) => faceOf(d, TEST_CAT, give))
+  const handle: AgentHandle = {
+    agent: 'round' as AgentHandle['agent'],
+    coord: null,
+    branch: 'refs/heads/main' as AgentHandle['branch'],
+    contract: '' as AgentHandle['contract'],
+    protocol: HOLDER_PROTOCOL,
+    model: PRIMARY.id,
+    wireModel: PRIMARY.model,
+    target: (faces[0] as ModelFace).target(),
+    adapter: { name: PRIMARY.wire },
+    state: {
+      ...emptyState(),
+      goal: '把这一轮规划出来',
+      distill: '上一轮的凝聚理解',
+      recent: '凝聚前最近几次原文',
+      runtime: '人说的那一句',
+    },
+  }
+  const run = () =>
+    holderPass({
+      handle,
+      log,
+      call: wireCallOver(transport) as CallModel,
+      // **镜像真实派发那一道闸**（`dispatch.ts` 的 `holder` 判定）：协议不对就不是这一格的活
+      // ——协议被换模型换掉的那一档，交卷在这里被拒，断言才抓得住。
+      execute: {
+        async execute(call: ToolCallRequest, h: AgentHandle) {
+          if (call.name === 'exit_plan_mode') {
+            if (h.protocol !== HOLDER_PROTOCOL) return { ok: false, output: 'this is not your cell\'s job（角色不对）' }
+            return { ok: true, output: '交卷', halt: true }
+          }
+          return { ok: true, output: '好' }
+        },
+      },
+      ...(opts.maxSteps === undefined ? {} : { maxSteps: opts.maxSteps }),
+      ...(fallbacks.length === 0 ? {} : { fallbacks }),
+    })
+  const events = async (): Promise<{ pos: { writer: string; seq: number }; e: LogEventLike }[]> => {
+    const out: { pos: { writer: string; seq: number }; e: LogEventLike }[] = []
+    for await (const row of (log as unknown as Log).readMerged()) out.push(row as never)
+    return out
+  }
+  return {
+    run,
+    events,
+    close: async () => {
+      await log.close()
+      await truth.close()
+      rmSync(root, { recursive: true, force: true })
+    },
+  }
+}
+
+test('⑫ 持轮者回退端到端：主脸死 → 回退脸交卷（角色还在）· 专属段序还在请求里 · 那一跳落账', async () => {
+  const bodies: string[] = []
+  const transport: Transport & { readonly bodies: string[] } = {
+    bodies,
+    async *post(t: Target, body: Uint8Array): AsyncGenerator<Uint8Array> {
+      bodies.push(new TextDecoder().decode(body))
+      if (t.model === PRIMARY.model) throw new Error('模拟：持轮者的主脸那台死了')
+      for (const line of HOLDER_BACKUP_SSE.split('\n')) yield new TextEncoder().encode(`${line}\n`)
+    },
+  }
+  const h = await holderWith(transport, [faceOf(BACKUP, TEST_CAT, { doc: {}, credential: '测试凭据（不出网）' })])
+  try {
+    const r = await h.run()
+    assert.equal(r.exit, 'declared', `回退脸那次 exit_plan_mode 被当持轮者的交卷收下——换模型没把角色换掉（exit=${r.exit}）`)
+    const rows = await h.events()
+    const calls = rows.filter((x) => x.e.t === 'llm/call')
+    assert.deepEqual(calls.map((x) => x.e.model), ['test/primary', 'test/backup'], '两趟各归各的模型（主脸半截 · 回退脸走完）')
+    assert.equal(rows.filter((x) => x.e.t === 'model/fallback').length, 1, '那一跳落在 round 的账上')
+    const second = bodies[1] ?? ''
+    assert.ok(second.includes('上一轮的凝聚理解'), '凝聚理解段还在（持轮者专属段序没有丢）')
+    assert.ok(second.includes('人说的那一句'), 'C 区头（人说的那一句）还在')
+    console.log('⑫ 读数：exit=declared · llm/call 2 笔（primary 半截 · backup 交卷）· 1 跳 · 专属段在请求里')
+  } finally {
+    await h.close()
+  }
+})
+
+test('⑬ 持轮者的额度闸与子格同一道：上界 1 · 主脸死 → 不换脸、只发一次', async () => {
+  const bodies: string[] = []
+  const transport: Transport & { readonly bodies: string[] } = {
+    bodies,
+    async *post(t: Target): AsyncGenerator<Uint8Array> {
+      bodies.push(t.model)
+      if (t.model === PRIMARY.model) throw new Error('模拟：持轮者的主脸那台死了')
+      for (const line of HOLDER_BACKUP_SSE.split('\n')) yield new TextEncoder().encode(`${line}\n`)
+    },
+  }
+  const h = await holderWith(transport, [faceOf(BACKUP, TEST_CAT, { doc: {}, credential: '测试凭据（不出网）' })], { maxSteps: 1 })
+  try {
+    const r = await h.run()
+    assert.match(r.stopped, /^cut-stream/, `额度已尽的那趟失败就是终态：${r.stopped}`)
+    const rows = await h.events()
+    assert.equal(rows.filter((x) => x.e.t === 'llm/call').length, 1, '上界 1 只发一次——持轮者的回退也不是免费额度')
+    assert.equal(rows.filter((x) => x.e.t === 'model/fallback').length, 0, '额度尽了不换脸')
+    console.log('⑬ 读数：持轮者 maxSteps=1 · 主脸死 → 1 次调用 · 0 跳 · cut-stream 如实停')
+  } finally {
+    await h.close()
   }
 })
