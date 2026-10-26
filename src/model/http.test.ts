@@ -732,10 +732,16 @@ test('⑪ 预先取消的信号不发请求：已成立的取消不等未来的 
 })
 
 // ── ⑫ 错误分支同一条看门狗规则 ─────────────────────────────────────────────────────
-test('⑫ 错误正文按块读：持续出字节读得完（末尾原话进错误）· 首字节后停住判死（不吞成空正文）', async () => {
+test('⑫ 错误正文按块读：持续出字节读得完（末尾原话进错误）· 首字节后停住判死（不吞成空正文）· 大块拦在硬上限', async () => {
   const f = fixture('deepseek-flash-anthropic')
   let stall = false
-  const server = createServer((_req, res) => {
+  const server = createServer((req, res) => {
+    if (req.url === '/big') {
+      // 丙：一个 1 MiB 的大块错误正文——上限要是硬的，不许一个 chunk 整块放行。
+      res.writeHead(400, { 'content-type': 'text/plain' })
+      res.end('X'.repeat(1048576))
+      return
+    }
     res.writeHead(400, { 'content-type': 'text/plain' })
     if (stall) {
       res.write('first bytes then silence')
@@ -777,7 +783,16 @@ test('⑫ 错误正文按块读：持续出字节读得完（末尾原话进错�
     const t2: Target = { ...base, idleTimeoutMs: 250 }
     const s2 = callModel(t2, requestFrom(f), fetchTransport)
     await assert.rejects(drain(s2.events), /毫秒没有一个字节/, '错误分支也判空闲：判死的原因不被吞成空正文')
-    console.log('⑫ 读数：错误正文持续出字节 → 读完且 FINAL_ERROR 进错误 · 停住 → 看门狗判死（原话抛出）')
+    // 丙：单个 1 MiB 大块的错误正文——交出去的拦在 4 KiB 硬上限里（dump 与内存同一条界）。
+    let got = 0
+    await assert.rejects(
+      async () => {
+        for await (const c of fetchTransport.post({ ...base, path: '/big' } as Target, new TextEncoder().encode('{}'))) got += c.byteLength
+      },
+      /回了 400/,
+    )
+    assert.ok(got <= 4096, `错误正文交出去的拦在 4 KiB 内（实际 ${got}）——原先一个大块整块放行`)
+    console.log('⑫ 读数：错误正文持续出字节 → 读完且 FINAL_ERROR 进错误 · 停住 → 看门狗判死 · 1 MiB 大块 → 交出 ≤ 4 KiB')
   } finally {
     await shutdown()
   }

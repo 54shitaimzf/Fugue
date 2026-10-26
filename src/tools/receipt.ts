@@ -150,6 +150,8 @@ export const MAX_CAPTURE_CHARS = 4 * 1024 * 1024
  *
  * **按字符（UTF-16 码元）计**（`data` 那一档给的是解码过的文本，`String.length` 就是码元数）：
  * 标记说的"截了几个"与实际截掉的码元数一致——多字节内容不拿字节冒充，也不把码元说成字节。
+ * **切点落在码点边界上**（与 `capReceipt` 的 UTF-8 边界同一条纪律）：头不让出高代理位、尾不
+ * 从低代理位起——孤立代理位再编码就是替换符，截断不该顺手弄坏它没截的那个字符。
  */
 export function openCapture(limit: number = MAX_CAPTURE_CHARS): {
   readonly add: (s: string) => void
@@ -159,30 +161,49 @@ export function openCapture(limit: number = MAX_CAPTURE_CHARS): {
   const tailW = limit - headW
   let head = ''
   let tail = ''
-  let omitted = 0
+  let total = 0
+  const loneHighAt = (s: string, at: number): boolean => {
+    if (at < 0 || at >= s.length) return false
+    const c = s.charCodeAt(at)
+    return c >= 0xd800 && c <= 0xdbff
+  }
   const pushTail = (s: string): void => {
-    const all = tail + s
-    if (all.length > tailW) {
-      omitted += all.length - tailW
-      tail = tailW === 0 ? '' : all.slice(-tailW)
-    } else {
-      tail = all
+    tail += s
+    if (tail.length > tailW) {
+      let cut = tail.length - tailW
+      if (tailW > 0 && cut < tail.length) {
+        // 尾巴的起点劈开了代理对：让出高代理位（它进省略那一段，省略按码元数计）。
+        if (tail.charCodeAt(cut) >= 0xdc00 && tail.charCodeAt(cut) <= 0xdfff && loneHighAt(tail, cut - 1)) cut += 1
+      }
+      if (cut > tail.length) cut = tail.length
+      tail = tailW === 0 ? '' : tail.slice(cut)
     }
   }
   return {
     add(s) {
+      total += s.length
       if (head.length < headW) {
         const room = headW - head.length
         if (s.length <= room) {
           head += s
           return
         }
-        head += s.slice(0, room)
-        pushTail(s.slice(room))
+        let take = room
+        // 头的终点劈开了代理对：少拿一个码元，那一对整个去尾巴那边。
+        if (loneHighAt(s, take - 1) && take - 1 >= 0 && take < s.length) {
+          const next = s.charCodeAt(take)
+          if (next >= 0xdc00 && next <= 0xdfff) take -= 1
+        }
+        head += s.slice(0, take)
+        pushTail(s.slice(take))
         return
       }
       pushTail(s)
     },
-    text: () => (omitted === 0 ? head + tail : `${head}\n…(${omitted} chars omitted at capture limit ${limit})…\n${tail}`),
+    // 省略数从「总数 − 实际留下的两头」推：切点为让出代理位挪过之后，这个数不用另记一份。
+    text: () => {
+      const omitted = total - head.length - tail.length
+      return omitted <= 0 ? head + tail : `${head}\n…(${omitted} chars omitted at capture limit ${limit})…\n${tail}`
+    },
   }
 }

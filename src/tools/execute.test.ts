@@ -1210,6 +1210,11 @@ test('⑰b 攒子进程输出带上限：不到上限逐字节原样 · 洪水�
   cjk.add('中文abc文')
   assert.equal(cjk.text(), '中文\n…(2 chars omitted at capture limit 4)…\nc文', '中文各占 1 码元：留「中文」与「c文」，截掉的恰是 2 个字符')
 
+  // 代理对不劈开：切点让到码点边界上——孤立代理位再编码就是替换符，截断标记两头都不许有。
+  const pair = openCapture(3)
+  pair.add('a😀b')
+  assert.equal(pair.text(), 'a\n…(2 chars omitted at capture limit 3)…\nb', '头让出高代理位：留「a」与「b」，emoji 整个进省略（按它的两个码元计）')
+
   const small = openCapture(1000)
   small.add('全部都在。')
   assert.equal(small.text(), '全部都在。', '不到上限一个字节不多（没有标记）')

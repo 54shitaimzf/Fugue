@@ -212,16 +212,17 @@ export const fetchTransport: Transport = {
         // 上游回的是人读的错：**带上原文的前一截**，否则"400"这三个数字什么都说明不了。
         // 错误正文同样按块读、看门狗同一条规则（判"空闲"不因状态码而异）：持续出字节的错误
         // 读得完（末尾那句原话正是排障要的），中途停住的判死那句话原样抛——不吞成空正文。
-        // 只攒有界的一截（要进错误信息的是前一截，不是整篇）。
+        // 只攒有界的一截，且是**硬上限**：追加前就截在里面——单个大块也拦得住（要进错误信息
+        // 的是前一截，dump 与内存同一条界）。
         let said = ''
         const dec = new TextDecoder()
         const cap = 4096
         if (res.body !== null) {
           for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
             if (t.idleTimeoutMs !== undefined) arm()
-            if (said.length < cap) said += dec.decode(chunk, { stream: true })
+            if (said.length < cap) said = (said + dec.decode(chunk, { stream: true })).slice(0, cap)
           }
-          said += dec.decode()
+          if (said.length < cap) said = (said + dec.decode()).slice(0, cap)
         }
         // **这一截也交出去**（`yield`，随后照旧抛）：它不进任何一次解析（上面已经非 2xx 了），
         // 但 `teeBytes` 会把它攒进原始字节里——`--dump-wire` 的 `response.sse` 于是连"上游说凭据
