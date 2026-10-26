@@ -448,21 +448,16 @@ function applyEntry(o: LandOptions, rel: RelPath, want: EntryState | null, now: 
     return { whiteout: true }
   }
   if (want.kind === 'file') {
-    const tmp = tmpName(abs)
     try {
-      writeFileSync(tmp, keep ?? want.bytes ?? new Uint8Array(0))
-      chmodSync(tmp, want.mode)
-      renameSync(tmp, abs)
+      replaceFile(abs, keep ?? want.bytes ?? new Uint8Array(0), want.mode)
     } catch (err) {
       throw new LandError(rel, `写不进去：${(err as Error).message}`)
     }
     return { whiteout: false }
   }
   if (want.kind === 'symlink') {
-    const tmp = tmpName(abs)
     try {
-      symlinkSync(want.target, tmp)
-      renameSync(tmp, abs)
+      replaceLink(abs, want.target)
     } catch (err) {
       throw new LandError(rel, `软链建不出来：${(err as Error).message}`)
     }
@@ -543,6 +538,44 @@ function clearEntry(rel: RelPath, abs: AbsPath): void {
  */
 export function tmpName(abs: AbsPath): AbsPath {
   return join(dirname(abs), `.fugue-tmp-${process.pid}-${Date.now().toString(36)}`)
+}
+
+/**
+ * **普通文件的原子替换**（失败自清）：同目录临时名 → 写 → 模式 → 改名。任何一步失败都把
+ * 自己创建的临时文件删掉、原始错误原样抛——`.fugue-tmp-*` 留在真实工作树里，下一轮漂移检
+ * 会把它当成用户的改动，**恢复入口被自己挡住**。物化（这一份）与发布（`merge/accept.ts`）
+ * 共用这一个门路：失败清理的纪律只在这一处说一遍。
+ */
+export function replaceFile(abs: AbsPath, bytes: Uint8Array, mode: number): void {
+  const tmp = tmpName(abs)
+  try {
+    writeFileSync(tmp, bytes)
+    chmodSync(tmp, mode)
+    renameSync(tmp, abs)
+  } catch (err) {
+    try {
+      unlinkSync(tmp)
+    } catch {
+      // 清不掉也不盖住原始错误（那时 tmp 多半已经不在了）
+    }
+    throw err
+  }
+}
+
+/** 软链那一档同一条纪律：换名的对象是链接本身。 */
+function replaceLink(abs: AbsPath, target: string): void {
+  const tmp = tmpName(abs)
+  try {
+    symlinkSync(target, tmp)
+    renameSync(tmp, abs)
+  } catch (err) {
+    try {
+      unlinkSync(tmp)
+    } catch {
+      // 同上
+    }
+    throw err
+  }
 }
 
 /**

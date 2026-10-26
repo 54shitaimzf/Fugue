@@ -14,7 +14,7 @@
 // § 8.5 的差异集一致：文件比内容、软链比目标那串字符）。
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, test } from 'node:test'
@@ -22,7 +22,7 @@ import type { Delta } from '../delta.ts'
 import type { EntryMeta } from '../entries.ts'
 import { scanTree } from './diffstat.ts'
 import type { TreeStat } from './diffstat.ts'
-import { LandError, diskEntry, landDeltas, sameEntry } from './land.ts'
+import { LandError, diskEntry, landDeltas, replaceFile, sameEntry } from './land.ts'
 import type { LandResult, ViewReads } from './land.ts'
 import { makeWhiteout, removeTree } from './mount.ts'
 
@@ -599,4 +599,31 @@ test('V7 · 盘上与视图比模式按 git 的两档：0664 就是 100644，执
   chmodSync(abs, 0o775)
   assert.equal(sameEntry(diskEntry(abs, 'a.ts'), view), false, '执行位翻了是真改动')
   assert.equal(sameEntry(diskEntry(abs, 'a.ts'), { ...view, mode: 0o755 }), true, '0775 与 0755 是同一档')
+})
+
+// ── replaceFile：失败自清——.fugue-tmp-* 不许留在工作树里 ─────────────────────────
+test('replaceFile 失败自清：换名落空时删掉自己创建的临时文件，原始错误原样抛、目标原样', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fugue-replace-'))
+  try {
+    const abs = join(dir, 'target')
+    // 目标是个**非空目录**：`rename(file → 目录)` 落空（EISDIR/ENOTEMPTY 那一族）。
+    mkdirSync(join(abs, 'occupied'), { recursive: true })
+    assert.throws(
+      () => replaceFile(abs, new TextEncoder().encode('新内容'), 0o644),
+      /EISDIR|ENOTEMPTY|directory/i,
+      '换名落空要抛原始错误',
+    )
+    const left = readdirSync(dir).filter((n) => n.startsWith('.fugue-tmp-'))
+    assert.deepEqual(left, [], '临时文件清掉了——留在真实工作树里，下一轮漂移检会把它当成用户的改动、挡住恢复入口')
+    assert.ok(existsSync(join(abs, 'occupied')), '目标原样（还是那个目录）')
+    // 成功那一档顺手核一遍：内容与模式都换上，同目录里没有别的残留。
+    const file = join(dir, 'plain')
+    writeFileSync(file, '旧内容')
+    replaceFile(file, new TextEncoder().encode('新内容'), 0o600)
+    assert.equal(readFileSync(file, 'utf8'), '新内容', '成功那一档：内容换上')
+    assert.equal(lstatSync(file).mode & 0o777, 0o600, '模式换上')
+    assert.deepEqual(readdirSync(dir).filter((n) => n.startsWith('.fugue-tmp-')), [], '没有临时名残留')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

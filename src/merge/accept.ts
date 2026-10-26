@@ -25,7 +25,7 @@ import type { Assertion, AssertionResult } from '../contract/types.ts'
 import { resultOf } from '../contract/types.ts'
 import { gitModeOf } from '../delta.ts'
 import { WORKSPACE_STATE } from '../materialize/diffstat.ts'
-import { tmpName } from '../materialize/land.ts'
+import { replaceFile } from '../materialize/land.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { Log } from '../log/events.ts'
 import type { RefName, RoundId } from '../terms.ts'
@@ -280,12 +280,9 @@ export async function advance(deps: AdvanceDeps, commit: CommitId): Promise<Adva
     if (now !== undefined && now.isFile() && gitModeOf(Number(now.mode)) === w.mode && hashOfFile(abs) === hashOf(w.bytes)) continue
     mkdirSync(dirname(abs), { recursive: true })
     if (now !== undefined && !now.isFile()) rmSync(abs, { recursive: true, force: true })
-    // **写临时名再改名**（与物化那条路同一个 `tmpName`）：就地 `writeFileSync` 先截断再写，
-    // 写到一半被打断的窗口里盘上是半份文件；改名那一刀是原子的，读者看见的只有旧的或新的。
-    const tmp = tmpName(abs)
-    writeFileSync(tmp, w.bytes)
-    chmodSync(tmp, w.mode & 0o7777)
-    renameSync(tmp, abs)
+    // **原子替换走物化那条共用的门路**（`replaceFile`：临时名 → 写 → 模式 → 改名，失败自清）：
+    // 读者看见的只有旧的或新的；临时名失败时清掉，不留 `.fugue-tmp-*` 在工作树里挡漂移检。
+    replaceFile(abs, w.bytes, w.mode & 0o7777)
     written.push(rel)
   }
 
