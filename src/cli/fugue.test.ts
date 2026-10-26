@@ -441,3 +441,38 @@ test('观察那三条命令：认不得的开关当场退 2（不静默收下）
     '读数：log --grep → 2 · watch --once → 2 · status --interval → 2 · 认得的四条（log · --json log --agent · watch · status --once）照旧 0',
   )
 })
+
+test('大输出经管道一个字节不丢：退出码交给事件循环去收尾，不许 process.exit 掐掉没排空的字节', () => {
+  const root = tmpRoot()
+  // 2 MiB 的正文（每行恰 64 字节，行首是六位行号）——尾巴那一行是哨兵：截尾必丢它。
+  const lines = 32 * 1024
+  const body = Array.from({ length: lines }, (_, i) => `${String(i).padStart(6, '0')} ${'x'.repeat(56)}\n`).join('')
+  const w = fugueStdin(root, body, 'write', 'big.txt', '--stdin')
+  assert.equal(w.code, 0, w.stderr)
+
+  const r = fugue(root, 'read', 'big.txt')
+  assert.equal(r.code, 0, r.stderr)
+  assert.equal(
+    r.stdout,
+    body,
+    `读回来的正文要逐字节等于写进去的那份：拿到 ${r.stdout.length} / ${body.length} 字节` +
+      (r.stdout.length < body.length ? '——尾巴被退出那一刀掐掉了' : ''),
+  )
+  assert.match(r.stdout.slice(-64), /^032767 /, '最后一行（哨兵）必须在')
+  console.log(`读数：read big.txt 2 MiB 经管道读回 ${r.stdout.length} / ${body.length} 字节，哨兵行在`)
+})
+
+test('round work 的 --retry 给了不是整数就退 2：打错字不许静默吞成缺省值', () => {
+  const root = tmpRoot()
+  // **打错的**：非整数 · 负数 · 空串 · 光给旗子不给值——四档都是"命令行不成立"（退 2），
+  // 话里指名道姓。原先这四档全被 `numberOf` 静默吞成缺省，走查里那一次红就永远红不出来。
+  for (const bad of ['abc', '-1', '', 'true']) {
+    const r = bad === 'true' ? fugue(root, 'round', 'work', '--retry') : fugue(root, 'round', 'work', '--retry', bad)
+    assert.equal(r.code, 2, `--retry ${JSON.stringify(bad)} 该退 2，拿到 ${r.code}：${r.stderr.slice(0, 160)}`)
+    assert.match(r.stderr, /--retry/, '报的话要点名这个旗子')
+  }
+  // **0 是合法取值**（"一遍都不重来"）：不该被整数闸误伤——它往下走到"处境不对"那一档退 1，那是另一件事。
+  const zero = fugue(root, 'round', 'work', '--retry', '0')
+  assert.equal(zero.code, 1, `--retry 0 是合法取值（处境不对退 1），拿到 ${zero.code}：${zero.stderr.slice(0, 160)}`)
+  console.log('读数：--retry abc/-1/空串/裸旗 → 2 · --retry 0 → 1（合法，处境不对那一档）')
+})

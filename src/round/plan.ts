@@ -19,13 +19,15 @@
 // **这一份一个契约都不发 · 一条分支都不起 · 一片物化都不铺。** 那三样归 `round go`（架构
 // § 15.1.a："落地不是不可逆的一刻，派发才是"）。于是"这一趟跑完了"与"这一轮派发了"是两件事。
 import type { CommitId, RelPath, RoundId } from '../terms.ts'
-import type { AgentId } from '../terms.ts'
+import type { AgentId, WriterId } from '../terms.ts'
 import type { Log, LogSeq } from '../log/events.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { View } from '../view/contract.ts'
 import type { AgentHandle, CallModel, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
 import { createRuntime } from '../runtime/step.ts'
 import type { ModelDecl } from '../model/contract.ts'
+import type { ModelFace } from '../model/roles.ts'
+import { hopFace } from '../model/roles.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { MODEL_FACING_LANGUAGE_LINE, emptyState, sourcesFor, stepBudgetLine, stepsLeftTail } from '../assemble/sources.ts'
@@ -102,6 +104,8 @@ export interface PlanDeps {
   readonly call: CallModel
   readonly execute: ToolExecutor
   readonly tools?: readonly ToolEntry[]
+  /** **回退链**（角色层站）：持轮者主脸之外的那几张，透传给 `holderPass`。 */
+  readonly fallbacks?: readonly ModelFace[]
   readonly maxSteps?: number
   /** 草案在视图里的路径。缺省 `draftPathOf(round)`（保留前缀那一处，架构 § 9.10）。 */
   readonly draftPath?: RelPath
@@ -293,7 +297,7 @@ export function holderFace(inner: ToolExecutor, opts: HolderFaceOptions = {}): T
    */
   const finish = (call: ToolCallRequest, r: ToolResult, h: AgentHandle): ToolResult => {
     if (call.name === 'exit_plan_mode' && r.ok && r.halt === true) opts.onDeclare?.()
-    const tail = stepsLeftTail(Number(h.state.step), opts.maxSteps, HOLDER_LAND_NOW)
+    const tail = stepsLeftTail(Number(h.state.attempts ?? h.state.step), opts.maxSteps, HOLDER_LAND_NOW)
     return tail === '' ? r : { ...r, output: capReceipt(r.output + tail) }
   }
   /** 一条调用在这一格里走完那一趟（见 `driver.ts` 那一份的同一条理由）。 */
@@ -493,14 +497,21 @@ export async function holderPass(deps: {
   readonly call: CallModel
   readonly execute: ToolExecutor
   /**
-   * 这一趟的产物（预备态那一趟的那份草案）：拒的话要指得出它。**讨论态那一趟不给**——
-   * 那一趟的产物不落在文件上（架构 § 15.1.a）。
+   * 这一趟的产物（预备态那一趟的那份草案）：拒的话要指得出它。**讨论态那一趟不给**——那
+   * 一趟的产物不落在文件上（架构 § 15.1.a）。
    */
   readonly draftPath?: RelPath
   readonly tools?: readonly ToolEntry[]
   readonly maxSteps?: number
   /** 人喊停那一档：不请模型跑。 */
   readonly judgeOnly?: boolean
+  /**
+   * **回退链**（角色层站）：持轮者主脸之外的那几张。步循环 `failed` 那一档在链还有剩时
+   * 换脸重试（同一步再走一遍，各落各的 `llm/call`），每一跳落 `model/fallback`。不给 = 空链。
+   */
+  readonly fallbacks?: readonly ModelFace[]
+  /** 喊停的那条线（与子格循环同一语义：循环顶先看一眼，已取消也算这一趟没跑成）。 */
+  readonly signal?: AbortSignal
 }): Promise<HolderPassResult> {
   if (deps.judgeOnly === true) {
     return { steps: 0, exit: 'judged', stopped: '人喊停：这一趟不请模型跑，拿手里那一份直接判', said: '' }
@@ -523,25 +534,55 @@ export async function holderPass(deps: {
   let stopped = '收敛'
   let exit: HolderExit = 'natural'
   let said = ''
+  const fallbacks = deps.fallbacks ?? []
+  let hopAt = 0
+  const signal = deps.signal ?? new AbortController().signal
   for (;;) {
-    const r = await runtime.step(handle, new AbortController().signal)
+    // **喊停了就停在这一步之前**（与子格循环同一条线、同一句话）。
+    if (signal.aborted) {
+      stopped = '已取消（调用方喊停）'
+      break
+    }
+    // **额度在每一次发起之前查**（含回退那一跳）：回退尝试同样计入 `--max-steps`，不暗中多一个
+    // 免费额度（与子格循环同一道闸、同一句话）。
+    if (deps.maxSteps !== undefined && steps >= deps.maxSteps) {
+      stopped = `到了你给的上界（${deps.maxSteps} 步）`
+      break
+    }
+    handle = { ...handle, state: { ...handle.state, attempts: steps } }
+    const r = await runtime.step(handle, signal)
     steps += 1
     // **最后说的那一段**：一步的产物在 `next.turns` 的末尾那一条里（`turnText` 那一面是它的
     // 文本投影，这里直接读结构化那一面，不重述一遍）。
     const last = (r.next.turns ?? []).at(-1)
     if (last?.text !== undefined && last.text !== '') said = last.text
     if (r.outcome.kind === 'failed') {
-      // **失败也要走到判那一步**：它是"这一格停了"的一种，`gate.problems` 会说出草案缺什么。
       stopped = `${r.outcome.error.why}：${r.outcome.error.message}`
+      // **取消是独立终态**：不归"模型供不上"，也不换脸（与子格循环同一条）。
+      if (signal.aborted) {
+        stopped = '已取消（调用方喊停）'
+        break
+      }
+      // **已执行过工具的失败不回退**：副作用已经落了，回退模型看不到那一批回执——重跑这一步
+      // 等于重放写。如实停下。
+      if (r.executed === true) break
+      // **额度已尽也不再换脸**：那一趟失败就是这一趟的终态。
+      if (deps.maxSteps !== undefined && steps >= deps.maxSteps) break
+      // **回退那一跳**（角色层站）：与子格循环同一段代码（`roles.ts` 的 `hopFace`）——换脸重试
+      // 同一步，每一跳落 `model/fallback`。
+      const hop = await hopFace(handle, fallbacks, hopAt, stopped, deps.log, 'round' as WriterId, handle.agent)
+      hopAt = hop.at
+      if (hop.hopped && hop.face !== null) {
+        handle = hop.handle
+        stopped = '收敛' // 换脸即复位——为什么复位，见 hopFace 那一段
+        continue
+      }
+      // **失败也要走到判那一步**：它是"这一格停了"的一种，`gate.problems` 会说出草案缺什么。
       break
     }
     handle = { ...handle, state: r.next }
     if (r.outcome.kind === 'done') {
       exit = declared ? 'declared' : 'natural'
-      break
-    }
-    if (deps.maxSteps !== undefined && steps >= deps.maxSteps) {
-      stopped = `到了你给的上界（${deps.maxSteps} 步）`
       break
     }
   }
@@ -598,6 +639,7 @@ export async function planRound(deps: PlanDeps): Promise<PlanResult> {
     execute: deps.execute,
     draftPath,
     ...(deps.tools === undefined ? {} : { tools: deps.tools }),
+    ...(deps.fallbacks === undefined || deps.fallbacks.length === 0 ? {} : { fallbacks: deps.fallbacks }),
     ...(deps.maxSteps === undefined ? {} : { maxSteps: deps.maxSteps }),
     ...(deps.judgeOnly === true ? { judgeOnly: true } : {}),
   })

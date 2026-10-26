@@ -24,6 +24,7 @@ import type { Log, LogSeq } from '../log/events.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { View } from '../view/contract.ts'
 import type { AgentHandle, CallModel, ToolExecutor } from '../runtime/step.ts'
+import type { ModelFace } from '../model/roles.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import { applyEdit } from '../view/edit.ts'
 import { overDistillLimit } from '../runtime/budget.ts'
@@ -131,6 +132,8 @@ export interface SayDeps {
   readonly call: CallModel
   readonly execute: ToolExecutor
   readonly tools?: readonly ToolEntry[]
+  /** **回退链**（角色层站）：持轮者主脸之外的那几张，透传给 `holderPass`。 */
+  readonly fallbacks?: readonly ModelFace[]
   readonly maxSteps?: number
   /** 预备态那一趟的跑法（`planRound`）：这一份不认识契约门，也不认识占用估账。 */
   readonly plan?: (over: {
@@ -213,6 +216,7 @@ async function discuss(deps: SayDeps, facts: RoundFacts): Promise<SayResult> {
     call: deps.call,
     execute: deps.execute,
     ...(deps.tools === undefined ? {} : { tools: deps.tools }),
+    ...(deps.fallbacks === undefined || deps.fallbacks.length === 0 ? {} : { fallbacks: deps.fallbacks }),
     ...(deps.maxSteps === undefined ? {} : { maxSteps: deps.maxSteps }),
   })
 

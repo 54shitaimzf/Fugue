@@ -21,10 +21,13 @@
 // 轮次的角色。工具面那一层只把问题**带出来**（`ask_user_question` 的回执里那一栏），不认识尺。
 import type { AssembleState } from '../assemble/sources.ts'
 import type { Contract } from '../contract/types.ts'
-import type { ModelEvent } from '../model/contract.ts'
+import type { ModelCall } from '../model/contract.ts'
 import type { Target } from '../model/http.ts'
+import { wireFactsOf } from '../model/http.ts'
+import type { ModelFace } from '../model/roles.ts'
 import type { WireAdapter } from '../model/wire/stream.ts'
 import type { CallModel, RuntimeRequest } from '../runtime/step.ts'
+import { llmCallEvent } from '../runtime/step.ts'
 import { digestOf } from '../runtime/restart.ts'
 import type { AskItem } from '../tools/execute.ts'
 import type { AgentId, AskTier, ContractId } from '../terms.ts'
@@ -221,19 +224,42 @@ export interface AskCallDeps {
   readonly target: Target
   readonly adapter: WireAdapter
   readonly model: string
+  /** 声明里的调用参数（`ModelDecl.call`）：**跟着脸进请求**——温度 · 输出预算 · 思考档不是裁断的装饰。 */
+  readonly callParams?: RuntimeRequest['call']
   readonly signal?: AbortSignal
 }
 
 /**
- * 走一次裁断：**一个调用**，上下文一次性，用完即弃。
+ * 一次裁断调用花掉的那一笔（进 `llm/call`，`role: ruler`）：与工具步**同一份账**——裁断没有
+ * 工具与文件视图，但它是真实的一次模型调用，按模型分账不许漏它（2026-10-26 外部审查 3.5）。
+ */
+export interface AskSpent {
+  readonly ms: number
+  readonly usage: ModelCall['usage']
+  readonly attempts: readonly number[]
+  readonly rawStop: string | null
+  readonly stop: ModelCall['stop']
+  readonly status: number | null
+  readonly headers: Readonly<Record<string, string | number>> | null
+}
+
+/** 一次裁断的两档出口：**判出来了**（哪怕是退化路——那是模型说了话）· **这一趟没跑成**（换脸重试的那一档）。 */
+export type AskAttempt =
+  | { readonly kind: 'verdict'; readonly verdict: AskVerdict; readonly spent: AskSpent }
+  | { readonly kind: 'dead'; readonly why: string; readonly spent: AskSpent }
+
+/**
+ * 走**一躺**裁断（不带链）：一个调用，上下文一次性，用完即弃。
  *
  * 请求的三区直接照规格摆：**A 区 = 复用那一段字节**（原样），**B 区 = 尺 + 契约 + 问题原文**，
  * **C 区是空的**——那一格的历史一个字都不进这次调用，而这次调用的推敲（请求正文 · 原始回复）
  * 也不落任何地方：出去的只有判决（`verdictOf` 那两行）。
  *
- * 调用抛了 · 没走完 · 回复读不出那两行，三条都归 `forwardAll`——不在调用点各写一遍。
+ * **两档出口分开交**（`AskAttempt`）：判出来了（含 `verdictOf` 认不出那两行的退化路——模型
+ * 说了话，判决成立）与这一趟没跑成（调用抛了 · 流没走完——换脸重试的那一档）。原先两种
+ * 都折进 `forwardAll`，链走那一层就只能拿字符串 prefixes 猜——判据不许靠猜。
  */
-export async function adjudicateAsk(input: AskAdjudicationInput, deps: AskCallDeps): Promise<AskVerdict> {
+async function askOnce(input: AskAdjudicationInput, deps: AskCallDeps): Promise<AskAttempt> {
   const encoder = new TextEncoder()
   const request: RuntimeRequest = {
     target: deps.target,
@@ -242,19 +268,156 @@ export async function adjudicateAsk(input: AskAdjudicationInput, deps: AskCallDe
     // **一个工具都不公布**：这一次裁断只说话，不伸手（伸手的是那一格，不是判它的这一格）。
     tools: [],
     model: deps.model,
+    ...(deps.callParams === undefined ? {} : { call: deps.callParams }),
   }
-  let said = ''
+  const started = performance.now()
+  const spentOf = (
+    call: ModelCall | null,
+    attempts: readonly number[],
+    facts: Readonly<Record<string, string | number>> | null,
+  ): AskSpent => ({
+    ms: Math.round(performance.now() - started),
+    usage: call?.usage ?? null,
+    attempts,
+    rawStop: call?.rawStop ?? null,
+    stop: call?.stop ?? null,
+    status: facts === null ? null : ((facts['status'] as number | undefined) ?? null),
+    headers: facts,
+  })
+  // **流要走完，账才成立**：这里不攒展示用的残字（那一套的教训是 3.10——传输层重试会把前一趟
+  // 的半截文字留在事件流上，攒起来的 `said` 于是混了两趟）；正式判词只从核验后的账里取。
+  let reply: ReturnType<CallModel> | null = null
   try {
-    const reply = deps.call(request, deps.signal ?? new AbortController().signal)
-    for await (const e of reply.events as AsyncIterable<ModelEvent>) {
-      if (e.t === 'delta') said += e.text
+    reply = deps.call(request, deps.signal ?? new AbortController().signal)
+    for await (const e of reply.events) {
+      void e
     }
     const led = reply.ledger()
-    if (led.failure !== null) return forwardAll(`那一次调用没走完：${led.failure}`)
+    if (led.failure !== null) return { kind: 'dead', why: `那一次调用没走完：${led.failure}`, spent: spentOf(null, led.attempts, null) }
+    if (led.call === null) {
+      return { kind: 'dead', why: '那一次调用没给出账（半截的响应当不了完整的用）', spent: spentOf(null, led.attempts, null) }
+    }
+    // **正式判词只认完整收尾**：截断的（`max-tokens` · `incomplete` …）没有资格当判决——
+    // 换下一张脸或转人，不靠偶然的截断位置凑出两行。
+    if (led.call.stop !== 'end-turn') {
+      return { kind: 'dead', why: `那一次调用没说完（stop: ${led.call.stop}）——截断的裁断不算数`, spent: spentOf(led.call, led.attempts, null) }
+    }
+    return { kind: 'verdict', verdict: verdictOf(led.call.text), spent: spentOf(led.call, led.attempts, null) }
   } catch (err) {
-    return forwardAll(`那一次调用抛了：${(err as Error).message}`)
+    let attempts: readonly number[] = []
+    if (reply !== null) {
+      try {
+        attempts = reply.ledger().attempts
+      } catch {
+        attempts = []
+      }
+    }
+    const facts = wireFactsOf(err)
+    return {
+      kind: 'dead',
+      why: `那一次调用抛了：${err instanceof Error ? err.message : String(err)}`,
+      spent: spentOf(null, attempts, facts),
+    }
   }
-  return verdictOf(said)
+}
+
+/**
+ * 走一次裁断（原出口）：判不出来就 `forwardAll`——与从前逐字节相同（不带链的调用点照旧）。
+ */
+export async function adjudicateAsk(input: AskAdjudicationInput, deps: AskCallDeps): Promise<AskVerdict> {
+  const r = await askOnce(input, deps)
+  return r.kind === 'dead' ? forwardAll(r.why) : r.verdict
+}
+
+/**
+ * 判那一次：**链在不在，走的都是同一份 `askOnce`**。链不在就借格子自己那一套（与从前逐字节
+ * 相同，一次即终）；链在就按次序走——没跑成换下一张（每一跳落 `model/fallback`），判出来了就停。
+ */
+async function ruleOf(input: TakeAsksInput): Promise<AskVerdict> {
+  const ask = { aZone: input.aZone, contract: input.contract, task: input.task, asks: input.asks }
+  const sig = input.signal === undefined ? {} : { signal: input.signal }
+  /** 取消是独立终态：不换下一张脸（换脸救不了人喊停），问题原样转人——不归"模型供不上"。 */
+  const cancelled = (): string => '已取消（调用方喊停）——裁断没跑完，问题原样转人'
+  /** 每一次裁断调用各落一笔 `llm/call`（`role: ruler`）——三角色同一本账（角色层站）。 */
+  const settle = (spent: AskSpent, model: string, wireName: string, callParams: RuntimeRequest['call']): Promise<unknown> =>
+    input.log.append(
+      input.writer,
+      llmCallEvent({
+        agent: input.agent,
+        step: String(input.step ?? 0),
+        model,
+        wireName,
+        thinking: callParams?.thinking ?? null,
+        toolCount: 0,
+        invocations: 0,
+        ms: spent.ms,
+        usage: spent.usage,
+        rawStop: spent.rawStop,
+        stop: spent.stop,
+        status: spent.status,
+        headers: spent.headers,
+        attempts: spent.attempts,
+        role: 'ruler',
+      }),
+    )
+  if (input.ruler === undefined) {
+    if (input.signal?.aborted) return forwardAll(cancelled())
+    const r = await askOnce(ask, {
+      call: input.call,
+      target: input.target,
+      adapter: input.adapter,
+      model: input.model,
+      ...(input.callParams === undefined ? {} : { callParams: input.callParams }),
+      ...sig,
+    })
+    await settle(r.spent, input.modelId ?? input.model, input.adapter.name, input.callParams)
+    // 调用确实发出去过（账已落），但"为什么转人"要说取消——链尾与无链同一条。
+    if (r.kind === 'dead' && input.signal?.aborted) return forwardAll(cancelled())
+    return r.kind === 'dead' ? forwardAll(r.why) : r.verdict
+  }
+  let dead: string | null = null
+  for (let at = 0; at < input.ruler.length; at += 1) {
+    if (input.signal?.aborted) return forwardAll(cancelled())
+    const face = input.ruler[at] as ModelFace
+    let r: AskAttempt
+    let sent = true
+    try {
+      r = await askOnce(ask, {
+        call: input.call,
+        target: face.target(),
+        adapter: { name: face.decl.wire },
+        model: face.decl.model,
+        ...(face.decl.call === undefined ? {} : { callParams: face.decl.call }),
+        ...sig,
+      })
+    } catch (err) {
+      // 那张脸拼都拼不起来（凭据没配那一类）：与跑成死同一档——落一跳账，换下一张。
+      // **没发出去的请求不落 `llm/call`**：台账一行就是一次真实调用，笔数要与请求数对得上；
+      // "选了它、没跑成"由 `model/fallback` 那一跳记（why 就是凭据那一句）。
+      sent = false
+      r = {
+        kind: 'dead',
+        why: `那张脸拼不起来：${(err as Error).message}`,
+        spent: { ms: 0, usage: null, attempts: [], rawStop: null, stop: null, status: null, headers: null },
+      }
+    }
+    if (sent) await settle(r.spent, face.decl.id, face.decl.wire, face.decl.call)
+    if (r.kind === 'verdict') return r.verdict
+    // **死档统一查一次取消**：调用中途人喊停（流被断掉那一类）不该归成"供方抛了"——
+    // `ask/ruling.why` 是用户可见的那一句。
+    if (input.signal?.aborted) return forwardAll(cancelled())
+    dead = r.why
+    const next = input.ruler[at + 1]
+    if (next === undefined) break
+    await input.log.append(input.writer, {
+      t: 'model/fallback',
+      agent: input.agent,
+      from: face.decl.id,
+      to: next.decl.id,
+      why: r.why,
+    })
+  }
+  return forwardAll(dead ?? '裁断那一串脸一张都没跑起来')
 }
 
 /** 问题被接住那一条：`ask/raised`（形状见 `log/events.ts`）。**正文就是那一批问题本身**。 */
@@ -315,7 +478,20 @@ export interface TakeAsksInput {
   readonly target: Target
   readonly adapter: WireAdapter
   readonly model: string
+  /** 这一格走到第几步：`llm/call` 的 `step` 栏跟着格子（角色那一栏是 `role`，两者不打架）。 */
+  readonly step?: number
+  /** 我们这边的模型键（`llm/call` 的 `model` 栏——借格子那一套的那一档用它）。 */
+  readonly modelId?: string
+  /** 借格子那一套时声明里的调用参数（链在的时候，每一张脸带它自己声明的那一份）。 */
+  readonly callParams?: RuntimeRequest['call']
   readonly signal?: AbortSignal
+  /**
+   * **裁断那一格自己的那串脸**（角色层站）：给了就按它走——主脸在前，**这一趟没跑成**
+   * （调用抛了 · 流没走完）才换下一张，每一跳落 `model/fallback`；**判出来了就停**（哪怕是
+   * 退化路——模型说了话，判决成立，换一张脸不会把它说得更好）。链走完了还没跑成 → 退化路全
+   * 转发。不给就照旧借格子自己那一套（与从前逐字节相同）。
+   */
+  readonly ruler?: readonly ModelFace[]
 }
 
 export interface TakeAsksResult {
@@ -328,16 +504,7 @@ export interface TakeAsksResult {
 export async function takeAsks(input: TakeAsksInput): Promise<TakeAsksResult> {
   const raised = raisedEventOf(input.agent, input.contract.id as ContractId, input.asks)
   await input.log.append(input.writer, raised)
-  const verdict = await adjudicateAsk(
-    { aZone: input.aZone, contract: input.contract, task: input.task, asks: input.asks },
-    {
-      call: input.call,
-      target: input.target,
-      adapter: input.adapter,
-      model: input.model,
-      ...(input.signal === undefined ? {} : { signal: input.signal }),
-    },
-  )
+  const verdict = await ruleOf(input)
   await input.log.append(input.writer, rulingEventOf(input.agent, raised.digest, verdict))
   if (verdict.forwarded) {
     // **问题原样转出去**：同一条正文（连 `digest` 都相同）——转出去的是那一问，不是它的摘要。

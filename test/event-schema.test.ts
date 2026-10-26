@@ -32,7 +32,7 @@ test('契约件与联合逐字节一致（提交的那一份 = 现推的那一�
   const source = readSources().events
   const fromSource = [...source.matchAll(/t:\s*'([a-zA-Z]+\/[a-zA-Z]+|signal)'/g)].map((m) => m[1])
   assert.deepEqual([...families].sort(), [...new Set(fromSource)].sort(), '契约里的族与联合里的族对不上')
-  assert.equal(families.length, 31, `族数变了：${families.length}——联合动了就得重推这一份`)
+  assert.equal(families.length, 32, `族数变了：${families.length}——联合动了就得重推这一份`)
   console.log(`读数：${families.length} 族 · 契约 ${have.length} 字节 · 与联合逐字节一致`)
 })
 

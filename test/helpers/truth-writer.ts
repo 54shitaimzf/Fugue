@@ -14,7 +14,7 @@
 import { appendFileSync, existsSync } from 'node:fs'
 import { openTruth } from '../../src/truth/truth.ts'
 import type { TreeEntry } from '../../src/entries.ts'
-import type { RefName } from '../../src/terms.ts'
+import type { CommitId, RefName } from '../../src/terms.ts'
 
 const [root, ref, mode, ...rest] = process.argv.slice(2)
 const truth = openTruth(root)

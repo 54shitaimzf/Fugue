@@ -22,6 +22,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { wireNamed } from './wire/registry.ts'
+import type { CallModel } from '../runtime/step.ts'
 import { wireHeader } from './wire/headers.ts'
 
 /**
@@ -93,6 +94,12 @@ export interface Target {
    * 不声明就是一次即终——默认档的行为一个字节都不多（夹具档与旧日志照旧）。
    */
   readonly retries?: RetryPolicy
+  /**
+   * **空闲看门狗**（毫秒 · 可省 = 没有）：从提供方那一栏带入，消费在 `fetchTransport`——
+   * 两次字节落地之间隔了这么久还没有一个字节，判死这一趟（报出来的是**没有状态码的那一类**，
+   * `attempts` 里记 0，重不重试由 `retries.timeout` 那一档说）。不声明就没有看门狗。
+   */
+  readonly idleTimeoutMs?: number
 }
 
 /** 声明 → 目标。**`authOf()` 的唯一调用点。** 引用表从配置的 `credentials.<id>` 键来（调用方递）。 */
@@ -126,6 +133,7 @@ export function targetAt(declId: string, credential: string, cat: Catalog): Targ
     from: 'decl',
     headers: wireHeader(decl.wire, credential),
     ...(provider.retries === undefined ? {} : { retries: provider.retries }),
+    ...(provider.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: provider.idleTimeoutMs }),
   }
 }
 
@@ -165,38 +173,88 @@ export class HttpError extends Error {
 /** 真网络那一档。**整个仓库里唯一一处 `fetch`。** */
 export const fetchTransport: Transport = {
   async *post(t: Target, body: Uint8Array, signal?: AbortSignal): AsyncGenerator<Uint8Array> {
+    // **取消的现值在入口同步**：只挂未来的 `abort` 事件，已经成立的取消就再也等不到那一声——
+    // 预先取消的调用会照发不误（2026-10-26 外部审查 3.4）。原因原样转递（AbortError 语义），
+    // 而调用那一层把取消当终态：不归"传输错可重试"那一类。
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error(`这一趟还没发就取消了：${String(signal.reason ?? '调用方喊停')}`)
+    }
     if (!t.host.startsWith('http')) {
       throw new HttpError(0, `这一份目标没有 host（来自 ${t.from}），发不了真请求：${JSON.stringify(t.host)}`)
     }
-    const res = await fetch(t.host + t.path, {
-      method: 'POST',
-      headers: t.headers,
-      body,
-      ...(signal === undefined ? {} : { signal }),
-    })
-    if (!res.ok) {
-      // 上游回的是人读的错：**带上原文的前一截**，否则"400"这三个数字什么都说明不了。
-      const said = await res.text().catch(() => '')
-      // **这一截也交出去**（`yield`，随后照旧抛）：它不进任何一次解析（上面已经非 2xx 了），
-      // 但 `teeBytes` 会把它攒进原始字节里——`--dump-wire` 的 `response.sse` 于是连"上游说凭据
-      // 不对"这句原话都在。原先抛之前一个字节都不 yield，那一趟的 dump 里响应是空的：
-      // 排障的人最想看的那一句恰好是唯一没落下来的那一句。
-      if (said !== '') yield new TextEncoder().encode(said)
-      // 而排障要的是**那几个能拿去报单的值**（请求号 · 限流 · 状态码）：它们只在这一层拿得到，
-      // 往上走就只剩一句话了。挂在错误上，`step` 那一层读它，填进已有的 `llm/call`。
-      throw new HttpError(
-        res.status,
-        `${t.host}${t.path} 回了 ${res.status} ${res.statusText}：${said.slice(0, 400)}`,
-        { status: res.status, ...(keptHeaders(res.headers) ?? {}) },
+    // **一只自己的控制器**：调用方喊停与看门狗到点都走它——两条路汇在同一处 abort 上，
+    // 下游（fetch 与 body 流）看到的形状就只有一种。喊停的话**原样转递**（AbortError 语义不变，
+    // 传输循环那一侧按"人喊停不重试"处理）；看门狗的话带着判死的那句话。
+    const own = new AbortController()
+    const passThrough = (): void => own.abort(signal?.reason)
+    signal?.addEventListener('abort', passThrough, { once: true })
+    /** 空闲看门狗：**每一次字节落地重置**；到点一个字节都没有 → 判死这一趟。 */
+    let idle: ReturnType<typeof setTimeout> | null = null
+    const arm = (): void => {
+      if (idle !== null) clearTimeout(idle)
+      idle = setTimeout(
+        () => own.abort(new Error(`上游 ${t.host}${t.path} ${t.idleTimeoutMs} 毫秒没有一个字节——判死这一趟（头都没回算空闲，流中途停住也算）`)),
+        t.idleTimeoutMs as number,
       )
     }
-    if (res.body === null) {
-      throw new HttpError(res.status, `${t.host}${t.path} 回了空 body：流式请求要的是一条 SSE 流`, {
-        status: res.status,
-        ...(keptHeaders(res.headers) ?? {}),
-      })
+    const disarm = (): void => {
+      if (idle !== null) clearTimeout(idle)
+      idle = null
     }
-    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) yield chunk
+    try {
+      if (t.idleTimeoutMs !== undefined) arm()
+      const res = await fetch(t.host + t.path, {
+        method: 'POST',
+        headers: t.headers,
+        body,
+        signal: own.signal,
+      })
+      if (!res.ok) {
+        // 上游回的是人读的错：**带上原文的前一截**，否则"400"这三个数字什么都说明不了。
+        // 错误正文同样按块读、看门狗同一条规则（判"空闲"不因状态码而异）：持续出字节的错误
+        // 读得完（末尾那句原话正是排障要的），中途停住的判死那句话原样抛——不吞成空正文。
+        // 只攒有界的一截，且是**硬上限**：追加前就截在里面——单个大块也拦得住（要进错误信息
+        // 的是前一截，dump 与内存同一条界）。
+        let said = ''
+        const dec = new TextDecoder()
+        const cap = 4096
+        if (res.body !== null) {
+          for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+            if (t.idleTimeoutMs !== undefined) arm()
+            if (said.length < cap) said = (said + dec.decode(chunk, { stream: true })).slice(0, cap)
+          }
+          if (said.length < cap) said = (said + dec.decode()).slice(0, cap)
+        }
+        // **这一截也交出去**（`yield`，随后照旧抛）：它不进任何一次解析（上面已经非 2xx 了），
+        // 但 `teeBytes` 会把它攒进原始字节里——`--dump-wire` 的 `response.sse` 于是连"上游说凭据
+        // 不对"这句原话都在。原先抛之前一个字节都不 yield，那一趟的 dump 里响应是空的：
+        // 排障的人最想看的那一句恰好是唯一没落下来的那一句。
+        if (said !== '') yield new TextEncoder().encode(said)
+        // 而排障要的是**那几个能拿去报单的值**（请求号 · 限流 · 状态码）：它们只在这一层拿得到，
+        // 往上走就只剩一句话了。挂在错误上，`step` 那一层读它，填进已有的 `llm/call`。
+        throw new HttpError(
+          res.status,
+          `${t.host}${t.path} 回了 ${res.status} ${res.statusText}：${said.slice(0, 400)}`,
+          { status: res.status, ...(keptHeaders(res.headers) ?? {}) },
+        )
+      }
+      if (res.body === null) {
+        throw new HttpError(res.status, `${t.host}${t.path} 回了空 body：流式请求要的是一条 SSE 流`, {
+          status: res.status,
+          ...(keptHeaders(res.headers) ?? {}) ,
+        })
+      }
+      for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+        // 每一次字节落地，看门狗重新起算（判的是"空闲"，不是总时长——长思考的合法生成
+        // 可以跑很久，但它不会长时间一个字节都不出）。
+        if (t.idleTimeoutMs !== undefined) arm()
+        yield chunk
+      }
+      disarm()
+    } finally {
+      disarm()
+      signal?.removeEventListener('abort', passThrough)
+    }
   },
 }
 

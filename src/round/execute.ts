@@ -19,7 +19,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Log } from '../log/events.ts'
+import type { Log, LogEvent } from '../log/events.ts'
 import type { Roots } from '../roots/contract.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { AgentId, CommitId, ContractId, RelPath, RoundId, WriterId } from '../terms.ts'
@@ -45,6 +45,7 @@ import { loadView } from '../view/view.ts'
 import type { View } from '../view/contract.ts'
 import type { AgentDriver, DriverAsk } from './driver.ts'
 import type { ModelDecl } from '../model/contract.ts'
+import type { ModelFace } from '../model/roles.ts'
 import type { CallModel, ToolExecutor } from '../runtime/step.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
@@ -253,6 +254,10 @@ export interface DriverSupport {
   /** 这一格的句柄（分支 · 契约 · 模型 · 目标）。同样收契约（理由同上）。 */
   readonly handle: (agent: AgentId, contract: Contract) => DriverAsk['handle']
   readonly decl: ModelDecl
+  /** 回退链（角色层站）：主脸之外的那几张（惰性取目标）。不给 = 空链（不换模型）。 */
+  readonly fallbacks?: readonly ModelFace[]
+  /** 裁断那一格自己的那串脸（角色层站）。不给就照旧借格子自己那一套。 */
+  readonly rulerFaces?: readonly ModelFace[]
   readonly call?: CallModel
   readonly execute?: ToolExecutor
   readonly tools?: readonly ToolEntry[]
@@ -271,6 +276,18 @@ export interface DriverSupport {
  *   6. `verify` —— 跑在物化出来的那棵树上（A6）
  *   7. `commitThenAdvance` —— 通过才定格 + 推进（A6 那句"顺序即不变量"）
  */
+/**
+ * 那个 writer 的**最后一条** `agent/stop`（`null` = 一条都没有——打桩那一档不落它）。
+ *
+ * 读它的是重跑那一道闸：断在半路的那一格不当作交过卷。整条 writer 日志只在这一刻读一遍
+ * （候选复用的那一格才有这一趟），一轮里的格子数就是它的上界。
+ */
+async function lastStopOf(log: Log, writer: WriterId): Promise<Extract<LogEvent, { t: 'agent/stop' }> | null> {
+  let last: Extract<LogEvent, { t: 'agent/stop' }> | null = null
+  for await (const e of log.readByWriter(writer)) if (e.t === 'agent/stop') last = e
+  return last
+}
+
 /**
  * 一格的那一份 ask。
  *
@@ -308,6 +325,8 @@ async function askOf(deps: RoundRunDeps, c: Contract, agent: AgentId, base: Comm
     state: support.state(agent, c),
     handle: support.handle(agent, c),
     decl: support.decl,
+    ...(support.fallbacks === undefined || support.fallbacks.length === 0 ? {} : { fallbacks: support.fallbacks }),
+    ...(support.rulerFaces === undefined || support.rulerFaces.length === 0 ? {} : { rulerFaces: support.rulerFaces }),
     ...(support.tools === undefined ? {} : { tools: support.tools }),
     ...(support.call === undefined ? {} : { call: support.call }),
     ...(support.execute === undefined ? {} : { execute: support.execute }),
@@ -368,9 +387,15 @@ export async function runIssued(deps: RunTailDeps, batch: IssuedBatch): Promise<
     // **已经交过卷的格不重跑**：那条分支已经不是这一轮钉住的底了。
     const head = await baseFor(deps.truth, agent as WriterId)
     if (head !== null && head !== batch.base) {
-      work[c.id] = head
-      reused.push(c.id as ContractId)
-      continue
+      // **断在半路的那一格不当作交过卷**：失败那一档照样提交（账要留），可那份提交是半截产物
+      // ——复用它等于把断点冻进这一轮的验收。判据是那条分支**最后一条** `agent/stop`（后一次
+      // 跑成了的那一格，它那条就是正常收工）：打桩那一档一条都没有（`null`），照旧复用。
+      const stop = await lastStopOf(deps.logOf(agent), agent as WriterId)
+      if (stop === null || stop.failed !== true) {
+        work[c.id] = head
+        reused.push(c.id as ContractId)
+        continue
+      }
     }
     const commit = await deps.stub(await askOf(deps, c, agent, batch.base))
     work[c.id] = commit

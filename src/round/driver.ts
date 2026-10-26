@@ -53,6 +53,8 @@ import type { Prefix } from '../assemble/contract.ts'
 import { handoffAt, successorOf } from '../runtime/restart.ts'
 import { refFor } from '../identity.ts'
 import type { ModelDecl } from '../model/contract.ts'
+import type { ModelFace } from '../model/roles.ts'
+import { hopFace } from '../model/roles.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 
 /**
@@ -98,6 +100,25 @@ export interface DriverAsk {
   readonly maxSteps?: number
   /** 到了触发点要不要交接（缺省要——`B6` 的停机纪律是"先停"）。 */
   readonly handoff?: boolean
+  /**
+   * **喊停的那条线**（可省 = 没有人能喊停，行为与从前逐字节相同）。给了它，循环每一步之前
+   * 看一眼：喊了就停（`stopped` 记「已取消」，`failed` 照断在半路那一档记——这一格没干完，
+   * 重跑那一道闸不把它当交过卷），已落的部分照常提交（账要留），模型调用与裁断都走同一条线
+   * （传输那一层会把它翻成一次没有状态码的失败）。**不装 SIGINT 处理器**：谁喊停由调用方
+   * 决定（serve 那一条路将来接它的取消口），这一层只认这一条线。
+   */
+  readonly signal?: AbortSignal
+  /**
+   * **回退链**（角色层站）：主脸之外的那几张（惰性取目标）。步循环 `failed` 那一档在链还有剩时
+   * **换脸重试**：同一步再走一遍（各落各的 `llm/call`，`model` 那一栏就是新脸），每一跳落
+   * `model/fallback`；链走完了才真算断。不给 = 空链（不换模型，与从前逐字节相同）。
+   */
+  readonly fallbacks?: readonly ModelFace[]
+  /**
+   * **裁断那一格自己的那串脸**（角色层站）：轮内收下问题那一次用哪几张。给了，
+   * `takeAsks` 按链走（跑不成换下一张，每一跳落账）；不给照旧借格子自己那一套。
+   */
+  readonly rulerFaces?: readonly ModelFace[]
 }
 
 /**
@@ -115,6 +136,12 @@ export interface DriverResult {
   readonly commits: readonly LogSeq[]
   readonly handoffs: readonly string[]
   readonly stopped: string
+  /**
+   * **这一格是断在半路停下来的**（`failed` 那一档：流半截 · 没能说完 · 工具抛了 · 调用方喊停；
+   * 步数到顶与预算停不算——那两档是"按规矩停"）。它进 `agent/stop` 的 `failed` 那一栏，重跑
+   * 那一道闸读它：断掉的格不当作交过卷。
+   */
+  readonly failed: boolean
 }
 
 /** 驱动不在时那句统一的话。**它要说清"缺的是哪一样"与"为什么不能装作干完了"。** */
@@ -203,6 +230,12 @@ export function goalOf(c: Contract): string {
 }
 
 /**
+ * **换一张脸**（角色层站的回退那一跳）住在 `model/roles.ts`（脸的事）：只换模型那几栏，
+ * **角色协议不动**——工具派发按 `h.protocol === HOLDER_PROTOCOL` 认持轮者，换模型换掉角色
+ * 会让 `exit_plan_mode` 被当成角色不对而拒收（2026-10-26 外部审查 3.2 的教训）。
+ */
+
+/**
  * 真驱动：**装配 → 调用 → 工具 → 落日志 → 下一步**，到收敛或到预算为止，然后提交。
  *
  * **它做的四件事**（顺序是承重的）：
@@ -254,7 +287,7 @@ export function withStepsLeft(inner: ToolExecutor, maxSteps?: number): ToolExecu
   /** 一条调用在这一格里走完那一趟（与 `plan.ts` 的 `holderFace` 同一个形状 · 同一条理由）。 */
   async function one(call: ToolCallRequest, h: AgentHandle): Promise<ToolResult> {
     const r = await inner.execute(call, h)
-    const t = stepsLeftTail(Number(h.state.step), maxSteps, AGENT_LAND_NOW)
+    const t = stepsLeftTail(Number(h.state.attempts ?? h.state.step), maxSteps, AGENT_LAND_NOW)
     return t === '' ? r : { ...r, output: capReceipt(r.output + t) }
   }
   return {
@@ -269,7 +302,7 @@ export function withStepsLeft(inner: ToolExecutor, maxSteps?: number): ToolExecu
         return out
       }
       const got = await inner.executeAll(calls, h)
-      const t = stepsLeftTail(Number(h.state.step), maxSteps, AGENT_LAND_NOW)
+      const t = stepsLeftTail(Number(h.state.attempts ?? h.state.step), maxSteps, AGENT_LAND_NOW)
       return t === '' ? got : got.map((r) => ({ ...r, output: capReceipt(r.output + t) }))
     },
   }
@@ -296,7 +329,14 @@ export async function runAgentOnce(ask: DriverAsk, opts: RealDriverOptions = {})
   // `onResult` 那一个出口，而壳调用 `realDriver()` 时没接它——那句话于是出了这一层就没了，
   // 命令面只剩"验收：通过 1"。落成一条事件之后，"这一格到底干完没有"在日志里查得到
   // （**验收仍然是唯一的判据**，这一条是旁证）。
-  await log.append(writer, { t: 'agent/stop', agent, steps: r.steps, stopped: r.stopped, handoffs: r.handoffs.length })
+  await log.append(writer, {
+    t: 'agent/stop',
+    agent,
+    steps: r.steps,
+    stopped: r.stopped,
+    handoffs: r.handoffs.length,
+    ...(r.failed ? { failed: true } : {}),
+  })
   return r
 }
 
@@ -702,21 +742,52 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
   const handoffs: string[] = []
   /** 轮内裁断回来的那几句结论（U18 甲案）：挂到下一步的「信号摘要」上，**只带结论**。 */
   const notes: string[] = []
+  /**
+   * **已经摊进「信号摘要」的判词条数**：每步只摊新增的那几句。`r.next.signals` 里躺着的是
+   * 上一步摊过的那几句，再把整份 `notes` 摊一遍，同一条判词会在 C 区里越滚越多——模型
+   * 每一步都把它当新信息读（实测：三步两问，第三步的前缀里第一问的判词出现两遍）。
+   */
+  let spreadAt = 0
   /** 这一格已经量到的那些比值（真 ÷ 估；每次调用最多加一份）。 */
   const ratios: number[] = []
   let handle: AgentHandle = { ...ask.handle, agent, state: ask.state }
   let steps = 0
   let handedOff = false
   let stopped = '收敛'
+  /** 断在半路那一档（进 `agent/stop` 的 `failed` 栏：重跑那一道闸读它）。 */
+  let failed = false
+  /** 喊停的那条线（`DriverAsk.signal`）：**循环里每一处 await 都走它**——原先每步现起一只
+   * 永不 abort 的控制器，那是一个死参数；现在一条线贯穿模型调用与裁断，循环顶先看一眼。 */
+  const signal = ask.signal ?? new AbortController().signal
+  /** 回退链走到第几张（角色层站）：链里每张至多换一次——换过的不回头。 */
+  const fallbacks = ask.fallbacks ?? []
+  let hopAt = 0
+  /** 预算按哪份声明算：**跟着脸换**（上限与触发点是模型的量），主脸起手。 */
+  let decl = ask.decl
   // **起手那一下也交一次**：这一格干完之后视图里那一份就是产出，而"提交"这件事在循环外面
   // （循环只管说话与调工具）。**顺序与架构 § 9.3 那三步一致**：视图先有内容，再走 `checkpoint()`。
   for (;;) {
+    // **喊停了就停在这一步之前**：已落的部分照常提交（账要留），这一格记断在半路（没干完）。
+    if (signal.aborted) {
+      stopped = '已取消（调用方喊停）'
+      failed = true
+      break
+    }
+    // **额度在每一次发起之前查**（含回退那一跳）：回退尝试同样计入 `--max-steps`，不暗中多一个
+    // 免费额度。上一趟走完而额度已尽，是与从前同一档的正常停（不算断在半路）。
+    if (maxSteps !== undefined && steps >= maxSteps) {
+      stopped = `到了你给的上界（${maxSteps} 步）`
+      break
+    }
+    // 收工那半句（`withStepsLeft`）与上面那道闸读**同一个数**：`attempts` 是已发起过的调用次数
+    // （含换脸重试），这一趟发起前先写进状态——模型看到的"还剩几步"不会比真正的额度乐观。
+    handle = { ...handle, state: { ...handle.state, attempts: steps } }
     // **这里不给工具目录那一段**（`tools: ''`）：循环这一层不认识目录，给了它等于把公布面绑进
     // 运行时。派发前那一份占用（`occupancyOf`）把目录算了进去，于是那一个是完整的一笔、这一个
     // 差了目录那一段。判"该不该交接"用的是这一笔，所以它偏松的一侧——而真读数会把这段差补回来
     // （用量里带着工具 schema，比值吸收的就是它）。
     const budget = planBudget({
-      decl: ask.decl,
+      decl,
       prefix: prefixOf(handle),
       tools: '',
       seed: goalOf(contract),
@@ -727,12 +798,40 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       stopped = budget.why
       break
     }
-    const signal = new AbortController().signal
     const r: StepResult = await runtime.step(handle, signal)
     steps += 1
     if (r.outcome.kind === 'failed') {
       // **失败要报出来**：它不是"干完了"。`why` 是短分类（`cut-stream` · `max-tokens` · …）。
       stopped = `${r.outcome.error.why}：${r.outcome.error.message}`
+      // **取消是独立终态**：不归"模型供不上"，也不换脸——换脸救不了人喊停。
+      if (signal.aborted) {
+        stopped = '已取消（调用方喊停）'
+        failed = true
+        break
+      }
+      // **已执行过工具的失败不回退**：副作用已经落了，而回退模型看不到那一批回执——重跑这一步
+      // 等于给它一个重放写的机会。如实停下（`failed:true`），恢复那一档交给人。
+      if (r.executed === true) {
+        failed = true
+        break
+      }
+      // **额度已尽也不再换脸**：那一趟失败就是这一格的终态——上界是用户给的，换脸是花钱的事。
+      if (maxSteps !== undefined && steps >= maxSteps) {
+        failed = true
+        break
+      }
+      // **回退那一跳**（角色层站）：闸已过（取消 · 已执行工具 · 额度），换脸重试同一步——
+      // 各落各的 `llm/call`，每一跳落 `model/fallback`（公共实现在 `roles.ts` 的 `hopFace`，
+      // 与持轮者循环同一段代码）。链走完了才真算断在半路。
+      const hop = await hopFace(handle, fallbacks, hopAt, stopped, log, writer, agent)
+      hopAt = hop.at
+      if (hop.hopped && hop.face !== null) {
+        handle = hop.handle
+        decl = hop.face.decl
+        stopped = '收敛' // 换脸即复位——为什么复位，见 hopFace 那一段
+        continue
+      }
+      failed = true
       break
     }
     // **真读数修正下一次判**（架构 § 8.15 的 `usage` 是唯一权威）：这一趟的用量与刚才那一笔估账
@@ -758,11 +857,17 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
         target: handle.target,
         adapter: handle.adapter,
         model: handle.wireModel,
+        step: Number(handle.state.step),
+        modelId: handle.model,
+        ...(handle.call === undefined ? {} : { callParams: handle.call }),
         signal,
+        ...(ask.rulerFaces === undefined ? {} : { ruler: ask.rulerFaces }),
       })
       notes.push(taken.note)
     }
-    handle = { ...handle, state: notes.length === 0 ? r.next : { ...r.next, signals: [...r.next.signals, ...notes] } }
+    const fresh = notes.slice(spreadAt)
+    handle = { ...handle, state: fresh.length === 0 ? r.next : { ...r.next, signals: [...r.next.signals, ...fresh] } }
+    spreadAt = notes.length
     if (r.outcome.kind === 'done') break
     // **交一次就够**（缺省只交一次）：触发点是一个数，而"这一格该不该换人"不是每一步都重新判的
     // ——反复交接会把同一格切成三四段，而每一段都要重读一遍 Zone A + Zone B。
@@ -791,10 +896,6 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
       handedOff = true
       handle = { ...handle, state: successorOf(handle.state, out.prompt) }
     }
-    if (maxSteps !== undefined && steps >= maxSteps) {
-      stopped = `到了你给的上界（${maxSteps} 步）`
-      break
-    }
   }
 
 
@@ -808,7 +909,7 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     ref: refFor(writer),
   })
   commits.push(committed.seq)
-  return { commit: committed.commit, steps, commits, handoffs, stopped }
+  return { commit: committed.commit, steps, commits, handoffs, stopped, failed }
 }
 
 /**

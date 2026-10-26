@@ -64,7 +64,7 @@ import {
   mergeTrigram,
   sectionsOf,
 } from './trigram.ts'
-import type { BlobBytes, Trigram, TrigramIndex, TrigramSections } from './trigram.ts'
+import type { BlobBytes, Trigram, TrigramIndex, TrigramParts, TrigramSections } from './trigram.ts'
 import { INDEX_LIMITS, IndexBudgetExceeded } from './budget.ts'
 import type { IndexBudget, IndexBudgetLimits } from './budget.ts'
 import { kindOf } from '../truth/truth.ts'

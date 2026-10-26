@@ -113,6 +113,15 @@ export interface ProviderDecl {
   readonly wireOverrides?: Readonly<Partial<Record<WireName, string>>>
   /** 这家提供方那一路的**重试档**（P2f 消费）：几次 · 哪些状态码 · 超时算不算。 */
   readonly retries?: RetryPolicy
+  /**
+   * **空闲看门狗**（毫秒）：一次调用**两次字节落地之间**（含头都没回的那一段）隔了这么久
+   * 还没有一个字节，就判死这一趟。它给 `RetryPolicy.timeout` 那一档补上了缺的产生者——
+   * 没有它，一个挂死的连接（收下请求、一个字节不回）永远等下去，重试档也就永远轮不到。
+   *
+   * **不声明就没有看门狗**——默认档一个字节都不多（与重试档同一条纪律）。判"空闲"而不是
+   * 判"总时长"：一次长思考的合法生成可以跑很久，但它不会**长时间一个字节都不出**。
+   */
+  readonly idleTimeoutMs?: number
 }
 
 /**

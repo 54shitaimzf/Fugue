@@ -362,10 +362,10 @@ test('⑤ 事件联合的判别名与架构 § 8.1 那一段逐条相符（`tool
   const plan = process.env['FUGUE_PLAN'] ?? '/mnt/c/Users/Administrator/Desktop/CodeWish/PLAN-ARCHIVE.md'
   const got = spawnSync('node', ['tools/check-events.js', plan], { cwd: process.cwd(), encoding: 'utf8' })
   assert.equal(got.status, 0, `check-events.js 没通过：\n${got.stdout}\n${got.stderr}`)
-  // **31 条**：本站加了 `merge/publish`（发布事实：目标提交 · 旧值 · 开始/完成）。
-  // 事件面此前到 0.4.3 冻在 30 条；新族仍走同一条对账：联合 ↔ 架构 §8.1。
-  assert.match(got.stdout, /代码里 31 条/, '代码那一侧该是 31 条')
-  assert.match(got.stdout, /架构里 31 条/, '架构 § 8.1 那一侧也该是 31 条')
+  // **32 条**：角色层站加了 `model/fallback`（回退那一跳：from → to · why）；此前 0.4.4 加过
+  // `merge/publish`。事件面此前到 0.4.3 冻在 30 条；新族仍走同一条对账：联合 ↔ 架构 §8.1。
+  assert.match(got.stdout, /代码里 32 条/, '代码那一侧该是 32 条')
+  assert.match(got.stdout, /架构里 32 条/, '架构 § 8.1 那一侧也该是 32 条')
   assert.match(got.stdout, /代码里每一条都在架构那一段里/, '两向都要相符')
   assert.match(got.stdout, /架构那一段里每一条都在代码里/, '两向都要相符')
   // 归档那一半（§ 5.18 那张三面表，同一个联合的**第二张**散文表——它漂过一次，漏 7 条）住在

@@ -240,8 +240,14 @@ const isMain =
   process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 
 if (isMain) {
+  // **退出码交给事件循环去收**（`process.exitCode`，不是 `process.exit`）：壳的输出走的是管道，
+  // 而 `process.exit` 不等排空——实测 2 MiB 的 `read` 只落下来 146176 字节（93% 丢在退出那一刀）。
+  // 设了码之后自然退出，缓冲里的字节才跟着下去；有句柄没关的那种挂死不属于这里的问题
+  //（命令自己 `ctx.close()`），拿一刀截尾去防挂死是把两种病混成一种。
   main(process.argv.slice(2))
-    .then((code) => process.exit(code))
+    .then((code) => {
+      process.exitCode = code
+    })
     .catch(async (err: unknown) => {
       // 兜底那一层的脸也跟着 `--json` 走（§ 9.8「错误」行）：走到这里的错（日志损坏 · 意外
       // 抛出）此前只有人读的那一面。日志目录那一行人面上照旧两行；`--json` 那一面一行，
@@ -253,13 +259,12 @@ if (isMain) {
         // "它的日志在哪"是两件事。默认值仍是 cwd（`run` 里那一句）。
         const asked = parseArgv(process.argv.slice(2)).flags.get('root')
         const dir = logDir(typeof asked === 'string' ? asked : process.cwd())
-        process.exit(
-          emitFail(
-            { code: 1, message: `日志损坏，拒绝加载 —— ${err.message}\n日志目录：${dir}` },
-            json,
-          ),
+        process.exitCode = emitFail(
+          { code: 1, message: `日志损坏，拒绝加载 —— ${err.message}\n日志目录：${dir}` },
+          json,
         )
+        return
       }
-      process.exit(emitFail({ code: 1, message: err instanceof Error ? err.message : String(err) }, json))
+      process.exitCode = emitFail({ code: 1, message: err instanceof Error ? err.message : String(err) }, json)
     })
 }

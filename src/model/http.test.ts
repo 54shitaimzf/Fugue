@@ -633,3 +633,167 @@ test('⑨ 重试：429 两次后成功 → 同一条调用三次尝试 · 同一
 
   console.log(`⑨ 读数：attempts [${l.attempts.join(' · ')}] · 三次同一 bodyHash ${l.bodyHash} · 默认档/名单外/线中掐断各一次即终`)
 })
+
+// ── ⑩ 空闲看门狗（挂死那一档终于判得死）──────────────────────────────────────────
+test('⑩ 空闲看门狗：收下请求一个字节不回的那一档判死并按重试档再来 · 没声明重试就当场报', async () => {
+  const f = fixture('deepseek-flash-anthropic')
+  let hits = 0
+  const server = createServer((_req, res) => {
+    hits += 1
+    if (hits % 2 === 1) return // 挂死那一档：收下请求、一个字节不回（连接就那么悬着）
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(f.response)
+    res.end()
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
+  const port = (server.address() as AddressInfo).port
+  const base = {
+    providerId: 'local',
+    host: `http://127.0.0.1:${port}`,
+    wire: fixtureTarget(f).wire,
+    path: '/v1/messages',
+    model: DECL.model,
+    from: 'decl',
+    headers: { 'content-type': 'application/json' },
+  } as const
+  const shutdown = async (): Promise<void> => {
+    server.closeAllConnections?.()
+    await new Promise<void>((ok) => server.close(() => ok()))
+  }
+  try {
+    // 甲：看门狗 300ms + 重试档（timeout 那一档至此终有产生者）——第一趟判死，第二趟走完。
+    const t1: Target = { ...base, idleTimeoutMs: 300, retries: { count: 1, on: [], timeout: true } }
+    const s1 = callModel(t1, requestFrom(f), fetchTransport)
+    const events: ModelEvent[] = []
+    const flight = (async () => {
+      for await (const e of s1.events) events.push(e)
+    })()
+    const raced = await Promise.race([
+      flight.then(() => 'done' as const),
+      new Promise<'hung'>((r) => setTimeout(() => r('hung'), 5000)),
+    ])
+    assert.equal(raced, 'done', '挂死那一趟要判得死、重试那一趟要接得住——没有看门狗这一档就是永远等')
+    const led1 = s1.ledger()
+    assert.deepEqual([...led1.attempts], [0, 200], `第一趟没拿到状态码（超时记 0）· 第二趟走完：${JSON.stringify(led1.attempts)}`)
+    assert.equal(led1.failure, null)
+    assert.equal(checkEvents(events).stop, 'tool-calls', '第二趟解出的是完整的一次调用')
+    assert.equal(hits, 2, '服务被撞了两次（挂死一次 · 走完一次）')
+
+    // 乙：没声明重试——挂死那一趟当场报出来（那句话进得了 stderr），不悄悄再来。
+    const t2: Target = { ...base, idleTimeoutMs: 300 }
+    const s2 = callModel(t2, requestFrom(f), fetchTransport)
+    await assert.rejects(drain(s2.events), /毫秒没有一个字节/)
+    assert.deepEqual([...s2.ledger().attempts], [0])
+    assert.equal(hits, 3, '乙只发一趟')
+    console.log('⑩ 读数：挂死 300ms 判死 · 甲 attempts [0, 200]（重试档接住）· 乙 attempts [0] 当场报')
+  } finally {
+    await shutdown()
+  }
+})
+
+// ── ⑪ 预先取消：入口同步 signal.aborted 的现值，一次都不发 ──────────────────────────
+test('⑪ 预先取消的信号不发请求：已成立的取消不等未来的 abort 事件（也不按重试档再来）', async () => {
+  const f = fixture('deepseek-flash-anthropic')
+  let hits = 0
+  const server = createServer((_req, res) => {
+    hits += 1
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(f.response)
+    res.end()
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
+  const port = (server.address() as AddressInfo).port
+  const base = {
+    providerId: 'local',
+    host: `http://127.0.0.1:${port}`,
+    wire: fixtureTarget(f).wire,
+    path: '/v1/messages',
+    model: DECL.model,
+    from: 'decl',
+    headers: { 'content-type': 'application/json' },
+  } as const
+  const shutdown = async (): Promise<void> => {
+    server.closeAllConnections?.()
+    await new Promise<void>((ok) => server.close(() => ok()))
+  }
+  try {
+    const ctl = new AbortController()
+    ctl.abort(new Error('人喊停了（预先取消）'))
+    // 带上重试档也要 0 次：取消是终态，不归"传输错可重试"那一类。
+    const t: Target = { ...base, retries: { count: 2, on: [], timeout: true } }
+    const s = callModel(t, requestFrom(f), fetchTransport, ctl.signal)
+    await assert.rejects(drain(s.events), /人喊停了|AbortError/)
+    assert.equal(hits, 0, `预先取消：服务一次都不被撞（实际 ${hits} 次）——入口同步现值，不等未来的 abort 事件`)
+    assert.deepEqual([...s.ledger().attempts], [0], '取消那一趟记一次没拿到状态码的尝试，不按重试档再来')
+    console.log('⑪ 读数：预先取消 → 服务 0 次被撞 · attempts [0] · 错误带着取消的原因')
+  } finally {
+    await shutdown()
+  }
+})
+
+// ── ⑫ 错误分支同一条看门狗规则 ─────────────────────────────────────────────────────
+test('⑫ 错误正文按块读：持续出字节读得完（末尾原话进错误）· 首字节后停住判死（不吞成空正文）· 大块拦在硬上限', async () => {
+  const f = fixture('deepseek-flash-anthropic')
+  let stall = false
+  const server = createServer((req, res) => {
+    if (req.url === '/big') {
+      // 丙：一个 1 MiB 的大块错误正文——上限要是硬的，不许一个 chunk 整块放行。
+      res.writeHead(400, { 'content-type': 'text/plain' })
+      res.end('X'.repeat(1048576))
+      return
+    }
+    res.writeHead(400, { 'content-type': 'text/plain' })
+    if (stall) {
+      res.write('first bytes then silence')
+      return
+    }
+    let n = 0
+    const iv = setInterval(() => {
+      n += 1
+      res.write(`chunk-${n} `)
+      if (n === 5) {
+        res.write('FINAL_ERROR')
+        res.end()
+        clearInterval(iv)
+      }
+    }, 80)
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
+  const port = (server.address() as AddressInfo).port
+  const base = {
+    providerId: 'local',
+    host: `http://127.0.0.1:${port}`,
+    wire: fixtureTarget(f).wire,
+    path: '/v1/messages',
+    model: DECL.model,
+    from: 'decl',
+    headers: { 'content-type': 'application/json' },
+  } as const
+  const shutdown = async (): Promise<void> => {
+    server.closeAllConnections?.()
+    await new Promise<void>((ok) => server.close(() => ok()))
+  }
+  try {
+    // 甲：错误正文每 80ms 出一拨（阈值 250ms）——读得完，末尾那句原话进得了错误信息。
+    const t1: Target = { ...base, idleTimeoutMs: 250 }
+    const s1 = callModel(t1, requestFrom(f), fetchTransport)
+    await assert.rejects(drain(s1.events), /FINAL_ERROR/, '持续有进展的错误正文要读得完——末尾原话正是排障要的那一句')
+    // 乙：首字节之后停住——同一把看门狗判死，那句话原样抛（不是吞成空正文的 400）。
+    stall = true
+    const t2: Target = { ...base, idleTimeoutMs: 250 }
+    const s2 = callModel(t2, requestFrom(f), fetchTransport)
+    await assert.rejects(drain(s2.events), /毫秒没有一个字节/, '错误分支也判空闲：判死的原因不被吞成空正文')
+    // 丙：单个 1 MiB 大块的错误正文——交出去的拦在 4 KiB 硬上限里（dump 与内存同一条界）。
+    let got = 0
+    await assert.rejects(
+      async () => {
+        for await (const c of fetchTransport.post({ ...base, path: '/big' } as Target, new TextEncoder().encode('{}'))) got += c.byteLength
+      },
+      /回了 400/,
+    )
+    assert.ok(got <= 4096, `错误正文交出去的拦在 4 KiB 内（实际 ${got}）——原先一个大块整块放行`)
+    console.log('⑫ 读数：错误正文持续出字节 → 读完且 FINAL_ERROR 进错误 · 停住 → 看门狗判死 · 1 MiB 大块 → 交出 ≤ 4 KiB')
+  } finally {
+    await shutdown()
+  }
+})

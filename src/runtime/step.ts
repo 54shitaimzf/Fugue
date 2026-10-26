@@ -207,6 +207,13 @@ export interface StepResult {
    * 的出口）。空/缺席都是"这一步没有"——轮次那一层据此收下并裁断。
    */
   readonly asks?: readonly AskItem[]
+  /**
+   * 这一步**有没有把工具调用交下去过**（执行了哪怕一条也是 `true`；缺席 = 没有）。
+   *
+   * 读它的是驱动那一层的回退闸：已执行工具的失败不换脸重跑——副作用已经落了，回退模型看不到
+   * 那一批回执，重跑这一步等于给它一个重放写的机会（2026-10-26 外部审查 3.1 的判决）。
+   */
+  readonly executed?: boolean
 }
 
 /**
@@ -283,7 +290,17 @@ export function scriptedModel(scripts: readonly (readonly ModelEvent[])[]): Call
       events: (async function* (): AsyncGenerator<ModelEvent> {
         for (const e of events) yield e
       })(),
-      ledger: () => ({ call: checkEvents(events), failure: null, attempts: [200] }),
+      // **半截的那一档也交得出账**（与产品那一档同一个口径）：脚本里没有 `stop`，`checkEvents`
+      // 核得出"没收尾"，账上就是 `call: null` + 一句为什么——而不是把那次核对的原样抛出去。
+      // 抛出去的话 `step()` 的 catch 里还要再读一次账（拿 attempts），第二次抛就没人接了：
+      // "半截的流"这一档于是根本造不出来（cut-stream 的断言全红在这里）。
+      ledger: () => {
+        try {
+          return { call: checkEvents(events), failure: null, attempts: [200] }
+        } catch (err) {
+          return { call: null, failure: err instanceof Error ? `${err.name}: ${err.message}` : String(err), attempts: [200] }
+        }
+      },
     }
   }
 }
@@ -354,6 +371,64 @@ function outcomeOf(stop: StopReason, usage: Usage | null, said: string, raw: str
           `上游说这一趟没走完（${raw ?? '它没给原话'}）：这一趟不算数，要再来一次是一次**新的调用**`,
         ),
       }
+  }
+}
+
+/** `llm/call` 那一条的全部事实——**工具步与裁断共用这一份构造**（一处字段次序，两处消费）。 */
+export interface LlmCallFacts {
+  readonly agent: AgentId
+  readonly step: string
+  readonly model: string
+  readonly wireName: string
+  readonly thinking: ThinkingLevel | null
+  readonly toolCount: number
+  readonly invocations: number
+  readonly ms: number
+  readonly usage: Usage | null
+  readonly rawStop: string | null
+  readonly stop: ModelCall['stop']
+  readonly status: number | null
+  readonly headers: Readonly<Record<string, string | number>> | null
+  readonly attempts: readonly number[]
+  /** 只在裁断那一笔带（`llm/call.role`）：缺席 = 工具步。 */
+  readonly role?: 'ruler'
+}
+
+/** 一笔 `llm/call` 事件（字段次序与语义只在这一处说一遍）。 */
+export function llmCallEvent(f: LlmCallFacts) {
+  return {
+    t: 'llm/call' as const,
+    agent: f.agent,
+    step: f.step as StepId,
+    model: f.model,
+    wire: f.wireName,
+    // **这一趟声明了哪一档思考**（`null` = 声明里没写这一栏，与 `off` 是两件事）。
+    // 记的是**我们声明的那一档**，不是适配器补出来的那一档：`openai.ts` 把没写翻成
+    // `disabled`、`anthropic.ts` 把没写翻成一个字段都不发，两处都记会在日志里漂。
+    thinking: f.thinking,
+    toolCount: f.toolCount,
+    invocations: f.invocations,
+    // **这一趟花了多久**：区间读数，与 `run/end.ms` 同一个格子；旧日志里没有这一栏。
+    ms: f.ms,
+    usage: {
+      inputTokens: f.usage?.inputTokens ?? null,
+      cacheReadTokens: f.usage?.cacheReadTokens ?? null,
+      cacheWriteTokens: f.usage?.cacheWriteTokens ?? null,
+      outputTokens: f.usage?.outputTokens ?? null,
+      // 思考那一部分是输出里的明细（不在钱那四样里）：记它不动账，但"想了多少"只有它能量到。
+      reasoningTokens: f.usage?.reasoningTokens ?? null,
+    },
+    // 提供方自己的原话来自**收尾那一条事件**（`checkEvents` 把它放在账的 `rawStop` 上）。
+    rawStop: f.rawStop,
+    stop: f.stop,
+    // 上游给的那几个事实：**只有失败那一路才有**（状态码 · 请求号 · 限流那几条）。
+    // 成功那一路这里是 `null`——**默认档一个字节都不多**。
+    status: f.status,
+    headers: f.headers,
+    // 试了几次（P2f）：每一次的状态码（`0` = 没拿到状态码那一档）。**恰一次时整栏不出现**
+    // ——没声明重试的默认档一个字节都不多，旧日志回放照旧。
+    ...(f.attempts.length > 1 ? { attempts: [...f.attempts] } : {}),
+    ...(f.role === undefined ? {} : { role: f.role }),
   }
 }
 
@@ -439,41 +514,25 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     const usage: Usage | null = call?.usage ?? null
     // ── 5b. `llm/call`：模型 · 步 · 工具调用条数 · 用量四个数
     seqs.push(
-      await deps.logOf(h.agent).append(h.agent as WriterId, {
-        t: 'llm/call',
-        agent: h.agent,
-        step: String(h.state.step) as StepId,
-        model: h.model,
-        wire: h.target.wire.name,
-        // **这一趟声明了哪一档思考**（`null` = 声明里没写这一栏，与 `off` 是两件事）。
-        // 记的是**我们声明的那一档**，不是适配器补出来的那一档：`openai.ts` 把没写翻成
-        // `disabled`、`anthropic.ts` 把没写翻成一个字段都不发，两处都记会在日志里漂。
-        thinking: h.call?.thinking ?? null,
-        toolCount: tools.length,
-        invocations: calls.length,
-        // **这一趟花了多久**：区间读数，与 `run/end.ms` 同一个格子；旧日志里没有这一栏。
-        ms,
-        usage: {
-          inputTokens: usage?.inputTokens ?? null,
-          cacheReadTokens: usage?.cacheReadTokens ?? null,
-          cacheWriteTokens: usage?.cacheWriteTokens ?? null,
-          outputTokens: usage?.outputTokens ?? null,
-          // 思考那一部分是输出里的明细（不在钱那四样里）：记它不动账，但"想了多少"只有它能量到。
-          reasoningTokens: usage?.reasoningTokens ?? null,
-        },
-        // 提供方自己的原话来自**收尾那一条事件**（`checkEvents` 把它放在账的 `rawStop` 上）。
-        // **`usage` 里原先也留了一栏同名**，两条线都想从 `usage` 对象里读它，而那个字段不在
-        // `usage` 里——它一路是 `null`（序 27 删掉了那一栏，读数一条都没有过）。
-        rawStop: call?.rawStop ?? null,
-        stop: call?.stop ?? null,
-        // 上游给的那几个事实：**只有失败那一路才有**（状态码 · 请求号 · 限流那几条）。
-        // 成功那一路这里是 `null`——**默认档一个字节都不多**。
-        status: facts === null ? null : ((facts['status'] as number | undefined) ?? null),
-        headers: facts,
-        // 试了几次（P2f）：每一次的状态码（`0` = 没拿到状态码那一档）。**恰一次时整栏不出现**
-        // ——没声明重试的默认档一个字节都不多，旧日志回放照旧。
-        ...(attempts.length > 1 ? { attempts: [...attempts] } : {}),
-      }),
+      await deps.logOf(h.agent).append(
+        h.agent as WriterId,
+        llmCallEvent({
+          agent: h.agent,
+          step: String(h.state.step),
+          model: h.model,
+          wireName: h.target.wire.name,
+          thinking: h.call?.thinking ?? null,
+          toolCount: tools.length,
+          invocations: calls.length,
+          ms,
+          usage,
+          rawStop: call?.rawStop ?? null,
+          stop: call?.stop ?? null,
+          status: facts === null ? null : ((facts['status'] as number | undefined) ?? null),
+          headers: facts,
+          attempts,
+        }),
+      ),
     )
 
     // 半截的流：三档里的 `failed`（**不许当"走完了"**）。
@@ -510,6 +569,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
         },
         next: h.state,
         seqs,
+        executed: true,
       }
     }
 
@@ -534,6 +594,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
           },
           next: h.state,
           seqs,
+          executed: true,
         }
       }
       if (r.halt === true) halted = true
@@ -560,7 +621,13 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
           lastStep: turnText(turnOf(said, done, call.thinking)),
           turns: [...(h.state.turns ?? []), turnOf(said, done, call.thinking)],
         }
-    return { outcome, next, seqs, ...(raised.length === 0 ? {} : { asks: raised }) }
+    return {
+      outcome,
+      next,
+      seqs,
+      ...(calls.length > 0 ? { executed: true } : {}),
+      ...(raised.length === 0 ? {} : { asks: raised }),
+    }
   }
 
   return {

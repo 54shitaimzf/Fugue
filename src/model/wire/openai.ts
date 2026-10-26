@@ -134,11 +134,22 @@ const usageOf = (u: Record<string, unknown> | undefined, chunkModel: string | nu
   }
 }
 
-/** 一条工具调用在流里的状态：那一片一片拼起来的名字与参数。 */
+/**
+ * 一条工具调用在流里的状态：那一片一片拼起来的名字与参数。
+ *
+ * `started`：**`tool-start` 发出去没有**——名字到了就发、只发一次（名字可能在任何一片里到：
+ * 兼容实现有把 `function.name` 放在第二片的）。`emitted`：参数里**已经以 `tool-delta` 发出去
+ * 的那一截**——名字没到之前攒下的参数，等 `tool-start` 发出之后一并补发（`checkEvents` 只认
+ * "开过才能收分片"）。原先靠"这一片的 `name` 与攒着的那个比一次"判断发没发，而攒着的那个
+ * 对象就是同一个（名字后到那一支就地改写了它），比出来恒等——`tool-start` 永不发出，
+ * 整趟被 `checkEvents` 判成坏账；而"参数先到"更被当场抛掉。
+ */
 interface ToolInFlight {
   id: string | null
   name: string | null
   args: string
+  started: boolean
+  emitted: number
 }
 
 interface ChatState {
@@ -234,9 +245,9 @@ export function wireOf(): WireAdapter {
             const args = typeof fn['arguments'] === 'string' ? (fn['arguments'] as string) : ''
             const open = s.tools.get(index)
             if (open === undefined) {
-              // **`tool-start` 那一条只在拿到名字的那一片发**：我们的形状里一条调用的 `name` 是一次给足的
-              // （`checkEvents` 只认"开一次"），所以名字没到就先不发、把它与参数攒着。
-              s.tools.set(index, { id, name, args: '' })
+              // **`tool-start` 那一条只在拿到名字的那一刻发**：我们的形状里一条调用的 `name` 是
+              // 一次给足的（`checkEvents` 只认"开一次"），所以名字没到就先不发、把它与参数攒着。
+              s.tools.set(index, { id, name, args: '', started: false, emitted: 0 })
             } else if (open.name === null && name !== null) {
               open.name = name
               if (open.id === null) open.id = id
@@ -246,15 +257,14 @@ export function wireOf(): WireAdapter {
               throw new WireError(`第 ${index} 条调用的名字改口了：先是 ${open.name}，这一片说是 ${name}`)
             }
             const live = s.tools.get(index) as ToolInFlight
-            if (live.name !== null && open?.name !== live.name) {
+            if (live.name !== null && !live.started) {
+              live.started = true
               out.push({ t: 'tool-start', index, id: live.id, name: live.name })
             }
-            if (args !== '') {
-              if (live.name === null) {
-                throw new WireError(`第 ${index} 条调用攒了参数却一直没有名字——这条线上名字与 id 都在第一片里`)
-              }
-              live.args += args
-              out.push({ t: 'tool-delta', index, args })
+            if (args !== '') live.args += args
+            if (live.started && live.emitted < live.args.length) {
+              out.push({ t: 'tool-delta', index, args: live.args.slice(live.emitted) })
+              live.emitted = live.args.length
             }
           }
         }
@@ -282,7 +292,12 @@ export function wireOf(): WireAdapter {
       s.done = true
       const out: ModelEvent[] = []
       for (const [index, open] of s.tools) {
-        out.push({ t: 'tool-call', index, id: open.id, name: open.name ?? '', arguments: open.args })
+        // **到收尾都没有名字的那一条，在这里拒**（不是在分片那一层抛——参数先到是合法的次序，
+        // 真正不可救的是流完了名字还没来）。空名字拼不成一条可派发的工具调用。
+        if (open.name === null) {
+          throw new WireError(`第 ${index} 条调用到流收尾都没有名字——拼不成一条可派发的工具调用`)
+        }
+        out.push({ t: 'tool-call', index, id: open.id, name: open.name, arguments: open.args })
       }
       s.tools.clear()
       if (s.reason === null) throw new WireError('流到头了没有收到 finish_reason——不把半截的响应当完整的用')

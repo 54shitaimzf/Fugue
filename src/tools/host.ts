@@ -24,6 +24,7 @@ import type { RunReply } from './execute.ts'
 import type { ActionAsk, AskItem, DenyAsk, EditRaw, PlanAsk, RunAsk, TodoItem, ToolHost, ToolListing } from './execute.ts'
 import { refuse } from './execute.ts'
 import { shellArgv } from './argv.ts'
+import { openCapture } from './receipt.ts'
 // **清单缓存**：`walk()` 的实现与它的键（视图代）都住这一份，宿主只接线（见 `walk-cache.ts`）。
 import { createWalk, walkRowsOf } from './walk-cache.ts'
 // **查询接线那一份计划**（本站）：按模式收窄这一趟要读的路径。它住在 `src/search/`，不进冻结面。
@@ -505,8 +506,10 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
     }
     const argv = made?.argv ?? userArgv
     const workdir = opts.execRoot === undefined ? (made?.cwd ?? workdirOf(cwd)) : execWorkdir(exec, cwd)
-    let stdout = ''
-    let stderr = ''
+    // **攒输出带上限**（`openCapture`）：回执那一层的 8 KiB 截在攒完之后，拦不住一条命令把
+    // 上百 MiB 排进管道——攒的那一侧原先一字节不落地进内存。地板：不到上限逐字节原样。
+    const out = openCapture()
+    const err = openCapture()
     let exit = 1
     let timedOut = false
     await new Promise<void>((done) => {
@@ -521,13 +524,13 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
       child.stdout.setEncoding('utf8')
       child.stderr.setEncoding('utf8')
       child.stdout.on('data', (s: string) => {
-        stdout += s
+        out.add(s)
       })
       child.stderr.on('data', (s: string) => {
-        stderr += s
+        err.add(s)
       })
       child.on('error', (e: Error) => {
-        stderr += `${e.message}\n`
+        err.add(`${e.message}\n`)
         done()
       })
       child.on('close', (code: number | null) => {
@@ -546,8 +549,8 @@ export function createToolHost(view: View, roots: Roots, opts: HostOptions = {})
       exit,
       ms: Date.now() - t0,
       denied: false,
-      stdout,
-      stderr: (timedOut ? `超过 ${timeoutMs} 毫秒被掉\n` : '') + stderr,
+      stdout: out.text(),
+      stderr: (timedOut ? `超过 ${timeoutMs} 毫秒被掉\n` : '') + err.text(),
     }
     await afterRun()
     return reply

@@ -18,13 +18,14 @@
 // **保留前缀不进真实工作树**（§ 9.10）：`.fugue` 那几样在视图与提交里，而 `advance` 跳过它们
 // ——既不改它们，也不删它们。
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { AbsPath, AgentId, CommitId, Enforcement, PolicyMode, RelPath } from '../terms.ts'
 import type { Assertion, AssertionResult } from '../contract/types.ts'
 import { resultOf } from '../contract/types.ts'
 import { gitModeOf } from '../delta.ts'
 import { WORKSPACE_STATE } from '../materialize/diffstat.ts'
+import { replaceFile } from '../materialize/land.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { Log } from '../log/events.ts'
 import type { RefName, RoundId } from '../terms.ts'
@@ -279,8 +280,9 @@ export async function advance(deps: AdvanceDeps, commit: CommitId): Promise<Adva
     if (now !== undefined && now.isFile() && gitModeOf(Number(now.mode)) === w.mode && hashOfFile(abs) === hashOf(w.bytes)) continue
     mkdirSync(dirname(abs), { recursive: true })
     if (now !== undefined && !now.isFile()) rmSync(abs, { recursive: true, force: true })
-    writeFileSync(abs, w.bytes)
-    chmodSync(abs, w.mode & 0o7777)
+    // **原子替换走物化那条共用的门路**（`replaceFile`：临时名 → 写 → 模式 → 改名，失败自清）：
+    // 读者看见的只有旧的或新的；临时名失败时清掉，不留 `.fugue-tmp-*` 在工作树里挡漂移检。
+    replaceFile(abs, w.bytes, w.mode & 0o7777)
     written.push(rel)
   }
 

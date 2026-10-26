@@ -132,3 +132,78 @@ export function capReceipt(text: string, limit: number = MAX_RECEIPT_BYTES): str
   const mark = `\n…(${omitted} bytes omitted · ${n} bytes and ${lineCount(text)} lines in all)…\n`
   return Buffer.concat([head, Buffer.from(mark, 'utf8'), tail]).toString('utf8')
 }
+
+/**
+ * host 那一层**攒**子进程输出（stdout · stderr）每条流的上限：内存那一档的护栏。
+ *
+ * 回执那一层的 8 KiB 是给**模型**的（截在攒完之后、进 C 区之前），拦不住"一条命令把上百
+ * MiB 排进管道"这一档——攒的那一侧原来一字节不落地进内存。这一层给攒的那一侧一条地板：
+ * 正常输出（哪怕几万字节）一个字节不截，被拦的只有把内存当排水口的那一种；截了要说清
+ * 截了多少（与 `capReceipt` 的标记同一条纪律：上限是常量，不给模型选）。
+ */
+export const MAX_CAPTURE_CHARS = 4 * 1024 * 1024
+
+/**
+ * 攒一条流的那只手：**头尾各半**（错误信息长在末尾——洪水排完之后那一行真正的诊断，靠的就是
+ * 尾巴那一半），中段截掉并说清截了多少。没截就没有标记（与回执那条"不到上限逐字节原样"同一
+ * 条纪律：上限是常量，不给模型选）。
+ *
+ * **按字符（UTF-16 码元）计**（`data` 那一档给的是解码过的文本，`String.length` 就是码元数）：
+ * 标记说的"截了几个"与实际截掉的码元数一致——多字节内容不拿字节冒充，也不把码元说成字节。
+ * **切点落在码点边界上**（与 `capReceipt` 的 UTF-8 边界同一条纪律）：头不让出高代理位、尾不
+ * 从低代理位起——孤立代理位再编码就是替换符，截断不该顺手弄坏它没截的那个字符。
+ */
+export function openCapture(limit: number = MAX_CAPTURE_CHARS): {
+  readonly add: (s: string) => void
+  readonly text: () => string
+} {
+  const headW = Math.ceil(limit / 2)
+  const tailW = limit - headW
+  let head = ''
+  let tail = ''
+  let total = 0
+  const loneHighAt = (s: string, at: number): boolean => {
+    if (at < 0 || at >= s.length) return false
+    const c = s.charCodeAt(at)
+    return c >= 0xd800 && c <= 0xdbff
+  }
+  const pushTail = (s: string): void => {
+    tail += s
+    if (tail.length > tailW) {
+      let cut = tail.length - tailW
+      if (tailW > 0 && cut < tail.length) {
+        // 尾巴的起点劈开了代理对：让出高代理位（它进省略那一段，省略按码元数计）。
+        if (tail.charCodeAt(cut) >= 0xdc00 && tail.charCodeAt(cut) <= 0xdfff && loneHighAt(tail, cut - 1)) cut += 1
+      }
+      if (cut > tail.length) cut = tail.length
+      tail = tailW === 0 ? '' : tail.slice(cut)
+    }
+  }
+  return {
+    add(s) {
+      total += s.length
+      if (head.length < headW) {
+        const room = headW - head.length
+        if (s.length <= room) {
+          head += s
+          return
+        }
+        let take = room
+        // 头的终点劈开了代理对：少拿一个码元，那一对整个去尾巴那边。
+        if (loneHighAt(s, take - 1) && take - 1 >= 0 && take < s.length) {
+          const next = s.charCodeAt(take)
+          if (next >= 0xdc00 && next <= 0xdfff) take -= 1
+        }
+        head += s.slice(0, take)
+        pushTail(s.slice(take))
+        return
+      }
+      pushTail(s)
+    },
+    // 省略数从「总数 − 实际留下的两头」推：切点为让出代理位挪过之后，这个数不用另记一份。
+    text: () => {
+      const omitted = total - head.length - tail.length
+      return omitted <= 0 ? head + tail : `${head}\n…(${omitted} chars omitted at capture limit ${limit})…\n${tail}`
+    },
+  }
+}

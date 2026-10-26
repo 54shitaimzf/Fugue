@@ -25,6 +25,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Protocol, SegmentId, SegmentValue } from './contract.ts'
+import type { Turn } from '../model/contract.ts'
 
 /**
  * 一个 agent 的坐标。**它不是段，是段的源要的那把钥匙。**
@@ -52,6 +53,13 @@ export interface AssembleState {
    * （跨步稳定）一个都不读它——所以它进状态、不进前缀。
    */
   readonly step: number
+  /**
+   * **这一格已经发起过几次模型调用**（含回退那一跳）。收工那半句（`withStepsLeft`）与终止那道闸
+   * （`--max-steps`）读的是**同一个数**：回退尝试也计入上界，模型看到的"还剩几步"不会比真正的
+   * 额度乐观。与 `step` 同类：坐标，不是段——前缀十二段一个都不读它。缺席 = 与 `step` 相同
+   * （没有失败重试的那一档，两者本来就相等）。
+   */
+  readonly attempts?: number
   /**
    * 这一步的工作目录（视图内的相对路径，`''` 就是根）。
    *
