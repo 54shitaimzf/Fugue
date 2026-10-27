@@ -22,6 +22,7 @@ import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { sourcesFor } from '../assemble/sources.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { emptyState } from '../assemble/sources.ts'
+import { lastStepTextOf, turnsOf } from '../assemble/facts.ts'
 import { fixtureState } from '../model/fixture-state.ts'
 import type { AgentId, BranchId, ContractId, WriterId } from '../terms.ts'
 import { planBudget } from './budget.ts'
@@ -180,9 +181,9 @@ test('② 交接提示词落在 Zone B：A 区逐字节不变 · B 区里出现�
     assert.ok(at < after.zoneA.length + after.zoneB.length, `分叉点 ${at} 该落在 B 区里（|A|+|B|=${after.zoneA.length + after.zoneB.length}）`)
 
     // 而 C 区（那串只追加的尾巴）被清空了：那是前任的会话内积累（§ 8.11）。
-    assert.equal(out.next.turns?.length, 1, '继任者手里只有"你接手了"那一句')
-    assert.match(out.next.turns![0]!.text ?? '', /【接手】/)
-    assert.equal(out.next.lastStep, '', '前任的上一步回执不进下一格')
+    assert.equal(turnsOf(out.next.facts).length, 1, '继任者手里只有"你接手了"那一句')
+    assert.match(turnsOf(out.next.facts)[0]!.text ?? '', /【接手】/)
+    assert.equal(lastStepTextOf(out.next.facts), '', '前任的上一步回执不进下一格')
     assert.equal(out.next.step, 0, '步数是它自己的')
 
     console.log(

@@ -228,7 +228,7 @@ function sayDeps(
       goal,
       distill,
       recent: over.recent,
-      ...(over.runtime === '' ? {} : { runtime: over.runtime }),
+      facts: over.runtime === '' ? [] : [{ kind: 'human', text: over.runtime }],
     }
     return {
       agent: AGENT,
@@ -349,8 +349,8 @@ test('① 讨论态：说一句 → 每一步都读得到它（请求体里）�
   assert.equal(spy.requests[0]?.turns, undefined, '第 0 步不该有轮次')
   // **那一段头由 `cHead` 发出去**（第 1 步起尾巴换成原生轮次，头照旧要发）——这一条必须单独判：
   // 请求体里那句话在讨论态**还有第二处来路**，会话记录那一段投影（B 区）里就带着它，于是"字节里
-  // 有它"钉不住 C 区那一段头。负对照实测：把 `cZoneHeadOf` 抹空，只判字节那一条照旧绿，加上这一
-  // 条才红。
+  // 有它"钉不住 C 区那一段头。负对照实测：把事实里的 `human` 那一条抹空，只判字节那一条照旧绿
+  // （B 区会话记录投影里也有那一句），加上这一条才红。
   for (const [at, req] of spy.requests.entries()) {
     assert.equal(new TextDecoder().decode(req.cHead ?? new Uint8Array()), sentence, `第 ${at} 步没把那一句发成 C 区那一段的头`)
   }

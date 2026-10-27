@@ -52,9 +52,11 @@ function cleanSegments(): Record<SegmentId, SegmentValue> {
     commits: ['abc123 第一个提交'],
     handoff: '上一任留下的一句话。',
     task: { goal: '让装配跨 agent 全等。', question: 'A 区里究竟是哪三段？', deliverables: ['sources.ts'], evidenceRequired: [], assertions: [] },
-    runtime: '这一步的会话流。',
-    signals: ['agent-2 已完成'],
-    lastStep: '上一步的工具结果。',
+    facts: [
+      { kind: 'human', text: '这一步的会话流。' },
+      { kind: 'turn', turn: { text: '上一步的工具结果。', calls: [], results: [] } },
+      { kind: 'ruling', text: 'agent-2 已完成' },
+    ],
   }
   return sourcesFor(SUBAGENT_PROTOCOL, st, WHO)
 }
@@ -97,8 +99,8 @@ test('① 一份故意坏掉的输入 → 四条约束各报一处，报出的�
   // 补出来的换行，改 `runtime` 的时候它们跟着从头重算——所以判据落在**那一段的字节**上
   // （`render()` 给每段补一个换行，比的是渲染后的字节，不是原文）。这一条与下面"中部被
   // 改写"那一对是同一个形状：**先证伪，再证不伪**。
-  const cSegs = (runtime: string): Record<SegmentId, SegmentValue> =>
-    sourcesFor(SUBAGENT_PROTOCOL, { ...emptyState(), runtime }, WHO)
+  const cSegs = (human: string): Record<SegmentId, SegmentValue> =>
+    sourcesFor(SUBAGENT_PROTOCOL, { ...emptyState(), facts: human === '' ? [] : [{ kind: 'human', text: human }] }, WHO)
   const first = assemble({ protocol: SUBAGENT_PROTOCOL, model: DEFAULT_MODEL.id, segments: cSegs('第一步。') })
   const CLEAN_RUNTIME = '第一步。' + '第二步。'
   // **只追加那一档的读数**：C 区是唯一积累的部分（架构 § 8.11），这一次的字节等于上一次的

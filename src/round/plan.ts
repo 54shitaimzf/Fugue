@@ -31,6 +31,7 @@ import { hopFace } from '../model/roles.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { MODEL_FACING_LANGUAGE_LINE, emptyState, sourcesFor, stepBudgetLine, stepsLeftTail } from '../assemble/sources.ts'
+import { lastTurnOf } from '../assemble/facts.ts'
 import { capReceipt } from '../tools/receipt.ts'
 import { assemble } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
@@ -552,9 +553,9 @@ export async function holderPass(deps: {
     handle = { ...handle, state: { ...handle.state, attempts: steps } }
     const r = await runtime.step(handle, signal)
     steps += 1
-    // **最后说的那一段**：一步的产物在 `next.turns` 的末尾那一条里（`turnText` 那一面是它的
-    // 文本投影，这里直接读结构化那一面，不重述一遍）。
-    const last = (r.next.turns ?? []).at(-1)
+    // **最后说的那一段**：一步的产物是事实里最后那一条回合（`turnText` 那一面是它的文本投影，
+    // 这里直接读结构化那一面，不重述一遍）。
+    const last = lastTurnOf(r.next.facts)
     if (last?.text !== undefined && last.text !== '') said = last.text
     if (r.outcome.kind === 'failed') {
       stopped = `${r.outcome.error.why}：${r.outcome.error.message}`

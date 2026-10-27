@@ -1,0 +1,438 @@
+{
+  "version": 1,
+  "note": "幕①的字节黄金：每一案按**改造前**的 C 区拼法（runtime + turns + signals + lastStep）装出来的 zoneC。生成于 0.5.4 施工前的 main（7b23918），由一趟一次性取数脚本录下（脚本按纪律未留，读数即本文件）。facts 与 src/assemble/facts.ts 的 Fact 同形；facts.test.ts 从它重建状态、只按事实投影，再与 zoneC 比。",
+  "protocol": "SUBAGENT_PROTOCOL",
+  "cases": [
+    {
+      "name": "空",
+      "facts": [],
+      "zoneC": "Cgo=",
+      "zoneCHash": "75a11da44c802486"
+    },
+    {
+      "name": "只有人",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCCgo=",
+      "zoneCHash": "7a0f3e009a922df1"
+    },
+    {
+      "name": "人的话带换行",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "第一行\n第二行\n"
+        }
+      ],
+      "zoneC": "56ys5LiA6KGMCuesrOS6jOihjAoKCg==",
+      "zoneCHash": "b1ead60b1a44d725"
+    },
+    {
+      "name": "一轮文本",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "text": "干完了。",
+            "calls": [],
+            "results": []
+          }
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCCk1vZGVsOiDlubLlrozkuobjgIIKTW9kZWw6IOW5suWujOS6huOAggo=",
+      "zoneCHash": "fd341b9f6ac01ea2"
+    },
+    {
+      "name": "一轮工具",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "calls": [
+              {
+                "id": "t1",
+                "name": "read",
+                "arguments": "{\"path\":\"a.ts\"}"
+              }
+            ],
+            "results": [
+              {
+                "id": "t1",
+                "output": "读到了。",
+                "isError": false
+              }
+            ]
+          }
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCClRvb2wgcmVhZCAoY2FsbCAxKToK6K+75Yiw5LqG44CCClRvb2wgcmVhZCAoY2FsbCAxKToK6K+75Yiw5LqG44CCCg==",
+      "zoneCHash": "6a0151bd645d54a5"
+    },
+    {
+      "name": "一轮错误回执",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "calls": [
+              {
+                "id": "t1",
+                "name": "read",
+                "arguments": "{\"path\":\"missing.ts\"}"
+              }
+            ],
+            "results": [
+              {
+                "id": "t1",
+                "output": "没有这个文件。",
+                "isError": true
+              }
+            ]
+          }
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCClRvb2wgKGZhaWxlZCkgcmVhZCAoY2FsbCAxKToK5rKh5pyJ6L+Z5Liq5paH5Lu244CCClRvb2wgKGZhaWxlZCkgcmVhZCAoY2FsbCAxKToK5rKh5pyJ6L+Z5Liq5paH5Lu244CCCg==",
+      "zoneCHash": "18b557a210360900"
+    },
+    {
+      "name": "一轮多调用",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "text": "两个一起看。",
+            "calls": [
+              {
+                "id": "a",
+                "name": "read",
+                "arguments": "{\"path\":\"a.ts\"}"
+              },
+              {
+                "id": "b",
+                "name": "glob",
+                "arguments": "{\"pattern\":\"*.ts\"}"
+              }
+            ],
+            "results": [
+              {
+                "id": "a",
+                "output": "A 的内容。",
+                "isError": false
+              },
+              {
+                "id": "b",
+                "output": "a.ts · b.ts",
+                "isError": false
+              }
+            ]
+          }
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCCk1vZGVsOiDkuKTkuKrkuIDotbfnnIvjgIIKVG9vbCByZWFkIChjYWxsIDEpOgpBIOeahOWGheWuueOAggpUb29sIGdsb2IgKGNhbGwgMik6CmEudHMgwrcgYi50cwpNb2RlbDog5Lik5Liq5LiA6LW355yL44CCClRvb2wgcmVhZCAoY2FsbCAxKToKQSDnmoTlhoXlrrnjgIIKVG9vbCBnbG9iIChjYWxsIDIpOgphLnRzIMK3IGIudHMK",
+      "zoneCHash": "d948ade796dd5327"
+    },
+    {
+      "name": "只伸手不说话",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "calls": [
+              {
+                "id": "t1",
+                "name": "read",
+                "arguments": "{\"path\":\"a.ts\"}"
+              }
+            ],
+            "results": [
+              {
+                "id": "t1",
+                "output": "读到了。",
+                "isError": false
+              }
+            ]
+          }
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCClRvb2wgcmVhZCAoY2FsbCAxKToK6K+75Yiw5LqG44CCClRvb2wgcmVhZCAoY2FsbCAxKToK6K+75Yiw5LqG44CCCg==",
+      "zoneCHash": "6a0151bd645d54a5"
+    },
+    {
+      "name": "只想不说",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "thinking": {
+              "text": "先想一下。",
+              "signature": null
+            },
+            "calls": [],
+            "results": []
+          }
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCCgoK",
+      "zoneCHash": "8abf757f396c0f8e"
+    },
+    {
+      "name": "两轮",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "calls": [
+              {
+                "id": "t1",
+                "name": "read",
+                "arguments": "{\"path\":\"a.ts\"}"
+              }
+            ],
+            "results": [
+              {
+                "id": "t1",
+                "output": "读到了。",
+                "isError": false
+              }
+            ]
+          }
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "text": "干完了。",
+            "calls": [],
+            "results": []
+          }
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCClRvb2wgcmVhZCAoY2FsbCAxKToK6K+75Yiw5LqG44CCCk1vZGVsOiDlubLlrozkuobjgIIKTW9kZWw6IOW5suWujOS6huOAggo=",
+      "zoneCHash": "eb6d704d501967c6"
+    },
+    {
+      "name": "判词在两轮之间",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "calls": [
+              {
+                "id": "q1",
+                "name": "ask_user_question",
+                "arguments": "{\"question\":\"第一问\"}"
+              }
+            ],
+            "results": [
+              {
+                "id": "q1",
+                "output": "把第一问带回了。",
+                "isError": false
+              }
+            ]
+          }
+        },
+        {
+          "kind": "ruling",
+          "text": "Ask carried back from this cell was settled inside the contract (ruler ask-ruler-2): 第一问的判词"
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "calls": [
+              {
+                "id": "q2",
+                "name": "ask_user_question",
+                "arguments": "{\"question\":\"第二问\"}"
+              }
+            ],
+            "results": [
+              {
+                "id": "q2",
+                "output": "把第二问带回了。",
+                "isError": false
+              }
+            ]
+          }
+        },
+        {
+          "kind": "ruling",
+          "text": "Ask carried back from this cell was forwarded to a person (contract · ruler ask-ruler-2): 第二问的判词"
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCClRvb2wgYXNrX3VzZXJfcXVlc3Rpb24gKGNhbGwgMSk6CuaKiuesrOS4gOmXruW4puWbnuS6huOAggpUb29sIGFza191c2VyX3F1ZXN0aW9uIChjYWxsIDEpOgrmiornrKzkuozpl67luKblm57kuobjgIIKQXNrIGNhcnJpZWQgYmFjayBmcm9tIHRoaXMgY2VsbCB3YXMgc2V0dGxlZCBpbnNpZGUgdGhlIGNvbnRyYWN0IChydWxlciBhc2stcnVsZXItMik6IOesrOS4gOmXrueahOWIpOivjQpBc2sgY2FycmllZCBiYWNrIGZyb20gdGhpcyBjZWxsIHdhcyBmb3J3YXJkZWQgdG8gYSBwZXJzb24gKGNvbnRyYWN0IMK3IHJ1bGVyIGFzay1ydWxlci0yKTog56ys5LqM6Zeu55qE5Yik6K+NClRvb2wgYXNrX3VzZXJfcXVlc3Rpb24gKGNhbGwgMSk6CuaKiuesrOS6jOmXruW4puWbnuS6huOAggo=",
+      "zoneCHash": "eb5c6ae3052b263e"
+    },
+    {
+      "name": "只有判词",
+      "facts": [
+        {
+          "kind": "ruling",
+          "text": "甲"
+        },
+        {
+          "kind": "ruling",
+          "text": "乙"
+        }
+      ],
+      "zoneC": "CueUsgrkuZkKCg==",
+      "zoneCHash": "b15135bb0e062b10"
+    },
+    {
+      "name": "交接后的那一格",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        },
+        {
+          "kind": "ruling",
+          "text": "交接前的那条判词"
+        },
+        {
+          "kind": "handoff",
+          "turn": {
+            "text": "【接手】从这一步开始。上面\"交接\"那一段是前任留下的。",
+            "calls": [],
+            "results": []
+          }
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCCk1vZGVsOiDjgJDmjqXmiYvjgJHku47ov5nkuIDmraXlvIDlp4vjgILkuIrpnaIi5Lqk5o6lIumCo+S4gOauteaYr+WJjeS7u+eVmeS4i+eahOOAggrkuqTmjqXliY3nmoTpgqPmnaHliKTor40KCg==",
+      "zoneCHash": "8278bdd0f86ca83c"
+    },
+    {
+      "name": "没有人的交接",
+      "facts": [
+        {
+          "kind": "handoff",
+          "turn": {
+            "text": "【接手】从这一步开始。上面\"交接\"那一段是前任留下的。",
+            "calls": [],
+            "results": []
+          }
+        }
+      ],
+      "zoneC": "TW9kZWw6IOOAkOaOpeaJi+OAkeS7jui/meS4gOatpeW8gOWni+OAguS4iumdoiLkuqTmjqUi6YKj5LiA5q615piv5YmN5Lu755WZ5LiL55qE44CCCgo=",
+      "zoneCHash": "52899a2319c40371"
+    },
+    {
+      "name": "思考加工具",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "thinking": {
+              "text": "想一想再伸手。",
+              "signature": "sig-从实录里来"
+            },
+            "text": "先看一眼。",
+            "calls": [
+              {
+                "id": "t1",
+                "name": "read",
+                "arguments": "{\"path\":\"a.ts\"}"
+              }
+            ],
+            "results": [
+              {
+                "id": "t1",
+                "output": "读到了。",
+                "isError": false
+              }
+            ]
+          }
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCCk1vZGVsOiDlhYjnnIvkuIDnnLzjgIIKVG9vbCByZWFkIChjYWxsIDEpOgror7vliLDkuobjgIIKTW9kZWw6IOWFiOeci+S4gOecvOOAggpUb29sIHJlYWQgKGNhbGwgMSk6Cuivu+WIsOS6huOAggo=",
+      "zoneCHash": "3122971a7aaf7a44"
+    },
+    {
+      "name": "空回合",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "calls": [],
+            "results": []
+          }
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCCgoK",
+      "zoneCHash": "8abf757f396c0f8e"
+    },
+    {
+      "name": "回执带换行",
+      "facts": [
+        {
+          "kind": "human",
+          "text": "人说的那一句。"
+        },
+        {
+          "kind": "turn",
+          "turn": {
+            "calls": [
+              {
+                "id": "t1",
+                "name": "bash",
+                "arguments": "{\"command\":\"ls\"}"
+              }
+            ],
+            "results": [
+              {
+                "id": "t1",
+                "output": "a.ts\nb.ts\n\nc.ts",
+                "isError": false
+              }
+            ]
+          }
+        }
+      ],
+      "zoneC": "5Lq66K+055qE6YKj5LiA5Y+l44CCClRvb2wgYmFzaCAoY2FsbCAxKToKYS50cwpiLnRzCgpjLnRzClRvb2wgYmFzaCAoY2FsbCAxKToKYS50cwpiLnRzCgpjLnRzCg==",
+      "zoneCHash": "2cb165707552159d"
+    }
+  ]
+}

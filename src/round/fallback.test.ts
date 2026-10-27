@@ -674,7 +674,7 @@ async function holderWith(
       goal: '把这一轮规划出来',
       distill: '上一轮的凝聚理解',
       recent: '凝聚前最近几次原文',
-      runtime: '人说的那一句',
+      facts: [{ kind: 'human', text: '人说的那一句' }],
     },
   }
   const run = () =>

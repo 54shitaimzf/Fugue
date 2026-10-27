@@ -844,14 +844,16 @@ async function holderWiringOf(o: {
     // 这一栏原先一处都没接：声明里那两栏是空的，于是没人看得出来"声明了却没发出去"——思考那一格
     // 一开就露了（真档第一趟读到的 `max_tokens` 是那条线的兜底 4096，而声明里写的是 32K）。
     call: decl.call,
-    // C 区那一段 = **头**（人说的那一句：`runtime`）+ 只追加的尾巴（走过的那几步）——见
-    // `assemble/sources.ts` 的 `cZoneHeadOf`。头是空的就不写这一栏（那时全文与尾巴逐字节相同）。
+    // C 区那一段 = **头**（人说的那一句：事实里的 `human`）+ 只追加的尾巴（每一条回合事实）；
+    // 头空着就不写这一栏（那时全文与尾巴逐字节相同）。
     state: {
       ...baseState,
       goal: goalText,
       distill: o.distill,
       recent: over.recent,
-      ...(over.runtime === '' ? {} : { runtime: over.runtime }),
+      // **人说的那一句是事实的第一条**：C 区的头由它投影，wire 的 `cHead` 也由它投影——
+      // 不再有一处单独的 `runtime` 字符串。
+      facts: over.runtime === '' ? [] : [{ kind: 'human' as const, text: over.runtime }],
     },
   })
   const pump = o.wire.wireIn === undefined ? undefined : wireInTransport(o.wire.wireIn)

@@ -299,7 +299,7 @@ async function askOf(deps: RoundRunDeps, c: Contract, agent: AgentId, base: Comm
   const support = deps.driver
   if (support === undefined) {
     // 打桩那一档：给一份形状完整但内容为空的 ask（`stubDriver` 一个字节都不读它们）。
-    const empty = {} as unknown as AssembleState
+    const empty = { facts: [] } as unknown as AssembleState
     return {
       agent,
       contract: c,

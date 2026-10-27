@@ -21,11 +21,14 @@
 //
 // **不是源的几样**：宿主绝对路径 · 主机名 · Signal 原文（架构 § 8.11 的约束 2 · 3 · 4）——
 // 这一份一个字段都不给它们留位置，所以它们进不了前缀。真正接上运行时的那些源（凝聚理解 ·
-// 凝聚前最近几次原文 · 运行时上下文 · 上一步结果）今天由调用方给值，S7 · S8 才有人产它们。
+// 凝聚前最近几次原文）今天由调用方给值；**C 区那三段不在这里拼**——它们从 `facts.ts` 的一份
+// 有序事实投影（`runtimeTextOf` · `rulingTextsOf` · `lastStepTextOf`），文本预览与两根 wire
+// 读的是同一份，不再有一处独立的追加（0.5.4 幕①）。
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Protocol, SegmentId, SegmentValue } from './contract.ts'
-import type { Turn } from '../model/contract.ts'
+import type { Fact } from './facts.ts'
+import { lastStepTextOf, rulingTextsOf, runtimeTextOf } from './facts.ts'
 
 /**
  * 一个 agent 的坐标。**它不是段，是段的源要的那把钥匙。**
@@ -108,34 +111,21 @@ export interface AssembleState {
   readonly maxSteps?: number
   readonly distill: string
   readonly recent: string
-  readonly runtime: string
   /**
-   * **这一步那一段**（`Runtime.step` 往里追加：每一步一个 `Turn`）。
+   * **这一趟的有序事实**：人说的那一句 · 一次完整模型回复及其工具结果 · 轮内裁断结论 ·
+   * 交接开场（`facts.ts`）。C 区那三段全部从它投影——文本预览、两根 wire 的编码、预算读数
+   * 读的是同一份值。
    *
-   * 结构化那一面与文本那一面同源：文本由 `turnText` 一处渲染，字节那一面（三区指纹 · 只追加）
-   * 量的就是它，而发出去的那一面是 `ModelRequest.turns`（原生轮次）。两处不许各写一份。
+   * **它是唯一的一份。** 从前这里躺着 `runtime`（头）· `turns`（结构化历史）· `signals`
+   * （判词）· `lastStep`（上一步回执）四栏，文本与 wire 各拼各的；轮次一非空，后两栏就从
+   * 实际请求里消失，而**那不会报错**（外部审查 § 3.11：实际请求里判词出现 0 次）。收成一份
+   * 值之后，"文本里有、请求里没有"在结构上不再可能——差只可能出在某个读者的投影上，而投影
+   * 是纯函数、可以逐字节量（`__fixture__/c-parity.json`）。
    *
-   * 它是 C 区那个积累段（架构 § 8.11 的「运行时上下文」：**只追加、不进日志、跨进程即失**）。
-   * 单独一栏而不是拼进 `runtime` 那个字符串，是因为"只追加"这条性质要在**值**上看得见：
-   * 拼字符串的话，改一个字与追加一段在类型上分不开，而 `B4` 的断言 ② 量的正是这件事
-   * （相邻两步 `hash(A+B)` 不变 · 只有 C 那一串往后长）。
+   * **只追加**（架构 § 8.11 的约束 1）：新的一条接在末尾；改中部是另一件事，`facts.test.ts`
+   * 的负对照量它。
    */
-  readonly turns?: readonly Turn[]
-  readonly signals: readonly string[]
-  readonly lastStep: string
-}
-
-/**
- * **C 区那一段的头**：只追加那条尾巴**之前**的那一半（架构 § 8.11：这一趟里那条自然增长的流，
- * 头是「人说的那一句」，尾巴是模型自己的输出与工具结果）。
- *
- * 它是那一段组成规则的**唯一一处说法**：`运行时上下文` 那一条源按它拼全文（头 + 尾巴），而
- * `runtime/step.ts` 按它把头发给适配器（`ModelRequest.cHead`）——适配器发原生轮次时尾巴换成
- * 轮次，头照旧要发。两处各写一句 `state.runtime` 的话，将来给这一段加一种前缀时，发出去的那
- * 一份不会跟着变，而**那不会报错**。
- */
-export function cZoneHeadOf(s: AssembleState): string {
-  return s.runtime
+  readonly facts: readonly Fact[]
 }
 
 /** 一份最小的输入：十二个段各有其空值，测试与走查从一个确定的形状出发。 */
@@ -153,9 +143,7 @@ export function emptyState(): AssembleState {
     task: { goal: '', question: '', deliverables: [], evidenceRequired: [], assertions: [], ownedPaths: [] },
     distill: '',
     recent: '',
-    runtime: '',
-    signals: [],
-    lastStep: '',
+    facts: [],
   }
 }
 
@@ -342,22 +330,6 @@ function taskText(t: AssembleState['task'], outputs: readonly string[], maxSteps
   return lines.join('\n')
 }
 
-/**
- * 一个 `Turn` → 它那一段文本。**这是结构化那一面唯一的文本投影**（两处不许各写一份）。
- *
- * 里面只有两样：模型说的话，与每一条工具回了什么。**不带修订号、不带执行序号**——那些是架构
- * 内部的坐标，模型不需要看，看了也只是噪声（架构 § 8.11 约束 3 在 C 区这一侧的读法）。
- */
-export function turnText(turn: Turn): string {
-  const lines: string[] = []
-  if (turn.text !== undefined && turn.text !== '') lines.push(`Model: ${turn.text}`)
-  turn.results.forEach((r, i) => {
-    const name = turn.calls[i]?.name ?? '?'
-    lines.push(`${r.isError ? 'Tool (failed)' : 'Tool'} ${name} (call ${i + 1}):\n${r.output}`)
-  })
-  return lines.join('\n')
-}
-
 /** 段值从哪来：一句纯函数，收到（协议 · 状态 · 坐标）给出这一段的值。 */
 interface SourceRule {
   readonly value: (s: AssembleState, who: AgentCoord | null) => SegmentValue
@@ -386,17 +358,11 @@ const SOURCES: Readonly<Record<SegmentId, SourceRule>> = {
   我的任务: { value: (s, who) => taskText(s.task, who === null ? [] : who.outputPaths, s.maxSteps) },
   凝聚理解: { value: (s) => s.distill },
   凝聚前最近几次原文: { value: (s) => s.recent },
-  // 运行时上下文是**积累段**：一句话加一串只追加的尾巴。空串与空尾巴都不产出分隔符。
-  运行时上下文: {
-    value: (s) => {
-      const turns = (s.turns ?? []).map(turnText)
-      const head = cZoneHeadOf(s)
-      if (turns.length === 0) return head
-      return head === '' ? turns.join('\n') : `${head}\n${turns.join('\n')}`
-    },
-  },
-  信号摘要: { value: (s) => [...s.signals] },
-  上一步结果: { value: (s) => s.lastStep },
+  // **C 区那三段全部从同一份事实投影**（`facts.ts`）：文本预览这一侧按段取，段序由协议定。
+  // 运行时上下文是**积累段**：人说的那一句加一串只追加的回合；空串与空尾巴都不产出分隔符。
+  运行时上下文: { value: (s) => runtimeTextOf(s.facts) },
+  信号摘要: { value: (s) => [...rulingTextsOf(s.facts)] },
+  上一步结果: { value: (s) => lastStepTextOf(s.facts) },
 }
 
 /** 十二个段的身份，按架构 § 8.11 那张表自上而下。 */

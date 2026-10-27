@@ -364,9 +364,15 @@ function stateWith(step: number): AssembleState {
     },
     distill: '',
     recent: '',
-    runtime: `第 ${step} 步。`,
-    signals: [`sig-${step + 1}`],
-    lastStep: step === 0 ? '' : `第 ${step - 1} 步的结果。`,
+    // 事实那一栏顶替从前的四栏（`runtime` · `turns` · `signals` · `lastStep`）：人话 +
+    // 一条回合（第 0 步没有）+ 一条判词。这一份只给请求体与字段集那几条断言喂输入。
+    facts: [
+      { kind: 'human', text: `第 ${step} 步。` },
+      ...(step === 0
+        ? []
+        : [{ kind: 'turn' as const, turn: { text: `第 ${step - 1} 步的结果。`, calls: [], results: [] } }]),
+      { kind: 'ruling', text: `sig-${step + 1}` },
+    ],
   }
 }
 

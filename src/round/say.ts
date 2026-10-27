@@ -5,7 +5,7 @@
 // PLAN § 5.10 的 `C5`。
 //
 // **两个状态，一个命令，一个判据都不用新加。** 人的话是这一趟的输入（进的是尾端第一条，定义处
-// 是 `assemble/sources.ts` 的 `cZoneHeadOf`），而产物分两档：
+// 是 `assemble/facts.ts` 的 `humanTextOf`：事实里那一条 `human`），而产物分两档：
 //
 //   讨论态（`Idle`）      这场对话就是这一态的状态：那句话落进 `.fugue/session/<轮次>.jsonl`，
 //                         这一趟的产物是**修正后的理解**（它最后说的那一段话 → `holder/distill`）。

@@ -49,6 +49,7 @@ import { takeAsks } from './handback.ts'
 import { calibrate, ratioOf, truthOf } from '../runtime/calib.ts'
 import { assemble } from '../assemble/assemble.ts'
 import { sourcesFor, stepsLeftTail } from '../assemble/sources.ts'
+import { withFact } from '../assemble/facts.ts'
 import type { Prefix } from '../assemble/contract.ts'
 import { handoffAt, successorOf } from '../runtime/restart.ts'
 import { refFor } from '../identity.ts'
@@ -740,14 +741,6 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
 
   const commits: LogSeq[] = []
   const handoffs: string[] = []
-  /** 轮内裁断回来的那几句结论（U18 甲案）：挂到下一步的「信号摘要」上，**只带结论**。 */
-  const notes: string[] = []
-  /**
-   * **已经摊进「信号摘要」的判词条数**：每步只摊新增的那几句。`r.next.signals` 里躺着的是
-   * 上一步摊过的那几句，再把整份 `notes` 摊一遍，同一条判词会在 C 区里越滚越多——模型
-   * 每一步都把它当新信息读（实测：三步两问，第三步的前缀里第一问的判词出现两遍）。
-   */
-  let spreadAt = 0
   /** 这一格已经量到的那些比值（真 ÷ 估；每次调用最多加一份）。 */
   const ratios: number[] = []
   let handle: AgentHandle = { ...ask.handle, agent, state: ask.state }
@@ -842,8 +835,10 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     // 持轮者**当场**判一次——不积累上下文的一次裁断（复用装配出来的 A 区 · 契约 + 问题 + 固定尺
     // 走近因），判决落事件；进人那一档把**问题原样**转到人那道门口。判不了的那一档也走这一条。
     //
-    // **推敲不进任何人的 C 区**：这里只把那句结论（判词）收进 `notes`，下一步挂到那一格的
-    // 「信号摘要」上；裁断读到的上下文与模型的原始回复哪儿都不落。
+    // **推敲不进任何人的 C 区**：这里只把那句结论（判词）收成一条事实——它接在刚过去的那一步
+    // 之后（顺序即发生顺序）；裁断读到的上下文与模型的原始回复哪儿都不落。
+    // **不再有"下一步摊一遍"的计数器**：一条判词产生一次、追加一次，重摊的病灶在结构上不存在。
+    let next = r.next
     if (r.asks !== undefined && r.asks.length > 0) {
       const taken = await takeAsks({
         log,
@@ -863,11 +858,9 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
         signal,
         ...(ask.rulerFaces === undefined ? {} : { ruler: ask.rulerFaces }),
       })
-      notes.push(taken.note)
+      next = { ...r.next, facts: withFact(r.next.facts, { kind: 'ruling', text: taken.note }) }
     }
-    const fresh = notes.slice(spreadAt)
-    handle = { ...handle, state: fresh.length === 0 ? r.next : { ...r.next, signals: [...r.next.signals, ...fresh] } }
-    spreadAt = notes.length
+    handle = { ...handle, state: next }
     if (r.outcome.kind === 'done') break
     // **交一次就够**（缺省只交一次）：触发点是一个数，而"这一格该不该换人"不是每一步都重新判的
     // ——反复交接会把同一格切成三四段，而每一段都要重读一遍 Zone A + Zone B。

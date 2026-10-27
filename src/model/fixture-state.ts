@@ -37,8 +37,15 @@ export function fixtureState(step: number): AssembleState {
     },
     distill: '',
     recent: '',
-    runtime: `第 ${step} 步。`,
-    signals: [`sig-${step + 1}`],
-    lastStep: step === 0 ? '' : `第 ${step - 1} 步的结果。`,
+    // 事实那一栏顶替从前的 `runtime` / `turns` / `signals` / `lastStep` 四栏：人话 + 一条回合
+    // （第 0 步没有）+ 一条判词。**三区都不空**这条用途不变；字节不再锚在旧读数上（这一份只喂
+    // wire 与预算，录下来的夹具是 `fixtureState(0)` 那一档，C 区字节仍逐字节相同）。
+    facts: [
+      { kind: 'human', text: `第 ${step} 步。` },
+      ...(step === 0
+        ? []
+        : [{ kind: 'turn' as const, turn: { text: `第 ${step - 1} 步的结果。`, calls: [], results: [] } }]),
+      { kind: 'ruling', text: `sig-${step + 1}` },
+    ],
   }
 }

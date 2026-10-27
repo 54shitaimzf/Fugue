@@ -30,6 +30,8 @@ import type { LogHandle, LogEvent } from '../log/events.ts'
 import { assemble, firstDivergence, hashOf } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { sourcesFor } from '../assemble/sources.ts'
+import { lastStepTextOf } from '../assemble/facts.ts'
+import type { Fact } from '../assemble/facts.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { fixtureState } from '../model/fixture-state.ts'
 import { readFixture } from '../model/session.ts'
@@ -226,31 +228,33 @@ test('② C 区只追加：相邻两步的 hash(A+B) 不变，C 只是一串只�
     assert.notEqual(zones[0]?.zoneCHash, zones[1]?.zoneCHash)
     // C 有两件事要量，而它们不是同一件事：
     //
-    //   一 · **积累段只追加**：`turns` 是那条尾巴（「运行时上下文」那一段），下一步是这一步的
+    //   一 · **积累段只追加**：`facts` 是那条尾巴（「运行时上下文」那一段），下一步是这一步的
     //        超集——逐项相同、只多几项。
-    //   二 · **"每步被换掉"的那一段排在最后**：`上一步结果` 不是积累段（它是"刚过去那一步"的
-    //        回执），所以它在 C 的**末尾**（架构 § 8.11 的区表：运行时上下文 · 信号摘要 ·
+    //   二 · **被换掉的那一段排在最后**：`上一步结果` 不是积累段（它是"最后一条回合"的文本
+    //        投影），所以它在 C 的**末尾**（架构 § 8.11 的区表：运行时上下文 · 信号摘要 ·
     //        上一步结果）。排在中间的话，"每步换掉它"就等于每步作废 C 的中段。
     //
     // **"C 整段是下一步的前缀"这句话是错的**，别把它写进断言：上面第一条（积累段往前长）与
     // 第二条（换掉的那段在末尾）合起来**不蕴含**整段是前缀——长出来的那几项插在积累段的末尾，
     // 而积累段后面还有一段（信号摘要）。**相邻两步真正的性质是"分歧点不早于积累段的起点"**：
     // 分歧不可能发生在 A+B（它们是同一串字节），只可能落在 C 里那两个该变的段上。
-    const baseTurns = h0.state.turns ?? []
-    const turnsNow = one.next.turns ?? []
-    assert.deepEqual(turnsNow.slice(0, baseTurns.length), baseTurns, '积累段的前缀变了')
-    assert.ok(turnsNow.length > baseTurns.length, '这一步没有往积累段里追加东西')
+    const baseFacts = h0.state.facts
+    const factsNow = one.next.facts
+    assert.deepEqual(factsNow.slice(0, baseFacts.length), baseFacts, '积累段的前缀变了')
+    assert.ok(factsNow.length > baseFacts.length, '这一步没有往积累段里追加东西')
     const p1 = prefixAt({ ...h0, state: one.next })
     const c1 = p1.zoneC
+    // 下一步：再追一条**更长**的回合。这是"上一步结果"在下一步被换掉的唯一方式——它就是
+    // 最后一条回合的文本投影。
     const after: AssembleState = {
       ...one.next,
       step: one.next.step + 1,
-      // 换掉末尾那一段（**比原来长**：这样"分歧点"那条断言才有内容）
-      lastStep: `工具的另一次回执：${'x'.repeat(200)}`,
-      turns: [...turnsNow, turnOfText('第二步新加的一段。')],
+      facts: [...factsNow, { kind: 'turn', turn: turnOfText(`工具的另一次回执：${'x'.repeat(200)}`) }],
     }
     const c2 = prefixAt({ ...h0, state: after }).zoneC
     assert.ok(c2.length > c1.length, `C 没有长：${c1.length} → ${c2.length}`)
+    const last1 = lastStepTextOf(one.next.facts)
+    const last2 = lastStepTextOf(after.facts)
     // 分歧点不早于积累段的起点：C 里"运行时上下文"那一段的正文在两步之间逐字节相同，
     // 而第一个不同的字节落在它后面。
     const text1 = new TextDecoder().decode(c1)
@@ -267,11 +271,11 @@ test('② C 区只追加：相邻两步的 hash(A+B) 不变，C 只是一串只�
     )
     // 换掉的那一段在末尾：它落在**最后一次**出现的位置上（前面那些出现是积累段里的同一段文本），
     // 而且 C1 以它收尾。
-    assert.ok(text1.lastIndexOf(one.next.lastStep) > sigAt, '「上一步结果」不在「信号摘要」之后')
-    assert.ok(text1.endsWith(`${one.next.lastStep}\n`), `C1 不是以「上一步结果」收尾：${JSON.stringify(text1.slice(-40))}`)
-    // 而换掉的那一段（`上一步结果`）在 C 的末尾：它的正文在 C1 里找得到，且它在 C1 里一直到尾。
-    assert.deepEqual(after.lastStep, `工具的另一次回执：${'x'.repeat(200)}`)
-    assert.notDeepEqual(after.lastStep, one.next.lastStep)
+    assert.ok(text1.lastIndexOf(last1) > sigAt, '「上一步结果」不在「信号摘要」之后')
+    assert.ok(text1.endsWith(`${last1}\n`), `C1 不是以「上一步结果」收尾：${JSON.stringify(text1.slice(-40))}`)
+    // 而它确实是**最后一条回合的文本投影**：换一条更长的回合，这一段跟着换。
+    assert.equal(last2, `Model: 工具的另一次回执：${'x'.repeat(200)}`)
+    assert.notEqual(last2, last1)
 
     // A 与 B 也逐字节相同（不是只有哈希相同）。
     const p2 = prefixAt({ ...h0, state: one.next })
@@ -361,8 +365,14 @@ test('④ 用假模型驱动它，三区稳定性照旧成立；负对照：每�
 
     // 负对照：把 C 区**中部**改掉（重写，不是追加）→ ② 那条"只追加"当场变红。
     const base = fixtureState(0)
-    const withTail: AssembleState = { ...base, turns: [turnOfText('甲'), turnOfText('乙'), turnOfText('丙')] }
-    const rewritten: AssembleState = { ...withTail, turns: [turnOfText('甲'), turnOfText('X'), turnOfText('丙')] }
+    const tail = ['甲', '乙', '丙'].map((text): Fact => ({ kind: 'turn', turn: turnOfText(text) }))
+    const withTail: AssembleState = { ...base, facts: [...base.facts, ...tail] }
+    const rewritten: AssembleState = {
+      ...withTail,
+      facts: withTail.facts.map((f): Fact =>
+        f.kind === 'turn' && f.turn.text === '乙' ? { kind: 'turn', turn: turnOfText('X') } : f,
+      ),
+    }
     const a = prefixAt({ ...h0, state: withTail })
     const b = prefixAt({ ...h0, state: rewritten })
     assert.notDeepEqual(a.zoneC, b.zoneC, '重写中部之后 C 竟然没变——那"只追加"这条就没有判据了')
