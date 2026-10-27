@@ -16,7 +16,7 @@ import { assemble, hashOf } from './assemble.ts'
 import { SUBAGENT_PROTOCOL } from './protocol.ts'
 import { emptyState, sourcesFor } from './sources.ts'
 import type { Fact } from './facts.ts'
-import { factsAfterHandoff, humanTextOf, lastStepTextOf, rulingTextsOf, runtimeTextOf, turnsOf, withFact } from './facts.ts'
+import { factsAfterHandoff, humanTextOf, lastStepTextOf, rulingTextsOf, runtimeTextOf, turnText, turnsOf, wireTurnsOf, withFact } from './facts.ts'
 
 const GOLDEN = JSON.parse(readFileSync(new URL('./__fixture__/c-parity.json', import.meta.url), 'utf8')) as {
   readonly note: string
@@ -130,4 +130,39 @@ test('⑤ 只追加与交接：withFact 往后长 · factsAfterHandoff 留人话
   assert.equal(lastStepTextOf(after), '', '前任的上一步回执不该跟到下一格')
   assert.deepEqual(rulingTextsOf(after), ['前任收到的一条判词'], '判词该留在下一格')
   console.log(`⑤ 读数：交接后 ${after.length} 条（${after.map((f) => f.kind).join(' · ')}）· C 区 ${runtimeTextOf(after).length} 字`)
+})
+
+test('⑥ wire 投影：判词折进紧邻的回合 notes · 文本预览不吃 notes · 挂不到回合的判词不进 wire', () => {
+  const facts: readonly Fact[] = [
+    { kind: 'human', text: '人说的那一句。' },
+    {
+      kind: 'turn',
+      turn: {
+        text: '第一步。',
+        calls: [{ id: 't1', name: 'read', arguments: '{"path":"a.ts"}' }],
+        results: [{ id: 't1', output: '读到了。', isError: false }],
+      },
+    },
+    { kind: 'ruling', text: '第一问的判词' },
+    { kind: 'turn', turn: { text: '第二步。', calls: [], results: [] } },
+    { kind: 'ruling', text: '第二问的判词' },
+  ]
+  const wire = wireTurnsOf(facts)
+  assert.equal(wire.length, 2, 'wire 的历史仍然只有两条回合')
+  assert.deepEqual(wire[0]?.notes, ['第一问的判词'], '第一问的判词没折进它前面那条回合')
+  assert.deepEqual(wire[1]?.notes, ['第二问的判词'], '第二问的判词没折进它前面那条回合')
+  assert.equal(wire[0]?.text, '第一步。', '折 notes 时改了回合本身')
+  // 文本预览不吃 notes：同一句话带不带判词，`turnText` 逐字节相同（幕①的黄金闸）。
+  const bare = { text: '第一步。', calls: [], results: [] }
+  assert.equal(turnText({ ...bare, notes: ['第一问的判词'] }), turnText(bare), '`turnText` 渲染了 notes——幕①的黄金会当场红')
+
+  // 交接那一格：人话 + 判词 + 【接手】。前任的判词没有回合可挂 → 不进 wire；文本预览仍带着它。
+  const opening = { text: '【接手】从这一步开始。上面"交接"那一段是前任留下的。', calls: [], results: [] }
+  const after = factsAfterHandoff([facts[0] as Fact, facts[1] as Fact, facts[2] as Fact], opening)
+  assert.deepEqual(wireTurnsOf(after).map((t) => t.text), [opening.text], '交接后的 wire 历史不是只有【接手】一句')
+  assert.equal(wireTurnsOf(after)[0]?.notes, undefined, '前任的判词被硬挂到【接手】那句上了')
+  assert.deepEqual(rulingTextsOf(after), ['第一问的判词'], '文本预览里那一句判词也不见了')
+  console.log(
+    `⑥ 读数：wire ${wire.length} 条回合（notes ${wire[0]?.notes?.length ?? 0} / ${wire[1]?.notes?.length ?? 0}）· 交接后只留【接手】、前任判词不进 wire`,
+  )
 })

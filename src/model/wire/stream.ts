@@ -45,6 +45,20 @@ export function wireHeadOf(r: {
   return hasTurns ? new Uint8Array(0) : r.zones.C
 }
 
+/**
+ * 判词那条 user 消息的**固定英文帽**：说的是“这是 harness 的裁决，不是人插话”。
+ *
+ * 两根 wire 共用这一句（措辞一处；模型面英文——架构 § 8.11 的读者分界）。判词原文逐字接在
+ * 下一行：幕②的验收数是**原文**出现几次，帽子不含原文，所以数到的就是裁决那一条。
+ */
+export const RULING_PREAMBLE =
+  'Harness note (not the person speaking). An in-round ruling follows verbatim:'
+
+/** 一条回合的判词 → 那条 user 消息的正文（帽子 + 判词原文逐字）。 */
+export function rulingNoteText(notes: readonly string[]): string {
+  return `${RULING_PREAMBLE}\n${notes.join('\n')}`
+}
+
 /** 一个适配器。`bytes` 与 `parse` 是纯函数；`state` 是**一条流一份**的可变状态（分片累加用）。 */
 export interface WireAdapter {
   /** 线协议的名字（`WireName` 的那两个值）。 */

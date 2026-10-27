@@ -19,7 +19,7 @@
 // 所以"收尾"归 `finish`——它是"这条流到头了"那一刻的判决。
 import type { ModelEvent, StopReason, ThinkingLevel, Turn, Usage } from '../contract.ts'
 import type { WireAdapter } from './stream.ts'
-import { WireError, bodyOf, wireHeadOf } from './stream.ts'
+import { WireError, bodyOf, rulingNoteText, wireHeadOf } from './stream.ts'
 import { THINKING_LEVELS } from '../contract.ts'
 
 interface ChatRequest {
@@ -67,6 +67,9 @@ function turnMessages(turn: Turn, at: number): Record<string, unknown>[] {
     }
     out.push({ role: 'tool', tool_call_id: id, content: r.output })
   })
+  // **判词接在工具回执之后**（0.5.4 幕②）：一条 user 消息，帽子 + 原文逐字。两条 wire 各自
+  // 编这一条，内容与位置相同、字节不要求相同。
+  if (turn.notes !== undefined && turn.notes.length > 0) out.push({ role: 'user', content: rulingNoteText(turn.notes) })
   return out
 }
 

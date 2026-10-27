@@ -7,7 +7,7 @@
 //   · 文本预览（`sources.ts` 的那三段）按**段**取：人那一句与回合进「运行时上下文」·
 //     判词进「信号摘要」· 最后一条回合进「上一步结果」——段的顺序由协议定，不由这一份定；
 //   · 两根 wire 的编码按**序**取：人是一句 · 回合是原生轮次（`turnsOf`）· 判词接在相应回合
-//     之后（0.5.4 幕②接上）；
+//     之后（`wireTurnsOf`：折进那条回合的 `notes`，两根 wire 各发一条 user 消息）；
 //   · 预算读数从同一份值或已编码请求的统计里取（0.5.4 幕③接上）。
 //
 // **为什么判词与交接各是一种事实，而不是塞进字符串或塞进回合。** 它们是两种不同的读者承诺：
@@ -120,6 +120,42 @@ export function lastTurnOf(facts: readonly Fact[]): Turn | undefined {
     if (f.kind === 'turn') return f.turn
   }
   return undefined
+}
+
+/**
+ * **wire 的历史投影**：每一条回合，把它后面紧跟的那几条判词折进 `notes`。
+ *
+ * 判词在存储里是独立事实（它发生在哪一轮之后是事实的**序**说的），而两根 wire 认的历史只有
+ * “回合”这一种形状（`Turn`）——所以这里是“同一份事实、另一个读者”的投影，不是第二份存储。
+ * 折进去的 `notes` 只进请求，不进文本预览（`turnText` 不读它）。
+ *
+ * **挂不到回合上的判词不进 wire**：交接那一格的事实是“人话 + 判词 + 【接手】”，那些判词属于
+ * 前任的回合，而前任的回合已经不在这份历史里了；它们仍留在文本预览的「信号摘要」里。硬把它们
+ * 挂到【接手】那句上，等于给新一格发一份没有对应工具回执的裁决——不伪造那个上下文。
+ */
+export function wireTurnsOf(facts: readonly Fact[]): readonly Turn[] {
+  const out: Turn[] = []
+  let pending: string[] = []
+  /** 把攒着的判词挂到**上一条**回合上（它发生在那一轮之后）；前面没有回合就丢掉（见上）。 */
+  const attach = (): void => {
+    if (pending.length === 0) return
+    const at = out.length - 1
+    if (at >= 0) {
+      const last = out[at] as Turn
+      out[at] = { ...last, notes: [...(last.notes ?? []), ...pending] }
+    }
+    pending = []
+  }
+  for (const f of facts) {
+    if (f.kind === 'turn' || f.kind === 'handoff') {
+      attach()
+      out.push(f.turn)
+    } else if (f.kind === 'ruling') {
+      pending.push(f.text)
+    }
+  }
+  attach()
+  return out
 }
 
 /**

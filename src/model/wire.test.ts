@@ -20,7 +20,7 @@ import type { ModelEvent, ModelRequest } from './contract.ts'
 import { DEFAULT_CALL, ModelDeclError, checkEvents, toolCallsIn } from './contract.ts'
 import { BUILTIN_CATALOG, modelDeclOf } from './catalog.ts'
 import type { WireAdapter } from './wire/stream.ts'
-import { chunksOf, parseStream } from './wire/stream.ts'
+import { chunksOf, parseStream, RULING_PREAMBLE } from './wire/stream.ts'
 import { wireOf as anthropicWireOf } from './wire/anthropic.ts'
 import { wireOf as openaiWireOf } from './wire/openai.ts'
 import { WIRES, WIRE_NAMES, wireNamed } from './wire/registry.ts'
@@ -455,6 +455,35 @@ test('⑥ 带走过的步：messages 里是 assistant 的 tool_use 与 user 的 
   const broken = { ...base, turns: [{ calls: [], results: [{ id: 'toolu_404', output: '孤儿回执', isError: false }] }] } satisfies ModelRequest
   assert.throws(() => wire.bytes(broken), /tool_use_id 对不上/, '孤儿回执要当场抛')
   console.log('⑥ 读数：原生轮次 ' + String(Buffer.byteLength(new TextDecoder().decode(wire.bytes(walked)), 'utf8')) + ' 字节 · 文本旧路 ' + String(Buffer.byteLength(new TextDecoder().decode(wire.bytes(base)), 'utf8')) + ' 字节')
+})
+
+// ── ⑥b 判词（0.5.4 幕②）：两条 wire 都在工具回执之后发一条 user 消息 ──────────────
+
+test('⑥b 判词：两条 wire 各发一条 user 消息（固定帽子 + 原文逐字），位置在工具回执之后；不带 notes 时一个字节都不多', () => {
+  const dec = new TextDecoder()
+  const note =
+    'Ask carried back from this cell was settled inside the contract (ruler ask-ruler-2): 第一问的判词'
+  const turn = {
+    text: '先数一下。',
+    calls: [{ id: 'toolu_01', name: 'glob', arguments: '{"pattern":"**/*.ts"}' }],
+    results: [{ id: 'toolu_01', output: '3 个文件', isError: false }],
+    notes: [note],
+  }
+  const base = request()
+  for (const [name, wire] of [
+    ['anthropic-messages', anthropicWireOf()],
+    ['openai-chat', openaiWireOf()],
+  ] as const) {
+    const flat = dec.decode(wire.bytes({ ...base, turns: [turn] } satisfies ModelRequest))
+    assert.equal(flat.split(note).length - 1, 1, `${name} 里判词不是恰好一遍`)
+    assert.ok(flat.includes(RULING_PREAMBLE), `${name} 里没有那句固定帽子`)
+    assert.ok(flat.indexOf(note) > flat.indexOf('3 个文件'), `${name} 里判词跑到工具回执前面了`)
+    // 负对照：同一回合不带 notes → 判词与帽子一个字节都不出现。
+    const bare = dec.decode(wire.bytes({ ...base, turns: [{ ...turn, notes: undefined }] } satisfies ModelRequest))
+    assert.equal(bare.includes(note), false, `${name}：不带 notes 时判词还在`)
+    assert.equal(bare.includes(RULING_PREAMBLE), false, `${name}：不带 notes 时帽子还在`)
+    console.log(`⑥b 读数：${name} · 带判词 ${Buffer.byteLength(flat, 'utf8')} 字节 · 不带 ${Buffer.byteLength(bare, 'utf8')} 字节`)
+  }
 })
 
 // ── ⑦ 思考那一格：收得到 · 回得去（`U1`）─────────────────────────────────────────

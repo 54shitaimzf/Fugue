@@ -38,7 +38,7 @@ import type { WireAdapter } from '../model/wire/stream.ts'
 import type { Prefix, Protocol } from '../assemble/contract.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
 import { sourcesFor } from '../assemble/sources.ts'
-import { humanTextOf, turnsOf, withFact } from '../assemble/facts.ts'
+import { humanTextOf, wireTurnsOf, withFact } from '../assemble/facts.ts'
 import { promptCacheFor } from '../model/contract.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
@@ -449,9 +449,10 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     const seqs: LogSeq[] = []
     // ── 1. 装配（纯函数，不碰模型）
     const prefix = assemble({ protocol: h.protocol, model: h.model, segments: sourcesFor(h.protocol, h.state, h.coord) })
-    // 同一份事实的两个投影：头是文本的那一半，尾巴是原生轮次的那一半。
+    // 同一份事实的两个投影：头是文本的那一半；尾巴是原生轮次的那一半（判词折进回合的
+    // `notes`——`wireTurnsOf`）。文本预览按段取，不吃 `notes`。
     const head = humanTextOf(h.state.facts)
-    const turns = turnsOf(h.state.facts)
+    const turns = wireTurnsOf(h.state.facts)
     const request: RuntimeRequest = {
       target: h.target,
       adapter: h.adapter,

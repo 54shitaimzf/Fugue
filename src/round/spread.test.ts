@@ -1,8 +1,8 @@
 // 驱动循环的两个收口，都在快档量（假模型 · 假执行器 · 真 git 台子）：
 //
-//   ① **判词只摊一次**（U18 甲案的驱动侧）：轮内裁断回来的那句结论挂到下一步的「信号摘要」上
-//      ——每步只摊**新增**的那几句。重摊的病灶是把整份 `notes` 每步再摊一遍：同一条判词在
-//      C 区里越滚越多，而模型每一步都当新信息读。
+//   ① **判词进实际请求、且恰一次**（0.5.4 幕②）：轮内裁断回来的那句结论接在相应回合的工具
+//      回执之后（一条 user 消息）。量的是**目标 wire 编出来的请求字节**（两根 wire 各一遍），
+//      不是装配前缀——重摊的病灶会让同一条判词在同一份请求里出现两遍。
 //   ② **断在半路要落账**：步循环 `failed` 那一档（流半截）→ `DriverResult.failed` 与
 //      `agent/stop` 的 `failed` 栏（重跑那一道闸吃它，判据在 work.test.ts ⑤）。
 //
@@ -22,7 +22,9 @@ import { lowerAt } from '../view/lower.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { emptyState } from '../assemble/sources.ts'
 import { BUILTIN_CATALOG, modelDeclOf } from '../model/catalog.ts'
-import type { ModelEvent } from '../model/contract.ts'
+import type { ModelDecl, ModelEvent } from '../model/contract.ts'
+import { wireRequestOf } from '../model/http.ts'
+import { wireNamed } from '../model/wire/registry.ts'
 import { scriptedModel } from '../runtime/step.ts'
 import type { CallModel, ToolResult } from '../runtime/step.ts'
 import { recordingExecutor } from '../runtime/step.ts'
@@ -67,14 +69,14 @@ interface Cell {
   readonly log: LogHandle
   readonly truth: TruthHandle
   readonly base: CommitId
-  /** 每一次调用的请求正文（三区拼开的那份），按发生次序——判词摊没摊、摊了几遍，从这里读。 */
+  /** 每一次调用的**实际请求正文**（目标 wire 编出来的那一份），按发生次序——判词在不在、几遍、在第几句，从这里读。 */
   readonly seen: readonly string[]
   readonly ask: DriverAsk
   run(): Promise<DriverResult>
   close(): Promise<void>
 }
 
-async function cell(agent: string, scripts: readonly (readonly ModelEvent[])[], make: (one: never, at: number) => ToolResult, signal?: AbortSignal): Promise<Cell> {
+async function cell(agent: string, scripts: readonly (readonly ModelEvent[])[], make: (one: never, at: number) => ToolResult, signal?: AbortSignal, decl: ModelDecl = DECL): Promise<Cell> {
   const AGENT = agent as AgentId
   const root = mkdtempSync(join(tmpdir(), 'fugue-spread-'))
   assert.equal(spawnSync('git', ['init', '-q', '.'], { cwd: root, env: GIT_ENV, encoding: 'utf8' }).status, 0)
@@ -106,11 +108,11 @@ async function cell(agent: string, scripts: readonly (readonly ModelEvent[])[], 
   const state = { ...emptyState(), goal: c.goal }
   const seen: string[] = []
   const decoder = new TextDecoder()
+  const wire = wireNamed(decl.wire)
   const inner = scriptedModel(scripts)
   const call: CallModel = (request, signal) => {
-    seen.push(
-      decoder.decode(request.prefix.zoneA) + decoder.decode(request.prefix.zoneB) + decoder.decode(request.prefix.zoneC),
-    )
+    // **实际请求字节**：与产品同一条编码路（`wireRequestOf` → 目标 wire 的 `bytes`）。
+    seen.push(decoder.decode(wire.bytes(wireRequestOf(request))))
     return inner(request, signal)
   }
   const exec = recordingExecutor(make as never)
@@ -130,13 +132,13 @@ async function cell(agent: string, scripts: readonly (readonly ModelEvent[])[], 
       branch: `refs/heads/${agent}` as DriverAsk['handle']['branch'],
       contract: 'c1' as ContractId,
       protocol: SUBAGENT_PROTOCOL,
-      model: DECL.id,
-      wireModel: DECL.model,
-      target: { wire: { name: DECL.wire } } as unknown as DriverAsk['handle']['target'],
-      adapter: { name: DECL.wire },
+      model: decl.id,
+      wireModel: decl.model,
+      target: { wire: { name: decl.wire } } as unknown as DriverAsk['handle']['target'],
+      adapter: { name: decl.wire },
       state,
     },
-    decl: DECL,
+    decl,
     call,
     execute: exec,
     ...(signal === undefined ? {} : { signal }),
@@ -157,41 +159,50 @@ async function cell(agent: string, scripts: readonly (readonly ModelEvent[])[], 
   }
 }
 
-test('① 两步各带一问：后一步的前缀里每条判词恰好一遍（重摊那一版是两遍）', async () => {
+test('① 两根 wire 各一遍：两步各带一问，后一步的**编码后请求**里每条判词恰好一遍（重摊那版是两遍）', async () => {
   // 脚本五趟：格子第一步（带第一问回）→ 裁断 → 格子第二步（带第二问回）→ 裁断 → 格子第三步（说完）。
-  const c = await cell('agent-1', [
+  const scripts: readonly (readonly ModelEvent[])[] = [
     [...callOne(0, 'q1', 'ask_user_question', { question: '第一问' }), { t: 'stop', reason: 'tool-calls', raw: 'tool_use' }],
     ruling('第一问的判词'),
     [...callOne(0, 'q2', 'ask_user_question', { question: '第二问' }), { t: 'stop', reason: 'tool-calls', raw: 'tool_use' }],
     ruling('第二问的判词'),
     [{ t: 'delta', text: '干完了。' }, { t: 'stop', reason: 'end-turn', raw: 'end_turn' }],
-  ], (_one, at) =>
+  ]
+  const make = (_one: never, at: number): ToolResult =>
     at === 0
       ? { ok: true, output: '把第一问带回了。', asks: [{ question: '第一问' }] }
       : at === 1
         ? { ok: true, output: '把第二问带回了。', asks: [{ question: '第二问' }] }
-        : { ok: true, output: '好。' },
-  )
-  try {
-    const r = await c.run()
-    assert.equal(r.stopped, '收敛', `这一格该自己说完：${r.stopped}`)
-    // 五次调用的次序：格子 · 裁断 · 格子 · 裁断 · 格子（裁断那两趟不带「信号摘要」那一段）。
-    assert.equal(c.seen.length, 5, `五趟调用（三步格子 + 两次裁断），拿到 ${c.seen.length}`)
-    const count = (hay: string, needle: string): number => hay.split(needle).length - 1
-    // 负对照：第一步带回来的判词，第二步的前缀里就该有一遍（两版都绿——判据是"该在"）。
-    assert.equal(count(c.seen[2] as string, '第一问的判词'), 1, '第二步前缀里第一问的判词该恰有一遍')
-    // 红断言：第三步的前缀里，每条判词都只许一遍——重摊那一版第一问出现两遍。
-    assert.equal(
-      count(c.seen[4] as string, '第一问的判词'),
-      1,
-      `第三步前缀里第一问的判词该恰有一遍（重摊会摊成 ${count(c.seen[4] as string, '第一问的判词')} 遍）`,
-    )
-    assert.equal(count(c.seen[4] as string, '第二问的判词'), 1, '第三步前缀里第二问的判词该恰有一遍')
-    console.log(
-      `① 读数：五趟调用（3 格子 + 2 裁断）· 第三步前缀里 第一问判词 ×${count(c.seen[4] as string, '第一问的判词')} · 第二问判词 ×${count(c.seen[4] as string, '第二问的判词')}——各恰一遍`,
-    )
-  } finally {
-    await c.close()
+        : { ok: true, output: '好。' }
+  const count = (hay: string, needle: string): number => hay.split(needle).length - 1
+  const at = (hay: string, needle: string): number => hay.indexOf(needle)
+  for (const declName of ['deepseek-flash/anthropic', 'deepseek-flash/openai'] as const) {
+    const c = await cell('agent-1', scripts, make, undefined, modelDeclOf(declName, BUILTIN_CATALOG))
+    try {
+      const r = await c.run()
+      assert.equal(r.stopped, '收敛', `${declName}：这一格该自己说完：${r.stopped}`)
+      // 五次调用的次序：格子 · 裁断 · 格子 · 裁断 · 格子（裁断那两趟不带「信号摘要」那一段）。
+      assert.equal(c.seen.length, 5, `${declName}：五趟调用（三步格子 + 两次裁断），拿到 ${c.seen.length}`)
+      const second = c.seen[2] as string
+      const third = c.seen[4] as string
+      // 负对照：第一步带回来的判词，第二步的实际请求里就该有一遍（判据是"该在"）。
+      assert.equal(count(second, '第一问的判词'), 1, `${declName}：第二步请求里第一问的判词该恰有一遍`)
+      // 红断言：第三步的实际请求里，每条判词都只许一遍——重摊那一版第一问出现两遍。
+      assert.equal(count(third, '第一问的判词'), 1, `${declName}：第三步请求里第一问的判词该恰有一遍`)
+      assert.equal(count(third, '第二问的判词'), 1, `${declName}：第三步请求里第二问的判词该恰有一遍`)
+      // 顺序（报告 § 4.7）：判词接在相应工具结果之后；第一问挂在第一轮上，所以它在第二问的回执之前。
+      assert.ok(at(second, '第一问的判词') > at(second, '把第一问带回了。'), `${declName}：第二步的判词跑到回执前面了`)
+      assert.ok(at(third, '第一问的判词') > at(third, '把第一问带回了。'), `${declName}：第三步里第一问的判词不在回执后`)
+      assert.ok(at(third, '第一问的判词') < at(third, '把第二问带回了。'), `${declName}：第一问的判词挂到第二轮去了`)
+      assert.ok(at(third, '第二问的判词') > at(third, '把第二问带回了。'), `${declName}：第二问的判词不在回执后`)
+      // 帽子：每条判词一条消息、一条帽子——两根 wire 共用同一句（措辞一处）。
+      assert.equal(count(third, 'Harness note (not the person speaking)'), 2, `${declName}：第三步请求里的帽子不是两条`)
+      console.log(
+        `① 读数（${declName}）：五趟调用（3 格子 + 2 裁断）· 第三步请求 第一问判词 ×1 · 第二问判词 ×1 · 帽子 ×2 · ${Buffer.byteLength(third, 'utf8')} 字节`,
+      )
+    } finally {
+      await c.close()
+    }
   }
 })
 
