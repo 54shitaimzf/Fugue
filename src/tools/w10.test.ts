@@ -38,6 +38,7 @@ import { faceOf, parseArgs } from './execute.ts'
 import type { ToolHost } from './execute.ts'
 import { refHeadOf } from '../round/head.ts'
 import { emptyState } from '../assemble/sources.ts'
+import { turnsOf } from '../assemble/facts.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { USAGE } from '../cli/fugue.ts'
 import type { AgentId, CommitId, RelPath, WriterId } from '../terms.ts'
@@ -393,7 +394,7 @@ test('⑥ 交接那一句与接手那一句里：分支名 · coord.id · 步数
   }
   const prompt = promptOf(h as never)
   const next = successorOf({ ...emptyState(), step: 42 }, prompt)
-  const first = (next.turns ?? [])[0]?.text ?? ''
+  const first = turnsOf(next.facts)[0]?.text ?? ''
 
   assert.ok(!prompt.includes('agent/round/7'), `【交接】句里带了分支名：${prompt}`)
   assert.ok(!prompt.includes('42'), `【交接】句里带了步数：${prompt}`)
@@ -407,7 +408,11 @@ test('⑥ 交接那一句与接手那一句里：分支名 · coord.id · 步数
     goal: '写一份 a.ts',
     from: AGENT,
     branch,
-    state: { ...emptyState(), step: 42, lastStep: '已经写了 a.ts。' },
+    state: {
+      ...emptyState(),
+      step: 42,
+      facts: [{ kind: 'turn', turn: { text: '已经写了 a.ts。', calls: [], results: [] } }],
+    },
     plan: { kind: 'restart', why: '预算到了' } as never,
     commands: [],
   })

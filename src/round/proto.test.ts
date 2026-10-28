@@ -25,7 +25,7 @@ test('①d 子 agent 那份 B 区多出「我的任务」那一段，而持轮�
     goal: '写一份 README.md',
     commits: ['75b0e30 B0'],
     task: { goal: '写一份 README.md', question: '', deliverables: ['README.md'], evidenceRequired: ['读得出来'], assertions: ['文件存在'] },
-    runtime: '第 0 步。',
+    facts: [{ kind: 'human', text: '第 0 步。' }],
   }
   const segs = sourcesFor(SUBAGENT_PROTOCOL, state, coord)
   const sub = assemble({ protocol: SUBAGENT_PROTOCOL, model: 'x' as never, segments: segs })

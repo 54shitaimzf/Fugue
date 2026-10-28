@@ -24,15 +24,15 @@ import type { Log, LogSeq } from '../log/events.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { View } from '../view/contract.ts'
 import type { AgentHandle, CallModel, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
-import { createRuntime } from '../runtime/step.ts'
+import { createRuntime, requestBodyOf } from '../runtime/step.ts'
 import type { ModelDecl } from '../model/contract.ts'
 import type { ModelFace } from '../model/roles.ts'
 import { hopFace } from '../model/roles.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { MODEL_FACING_LANGUAGE_LINE, emptyState, sourcesFor, stepBudgetLine, stepsLeftTail } from '../assemble/sources.ts'
+import { lastTurnOf } from '../assemble/facts.ts'
 import { capReceipt } from '../tools/receipt.ts'
-import { assemble } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { estimateTokensOfText, planBudget } from '../runtime/budget.ts'
 import { digestOf } from '../runtime/restart.ts'
@@ -142,9 +142,9 @@ export interface OccupancyRow {
   readonly at: number
   readonly kind: DraftKind
   readonly goal: string
-  /** `seed` 那一段自己的估账（token，与 `used` 同一个口径）。 */
+  /** `seed` 那一段自己的估账（token，与 `used` 同一把尺）；**它不进 `used`**——请求体里没有它。 */
   readonly seed: number
-  /** 三区 + 工具目录 + `seed`（**按那把尺估出来的 token**：与上限 · 触发点 · 余量同一个口径）。 */
+  /** **已编码请求**的估账（目标 wire 编出来的那一份：三区 · 工具目录 · 原生轮次都在里面）。 */
   readonly used: number
   /** `contextLimit − used`，可以是负的。 */
   readonly headroom: number
@@ -163,8 +163,13 @@ export interface OccupancyContext {
   readonly goal: string
   readonly round: RoundId
   readonly maxSteps?: number
-  /** 工具目录那一段的**正文**（公布给模型的那一份序列化之后——架构 § 8.11 表外那一项）。 */
-  readonly tools: string
+  /**
+   * 工具目录**公布给模型的那一份**（`ToolEntry[]`，与 `runtime.step` 的 `deps.tools` 同一份）。
+   *
+   * 从前这里递的是序列化之后的正文；改成 schema 是因为占用现在按**已编码的请求**量——工具目录
+   * 是请求体的一部分，正文与编码后的字节差着 JSON 的字段名与包装。
+   */
+  readonly tools: readonly ToolEntry[]
   /**
    * 一份种子的**正文**：指针清单 + 在这棵树上取到的内容。
    *
@@ -389,7 +394,8 @@ export function holderGoalText(goal: string, draftPath: RelPath, maxSteps?: numb
 }
 
 /**
- * 每一格的预估占用：`Zone A + Zone B + seed + 交接余量` 与 `contextLimit` 的差额。
+ * 每一格的预估占用：**已编码请求**（`used`）与 `contextLimit` 的差额；甜点那一档再要求它
+ * 加交接余量不超过触发点。
  *
  * **它是"拆分规模对齐模型能力"这句话唯一能验的形状**（PLAN § 5.10 的 C1 断言④）。口径分两半：
  *
@@ -399,8 +405,14 @@ export function holderGoalText(goal: string, draftPath: RelPath, maxSteps?: numb
  *     跑到尾不用交接，且交接余量也放得下**。`B7` 的读数将来只用来收窄这条带，不改形状。
  *
  * 三区怎么来的：拿**子 agent 那一份协议**（`SUBAGENT_PROTOCOL`）与一节草案拼一次真装配
- * （`assemble` 是纯函数），`seed` 那一段交给同一把尺估——**"这一格装得下装不下"与上限 · 触发点 · 余量因此落在同一个口径上**。`base` 那一份状态由调用方给（项目方针 ·
- * 系统状态 · 代码树都是真的），这一份只按节覆盖"这一格自己的那几段"。
+ * （`assemble` 是纯函数），再用目标 wire 编成**这一步真要发出去的那一份请求**——预算量的是它。
+ * `base` 那一份状态由调用方给（项目方针 · 系统状态 · 代码树都是真的），这一份只按节覆盖
+ * "这一格自己的那几段"。
+ *
+ * **`seed` 那一栏不进 `used`**：请求体里没有它——它量的是派发前要铺开的工作面，仍然单列、
+ * 按同一把尺量给人看。派发那一趟的旧预算另有一个 `seed` 加项，递进去的其实是这一格的目标
+ * （`goalOf(contract)`：implement 型就是 `c.goal`），而目标已经在 B 区的「我的任务」里——
+ * 同一段正文因此占了两份账；新预算量请求体，目标只算一份。
  *
  * **估账不是读数**：真读数在 `llm/call` 的 `usage` 里（派发之后才有）。这一份的用处只有一处
  * ——在派发之前把"这一格装得下装不下"印给人看。
@@ -430,14 +442,21 @@ export function occupancyOf(sections: readonly DraftSection[], ctx: OccupancyCon
       },
       ...(ctx.maxSteps === undefined ? {} : { maxSteps: ctx.maxSteps }),
     }
-    const prefix = assemble({
-      protocol: SUBAGENT_PROTOCOL,
-      model: ctx.decl.id,
-      segments: sourcesFor(SUBAGENT_PROTOCOL, state, coord),
-    })
     const seedText = (ctx.seedText ?? seedTextOf)(s.seed)
-    const plan = planBudget({ decl: ctx.decl, prefix, tools: ctx.tools, seed: seedText, handoff: '' })
-    // 单独印的那一栏：同一把尺对 `seed` 那一段的读数（与 `used` 里那一份是同一段正文）。
+    const body = requestBodyOf(
+      {
+        protocol: SUBAGENT_PROTOCOL,
+        model: ctx.decl.id,
+        wireModel: ctx.decl.model,
+        adapter: { name: ctx.decl.wire },
+        ...(ctx.decl.call === undefined ? {} : { call: ctx.decl.call }),
+        state,
+        coord,
+      },
+      ctx.tools,
+    )
+    const plan = planBudget({ decl: ctx.decl, body })
+    // 单独印的那一栏：同一把尺对 `seed` 那一段的读数（它不在请求体里，因此不进 `used`）。
     const seed = estimateTokensOfText(seedText)
     const sweet = plan.used + plan.handoffMargin <= plan.trigger
     return {
@@ -552,9 +571,9 @@ export async function holderPass(deps: {
     handle = { ...handle, state: { ...handle.state, attempts: steps } }
     const r = await runtime.step(handle, signal)
     steps += 1
-    // **最后说的那一段**：一步的产物在 `next.turns` 的末尾那一条里（`turnText` 那一面是它的
-    // 文本投影，这里直接读结构化那一面，不重述一遍）。
-    const last = (r.next.turns ?? []).at(-1)
+    // **最后说的那一段**：一步的产物是事实里最后那一条回合（`turnText` 那一面是它的文本投影，
+    // 这里直接读结构化那一面，不重述一遍）。
+    const last = lastTurnOf(r.next.facts)
     if (last?.text !== undefined && last.text !== '') said = last.text
     if (r.outcome.kind === 'failed') {
       stopped = `${r.outcome.error.why}：${r.outcome.error.message}`

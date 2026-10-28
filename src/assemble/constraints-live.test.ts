@@ -44,6 +44,7 @@ import { SUBAGENT_PROTOCOL } from './protocol.ts'
 import { render, stableStringify } from './render.ts'
 import type { AgentCoord, AssembleState } from './sources.ts'
 import { emptyState, sourcesFor } from './sources.ts'
+import { turnsOf } from './facts.ts'
 import { stateWithState } from './sources-state.ts'
 
 const DEFAULT_MODEL = defaultModelOf(BUILTIN_CATALOG)
@@ -103,7 +104,7 @@ async function realWorkspace(tag: string): Promise<Live> {
   mkdirSync(systemDir, { recursive: true })
   const state: AssembleState = {
     ...stateWithState(
-      { ...emptyState(), goal: '把这一站做完。', runtime: '读一遍 src/index.ts，把结果报出来。' },
+      { ...emptyState(), goal: '把这一站做完。', facts: [{ kind: 'human', text: '读一遍 src/index.ts，把结果报出来。' }] },
       await readConfig(root, systemDir),
       root,
     ),
@@ -319,8 +320,8 @@ test('⑤ 非静默档（定性）：真跑一步恰好一条 append-only，位�
     })
     const step = await runtime.step(handleOf(w.state), new AbortController().signal)
     assert.equal(step.outcome.kind, 'done')
-    assert.equal(step.next.turns?.length, 1, '这一步没有留下轮次——那一档就不是非静默的')
-    assert.deepEqual(step.next.turns?.slice(0, w.state.turns?.length ?? 0), w.state.turns ?? [], '旧轮次不在了')
+    assert.equal(turnsOf(step.next.facts).length, 1, '这一步没有留下轮次——那一档就不是非静默的')
+    assert.deepEqual(turnsOf(step.next.facts).slice(0, turnsOf(w.state.facts).length), turnsOf(w.state.facts), '旧轮次不在了')
 
     const ran = assembled(step.next)
     const vs = checkConstraints(SUBAGENT_PROTOCOL, ran.segments, w.prefix, '这一步', CONTROLLED, ran.prefix)

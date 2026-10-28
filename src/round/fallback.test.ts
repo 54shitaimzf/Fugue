@@ -21,12 +21,17 @@ import { openTruth } from '../truth/truth.ts'
 import { loadView } from '../view/view.ts'
 import { lowerAt } from '../view/lower.ts'
 import { SUBAGENT_PROTOCOL, HOLDER_PROTOCOL } from '../assemble/protocol.ts'
-import { emptyState } from '../assemble/sources.ts'
+import { emptyState, sourcesFor } from '../assemble/sources.ts'
+import { assemble } from '../assemble/assemble.ts'
+import { humanTextOf, wireTurnsOf } from '../assemble/facts.ts'
 import type { Catalog } from '../model/catalog.ts'
-import type { ModelDecl } from '../model/contract.ts'
-import { faceOf } from '../model/roles.ts'
+import type { ModelDecl, Turn } from '../model/contract.ts'
+import { faceHandle, faceOf } from '../model/roles.ts'
 import type { ModelFace } from '../model/roles.ts'
 import type { Transport, Target } from '../model/http.ts'
+import { wireRequestOf } from '../model/http.ts'
+import { wireNamed } from '../model/wire/registry.ts'
+import { RULING_PREAMBLE } from '../model/wire/stream.ts'
 import { wireCallOver } from '../runtime/step.ts'
 import type { CallModel, ModelEvent } from '../runtime/step.ts'
 import { recordingExecutor } from '../runtime/step.ts'
@@ -37,7 +42,7 @@ import type { ToolExecutor, ToolCallRequest, AgentHandle } from '../runtime/step
 import { holderPass } from './plan.ts'
 import { ledgerOf } from '../probe/ledger.ts'
 import type { LedgerRow } from '../probe/ledger.ts'
-import type { AgentId, CommitId, ContractId, RelPath, WriterId } from '../terms.ts'
+import type { AgentId, BranchId, CommitId, ContractId, RelPath, WriterId } from '../terms.ts'
 import type { Contract } from '../contract/types.ts'
 
 const GIT_ENV: NodeJS.ProcessEnv = {
@@ -674,7 +679,7 @@ async function holderWith(
       goal: '把这一轮规划出来',
       distill: '上一轮的凝聚理解',
       recent: '凝聚前最近几次原文',
-      runtime: '人说的那一句',
+      facts: [{ kind: 'human', text: '人说的那一句' }],
     },
   }
   const run = () =>
@@ -760,4 +765,110 @@ test('⑬ 持轮者的额度闸与子格同一道：上界 1 · 主脸死 → �
   } finally {
     await h.close()
   }
+})
+
+// ── ⑭ 跨 wire 的历史投影：已完成一步再换模型，目标 wire 合法编码 ──────
+
+test('⑭ 跨 wire 的历史：带签名的思考只回 Anthropic · OpenAI 发 reasoning_content 不认签名 · 判词仍接在回执后（两个方向各一）', () => {
+  const DEC = new TextDecoder()
+  const enc = new TextEncoder()
+  const A: ModelDecl = { ...PRIMARY, id: 'test/anthropic', wire: 'anthropic-messages', model: 'test-anthropic' }
+  const O: ModelDecl = { ...PRIMARY, id: 'test/openai', wire: 'openai-chat', model: 'test-openai' }
+  /** 一张最小的脸：目标 wire 是真的适配器（编码要用它），地址与凭据都不出网。 */
+  const faceFor = (decl: ModelDecl): ModelFace => ({
+    decl,
+    target: () => ({
+      providerId: decl.provider,
+      host: 'https://test.invalid',
+      wire: wireNamed(decl.wire),
+      path: '',
+      model: decl.model,
+      from: 'decl',
+      headers: {},
+    }),
+  })
+  // 已经走完的那一步：思考 + 工具调用/回执（同一份，只把签名换成另一种提供方来的形状）。
+  const signed: Turn = {
+    thinking: { text: '想一下。', signature: 'sig-从实录里来' },
+    text: '先看一眼。',
+    calls: [{ id: 't1', name: 'read', arguments: '{"path":"a.ts"}' }],
+    results: [{ id: 't1', output: '读到了。', isError: false }],
+  }
+  const unsigned: Turn = { ...signed, thinking: { text: '想一下。', signature: null } }
+  const note = 'Ask carried back from this cell was settled inside the contract (ruler ask-ruler-2): 第一问的判词'
+  const factsOf = (turn: Turn) => [
+    { kind: 'human' as const, text: '人说的那一句。' },
+    { kind: 'turn' as const, turn },
+    { kind: 'ruling' as const, text: note },
+  ]
+  const tools = [{ name: 'read', description: '读一个文件。', parameters: { type: 'object' } }]
+
+  /** 换脸之后，按 `runtime/step.ts` 同一条投影与编码路走一遍：返回目标 wire 的实际请求正文。 */
+  const encodeAfter = (from: ModelDecl, to: ModelDecl, turn: Turn): string => {
+    const base: AgentHandle = {
+      agent: 'agent-1' as AgentId,
+      coord: { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: ['deliver/agent-1/'] },
+      branch: 'refs/heads/agent-1' as BranchId,
+      contract: 'c1' as ContractId,
+      protocol: SUBAGENT_PROTOCOL,
+      model: from.id,
+      wireModel: from.model,
+      target: faceFor(from).target(),
+      adapter: { name: from.wire },
+      state: { ...emptyState(), facts: factsOf(turn) },
+    }
+    const next = faceHandle(base, faceFor(to))
+    assert.equal(next.state, base.state, `${from.wire} → ${to.wire}：换脸把这一格的历史也换了`)
+    const prefix = assemble({
+      protocol: next.protocol,
+      model: next.model,
+      segments: sourcesFor(next.protocol, next.state, next.coord),
+    })
+    const head = humanTextOf(next.state.facts)
+    const turns = wireTurnsOf(next.state.facts)
+    assert.equal(turns[0]?.notes?.length, 1, `${from.wire} → ${to.wire}：判词没进 wire 投影`)
+    const bytes = wireNamed(to.wire).bytes(
+      wireRequestOf({
+        adapter: next.adapter,
+        prefix,
+        model: next.wireModel,
+        tools,
+        turns,
+        ...(head === '' ? {} : { cHead: enc.encode(head) }),
+      }),
+    )
+    return DEC.decode(bytes)
+  }
+  const count = (hay: string, needle: string): number => hay.split(needle).length - 1
+  const at = (hay: string, needle: string): number => hay.indexOf(needle)
+
+  // 甲 · Anthropic 走完一步 → 回退到 OpenAI：工具对还在 · 思考以 reasoning_content 文本过去 ·
+  // 签名一个字节都不带（OpenAI 那条线不认它）· 判词在回执之后恰一遍。
+  const toO = encodeAfter(A, O, signed)
+  assert.ok(toO.includes('"tool_calls"'), 'OpenAI 请求里没有工具调用那一对')
+  assert.ok(toO.includes('读到了。'), 'OpenAI 请求里没有工具回执')
+  assert.ok(toO.includes('"reasoning_content":"想一下。"'), 'OpenAI 请求里没有思考文本（reasoning_content）')
+  assert.equal(toO.includes('sig-从实录里来'), false, 'Anthropic 的思考签名漏进了 OpenAI 请求')
+  assert.equal(count(toO, note), 1, 'OpenAI 请求里判词不是恰好一遍')
+  assert.ok(toO.includes(RULING_PREAMBLE), 'OpenAI 请求里没有判词那条固定帽子')
+  assert.ok(at(toO, note) > at(toO, '读到了。'), 'OpenAI 请求里判词跑到工具回执前面了')
+
+  // 乙 · OpenAI 走完一步 → 回退到 Anthropic：无签名的思考块**不发**（这条线回传思考要签名）·
+  // 工具对还在 · 判词在回执之后恰一遍。
+  const toA = encodeAfter(O, A, unsigned)
+  assert.ok(toA.includes('"tool_use"') && toA.includes('"tool_result"'), 'Anthropic 请求里缺工具那一对')
+  assert.equal(toA.includes('"type":"thinking"'), false, '无签名的思考块被发到 Anthropic 了')
+  assert.equal(count(toA, note), 1, 'Anthropic 请求里判词不是恰好一遍')
+  assert.ok(at(toA, note) > at(toA, '读到了。'), 'Anthropic 请求里判词跑到工具回执前面了')
+
+  // 丙 · 负对照：带签名的思考回 Anthropic 照旧带签名（别把闸做成"一律丢"）。
+  const signedA = encodeAfter(A, A, signed)
+  assert.ok(signedA.includes('"type":"thinking"'), '带签名的思考块被一律丢掉了')
+  assert.ok(signedA.includes('"signature":"sig-从实录里来"'), '签名没跟着思考块回去')
+
+  console.log(
+    `⑭ 读数：A→O ${Buffer.byteLength(toO, 'utf8')} 字节（签名 0 处 · 判词 ×1）· ` +
+      `O→A ${Buffer.byteLength(toA, 'utf8')} 字节（无签名思考 0 处 · 判词 ×1）· ` +
+      `A→A ${Buffer.byteLength(signedA, 'utf8')} 字节（签名随行）`,
+  )
 })

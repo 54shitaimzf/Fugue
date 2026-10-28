@@ -28,6 +28,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentCoord } from '../assemble/sources.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
+import { lastStepTextOf, turnsOf } from '../assemble/facts.ts'
 import { fixtureState } from '../model/fixture-state.ts'
 import { openLog } from '../log/log.ts'
 import type { LogHandle } from '../log/events.ts'
@@ -290,7 +291,7 @@ test('② 写串行 · 读不越过写：写后面那两条读看得见写的字
       ['旧-A', '新-A'],
       `a.txt 两次读到的字节：${JSON.stringify(b.seen.get('a.txt'))}`,
     )
-    const turn = (r.next.turns ?? [])[0]
+    const turn = turnsOf(r.next.facts)[0]
     assert.ok(turn !== undefined, '这一步该留下一条往返')
     assert.deepEqual(
       turn.results.map((x) => (x.output.startsWith('wrote ') ? x.output : bodyOf(x.output))),
@@ -320,7 +321,7 @@ test('③ 回执按原调用序：完成次序反过来（最后一条最先回�
     assert.equal(r.outcome.kind, 'continue')
     // 发起次序是原调用序（批内一起发）——而落定的次序与它相反，下面那一条才有内容。
     assert.deepEqual(b.started, ['a.txt', 'b.txt', 'c.txt', 'd.txt'], '发起次序该是原调用序（批内一起发）')
-    const turn = (r.next.turns ?? [])[0]
+    const turn = turnsOf(r.next.facts)[0]
     assert.ok(turn !== undefined, '这一步该留下一条往返')
     // 下标对位：`calls[i]` 就是 `results[i]`（回执按原调用序归位）。
     assert.deepEqual(turn.calls.map((c) => c.id), ['c1', 'c2', 'c3', 'c4'])
@@ -330,8 +331,8 @@ test('③ 回执按原调用序：完成次序反过来（最后一条最先回�
       ['A', 'B', 'C', 'D'],
       `回执没有按原调用序归位：${JSON.stringify(turn.results.map((x) => bodyOf(x.output)))}`,
     )
-    // C 区那一段（`lastStep` 是它的一个投影）也照原序。
-    const last = r.next.lastStep
+    // C 区那一段（`lastStep` 是它的一个投影——最后一条回合的文本）也照原序。
+    const last = lastStepTextOf(r.next.facts)
     const at = ['a.txt', 'b.txt', 'c.txt', 'd.txt'].map((p) => last.indexOf(p))
     assert.deepEqual([...at].sort((x, y) => x - y), at, `C 区那一段里四条回执的次序不是原调用序：${JSON.stringify(at)}`)
     console.log(

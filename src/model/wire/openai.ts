@@ -19,7 +19,7 @@
 // 所以"收尾"归 `finish`——它是"这条流到头了"那一刻的判决。
 import type { ModelEvent, StopReason, ThinkingLevel, Turn, Usage } from '../contract.ts'
 import type { WireAdapter } from './stream.ts'
-import { WireError, bodyOf, wireHeadOf } from './stream.ts'
+import { WireError, bodyOf, rulingMessage, wireHeadOf } from './stream.ts'
 import { THINKING_LEVELS } from '../contract.ts'
 
 interface ChatRequest {
@@ -67,6 +67,7 @@ function turnMessages(turn: Turn, at: number): Record<string, unknown>[] {
     }
     out.push({ role: 'tool', tool_call_id: id, content: r.output })
   })
+  if (turn.notes !== undefined && turn.notes.length > 0) out.push(rulingMessage(turn.notes))
   return out
 }
 

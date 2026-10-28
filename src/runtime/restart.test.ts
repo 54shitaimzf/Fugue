@@ -18,10 +18,14 @@ import { BUILTIN_CATALOG, modelDeclOf } from '../model/catalog.ts'
 import { openLog } from '../log/log.ts'
 import type { LogEvent } from '../log/events.ts'
 import { assemble, firstDivergence } from '../assemble/assemble.ts'
+import { wireRequestOf } from '../model/http.ts'
+import { wireNamed } from '../model/wire/registry.ts'
+import { catalog, CATALOG_STATES } from '../tools/catalog.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { sourcesFor } from '../assemble/sources.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { emptyState } from '../assemble/sources.ts'
+import { humanTextOf, lastStepTextOf, turnsOf, wireTurnsOf } from '../assemble/facts.ts'
 import { fixtureState } from '../model/fixture-state.ts'
 import type { AgentId, BranchId, ContractId, WriterId } from '../terms.ts'
 import { planBudget } from './budget.ts'
@@ -45,12 +49,28 @@ function bigState(target = 90_000): AssembleState {
   return { ...fixtureState(7), files: [{ path: 'src/big.ts', text: line.repeat(Math.ceil(target / per)) }] }
 }
 
-/** 工具目录与 `seed` 那两段：**账里递的是正文**（怎么量归 `planBudget`，调用方不换算）。 */
-const TOOLS = '工具目录：read_file · write_file · run_command'
-const SEED = '把这一格的活干完，并把读数交回来。'
+/** 工具目录：公布面那 12 条（与 `runtime.step` 的 `deps.tools` 同一份）。 */
+const TOOLS = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 
 /** 交接提示词那一段正文：ASCII 每四个字节一个 token（这把尺自己的系数），于是"约 n 个 token"。 */
 const handoffOf = (tokens: number): string => 'x'.repeat(tokens * 4)
+
+/** 这一步要发出去的那份请求字节（与 `runtime/step.ts` 的 `requestBodyOf` 同一条投影）。 */
+function bodyOf(state: AssembleState, handoff = ''): Uint8Array {
+  const s = handoff === '' ? state : { ...state, handoff }
+  const head = humanTextOf(s.facts)
+  const turns = wireTurnsOf(s.facts)
+  return wireNamed(DECL.wire).bytes(
+    wireRequestOf({
+      adapter: { name: DECL.wire },
+      prefix: prefixOf(s),
+      model: DECL.model,
+      tools: TOOLS,
+      ...(turns.length === 0 ? {} : { turns }),
+      ...(head === '' ? {} : { cHead: new TextEncoder().encode(head) }),
+    }),
+  )
+}
 
 /**
  * 一份"账落在 `target` 之上"的状态。**尺寸只认那把尺的读数**：先按字节猜一个起点，量一次、
@@ -60,7 +80,7 @@ function stateWithUsed(target: number, decl: typeof DECL = DECL): AssembleState 
   let bytes = target
   for (let i = 0; i < 16; i++) {
     const state = bigState(bytes)
-    const used = planBudget({ decl, prefix: prefixOf(state), tools: TOOLS, seed: SEED, handoff: '' }).used
+    const used = planBudget({ decl, body: bodyOf(state) }).used
     if (used >= target) return state
     bytes = Math.ceil(bytes * (target / used) * 1.05)
   }
@@ -93,8 +113,7 @@ const prefixOf = (state: AssembleState, coord: AgentCoord = WHO) =>
 test('① 到了触发点：agent/handoff 在日志里 · 正文非空 · 新 AgentId 同一条分支 · 轮级状态没变', async () => {
   await withLog(async (log, root) => {
     const state = stateWithUsed(DECL.budget.trigger + 4_000)
-    const prefix = prefixOf(state)
-    const plan = planBudget({ decl: DECL, prefix, tools: TOOLS, seed: SEED, handoff: handoffOf(2_000) })
+    const plan = planBudget({ decl: DECL, body: bodyOf(state), bodyWithHandoff: bodyOf(state, handoffOf(2_000)) })
     assert.equal(plan.kind, 'restart', `这一份状态该判交接：${plan.why}`)
 
     // 后继的名字**这一份不算**（清障批 ⑤）：名字由调用方给（`round/driver.ts` 交接那一步），
@@ -147,7 +166,7 @@ test('① 到了触发点：agent/handoff 在日志里 · 正文非空 · 新 Ag
 test('② 交接提示词落在 Zone B：A 区逐字节不变 · B 区里出现那一段 · 分叉点落在 A 与 A+B 之间', async () => {
   await withLog(async (log, root) => {
     const state = stateWithUsed(DECL.budget.trigger + 4_000)
-    const plan = planBudget({ decl: DECL, prefix: prefixOf(state), tools: TOOLS, seed: SEED, handoff: handoffOf(2_000) })
+    const plan = planBudget({ decl: DECL, body: bodyOf(state), bodyWithHandoff: bodyOf(state, handoffOf(2_000)) })
     const out = await handoffAt({
       log,
       writer: AGENT as WriterId,
@@ -180,9 +199,9 @@ test('② 交接提示词落在 Zone B：A 区逐字节不变 · B 区里出现�
     assert.ok(at < after.zoneA.length + after.zoneB.length, `分叉点 ${at} 该落在 B 区里（|A|+|B|=${after.zoneA.length + after.zoneB.length}）`)
 
     // 而 C 区（那串只追加的尾巴）被清空了：那是前任的会话内积累（§ 8.11）。
-    assert.equal(out.next.turns?.length, 1, '继任者手里只有"你接手了"那一句')
-    assert.match(out.next.turns![0]!.text ?? '', /【接手】/)
-    assert.equal(out.next.lastStep, '', '前任的上一步回执不进下一格')
+    assert.equal(turnsOf(out.next.facts).length, 1, '继任者手里只有"你接手了"那一句')
+    assert.match(turnsOf(out.next.facts)[0]!.text ?? '', /【接手】/)
+    assert.equal(lastStepTextOf(out.next.facts), '', '前任的上一步回执不进下一格')
     assert.equal(out.next.step, 0, '步数是它自己的')
 
     console.log(
@@ -200,10 +219,8 @@ test('③ 地板：预算退化成"用完就停"时仍能收尾——明确报�
     const state = stateWithUsed(DECL.contextLimit)
     const plan = planBudget({
       decl: DECL,
-      prefix: prefixOf(state),
-      tools: TOOLS,
-      seed: SEED,
-      handoff: handoffOf(DECL.budget.handoffMargin * 8),
+      body: bodyOf(state),
+      bodyWithHandoff: bodyOf(state, handoffOf(DECL.budget.handoffMargin * 8)),
     })
     assert.equal(plan.kind, 'stop', `这一份该判停：${plan.why}`)
     // **不留白**：为什么停那句话说得出量（用了多少 · 扣掉交接与余量之后留给这一步多少 · 这一步比它多多少 · 触发点在哪）。
@@ -228,11 +245,11 @@ test('④ 负对照：触发点设在等于上限 → 那一档判出来的是"�
   const broken = { ...DECL, budget: { trigger: DECL.contextLimit, handoffMargin: 16_000 } }
   const state = stateWithUsed(DECL.budget.trigger + 4_000)
   // 正常那一份预算：同一份状态判出来的是**交接**。
-  const good = planBudget({ decl: DECL, prefix: prefixOf(state), tools: TOOLS, seed: SEED, handoff: handoffOf(2_000) })
+  const good = planBudget({ decl: DECL, body: bodyOf(state), bodyWithHandoff: bodyOf(state, handoffOf(2_000)) })
   assert.equal(good.kind, 'restart', `正常预算下：${good.kind}——${good.why}`)
 
   // 坏预算：**同一份状态连触发点都到不了**（触发点贴在上限上，就再也没有"到了触发点"这一步）。
-  const stuck = planBudget({ decl: broken, prefix: prefixOf(state), tools: TOOLS, seed: SEED, handoff: handoffOf(2_000) })
+  const stuck = planBudget({ decl: broken, body: bodyOf(state), bodyWithHandoff: bodyOf(state, handoffOf(2_000)) })
   assert.equal(stuck.kind, 'continue', `坏预算判出来的：${stuck.kind}——${stuck.why}`)
   assert.equal(stuck.trigger, stuck.limit)
   assert.notEqual(stuck.kind, good.kind, '两档的差别只有那一个数，判决却相反')
@@ -241,10 +258,8 @@ test('④ 负对照：触发点设在等于上限 → 那一档判出来的是"�
   // **撑爆按那把尺的读数撑**——字节数与 token 数不是一回事，所以这里不写死乘几倍。
   const over = planBudget({
     decl: broken,
-    prefix: prefixOf(stateWithUsed(DECL.contextLimit, broken)),
-    tools: TOOLS,
-    seed: SEED,
-    handoff: handoffOf(2_000),
+    body: bodyOf(stateWithUsed(DECL.contextLimit, broken)),
+    bodyWithHandoff: bodyOf(stateWithUsed(DECL.contextLimit, broken), handoffOf(2_000)),
   })
   assert.equal(over.kind, 'stop', `坏预算撑爆那一档：${over.why}`)
   assert.ok(over.used > over.limit, `用量 ${over.used} 该过上限 ${over.limit}`)

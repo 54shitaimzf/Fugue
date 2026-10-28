@@ -60,9 +60,13 @@ function stateWith(over: Partial<AssembleState> = {}): AssembleState {
     },
     distill: '持轮者凝聚出来的理解。',
     recent: '压缩前留着的那几段原文。',
-    runtime: '这一步的会话流。',
-    signals: ['agent-2 已完成', 'agent-3 超时'],
-    lastStep: '上一步的工具结果。',
+    // 事实那一栏：人话 + 一条回合（旧 `lastStep` 那一段文本的投影）+ 两条判词。
+    facts: [
+      { kind: 'human', text: '这一步的会话流。' },
+      { kind: 'turn', turn: { text: '上一步的工具结果。', calls: [], results: [] } },
+      { kind: 'ruling', text: 'agent-2 已完成' },
+      { kind: 'ruling', text: 'agent-3 超时' },
+    ],
     ...over,
   }
 }

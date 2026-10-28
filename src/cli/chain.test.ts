@@ -939,8 +939,8 @@ test('C5 · `fugue say` 讨论态：那句话进记录 · 进请求字节 · 讨
   const request = readFileSync(join(dump, 'call-0001', 'request.json'), 'utf8')
   assert.ok(request.includes(sentence), `落下来那一份请求里没有那句话：${request.slice(0, 300)}`)
   // 而**那一句单独成一条消息**（C 区那一段的头就是它）：只判"字节里有那句话"钉不住这一处——
-  // 讨论态里 B 区那一段投影（最近几次原文）也带着那句话。负对照实测：把 `cZoneHeadOf` 抹空，
-  // 只判字节那一条照旧绿，加上这一条才红。
+  // 讨论态里 B 区那一段投影（最近几次原文）也带着那句话。负对照实测：把事实里的 `human`
+  // 那一条抹空，只判字节那一条照旧绿，加上这一条才红。
   assert.ok(
     messagesOf(request).some((m) => m.content === sentence),
     `落下来那一份请求里没有"那一句单独成一条消息"（C 区那一段头）：${request.slice(0, 400)}`,

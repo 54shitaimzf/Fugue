@@ -46,6 +46,7 @@ import { createRoots } from '../roots/roots.ts'
 import type { Denied as FenceDenied, Roots } from '../roots/contract.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { emptyState, stepsLeftTail } from '../assemble/sources.ts'
+import { turnsOf } from '../assemble/facts.ts'
 import type { AssembleState } from '../assemble/sources.ts'
 import { fixtureState } from '../model/fixture-state.ts'
 import { BUILTIN_CATALOG, modelDeclOf } from '../model/catalog.ts'
@@ -750,7 +751,7 @@ test('④ 假模型驱动 读 → 写 → 检查点：走到一次真提交，�
     for (let i = 0; i < 3; i++) {
       const r = await rt.step(h, new AbortController().signal)
       outcomes.push(r.outcome.kind)
-      turned.push(...(r.next.turns ?? []).slice(turned.length))
+      turned.push(...turnsOf(r.next.facts).slice(turned.length).map((t) => t.text ?? ''))
       h = { ...h, state: r.next }
     }
     assert.deepEqual(outcomes, ['continue', 'continue', 'done'], `三步的结果：${outcomes.join(' ')}｜工具回了什么：${turned.join(' ¶ ')}`)

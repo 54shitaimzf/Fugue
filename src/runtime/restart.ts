@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto'
 import type { Log, LogEvent } from '../log/events.ts'
 import type { AgentId, BranchId, ContractId, LogSeq, WriterId } from '../terms.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
+import { factsAfterHandoff, lastStepTextOf } from '../assemble/facts.ts'
 import type { BudgetPlan } from './budget.ts'
 
 /** 交接的正文。**它是一份值，序列化成 JSON 进事件**（与 `round/intent` · `contract/issue` 同一路）。 */
@@ -53,7 +54,8 @@ export function handoffOf(i: {
   readonly plan: BudgetPlan
   readonly commands: readonly string[]
 }): Handoff {
-  const done = i.state.lastStep.trim() === '' ? '（这一步没有留下回执）' : i.state.lastStep.trim()
+  const last = lastStepTextOf(i.state.facts).trim()
+  const done = last === '' ? '（这一步没有留下回执）' : last
   return {
     goal: i.goal,
     from: i.from,
@@ -129,14 +131,15 @@ async function recordHandoff(
  * 后继那一格的状态。**纯函数，而且它是"接续"这件事在值上的全部**：
  *
  *   · `handoff` 那一栏进 Zone B（交接提示词那一段）——**下一格第一步的 B 区里就有它**；
- *   · `turns` 与 `lastStep` **清空**：那是前任的会话内积累（架构 § 8.11："跨进程即失"）；
- *     不清的话下一格会以为那些工具结果是它自己刚做的；
+ *   · 前任的回合事实**丢掉**（`factsAfterHandoff`）：那是前任的会话内积累（架构 § 8.11：
+ *     "跨进程即失"）；不丢的话下一格会以为那些工具结果是它自己刚做的。人话与判词留下——
+ *     与从前保住 `runtime` · `signals` 同一口径；
  *   · `step` 归零：**它的步数是它自己的**（触发点按它自己的步数算）；
- *   · 其余（方针 · 系统 · 代码树 · 目标 · 文件 · 提交 · 契约 · 摘要 · 信号）照旧——
+ *   · 其余（方针 · 系统 · 代码树 · 目标 · 文件 · 提交 · 契约 · 摘要）照旧——
  *     它们要么来自视图与日志（重新装配得出），要么本来就是跨 agent 稳定的那几段。
  *
- * 返回的那个 `turns` 里那一条"你接手了"是**给模型看的第一句**（它与前任收到的第一句同一个
- * 位置），不是回执——回执是工具跑完之后才有的东西。
+ * 那条『接手』是**给模型看的第一句**（它与前任收到的第一句同一个位置），不是回执——回执是
+ * 工具跑完之后才有的东西。
  */
 export function successorOf(state: AssembleState, prompt: string): AssembleState {
   return {
@@ -145,8 +148,13 @@ export function successorOf(state: AssembleState, prompt: string): AssembleState
     handoff: prompt,
     // **接手那一句也不带 `coord.id`**（PLAN § 5.17 处五）：它是给模型看的第一句，而
     // "我是谁"这件事由 B 区的目标与契约说，不由这一句报户口。
-    turns: [{ text: '【接手】从这一步开始。上面"交接"那一段是前任留下的。', calls: [], results: [] }],
-    lastStep: '',
+    // **事实换人**：前任的回合丢掉、人话与判词留下、接上这一句【接手】（`factsAfterHandoff`）
+    // ——与从前的 `turns` 清空 · `lastStep` 清空逐字节相同。
+    facts: factsAfterHandoff(state.facts, {
+      text: '【接手】从这一步开始。上面"交接"那一段是前任留下的。',
+      calls: [],
+      results: [],
+    }),
   }
 }
 

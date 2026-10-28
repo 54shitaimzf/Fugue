@@ -3,14 +3,14 @@
 // 接续"）· § 23 U6（三个模型相关的量，**这一站只建立口径**）· § 8.15（`prefix-hit-rate` 的
 // 输入就是这套字节——那八个指标住在 src/probe/metrics.ts）· § 8.13.a（循环重启）。
 //
-// **它是纯函数。** 输入是一份前缀与一份声明，出口是三个数与一个判决——不读日志、不碰模型、
-// 不认识 agent。于是"触发点到了没有"这件事在真调用之前就答得出来（`B0` 那道闸的同一条理由：
-// 账不对的时候，真调用的读数不可解释，而钱已经花了）。
+// **它是纯函数。** 输入是一份**已编码的请求**（这一步真要发出去的那一份字节）与一份声明，
+// 出口是三个数与一个判决——不读日志、不碰模型、不认识 agent。于是"触发点到了没有"这件事在
+// 真调用之前就答得出来（`B0` 那道闸的同一条理由：账不对的时候，真调用的读数不可解释，而钱
+// 已经花了）。
 //
 // **三个数只有一处定义**：`ModelDecl.contextLimit` 是那一个上界，`trigger` 与 `handoffMargin`
 // 由 `contract.ts` 的 `triggerAt()` 与声明一起给。这一份不自己算那个比例，也不自己定余量——
 // 它只读。
-import type { Prefix } from '../assemble/contract.ts'
 import { UNCALIBRATED } from './calib.ts'
 import type { Calibration } from './calib.ts'
 import type { ModelDecl } from '../model/contract.ts'
@@ -21,7 +21,8 @@ import type { ModelDecl } from '../model/contract.ts'
  * 真正的 token 数只有提供方的分词器答得准，而那是要出网才知道的东西——`B0` 的闸要求这笔账
  * **离线**算出来，于是这里是一把保守的粗尺：**非 ASCII 每两个字节算一个 token**（一个三字节的
  * 汉字因此约 1.5 个，而真实分词通常更少）· **ASCII 每四个字节算一个**（英文与代码的常见比值，
- * 取整时向上）· 再加一个固定的信封（`ENVELOPE`，两侧的角色标记与分隔那几十个字节）。
+ * 取整时向上）· 再加一个固定的信封（`ENVELOPE_TOKENS`，8 个）。请求体自己已经带着 JSON 的
+ * 信封了，这 8 个是**保守余量**：估账宁可早触发一步，不要贴着地板走。
  *
  * **它是估账，不是读数**：读数在 `llm/call` 的 `usage` 那四个数里（真调用之后才有）。这笔账
  * 的用处只有一个——**在真调用之前判断"这一步发不发得出去"**。
@@ -53,7 +54,7 @@ export interface BudgetPlan {
   /** 交接余量：留给"交接提示词 + 下一次调用的头"那一块。 */
   readonly handoffMargin: number
   /**
-   * 这一步的上下文用了多少（三区 + 工具目录 + `seed`，**按那把尺估出来的 token**，过了修正）。
+   * 这一步的上下文用了多少——**已编码请求**（`BudgetAsk.body`）按那把尺估出来的 token，过了修正。
    */
   readonly used: number
   /**
@@ -78,17 +79,19 @@ export interface BudgetPlan {
 /** 这笔账要什么。**全部是值**：没有任何一处要现读日志或现读视图。 */
 export interface BudgetAsk {
   readonly decl: ModelDecl
-  /** 这一步要发出去的那份前缀。 */
-  readonly prefix: Prefix
   /**
-   * 工具目录那一段的**正文**（架构 § 8.11 表外那一项：它有位置，位置不由我们排）。
+   * **这一步要发出去的那份请求字节**（目标 wire 的 `bytes` 编出来的那一份）。
    *
-   * **递进来的是正文，不是量好的数**：怎么量归 `planBudget` 那一处——调用方各自换算的话，
-   * 三区 · 工具目录 · `seed` 就是三套口径混进同一个和里。
+   * 不是三区文本的拼法：JSON 的字段名 · 角色包装 · 工具 schema · 原生轮次 · 判词那几条 user
+   * 消息全在里面。预算量的必须与发出去的是同一份——否则比值校准的两端永远不是同一把尺。
    */
-  readonly tools: string
-  /** `seed` 的**正文**：那一轮派下来的活（架构 § 8.12）。 */
-  readonly seed: string
+  readonly body: Uint8Array
+  /**
+   * **现在交接的话，请求体会变成的那一份**（交接提示词已经写进 B 区；同一目标 wire 编出来）。
+   *
+   * 不给 = 这一步不估交接（判决只答"到了触发点没有"）；给了才答"交接写不写得下"。
+   */
+  readonly bodyWithHandoff?: Uint8Array
   /**
    * 一份修正：这一趟之前量到的"真 ÷ 估"。不给就是那把尺的原始读数（`UNCALIBRATED`）。
    *
@@ -96,13 +99,6 @@ export interface BudgetAsk {
    * 一处算（最近八份的中位数）。没有读数时账一个字都不动。
    */
   readonly calib?: Calibration
-  /**
-   * 交接提示词的**正文**（这一步还没交接时给 `''`，那时它一点账都不占）。
-   *
-   * **它进这一笔账**：到了触发点的那一步要写的正是它，而"写不写得下"就是 `stop` 与 `restart`
-   * 的分界。给空串的话判决只答得出"到了触发点"，答不出"还写不写得下"。
-   */
-  readonly handoff: string
 }
 
 /** 一段文本的字节：**进尺的那一份**（UTF-8，与装配器写出来的字节同一个量法）。 */
@@ -137,47 +133,32 @@ export function overDistillLimit(text: string): string | null {
   )
 }
 
-/** 几段字节接成一段。**尺一次只量一段**——信封因此只算一次，不会被每个加数各加一遍。 */
-function concat(parts: readonly Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0))
-  let at = 0
-  for (const p of parts) {
-    out.set(p, at)
-    at += p.length
-  }
-  return out
-}
-
 /**
  * 算这一步的账。
  *
  * **顺序是刻意的**：先算"这一步用了多少"，再看它有没有过触发点，最后看**交接写不写不下**
  * ——三档因此是三个数之间的比较，没有一处拍脑袋。
  *
- * `used` 里那一块 `handoff` 的算法：判决要回答"到了触发点这一步，交接提示词还塞不塞得进
+ * `used` 里那一块交接的算法：判决要回答"到了触发点这一步，交接提示词还塞不塞得进
  * 下一次调用"。所以它是 `这一步 + 交接 + 余量`：**那三样一起不超过上限**才算 `restart`。
- * 交接那一段取的是**增量**——同一段字节再量一次、减掉先前那一次，多出来的就是它。
+ * 交接那一段取的是**两份已编码请求的差**——同一把尺、同一个信封，差里不会多算一次信封。
  */
 export function planBudget(ask: BudgetAsk): BudgetPlan {
   // 上限那一栏在一等字段上（`contextLimit`），触发点与余量在 `budget` 那一格里——**三处名字**
   // 各有各的出处，这一份只读，不自己算比例。
   const limit = ask.decl.contextLimit
   const budget = ask.decl.budget
-  // **这一笔账只量一次**：前缀三区 + 工具目录 + `seed` 接成一段交给尺，于是那三个加数不可能各按
-  // 各的口径记。三个数（上限 · 触发点 · 余量）与 `used` 因此落在同一个口径上。
-  const head = concat([
-    ask.prefix.zoneA,
-    ask.prefix.zoneB,
-    ask.prefix.zoneC,
-    bytesOfText(ask.tools),
-    bytesOfText(ask.seed),
-  ])
-  const raw = estimateTokens(head)
+  // **这一笔账只量一份字节**：调用方递进来的就是目标 wire 编出来的那一份请求，与 `callModel`
+  // 发出去的逐字节相同。三个数（上限 · 触发点 · 余量）与 `used` 因此落在同一个口径上。
+  const raw = estimateTokens(ask.body)
   const calib = ask.calib ?? UNCALIBRATED
   // **修正的是一个比值**（真 ÷ 估）：账上的每一个加数都过它，尺的原始读数留在 `raw` 里。
   const used = Math.ceil(raw * calib.ratio)
   const headroom = limit - used
-  const handoff = Math.round((estimateTokens(concat([head, bytesOfText(ask.handoff)])) - raw) * calib.ratio)
+  const handoff =
+    ask.bodyWithHandoff === undefined
+      ? 0
+      : Math.max(0, Math.round((estimateTokens(ask.bodyWithHandoff) - raw) * calib.ratio))
   const withHandoff = used + handoff + budget.handoffMargin
   const note = calib.samples === 0 ? '' : `（按 ${calib.samples} 份真读数修 ×${calib.ratio.toFixed(2)}）`
 

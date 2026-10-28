@@ -34,11 +34,12 @@ import type { ModelCall, ModelEvent, StopReason, Thinking, ThinkingLevel, Turn, 
 import { checkEvents } from '../model/contract.ts'
 import type { Target, Transport } from '../model/http.ts'
 import { callModel, wireFactsOf, wireRequestOf } from '../model/http.ts'
+import { wireNamed } from '../model/wire/registry.ts'
 import type { WireAdapter } from '../model/wire/stream.ts'
 import type { Prefix, Protocol } from '../assemble/contract.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
-import { cZoneHeadOf } from '../assemble/sources.ts'
-import { sourcesFor, turnText } from '../assemble/sources.ts'
+import { sourcesFor } from '../assemble/sources.ts'
+import { humanTextOf, wireTurnsOf, withFact } from '../assemble/facts.ts'
 import { promptCacheFor } from '../model/contract.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import type { ToolEntry } from '../tools/catalog.ts'
@@ -136,7 +137,7 @@ export interface RuntimeRequest {
   /** 已经走过的那几步（发原生轮次用；第 0 步没有）。 */
   readonly turns?: readonly Turn[]
   /**
-   * **C 区那一段的头**（`AssembleState.runtime` 的字节）：只追加那条尾巴之前的字节。
+   * **C 区那一段的头**（`humanTextOf(state.facts)` 的字节）：只追加那条尾巴之前的字节。
    *
    * 它必须单独带过去：`turns` 一有值，适配器就把尾巴发成原生轮次，而**头照旧要发**——不然
    * 人说的那一句从第 1 步起就再也读不到（架构 § 8.11：「那句话进的是这一趟的尾端（C 区第一
@@ -146,6 +147,63 @@ export interface RuntimeRequest {
   /** 提供方那边什么名字（`ModelRequest.model`）。 */
   readonly model: string
   readonly call?: { readonly temperature?: number; readonly maxTokens?: number; readonly thinking?: ThinkingLevel }
+}
+
+/**
+ * 编码一份请求要的那几样（**不含 `target`**：编码不碰它；真发的时候才用得上）。
+ *
+ * 它是“同一份投影”的输入：`runtime/step.ts` 发出去的那一份、预算量的那一份、占用表量
+ * 的那一份都从这里过——三处各拼一遍的话，预算与请求就会静默地不是同一份。
+ */
+export interface RequestParts {
+  readonly protocol: Protocol
+  readonly model: ModelId
+  readonly wireModel: string
+  readonly adapter: { readonly name: string }
+  readonly call?: { readonly temperature?: number; readonly maxTokens?: number; readonly thinking?: ThinkingLevel }
+  readonly state: AssembleState
+  readonly coord: AgentCoord | null
+}
+
+/** 这一份请求的线协议参数：**只此一处**（`step()` 与预算读的是同一份投影）。 */
+function wireAskOf(p: RequestParts, tools: readonly ToolEntry[]): Parameters<typeof wireRequestOf>[0] {
+  const prefix = assemble({ protocol: p.protocol, model: p.model, segments: sourcesFor(p.protocol, p.state, p.coord) })
+  // 同一份事实的两个投影：头是文本的那一半；尾巴是原生轮次的那一半（判词折进回合的
+  // `notes`——`wireTurnsOf`）。文本预览按段取，不吃 `notes`。
+  const head = humanTextOf(p.state.facts)
+  const turns = wireTurnsOf(p.state.facts)
+  return {
+    adapter: p.adapter,
+    prefix,
+    model: p.wireModel,
+    tools,
+    ...(turns.length === 0 ? {} : { turns }),
+    ...(head === '' ? {} : { cHead: new TextEncoder().encode(head) }),
+    ...(p.call === undefined ? {} : { call: p.call }),
+  }
+}
+
+/** 这一步要发出去的那份请求（运行时的 `RuntimeRequest`）。 */
+export function requestOf(
+  h: RequestParts & { readonly target: Target },
+  tools: readonly ToolEntry[],
+): RuntimeRequest {
+  return {
+    target: h.target,
+    adapter: h.adapter,
+    promptCache: promptCacheFor(h.adapter.name),
+    ...wireAskOf(h, tools),
+  }
+}
+
+/**
+ * **编码后的那一份**：预算读的就是它。
+ *
+ * 与 `callModel` 里 `t.wire.bytes(r)` 编的是同一份（同一处 `wireAskOf` 的投影 + 同一个目标
+ * wire 的适配器）。`target` 不参与——它只说发到哪儿，不改字节。
+ */
+export function requestBodyOf(h: RequestParts, tools: readonly ToolEntry[]): Uint8Array {
+  return wireNamed(h.adapter.name).bytes(wireRequestOf(wireAskOf(h, tools)))
 }
 
 /** 第 2 步的出口：事件流 + 一次调用的账。 */
@@ -448,30 +506,15 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   async function step(h: AgentHandle, signal: AbortSignal): Promise<StepResult> {
     const seqs: LogSeq[] = []
     // ── 1. 装配（纯函数，不碰模型）
-    const prefix = assemble({ protocol: h.protocol, model: h.model, segments: sourcesFor(h.protocol, h.state, h.coord) })
-    const request: RuntimeRequest = {
-      target: h.target,
-      adapter: h.adapter,
-      prefix,
-      tools,
-      promptCache: promptCacheFor(h.adapter.name),
-      model: h.wireModel,
-      // 走过的那几步：**有才带**。第 0 步与交接后的第一步都是“没有”——没有就发 C 区那条文本
-      // （两条路都不改 A/B 两区的字节，前缀那笔账不破）。
-      ...(h.state.turns === undefined || h.state.turns.length === 0 ? {} : { turns: h.state.turns }),
-      // C 区那一段的**头**（人说的那一句 · 这一趟的开场）：**每一步都带**。组成规则的定义处是
-      // `assemble/sources.ts` 的 `cZoneHeadOf`——C 区那一段 = 头 + 只追加的尾巴，尾巴走 `turns`。
-      ...(cZoneHeadOf(h.state) === '' ? {} : { cHead: new TextEncoder().encode(cZoneHeadOf(h.state)) }),
-      ...(h.call === undefined ? {} : { call: h.call }),
-    }
+    const request = requestOf(h, tools)
     // ── 5a. `prefix/assemble`：三区指纹（`B3` 的断言 ② 要的那三个数）
     seqs.push(
       await deps.logOf(h.agent).append(h.agent as WriterId, {
         t: 'prefix/assemble',
         agent: h.agent,
-        zoneAHash: hashOf(prefix.zoneA),
-        zoneBHash: hashOf(prefix.zoneB),
-        zoneCHash: hashOf(prefix.zoneC),
+        zoneAHash: hashOf(request.prefix.zoneA),
+        zoneBHash: hashOf(request.prefix.zoneB),
+        zoneCHash: hashOf(request.prefix.zoneC),
       }),
     )
 
@@ -605,21 +648,20 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     // ── 6. 下一状态：C 区那个积累段**只追加**（架构 § 8.11 的验证性质）。
     // **有工具叫停就到这儿为止**（停在门口那一档）：它是"收敛"，与模型自己说完同一档。
     const outcome = halted ? { kind: 'done' as const, usage } : outcomeOf(call.stop, usage, said, call.rawStop)
-    // 这一步什么都没发生（没说话、也没调工具）——不追加一个空的 `Turn`：空的一步会让
-    // `上一步结果` 变成空串，而"这一步无事发生"与"上一步的结果丢了"是两件事。
+    // 这一步什么都没发生（没说话、也没调工具、也没想）——不追加一条空回合：空的一步会让
+    // 「上一步结果」变成空串，而"这一步无事发生"与"上一步的结果丢了"是两件事。
     // **想过也算发生过**：只想不说、也没伸手的一步，它的思考照样要留在轮次里——带工具时
     // 不回传就是 400（上游那一页的 Tool Calls 一节），所以"安静"这一档必须把思考算进去。
     const quiet = said === '' && done.length === 0 && call.thinking === null
+    // **一步就是一条回合事实**（只追加）。「上一步结果」不再另写一份字符串：它是这条事实的
+    // 文本投影（`facts.ts` 的 `lastStepTextOf`）——从前 `turns` 与 `lastStep` 写的是同一个值，
+    // 现在只有一份。**思考不进文本投影**（它走原生轮次那一路）。
     const next: AssembleState = quiet
       ? { ...h.state, step: h.state.step + 1 }
       : {
           ...h.state,
           step: h.state.step + 1,
-          // `上一步结果` 与 `运行时上下文` 都是 C 区的段：前者是"刚过去那一步"，后者是那条只追加的尾巴。
-          // **C 区那一段文本里不渲染思考**：思考走原生轮次那一路（`Turn.thinking`），写进文本面
-          // 等于同一份东西发两遍，还把那一段每步都变的字节撑大。
-          lastStep: turnText(turnOf(said, done, call.thinking)),
-          turns: [...(h.state.turns ?? []), turnOf(said, done, call.thinking)],
+          facts: withFact(h.state.facts, { kind: 'turn', turn: turnOf(said, done, call.thinking) }),
         }
     return {
       outcome,

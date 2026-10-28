@@ -12,30 +12,60 @@
 //   ⑥ **凝聚理解那一栏的上限**（架构 § 15.1.a）：50 000 token 以内不报，超了报出来（带两个数，
 //      不裁剪——它是模型的产物，没有"拒"的对象）
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { triggerAt } from '../model/contract.ts'
-import type { ModelDecl } from '../model/contract.ts'
+import { checkEvents, triggerAt } from '../model/contract.ts'
+import type { ModelDecl, ModelEvent } from '../model/contract.ts'
 import { BUILTIN_CATALOG, modelDeclOf } from '../model/catalog.ts'
-import { assemble, readPrefix } from '../assemble/assemble.ts'
+import { wireRequestOf } from '../model/http.ts'
+import { wireNamed } from '../model/wire/registry.ts'
+import { parseStream } from '../model/wire/stream.ts'
+import { assemble } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { sourcesFor } from '../assemble/sources.ts'
 import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { emptyState } from '../assemble/sources.ts'
+import { humanTextOf, wireTurnsOf } from '../assemble/facts.ts'
 import { fixtureState } from '../model/fixture-state.ts'
 import type { Prefix } from '../assemble/contract.ts'
 import { DISTILL_LIMIT_TOKENS, ENVELOPE_TOKENS, checkBudget, estimateTokens, estimateTokensOfText, overDistillLimit, planBudget } from './budget.ts'
-import { calibrate, ratioOf, truthOf } from './calib.ts'
 import type { BudgetAsk } from './budget.ts'
+import { calibrate, ratioOf, truthOf } from './calib.ts'
+import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
 
 const DECL = modelDeclOf('deepseek-flash/anthropic', BUILTIN_CATALOG)
 const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: [] }
 
-/** 工具目录与 `seed` 那两段：**账里递的是正文**（怎么量归 `planBudget`，调用方不换算）。 */
-const TOOLS = '工具目录：read_file · write_file · run_command'
-const SEED = '把这一格的活干完，并把读数交回来。'
+/** 工具目录：公布面那 12 条（与 `runtime.step` 的 `deps.tools` 同一份）。 */
+const TOOLS = catalog(CATALOG_STATES[0] as (typeof CATALOG_STATES)[number])
 
 function prefixOf(state: AssembleState, coord: AgentCoord = WHO, decl: ModelDecl = DECL): Prefix {
   return assemble({ protocol: SUBAGENT_PROTOCOL, model: decl.id, segments: sourcesFor(SUBAGENT_PROTOCOL, state, coord) })
+}
+
+const WIRE = wireNamed(DECL.wire)
+const enc = new TextEncoder()
+
+/**
+ * **这一步要发出去的那一份请求字节**：与 `runtime/step.ts` 的 `requestBodyOf` 同一条投影
+ * （同一份前缀 · 同一份原生轮次 · 同一份工具目录 · 同一个目标 wire 的编码器）。
+ *
+ * `handoff` 给了就把它写进 B 区再编一次——那是“现在交接的话，请求体会变成的那一份”。
+ */
+function bodyOf(state: AssembleState, handoff = ''): Uint8Array {
+  const s = handoff === '' ? state : { ...state, handoff }
+  const head = humanTextOf(s.facts)
+  const turns = wireTurnsOf(s.facts)
+  return WIRE.bytes(
+    wireRequestOf({
+      adapter: { name: DECL.wire },
+      prefix: prefixOf(s),
+      model: DECL.model,
+      tools: TOOLS,
+      ...(turns.length === 0 ? {} : { turns }),
+      ...(head === '' ? {} : { cHead: enc.encode(head) }),
+    }),
+  )
 }
 
 /** 一份够到触发点的状态：`files` 里塞够多的字节（B 区那一段会跟着长）。 */
@@ -59,7 +89,7 @@ function stateWithUsed(target: number, decl: typeof DECL = DECL): AssembleState 
   let bytes = target
   for (let i = 0; i < 16; i++) {
     const state = bigState(bytes)
-    const used = planBudget({ decl, prefix: prefixOf(state), tools: TOOLS, seed: SEED, handoff: '' }).used
+    const used = planBudget({ decl, body: bodyOf(state) }).used
     if (used >= target) return state
     bytes = Math.ceil(bytes * (target / used) * 1.05)
   }
@@ -69,24 +99,9 @@ function stateWithUsed(target: number, decl: typeof DECL = DECL): AssembleState 
 /** 交接提示词那一段正文：ASCII 每四个字节一个 token（这把尺自己的系数），于是"约 n 个 token"。 */
 const handoffOf = (tokens: number): string => 'x'.repeat(tokens * 4)
 
-/** 账上那几段接成的一段字节——**与 `planBudget` 里那一次量法是同一个形状**（用来核对"账 == 尺"）。 */
-const bytesOfAsk = (ask: BudgetAsk): Uint8Array =>
-  new Uint8Array(
-    Buffer.concat([
-      Buffer.from(ask.prefix.zoneA),
-      Buffer.from(ask.prefix.zoneB),
-      Buffer.from(ask.prefix.zoneC),
-      Buffer.from(ask.tools, 'utf8'),
-      Buffer.from(ask.seed, 'utf8'),
-    ]),
-  )
-
-const askOf = (prefix: Prefix, over: Partial<BudgetAsk> = {}): BudgetAsk => ({
+const askOf = (state: AssembleState, over: Partial<BudgetAsk> = {}): BudgetAsk => ({
   decl: DECL,
-  prefix,
-  tools: TOOLS,
-  seed: SEED,
-  handoff: '',
+  body: bodyOf(state),
   ...over,
 })
 
@@ -99,7 +114,7 @@ test('① 三个数印得出来，且关系可核对（触发点在 (0, 上限) 
   assert.equal(DECL.budget.trigger, 367_001)
   assert.equal(DECL.budget.handoffMargin, 16_000)
 
-  const plan = planBudget(askOf(prefixOf(emptyState())))
+  const plan = planBudget(askOf(emptyState()))
   assert.equal(plan.limit, DECL.contextLimit)
   assert.equal(plan.trigger, DECL.budget.trigger)
   assert.equal(plan.handoffMargin, DECL.budget.handoffMargin)
@@ -118,23 +133,23 @@ test('② 那把尺与那笔账是同一个口径 · 同样字数下中文更贵
   assert.equal(estimateTokens(cjk), Math.ceil(1200 / 2) + ENVELOPE_TOKENS, `400 个汉字（1200 字节）：${estimateTokens(cjk)}`)
   assert.ok(estimateTokens(cjk) > estimateTokens(ascii), '同样的"字符数"下非 ASCII 更贵')
 
-  // **账就是那把尺量出来的**：三区 + 工具目录 + `seed` 接成一段，两条路各量一次，逐数相同。
-  const ask = askOf(prefixOf(fixtureState(7)))
+  // **账就是那把尺量出来的**：同一份已编码请求，两条路各量一次，逐数相同。
+  const ask = askOf(fixtureState(7))
   const plan = planBudget(ask)
-  assert.equal(plan.used, estimateTokens(bytesOfAsk(ask)), `账该是尺对同一份文本的读数：${plan.used}`)
+  assert.equal(plan.used, estimateTokens(ask.body), `账该是尺对同一份请求字节的读数：${plan.used}`)
 
   // **负对照（口径）**：同样字数下，中文那一段多出来的账是英文的四倍以上——按字节记账时这个比
   // 是 3（一个汉字三字节），过不了这条，于是"口径是 token 还是字节"在这里分得开。
   const n = 4_000
-  const base = planBudget(askOf(prefixOf(fixtureState(7)))).used
-  const grow = (text: string): number => planBudget(askOf(prefixOf(textState(text)))).used - base
+  const base = planBudget(askOf(fixtureState(7))).used
+  const grow = (text: string): number => planBudget(askOf(textState(text))).used - base
   const cjkGrow = grow('字'.repeat(n))
   const asciiGrow = grow('a'.repeat(n))
   assert.ok(cjkGrow > asciiGrow * 4, `同样 ${n} 个字：中文多 ${cjkGrow} · 英文多 ${asciiGrow}——中文该多出四倍以上`)
 
   // 一份撑到超限的状态：判 `stop`，而话里要说出**超了多少**（架构 § 8.12 那一条）。
   const huge = stateWithUsed(DECL.contextLimit + 20_000)
-  const stop = planBudget(askOf(prefixOf(huge), { handoff: handoffOf(4_000) }))
+  const stop = planBudget({ ...askOf(huge), bodyWithHandoff: bodyOf(huge, handoffOf(4_000)) })
   assert.equal(stop.kind, 'stop', `撑爆了该停：${stop.why}`)
   assert.match(stop.why, /留给这一步的是 \d+，而这一步要的比它多 \d+/, `停的话里要说清差多少：${stop.why}`)
   assert.ok(stop.headroom < 0, `还剩多少是负的：${stop.headroom}`)
@@ -145,19 +160,18 @@ test('② 那把尺与那笔账是同一个口径 · 同样字数下中文更贵
 
 test('③ 三档分得开：没到触发点 · 到了且写不下 · 到了且塞得下', () => {
   // (a) 没到触发点。
-  const small = planBudget(askOf(prefixOf(emptyState())))
+  const small = planBudget(askOf(emptyState()))
   assert.equal(small.kind, 'continue')
 
   // (b) 到了触发点，而交接塞得下 → `restart`。
   const near = stateWithUsed(DECL.budget.trigger)
-  const mid = planBudget(askOf(prefixOf(near), { handoff: handoffOf(2_000) }))
+  const mid = planBudget({ ...askOf(near), bodyWithHandoff: bodyOf(near, handoffOf(2_000)) })
   assert.equal(mid.kind, 'restart', `到了触发点该交接：${mid.why}`)
   assert.ok(mid.used >= mid.trigger, `用过了触发点：${mid.used} ≥ ${mid.trigger}`)
-  assert.ok(mid.used + 2_000 + mid.handoffMargin <= mid.limit, '交接加余量塞得下')
 
   // (c) 到了触发点，而**交接已经写不下** → `stop`（地板那一档：明确报出为什么停）。
   const tooBig = stateWithUsed(DECL.contextLimit - DECL.budget.handoffMargin)
-  const stop = planBudget(askOf(prefixOf(tooBig), { handoff: handoffOf(DECL.budget.handoffMargin * 4) }))
+  const stop = planBudget({ ...askOf(tooBig), bodyWithHandoff: bodyOf(tooBig, handoffOf(DECL.budget.handoffMargin * 4)) })
   assert.equal(stop.kind, 'stop', `交接待写不下该停：${stop.why}`)
   console.log(`③ 读数：continue used=${small.used} · restart used=${mid.used} · stop used=${stop.used}`)
 })
@@ -179,12 +193,12 @@ test('④ 负对照：触发点设在等于上限 → 关系核对当场报出�
   // `[trigger, limit - margin)` 这一段里）：正常预算下判"交接"，坏预算下**连触发都到不了**
   // ——它一直在 `continue` 里转，直到某一步直接撑爆（那一步是 `stop`，而交接已经写不下了）。
   const mid = stateWithUsed(DECL.budget.trigger + 4_000) // 用量落在 [350000, 984000) 里
-  const good = planBudget(askOf(prefixOf(mid)))
+  const good = planBudget(askOf(mid))
   assert.equal(good.kind, 'restart', `正常预算下：${good.kind}——${good.why}`)
-  const plan = planBudget(askOf(prefixOf(mid), { decl: broken }))
+  const plan = planBudget(askOf(mid, { decl: broken }))
   assert.equal(plan.kind, 'continue', `坏预算下判出来的：${plan.kind}——${plan.why}`)
   // 再撑一点就撑爆：那一档是 `stop`，而"该交接"这一步再也走不到。
-  const over = planBudget(askOf(prefixOf(stateWithUsed(DECL.contextLimit, broken)), { decl: broken }))
+  const over = planBudget(askOf(stateWithUsed(DECL.contextLimit, broken), { decl: broken }))
   assert.equal(over.kind, 'stop', `坏预算撑爆那一档：${over.why}`)
   assert.match(over.why, /留给这一步的是 \d+，而这一步要的比它多 \d+/)
 })
@@ -192,7 +206,7 @@ test('④ 负对照：触发点设在等于上限 → 关系核对当场报出�
 // ── ⑤ 真读数修正 ───────────────────────────────────────────────────────────────
 
 test('⑤ 修正：账按真读数的比修，缺省一步不修 · 真数是这一趟输入的总量', () => {
-  const ask = askOf(prefixOf(fixtureState(7)))
+  const ask = askOf(fixtureState(7))
   const plain = planBudget(ask)
   assert.equal(plain.raw, plain.used, '没有修正时账就是那把尺的原始读数')
 
@@ -242,4 +256,32 @@ test('⑥ 凝聚理解的上限：50 000 token 以内不报，超了报出来（
   assert.match(said!, /超 8；/)
   assert.match(said!, /不裁剪/)
   console.log(`⑥ 读数：${okTokens} token 不报 · ${overTokens} token 报「${said}」`)
+})
+
+// ── ⑦ 首读数：比值校准两端同尺 ───────────────────────────────────────────────
+
+/**
+ * `src/cli/__fixture__/wire-in/wire/call-0001/` 是一对**同一次调用**的落盘：`request.json`
+ * 是发出去的字节，`response.sse` 是那一次的响应（带提供方的用量）。拿这一对算第一个
+ * “真 ÷ 估”：**分子与分母说的是同一份请求**——这正是同一把尺。
+ *
+ * 它是**归因证据，不是判决**：一次调用的比值不能说明尺的准头（`B7` 的基线那一档要看多份）。
+ */
+test('⑦ 首读数：同一份已发出的请求体 · 真 ÷ 估（只记不判）', async () => {
+  const at = new URL('../cli/__fixture__/wire-in/wire/call-0001/', import.meta.url)
+  const body = readFileSync(new URL('request.json', at))
+  const sse = readFileSync(new URL('response.sse', at), 'utf8')
+  const wire = wireNamed('anthropic-messages')
+  const events: ModelEvent[] = []
+  for await (const e of parseStream(wire, (async function* () { yield enc.encode(sse) })())) events.push(e)
+  const call = checkEvents(events)
+  const truth = truthOf(call.usage)
+  assert.notEqual(truth, null, '这一份响应没带用量——首读数不成立')
+  const est = estimateTokens(body)
+  const ratio = ratioOf(truth, est)
+  assert.notEqual(ratio, null, '估为 0 就算不出比值')
+  assert.ok((ratio as number) > 0, `比值该是正的：${ratio}`)
+  console.log(
+    `⑦ 读数：真 ${truth} ÷ 估 ${est} = ${(ratio as number).toFixed(3)}（request.json 与 response.sse 是同一次调用 · 归因证据，只记不判）`,
+  )
 })
