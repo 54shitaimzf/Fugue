@@ -40,6 +40,7 @@
 
 - `src/assemble/facts.ts`：`Fact` 联合（human · turn · ruling · handoff）与 `wireTurnsOf`；`src/assemble/sources.ts` 的 C 区三段从事实投影；`runtime/step.ts` 的 `requestOf`/`requestBodyOf` 是唯一一处请求投影；`planBudget` 的输入改成 `body`/`bodyWithHandoff`；`OccupancyContext.tools` 由序列化正文改成 `ToolEntry[]`。
 - `Turn` 加可选 `notes?: readonly string[]`（wire 的历史投影，不渲染进文本预览）；`ModelRequest` 顶层形状不动。
+- 文档与注释口径对齐（改进批，行为零变化）：架构 § 8.11 的 C 区三段与“C 怎么增长”改成已落地事实（三段是同一份有序事实的三个投影；每步尾部只接在历史之后）；两根 wire 的判词消息收进 `wire/stream.ts` 的 `rulingMessage` 一处。
 - 全档 `node tools/test-entry.js`：fast 组 1507/1507 · real 组 156/156 · all 1663/1663。
 
 **完整对比**：[v0.5.3...v0.5.4](https://github.com/54shitaimzf/Fugue/compare/v0.5.3...v0.5.4)
