@@ -457,7 +457,7 @@ test('⑥ 带走过的步：messages 里是 assistant 的 tool_use 与 user 的 
   console.log('⑥ 读数：原生轮次 ' + String(Buffer.byteLength(new TextDecoder().decode(wire.bytes(walked)), 'utf8')) + ' 字节 · 文本旧路 ' + String(Buffer.byteLength(new TextDecoder().decode(wire.bytes(base)), 'utf8')) + ' 字节')
 })
 
-// ── ⑥b 判词（幕②）：两条 wire 都在工具回执之后发一条 user 消息 ──────────────
+// ── ⑥b 判词：两条 wire 都在工具回执之后发一条 user 消息 ──────────────
 
 test('⑥b 判词：两条 wire 各发一条 user 消息（固定帽子 + 原文逐字），位置在工具回执之后；不带 notes 时一个字节都不多', () => {
   const dec = new TextDecoder()

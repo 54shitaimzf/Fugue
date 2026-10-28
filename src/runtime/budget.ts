@@ -54,7 +54,7 @@ export interface BudgetPlan {
   /** 交接余量：留给"交接提示词 + 下一次调用的头"那一块。 */
   readonly handoffMargin: number
   /**
-   * 这一步的上下文用了多少（三区 + 工具目录 + `seed`，**按那把尺估出来的 token**，过了修正）。
+   * 这一步的上下文用了多少——**已编码请求**（`BudgetAsk.body`）按那把尺估出来的 token，过了修正。
    */
   readonly used: number
   /**
@@ -83,8 +83,7 @@ export interface BudgetAsk {
    * **这一步要发出去的那份请求字节**（目标 wire 的 `bytes` 编出来的那一份）。
    *
    * 不是三区文本的拼法：JSON 的字段名 · 角色包装 · 工具 schema · 原生轮次 · 判词那几条 user
-   * 消息全在里面。预算量的必须与发出去的是同一份（幕③的判据）——否则比值校准的两端
-   * 永远不是同一把尺。
+   * 消息全在里面。预算量的必须与发出去的是同一份——否则比值校准的两端永远不是同一把尺。
    */
   readonly body: Uint8Array
   /**

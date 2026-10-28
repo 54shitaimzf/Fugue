@@ -604,7 +604,7 @@ export interface Turn {
   /** 每一条回了什么。与 `calls` 逐条对位。 */
   readonly results: readonly { readonly id: string | null; readonly output: string; readonly isError: boolean }[]
   /**
-   * **这一轮工具回执之后，harness 对模型说的那几句判词**（幕②）。`undefined` = 没有。
+   * **这一轮工具回执之后，harness 对模型说的那几句判词**。`undefined` = 没有。
    *
    * **它是 wire 的历史投影，不是存储**：存储里判词是独立事实（`assemble/facts.ts` 的
    * `RulingFact`），发请求时由 `wireTurnsOf` 折进它前面那条回合——判词与工具结果的关系是
@@ -613,7 +613,7 @@ export interface Turn {
    * **文本预览不吃这一栏**：`turnText` 不渲染 `notes`——`facts.test` ⑥ 直接钉着“带不带 notes，
    * `turnText` 逐字节相同”。它只进两根 wire 的请求：各发**一条 user 消息**，接在
    * `tool_result` / `role:'tool'` 之后，正文是两根 wire 共用的那句固定英文帽加判词原文
-   * （判词是 harness 的裁决，不是人插话）。
+   * （两根 wire 共用的 `rulingMessage`；判词是 harness 的裁决，不是人插话）。
    *
    * 旧值不带它——夹具与旧回放的请求体因此一个字节都不动。
    */

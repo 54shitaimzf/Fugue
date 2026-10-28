@@ -49,14 +49,22 @@ export function wireHeadOf(r: {
  * 判词那条 user 消息的**固定英文帽**：说的是“这是 harness 的裁决，不是人插话”。
  *
  * 两根 wire 共用这一句（措辞一处；模型面英文——架构 § 8.11 的读者分界）。判词原文逐字接在
- * 下一行：幕②的验收数是**原文**出现几次，帽子不含原文，所以数到的就是裁决那一条。
+ * 下一行：验收数的是**原文**出现几次，帽子不含原文，所以数到的就是裁决那一条。
  */
 export const RULING_PREAMBLE =
   'Harness note (not the person speaking). An in-round ruling follows verbatim:'
 
 /** 一条回合的判词 → 那条 user 消息的正文（帽子 + 判词原文逐字）。 */
-export function rulingNoteText(notes: readonly string[]): string {
+function rulingNoteText(notes: readonly string[]): string {
   return `${RULING_PREAMBLE}\n${notes.join('\n')}`
+}
+
+/**
+ * 一条回合的判词 → 那一根 user 消息。**两根 wire 的 `turnMessages` 都在工具回执之后收下它**
+ * ——位置是承重的：判词说的是"上面那次工具回执之后，harness 的裁决"。
+ */
+export function rulingMessage(notes: readonly string[]): Record<string, unknown> {
+  return { role: 'user', content: rulingNoteText(notes) }
 }
 
 /** 一个适配器。`bytes` 与 `parse` 是纯函数；`state` 是**一条流一份**的可变状态（分片累加用）。 */

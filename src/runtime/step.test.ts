@@ -282,7 +282,7 @@ test('② C 区只追加：相邻两步的 hash(A+B) 不变，C 只是一串只�
     const p2 = prefixAt({ ...h0, state: one.next })
     assert.deepEqual(p1.zoneA, p2.zoneA)
     assert.deepEqual(p1.zoneB, p2.zoneB)
-    // **zoneC 指纹量的是文本投影**（幕③的口径）：它是 C 区那一段字节的 hash，不是发出去的
+    // **zoneC 指纹量的是文本投影**：它是 C 区那一段字节的 hash，不是发出去的
     // 请求体的 hash；预算读的是后者（`requestBodyOf`），两处不互相冒充。
     assert.equal(zones[0]?.zoneCHash, hashOf(prefixAt(h0).zoneC), 'zoneC 指纹不是 C 区文本投影的 hash')
     assert.equal(zones[1]?.zoneCHash, hashOf(p1.zoneC), 'zoneC 指纹不是 C 区文本投影的 hash')
@@ -707,7 +707,7 @@ test('⑩ `llm/call` 带上这一趟的耗时读数：慢的那一趟量得出�
   })
 })
 
-// ── ⑪ 预算量的就是发出去的那一份（幕③）────────────────────────────
+// ── ⑪ 预算量的就是发出去的那一份 ────────────────────────────
 
 test('⑪ 预算量的与 step 发出去的是同一份：requestBodyOf 与那次请求的编码逐字节相同', async () => {
   await withRoot(async (root, log) => {

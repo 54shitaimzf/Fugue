@@ -1066,7 +1066,7 @@ export async function roundPlan(
         }
       }
       if (draft !== null) {
-        emitLine('  每一格的预估占用（三区 + 工具目录 + seed；估账，不是量出来的）：')
+        emitLine('  每一格的预估占用（used = 已编码请求；seed 单列，不计入 used；甜点再算交接余量——估账，不是量出来的）：')
         for (const row of r.occupancy) {
           emitLine(
             `    第 ${row.at} 节\tseed ${row.seed}\tused ${row.used}\t触发点 ${row.trigger}\t与上限的差额 ${row.headroom}\t甜点=${row.sweet ? '是' : '否'}` +

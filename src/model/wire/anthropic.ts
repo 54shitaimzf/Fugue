@@ -20,7 +20,7 @@
 // 按错的原因往下走。
 import type { ModelEvent, StopReason, ThinkingLevel, Turn, Usage } from '../contract.ts'
 import type { WireAdapter } from './stream.ts'
-import { WireError, bodyOf, rulingNoteText, wireHeadOf } from './stream.ts'
+import { WireError, bodyOf, rulingMessage, wireHeadOf } from './stream.ts'
 import { THINKING_LEVELS } from '../contract.ts'
 
 /** 请求里那几样这一份要用到的：三区字节 · 提供方那边的模型名 · 工具目录 · 调用配置。 */
@@ -46,7 +46,7 @@ function turnMessages(turn: Turn, at: number): Record<string, unknown>[] {
   const said: Record<string, unknown>[] = []
   // **思考块排在最前**：这条线上它就是助理消息的第一块（顺序是形状的一部分），而带工具时
   // 它必须原样回传——`signature` 一起带上，缺了签名这块就不成立了。
-  // **思考块只发带签名的那一档**（幕②）：这条线回传思考时要求签名一起带上（带
+  // **思考块只发带签名的那一档**：这条线回传思考时要求签名一起带上（带
   // `tool_use` 的思考块必须原样回传）。别的 wire 来的思考（`signature === null`）没有签名可回，
   // **目标 wire 决定携带**：这里丢掉那一块，不伪造另一家的签名（报告 § 4.2）。丢的只是元数据，
   // 模型说的话与工具那一对照旧发。
@@ -86,9 +86,7 @@ function turnMessages(turn: Turn, at: number): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
   if (said.length > 0) out.push({ role: 'assistant', content: said })
   if (results.length > 0) out.push({ role: 'user', content: results })
-  // **判词接在工具回执之后**（幕②）：一条 user 消息，帽子 + 原文逐字（`wire/stream.ts`
-  // 的 `rulingNoteText`）。两条 wire 各自编这一条，内容与位置相同、字节不要求相同。
-  if (turn.notes !== undefined && turn.notes.length > 0) out.push({ role: 'user', content: rulingNoteText(turn.notes) })
+  if (turn.notes !== undefined && turn.notes.length > 0) out.push(rulingMessage(turn.notes))
   return out
 }
 

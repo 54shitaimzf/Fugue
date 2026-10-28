@@ -142,9 +142,9 @@ export interface OccupancyRow {
   readonly at: number
   readonly kind: DraftKind
   readonly goal: string
-  /** `seed` 那一段自己的估账（token，与 `used` 同一个口径）。 */
+  /** `seed` 那一段自己的估账（token，与 `used` 同一把尺）；**它不进 `used`**——请求体里没有它。 */
   readonly seed: number
-  /** 三区 + 工具目录 + `seed`（**按那把尺估出来的 token**：与上限 · 触发点 · 余量同一个口径）。 */
+  /** **已编码请求**的估账（目标 wire 编出来的那一份：三区 · 工具目录 · 原生轮次都在里面）。 */
   readonly used: number
   /** `contextLimit − used`，可以是负的。 */
   readonly headroom: number
@@ -394,7 +394,8 @@ export function holderGoalText(goal: string, draftPath: RelPath, maxSteps?: numb
 }
 
 /**
- * 每一格的预估占用：`Zone A + Zone B + seed + 交接余量` 与 `contextLimit` 的差额。
+ * 每一格的预估占用：**已编码请求**（`used`）与 `contextLimit` 的差额；甜点那一档再要求它
+ * 加交接余量不超过触发点。
  *
  * **它是"拆分规模对齐模型能力"这句话唯一能验的形状**（PLAN § 5.10 的 C1 断言④）。口径分两半：
  *
@@ -408,8 +409,10 @@ export function holderGoalText(goal: string, draftPath: RelPath, maxSteps?: numb
  * `base` 那一份状态由调用方给（项目方针 · 系统状态 · 代码树都是真的），这一份只按节覆盖
  * "这一格自己的那几段"。
  *
- * **种子那一段不进 `used`**：它不在请求里（它是派发前要铺开的工作面）。它单列一栏，仍按那把
- * 尺量，读的人看得到它有多大——但"这一格装得下装不下"问的是发出去的那一份。
+ * **`seed` 那一栏不进 `used`**：请求体里没有它——它量的是派发前要铺开的工作面，仍然单列、
+ * 按同一把尺量给人看。派发那一趟的旧预算另有一个 `seed` 加项，递进去的其实是这一格的目标
+ * （`goalOf(contract)`：implement 型就是 `c.goal`），而目标已经在 B 区的「我的任务」里——
+ * 同一段正文因此占了两份账；新预算量请求体，目标只算一份。
  *
  * **估账不是读数**：真读数在 `llm/call` 的 `usage` 里（派发之后才有）。这一份的用处只有一处
  * ——在派发之前把"这一格装得下装不下"印给人看。
@@ -453,7 +456,7 @@ export function occupancyOf(sections: readonly DraftSection[], ctx: OccupancyCon
       ctx.tools,
     )
     const plan = planBudget({ decl: ctx.decl, body })
-    // 单独印的那一栏：同一把尺对 `seed` 那一段的读数（与 `used` 里那一份是同一段正文）。
+    // 单独印的那一栏：同一把尺对 `seed` 那一段的读数（它不在请求体里，因此不进 `used`）。
     const seed = estimateTokensOfText(seedText)
     const sweet = plan.used + plan.handoffMargin <= plan.trigger
     return {

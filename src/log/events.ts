@@ -238,7 +238,7 @@ export type LogEvent =
       /**
        * C 区**文本投影**的指纹（`hashOf(prefix.zoneC)`），**不是**发出去的请求体的指纹。
        *
-       * 预算量的是后者（`runtime/step.ts` 的 `requestBodyOf` 编出来的那一份，幕③）；这一栏
+       * 预算量的是后者（`runtime/step.ts` 的 `requestBodyOf` 编出来的那一份）；这一栏
        * 留给前缀与缓存那一面的读数、以及"相邻两步只有 C 变"那条验证性质——两把量法各有各的
        * 读者，不互相冒充。
        */

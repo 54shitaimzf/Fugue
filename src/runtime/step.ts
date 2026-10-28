@@ -137,7 +137,7 @@ export interface RuntimeRequest {
   /** 已经走过的那几步（发原生轮次用；第 0 步没有）。 */
   readonly turns?: readonly Turn[]
   /**
-   * **C 区那一段的头**（`AssembleState.runtime` 的字节）：只追加那条尾巴之前的字节。
+   * **C 区那一段的头**（`humanTextOf(state.facts)` 的字节）：只追加那条尾巴之前的字节。
    *
    * 它必须单独带过去：`turns` 一有值，适配器就把尾巴发成原生轮次，而**头照旧要发**——不然
    * 人说的那一句从第 1 步起就再也读不到（架构 § 8.11：「那句话进的是这一趟的尾端（C 区第一

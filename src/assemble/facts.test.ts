@@ -1,4 +1,4 @@
-// 幕①的字节平价：**有序事实 → 现行整区文本，逐字节相同**。
+// 字节平价：**有序事实 → 现行整区文本，逐字节相同**。
 //
 // 黄金在 `__fixture__/c-parity.json`：17 案，每一案的 zoneC 是**改造前**那套拼法
 // （`runtime` + `turns` + `signals` + `lastStep`）在 施工前的 main（7b23918）上装出来的。
@@ -152,9 +152,9 @@ test('⑥ wire 投影：判词折进紧邻的回合 notes · 文本预览不吃 
   assert.deepEqual(wire[0]?.notes, ['第一问的判词'], '第一问的判词没折进它前面那条回合')
   assert.deepEqual(wire[1]?.notes, ['第二问的判词'], '第二问的判词没折进它前面那条回合')
   assert.equal(wire[0]?.text, '第一步。', '折 notes 时改了回合本身')
-  // 文本预览不吃 notes：同一句话带不带判词，`turnText` 逐字节相同（幕①的黄金闸）。
+  // 文本预览不吃 notes：同一句话带不带判词，`turnText` 逐字节相同（字节黄金的闸）。
   const bare = { text: '第一步。', calls: [], results: [] }
-  assert.equal(turnText({ ...bare, notes: ['第一问的判词'] }), turnText(bare), '`turnText` 渲染了 notes——幕①的黄金会当场红')
+  assert.equal(turnText({ ...bare, notes: ['第一问的判词'] }), turnText(bare), '`turnText` 渲染了 notes——黄金会当场红')
 
   // 交接那一格：人话 + 判词 + 【接手】。前任的判词没有回合可挂 → 不进 wire；文本预览仍带着它。
   const opening = { text: '【接手】从这一步开始。上面"交接"那一段是前任留下的。', calls: [], results: [] }

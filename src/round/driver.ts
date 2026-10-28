@@ -775,7 +775,7 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     // 收工那半句（`withStepsLeft`）与上面那道闸读**同一个数**：`attempts` 是已发起过的调用次数
     // （含换脸重试），这一趟发起前先写进状态——模型看到的"还剩几步"不会比真正的额度乐观。
     handle = { ...handle, state: { ...handle.state, attempts: steps } }
-    // **预算量的是发出去的那一份**（幕③）：与 `runtime/step` 同一条投影、同一个目标 wire
+    // **预算量的是发出去的那一份**：与 `runtime/step` 同一条投影、同一个目标 wire
     // 的编码器——工具目录 · 原生轮次 · 判词那几条 user 消息全在里面。每一步多编一次；真档读数
     // 里记了这条代价（翻案条件见提交信息）。
     const budget = planBudget({
