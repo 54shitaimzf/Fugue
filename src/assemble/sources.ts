@@ -23,7 +23,7 @@
 // 这一份一个字段都不给它们留位置，所以它们进不了前缀。真正接上运行时的那些源（凝聚理解 ·
 // 凝聚前最近几次原文）今天由调用方给值；**C 区那三段不在这里拼**——它们从 `facts.ts` 的一份
 // 有序事实投影（`runtimeTextOf` · `rulingTextsOf` · `lastStepTextOf`），文本预览与两根 wire
-// 读的是同一份，不再有一处独立的追加（0.5.4 幕①）。
+// 读的是同一份，不再有一处独立的追加（幕①）。
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Protocol, SegmentId, SegmentValue } from './contract.ts'

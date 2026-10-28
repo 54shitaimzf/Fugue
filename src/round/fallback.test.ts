@@ -767,7 +767,7 @@ test('⑬ 持轮者的额度闸与子格同一道：上界 1 · 主脸死 → �
   }
 })
 
-// ── ⑭ 跨 wire 的历史投影（0.5.4 幕②）：已完成一步再换模型，目标 wire 合法编码 ──────
+// ── ⑭ 跨 wire 的历史投影（幕②）：已完成一步再换模型，目标 wire 合法编码 ──────
 
 test('⑭ 跨 wire 的历史：带签名的思考只回 Anthropic · OpenAI 发 reasoning_content 不认签名 · 判词仍接在回执后（两个方向各一）', () => {
   const DEC = new TextDecoder()

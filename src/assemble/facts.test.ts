@@ -1,7 +1,7 @@
 // 幕①的字节平价：**有序事实 → 现行整区文本，逐字节相同**。
 //
 // 黄金在 `__fixture__/c-parity.json`：17 案，每一案的 zoneC 是**改造前**那套拼法
-// （`runtime` + `turns` + `signals` + `lastStep`）在 0.5.4 施工前的 main（7b23918）上装出来的。
+// （`runtime` + `turns` + `signals` + `lastStep`）在 施工前的 main（7b23918）上装出来的。
 // 事实与 `facts.ts` 的 `Fact` 同形；这一份从事实重建状态、**只按事实投影**，再与黄金比。
 //
 // 两条红断言（施工交接单 § 三 幕①）：

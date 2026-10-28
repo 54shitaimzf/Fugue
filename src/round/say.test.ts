@@ -313,7 +313,7 @@ async function runPlan(b: Bench, handle: AgentHandle, goal: string, call: CallMo
       goal,
       round: ROUND,
       maxSteps: 8,
-      tools: JSON.stringify(CATALOG),
+      tools: CATALOG,
     },
   })
 }

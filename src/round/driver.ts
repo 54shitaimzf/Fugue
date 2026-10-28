@@ -42,7 +42,7 @@ import type { Contract } from '../contract/types.ts'
 import { checkpoint } from '../checkpoint.ts'
 import { snapshotOf } from '../view/snapshot.ts'
 import type { Stub } from './execute.ts'
-import { HarnessError, createRuntime } from '../runtime/step.ts'
+import { HarnessError, createRuntime, requestBodyOf } from '../runtime/step.ts'
 import type { AgentHandle, CallModel, StepResult, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
 import { planBudget } from '../runtime/budget.ts'
 import { takeAsks } from './handback.ts'
@@ -775,16 +775,12 @@ async function driveOnce(ask: DriverAsk, opts: RealDriverOptions, log: Log, view
     // 收工那半句（`withStepsLeft`）与上面那道闸读**同一个数**：`attempts` 是已发起过的调用次数
     // （含换脸重试），这一趟发起前先写进状态——模型看到的"还剩几步"不会比真正的额度乐观。
     handle = { ...handle, state: { ...handle.state, attempts: steps } }
-    // **这里不给工具目录那一段**（`tools: ''`）：循环这一层不认识目录，给了它等于把公布面绑进
-    // 运行时。派发前那一份占用（`occupancyOf`）把目录算了进去，于是那一个是完整的一笔、这一个
-    // 差了目录那一段。判"该不该交接"用的是这一笔，所以它偏松的一侧——而真读数会把这段差补回来
-    // （用量里带着工具 schema，比值吸收的就是它）。
+    // **预算量的是发出去的那一份**（幕③）：与 `runtime/step` 同一条投影、同一个目标 wire
+    // 的编码器——工具目录 · 原生轮次 · 判词那几条 user 消息全在里面。每一步多编一次；真档读数
+    // 里记了这条代价（翻案条件见提交信息）。
     const budget = planBudget({
       decl,
-      prefix: prefixOf(handle),
-      tools: '',
-      seed: goalOf(contract),
-      handoff: '',
+      body: requestBodyOf(handle, ask.tools ?? []),
       calib: calibrate(ratios),
     })
     if (budget.kind === 'stop') {

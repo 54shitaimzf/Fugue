@@ -37,14 +37,15 @@ import { fixtureState } from '../model/fixture-state.ts'
 import { readFixture } from '../model/session.ts'
 import { fixtureTarget } from '../model/session.ts'
 import type { Fixture } from '../model/session.ts'
-import { callModel, makeDumpCall } from '../model/http.ts'
+import { callModel, makeDumpCall, wireRequestOf } from '../model/http.ts'
+import { wireNamed } from '../model/wire/registry.ts'
 import type { Transport } from '../model/http.ts'
 import { fixtureTransport } from '../model/session.ts'
 import { CATALOG_STATES, catalog } from '../tools/catalog.ts'
 import type { AgentId, BranchId, ContractId } from '../terms.ts'
 import type { ModelId } from '../model/contract.ts'
-import type { AgentHandle, CallModel, StepOutcome, ToolCallRequest } from './step.ts'
-import { HarnessError, createRuntime, recordingExecutor, scriptedModel, wireCall } from './step.ts'
+import type { AgentHandle, CallModel, RuntimeRequest, StepOutcome, ToolCallRequest } from './step.ts'
+import { HarnessError, createRuntime, recordingExecutor, requestBodyOf, scriptedModel, wireCall } from './step.ts'
 import { runSteps } from './run.ts'
 
 const WHO: AgentCoord = { id: 'agent-1', branch: 'refs/heads/agent-1', outputPaths: ['deliver/agent-1/'] }
@@ -281,6 +282,14 @@ test('② C 区只追加：相邻两步的 hash(A+B) 不变，C 只是一串只�
     const p2 = prefixAt({ ...h0, state: one.next })
     assert.deepEqual(p1.zoneA, p2.zoneA)
     assert.deepEqual(p1.zoneB, p2.zoneB)
+    // **zoneC 指纹量的是文本投影**（幕③的口径）：它是 C 区那一段字节的 hash，不是发出去的
+    // 请求体的 hash；预算读的是后者（`requestBodyOf`），两处不互相冒充。
+    assert.equal(zones[0]?.zoneCHash, hashOf(prefixAt(h0).zoneC), 'zoneC 指纹不是 C 区文本投影的 hash')
+    assert.equal(zones[1]?.zoneCHash, hashOf(p1.zoneC), 'zoneC 指纹不是 C 区文本投影的 hash')
+    // 尺寸读数：C 区（文本）与请求体不是一回事——预算量的是后者。
+    console.log(
+      `② 读数：C 区文本 ${c1.length} → ${c2.length} 字节 · 这一步请求体 ${requestBodyOf(h0, tools).length} 字节（预算量的是后者）`,
+    )
     console.log(
       `② 读数：A ${p1.zoneA.length} 字节 ${zones[0]?.zoneAHash} · B ${p1.zoneB.length} 字节 ${zones[0]?.zoneBHash} · ` +
         `C ${c1.length} → ${c2.length} 字节（${zones[0]?.zoneCHash} → ${zones[1]?.zoneCHash}）· ` +
@@ -695,5 +704,43 @@ test('⑩ `llm/call` 带上这一趟的耗时读数：慢的那一趟量得出�
       `⑩ 读数：这一趟等了 30 ms · \`llm/call.ms\` 量到 ${String(ms)} ms` +
         ` · 旧日志里没有这一栏（回放照旧，读账那一侧给「未量到」）`,
     )
+  })
+})
+
+// ── ⑪ 预算量的就是发出去的那一份（幕③）────────────────────────────
+
+test('⑪ 预算量的与 step 发出去的是同一份：requestBodyOf 与那次请求的编码逐字节相同', async () => {
+  await withRoot(async (root, log) => {
+    const h = handleOf(fixtureState(0))
+    const expect = requestBodyOf(h, tools)
+    let seen: RuntimeRequest | null = null
+    const inner = scriptedModel([[{ t: 'delta', text: '数完了。' }, { t: 'stop', reason: 'end-turn' }]])
+    const call: CallModel = (request, signal) => {
+      seen = request
+      return inner(request, signal)
+    }
+    const rt = createRuntime({
+      logOf: () => log,
+      call,
+      execute: recordingExecutor(() => ({ ok: true, output: '好。' })),
+      tools,
+    })
+    await rt.step(h, new AbortController().signal)
+    assert.notEqual(seen, null, '这一趟没调到模型')
+    const r = seen as RuntimeRequest
+    const sent = wireNamed(h.adapter.name).bytes(
+      wireRequestOf({
+        adapter: r.adapter,
+        prefix: r.prefix,
+        model: r.model,
+        tools: r.tools,
+        ...(r.turns === undefined ? {} : { turns: r.turns }),
+        ...(r.cHead === undefined ? {} : { cHead: r.cHead }),
+        ...(r.call === undefined ? {} : { call: r.call }),
+      }),
+    )
+    assert.deepEqual(sent, expect, '预算量的那一份与发出去的那一份不是同一份字节')
+    console.log(`⑪ 读数：请求体 ${sent.length} 字节 · 预算量的与 step 发出去的逐字节相同`)
+    assert.ok(root.length > 0, '日志根在（这一条只是把 root 用起来）')
   })
 })

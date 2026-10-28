@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "幕①的字节黄金：每一案按**改造前**的 C 区拼法（runtime + turns + signals + lastStep）装出来的 zoneC。生成于 0.5.4 施工前的 main（7b23918），由一趟一次性取数脚本录下（脚本按纪律未留，读数即本文件）。facts 与 src/assemble/facts.ts 的 Fact 同形；facts.test.ts 从它重建状态、只按事实投影，再与 zoneC 比。",
+  "note": "幕①的字节黄金：每一案按**改造前**的 C 区拼法（runtime + turns + signals + lastStep）装出来的 zoneC。生成于施工前的 main（7b23918），由一趟一次性取数脚本录下（脚本按纪律未留，读数即本文件）。facts 与 src/assemble/facts.ts 的 Fact 同形；facts.test.ts 从它重建状态、只按事实投影，再与 zoneC 比。",
   "protocol": "SUBAGENT_PROTOCOL",
   "cases": [
     {

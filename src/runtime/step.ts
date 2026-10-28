@@ -34,6 +34,7 @@ import type { ModelCall, ModelEvent, StopReason, Thinking, ThinkingLevel, Turn, 
 import { checkEvents } from '../model/contract.ts'
 import type { Target, Transport } from '../model/http.ts'
 import { callModel, wireFactsOf, wireRequestOf } from '../model/http.ts'
+import { wireNamed } from '../model/wire/registry.ts'
 import type { WireAdapter } from '../model/wire/stream.ts'
 import type { Prefix, Protocol } from '../assemble/contract.ts'
 import { assemble, hashOf } from '../assemble/assemble.ts'
@@ -146,6 +147,63 @@ export interface RuntimeRequest {
   /** 提供方那边什么名字（`ModelRequest.model`）。 */
   readonly model: string
   readonly call?: { readonly temperature?: number; readonly maxTokens?: number; readonly thinking?: ThinkingLevel }
+}
+
+/**
+ * 编码一份请求要的那几样（**不含 `target`**：编码不碰它；真发的时候才用得上）。
+ *
+ * 它是“同一份投影”的输入：`runtime/step.ts` 发出去的那一份、预算量的那一份、占用表量
+ * 的那一份都从这里过——三处各拼一遍的话，预算与请求就会静默地不是同一份。
+ */
+export interface RequestParts {
+  readonly protocol: Protocol
+  readonly model: ModelId
+  readonly wireModel: string
+  readonly adapter: { readonly name: string }
+  readonly call?: { readonly temperature?: number; readonly maxTokens?: number; readonly thinking?: ThinkingLevel }
+  readonly state: AssembleState
+  readonly coord: AgentCoord | null
+}
+
+/** 这一份请求的线协议参数：**只此一处**（`step()` 与预算读的是同一份投影）。 */
+function wireAskOf(p: RequestParts, tools: readonly ToolEntry[]): Parameters<typeof wireRequestOf>[0] {
+  const prefix = assemble({ protocol: p.protocol, model: p.model, segments: sourcesFor(p.protocol, p.state, p.coord) })
+  // 同一份事实的两个投影：头是文本的那一半；尾巴是原生轮次的那一半（判词折进回合的
+  // `notes`——`wireTurnsOf`）。文本预览按段取，不吃 `notes`。
+  const head = humanTextOf(p.state.facts)
+  const turns = wireTurnsOf(p.state.facts)
+  return {
+    adapter: p.adapter,
+    prefix,
+    model: p.wireModel,
+    tools,
+    ...(turns.length === 0 ? {} : { turns }),
+    ...(head === '' ? {} : { cHead: new TextEncoder().encode(head) }),
+    ...(p.call === undefined ? {} : { call: p.call }),
+  }
+}
+
+/** 这一步要发出去的那份请求（运行时的 `RuntimeRequest`）。 */
+export function requestOf(
+  h: RequestParts & { readonly target: Target },
+  tools: readonly ToolEntry[],
+): RuntimeRequest {
+  return {
+    target: h.target,
+    adapter: h.adapter,
+    promptCache: promptCacheFor(h.adapter.name),
+    ...wireAskOf(h, tools),
+  }
+}
+
+/**
+ * **编码后的那一份**：预算读的就是它。
+ *
+ * 与 `callModel` 里 `t.wire.bytes(r)` 编的是同一份（同一处 `wireAskOf` 的投影 + 同一个目标
+ * wire 的适配器）。`target` 不参与——它只说发到哪儿，不改字节。
+ */
+export function requestBodyOf(h: RequestParts, tools: readonly ToolEntry[]): Uint8Array {
+  return wireNamed(h.adapter.name).bytes(wireRequestOf(wireAskOf(h, tools)))
 }
 
 /** 第 2 步的出口：事件流 + 一次调用的账。 */
@@ -448,35 +506,15 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   async function step(h: AgentHandle, signal: AbortSignal): Promise<StepResult> {
     const seqs: LogSeq[] = []
     // ── 1. 装配（纯函数，不碰模型）
-    const prefix = assemble({ protocol: h.protocol, model: h.model, segments: sourcesFor(h.protocol, h.state, h.coord) })
-    // 同一份事实的两个投影：头是文本的那一半；尾巴是原生轮次的那一半（判词折进回合的
-    // `notes`——`wireTurnsOf`）。文本预览按段取，不吃 `notes`。
-    const head = humanTextOf(h.state.facts)
-    const turns = wireTurnsOf(h.state.facts)
-    const request: RuntimeRequest = {
-      target: h.target,
-      adapter: h.adapter,
-      prefix,
-      tools,
-      promptCache: promptCacheFor(h.adapter.name),
-      model: h.wireModel,
-      // 走过的那几步：**有才带**。第 0 步与交接后的第一步都是“没有”——没有就发 C 区那条文本
-      // （两条路都不改 A/B 两区的字节，前缀那笔账不破）。这一串是**事实的投影**（`facts.ts`
-      // 的 `turnsOf`），不是另一份状态：判词接在它后面（0.5.4 幕②）也走同一份。
-      ...(turns.length === 0 ? {} : { turns }),
-      // C 区那一段的**头**（人说的那一句 · 这一趟的开场）：**每一步都带**。它同样是事实的
-      // 投影（`humanTextOf`）——头与尾巴不再各有一处拼法。
-      ...(head === '' ? {} : { cHead: new TextEncoder().encode(head) }),
-      ...(h.call === undefined ? {} : { call: h.call }),
-    }
+    const request = requestOf(h, tools)
     // ── 5a. `prefix/assemble`：三区指纹（`B3` 的断言 ② 要的那三个数）
     seqs.push(
       await deps.logOf(h.agent).append(h.agent as WriterId, {
         t: 'prefix/assemble',
         agent: h.agent,
-        zoneAHash: hashOf(prefix.zoneA),
-        zoneBHash: hashOf(prefix.zoneB),
-        zoneCHash: hashOf(prefix.zoneC),
+        zoneAHash: hashOf(request.prefix.zoneA),
+        zoneBHash: hashOf(request.prefix.zoneB),
+        zoneCHash: hashOf(request.prefix.zoneC),
       }),
     )
 

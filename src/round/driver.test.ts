@@ -645,13 +645,14 @@ test('② 假模型驱动整轮 → 一次真提交，而真工作树一个字�
 test('③ 触发点到了落 agent/handoff，后继接着干完（同一条分支 · 轮级状态不变）', async () => {
   const b = await bench()
   try {
-    // **把触发点压到很低**：一份"上限 800 · 触发点 150 · 余量 10"的声明——三区一算就过线。
-    // **上限要压到实际三区之上、但不能太远**（实到 292 token：`B6` 那一条报的就是
-    // "用了 292（触发点 150）"，而交接提示词那几十个字节要写得下）。压到 200 的话 `planBudget`
-    // 直接给 `stop`——那一趟连一步都不走，交接自然一次都没有。
-    // **292 这个读数随前缀自己的长度走**：W11 收工口径那三句进「我的任务」之后它涨了一截，
-    // 上限因此从 700 抬到 800（那三句是给模型的话，涨是它们的目的，不是漂）。
-    const tiny = { ...DECL, contextLimit: 800, budget: { trigger: 150, handoffMargin: 10 } }
+    // **把触发点压到很低**：一份"上限 3000 · 触发点 2300 · 余量 10"的声明——第一步之前就过线。
+    // **这些数随"发出去的那份请求"的底走**：幕③ 起预算量的是编码后的请求（工具目录 ·
+    // 三区 · 包装），这份台子的底是 **2339 token**（旧文本估账是 292）。触发点压在底之下：
+    // 第 0 步就判 `restart`，而交接在**这一步走完之后**发生（`driver.ts` 的交接块在
+    // `kind === 'done'` 之后），所以后继是 `agent-1-2`。上限 3000 让交接提示词那几十个字节写得下。
+    // 压在底之上一点点反而会变成"第 2 步 done 之后才判 restart"——那一档在 `done` 就 break 了，
+    // 一次交接都没有（实测 2350 就是这样）。
+    const tiny = { ...DECL, contextLimit: 3000, budget: { trigger: 2300, handoffMargin: 10 } }
     // 预算那一栏由 `decl` 决定，而 `realDriver` 的 `onResult` 能拿到那一趟的读数。
     let result: { handoffs: readonly string[]; stopped: string } | null = null
     const driver = realDriver({
@@ -1045,7 +1046,7 @@ test('①c2 不给上界就不设：71 步的脚本走完 71 步；给了 64 就
  * 两条路的步数与停因都不同，所以它不是"脚本短所以只走了一条"那种瞎绿。
  */
 test('①c3 真读数修正下一步的账：报了用量就跟着它走，没报就一步不修', async () => {
-  const tiny = { ...DECL, contextLimit: 900, budget: { trigger: 250, handoffMargin: 10 } }
+  const tiny = { ...DECL, contextLimit: 4500, budget: { trigger: 3500, handoffMargin: 10 } }
   interface Usageish {
     inputTokens: number | null
     cacheReadTokens: number | null
@@ -1055,8 +1056,9 @@ test('①c3 真读数修正下一步的账：报了用量就跟着它走，没�
     model: string | null
   }
   const NONE: Usageish = { inputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null, reasoningTokens: null, model: null }
-  /** 那份 tiny 前缀的原始估账是 292（③ 的注释里那个数），900 是它三倍上下。 */
-  const BIG: Usageish = { ...NONE, inputTokens: 900 }
+  /** 那份 tiny 请求的原始估账是 **2339**（③ 的注释里那个读数）；24000 是它的十倍上下——
+   *  报一次就够把下一步的账顶过上限。 */
+  const BIG: Usageish = { ...NONE, inputTokens: 24_000 }
   const withUsage = (usage: Usageish): readonly (readonly ModelEvent[])[] => {
     const swap = (step: readonly ModelEvent[]): ModelEvent[] =>
       step.map((e) => (e.t === 'usage' ? { t: 'usage', usage } : e))
@@ -1103,7 +1105,7 @@ test('①c3 真读数修正下一步的账：报了用量就跟着它走，没�
   assert.ok(heard.calls < silent.calls, `报了用量那一趟该更早停：${heard.calls} < ${silent.calls}`)
   assert.match(heard.stopped, /按 1 份真读数修/, `停的那句话该说清账是按真读数修的：「${heard.stopped}」`)
   assert.match(heard.stopped, /不裁剪后照发/, heard.stopped)
-  console.log(`①c3 读数：用量报 900 → ${heard.calls} 条 llm/call（停因「${heard.stopped}」）`)
+  console.log(`①c3 读数：用量报 24000 → ${heard.calls} 条 llm/call（停因「${heard.stopped}」）`)
 })
 
 // ── ①d 执行类工具落在哪棵树上 ──────────────────────────────────────────────────

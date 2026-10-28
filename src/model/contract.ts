@@ -604,7 +604,7 @@ export interface Turn {
   /** 每一条回了什么。与 `calls` 逐条对位。 */
   readonly results: readonly { readonly id: string | null; readonly output: string; readonly isError: boolean }[]
   /**
-   * **这一轮工具回执之后，harness 对模型说的那几句判词**（0.5.4 幕②）。`undefined` = 没有。
+   * **这一轮工具回执之后，harness 对模型说的那几句判词**（幕②）。`undefined` = 没有。
    *
    * **它是 wire 的历史投影，不是存储**：存储里判词是独立事实（`assemble/facts.ts` 的
    * `RulingFact`），发请求时由 `wireTurnsOf` 折进它前面那条回合——判词与工具结果的关系是

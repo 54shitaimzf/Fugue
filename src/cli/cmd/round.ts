@@ -955,7 +955,7 @@ export async function roundPlan(
         goal,
         round,
         ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
-        tools: JSON.stringify(tools),
+        tools,
       },
     })
 
@@ -1193,7 +1193,7 @@ export async function sayCommand(
             goal: over.goal,
             round,
             ...(wire.maxSteps === undefined ? {} : { maxSteps: wire.maxSteps }),
-            tools: JSON.stringify(w.tools),
+            tools: w.tools,
           },
         }),
     })

@@ -24,7 +24,7 @@ import type { Log, LogSeq } from '../log/events.ts'
 import type { Truth } from '../truth/contract.ts'
 import type { View } from '../view/contract.ts'
 import type { AgentHandle, CallModel, ToolCallRequest, ToolExecutor, ToolResult } from '../runtime/step.ts'
-import { createRuntime } from '../runtime/step.ts'
+import { createRuntime, requestBodyOf } from '../runtime/step.ts'
 import type { ModelDecl } from '../model/contract.ts'
 import type { ModelFace } from '../model/roles.ts'
 import { hopFace } from '../model/roles.ts'
@@ -33,7 +33,6 @@ import type { AgentCoord, AssembleState } from '../assemble/sources.ts'
 import { MODEL_FACING_LANGUAGE_LINE, emptyState, sourcesFor, stepBudgetLine, stepsLeftTail } from '../assemble/sources.ts'
 import { lastTurnOf } from '../assemble/facts.ts'
 import { capReceipt } from '../tools/receipt.ts'
-import { assemble } from '../assemble/assemble.ts'
 import { SUBAGENT_PROTOCOL } from '../assemble/protocol.ts'
 import { estimateTokensOfText, planBudget } from '../runtime/budget.ts'
 import { digestOf } from '../runtime/restart.ts'
@@ -164,8 +163,13 @@ export interface OccupancyContext {
   readonly goal: string
   readonly round: RoundId
   readonly maxSteps?: number
-  /** 工具目录那一段的**正文**（公布给模型的那一份序列化之后——架构 § 8.11 表外那一项）。 */
-  readonly tools: string
+  /**
+   * 工具目录**公布给模型的那一份**（`ToolEntry[]`，与 `runtime.step` 的 `deps.tools` 同一份）。
+   *
+   * 从前这里递的是序列化之后的正文；改成 schema 是因为占用现在按**已编码的请求**量——工具目录
+   * 是请求体的一部分，正文与编码后的字节差着 JSON 的字段名与包装。
+   */
+  readonly tools: readonly ToolEntry[]
   /**
    * 一份种子的**正文**：指针清单 + 在这棵树上取到的内容。
    *
@@ -400,8 +404,12 @@ export function holderGoalText(goal: string, draftPath: RelPath, maxSteps?: numb
  *     跑到尾不用交接，且交接余量也放得下**。`B7` 的读数将来只用来收窄这条带，不改形状。
  *
  * 三区怎么来的：拿**子 agent 那一份协议**（`SUBAGENT_PROTOCOL`）与一节草案拼一次真装配
- * （`assemble` 是纯函数），`seed` 那一段交给同一把尺估——**"这一格装得下装不下"与上限 · 触发点 · 余量因此落在同一个口径上**。`base` 那一份状态由调用方给（项目方针 ·
- * 系统状态 · 代码树都是真的），这一份只按节覆盖"这一格自己的那几段"。
+ * （`assemble` 是纯函数），再用目标 wire 编成**这一步真要发出去的那一份请求**——预算量的是它。
+ * `base` 那一份状态由调用方给（项目方针 · 系统状态 · 代码树都是真的），这一份只按节覆盖
+ * "这一格自己的那几段"。
+ *
+ * **种子那一段不进 `used`**：它不在请求里（它是派发前要铺开的工作面）。它单列一栏，仍按那把
+ * 尺量，读的人看得到它有多大——但"这一格装得下装不下"问的是发出去的那一份。
  *
  * **估账不是读数**：真读数在 `llm/call` 的 `usage` 里（派发之后才有）。这一份的用处只有一处
  * ——在派发之前把"这一格装得下装不下"印给人看。
@@ -431,13 +439,20 @@ export function occupancyOf(sections: readonly DraftSection[], ctx: OccupancyCon
       },
       ...(ctx.maxSteps === undefined ? {} : { maxSteps: ctx.maxSteps }),
     }
-    const prefix = assemble({
-      protocol: SUBAGENT_PROTOCOL,
-      model: ctx.decl.id,
-      segments: sourcesFor(SUBAGENT_PROTOCOL, state, coord),
-    })
     const seedText = (ctx.seedText ?? seedTextOf)(s.seed)
-    const plan = planBudget({ decl: ctx.decl, prefix, tools: ctx.tools, seed: seedText, handoff: '' })
+    const body = requestBodyOf(
+      {
+        protocol: SUBAGENT_PROTOCOL,
+        model: ctx.decl.id,
+        wireModel: ctx.decl.model,
+        adapter: { name: ctx.decl.wire },
+        ...(ctx.decl.call === undefined ? {} : { call: ctx.decl.call }),
+        state,
+        coord,
+      },
+      ctx.tools,
+    )
+    const plan = planBudget({ decl: ctx.decl, body })
     // 单独印的那一栏：同一把尺对 `seed` 那一段的读数（与 `used` 里那一份是同一段正文）。
     const seed = estimateTokensOfText(seedText)
     const sweet = plan.used + plan.handoffMargin <= plan.trigger

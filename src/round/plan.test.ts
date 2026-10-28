@@ -275,7 +275,7 @@ async function plan(
       goal: '把解析器拆出来',
       round: ROUND,
       maxSteps: opts.maxSteps ?? 8,
-      tools: JSON.stringify(CATALOG),
+      tools: CATALOG,
     },
   })
 }
@@ -409,7 +409,7 @@ test('④ 每一格的预估占用印得出来；ownedPaths 铺到整棵树那�
         goal: '把树铺开',
         round: ROUND,
         maxSteps: 8,
-        tools: JSON.stringify(CATALOG),
+        tools: CATALOG,
       })
     // 按 1.5 倍往上撑，**撑破"甜点区间"就停手**（由尺判，不由条数判）——条数本身不是判据，
     // 它是"这一份状态"的尺寸；账与上限的关系才是判据。
